@@ -3,13 +3,15 @@
 /**
  * Code Cell Component
  * 
- * Renders a Jupyter notebook code cell with two modes:
+ * Renders a Jupyter notebook code cell with:
  * - View mode: Syntax highlighted code (default)
  * - Edit mode: CodeEditor (activated by double-click)
+ * - Run button: Execute Python code via Pyodide
+ * - Output area: Display execution results
  * 
- * Uses the unified CodeEditor component for consistent editing experience.
+ * Uses the unified CodeEditor component and on-demand Python kernel.
  * 
- * Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6
+ * Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 10.1-10.7
  */
 
 import { useEffect, useRef, useState, memo, useCallback } from "react";
@@ -17,6 +19,9 @@ import { CodeEditor } from "@/components/editor/codemirror/code-editor";
 import { highlightCode } from "@/lib/code-highlighter";
 import type { JupyterOutput } from "@/lib/notebook-utils";
 import { AnsiText } from "./ansi-text";
+import { usePythonRunner } from "@/hooks/use-python-runner";
+import { OutputArea } from "./output-area";
+import { KernelStatus } from "./kernel-status";
 
 interface CodeCellProps {
   source: string;
@@ -38,7 +43,7 @@ function normalizeText(text: string | string[] | undefined): string {
 }
 
 /**
- * Render a single cell output
+ * Render a single cell output (for notebook file outputs)
  */
 function CellOutput({ output }: { output: JupyterOutput }) {
   if (output.output_type === "stream") {
@@ -86,7 +91,6 @@ function CellOutput({ output }: { output: JupyterOutput }) {
   }
 
   if (output.output_type === "error") {
-    // Error output often contains ANSI codes for colored tracebacks
     const errorText = [
       `${output.ename}: ${output.evalue}`,
       ...(output.traceback || []),
@@ -114,13 +118,27 @@ function RenderedCode({ source }: { source: string }) {
 }
 
 /**
+ * Play icon for Run button
+ */
+function PlayIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg 
+      className={className}
+      width="16" 
+      height="16" 
+      viewBox="0 0 24 24" 
+      fill="currentColor"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  );
+}
+
+/**
  * Code Cell Component
  * 
- * Renders a code cell with two modes:
- * - View mode: Syntax highlighted code (default)
- * - Edit mode: CodeEditor (activated by double-click)
- * 
- * Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6
+ * Renders a code cell with editing, execution, and output display.
  */
 export const CodeCell = memo(function CodeCell({
   source,
@@ -134,7 +152,17 @@ export const CodeCell = memo(function CodeCell({
   const [isEditing, setIsEditing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // Store content in ref to preserve state across mode switches (Requirement 5.6)
+  // Python runner hook for code execution
+  const { 
+    status, 
+    outputs: executionOutputs, 
+    runCode, 
+    clearOutputs,
+    isRunning,
+    isLoading 
+  } = usePythonRunner();
+  
+  // Store content in ref to preserve state across mode switches
   const contentRef = useRef(source);
   
   // Track if we're currently editing to ignore external source updates
@@ -152,7 +180,7 @@ export const CodeCell = memo(function CodeCell({
     onFocus();
   }, [onFocus]);
   
-  // Handle exiting edit mode (Requirement 5.3)
+  // Handle exiting edit mode
   const exitEditMode = useCallback(() => {
     isEditingRef.current = false;
     setIsEditing(false);
@@ -164,6 +192,23 @@ export const CodeCell = memo(function CodeCell({
     onChange(newContent);
   }, [onChange]);
 
+  // Handle Run button click
+  const handleRun = useCallback(async () => {
+    const code = contentRef.current.trim();
+    if (!code) return;
+    
+    clearOutputs();
+    await runCode(code);
+  }, [runCode, clearOutputs]);
+
+  // Handle Shift+Enter to run code
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.shiftKey && e.key === 'Enter') {
+      e.preventDefault();
+      handleRun();
+    }
+  }, [handleRun]);
+
   // Handle click outside to exit edit mode
   useEffect(() => {
     if (!isEditing) return;
@@ -174,7 +219,6 @@ export const CodeCell = memo(function CodeCell({
       }
     };
 
-    // Delay adding listener to avoid immediate trigger
     const timer = setTimeout(() => {
       document.addEventListener("mousedown", handleClickOutside);
     }, 100);
@@ -185,21 +229,37 @@ export const CodeCell = memo(function CodeCell({
     };
   }, [isEditing, exitEditMode]);
 
+  // Determine if we should show execution outputs or file outputs
+  const hasExecutionOutputs = executionOutputs.length > 0;
+  const hasFileOutputs = outputs && outputs.length > 0;
+
   return (
-    <div ref={containerRef} className="space-y-2">
-      {/* Execution count label */}
-      <div className="text-xs text-muted-foreground font-mono">
-        [{executionCount ?? " "}]:
+    <div ref={containerRef} className="space-y-2" onKeyDown={handleKeyDown}>
+      {/* Toolbar with execution count and Run button */}
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-muted-foreground font-mono">
+          [{executionCount ?? " "}]:
+        </div>
+        
+        {/* Run button */}
+        <button
+          onClick={handleRun}
+          disabled={isRunning || isLoading}
+          className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md
+                     bg-primary/10 hover:bg-primary/20 text-primary
+                     disabled:opacity-50 disabled:cursor-not-allowed
+                     transition-colors"
+          title="Run cell (Shift+Enter)"
+        >
+          <PlayIcon className="w-3 h-3" />
+          <span>Run</span>
+        </button>
       </div>
       
       {/* Code editor/viewer */}
       <div>
         {isEditing ? (
           <div className="rounded-lg overflow-hidden border-2 border-primary">
-            {/* 
-              CodeEditor with auto-height mode for cells (Requirement 5.2)
-              Navigation callbacks for cell navigation (Requirements 5.3, 5.4, 5.5)
-            */}
             <CodeEditor
               initialValue={contentRef.current}
               language="python"
@@ -221,10 +281,18 @@ export const CodeCell = memo(function CodeCell({
         )}
       </div>
 
-      {/* Outputs */}
-      {outputs && outputs.length > 0 && (
+      {/* Kernel status indicator (loading/running) */}
+      <KernelStatus status={status} />
+
+      {/* Execution outputs (from Python runner) */}
+      {hasExecutionOutputs && (
+        <OutputArea outputs={executionOutputs} />
+      )}
+
+      {/* File outputs (from notebook file) - show only if no execution outputs */}
+      {!hasExecutionOutputs && hasFileOutputs && (
         <div className="space-y-2">
-          {outputs.map((output, i) => (
+          {outputs!.map((output, i) => (
             <CellOutput key={i} output={output} />
           ))}
         </div>

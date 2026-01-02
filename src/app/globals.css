@@ -1925,3 +1925,15 @@ math-field::part(placeholder) {
   font-size: 10px;
   color: rgba(255, 255, 255, 0.4);
 }
+
+
+/* Python Kernel Loading Progress Animation */
+@keyframes loading-progress {
+  0% { width: 10%; opacity: 0.5; }
+  50% { width: 80%; opacity: 1; }
+  100% { width: 10%; opacity: 0.5; }
+}
+
+.loading-progress-bar {
+  animation: loading-progress 2s ease-in-out infinite;
+}
