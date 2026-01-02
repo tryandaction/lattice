@@ -168,10 +168,13 @@ export const CodeCell = memo(function CodeCell({
   // Track if we're currently editing to ignore external source updates
   const isEditingRef = useRef(false);
   
-  // Update content ref when source changes (only when not editing)
-  if (!isEditingRef.current) {
-    contentRef.current = source;
-  }
+  // Always sync contentRef with source when not editing
+  // This ensures we have the latest source when entering edit mode
+  useEffect(() => {
+    if (!isEditingRef.current) {
+      contentRef.current = source;
+    }
+  }, [source]);
 
   // Handle double-click to enter edit mode
   const handleDoubleClick = useCallback(() => {

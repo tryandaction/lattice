@@ -91,14 +91,12 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
   
   // Track the current file to detect file switches
   const currentFileRef = useRef(fileName);
-  // Track the current content to detect content changes
+  // Track the current content to detect content changes from external sources
   const currentContentRef = useRef(content);
-  // Track if we're doing an internal update
-  const isInternalUpdateRef = useRef(false);
   // Track the last serialized content to avoid unnecessary updates
-  const lastSerializedRef = useRef<string | null>(null);
+  const lastSerializedRef = useRef<string | null>(content);
   // Track if initial load is complete
-  const initialLoadRef = useRef(false);
+  const initialLoadRef = useRef(true); // Start as true since we have initial content
 
   // Debounced content change notification for better performance
   const debouncedNotifyChange = useMemo(
@@ -111,30 +109,33 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
     [onContentChange]
   );
 
-  // Reset state when file changes OR when content changes significantly (file reload)
+  // Reset state when file changes OR when content changes from external source (file reload)
   useEffect(() => {
     const fileChanged = fileName !== currentFileRef.current;
     const contentChanged = content !== currentContentRef.current;
     
-    if (fileChanged || (contentChanged && !initialLoadRef.current)) {
+    // Only reset if file changed or content changed from external source
+    // (not from our own edits which would have updated lastSerializedRef)
+    const isExternalContentChange = contentChanged && content !== lastSerializedRef.current;
+    
+    if (fileChanged || isExternalContentChange) {
       currentFileRef.current = fileName;
       currentContentRef.current = content;
-      lastSerializedRef.current = content; // Set initial serialized content
+      lastSerializedRef.current = content;
       resetState(content);
-      initialLoadRef.current = true;
     }
   }, [fileName, content, resetState]);
 
-  // Notify parent of content changes (debounced) - only after user edits
+  // Notify parent of content changes (debounced) - triggered by user edits
   useEffect(() => {
-    if (!onContentChange || isInternalUpdateRef.current || !initialLoadRef.current) return;
+    if (!onContentChange) return;
     
     // Only notify if dirty (user made changes)
     if (!isDirty) return;
     
     const serialized = serialize();
     debouncedNotifyChange(serialized);
-  }, [state, serialize, debouncedNotifyChange, isDirty]);
+  }, [state, serialize, debouncedNotifyChange, isDirty, onContentChange]);
 
   /**
    * Handle save operation

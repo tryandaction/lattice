@@ -227,10 +227,14 @@ export function PaneWrapper({
     setPendingCloseTabIndex(null);
   }, []);
 
+  // Ref to track current content for comparison (avoids stale closure issues)
+  const contentRef = useRef<string | ArrayBuffer | null>(content);
+  contentRef.current = content;
+
   // Handle content change (for editable files)
   const handleContentChange = useCallback((newContent: string) => {
-    // Don't update if content is the same
-    if (newContent === content) return;
+    // Don't update if content is the same (use ref to avoid stale closure)
+    if (newContent === contentRef.current) return;
     
     setContent(newContent);
     
@@ -245,7 +249,7 @@ export function PaneWrapper({
         setTabDirty(paneId, activeTabIndex, true);
       }
     }
-  }, [paneId, activeTabIndex, setTabDirty, activeTab, setContentToCache, content]);
+  }, [paneId, activeTabIndex, setTabDirty, activeTab, setContentToCache]);
 
   // Handle file save - optimized with fast save
   const handleSave = useCallback(async () => {
