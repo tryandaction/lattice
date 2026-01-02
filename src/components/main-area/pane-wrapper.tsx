@@ -1,0 +1,384 @@
+"use client";
+
+import { useCallback, useEffect, useState, useRef, useMemo } from "react";
+import { useDndMonitor } from "@dnd-kit/core";
+import { SplitSquareHorizontal, SplitSquareVertical, X, FileText } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { TabBar } from "./tab-bar";
+import { DropZones } from "./drop-zone";
+import { UniversalFileViewer } from "./universal-file-viewer";
+import { SaveReminderDialog } from "@/components/ui/save-reminder-dialog";
+import { useWorkspaceStore, type PaneId } from "@/stores/workspace-store";
+import { useContentCacheStore } from "@/stores/content-cache-store";
+import { findPane } from "@/lib/layout-utils";
+import { getFileExtension, isBinaryFile, isEditableFile } from "@/lib/file-utils";
+import { fastSaveFile, debounce } from "@/lib/fast-save";
+import type { TabState } from "@/types/layout";
+
+export interface PaneWrapperProps {
+  paneId: PaneId;
+  isActive: boolean;
+  onActivate: () => void;
+  onSplitRight: () => void;
+  onSplitDown: () => void;
+  onClose: () => void;
+}
+
+/**
+ * Pane Wrapper Component
+ * 
+ * Wraps a pane with tab bar, content viewer, and pane controls.
+ * Handles file content loading and tab management.
+ * 
+ * Content Loading Priority:
+ * 1. Check cache first - if cached content exists, use it (preserves unsaved changes)
+ * 2. Only load from file if no cache exists
+ */
+export function PaneWrapper({
+  paneId,
+  isActive,
+  onActivate,
+  onSplitRight,
+  onSplitDown,
+  onClose,
+}: PaneWrapperProps) {
+  const layout = useWorkspaceStore((state) => state.layout);
+  const setActiveTab = useWorkspaceStore((state) => state.setActiveTab);
+  const closeTab = useWorkspaceStore((state) => state.closeTab);
+  const setTabDirty = useWorkspaceStore((state) => state.setTabDirty);
+
+  // Get pane data from layout
+  const pane = findPane(layout.root, paneId);
+  const tabs = pane?.tabs ?? [];
+  const activeTabIndex = pane?.activeTabIndex ?? -1;
+  const activeTab = activeTabIndex >= 0 && activeTabIndex < tabs.length 
+    ? tabs[activeTabIndex] 
+    : null;
+
+  // Content loading state
+  const [content, setContent] = useState<string | ArrayBuffer | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Track which tab's content is currently loaded
+  const loadedTabIdRef = useRef<string | null>(null);
+  // Track the original content for dirty state comparison
+  const originalContentRef = useRef<string | null>(null);
+
+  // Content cache store - use getState() for non-reactive access in effects
+  const setContentToCache = useContentCacheStore((state) => state.setContent);
+  const getContentFromCache = useContentCacheStore((state) => state.getContent);
+  const markAsSaved = useContentCacheStore((state) => state.markAsSaved);
+  const removeFromCache = useContentCacheStore((state) => state.removeFromCache);
+  const hasUnsavedChanges = useContentCacheStore((state) => state.hasUnsavedChanges);
+
+  // Save reminder dialog state
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [pendingCloseTabIndex, setPendingCloseTabIndex] = useState<number | null>(null);
+  const pendingCloseTabRef = useRef<TabState | null>(null);
+
+  // Load file content when active tab changes
+  useEffect(() => {
+    // No active tab - clear everything
+    if (!activeTab) {
+      setContent(null);
+      setIsLoading(false);
+      setError(null);
+      loadedTabIdRef.current = null;
+      originalContentRef.current = null;
+      return;
+    }
+
+    // Same tab already loaded - no need to reload
+    if (loadedTabIdRef.current === activeTab.id) {
+      return;
+    }
+
+    // PRIORITY 1: Check cache first - this preserves unsaved changes
+    const cached = getContentFromCache(activeTab.id);
+    if (cached) {
+      setContent(cached.content);
+      originalContentRef.current = cached.originalContent;
+      loadedTabIdRef.current = activeTab.id;
+      setIsLoading(false);
+      setError(null);
+      return;
+    }
+
+    // PRIORITY 2: No cache - load from file
+    loadedTabIdRef.current = activeTab.id;
+    originalContentRef.current = null;
+
+    const loadFile = async () => {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const file = await activeTab.fileHandle.getFile();
+        const extension = getFileExtension(file.name);
+        
+        const fileContent = isBinaryFile(extension)
+          ? await file.arrayBuffer()
+          : await file.text();
+
+        // Only update if this is still the active tab (handles rapid switching)
+        if (loadedTabIdRef.current === activeTab.id) {
+          setContent(fileContent);
+          if (typeof fileContent === 'string') {
+            originalContentRef.current = fileContent;
+            // Initialize cache with original content
+            setContentToCache(activeTab.id, fileContent, fileContent);
+          }
+          setIsLoading(false);
+        }
+      } catch (err) {
+        // Only update error if this is still the active tab
+        if (loadedTabIdRef.current === activeTab.id) {
+          setError(err instanceof Error ? err.message : "Failed to read file");
+          setIsLoading(false);
+        }
+      }
+    };
+
+    loadFile();
+  }, [activeTab?.id, getContentFromCache, setContentToCache]);
+
+  // Handle tab click
+  const handleTabClick = useCallback((index: number) => {
+    setActiveTab(paneId, index);
+  }, [paneId, setActiveTab]);
+
+  // Handle tab close with save reminder
+  const handleTabClose = useCallback((index: number) => {
+    const tab = tabs[index];
+    if (!tab) return;
+
+    // Check if tab has unsaved changes
+    if (hasUnsavedChanges(tab.id)) {
+      // Show save reminder dialog
+      pendingCloseTabRef.current = tab;
+      setPendingCloseTabIndex(index);
+      setSaveDialogOpen(true);
+    } else {
+      // No unsaved changes, close directly
+      removeFromCache(tab.id);
+      closeTab(paneId, index);
+    }
+  }, [paneId, closeTab, tabs, hasUnsavedChanges, removeFromCache]);
+
+  // Handle save from dialog
+  const handleDialogSave = useCallback(async () => {
+    const tab = pendingCloseTabRef.current;
+    const tabIndex = pendingCloseTabIndex;
+    
+    if (!tab || tabIndex === null) return;
+
+    // Get cached content for this tab
+    const cached = getContentFromCache(tab.id);
+    if (!cached || typeof cached.content !== 'string') {
+      // No content to save, just close
+      setSaveDialogOpen(false);
+      removeFromCache(tab.id);
+      closeTab(paneId, tabIndex);
+      return;
+    }
+
+    try {
+      // Save the file
+      const writable = await tab.fileHandle.createWritable();
+      await writable.write(cached.content);
+      await writable.close();
+
+      // Close dialog and tab
+      setSaveDialogOpen(false);
+      removeFromCache(tab.id);
+      closeTab(paneId, tabIndex);
+      
+      // Reset pending state
+      pendingCloseTabRef.current = null;
+      setPendingCloseTabIndex(null);
+    } catch (err) {
+      console.error('Failed to save file:', err);
+      throw err;
+    }
+  }, [paneId, closeTab, pendingCloseTabIndex, getContentFromCache, removeFromCache]);
+
+  // Handle don't save from dialog
+  const handleDialogDontSave = useCallback(() => {
+    const tabIndex = pendingCloseTabIndex;
+    const tab = pendingCloseTabRef.current;
+    
+    if (tabIndex === null || !tab) return;
+
+    // Close dialog and tab without saving
+    setSaveDialogOpen(false);
+    removeFromCache(tab.id);
+    closeTab(paneId, tabIndex);
+    
+    // Reset pending state
+    pendingCloseTabRef.current = null;
+    setPendingCloseTabIndex(null);
+  }, [paneId, closeTab, pendingCloseTabIndex, removeFromCache]);
+
+  // Handle cancel from dialog
+  const handleDialogCancel = useCallback(() => {
+    setSaveDialogOpen(false);
+    pendingCloseTabRef.current = null;
+    setPendingCloseTabIndex(null);
+  }, []);
+
+  // Handle content change (for editable files)
+  const handleContentChange = useCallback((newContent: string) => {
+    // Don't update if content is the same
+    if (newContent === content) return;
+    
+    setContent(newContent);
+    
+    // Update cache with new content
+    if (activeTab) {
+      const originalContent = originalContentRef.current ?? newContent;
+      setContentToCache(activeTab.id, newContent, originalContent);
+      
+      // Mark as dirty ONLY if content actually differs from original
+      const isDirty = newContent !== originalContent;
+      if (isDirty) {
+        setTabDirty(paneId, activeTabIndex, true);
+      }
+    }
+  }, [paneId, activeTabIndex, setTabDirty, activeTab, setContentToCache, content]);
+
+  // Handle file save - optimized with fast save
+  const handleSave = useCallback(async () => {
+    if (!activeTab || typeof content !== 'string') return;
+    
+    try {
+      // Use optimized save function
+      await fastSaveFile(activeTab.fileHandle, content);
+      
+      // Update cache - mark as saved with new original content
+      markAsSaved(activeTab.id, content);
+      originalContentRef.current = content;
+      
+      // Clear dirty state
+      setTabDirty(paneId, activeTabIndex, false);
+    } catch (err) {
+      console.error('Failed to save file:', err);
+      throw err;
+    }
+  }, [activeTab, content, paneId, activeTabIndex, setTabDirty, markAsSaved]);
+
+  // Handle pane click to activate
+  const handlePaneClick = useCallback(() => {
+    if (!isActive) {
+      onActivate();
+    }
+  }, [isActive, onActivate]);
+
+  // Determine if current file is editable
+  const isEditable = activeTab 
+    ? isEditableFile(getFileExtension(activeTab.fileName)) 
+    : false;
+
+  // Track if dragging is happening (for showing drop zones)
+  const [isDragging, setIsDragging] = useState(false);
+
+  useDndMonitor({
+    onDragStart: () => setIsDragging(true),
+    onDragEnd: () => setIsDragging(false),
+    onDragCancel: () => setIsDragging(false),
+  });
+
+  return (
+    <div
+      className={cn(
+        "flex h-full flex-col overflow-hidden rounded-sm border transition-all duration-150",
+        isActive
+          ? "border-blue-500/50 ring-2 ring-blue-500/30"
+          : "border-border"
+      )}
+      onClick={handlePaneClick}
+    >
+      {/* Save Reminder Dialog */}
+      <SaveReminderDialog
+        isOpen={saveDialogOpen}
+        fileName={pendingCloseTabRef.current?.fileName ?? ""}
+        onSave={handleDialogSave}
+        onDontSave={handleDialogDontSave}
+        onCancel={handleDialogCancel}
+      />
+
+      {/* Pane Header with Tabs and Actions */}
+      <div className="flex items-center border-b border-border bg-muted/30">
+        {/* Tab Bar */}
+        <div className="flex-1 min-w-0 overflow-hidden">
+          <TabBar
+            paneId={paneId}
+            tabs={tabs}
+            activeTabIndex={activeTabIndex}
+            onTabClick={handleTabClick}
+            onTabClose={handleTabClose}
+          />
+        </div>
+        
+        {/* Pane Actions */}
+        <div className="flex items-center gap-0.5 px-1 border-l border-border">
+          <button
+            onClick={(e) => { e.stopPropagation(); onSplitRight(); }}
+            className="p-1 rounded hover:bg-accent transition-colors"
+            title="Split Right"
+          >
+            <SplitSquareHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onSplitDown(); }}
+            className="p-1 rounded hover:bg-accent transition-colors"
+            title="Split Down"
+          >
+            <SplitSquareVertical className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onClose(); }}
+            className="p-1 rounded hover:bg-accent transition-colors"
+            title="Close Pane"
+          >
+            <X className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
+        </div>
+      </div>
+
+      {/* Content Area */}
+      <div className="relative flex-1 overflow-hidden">
+        {/* Drop Zones - shown when dragging */}
+        <DropZones paneId={paneId} isVisible={isDragging} />
+        
+        {activeTab ? (
+          <UniversalFileViewer
+            paneId={paneId}
+            handle={activeTab.fileHandle}
+            content={content}
+            isLoading={isLoading}
+            error={error}
+            onContentChange={isEditable ? handleContentChange : undefined}
+            onSave={isEditable ? handleSave : undefined}
+          />
+        ) : (
+          <EmptyPaneState />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Empty Pane State
+ * Shown when no files are open in the pane
+ */
+function EmptyPaneState() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
+      <FileText className="h-12 w-12 mb-2 opacity-20" />
+      <p className="text-sm">No file open</p>
+      <p className="text-xs mt-1">Click a file in the explorer to open it</p>
+    </div>
+  );
+}

@@ -1,0 +1,10 @@
+{
+    "typescript.autoClosingTags": false,
+    "css.validate": false,
+    "scss.validate": false,
+    "less.validate": false,
+    "css.lint.unknownAtRules": "ignore",
+    "files.associations": {
+        "*.css": "tailwindcss"
+    }
+}

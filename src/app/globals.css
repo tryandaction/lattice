@@ -1,0 +1,1927 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-mono: "Geist Mono", monospace;
+  
+  /* Slate/Zinc Scientific Theme - Light Mode */
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 3.9%;
+  --primary: 240 5.9% 10%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 5.9% 10%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 240 5.9% 10%;
+  --radius: 0.5rem;
+}
+
+.dark {
+  /* Slate/Zinc Scientific Theme - Dark Mode */
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 240 10% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 10% 3.9%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 0 0% 98%;
+  --primary-foreground: 240 5.9% 10%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --ring: 240 4.9% 83.9%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Scientific Minimalist Utilities */
+@layer utilities {
+  .font-scientific {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.025em;
+  }
+  
+  .border-scientific {
+    border-width: 1px;
+    border-style: dashed;
+  }
+}
+
+/* Renderer-specific Academic Styling */
+@layer components {
+  /* Markdown Renderer Styles */
+  .prose-academic {
+    @apply prose prose-slate dark:prose-invert max-w-none;
+    @apply prose-headings:font-serif prose-headings:tracking-tight;
+    @apply prose-p:font-sans prose-p:leading-relaxed;
+    @apply prose-a:text-primary prose-a:no-underline hover:prose-a:underline;
+    @apply prose-code:rounded prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5;
+    @apply prose-code:before:content-none prose-code:after:content-none;
+    @apply prose-pre:bg-muted prose-pre:border prose-pre:border-border;
+    @apply prose-blockquote:border-l-primary prose-blockquote:bg-muted/50;
+    @apply prose-table:border prose-table:border-border;
+    @apply prose-th:bg-muted prose-th:border prose-th:border-border prose-th:p-2;
+    @apply prose-td:border prose-td:border-border prose-td:p-2;
+  }
+
+  /* PDF Viewer Styles */
+  .pdf-viewer-container {
+    @apply flex h-full flex-col bg-background;
+  }
+
+  .pdf-toolbar {
+    @apply flex items-center justify-between border-b border-border bg-muted/50 px-4 py-2;
+  }
+
+  .pdf-page-container {
+    @apply flex-1 overflow-auto bg-muted/30 p-4;
+  }
+
+  /* Code Reader Styles */
+  .code-reader-container {
+    @apply h-full overflow-auto bg-background;
+  }
+
+  .code-header {
+    @apply sticky top-0 z-10 border-b border-border bg-muted/90 px-4 py-2 backdrop-blur;
+  }
+
+  /* Jupyter Notebook Styles */
+  .jupyter-container {
+    @apply mx-auto max-w-4xl p-8;
+  }
+
+  .jupyter-cell-markdown {
+    @apply border-l-2 border-primary/20 pl-4;
+  }
+
+  .jupyter-cell-code {
+    @apply space-y-2;
+  }
+
+  .jupyter-output {
+    @apply whitespace-pre-wrap rounded bg-muted p-3 text-sm font-mono;
+  }
+
+  .jupyter-output-error {
+    @apply whitespace-pre-wrap rounded bg-destructive/10 p-3 text-sm font-mono text-destructive;
+  }
+
+  /* Document Viewer Styles (Word, PowerPoint) */
+  .document-container {
+    @apply mx-auto max-w-4xl p-8;
+  }
+
+  .document-header {
+    @apply sticky top-0 z-10 border-b border-border bg-muted/90 px-4 py-2 backdrop-blur;
+  }
+
+  /* Slide Viewer Styles */
+  .slide-container {
+    @apply aspect-video rounded-lg border border-border bg-white p-8 shadow-lg dark:bg-slate-900;
+  }
+
+  .slide-thumbnail {
+    @apply mb-2 w-full rounded border p-2 text-left text-xs transition-colors;
+  }
+
+  .slide-thumbnail-active {
+    @apply border-primary bg-primary/10;
+  }
+
+  /* HTML Viewer Styles */
+  .html-viewer-container {
+    @apply flex h-full flex-col;
+  }
+
+  .html-toolbar {
+    @apply flex items-center justify-between border-b border-border bg-muted/50 px-4 py-2;
+  }
+
+  /* Loading States */
+  .loading-container {
+    @apply flex h-full flex-col items-center justify-center bg-background p-8;
+  }
+
+  /* Error States */
+  .error-container {
+    @apply flex h-full flex-col items-center justify-center bg-background p-8;
+  }
+}
+
+/* Prose Lattice - Obsidian-like Markdown Rendering */
+.prose-lattice {
+  @apply text-foreground;
+  font-size: 1rem;
+  line-height: 1.75;
+}
+
+.prose-lattice h1 {
+  @apply text-3xl font-bold mt-8 mb-4 pb-2 border-b border-border;
+}
+
+.prose-lattice h2 {
+  @apply text-2xl font-bold mt-6 mb-3 pb-1 border-b border-border/50;
+}
+
+.prose-lattice h3 {
+  @apply text-xl font-semibold mt-5 mb-2;
+}
+
+.prose-lattice h4 {
+  @apply text-lg font-semibold mt-4 mb-2;
+}
+
+.prose-lattice h5 {
+  @apply text-base font-semibold mt-3 mb-1;
+}
+
+.prose-lattice h6 {
+  @apply text-sm font-semibold mt-3 mb-1 text-muted-foreground;
+}
+
+.prose-lattice p {
+  @apply my-3;
+}
+
+.prose-lattice strong {
+  @apply font-bold;
+}
+
+.prose-lattice em {
+  @apply italic;
+}
+
+.prose-lattice a {
+  @apply text-primary underline underline-offset-2 hover:text-primary/80;
+}
+
+.prose-lattice ul {
+  @apply list-disc pl-6 my-3;
+}
+
+.prose-lattice ol {
+  @apply list-decimal pl-6 my-3;
+}
+
+.prose-lattice li {
+  @apply my-1;
+}
+
+.prose-lattice li > ul,
+.prose-lattice li > ol {
+  @apply my-1;
+}
+
+.prose-lattice blockquote {
+  @apply border-l-4 border-primary/40 pl-4 my-4 italic text-muted-foreground bg-muted/30 py-2 pr-4 rounded-r;
+}
+
+.prose-lattice blockquote p {
+  @apply my-1;
+}
+
+.prose-lattice code {
+  @apply bg-muted rounded px-1.5 py-0.5 text-sm font-mono;
+}
+
+.prose-lattice pre {
+  @apply bg-muted rounded-lg p-4 my-4 overflow-x-auto;
+}
+
+.prose-lattice pre code {
+  @apply bg-transparent p-0 text-sm;
+}
+
+.prose-lattice hr {
+  @apply my-8 border-border;
+}
+
+/* Table styles for prose-lattice */
+.prose-lattice table {
+  @apply w-full border-collapse my-4 text-sm;
+}
+
+.prose-lattice thead {
+  @apply bg-muted;
+}
+
+.prose-lattice th {
+  @apply border border-border px-3 py-2 text-left font-semibold;
+}
+
+.prose-lattice td {
+  @apply border border-border px-3 py-2;
+}
+
+.prose-lattice tr:nth-child(even) {
+  @apply bg-muted/30;
+}
+
+.prose-lattice tr:hover {
+  @apply bg-muted/50;
+}
+
+/* Image styles */
+.prose-lattice img {
+  @apply rounded-lg my-4 max-w-full;
+}
+
+/* KaTeX Math Styling Overrides */
+.katex {
+  font-size: 1.1em;
+}
+
+.katex-display {
+  @apply my-4 overflow-x-auto py-2;
+}
+
+/* Better math display in prose */
+.prose-lattice .katex-display {
+  @apply my-6;
+}
+
+.prose-lattice .katex {
+  font-size: 1.05em;
+}
+
+/* Syntax Highlighter Overrides */
+pre[class*="language-"] {
+  @apply rounded-lg border border-border;
+}
+
+code[class*="language-"] {
+  font-family: var(--font-mono);
+}
+
+
+/* Advanced Editor Styles */
+.ProseMirror {
+  outline: none;
+  min-height: 200px;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+  @apply text-muted-foreground;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* Table Styles in Editor */
+.ProseMirror table {
+  @apply w-full border-collapse border border-border my-4;
+}
+
+.ProseMirror th,
+.ProseMirror td {
+  @apply border border-border p-2 text-left;
+}
+
+.ProseMirror th {
+  @apply bg-muted font-semibold;
+}
+
+.ProseMirror tr:hover td {
+  @apply bg-muted/50;
+}
+
+/* Selected cell highlight */
+.ProseMirror .selectedCell {
+  @apply bg-primary/10;
+}
+
+/* Code Block Styles */
+.ProseMirror pre {
+  @apply bg-muted rounded-lg p-4 my-4 overflow-x-auto;
+  font-family: var(--font-mono);
+}
+
+.ProseMirror code {
+  @apply bg-muted rounded px-1.5 py-0.5;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.ProseMirror pre code {
+  @apply bg-transparent p-0;
+}
+
+/* Blockquote Styles */
+.ProseMirror blockquote {
+  @apply border-l-4 border-primary/30 pl-4 my-4 italic text-muted-foreground;
+}
+
+/* Heading Styles */
+.ProseMirror h1 {
+  @apply text-3xl font-bold mt-8 mb-4;
+}
+
+.ProseMirror h2 {
+  @apply text-2xl font-bold mt-6 mb-3;
+}
+
+.ProseMirror h3 {
+  @apply text-xl font-semibold mt-4 mb-2;
+}
+
+/* List Styles */
+.ProseMirror ul,
+.ProseMirror ol {
+  @apply pl-6 my-4;
+}
+
+.ProseMirror li {
+  @apply my-1;
+}
+
+/* Math Block Styles */
+.block-math {
+  @apply my-4 py-2 text-center;
+}
+
+.block-math-source {
+  @apply bg-muted rounded-lg p-4;
+  font-family: var(--font-mono);
+}
+
+.inline-math {
+  @apply inline;
+}
+
+.inline-math-source {
+  @apply bg-muted rounded px-1;
+  font-family: var(--font-mono);
+}
+
+/* Slash Command Menu */
+.slash-command-menu {
+  min-width: 200px;
+}
+
+/* Tippy.js Styles */
+.tippy-box {
+  @apply bg-transparent;
+}
+
+.tippy-content {
+  @apply p-0;
+}
+
+/* Notebook Editor Styles */
+.notebook-cell {
+  @apply relative border-l-2 border-transparent transition-colors;
+}
+
+.notebook-cell:hover {
+  @apply border-muted;
+}
+
+.notebook-cell.active {
+  @apply border-primary;
+}
+
+.notebook-cell-controls {
+  @apply absolute -left-8 top-0 flex flex-col gap-1 opacity-0 transition-opacity;
+}
+
+.notebook-cell:hover .notebook-cell-controls {
+  @apply opacity-100;
+}
+
+/* CodeMirror Overrides */
+.cm-editor {
+  @apply rounded-lg border border-border;
+}
+
+.cm-editor.cm-focused {
+  @apply outline-none ring-1 ring-primary;
+}
+
+.cm-scroller {
+  font-family: var(--font-mono);
+}
+
+/* Enhanced Math Editing Styles */
+.math-edit-input,
+.math-edit-textarea {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.9rem;
+  background: hsl(var(--muted));
+  border: 2px solid hsl(var(--primary));
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  outline: none;
+  color: hsl(var(--foreground));
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.math-edit-input {
+  min-width: 120px;
+  display: inline-block;
+  width: auto;
+}
+
+.math-edit-textarea {
+  min-height: 80px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.math-edit-input:focus,
+.math-edit-textarea:focus {
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.2);
+}
+
+.math-render {
+  display: inline;
+}
+
+.block-math-render {
+  display: block;
+  text-align: center;
+  padding: 0.5rem 0;
+}
+
+/* Math node styles */
+.inline-math {
+  display: inline-block;
+  vertical-align: middle;
+  cursor: pointer;
+  padding: 0 0.125rem;
+  border-radius: 0.25rem;
+  transition: background-color 0.15s;
+}
+
+.inline-math:hover {
+  background-color: hsl(var(--muted) / 0.5);
+}
+
+.inline-math.ProseMirror-selectednode {
+  background-color: hsl(var(--primary) / 0.15);
+  outline: 2px solid hsl(var(--primary) / 0.5);
+  outline-offset: 1px;
+}
+
+.block-math {
+  display: block;
+  margin: 1rem 0;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.block-math:hover {
+  background-color: hsl(var(--muted) / 0.3);
+}
+
+.block-math.ProseMirror-selectednode {
+  background-color: hsl(var(--primary) / 0.1);
+  outline: 2px solid hsl(var(--primary) / 0.5);
+}
+
+.block-math.editing {
+  background-color: hsl(var(--muted) / 0.5);
+}
+
+/* Placeholder for empty math */
+.math-placeholder {
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.875rem;
+}
+
+/* Math error display */
+.math-error {
+  color: hsl(var(--destructive));
+  font-family: var(--font-mono), monospace;
+  font-size: 0.875rem;
+  background: hsl(var(--destructive) / 0.1);
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+}
+
+/* Code block wrapper */
+.code-block-wrapper {
+  @apply relative my-4;
+}
+
+.code-block-wrapper:hover select {
+  @apply opacity-100;
+}
+
+.code-block {
+  @apply bg-muted rounded-lg p-4 overflow-x-auto;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+/* Language selector in code blocks */
+.code-block-wrapper select {
+  @apply absolute top-2 right-2 text-xs bg-background border border-border rounded px-2 py-1;
+  @apply opacity-0 transition-opacity cursor-pointer;
+}
+
+.code-block-wrapper:hover select {
+  @apply opacity-100;
+}
+
+/* Table toolbar animation */
+.table-toolbar-enter {
+  @apply opacity-0 transform -translate-y-2;
+}
+
+.table-toolbar-enter-active {
+  @apply opacity-100 transform translate-y-0 transition-all duration-200;
+}
+
+/* Placeholder for empty math */
+.math-placeholder {
+  @apply text-muted-foreground italic;
+}
+
+/* Syntax highlighting colors for code blocks */
+.code-block .keyword { color: #c678dd; }
+.code-block .string { color: #98c379; }
+.code-block .number { color: #d19a66; }
+.code-block .comment { color: #5c6370; font-style: italic; }
+.code-block .function { color: #61afef; }
+.code-block .operator { color: #56b6c2; }
+.code-block .class-name { color: #e5c07b; }
+.code-block .punctuation { color: #abb2bf; }
+
+/* Dark mode syntax highlighting */
+.dark .code-block .keyword { color: #c678dd; }
+.dark .code-block .string { color: #98c379; }
+.dark .code-block .number { color: #d19a66; }
+.dark .code-block .comment { color: #5c6370; }
+.dark .code-block .function { color: #61afef; }
+.dark .code-block .operator { color: #56b6c2; }
+.dark .code-block .class-name { color: #e5c07b; }
+.dark .code-block .punctuation { color: #abb2bf; }
+
+
+/* Code syntax highlighting for rendered code */
+.hljs-keyword {
+  color: #c678dd;
+  font-weight: 500;
+}
+
+.hljs-built_in {
+  color: #e5c07b;
+}
+
+.hljs-string {
+  color: #98c379;
+}
+
+.hljs-number {
+  color: #d19a66;
+}
+
+.hljs-comment {
+  color: #5c6370;
+  font-style: italic;
+}
+
+.hljs-title.function_ {
+  color: #61afef;
+}
+
+/* Dark mode adjustments */
+.dark .hljs-keyword {
+  color: #c678dd;
+}
+
+.dark .hljs-built_in {
+  color: #e5c07b;
+}
+
+.dark .hljs-string {
+  color: #98c379;
+}
+
+.dark .hljs-number {
+  color: #d19a66;
+}
+
+.dark .hljs-comment {
+  color: #7f848e;
+}
+
+.dark .hljs-title.function_ {
+  color: #61afef;
+}
+
+
+/* Math Edit Wrapper with Drag Handle */
+.math-edit-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  background: hsl(var(--muted) / 0.5);
+  border: 2px solid hsl(var(--primary));
+  border-radius: 0.375rem;
+  padding: 0.25rem;
+}
+
+.math-edit-wrapper.block {
+  display: flex;
+  align-items: flex-start;
+  padding: 0.5rem;
+}
+
+.math-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.5rem;
+  color: hsl(var(--muted-foreground));
+  cursor: grab;
+  user-select: none;
+  font-size: 0.75rem;
+  letter-spacing: -0.1em;
+  border-radius: 0.25rem;
+  flex-shrink: 0;
+}
+
+.math-drag-handle:hover {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+.math-drag-handle:active {
+  cursor: grabbing;
+}
+
+.math-drag-handle.block {
+  height: auto;
+  min-height: 2rem;
+  align-self: stretch;
+}
+
+/* Adjust input/textarea in wrapper */
+.math-edit-wrapper .math-edit-input {
+  border: none;
+  background: transparent;
+  padding: 0.25rem 0.5rem;
+  min-width: 150px;
+}
+
+.math-edit-wrapper .math-edit-input:focus {
+  box-shadow: none;
+}
+
+.math-edit-wrapper .math-edit-textarea {
+  border: none;
+  background: transparent;
+  padding: 0.5rem;
+  flex: 1;
+  min-width: 200px;
+}
+
+.math-edit-wrapper .math-edit-textarea:focus {
+  box-shadow: none;
+}
+
+
+/* PPTX Slide Container Styles */
+.pptx-wrapper {
+  position: relative;
+  background: white;
+  /* Remove overflow: hidden to allow content to be measured correctly */
+}
+
+.pptx-wrapper section {
+  position: relative !important;
+  margin: 0 auto;
+}
+
+.pptx-wrapper .block {
+  position: absolute;
+}
+
+.pptx-wrapper * {
+  box-sizing: border-box;
+}
+
+/* Allow absolute positioned elements to show their content */
+.pptx-wrapper div[style*="position: absolute"],
+.pptx-wrapper div[style*="position:absolute"] {
+  /* Don't hide overflow - let content be visible */
+  overflow: visible;
+}
+
+/* Text rendering improvements */
+.pptx-wrapper p,
+.pptx-wrapper span {
+  margin: 0;
+  padding: 0;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* SVG shapes */
+.pptx-wrapper svg {
+  display: block;
+  overflow: visible;
+}
+
+/* Table styles in slides */
+.pptx-wrapper table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.pptx-wrapper td,
+.pptx-wrapper th {
+  padding: 4px 8px;
+  vertical-align: middle;
+}
+
+/* Image handling - preserve original dimensions */
+.pptx-wrapper img {
+  display: block;
+}
+
+/* Chart container */
+.pptx-wrapper .chart-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* Hyperlinks in slides */
+.pptx-wrapper a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* List styles */
+.pptx-wrapper ul,
+.pptx-wrapper ol {
+  margin: 0;
+  padding-left: 1.5em;
+}
+
+.pptx-wrapper li {
+  margin: 0.25em 0;
+}
+
+
+/* PPT Viewer Enhanced Styles */
+.ppt-viewer-container {
+  @apply flex h-full w-full bg-background overflow-hidden;
+}
+
+.ppt-thumbnail-panel {
+  @apply flex flex-col h-full border-r border-border;
+  background-color: hsl(var(--muted) / 0.3);
+}
+
+.dark .ppt-thumbnail-panel {
+  background-color: hsl(var(--muted) / 0.2);
+}
+
+.ppt-thumbnail-panel-header {
+  @apply flex items-center justify-between px-2 py-1.5;
+  @apply border-b border-border;
+  background-color: hsl(var(--muted) / 0.5);
+}
+
+.dark .ppt-thumbnail-panel-header {
+  background-color: hsl(var(--muted) / 0.3);
+}
+
+.ppt-thumbnail-item {
+  @apply relative flex flex-col items-center gap-1 p-1 rounded-md;
+  @apply transition-all duration-200;
+  @apply hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/50;
+}
+
+.ppt-thumbnail-item.selected {
+  @apply bg-primary/10 ring-2 ring-primary;
+}
+
+.ppt-thumbnail-container {
+  @apply relative rounded border overflow-hidden bg-white shadow-sm;
+}
+
+.ppt-thumbnail-container.selected {
+  @apply border-primary ring-1 ring-primary/30;
+}
+
+.ppt-main-slide-area {
+  @apply flex-1 flex items-center justify-center overflow-hidden p-4;
+  background-color: hsl(var(--muted) / 0.2);
+}
+
+.dark .ppt-main-slide-area {
+  background-color: hsl(var(--muted) / 0.1);
+}
+
+.ppt-slide-container {
+  @apply relative bg-white shadow-lg rounded-md;
+  box-shadow: 0 0 0 1px hsl(var(--border) / 0.5);
+}
+
+.dark .ppt-slide-container {
+  box-shadow: 0 0 0 1px hsl(var(--border));
+}
+
+/* Slide content rendering */
+.ppt-slide-content {
+  @apply absolute inset-0 overflow-visible rounded-md;
+}
+
+/* Formula rendering in slides */
+.ppt-slide-content .katex {
+  font-size: 1em;
+}
+
+.ppt-slide-content .katex-display {
+  @apply my-2 overflow-x-auto;
+}
+
+/* Loading indicator enhancements */
+.ppt-loading-overlay {
+  @apply absolute inset-0 flex flex-col items-center justify-center;
+  @apply backdrop-blur-sm z-10;
+  @apply transition-opacity duration-300;
+  background-color: hsl(var(--background) / 0.95);
+}
+
+.dark .ppt-loading-overlay {
+  background-color: hsl(var(--background) / 0.98);
+}
+
+.ppt-loading-progress-ring {
+  @apply transition-all duration-300 ease-out;
+}
+
+/* Smooth transitions for slide changes */
+.ppt-slide-transition {
+  @apply transition-opacity duration-200 ease-in-out;
+}
+
+/* Focus styles for accessibility */
+.ppt-main-slide-area:focus {
+  @apply outline-none;
+}
+
+.ppt-main-slide-area:focus-visible {
+  @apply ring-2 ring-primary ring-inset;
+}
+
+/* Scrollbar styling for thumbnail panel */
+.ppt-thumbnail-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.ppt-thumbnail-scroll::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+.ppt-thumbnail-scroll::-webkit-scrollbar-thumb {
+  @apply bg-border rounded-full;
+}
+
+.ppt-thumbnail-scroll::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/50;
+}
+
+/* Dark mode specific adjustments for slide content */
+.dark .ppt-slide-container {
+  @apply shadow-xl;
+}
+
+/* Ensure slide backgrounds remain white in dark mode */
+.dark .ppt-slide-content,
+.dark .ppt-thumbnail-container {
+  background-color: white;
+}
+
+
+/* PPTX Formula Rendering Styles */
+.pptx-formula-rendered,
+.formula-injected,
+.pptx-formula-overlay .formula-item {
+  display: inline-block;
+}
+
+.pptx-formula-rendered .katex,
+.formula-injected .katex,
+.pptx-formula-overlay .katex {
+  font-size: 1.1em;
+  color: #333;
+}
+
+/* Enhanced formula text (converted from plain text) */
+.formula-enhanced {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.formula-enhanced .katex {
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Replaced formula (from extracted OMML) */
+.pptx-formula-replaced {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.pptx-formula-replaced .katex {
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Appended formula */
+.pptx-formula-appended {
+  display: block;
+  margin-top: 4px;
+}
+
+.pptx-formula-appended .katex {
+  font-size: 1.1em;
+}
+
+.pptx-formula-overlay {
+  background: rgba(255, 255, 255, 0.98) !important;
+  backdrop-filter: blur(8px);
+}
+
+.dark .pptx-formula-overlay {
+  background: rgba(30, 30, 30, 0.98) !important;
+}
+
+.dark .pptx-formula-overlay .katex {
+  color: #e0e0e0;
+}
+
+/* Formula error styling */
+.formula-error {
+  color: #cc0000;
+  font-family: monospace;
+  font-size: 0.9em;
+  padding: 2px 4px;
+  background: rgba(204, 0, 0, 0.1);
+  border-radius: 3px;
+}
+
+/* KaTeX display mode in slides */
+.pptx-wrapper .katex-display,
+.ppt-slide-content .katex-display {
+  margin: 0.5em 0;
+  text-align: center;
+}
+
+/* Ensure KaTeX renders properly in scaled containers */
+.pptx-wrapper .katex,
+.ppt-slide-content .katex {
+  white-space: nowrap;
+}
+
+/* Formula container in slides */
+.pptx-formulas-container {
+  z-index: 5;
+}
+
+.pptx-formulas-container .pptx-formula-rendered {
+  background: rgba(255, 255, 255, 0.95);
+  padding: 8px 12px;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.dark .pptx-formulas-container .pptx-formula-rendered {
+  background: rgba(40, 40, 40, 0.95);
+}
+
+/* PPTX Content Overlay - for slides with missing content */
+.pptx-content-overlay {
+  position: absolute;
+  z-index: 10;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.pptx-content-overlay::-webkit-scrollbar {
+  width: 6px;
+}
+
+.pptx-content-overlay::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.pptx-content-overlay::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+
+/* Formula display in content overlay */
+.pptx-formula-display {
+  text-align: center;
+  padding: 8px 0;
+  margin: 4px 0;
+}
+
+.pptx-formula-display .katex {
+  font-size: 1.15em;
+  color: #333;
+}
+
+.pptx-formula-display .katex-display {
+  margin: 0;
+}
+
+/* Formula section for remaining formulas */
+.pptx-formula-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #eee;
+}
+
+.pptx-formula-item {
+  text-align: center;
+  padding: 4px 0;
+}
+
+.pptx-formula-item .katex {
+  font-size: 1.1em;
+}
+
+/* Formula container for overlay injection */
+.pptx-formula-container {
+  position: absolute;
+  z-index: 10;
+}
+
+.pptx-formula-container .pptx-formula-item {
+  text-align: center;
+  padding: 6px 0;
+  width: 100%;
+}
+
+.pptx-formula-container .katex {
+  font-size: 1.2em;
+  color: #333;
+}
+
+/* Dark mode support for formula containers */
+.dark .pptx-content-overlay {
+  background: rgba(30, 30, 30, 0.98) !important;
+  color: #e0e0e0;
+}
+
+.dark .pptx-content-overlay .katex {
+  color: #e0e0e0;
+}
+
+.dark .pptx-formula-display .katex {
+  color: #e0e0e0;
+}
+
+.dark .pptx-formula-container {
+  background: rgba(30, 30, 30, 0.92) !important;
+}
+
+.dark .pptx-formula-container .katex {
+  color: #e0e0e0;
+}
+
+/* Ensure formulas are visible and not clipped */
+.formula-injected,
+.formula-enhanced,
+.pptx-formula-replaced,
+.formula-enhanced-container {
+  overflow: visible !important;
+}
+
+/* Fix for KaTeX in scaled containers */
+.katex {
+  text-rendering: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Fix KaTeX sqrt (square root) rendering */
+/* Note: KaTeX handles sqrt rendering correctly by default.
+   Only add minimal fixes if needed. */
+
+/* Fix inline formula display */
+.pptx-inline-formula {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.pptx-inline-formula .katex {
+  display: inline-block;
+}
+
+
+/* MathLive Node Styles */
+.mathlive-container {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.mathlive-container.block {
+  display: block;
+  text-align: center;
+  margin: 1rem 0;
+}
+
+.mathlive-loading {
+  @apply text-muted-foreground italic;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+}
+
+/* MathLive NodeView Wrappers */
+.inline-mathlive-wrapper {
+  display: inline-block;
+  vertical-align: middle;
+  cursor: pointer;
+  padding: 0 0.125rem;
+  border-radius: 0.25rem;
+  transition: background-color 0.15s;
+}
+
+.inline-mathlive-wrapper:hover {
+  background-color: hsl(var(--muted) / 0.5);
+}
+
+.inline-mathlive-wrapper.selected {
+  background-color: hsl(var(--primary) / 0.15);
+  outline: 2px solid hsl(var(--primary) / 0.5);
+  outline-offset: 1px;
+}
+
+.block-mathlive-wrapper {
+  display: block;
+  margin: 1rem 0;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.block-mathlive-wrapper:hover {
+  background-color: hsl(var(--muted) / 0.3);
+}
+
+.block-mathlive-wrapper.selected {
+  background-color: hsl(var(--primary) / 0.1);
+  outline: 2px solid hsl(var(--primary) / 0.5);
+}
+
+/* MathLive mathfield element styling */
+math-field {
+  --caret-color: hsl(var(--primary));
+  --selection-background-color: hsl(var(--primary) / 0.2);
+  --placeholder-color: hsl(var(--muted-foreground));
+  --smart-fence-color: hsl(var(--primary) / 0.5);
+  font-size: 1.1em;
+}
+
+math-field:focus {
+  outline: none;
+}
+
+math-field::part(container) {
+  border: none;
+  background: transparent;
+}
+
+math-field::part(content) {
+  padding: 0.25rem;
+}
+
+/* Hide MathLive's built-in virtual keyboard toggle button (we use toolbar button instead) */
+math-field::part(virtual-keyboard-toggle),
+.ML__virtual-keyboard-toggle {
+  display: none !important;
+}
+
+/* Hide the menu toggle button completely for empty math fields */
+.inline-mathlive-wrapper.empty math-field::part(menu-toggle),
+.block-mathlive-wrapper.empty math-field::part(menu-toggle),
+.inline-mathlive-wrapper[data-empty="true"] math-field::part(menu-toggle),
+.block-mathlive-wrapper[data-empty="true"] math-field::part(menu-toggle) {
+  display: none !important;
+}
+
+/* For math fields with content: hide menu toggle by default, show on hover */
+.inline-mathlive-wrapper.has-content math-field::part(menu-toggle),
+.block-mathlive-wrapper.has-content math-field::part(menu-toggle),
+math-field::part(menu-toggle),
+.ML__menu-toggle {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+/* Show menu toggle only on hover for non-empty math fields */
+.inline-mathlive-wrapper.has-content:hover math-field::part(menu-toggle),
+.block-mathlive-wrapper.has-content:hover math-field::part(menu-toggle),
+.inline-mathlive-wrapper[data-empty="false"]:hover math-field::part(menu-toggle),
+.block-mathlive-wrapper[data-empty="false"]:hover math-field::part(menu-toggle) {
+  opacity: 1;
+}
+
+/* MathLive placeholder styling */
+math-field::part(placeholder) {
+  color: hsl(var(--muted-foreground));
+  opacity: 0.7;
+}
+
+/* Image paste placeholder */
+.image-paste-placeholder {
+  @apply inline-flex items-center gap-1 px-2 py-1 rounded;
+  @apply bg-muted text-muted-foreground text-sm;
+  @apply animate-pulse;
+}
+
+
+/* Quantum Keyboard HUD Styles */
+@keyframes keycap-flash {
+  0% {
+    background-color: rgba(59, 130, 246, 0.5);
+    transform: scale(1);
+  }
+  50% {
+    background-color: rgba(59, 130, 246, 0.8);
+    transform: scale(1.05);
+  }
+  100% {
+    background-color: rgba(59, 130, 246, 0.5);
+    transform: scale(1);
+  }
+}
+
+.animate-keycap-flash {
+  animation: keycap-flash 200ms ease-out;
+}
+
+/* Quantum HUD Container - Smart positioning based on cursor location */
+.quantum-hud-container {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  pointer-events: none;
+  /* Default to bottom */
+  bottom: 20px;
+  top: auto;
+  transition: top 0.3s ease, bottom 0.3s ease;
+}
+
+/* Position variants - controlled by data attribute */
+.quantum-hud-container[data-position="top"] {
+  bottom: auto;
+  top: 20px;
+}
+
+.quantum-hud-container[data-position="bottom"] {
+  bottom: 20px;
+  top: auto;
+}
+
+/* Drag handle for repositioning */
+.quantum-drag-handle {
+  position: absolute;
+  top: -24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background: rgba(30, 30, 40, 0.8);
+  border-radius: 12px 12px 0 0;
+  cursor: grab;
+  user-select: none;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+  z-index: 10;
+}
+
+.quantum-drag-handle:hover {
+  opacity: 1;
+}
+
+.quantum-drag-handle:active {
+  cursor: grabbing;
+}
+
+.quantum-position-label {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 500;
+}
+
+.quantum-reset-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.6);
+  transition: all 0.2s ease;
+}
+
+.quantum-reset-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* Hidden input to block IME - password type disables IME in most browsers */
+.quantum-ime-blocker {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+  pointer-events: auto;
+  /* Additional IME blocking */
+  ime-mode: disabled !important;
+  -webkit-ime-mode: disabled !important;
+  text-security: disc;
+  -webkit-text-security: disc;
+}
+
+/* Quantum Bubble - The main floating container */
+.quantum-bubble {
+  position: relative;
+  pointer-events: auto;
+  outline: none;
+  /* Add subtle bounce shadow for bubble effect */
+  filter: drop-shadow(0 10px 30px rgba(99, 102, 241, 0.3));
+}
+
+/* Bubble pop-in animation enhancement */
+@keyframes bubble-pop {
+  0% {
+    transform: scale(0.3) translateY(100px);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.1) translateY(-10px);
+    opacity: 1;
+  }
+  70% {
+    transform: scale(0.95) translateY(5px);
+  }
+  100% {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Bubble shrink-out animation */
+@keyframes bubble-shrink {
+  0% {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+  30% {
+    transform: scale(1.05) translateY(-5px);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.3) translateY(100px);
+    opacity: 0;
+  }
+}
+
+/* Colorful Ripple Background */
+.quantum-ripple-bg {
+  position: absolute;
+  inset: -30px;
+  z-index: -1;
+  overflow: visible;
+  pointer-events: none;
+}
+
+@keyframes quantum-ripple-1 {
+  0%, 100% {
+    transform: scale(1) rotate(0deg) translateY(0);
+    opacity: 0.6;
+  }
+  25% {
+    transform: scale(1.08) rotate(2deg) translateY(-3px);
+    opacity: 0.75;
+  }
+  50% {
+    transform: scale(1.05) rotate(3deg) translateY(-5px);
+    opacity: 0.85;
+  }
+  75% {
+    transform: scale(1.03) rotate(1deg) translateY(-2px);
+    opacity: 0.7;
+  }
+}
+
+@keyframes quantum-ripple-2 {
+  0%, 100% {
+    transform: scale(1.02) rotate(0deg) translateX(0);
+    opacity: 0.5;
+  }
+  33% {
+    transform: scale(1.1) rotate(-3deg) translateX(5px);
+    opacity: 0.7;
+  }
+  66% {
+    transform: scale(1.06) rotate(-1deg) translateX(2px);
+    opacity: 0.6;
+  }
+}
+
+@keyframes quantum-ripple-3 {
+  0%, 100% {
+    transform: scale(1.04) rotate(0deg);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1.12) rotate(4deg);
+    opacity: 0.65;
+  }
+  80% {
+    transform: scale(1.08) rotate(2deg);
+    opacity: 0.5;
+  }
+}
+
+/* Bubble breathing animation for the ripples */
+@keyframes bubble-breathe {
+  0%, 100% {
+    transform: scale(1);
+    filter: blur(20px);
+  }
+  50% {
+    transform: scale(1.03);
+    filter: blur(25px);
+  }
+}
+
+.quantum-ripple {
+  position: absolute;
+  inset: 0;
+  border-radius: 30px;
+  filter: blur(25px);
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.quantum-ripple-1 {
+  background: linear-gradient(135deg, 
+    rgba(99, 102, 241, 0.5) 0%, 
+    rgba(168, 85, 247, 0.5) 50%, 
+    rgba(236, 72, 153, 0.5) 100%
+  );
+  animation: quantum-ripple-1 3s ease-in-out infinite, bubble-breathe 4s ease-in-out infinite;
+}
+
+.quantum-ripple-2 {
+  background: linear-gradient(225deg, 
+    rgba(34, 211, 238, 0.4) 0%, 
+    rgba(59, 130, 246, 0.4) 50%, 
+    rgba(147, 51, 234, 0.4) 100%
+  );
+  animation: quantum-ripple-2 4s ease-in-out infinite 0.3s, bubble-breathe 5s ease-in-out infinite 0.5s;
+}
+
+.quantum-ripple-3 {
+  background: linear-gradient(45deg, 
+    rgba(251, 146, 60, 0.35) 0%, 
+    rgba(236, 72, 153, 0.35) 50%, 
+    rgba(99, 102, 241, 0.35) 100%
+  );
+  animation: quantum-ripple-3 5s ease-in-out infinite 0.6s, bubble-breathe 6s ease-in-out infinite 1s;
+}
+
+/* Quantum Content Container */
+.quantum-content {
+  position: relative;
+  background: rgba(15, 15, 20, 0.92);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 16px 20px;
+  box-shadow: 
+    0 0 0 1px rgba(255, 255, 255, 0.05),
+    0 25px 60px -15px rgba(0, 0, 0, 0.6),
+    0 0 120px -30px rgba(99, 102, 241, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2);
+  /* Subtle inner glow for bubble effect */
+  background-image: 
+    radial-gradient(ellipse at top, rgba(255, 255, 255, 0.05) 0%, transparent 50%),
+    radial-gradient(ellipse at bottom, rgba(99, 102, 241, 0.05) 0%, transparent 50%);
+}
+
+/* Mode Indicator */
+.quantum-mode-indicator {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 12px;
+  letter-spacing: 0.5px;
+}
+
+/* Hint Text */
+.quantum-hint {
+  text-align: center;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  margin-top: 12px;
+}
+
+/* Shadow Keyboard Container - Updated for bubble style */
+.shadow-keyboard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+/* Variant Menu - Updated positioning for bubble style */
+.variant-menu {
+  position: absolute;
+  z-index: 10000;
+  background: rgba(20, 20, 25, 0.98);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 14px;
+  box-shadow: 
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    0 0 60px -10px rgba(99, 102, 241, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  min-width: 120px;
+  max-width: 180px;
+  overflow: hidden;
+}
+
+.variant-menu-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: rgba(255, 255, 255, 0.85);
+  text-align: center;
+  font-size: 18px;
+}
+
+.variant-menu-item:hover {
+  background: rgba(99, 102, 241, 0.2);
+}
+
+.variant-menu-item.highlighted {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.4), rgba(168, 85, 247, 0.4));
+  color: white;
+}
+
+/* Legacy styles - keep for compatibility */
+.hud-overlay {
+  @apply fixed inset-0 z-[9999];
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.dark .hud-overlay {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.hud-title {
+  @apply text-white/60 text-sm font-medium tracking-wide uppercase mb-4;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.hud-hint {
+  @apply text-white/40 text-xs mt-4 text-center;
+}
+
+/* ============================================================================
+   Symbol Selector Styles
+   ============================================================================ */
+
+.symbol-selector {
+  position: absolute;
+  z-index: 10000;
+  background: rgba(20, 20, 25, 0.98);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  box-shadow: 
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    0 0 60px -10px rgba(99, 102, 241, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  min-width: 160px;
+  max-width: 220px;
+  overflow: hidden;
+}
+
+.symbol-selector-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.symbol-selector-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: white;
+}
+
+.symbol-selector-title {
+  flex: 1;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.symbol-selector-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.symbol-selector-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+.symbol-selector-list {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.symbol-selector-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.symbol-selector-item:hover {
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.symbol-selector-item.highlighted {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.4), rgba(168, 85, 247, 0.4));
+  color: white;
+}
+
+.symbol-selector-symbol {
+  font-size: 18px;
+}
+
+.symbol-selector-default-badge {
+  font-size: 9px;
+  padding: 2px 6px;
+  background: rgba(99, 102, 241, 0.3);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.symbol-selector-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.2);
+  border: none;
+  color: rgba(239, 68, 68, 0.8);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.symbol-selector-delete:hover {
+  background: rgba(239, 68, 68, 0.4);
+  color: white;
+}
+
+.symbol-selector-action {
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+}
+
+.symbol-selector-action svg {
+  opacity: 0.7;
+}
+
+.symbol-selector-action:hover svg {
+  opacity: 1;
+}
+
+.symbol-selector-add-form {
+  padding: 10px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.symbol-selector-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  color: white;
+  font-size: 13px;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.symbol-selector-input:focus {
+  border-color: rgba(99, 102, 241, 0.5);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.symbol-selector-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.symbol-selector-preview {
+  margin-top: 8px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  text-align: center;
+  font-size: 20px;
+  color: white;
+}
+
+.symbol-selector-add-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.symbol-selector-confirm,
+.symbol-selector-cancel {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: none;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.symbol-selector-confirm {
+  background: rgba(34, 197, 94, 0.3);
+  color: rgba(34, 197, 94, 1);
+}
+
+.symbol-selector-confirm:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.5);
+}
+
+.symbol-selector-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.symbol-selector-cancel {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.symbol-selector-cancel:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.symbol-selector-footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+}
