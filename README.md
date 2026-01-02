@@ -2,6 +2,8 @@
 
 一个轻量级、高性能的现代编辑器，专为笔记、数学公式和代码编辑设计。
 
+**🌐 在线体验：https://lattice-three-alpha.vercel.app/**
+
 ## ✨ 特性
 
 - **多格式支持** - Markdown、Jupyter Notebook、PowerPoint、Word、PDF、图片等
