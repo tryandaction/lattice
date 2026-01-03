@@ -72,36 +72,41 @@ function FitWidthIcon({ className }: { className?: string }) {
 
 /**
  * Converts Universal AnnotationItem to react-pdf-highlighter IHighlight
+ * Note: We store normalized 0-1 coordinates, need to convert back to PDF points
  */
 function annotationToHighlight(annotation: AnnotationItem): IHighlight | null {
   if (annotation.target.type !== 'pdf') return null;
   
   const target = annotation.target as PdfTarget;
   
-  // Convert BoundingBox[] to Scaled[] format
+  // Default page dimensions (US Letter in points)
+  const pageWidth = 612;
+  const pageHeight = 792;
+  
+  // Convert normalized coordinates back to PDF points
   const rects = target.rects.map(rect => ({
-    x1: rect.x1,
-    y1: rect.y1,
-    x2: rect.x2,
-    y2: rect.y2,
-    width: rect.x2 - rect.x1,
-    height: rect.y2 - rect.y1,
+    x1: rect.x1 * pageWidth,
+    y1: rect.y1 * pageHeight,
+    x2: rect.x2 * pageWidth,
+    y2: rect.y2 * pageHeight,
+    width: pageWidth,
+    height: pageHeight,
     pageNumber: target.page,
   }));
 
-  // Calculate bounding rect
-  const x1 = Math.min(...target.rects.map(r => r.x1));
-  const y1 = Math.min(...target.rects.map(r => r.y1));
-  const x2 = Math.max(...target.rects.map(r => r.x2));
-  const y2 = Math.max(...target.rects.map(r => r.y2));
+  // Calculate bounding rect from converted coordinates
+  const x1 = Math.min(...rects.map(r => r.x1));
+  const y1 = Math.min(...rects.map(r => r.y1));
+  const x2 = Math.max(...rects.map(r => r.x2));
+  const y2 = Math.max(...rects.map(r => r.y2));
 
   return {
     id: annotation.id,
     position: {
       boundingRect: {
         x1, y1, x2, y2,
-        width: x2 - x1,
-        height: y2 - y1,
+        width: pageWidth,
+        height: pageHeight,
         pageNumber: target.page,
       },
       rects,
@@ -119,17 +124,24 @@ function annotationToHighlight(annotation: AnnotationItem): IHighlight | null {
 
 /**
  * Converts react-pdf-highlighter NewHighlight to annotation data
+ * Note: react-pdf-highlighter returns PDF coordinates (points), we need to normalize to 0-1
  */
 function highlightToAnnotationData(
   highlight: NewHighlight,
   color: string,
   author: string
 ): Omit<AnnotationItem, 'id' | 'createdAt'> {
+  // Get page dimensions from boundingRect (more reliable than individual rects)
+  const boundingRect = highlight.position.boundingRect;
+  const pageWidth = boundingRect.width || 612;  // Default to US Letter
+  const pageHeight = boundingRect.height || 792;
+  
+  // Normalize coordinates from PDF points to 0-1 range
   const rects: BoundingBox[] = highlight.position.rects.map(rect => ({
-    x1: rect.x1,
-    y1: rect.y1,
-    x2: rect.x2,
-    y2: rect.y2,
+    x1: Math.max(0, Math.min(1, rect.x1 / pageWidth)),
+    y1: Math.max(0, Math.min(1, rect.y1 / pageHeight)),
+    x2: Math.max(0, Math.min(1, rect.x2 / pageWidth)),
+    y2: Math.max(0, Math.min(1, rect.y2 / pageHeight)),
   }));
 
   return {
@@ -637,6 +649,13 @@ export function PDFHighlighterAdapter({
 
   return (
     <div ref={containerRef} className="flex h-full flex-col">
+      {/* Error banner */}
+      {annotationsError && (
+        <div className="bg-red-50 dark:bg-red-950 border-b border-red-200 dark:border-red-800 px-4 py-2 text-sm text-red-700 dark:text-red-300">
+          Error: {annotationsError}
+        </div>
+      )}
+      
       {/* Zotero-style Toolbar */}
       <div className="flex items-center justify-between border-b border-border bg-muted/50 px-2 py-1.5">
         {/* Left: File name */}
