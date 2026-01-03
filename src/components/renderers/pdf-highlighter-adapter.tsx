@@ -646,9 +646,8 @@ export function PDFHighlighterAdapter({
     const container = scrollContainerRef.current;
     if (!container) return 1.0;
     
-    // Assume standard PDF page width of 612 points (8.5 inches)
     const pageWidth = 612;
-    const containerWidth = container.clientWidth - 48; // Account for padding
+    const containerWidth = container.clientWidth - 48;
     return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, containerWidth / pageWidth));
   }, []);
 
@@ -657,7 +656,6 @@ export function PDFHighlighterAdapter({
     const container = scrollContainerRef.current;
     if (!container) return 1.0;
     
-    // Assume standard PDF page dimensions (612 x 792 points)
     const pageWidth = 612;
     const pageHeight = 792;
     const containerWidth = container.clientWidth - 48;
@@ -668,158 +666,115 @@ export function PDFHighlighterAdapter({
     return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(scaleX, scaleY)));
   }, []);
 
-  // Helper to preserve viewport center during zoom
-  const preserveViewportCenter = useCallback((oldScale: number, newScale: number) => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-
-    // Get current scroll position and viewport dimensions
-    const scrollLeft = container.scrollLeft;
-    const scrollTop = container.scrollTop;
-    const viewportWidth = container.clientWidth;
-    const viewportHeight = container.clientHeight;
-
-    // Calculate the center point in document coordinates (at old scale)
-    const centerX = scrollLeft + viewportWidth / 2;
-    const centerY = scrollTop + viewportHeight / 2;
-
-    // Convert to normalized coordinates (independent of scale)
-    const normalizedX = centerX / oldScale;
-    const normalizedY = centerY / oldScale;
-
-    // After scale change, restore the center point
-    requestAnimationFrame(() => {
-      // Calculate new scroll position to keep the same center
-      const newCenterX = normalizedX * newScale;
-      const newCenterY = normalizedY * newScale;
-      
-      container.scrollLeft = newCenterX - viewportWidth / 2;
-      container.scrollTop = newCenterY - viewportHeight / 2;
-    });
+  // Apply zoom with a specific new scale value
+  const applyZoom = useCallback((newScale: number) => {
+    const clampedScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newScale));
+    setScale(clampedScale);
+    setZoomMode('manual');
   }, []);
 
   // Apply zoom mode
   const applyZoomMode = useCallback((mode: 'manual' | 'fit-width' | 'fit-page') => {
     setZoomMode(mode);
     if (mode === 'fit-width') {
-      const newScale = calculateFitWidth();
-      setScale((s) => {
-        if (s !== newScale) preserveViewportCenter(s, newScale);
-        return newScale;
-      });
+      setScale(calculateFitWidth());
     } else if (mode === 'fit-page') {
-      const newScale = calculateFitPage();
-      setScale((s) => {
-        if (s !== newScale) preserveViewportCenter(s, newScale);
-        return newScale;
-      });
+      setScale(calculateFitPage());
     }
-  }, [calculateFitWidth, calculateFitPage, preserveViewportCenter]);
+  }, [calculateFitWidth, calculateFitPage]);
 
-  // Zoom functions with proper bounds and viewport preservation
+  // Simple zoom functions
   const zoomIn = useCallback(() => {
-    setScale((s) => {
-      const newScale = Math.min(s + ZOOM_STEP, ZOOM_MAX);
-      if (newScale !== s) {
-        preserveViewportCenter(s, newScale);
-      }
-      return newScale;
-    });
-  }, [preserveViewportCenter]);
+    setScale(s => Math.min(s + ZOOM_STEP, ZOOM_MAX));
+    setZoomMode('manual');
+  }, []);
 
   const zoomOut = useCallback(() => {
-    setScale((s) => {
-      const newScale = Math.max(s - ZOOM_STEP, ZOOM_MIN);
-      if (newScale !== s) {
-        preserveViewportCenter(s, newScale);
-      }
-      return newScale;
-    });
-  }, [preserveViewportCenter]);
+    setScale(s => Math.max(s - ZOOM_STEP, ZOOM_MIN));
+    setZoomMode('manual');
+  }, []);
 
   const resetZoom = useCallback(() => {
-    setScale((s) => {
-      if (s !== 1.0) {
-        preserveViewportCenter(s, 1.0);
-      }
-      return 1.0;
-    });
-  }, [preserveViewportCenter]);
+    setScale(1.0);
+    setZoomMode('manual');
+  }, []);
 
-  // Handle Ctrl+Wheel zoom
-  const handleWheel = useCallback((e: WheelEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
-      setScale((s) => {
-        const newScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, s + delta));
-        if (newScale !== s) {
-          preserveViewportCenter(s, newScale);
-        }
-        return newScale;
-      });
-    }
-  }, [preserveViewportCenter]);
+  // Handle Ctrl+Wheel zoom - use native event on document to ensure capture
+  useEffect(() => {
+    const handleWheelZoom = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+        setScale(s => {
+          const newScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, s + delta));
+          return newScale;
+        });
+        setZoomMode('manual');
+      }
+    };
+
+    // Add to document to capture all wheel events with ctrl
+    document.addEventListener('wheel', handleWheelZoom, { passive: false });
+    
+    return () => {
+      document.removeEventListener('wheel', handleWheelZoom);
+    };
+  }, []);
 
   // Handle keyboard shortcuts for zoom and tools
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    // Zoom shortcuts
-    if (e.ctrlKey || e.metaKey) {
-      if (e.key === '=' || e.key === '+') {
-        e.preventDefault();
-        zoomIn();
-      } else if (e.key === '-') {
-        e.preventDefault();
-        zoomOut();
-      } else if (e.key === '0') {
-        e.preventDefault();
-        resetZoom();
-      }
-    }
-    // Tool shortcuts (without modifiers)
-    if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-      switch (e.key.toLowerCase()) {
-        case 'h':
-          setActiveTool(activeTool === 'highlight' ? 'select' : 'highlight');
-          break;
-        case 'u':
-          setActiveTool(activeTool === 'underline' ? 'select' : 'underline');
-          break;
-        case 'n':
-          setActiveTool(activeTool === 'note' ? 'select' : 'note');
-          break;
-        case 't':
-          setActiveTool(activeTool === 'text' ? 'select' : 'text');
-          break;
-        case 'a':
-          setActiveTool(activeTool === 'area' ? 'select' : 'area');
-          break;
-        case 'd':
-          setActiveTool(activeTool === 'ink' ? 'select' : 'ink');
-          break;
-        case 'escape':
-          setActiveTool('select');
-          setShowColorPicker(false);
-          break;
-      }
-    }
-  }, [zoomIn, zoomOut, resetZoom, activeTool]);
-
-  // Set up wheel and keyboard event listeners
   useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (container) {
-      container.addEventListener('wheel', handleWheel, { passive: false });
-    }
-    document.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      if (container) {
-        container.removeEventListener('wheel', handleWheel);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
       }
-      document.removeEventListener('keydown', handleKeyDown);
+
+      // Zoom shortcuts
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault();
+          zoomIn();
+        } else if (e.key === '-') {
+          e.preventDefault();
+          zoomOut();
+        } else if (e.key === '0') {
+          e.preventDefault();
+          resetZoom();
+        }
+      }
+      
+      // Tool shortcuts (without modifiers)
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        switch (e.key.toLowerCase()) {
+          case 'h':
+            setActiveTool(t => t === 'highlight' ? 'select' : 'highlight');
+            break;
+          case 'u':
+            setActiveTool(t => t === 'underline' ? 'select' : 'underline');
+            break;
+          case 'n':
+            setActiveTool(t => t === 'note' ? 'select' : 'note');
+            break;
+          case 't':
+            setActiveTool(t => t === 'text' ? 'select' : 'text');
+            break;
+          case 'a':
+            setActiveTool(t => t === 'area' ? 'select' : 'area');
+            break;
+          case 'd':
+            setActiveTool(t => t === 'ink' ? 'select' : 'ink');
+            break;
+          case 'escape':
+            setActiveTool('select');
+            setShowColorPicker(false);
+            break;
+        }
+      }
     };
-  }, [handleWheel, handleKeyDown]);
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [zoomIn, zoomOut, resetZoom]);
 
   // Create blob URL from ArrayBuffer
   const pdfUrl = useMemo(() => {
