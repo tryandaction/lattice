@@ -9,9 +9,10 @@
  * Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
  */
 
-import { useCallback, useMemo, useRef, useEffect } from "react";
+import { useCallback, useMemo, useRef, useEffect, useState } from "react";
 import { CodeEditor, CodeEditorLanguage } from "@/components/editor/codemirror/code-editor";
 import { getCodeEditorLanguage, getFileExtension } from "@/lib/file-utils";
+import { useAnnotationNavigation } from "../../hooks/use-annotation-navigation";
 
 interface CodeEditorViewerProps {
   /** File content as string */
@@ -55,6 +56,29 @@ export function CodeEditorViewer({
   
   // Track if content has changed for save
   const hasChangedRef = useRef(false);
+  
+  // Editor ref for scroll-to-line functionality
+  const editorContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Highlighted line state for annotation navigation
+  const [highlightedLine, setHighlightedLine] = useState<number | null>(null);
+  
+  // Universal annotation navigation support
+  useAnnotationNavigation({
+    handlers: {
+      onCodeLineNavigate: (line, _annotationId) => {
+        // Highlight the line
+        setHighlightedLine(line);
+        
+        // Scroll to the line (approximate - CodeMirror handles this internally)
+        // The CodeEditor component would need to expose a scrollToLine method
+        // for precise scrolling. For now, we highlight the line.
+        
+        // Clear highlight after 3 seconds
+        setTimeout(() => setHighlightedLine(null), 3000);
+      },
+    },
+  });
   
   // Cleanup debounce timer on unmount
   useEffect(() => {

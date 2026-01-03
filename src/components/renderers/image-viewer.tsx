@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { ZoomIn, ZoomOut, RotateCw, Maximize2, Download, Move, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAnnotationNavigation } from "../../hooks/use-annotation-navigation";
 
 interface ImageViewerProps {
   content: ArrayBuffer;
@@ -26,10 +27,46 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
   const [isPanning, setIsPanning] = useState(false);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [highlightedRegion, setHighlightedRegion] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
   
   const containerRef = useRef<HTMLDivElement>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+
+  // Universal annotation navigation support
+  useAnnotationNavigation({
+    handlers: {
+      onImageNavigate: (x, y, width, height, annotationId) => {
+        // Highlight the region and pan to center it
+        setHighlightedRegion({ x, y, width, height });
+        
+        // Calculate pan offset to center the region
+        if (imageContainerRef.current && naturalSize.width > 0) {
+          const container = imageContainerRef.current;
+          const containerWidth = container.clientWidth;
+          const containerHeight = container.clientHeight;
+          
+          // Convert percentage to pixel coordinates
+          const regionCenterX = (x + width / 2) / 100 * naturalSize.width * zoom;
+          const regionCenterY = (y + height / 2) / 100 * naturalSize.height * zoom;
+          
+          // Calculate offset to center the region
+          const offsetX = containerWidth / 2 - regionCenterX;
+          const offsetY = containerHeight / 2 - regionCenterY;
+          
+          setPanOffset({ x: offsetX, y: offsetY });
+        }
+        
+        // Clear highlight after 3 seconds
+        setTimeout(() => setHighlightedRegion(null), 3000);
+      },
+    },
+  });
 
   // Create object URL from ArrayBuffer
   useEffect(() => {
@@ -295,7 +332,7 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
       {/* Image container */}
       <div
         ref={imageContainerRef}
-        className="flex flex-1 items-center justify-center overflow-auto bg-[#1a1a1a] p-6"
+        className="flex flex-1 items-center justify-center overflow-auto bg-[#1a1a1a] p-6 relative"
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
@@ -304,6 +341,7 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
         style={{ cursor: isPanning ? "grabbing" : "grab" }}
       >
         <div
+          className="relative"
           style={{
             transform: `translate(${panOffset.x}px, ${panOffset.y}px)`,
             transition: isPanning ? "none" : "transform 0.1s ease-out",
@@ -328,6 +366,21 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
             }}
             draggable={false}
           />
+          
+          {/* Annotation highlight overlay */}
+          {highlightedRegion && naturalSize.width > 0 && (
+            <div
+              className="absolute pointer-events-none border-2 border-primary bg-primary/20 animate-pulse"
+              style={{
+                left: `${(highlightedRegion.x / 100) * naturalSize.width * zoom}px`,
+                top: `${(highlightedRegion.y / 100) * naturalSize.height * zoom}px`,
+                width: `${(highlightedRegion.width / 100) * naturalSize.width * zoom}px`,
+                height: `${(highlightedRegion.height / 100) * naturalSize.height * zoom}px`,
+                transform: `rotate(${rotation}deg)`,
+                transformOrigin: "center center",
+              }}
+            />
+          )}
         </div>
       </div>
     </div>

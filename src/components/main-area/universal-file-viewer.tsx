@@ -64,6 +64,12 @@ const PDFViewer = dynamic(
   { loading: () => <LoadingState message="Loading PDF viewer..." />, ssr: false }
 );
 
+// PDF Highlighter Adapter for annotation support
+const PDFHighlighterAdapter = dynamic(
+  () => import("@/components/renderers/pdf-highlighter-adapter").then((mod) => mod.PDFHighlighterAdapter),
+  { loading: () => <LoadingState message="Loading PDF viewer with annotations..." />, ssr: false }
+);
+
 const JupyterRenderer = dynamic(
   () => import("@/components/renderers/jupyter-renderer").then((mod) => mod.JupyterRenderer),
   { loading: () => <LoadingState message="Loading Jupyter renderer..." />, ssr: false }
@@ -99,6 +105,12 @@ const ImageViewer = dynamic(
   { loading: () => <LoadingState message="Loading image viewer..." />, ssr: false }
 );
 
+// Image Tldraw Adapter for annotation support
+const ImageTldrawAdapter = dynamic(
+  () => import("@/components/renderers/image-tldraw-adapter").then((mod) => mod.ImageTldrawAdapter),
+  { loading: () => <LoadingState message="Loading image editor..." />, ssr: false }
+);
+
 const UnsupportedFile = dynamic(
   () => import("@/components/renderers/unsupported-file").then((mod) => mod.UnsupportedFile),
   { loading: () => <LoadingState message="Loading..." />, ssr: false }
@@ -117,12 +129,16 @@ function FileViewer({
   content,
   fileName,
   rendererType,
+  fileHandle,
+  rootHandle,
   onContentChange,
   onSave,
 }: {
   content: string | ArrayBuffer;
   fileName: string;
   rendererType: RendererType;
+  fileHandle?: FileSystemFileHandle;
+  rootHandle?: FileSystemDirectoryHandle | null;
   onContentChange?: (content: string) => void;
   onSave?: () => Promise<void>;
 }) {
@@ -145,6 +161,18 @@ function FileViewer({
       // Fallback to read-only renderer if no onChange handler
       return <MarkdownRenderer content={content as string} fileName={fileName} />;
     case "pdf":
+      // Use PDFHighlighterAdapter if we have file handles for annotation support
+      if (fileHandle && rootHandle) {
+        return (
+          <PDFHighlighterAdapter
+            content={content as ArrayBuffer}
+            fileName={fileName}
+            fileHandle={fileHandle}
+            rootHandle={rootHandle}
+          />
+        );
+      }
+      // Fallback to basic PDF viewer
       return <PDFViewer content={content as ArrayBuffer} fileName={fileName} />;
     case "jupyter":
       // Use NotebookEditor for editable notebooks
@@ -181,6 +209,19 @@ function FileViewer({
     case "html":
       return <HTMLViewer content={content as string} fileName={fileName} />;
     case "image":
+      // Use ImageTldrawAdapter if we have file handles for annotation support
+      if (fileHandle && rootHandle) {
+        return (
+          <ImageTldrawAdapter
+            content={content as ArrayBuffer}
+            fileName={fileName}
+            mimeType={getImageMimeType(extension)}
+            fileHandle={fileHandle}
+            rootHandle={rootHandle}
+          />
+        );
+      }
+      // Fallback to basic image viewer
       return <ImageViewer content={content as ArrayBuffer} fileName={fileName} mimeType={getImageMimeType(extension)} />;
     case "unsupported":
     default:
@@ -194,6 +235,7 @@ function FileViewer({
 export interface UniversalFileViewerProps {
   paneId: PaneId;
   handle: FileSystemFileHandle | null;
+  rootHandle?: FileSystemDirectoryHandle | null;
   content: string | ArrayBuffer | null;
   isLoading: boolean;
   error: string | null;
@@ -212,6 +254,7 @@ export function UniversalFileViewer({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   paneId,
   handle,
+  rootHandle,
   content,
   isLoading,
   error,
@@ -248,6 +291,8 @@ export function UniversalFileViewer({
         content={content} 
         fileName={fileName} 
         rendererType={rendererType}
+        fileHandle={handle}
+        rootHandle={rootHandle}
         onContentChange={onContentChange}
         onSave={onSave}
       />

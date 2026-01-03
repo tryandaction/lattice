@@ -43,6 +43,7 @@ export function PaneWrapper({
   onClose,
 }: PaneWrapperProps) {
   const layout = useWorkspaceStore((state) => state.layout);
+  const rootHandle = useWorkspaceStore((state) => state.rootHandle);
   const setActiveTab = useWorkspaceStore((state) => state.setActiveTab);
   const closeTab = useWorkspaceStore((state) => state.closeTab);
   const setTabDirty = useWorkspaceStore((state) => state.setTabDirty);
@@ -359,6 +360,7 @@ export function PaneWrapper({
           <UniversalFileViewer
             paneId={paneId}
             handle={activeTab.fileHandle}
+            rootHandle={rootHandle}
             content={content}
             isLoading={isLoading}
             error={error}
