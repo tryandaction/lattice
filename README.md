@@ -2,7 +2,7 @@
 
 一个轻量级、高性能的现代编辑器，专为笔记、数学公式和代码编辑设计。
 
-**🌐 在线体验：https://lattice-three-alpha.vercel.app/**
+**🌐 在线体验：https://lattice-apq.pages.dev/**
 
 ## ✨ 特性
 
