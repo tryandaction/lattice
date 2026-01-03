@@ -32,12 +32,15 @@ import {
   Square,
   Pencil,
   ChevronDown,
+  PanelRightOpen,
+  PanelRightClose,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAnnotationSystem } from "@/hooks/use-annotation-system";
 import { useAnnotationNavigation } from "@/hooks/use-annotation-navigation";
 import { HIGHLIGHT_COLORS } from "@/lib/annotation-colors";
 import { PDFExportButton } from "./pdf-export-button";
+import { PdfAnnotationSidebar } from "./pdf-annotation-sidebar";
 import type { AnnotationItem, PdfTarget, BoundingBox } from "@/types/universal-annotation";
 
 import "react-pdf-highlighter/dist/style.css";
@@ -378,8 +381,11 @@ export function PDFHighlighterAdapter({
   const [pendingPin, setPendingPin] = useState<{ x: number; y: number; page: number } | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(true); // Show sidebar by default
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const pdfHighlighterRef = useRef<any>(null);
 
   // Zoom limits
   const ZOOM_MIN = 0.25;
@@ -643,6 +649,32 @@ export function PDFHighlighterAdapter({
     [pendingPin, addAnnotation]
   );
 
+  // Handle sidebar annotation selection
+  const handleSidebarSelect = useCallback((annotation: AnnotationItem) => {
+    setSelectedAnnotationId(annotation.id);
+    setHighlightedId(annotation.id);
+    
+    // Scroll to the annotation's page
+    if (annotation.target.type === 'pdf') {
+      const target = annotation.target as PdfTarget;
+      const pageElement = document.querySelector(`[data-page-number="${target.page}"]`);
+      if (pageElement) {
+        pageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+    
+    // Clear highlight after animation
+    setTimeout(() => setHighlightedId(null), 2000);
+  }, []);
+
+  // Handle sidebar delete
+  const handleSidebarDelete = useCallback((id: string) => {
+    deleteAnnotation(id);
+    if (selectedAnnotationId === id) {
+      setSelectedAnnotationId(null);
+    }
+  }, [deleteAnnotation, selectedAnnotationId]);
+
   if (annotationsError) {
     console.error('Annotation error:', annotationsError);
   }
@@ -808,6 +840,16 @@ export function PDFHighlighterAdapter({
             annotations={annotations}
             fileName={fileName}
           />
+
+          <Button
+            variant={showSidebar ? "secondary" : "ghost"}
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setShowSidebar(!showSidebar)}
+            title={showSidebar ? "Hide annotations panel" : "Show annotations panel"}
+          >
+            {showSidebar ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+          </Button>
         </div>
       </div>
 
@@ -859,16 +901,18 @@ export function PDFHighlighterAdapter({
         </div>
       )}
 
-      <div
-        ref={scrollContainerRef}
-        className="flex-1 overflow-auto bg-muted/30"
-        onClick={handlePdfClick}
-        style={{ 
-          cursor: activeTool === 'note' ? 'crosshair' : 
-                  activeTool === 'area' ? 'crosshair' :
-                  activeTool === 'ink' ? 'crosshair' : 'default' 
-        }}
-      >
+      {/* Main content area with PDF and sidebar */}
+      <div className="flex flex-1 overflow-hidden">
+        <div
+          ref={scrollContainerRef}
+          className="flex-1 overflow-auto bg-muted/30"
+          onClick={handlePdfClick}
+          style={{ 
+            cursor: activeTool === 'note' ? 'crosshair' : 
+                    activeTool === 'area' ? 'crosshair' :
+                    activeTool === 'ink' ? 'crosshair' : 'default' 
+          }}
+        >
         <PdfLoader
           url={pdfUrl}
           beforeLoad={
@@ -888,6 +932,25 @@ export function PDFHighlighterAdapter({
                 hideTipAndSelection,
                 transformSelection
               ) => {
+                // Check if this is an area selection (has image but no text)
+                const isAreaSelection = content.image && !content.text;
+                
+                // If area tool is active or this is an area selection
+                if (activeTool === 'area' || isAreaSelection) {
+                  const newHighlight: NewHighlight = {
+                    position,
+                    content,
+                    comment: { text: '', emoji: '' },
+                  };
+                  // Create area annotation with current color
+                  const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user');
+                  // Override style type to 'area'
+                  annotationData.style.type = 'area';
+                  addAnnotation(annotationData);
+                  hideTipAndSelection();
+                  return null;
+                }
+                
                 // If highlight or underline tool is active, use activeColor directly
                 if (activeTool === 'highlight' || activeTool === 'underline') {
                   const newHighlight: NewHighlight = {
@@ -896,11 +959,16 @@ export function PDFHighlighterAdapter({
                     comment: { text: '', emoji: '' },
                   };
                   const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user');
+                  // Set underline style if underline tool
+                  if (activeTool === 'underline') {
+                    annotationData.style.type = 'underline';
+                  }
                   addAnnotation(annotationData);
                   hideTipAndSelection();
                   return null;
                 }
-                // Otherwise show color picker
+                
+                // Otherwise show color picker for text selection
                 return (
                   <ColorPicker
                     selectedText={content.text}
@@ -1022,6 +1090,19 @@ export function PDFHighlighterAdapter({
             />
           )}
         </PdfLoader>
+        </div>
+
+        {/* Annotation Sidebar */}
+        {showSidebar && (
+          <div className="w-64 border-l border-border bg-background flex-shrink-0 overflow-hidden">
+            <PdfAnnotationSidebar
+              annotations={annotations}
+              selectedId={selectedAnnotationId}
+              onSelect={handleSidebarSelect}
+              onDelete={handleSidebarDelete}
+            />
+          </div>
+        )}
       </div>
 
       {pendingPin && (
