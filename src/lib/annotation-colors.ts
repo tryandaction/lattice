@@ -43,6 +43,48 @@ export const HIGHLIGHT_COLORS: readonly HighlightColor[] = [
 ] as const;
 
 /**
+ * Background colors including transparent option
+ */
+export const BACKGROUND_COLORS: readonly HighlightColor[] = [
+  { name: 'None', nameCN: '无背景', value: 'transparent', hex: 'transparent' },
+  ...HIGHLIGHT_COLORS,
+] as const;
+
+/**
+ * Text colors for text annotations
+ */
+export const TEXT_COLORS: readonly HighlightColor[] = [
+  { name: 'Black', nameCN: '黑色', value: 'black', hex: '#000000' },
+  { name: 'White', nameCN: '白色', value: 'white', hex: '#FFFFFF' },
+  { name: 'Red', nameCN: '红色', value: 'red', hex: '#FF0000' },
+  { name: 'Blue', nameCN: '蓝色', value: 'blue', hex: '#0066CC' },
+  { name: 'Green', nameCN: '绿色', value: 'green', hex: '#008800' },
+  { name: 'Orange', nameCN: '橙色', value: 'orange', hex: '#FF6600' },
+  { name: 'Purple', nameCN: '紫色', value: 'purple', hex: '#6600CC' },
+] as const;
+
+/**
+ * Font sizes for text annotations
+ */
+export const TEXT_FONT_SIZES: readonly { value: number; label: string }[] = [
+  { value: 10, label: '10px' },
+  { value: 12, label: '12px' },
+  { value: 14, label: '14px' },
+  { value: 16, label: '16px' },
+  { value: 18, label: '18px' },
+  { value: 20, label: '20px' },
+  { value: 24, label: '24px' },
+] as const;
+
+/**
+ * Default text annotation style
+ */
+export const DEFAULT_TEXT_STYLE = {
+  textColor: '#000000',
+  fontSize: 14,
+} as const;
+
+/**
  * Context menu actions for annotations (Zotero-style)
  */
 export interface AnnotationContextAction {

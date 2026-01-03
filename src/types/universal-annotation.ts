@@ -76,21 +76,30 @@ export type AnnotationTarget =
 /**
  * Valid annotation style types
  */
-export type AnnotationStyleType = 'highlight' | 'underline' | 'area' | 'ink';
+export type AnnotationStyleType = 'highlight' | 'underline' | 'area' | 'ink' | 'text';
+
+/**
+ * Text annotation style configuration
+ */
+export interface TextAnnotationStyle {
+  textColor?: string;    // Text color (hex)
+  fontSize?: number;     // Font size in pixels (default: 14)
+}
 
 /**
  * Annotation style configuration
  */
 export interface AnnotationStyle {
-  color: string;  // Hex color or named color
+  color: string;  // Hex color or named color (background color, 'transparent' for no background)
   type: AnnotationStyleType;
+  textStyle?: TextAnnotationStyle;  // Optional text styling for text annotations
 }
 
 /**
  * Valid style types array for validation
  */
 export const ANNOTATION_STYLE_TYPES: readonly AnnotationStyleType[] = [
-  'highlight', 'underline', 'area', 'ink'
+  'highlight', 'underline', 'area', 'ink', 'text'
 ] as const;
 
 // ============================================================================

@@ -38,7 +38,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useAnnotationSystem } from "@/hooks/use-annotation-system";
 import { useAnnotationNavigation } from "@/hooks/use-annotation-navigation";
-import { HIGHLIGHT_COLORS } from "@/lib/annotation-colors";
+import { HIGHLIGHT_COLORS, BACKGROUND_COLORS, TEXT_COLORS, TEXT_FONT_SIZES, DEFAULT_TEXT_STYLE } from "@/lib/annotation-colors";
 import { PDFExportButton } from "./pdf-export-button";
 import { PdfAnnotationSidebar } from "./pdf-annotation-sidebar";
 import type { AnnotationItem, PdfTarget, BoundingBox } from "@/types/universal-annotation";
@@ -104,6 +104,9 @@ function CustomHighlight({ position, isScrolledTo, color, styleType, onClick }: 
   // Calculate opacity based on scroll state
   const opacity = isScrolledTo ? 1 : 0.8;
   
+  // Check if color is transparent
+  const isTransparent = !color || color === 'transparent';
+  
   return (
     <div className="Highlight" onClick={onClick}>
       <div className="Highlight__parts">
@@ -119,6 +122,7 @@ function CustomHighlight({ position, isScrolledTo, color, styleType, onClick }: 
           
           if (styleType === 'underline') {
             // Underline style: transparent background with colored bottom border
+            const borderColor = isTransparent ? '#666666' : color;
             return (
               <div
                 key={index}
@@ -126,7 +130,7 @@ function CustomHighlight({ position, isScrolledTo, color, styleType, onClick }: 
                 style={{
                   ...baseStyle,
                   backgroundColor: 'transparent',
-                  borderBottom: `2px solid ${color}`,
+                  borderBottom: `2px solid ${borderColor}`,
                   opacity,
                   transition: 'opacity 0.2s ease-in-out',
                 }}
@@ -134,21 +138,37 @@ function CustomHighlight({ position, isScrolledTo, color, styleType, onClick }: 
             );
           } else if (styleType === 'area') {
             // Area style: border box with light fill
+            const areaColor = isTransparent ? '#666666' : color;
             return (
               <div
                 key={index}
                 className="Highlight__part"
                 style={{
                   ...baseStyle,
-                  backgroundColor: `${color}20`,
-                  border: `2px solid ${color}`,
+                  backgroundColor: isTransparent ? 'transparent' : `${areaColor}20`,
+                  border: `2px solid ${areaColor}`,
                   opacity,
                   transition: 'opacity 0.2s ease-in-out',
                 }}
               />
             );
           } else {
-            // Highlight style: colored background
+            // Highlight style: colored background (or transparent with dashed border)
+            if (isTransparent) {
+              return (
+                <div
+                  key={index}
+                  className="Highlight__part"
+                  style={{
+                    ...baseStyle,
+                    backgroundColor: 'transparent',
+                    border: '1px dashed #999999',
+                    opacity,
+                    transition: 'opacity 0.2s ease-in-out',
+                  }}
+                />
+              );
+            }
             return (
               <div
                 key={index}
@@ -509,6 +529,30 @@ function HighlightPopupContent({
         <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground border-b border-border">
           选择颜色
         </div>
+        {/* Transparent option */}
+        <button
+          onClick={() => {
+            onChangeColor('transparent');
+            setShowColorPicker(false);
+          }}
+          className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2 text-sm"
+        >
+          <div className="relative">
+            <div 
+              className="w-4 h-4 rounded-sm border border-black/10"
+              style={{ 
+                backgroundImage: 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)',
+                backgroundSize: '4px 4px',
+                backgroundPosition: '0 0, 0 2px, 2px -2px, -2px 0px'
+              }}
+            />
+            {currentColor === 'transparent' && (
+              <Check className="absolute -top-0.5 -right-0.5 h-3 w-3 text-foreground" />
+            )}
+          </div>
+          <span>无背景</span>
+        </button>
+        <div className="h-px bg-border mx-2 my-1" />
         {HIGHLIGHT_COLORS.map((color) => (
           <button
             key={color.value}
@@ -547,17 +591,17 @@ function HighlightPopupContent({
       {/* Show highlighted text preview if available */}
       {highlightText && (
         <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border">
-          <div className="truncate max-w-[200px]" style={{ backgroundColor: `${currentColor}40` }}>
+          <div 
+            className="truncate max-w-[200px]" 
+            style={{ 
+              backgroundColor: currentColor && currentColor !== 'transparent' ? `${currentColor}40` : 'transparent',
+              border: currentColor === 'transparent' ? '1px dashed var(--border)' : 'none',
+              padding: '2px 4px',
+              borderRadius: '2px',
+            }}
+          >
             "{highlightText.slice(0, 50)}{highlightText.length > 50 ? '...' : ''}"
           </div>
-        </div>
-      )}
-      
-      {/* Show existing comment */}
-      {comment.text && (
-        <div className="px-3 py-2 border-b border-border">
-          <div className="text-xs text-muted-foreground mb-1">评论:</div>
-          <div className="text-sm bg-muted rounded p-1.5">{comment.text}</div>
         </div>
       )}
       
@@ -578,7 +622,12 @@ function HighlightPopupContent({
         >
           <div 
             className="w-4 h-4 rounded-sm border border-black/10"
-            style={{ backgroundColor: currentColor || '#FFD400' }}
+            style={{ 
+              backgroundColor: currentColor && currentColor !== 'transparent' ? currentColor : 'transparent',
+              backgroundImage: currentColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
+              backgroundSize: '4px 4px',
+              backgroundPosition: '0 0, 0 2px, 2px -2px, -2px 0px'
+            }}
           />
           <span>更改颜色</span>
           <ChevronDown className="h-3 w-3 ml-auto" />
@@ -664,25 +713,184 @@ function PinCommentPopup({ position, onSave, onCancel }: PinCommentPopupProps) {
 
 interface TextAnnotationPopupProps {
   position: { x: number; y: number };
-  onSave: (text: string) => void;
+  onSave: (text: string, textColor: string, fontSize: number, bgColor: string) => void;
   onCancel: () => void;
+  initialColor?: string;
 }
 
 /**
- * Zotero-style text annotation popup
+ * Zotero-style text annotation popup with color and size options
  */
-function TextAnnotationPopup({ position, onSave, onCancel }: TextAnnotationPopupProps) {
+function TextAnnotationPopup({ position, onSave, onCancel, initialColor }: TextAnnotationPopupProps) {
   const [text, setText] = useState("");
+  const [textColor, setTextColor] = useState<string>(DEFAULT_TEXT_STYLE.textColor);
+  const [fontSize, setFontSize] = useState<number>(DEFAULT_TEXT_STYLE.fontSize);
+  const [bgColor, setBgColor] = useState(initialColor || 'transparent');
+  const [showTextColorPicker, setShowTextColorPicker] = useState(false);
+  const [showBgColorPicker, setShowBgColorPicker] = useState(false);
+  const [showSizePicker, setShowSizePicker] = useState(false);
 
   return (
     <div
-      className="fixed bg-popover border border-border rounded-lg shadow-xl p-3 z-50 min-w-[280px]"
+      className="fixed bg-popover border border-border rounded-lg shadow-xl p-3 z-50 min-w-[320px]"
       style={{ left: position.x, top: position.y }}
     >
       <div className="flex items-center gap-2 mb-2">
         <Type className="h-4 w-4" />
         <span className="text-sm font-medium">添加文本</span>
       </div>
+      
+      {/* Style options row */}
+      <div className="flex items-center gap-2 mb-2 pb-2 border-b border-border">
+        {/* Text color picker */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              setShowTextColorPicker(!showTextColorPicker);
+              setShowBgColorPicker(false);
+              setShowSizePicker(false);
+            }}
+            className="flex items-center gap-1 px-2 py-1 text-xs border border-border rounded hover:bg-muted"
+            title="文字颜色"
+          >
+            <span className="w-3 h-3 rounded-sm border border-black/20" style={{ backgroundColor: textColor }} />
+            <span>文字</span>
+            <ChevronDown className="h-3 w-3" />
+          </button>
+          {showTextColorPicker && (
+            <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[120px]">
+              {TEXT_COLORS.map((color) => (
+                <button
+                  key={color.value}
+                  onClick={() => {
+                    setTextColor(color.hex);
+                    setShowTextColorPicker(false);
+                  }}
+                  className="w-full px-2 py-1 text-left hover:bg-muted flex items-center gap-2 text-xs"
+                >
+                  <div className="relative">
+                    <div 
+                      className="w-3 h-3 rounded-sm border border-black/20"
+                      style={{ backgroundColor: color.hex }}
+                    />
+                    {textColor === color.hex && (
+                      <Check className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 text-foreground" />
+                    )}
+                  </div>
+                  <span>{color.nameCN}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Background color picker */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              setShowBgColorPicker(!showBgColorPicker);
+              setShowTextColorPicker(false);
+              setShowSizePicker(false);
+            }}
+            className="flex items-center gap-1 px-2 py-1 text-xs border border-border rounded hover:bg-muted"
+            title="背景颜色"
+          >
+            <span 
+              className="w-3 h-3 rounded-sm border border-black/20" 
+              style={{ 
+                backgroundColor: bgColor === 'transparent' ? 'transparent' : bgColor,
+                backgroundImage: bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
+                backgroundSize: '4px 4px',
+                backgroundPosition: '0 0, 0 2px, 2px -2px, -2px 0px'
+              }} 
+            />
+            <span>背景</span>
+            <ChevronDown className="h-3 w-3" />
+          </button>
+          {showBgColorPicker && (
+            <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[120px]">
+              {BACKGROUND_COLORS.map((color) => (
+                <button
+                  key={color.value}
+                  onClick={() => {
+                    setBgColor(color.hex);
+                    setShowBgColorPicker(false);
+                  }}
+                  className="w-full px-2 py-1 text-left hover:bg-muted flex items-center gap-2 text-xs"
+                >
+                  <div className="relative">
+                    <div 
+                      className="w-3 h-3 rounded-sm border border-black/20"
+                      style={{ 
+                        backgroundColor: color.hex === 'transparent' ? 'transparent' : color.hex,
+                        backgroundImage: color.hex === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
+                        backgroundSize: '4px 4px',
+                        backgroundPosition: '0 0, 0 2px, 2px -2px, -2px 0px'
+                      }}
+                    />
+                    {bgColor === color.hex && (
+                      <Check className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 text-foreground" />
+                    )}
+                  </div>
+                  <span>{color.nameCN}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Font size picker */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              setShowSizePicker(!showSizePicker);
+              setShowTextColorPicker(false);
+              setShowBgColorPicker(false);
+            }}
+            className="flex items-center gap-1 px-2 py-1 text-xs border border-border rounded hover:bg-muted"
+            title="字体大小"
+          >
+            <span>{fontSize}px</span>
+            <ChevronDown className="h-3 w-3" />
+          </button>
+          {showSizePicker && (
+            <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[80px]">
+              {TEXT_FONT_SIZES.map((size) => (
+                <button
+                  key={size.value}
+                  onClick={() => {
+                    setFontSize(size.value);
+                    setShowSizePicker(false);
+                  }}
+                  className="w-full px-2 py-1 text-left hover:bg-muted flex items-center gap-2 text-xs"
+                >
+                  {fontSize === size.value && <Check className="h-2.5 w-2.5" />}
+                  <span className={fontSize !== size.value ? 'ml-4' : ''}>{size.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Preview */}
+      <div 
+        className="mb-2 p-2 rounded border border-dashed border-border min-h-[40px] flex items-center"
+        style={{ 
+          backgroundColor: bgColor === 'transparent' ? 'transparent' : `${bgColor}40`,
+        }}
+      >
+        <span 
+          style={{ 
+            color: textColor, 
+            fontSize: `${fontSize}px`,
+            lineHeight: 1.4
+          }}
+        >
+          {text || '预览文字...'}
+        </span>
+      </div>
+
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -695,7 +903,7 @@ function TextAnnotationPopup({ position, onSave, onCancel }: TextAnnotationPopup
         <Button size="sm" variant="ghost" onClick={onCancel}>
           取消
         </Button>
-        <Button size="sm" onClick={() => onSave(text)} disabled={!text.trim()}>
+        <Button size="sm" onClick={() => onSave(text, textColor, fontSize, bgColor)} disabled={!text.trim()}>
           添加
         </Button>
       </div>
@@ -710,6 +918,115 @@ function TextAnnotationPopup({ position, onSave, onCancel }: TextAnnotationPopup
 interface InkAnnotationOverlayProps {
   annotation: AnnotationItem;
   scale: number;
+}
+
+/**
+ * Text annotation overlay component - renders text directly on PDF page
+ */
+interface TextAnnotationOverlayProps {
+  annotation: AnnotationItem;
+  scale: number;
+  onClick?: () => void;
+  isHighlighted?: boolean;
+}
+
+function TextAnnotationOverlay({ annotation, scale, onClick, isHighlighted }: TextAnnotationOverlayProps) {
+  if (annotation.style.type !== 'text' || annotation.target.type !== 'pdf') {
+    return null;
+  }
+
+  const target = annotation.target as PdfTarget;
+  if (target.rects.length === 0) return null;
+
+  const rect = target.rects[0];
+  const textStyle = annotation.style.textStyle || { textColor: '#000000', fontSize: 14 };
+  const bgColor = annotation.style.color;
+  const hasBackground = bgColor && bgColor !== 'transparent';
+
+  return (
+    <div
+      className={`absolute cursor-pointer transition-all ${isHighlighted ? 'ring-2 ring-primary ring-offset-1' : ''}`}
+      style={{
+        left: `${rect.x1 * 100}%`,
+        top: `${rect.y1 * 100}%`,
+        backgroundColor: hasBackground ? `${bgColor}60` : 'transparent',
+        padding: '2px 4px',
+        borderRadius: '2px',
+        maxWidth: '50%',
+        zIndex: 15,
+      }}
+      onClick={onClick}
+    >
+      <span
+        style={{
+          color: textStyle.textColor || '#000000',
+          fontSize: `${(textStyle.fontSize || 14) * scale}px`,
+          lineHeight: 1.3,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+        }}
+      >
+        {annotation.content}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Portal component to render text annotation on the correct page
+ */
+interface TextAnnotationPortalProps {
+  annotation: AnnotationItem;
+  page: number;
+  scale: number;
+  onClick?: () => void;
+  isHighlighted?: boolean;
+}
+
+function TextAnnotationPortal({ annotation, page, scale, onClick, isHighlighted }: TextAnnotationPortalProps) {
+  const [container, setContainer] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const pageElement = document.querySelector(`[data-page-number="${page}"]`) as HTMLElement;
+    if (!pageElement) return;
+
+    // Ensure the page element has relative positioning
+    const computedStyle = window.getComputedStyle(pageElement);
+    if (computedStyle.position === 'static') {
+      pageElement.style.position = 'relative';
+    }
+
+    let overlay = pageElement.querySelector(`.text-overlay-${annotation.id}`) as HTMLElement;
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = `text-overlay-${annotation.id}`;
+      overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:15;';
+      pageElement.appendChild(overlay);
+    }
+    
+    // Enable pointer events for the text annotation
+    overlay.style.pointerEvents = 'auto';
+    
+    setContainer(overlay);
+
+    return () => {
+      if (overlay && overlay.parentNode) {
+        overlay.parentNode.removeChild(overlay);
+      }
+    };
+  }, [page, annotation.id]);
+
+  if (!container) return null;
+
+  return ReactDOM.createPortal(
+    <TextAnnotationOverlay 
+      annotation={annotation} 
+      scale={scale} 
+      onClick={onClick}
+      isHighlighted={isHighlighted}
+    />,
+    container
+  );
 }
 
 function InkAnnotationOverlay({ annotation, scale }: InkAnnotationOverlayProps) {
@@ -1054,7 +1371,7 @@ export function PDFHighlighterAdapter({
   // Convert annotations to highlights
   const highlights = useMemo(() => {
     return annotations
-      .filter(a => a.style.type !== 'ink') // Ink annotations are rendered separately
+      .filter(a => a.style.type !== 'ink' && a.style.type !== 'text') // Ink and text annotations are rendered separately
       .map(a => annotationToHighlight(a, pdfPageDimensions))
       .filter((h): h is IHighlight => h !== null);
   }, [annotations, pdfPageDimensions]);
@@ -1062,6 +1379,11 @@ export function PDFHighlighterAdapter({
   // Get ink annotations for custom rendering
   const inkAnnotations = useMemo(() => {
     return annotations.filter(a => a.style.type === 'ink');
+  }, [annotations]);
+
+  // Get text annotations for custom rendering
+  const textAnnotations = useMemo(() => {
+    return annotations.filter(a => a.style.type === 'text');
   }, [annotations]);
 
   // Navigation handler
@@ -1207,7 +1529,7 @@ export function PDFHighlighterAdapter({
   }, [isDrawing, currentInkPage, currentInkPath, activeColor, addAnnotation]);
 
   // Handle text annotation save
-  const handleSaveTextAnnotation = useCallback((text: string) => {
+  const handleSaveTextAnnotation = useCallback((text: string, textColor: string, fontSize: number, bgColor: string) => {
     if (!textAnnotationPosition || !text.trim()) {
       setTextAnnotationPosition(null);
       return;
@@ -1232,22 +1554,25 @@ export function PDFHighlighterAdapter({
         rects: [{
           x1: Math.max(0, x - 0.005),
           y1: Math.max(0, y - 0.005),
-          x2: Math.min(1, x + 0.1),
-          y2: Math.min(1, y + 0.02),
+          x2: Math.min(1, x + 0.15),
+          y2: Math.min(1, y + 0.03),
         }],
       } as PdfTarget,
       style: {
-        color: activeColor,
-        type: 'highlight',
+        color: bgColor,
+        type: 'text' as any, // Use 'text' type for text annotations
+        textStyle: {
+          textColor,
+          fontSize,
+        },
       },
       content: text,
-      comment: text,
       author: 'user',
     };
 
     addAnnotation(textAnnotation);
     setTextAnnotationPosition(null);
-  }, [textAnnotationPosition, activeColor, addAnnotation]);
+  }, [textAnnotationPosition, addAnnotation]);
 
   // Save pin with correct coordinate calculation
   const handleSavePin = useCallback(
@@ -1821,6 +2146,26 @@ export function PDFHighlighterAdapter({
               />
             );
           })}
+
+          {/* Text annotations - rendered using portals to each page */}
+          {textAnnotations.map(ann => {
+            if (ann.target.type !== 'pdf') return null;
+            const target = ann.target as PdfTarget;
+            return (
+              <TextAnnotationPortal
+                key={ann.id}
+                annotation={ann}
+                page={target.page}
+                scale={scale}
+                isHighlighted={highlightedId === ann.id}
+                onClick={() => {
+                  setSelectedAnnotationId(ann.id);
+                  setHighlightedId(ann.id);
+                  setTimeout(() => setHighlightedId(null), 2000);
+                }}
+              />
+            );
+          })}
           
           {/* Current drawing path */}
           {currentInkPage !== null && currentInkPath.length > 0 && (
@@ -1852,6 +2197,14 @@ export function PDFHighlighterAdapter({
                   updateAnnotation(id, { style: { type: newType } });
                 }
               }}
+              onUpdateTextStyle={(id, textColor, fontSize, bgColor) => {
+                updateAnnotation(id, { 
+                  style: { 
+                    color: bgColor,
+                    textStyle: { textColor, fontSize }
+                  } 
+                });
+              }}
             />
           </div>
         )}
@@ -1870,6 +2223,7 @@ export function PDFHighlighterAdapter({
           position={{ x: textAnnotationPosition.x, y: textAnnotationPosition.y }}
           onSave={handleSaveTextAnnotation}
           onCancel={() => setTextAnnotationPosition(null)}
+          initialColor={activeColor}
         />
       )}
     </div>
