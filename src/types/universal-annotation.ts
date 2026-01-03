@@ -132,20 +132,25 @@ export interface UniversalAnnotationFile {
 
 /**
  * Type guard for BoundingBox
+ * More lenient to handle floating point precision issues
  */
 export function isBoundingBox(value: unknown): value is BoundingBox {
   if (typeof value !== 'object' || value === null) return false;
   const box = value as Record<string, unknown>;
   
+  // Check that all required fields are numbers
+  if (typeof box.x1 !== 'number' || typeof box.y1 !== 'number' ||
+      typeof box.x2 !== 'number' || typeof box.y2 !== 'number') {
+    return false;
+  }
+  
+  // Allow small tolerance for floating point precision
+  const tolerance = 0.001;
   return (
-    typeof box.x1 === 'number' &&
-    typeof box.y1 === 'number' &&
-    typeof box.x2 === 'number' &&
-    typeof box.y2 === 'number' &&
-    box.x1 >= 0 && box.x1 <= 1 &&
-    box.y1 >= 0 && box.y1 <= 1 &&
-    box.x2 >= 0 && box.x2 <= 1 &&
-    box.y2 >= 0 && box.y2 <= 1
+    box.x1 >= -tolerance && box.x1 <= 1 + tolerance &&
+    box.y1 >= -tolerance && box.y1 <= 1 + tolerance &&
+    box.x2 >= -tolerance && box.x2 <= 1 + tolerance &&
+    box.y2 >= -tolerance && box.y2 <= 1 + tolerance
   );
 }
 
@@ -248,6 +253,7 @@ export function isAnnotationStyle(value: unknown): value is AnnotationStyle {
 
 /**
  * Type guard for AnnotationItem
+ * More lenient to handle various annotation types
  */
 export function isAnnotationItem(value: unknown): value is AnnotationItem {
   if (typeof value !== 'object' || value === null) return false;
@@ -260,9 +266,9 @@ export function isAnnotationItem(value: unknown): value is AnnotationItem {
   if (typeof item.author !== 'string') return false;
   if (typeof item.createdAt !== 'number') return false;
   
-  // Optional fields
-  if (item.content !== undefined && typeof item.content !== 'string') return false;
-  if (item.comment !== undefined && typeof item.comment !== 'string') return false;
+  // Optional fields - allow undefined, null, or correct type
+  if (item.content !== undefined && item.content !== null && typeof item.content !== 'string') return false;
+  if (item.comment !== undefined && item.comment !== null && typeof item.comment !== 'string') return false;
   
   return true;
 }
@@ -401,6 +407,7 @@ export function validateAnnotationStyle(value: unknown): ValidationResult {
 
 /**
  * Validates an AnnotationItem with detailed error messages
+ * More lenient validation to allow various annotation types
  */
 export function validateAnnotationItem(value: unknown): ValidationResult {
   const errors: string[] = [];
@@ -424,24 +431,32 @@ export function validateAnnotationItem(value: unknown): ValidationResult {
     errors.push('Annotation createdAt must be a number (timestamp)');
   }
   
-  // Validate target
-  const targetResult = validateAnnotationTarget(item.target);
-  if (!targetResult.valid) {
-    errors.push(...targetResult.errors.map(e => `target: ${e}`));
+  // Validate target - more lenient for edge cases
+  if (item.target === undefined || item.target === null) {
+    errors.push('Annotation target is required');
+  } else {
+    const targetResult = validateAnnotationTarget(item.target);
+    if (!targetResult.valid) {
+      errors.push(...targetResult.errors.map(e => `target: ${e}`));
+    }
   }
   
-  // Validate style
-  const styleResult = validateAnnotationStyle(item.style);
-  if (!styleResult.valid) {
-    errors.push(...styleResult.errors.map(e => `style: ${e}`));
+  // Validate style - more lenient
+  if (item.style === undefined || item.style === null) {
+    errors.push('Annotation style is required');
+  } else {
+    const styleResult = validateAnnotationStyle(item.style);
+    if (!styleResult.valid) {
+      errors.push(...styleResult.errors.map(e => `style: ${e}`));
+    }
   }
   
-  // Validate optional fields
-  if (item.content !== undefined && typeof item.content !== 'string') {
+  // Validate optional fields - allow undefined, null, or string
+  if (item.content !== undefined && item.content !== null && typeof item.content !== 'string') {
     errors.push('Annotation content must be a string if provided');
   }
   
-  if (item.comment !== undefined && typeof item.comment !== 'string') {
+  if (item.comment !== undefined && item.comment !== null && typeof item.comment !== 'string') {
     errors.push('Annotation comment must be a string if provided');
   }
   

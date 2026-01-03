@@ -11,14 +11,16 @@
  * - Click to navigate
  */
 
-import React, { useMemo } from "react";
+import { useMemo } from "react";
 import { 
   Highlighter, 
   StickyNote, 
   Square, 
   MessageSquare,
-  ChevronRight,
   Trash2,
+  Pencil,
+  Underline,
+  Type,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AnnotationItem, PdfTarget } from "@/types/universal-annotation";
@@ -72,8 +74,11 @@ export function PdfAnnotationSidebar({
     const style = ann.style.type;
     switch (style) {
       case 'highlight':
-      case 'underline':
         return <Highlighter className="h-3 w-3" style={{ color: ann.style.color }} />;
+      case 'underline':
+        return <Underline className="h-3 w-3" style={{ color: ann.style.color }} />;
+      case 'ink':
+        return <Pencil className="h-3 w-3" style={{ color: ann.style.color }} />;
       case 'area':
         // Check if it's a small pin/note
         if (ann.target.type === 'pdf') {
@@ -89,18 +94,21 @@ export function PdfAnnotationSidebar({
         }
         return <Square className="h-3 w-3" style={{ color: ann.style.color }} />;
       default:
-        return <Highlighter className="h-3 w-3" style={{ color: ann.style.color }} />;
+        return <Type className="h-3 w-3" style={{ color: ann.style.color }} />;
     }
   };
 
   const getPreviewText = (ann: AnnotationItem) => {
+    if (ann.style.type === 'ink') {
+      return 'Drawing';
+    }
     if (ann.content) {
       return ann.content.slice(0, 50) + (ann.content.length > 50 ? '...' : '');
     }
     if (ann.comment) {
       return ann.comment.slice(0, 50) + (ann.comment.length > 50 ? '...' : '');
     }
-    return 'Area selection';
+    return ann.style.type === 'area' ? 'Area selection' : 'Annotation';
   };
 
   if (annotations.length === 0) {
@@ -129,7 +137,7 @@ export function PdfAnnotationSidebar({
             {group.items.map(ann => (
               <div
                 key={ann.id}
-                className={`px-3 py-2 cursor-pointer hover:bg-muted/50 transition-colors border-l-2 ${
+                className={`group px-3 py-2 cursor-pointer hover:bg-muted/50 transition-colors border-l-2 ${
                   selectedId === ann.id 
                     ? 'bg-muted border-l-primary' 
                     : 'border-l-transparent'
@@ -159,7 +167,7 @@ export function PdfAnnotationSidebar({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-6 w-6 opacity-0 group-hover:opacity-100 hover:opacity-100"
+                    className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
                     onClick={(e) => {
                       e.stopPropagation();
                       onDelete(ann.id);

@@ -76,17 +76,20 @@ function FitWidthIcon({ className }: { className?: string }) {
 /**
  * Converts Universal AnnotationItem to react-pdf-highlighter IHighlight
  * Note: We store normalized 0-1 coordinates, need to convert back to PDF points
+ * The react-pdf-highlighter library handles scaling internally based on pdfScaleValue
  */
-function annotationToHighlight(annotation: AnnotationItem): IHighlight | null {
+function annotationToHighlight(annotation: AnnotationItem, pdfPageDimensions?: Map<number, { width: number; height: number }>): IHighlight | null {
   if (annotation.target.type !== 'pdf') return null;
   
   const target = annotation.target as PdfTarget;
   
-  // Default page dimensions (US Letter in points)
-  const pageWidth = 612;
-  const pageHeight = 792;
+  // Get actual page dimensions if available, otherwise use US Letter defaults
+  const pageDims = pdfPageDimensions?.get(target.page);
+  const pageWidth = pageDims?.width || 612;
+  const pageHeight = pageDims?.height || 792;
   
-  // Convert normalized coordinates back to PDF points
+  // Convert normalized coordinates (0-1) back to PDF points
+  // react-pdf-highlighter expects coordinates in PDF points (not scaled)
   const rects = target.rects.map(rect => ({
     x1: rect.x1 * pageWidth,
     y1: rect.y1 * pageHeight,
@@ -96,6 +99,11 @@ function annotationToHighlight(annotation: AnnotationItem): IHighlight | null {
     height: pageHeight,
     pageNumber: target.page,
   }));
+
+  // Handle empty rects (e.g., for ink annotations)
+  if (rects.length === 0) {
+    return null;
+  }
 
   // Calculate bounding rect from converted coordinates
   const x1 = Math.min(...rects.map(r => r.x1));
@@ -132,7 +140,8 @@ function annotationToHighlight(annotation: AnnotationItem): IHighlight | null {
 function highlightToAnnotationData(
   highlight: NewHighlight,
   color: string,
-  author: string
+  author: string,
+  styleType: 'highlight' | 'underline' | 'area' = 'highlight'
 ): Omit<AnnotationItem, 'id' | 'createdAt'> {
   // Get page dimensions from boundingRect (more reliable than individual rects)
   const boundingRect = highlight.position.boundingRect;
@@ -140,22 +149,38 @@ function highlightToAnnotationData(
   const pageHeight = boundingRect.height || 792;
   
   // Normalize coordinates from PDF points to 0-1 range
-  const rects: BoundingBox[] = highlight.position.rects.map(rect => ({
-    x1: Math.max(0, Math.min(1, rect.x1 / pageWidth)),
-    y1: Math.max(0, Math.min(1, rect.y1 / pageHeight)),
-    x2: Math.max(0, Math.min(1, rect.x2 / pageWidth)),
-    y2: Math.max(0, Math.min(1, rect.y2 / pageHeight)),
-  }));
+  // Ensure coordinates are properly ordered (x1 < x2, y1 < y2)
+  const rects: BoundingBox[] = highlight.position.rects.map(rect => {
+    const x1 = Math.max(0, Math.min(1, Math.min(rect.x1, rect.x2) / pageWidth));
+    const y1 = Math.max(0, Math.min(1, Math.min(rect.y1, rect.y2) / pageHeight));
+    const x2 = Math.max(0, Math.min(1, Math.max(rect.x1, rect.x2) / pageWidth));
+    const y2 = Math.max(0, Math.min(1, Math.max(rect.y1, rect.y2) / pageHeight));
+    return { x1, y1, x2, y2 };
+  });
+
+  // Filter out invalid/empty rects
+  const validRects = rects.filter(r => 
+    r.x2 > r.x1 && r.y2 > r.y1 && 
+    (r.x2 - r.x1) > 0.001 && (r.y2 - r.y1) > 0.001
+  );
+
+  // If no valid rects, create one from bounding rect
+  const finalRects = validRects.length > 0 ? validRects : [{
+    x1: Math.max(0, Math.min(1, boundingRect.x1 / pageWidth)),
+    y1: Math.max(0, Math.min(1, boundingRect.y1 / pageHeight)),
+    x2: Math.max(0, Math.min(1, boundingRect.x2 / pageWidth)),
+    y2: Math.max(0, Math.min(1, boundingRect.y2 / pageHeight)),
+  }];
 
   return {
     target: {
       type: 'pdf',
       page: highlight.position.pageNumber,
-      rects,
+      rects: finalRects,
     } as PdfTarget,
     style: {
       color,
-      type: 'highlight',
+      type: styleType,
     },
     content: highlight.content.text,
     comment: highlight.comment?.text || undefined,
@@ -351,6 +376,146 @@ function PinCommentPopup({ position, onSave, onCancel }: PinCommentPopupProps) {
   );
 }
 
+interface TextAnnotationPopupProps {
+  position: { x: number; y: number };
+  onSave: (text: string) => void;
+  onCancel: () => void;
+}
+
+function TextAnnotationPopup({ position, onSave, onCancel }: TextAnnotationPopupProps) {
+  const [text, setText] = useState("");
+
+  return (
+    <div
+      className="fixed bg-popover border border-border rounded-lg shadow-lg p-3 z-50 min-w-[250px]"
+      style={{ left: position.x, top: position.y }}
+    >
+      <div className="text-sm font-medium mb-2">Add Text</div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Enter text..."
+        className="w-full p-2 text-sm border border-border rounded bg-background resize-none mb-2"
+        rows={2}
+        autoFocus
+      />
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button size="sm" onClick={() => onSave(text)} disabled={!text.trim()}>
+          Add
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Renders ink annotation paths on a canvas overlay
+ */
+interface InkOverlayProps {
+  annotations: AnnotationItem[];
+  currentPath: { x: number; y: number }[];
+  currentPage: number | null;
+  color: string;
+  scale: number;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+}
+
+function InkOverlay({ annotations, currentPath, currentPage, color, scale, containerRef }: InkOverlayProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    // Set canvas size to match container
+    const rect = container.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw saved ink annotations
+    annotations.forEach(ann => {
+      if (ann.style.type !== 'ink' || ann.target.type !== 'pdf') return;
+      
+      try {
+        const path = JSON.parse(ann.content || '[]') as { x: number; y: number }[];
+        if (path.length < 2) return;
+
+        const pageElement = document.querySelector(`[data-page-number="${(ann.target as PdfTarget).page}"]`);
+        if (!pageElement) return;
+
+        const pageRect = pageElement.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+
+        ctx.beginPath();
+        ctx.strokeStyle = ann.style.color;
+        ctx.lineWidth = 2 * scale;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        path.forEach((point, i) => {
+          const x = pageRect.left - containerRect.left + container.scrollLeft + point.x * pageRect.width;
+          const y = pageRect.top - containerRect.top + container.scrollTop + point.y * pageRect.height;
+          
+          if (i === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+
+        ctx.stroke();
+      } catch (e) {
+        // Invalid path data
+      }
+    });
+
+    // Draw current path being drawn
+    if (currentPath.length >= 2 && currentPage !== null) {
+      const pageElement = document.querySelector(`[data-page-number="${currentPage}"]`);
+      if (pageElement) {
+        const pageRect = pageElement.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2 * scale;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        currentPath.forEach((point, i) => {
+          const x = pageRect.left - containerRect.left + container.scrollLeft + point.x * pageRect.width;
+          const y = pageRect.top - containerRect.top + container.scrollTop + point.y * pageRect.height;
+          
+          if (i === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+
+        ctx.stroke();
+      }
+    }
+  }, [annotations, currentPath, currentPage, color, scale, containerRef]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 pointer-events-none z-10"
+    />
+  );
+}
+
 // ============================================================================
 // Main Component
 // ============================================================================
@@ -383,9 +548,16 @@ export function PDFHighlighterAdapter({
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true); // Show sidebar by default
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
+  const [inkPaths, setInkPaths] = useState<Map<number, { x: number; y: number }[]>>(new Map()); // For ink drawing
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [currentInkPath, setCurrentInkPath] = useState<{ x: number; y: number }[]>([]);
+  const [currentInkPage, setCurrentInkPage] = useState<number | null>(null);
+  const [textAnnotationPosition, setTextAnnotationPosition] = useState<{ x: number; y: number; page: number } | null>(null);
+  const [pdfPageDimensions, setPdfPageDimensions] = useState<Map<number, { width: number; height: number }>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const pdfHighlighterRef = useRef<any>(null);
+  const inkCanvasRef = useRef<HTMLCanvasElement>(null);
 
   // Zoom limits
   const ZOOM_MIN = 0.25;
@@ -587,8 +759,14 @@ export function PDFHighlighterAdapter({
   // Convert annotations to highlights
   const highlights = useMemo(() => {
     return annotations
-      .map(annotationToHighlight)
+      .filter(a => a.style.type !== 'ink') // Ink annotations are rendered separately
+      .map(a => annotationToHighlight(a, pdfPageDimensions))
       .filter((h): h is IHighlight => h !== null);
+  }, [annotations, pdfPageDimensions]);
+
+  // Get ink annotations for custom rendering
+  const inkAnnotations = useMemo(() => {
+    return annotations.filter(a => a.style.type === 'ink');
   }, [annotations]);
 
   // Navigation handler
@@ -604,6 +782,22 @@ export function PDFHighlighterAdapter({
   // Handle PDF click in note mode
   const handlePdfClick = useCallback(
     (event: React.MouseEvent) => {
+      // Handle text annotation mode
+      if (activeTool === 'text') {
+        const target = event.target as HTMLElement;
+        const pageElement = target.closest('[data-page-number]');
+        if (!pageElement) return;
+
+        const pageNumber = parseInt(pageElement.getAttribute('data-page-number') || '1', 10);
+        
+        setTextAnnotationPosition({
+          x: event.clientX,
+          y: event.clientY,
+          page: pageNumber,
+        });
+        return;
+      }
+
       if (activeTool !== 'note') return;
 
       const target = event.target as HTMLElement;
@@ -620,6 +814,129 @@ export function PDFHighlighterAdapter({
     },
     [activeTool]
   );
+
+  // Handle ink drawing start
+  const handleInkMouseDown = useCallback((event: React.MouseEvent) => {
+    if (activeTool !== 'ink') return;
+    
+    const target = event.target as HTMLElement;
+    const pageElement = target.closest('[data-page-number]');
+    if (!pageElement) return;
+
+    const pageNumber = parseInt(pageElement.getAttribute('data-page-number') || '1', 10);
+    const rect = pageElement.getBoundingClientRect();
+    
+    const x = (event.clientX - rect.left) / rect.width;
+    const y = (event.clientY - rect.top) / rect.height;
+    
+    setIsDrawing(true);
+    setCurrentInkPage(pageNumber);
+    setCurrentInkPath([{ x, y }]);
+  }, [activeTool]);
+
+  // Handle ink drawing move
+  const handleInkMouseMove = useCallback((event: React.MouseEvent) => {
+    if (!isDrawing || activeTool !== 'ink' || currentInkPage === null) return;
+    
+    const target = event.target as HTMLElement;
+    const pageElement = target.closest('[data-page-number]');
+    if (!pageElement) return;
+
+    const pageNumber = parseInt(pageElement.getAttribute('data-page-number') || '1', 10);
+    if (pageNumber !== currentInkPage) return;
+
+    const rect = pageElement.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / rect.width;
+    const y = (event.clientY - rect.top) / rect.height;
+    
+    setCurrentInkPath(prev => [...prev, { x, y }]);
+  }, [isDrawing, activeTool, currentInkPage]);
+
+  // Handle ink drawing end
+  const handleInkMouseUp = useCallback(() => {
+    if (!isDrawing || currentInkPage === null || currentInkPath.length < 2) {
+      setIsDrawing(false);
+      setCurrentInkPath([]);
+      setCurrentInkPage(null);
+      return;
+    }
+
+    // Create ink annotation from path
+    // Convert path to bounding box for storage
+    const xs = currentInkPath.map(p => p.x);
+    const ys = currentInkPath.map(p => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+
+    const inkAnnotation: Omit<AnnotationItem, 'id' | 'createdAt'> = {
+      target: {
+        type: 'pdf',
+        page: currentInkPage,
+        rects: [{
+          x1: Math.max(0, minX),
+          y1: Math.max(0, minY),
+          x2: Math.min(1, maxX),
+          y2: Math.min(1, maxY),
+        }],
+      } as PdfTarget,
+      style: {
+        color: activeColor,
+        type: 'ink',
+      },
+      // Store the path as JSON in content for later rendering
+      content: JSON.stringify(currentInkPath),
+      author: 'user',
+    };
+
+    addAnnotation(inkAnnotation);
+    
+    setIsDrawing(false);
+    setCurrentInkPath([]);
+    setCurrentInkPage(null);
+  }, [isDrawing, currentInkPage, currentInkPath, activeColor, addAnnotation]);
+
+  // Handle text annotation save
+  const handleSaveTextAnnotation = useCallback((text: string) => {
+    if (!textAnnotationPosition || !text.trim()) {
+      setTextAnnotationPosition(null);
+      return;
+    }
+
+    const pageElement = document.querySelector(`[data-page-number="${textAnnotationPosition.page}"]`);
+    if (!pageElement) {
+      setTextAnnotationPosition(null);
+      return;
+    }
+
+    const rect = pageElement.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (textAnnotationPosition.x - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (textAnnotationPosition.y - rect.top) / rect.height));
+
+    const textAnnotation: Omit<AnnotationItem, 'id' | 'createdAt'> = {
+      target: {
+        type: 'pdf',
+        page: textAnnotationPosition.page,
+        rects: [{
+          x1: Math.max(0, x - 0.01),
+          y1: Math.max(0, y - 0.01),
+          x2: Math.min(1, x + 0.15),
+          y2: Math.min(1, y + 0.03),
+        }],
+      } as PdfTarget,
+      style: {
+        color: activeColor,
+        type: 'highlight',
+      },
+      content: text,
+      comment: text,
+      author: 'user',
+    };
+
+    addAnnotation(textAnnotation);
+    setTextAnnotationPosition(null);
+  }, [textAnnotationPosition, activeColor, addAnnotation]);
 
   // Save pin
   const handleSavePin = useCallback(
@@ -905,12 +1222,17 @@ export function PDFHighlighterAdapter({
       <div className="flex flex-1 overflow-hidden">
         <div
           ref={scrollContainerRef}
-          className="flex-1 overflow-auto bg-muted/30"
+          className="flex-1 overflow-auto bg-muted/30 relative"
           onClick={handlePdfClick}
+          onMouseDown={handleInkMouseDown}
+          onMouseMove={handleInkMouseMove}
+          onMouseUp={handleInkMouseUp}
+          onMouseLeave={handleInkMouseUp}
           style={{ 
             cursor: activeTool === 'note' ? 'crosshair' : 
                     activeTool === 'area' ? 'crosshair' :
-                    activeTool === 'ink' ? 'crosshair' : 'default' 
+                    activeTool === 'ink' ? 'crosshair' :
+                    activeTool === 'text' ? 'text' : 'default' 
           }}
         >
         <PdfLoader
@@ -943,9 +1265,7 @@ export function PDFHighlighterAdapter({
                     comment: { text: '', emoji: '' },
                   };
                   // Create area annotation with current color
-                  const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user');
-                  // Override style type to 'area'
-                  annotationData.style.type = 'area';
+                  const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user', 'area');
                   addAnnotation(annotationData);
                   hideTipAndSelection();
                   return null;
@@ -958,11 +1278,8 @@ export function PDFHighlighterAdapter({
                     content,
                     comment: { text: '', emoji: '' },
                   };
-                  const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user');
-                  // Set underline style if underline tool
-                  if (activeTool === 'underline') {
-                    annotationData.style.type = 'underline';
-                  }
+                  const styleType = activeTool === 'underline' ? 'underline' : 'highlight';
+                  const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user', styleType);
                   addAnnotation(annotationData);
                   hideTipAndSelection();
                   return null;
@@ -978,7 +1295,7 @@ export function PDFHighlighterAdapter({
                         content,
                         comment: { text: '', emoji: '' },
                       };
-                      const annotationData = highlightToAnnotationData(newHighlight, color, 'user');
+                      const annotationData = highlightToAnnotationData(newHighlight, color, 'user', 'highlight');
                       addAnnotation(annotationData);
                       hideTipAndSelection();
                     }}
@@ -1105,11 +1422,31 @@ export function PDFHighlighterAdapter({
         )}
       </div>
 
+      {/* Ink drawing overlay */}
+      {(inkAnnotations.length > 0 || currentInkPath.length > 0) && (
+        <InkOverlay
+          annotations={inkAnnotations}
+          currentPath={currentInkPath}
+          currentPage={currentInkPage}
+          color={activeColor}
+          scale={scale}
+          containerRef={scrollContainerRef}
+        />
+      )}
+
       {pendingPin && (
         <PinCommentPopup
           position={{ x: pendingPin.x, y: pendingPin.y }}
           onSave={handleSavePin}
           onCancel={() => setPendingPin(null)}
+        />
+      )}
+
+      {textAnnotationPosition && (
+        <TextAnnotationPopup
+          position={{ x: textAnnotationPosition.x, y: textAnnotationPosition.y }}
+          onSave={handleSaveTextAnnotation}
+          onCancel={() => setTextAnnotationPosition(null)}
         />
       )}
     </div>
