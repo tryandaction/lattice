@@ -42,13 +42,6 @@ interface PdfAnnotationSidebarProps {
   onConvertToUnderline?: (id: string) => void;
 }
 
-interface ContextMenuState {
-  visible: boolean;
-  x: number;
-  y: number;
-  annotationId: string | null;
-}
-
 // Zotero-style context menu component
 function AnnotationContextMenu({
   x,
@@ -161,6 +154,19 @@ function AnnotationContextMenu({
         >
           <Underline className="h-4 w-4" />
           转换为下划线
+        </button>
+      )}
+
+      {annotation.style.type === 'underline' && onConvertToUnderline && (
+        <button
+          className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2"
+          onClick={() => {
+            onConvertToUnderline();
+            onClose();
+          }}
+        >
+          <Highlighter className="h-4 w-4" />
+          转换为高亮
         </button>
       )}
 

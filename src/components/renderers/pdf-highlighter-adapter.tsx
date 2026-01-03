@@ -12,7 +12,6 @@ import ReactDOM from "react-dom";
 import {
   PdfLoader,
   PdfHighlighter,
-  Highlight,
   Popup,
 } from "react-pdf-highlighter";
 import type { 
@@ -67,6 +66,122 @@ function FitWidthIcon({ className }: { className?: string }) {
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <path d="M7 12h10M7 12l2-2M7 12l2 2M17 12l-2-2M17 12l-2 2" />
     </svg>
+  );
+}
+
+// ============================================================================
+// Custom Highlight Component (supports colors and underline)
+// ============================================================================
+
+// Position type from react-pdf-highlighter (viewport coordinates)
+interface ViewportPosition {
+  boundingRect: { left: number; top: number; width: number; height: number; pageNumber?: number };
+  rects: Array<{ left: number; top: number; width: number; height: number; pageNumber?: number }>;
+  pageNumber: number;
+}
+
+interface CustomHighlightProps {
+  position: ViewportPosition;
+  isScrolledTo: boolean;
+  color: string;
+  styleType: 'highlight' | 'underline' | 'area';
+  onClick?: () => void;
+}
+
+/**
+ * Custom highlight component that supports:
+ * - Custom colors (not just default yellow)
+ * - Underline style (renders as underline instead of background)
+ * - Area selection (renders as border box)
+ * 
+ * Note: react-pdf-highlighter passes position.rects with LTWHP format
+ * (left, top, width, height, pageNumber) for viewport coordinates
+ */
+function CustomHighlight({ position, isScrolledTo, color, styleType, onClick }: CustomHighlightProps) {
+  // The rects from react-pdf-highlighter are in viewport coordinates (LTWHP format)
+  const rects = position.rects;
+  
+  // Calculate opacity based on scroll state
+  const opacity = isScrolledTo ? 1 : 0.8;
+  
+  return (
+    <div className="Highlight" onClick={onClick}>
+      <div className="Highlight__parts">
+        {rects.map((rect, index) => {
+          // Common styles for positioning
+          const baseStyle: React.CSSProperties = {
+            position: 'absolute',
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+          };
+          
+          if (styleType === 'underline') {
+            // Underline style: transparent background with colored bottom border
+            return (
+              <div
+                key={index}
+                className="Highlight__part"
+                style={{
+                  ...baseStyle,
+                  backgroundColor: 'transparent',
+                  borderBottom: `2px solid ${color}`,
+                  opacity,
+                  transition: 'opacity 0.2s ease-in-out',
+                }}
+              />
+            );
+          } else if (styleType === 'area') {
+            // Area style: border box with light fill
+            return (
+              <div
+                key={index}
+                className="Highlight__part"
+                style={{
+                  ...baseStyle,
+                  backgroundColor: `${color}20`,
+                  border: `2px solid ${color}`,
+                  opacity,
+                  transition: 'opacity 0.2s ease-in-out',
+                }}
+              />
+            );
+          } else {
+            // Highlight style: colored background
+            return (
+              <div
+                key={index}
+                className="Highlight__part"
+                style={{
+                  ...baseStyle,
+                  backgroundColor: color,
+                  opacity: opacity * 0.4, // Highlights should be semi-transparent
+                  transition: 'opacity 0.2s ease-in-out',
+                }}
+              />
+            );
+          }
+        })}
+      </div>
+      
+      {/* Scroll indicator */}
+      {isScrolledTo && rects.length > 0 && (
+        <div
+          className="Highlight__scroll-indicator"
+          style={{
+            position: 'absolute',
+            left: rects[0].left,
+            top: rects[0].top - 4,
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            backgroundColor: color,
+            animation: 'pulse 1s ease-in-out infinite',
+          }}
+        />
+      )}
+    </div>
   );
 }
 
@@ -1553,10 +1668,10 @@ export function PDFHighlighterAdapter({
                 const isPin = annotation && isPinAnnotation(annotation);
                 const isHighlighted = highlightedId === highlight.id;
 
-                // Handler for changing color
+                // Handler for changing color - only pass the color field
                 const handleChangeColor = (color: string) => {
                   if (annotation) {
-                    updateAnnotation(highlight.id, { style: { ...annotation.style, color } });
+                    updateAnnotation(highlight.id, { style: { color } });
                   }
                   hideTip();
                 };
@@ -1565,7 +1680,7 @@ export function PDFHighlighterAdapter({
                 const handleConvertStyle = () => {
                   if (annotation) {
                     const newType = annotation.style.type === 'highlight' ? 'underline' : 'highlight';
-                    updateAnnotation(highlight.id, { style: { ...annotation.style, type: newType } });
+                    updateAnnotation(highlight.id, { style: { type: newType } });
                     hideTip();
                   }
                 };
@@ -1613,6 +1728,10 @@ export function PDFHighlighterAdapter({
                   );
                 }
 
+                // Get the style type and color from annotation
+                const highlightColor = annotation?.style.color || '#FFD400';
+                const highlightStyleType = (annotation?.style.type || 'highlight') as 'highlight' | 'underline' | 'area';
+
                 return (
                   <Popup
                     popupContent={
@@ -1659,10 +1778,11 @@ export function PDFHighlighterAdapter({
                         ));
                       }}
                     >
-                      <Highlight
+                      <CustomHighlight
                         isScrolledTo={isScrolledTo || isHighlighted}
                         position={highlight.position}
-                        comment={highlight.comment}
+                        color={highlightColor}
+                        styleType={highlightStyleType}
                       />
                     </div>
                   </Popup>
@@ -1710,17 +1830,14 @@ export function PDFHighlighterAdapter({
               onSelect={handleSidebarSelect}
               onDelete={handleSidebarDelete}
               onUpdateColor={(id, color) => {
-                const ann = annotations.find(a => a.id === id);
-                if (ann) {
-                  updateAnnotation(id, { style: { ...ann.style, color } });
-                }
+                updateAnnotation(id, { style: { color } });
               }}
               onUpdateComment={(id, comment) => updateAnnotation(id, { comment })}
               onConvertToUnderline={(id) => {
                 const ann = annotations.find(a => a.id === id);
                 if (ann) {
                   const newType = ann.style.type === 'highlight' ? 'underline' : 'highlight';
-                  updateAnnotation(id, { style: { ...ann.style, type: newType } });
+                  updateAnnotation(id, { style: { type: newType } });
                 }
               }}
             />

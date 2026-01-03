@@ -31,6 +31,19 @@ import {
 // Types
 // ============================================================================
 
+/**
+ * Deep partial type for annotation updates
+ * Allows partial updates to nested objects like style and target
+ */
+export type AnnotationUpdates = {
+  target?: Partial<AnnotationItem['target']>;
+  style?: Partial<AnnotationItem['style']>;
+  content?: string;
+  comment?: string;
+  author?: string;
+  createdAt?: number;
+};
+
 export interface UseAnnotationSystemOptions {
   /** File handle for the annotated file */
   fileHandle: FileSystemFileHandle;
@@ -54,7 +67,7 @@ export interface UseAnnotationSystemReturn {
   
   // Actions
   addAnnotation: (annotation: Omit<AnnotationItem, 'id' | 'createdAt'>) => string | null;
-  updateAnnotation: (id: string, updates: Partial<Omit<AnnotationItem, 'id'>>) => boolean;
+  updateAnnotation: (id: string, updates: AnnotationUpdates) => boolean;
   deleteAnnotation: (id: string) => boolean;
   
   // Navigation
@@ -295,33 +308,59 @@ export function useAnnotationSystem({
   // Update annotation
   const updateAnnotation = useCallback((
     id: string,
-    updates: Partial<Omit<AnnotationItem, 'id'>>
+    updates: AnnotationUpdates
   ): boolean => {
-    let success = false;
+    // Find the annotation first to validate synchronously
+    const existingAnnotation = annotations.find(a => a.id === id);
+    if (!existingAnnotation) {
+      console.warn(`[updateAnnotation] Annotation not found: ${id}`);
+      return false;
+    }
     
+    // Deep merge for nested objects like style and target
+    // Use type assertion since we know the merged result will be valid
+    const mergedStyle = updates.style 
+      ? { ...existingAnnotation.style, ...updates.style }
+      : existingAnnotation.style;
+    
+    const mergedTarget = updates.target
+      ? { ...existingAnnotation.target, ...updates.target }
+      : existingAnnotation.target;
+    
+    const updated: AnnotationItem = {
+      ...existingAnnotation,
+      content: updates.content !== undefined ? updates.content : existingAnnotation.content,
+      comment: updates.comment !== undefined ? updates.comment : existingAnnotation.comment,
+      author: updates.author !== undefined ? updates.author : existingAnnotation.author,
+      createdAt: updates.createdAt !== undefined ? updates.createdAt : existingAnnotation.createdAt,
+      style: mergedStyle as AnnotationItem['style'],
+      target: mergedTarget as AnnotationItem['target'],
+    };
+    
+    // Validate updated annotation
+    const validation = validateAnnotationItem(updated);
+    if (!validation.valid) {
+      console.error(`[updateAnnotation] Validation failed:`, validation.errors);
+      setError(`Invalid annotation update: ${validation.errors.join(', ')}`);
+      return false;
+    }
+    
+    // Update state
     setAnnotations(prev => {
       const index = prev.findIndex(a => a.id === id);
       if (index === -1) return prev;
-      
-      const updated = { ...prev[index], ...updates };
-      
-      // Validate updated annotation
-      const validation = validateAnnotationItem(updated);
-      if (!validation.valid) {
-        setError(`Invalid annotation update: ${validation.errors.join(', ')}`);
-        return prev;
-      }
       
       const newAnnotations = [...prev];
       newAnnotations[index] = updated;
       
       scheduleSave(newAnnotations);
-      success = true;
       return newAnnotations;
     });
     
-    return success;
-  }, [scheduleSave]);
+    // Clear any previous error
+    setError(null);
+    return true;
+  }, [annotations, scheduleSave]);
 
   // Delete annotation
   const deleteAnnotation = useCallback((id: string): boolean => {
