@@ -1329,6 +1329,7 @@ export function PDFHighlighterAdapter({
         >
           {(pdfDocument) => (
             <PdfHighlighter
+              key={`pdf-scale-${scale.toFixed(2)}`}
               pdfDocument={pdfDocument}
               enableAreaSelection={(event) => event.altKey || activeTool === 'area'}
               onSelectionFinished={(
