@@ -641,47 +641,19 @@ export function PDFHighlighterAdapter({
   const ZOOM_MAX = 4.0;
   const ZOOM_STEP = 0.25;
 
-  // Calculate fit-width scale
-  const calculateFitWidth = useCallback(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return 1.0;
-    
-    const pageWidth = 612;
-    const containerWidth = container.clientWidth - 48;
-    return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, containerWidth / pageWidth));
-  }, []);
-
-  // Calculate fit-page scale
-  const calculateFitPage = useCallback(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return 1.0;
-    
-    const pageWidth = 612;
-    const pageHeight = 792;
-    const containerWidth = container.clientWidth - 48;
-    const containerHeight = container.clientHeight - 48;
-    
-    const scaleX = containerWidth / pageWidth;
-    const scaleY = containerHeight / pageHeight;
-    return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(scaleX, scaleY)));
-  }, []);
-
-  // Apply zoom with a specific new scale value
-  const applyZoom = useCallback((newScale: number) => {
-    const clampedScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newScale));
-    setScale(clampedScale);
-    setZoomMode('manual');
-  }, []);
+  // Get the pdfScaleValue string for PdfHighlighter
+  // Can be a number string or special values: "page-width", "page-fit", "auto"
+  const pdfScaleValue = useMemo(() => {
+    if (zoomMode === 'fit-width') return 'page-width';
+    if (zoomMode === 'fit-page') return 'page-fit';
+    return String(scale);
+  }, [scale, zoomMode]);
 
   // Apply zoom mode
   const applyZoomMode = useCallback((mode: 'manual' | 'fit-width' | 'fit-page') => {
     setZoomMode(mode);
-    if (mode === 'fit-width') {
-      setScale(calculateFitWidth());
-    } else if (mode === 'fit-page') {
-      setScale(calculateFitPage());
-    }
-  }, [calculateFitWidth, calculateFitPage]);
+    // For special modes, we don't need to calculate scale - pdfjs handles it
+  }, []);
 
   // Simple zoom functions
   const zoomIn = useCallback(() => {
@@ -1208,7 +1180,7 @@ export function PDFHighlighterAdapter({
           </Button>
           
           <span className="min-w-[3.5rem] text-center text-sm tabular-nums">
-            {Math.round(scale * 100)}%
+            {zoomMode === 'fit-width' ? 'Fit W' : zoomMode === 'fit-page' ? 'Fit P' : `${Math.round(scale * 100)}%`}
           </span>
           
           <Button
@@ -1329,7 +1301,7 @@ export function PDFHighlighterAdapter({
         >
           {(pdfDocument) => (
             <PdfHighlighter
-              key={`pdf-scale-${scale.toFixed(2)}`}
+              key={`pdf-scale-${pdfScaleValue}`}
               pdfDocument={pdfDocument}
               enableAreaSelection={(event) => event.altKey || activeTool === 'area'}
               onSelectionFinished={(
@@ -1485,7 +1457,7 @@ export function PDFHighlighterAdapter({
                 );
               }}
               highlights={highlights}
-              pdfScaleValue={String(scale)}
+              pdfScaleValue={pdfScaleValue}
               onScrollChange={() => {}}
               scrollRef={() => {}}
             />
