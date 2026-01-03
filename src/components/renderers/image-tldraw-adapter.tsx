@@ -172,25 +172,32 @@ export function ImageTldrawAdapter({
   const currentAnnotationIdRef = useRef<string | null>(null);
   const isRestoringRef = useRef(false);
 
-  // Create blob URL from ArrayBuffer
+  // Create data URL from ArrayBuffer (Tldraw requires data URLs, not blob URLs)
   useEffect(() => {
     const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    setImageUrl(url);
+    
+    // Convert blob to data URL for Tldraw compatibility
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setImageUrl(dataUrl);
+      
+      // Load image to get dimensions
+      const img = new Image();
+      img.onload = () => {
+        setImageSize({ width: img.naturalWidth, height: img.naturalHeight });
+      };
+      img.onerror = () => {
+        setTldrawError(new Error('Failed to load image'));
+      };
+      img.src = dataUrl;
+    };
+    reader.onerror = () => {
+      setTldrawError(new Error('Failed to read image data'));
+    };
+    reader.readAsDataURL(blob);
 
-    // Load image to get dimensions
-    const img = new Image();
-    img.onload = () => {
-      setImageSize({ width: img.naturalWidth, height: img.naturalHeight });
-    };
-    img.onerror = () => {
-      setTldrawError(new Error('Failed to load image'));
-    };
-    img.src = url;
-
-    return () => {
-      URL.revokeObjectURL(url);
-    };
+    // No cleanup needed for data URLs (they don't need to be revoked)
   }, [content, mimeType]);
 
   // Navigation handler
@@ -394,7 +401,9 @@ export function ImageTldrawAdapter({
       const a = document.createElement('a');
       a.href = imageUrl;
       a.download = fileName;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
     }
   };
 
