@@ -310,57 +310,68 @@ export function useAnnotationSystem({
     id: string,
     updates: AnnotationUpdates
   ): boolean => {
-    // Find the annotation first to validate synchronously
-    const existingAnnotation = annotations.find(a => a.id === id);
-    if (!existingAnnotation) {
-      console.warn(`[updateAnnotation] Annotation not found: ${id}`);
-      return false;
-    }
+    let success = false;
+    let validationError: string | null = null;
     
-    // Deep merge for nested objects like style and target
-    // Use type assertion since we know the merged result will be valid
-    const mergedStyle = updates.style 
-      ? { ...existingAnnotation.style, ...updates.style }
-      : existingAnnotation.style;
-    
-    const mergedTarget = updates.target
-      ? { ...existingAnnotation.target, ...updates.target }
-      : existingAnnotation.target;
-    
-    const updated: AnnotationItem = {
-      ...existingAnnotation,
-      content: updates.content !== undefined ? updates.content : existingAnnotation.content,
-      comment: updates.comment !== undefined ? updates.comment : existingAnnotation.comment,
-      author: updates.author !== undefined ? updates.author : existingAnnotation.author,
-      createdAt: updates.createdAt !== undefined ? updates.createdAt : existingAnnotation.createdAt,
-      style: mergedStyle as AnnotationItem['style'],
-      target: mergedTarget as AnnotationItem['target'],
-    };
-    
-    // Validate updated annotation
-    const validation = validateAnnotationItem(updated);
-    if (!validation.valid) {
-      console.error(`[updateAnnotation] Validation failed:`, validation.errors);
-      setError(`Invalid annotation update: ${validation.errors.join(', ')}`);
-      return false;
-    }
-    
-    // Update state
+    // Update state using functional update to ensure we have the latest state
     setAnnotations(prev => {
       const index = prev.findIndex(a => a.id === id);
-      if (index === -1) return prev;
+      if (index === -1) {
+        console.warn(`[updateAnnotation] Annotation not found: ${id}`);
+        return prev;
+      }
+      
+      const existingAnnotation = prev[index];
+      
+      // Deep merge for nested objects like style and target
+      // Use type assertion since we know the merged result will be valid
+      const mergedStyle = updates.style 
+        ? { ...existingAnnotation.style, ...updates.style }
+        : existingAnnotation.style;
+      
+      const mergedTarget = updates.target
+        ? { ...existingAnnotation.target, ...updates.target }
+        : existingAnnotation.target;
+      
+      const updated: AnnotationItem = {
+        ...existingAnnotation,
+        content: updates.content !== undefined ? updates.content : existingAnnotation.content,
+        comment: updates.comment !== undefined ? updates.comment : existingAnnotation.comment,
+        author: updates.author !== undefined ? updates.author : existingAnnotation.author,
+        createdAt: updates.createdAt !== undefined ? updates.createdAt : existingAnnotation.createdAt,
+        style: mergedStyle as AnnotationItem['style'],
+        target: mergedTarget as AnnotationItem['target'],
+      };
+      
+      // Validate updated annotation
+      const validation = validateAnnotationItem(updated);
+      if (!validation.valid) {
+        console.error(`[updateAnnotation] Validation failed:`, validation.errors);
+        validationError = `Invalid annotation update: ${validation.errors.join(', ')}`;
+        return prev;
+      }
       
       const newAnnotations = [...prev];
       newAnnotations[index] = updated;
       
       scheduleSave(newAnnotations);
+      success = true;
       return newAnnotations;
     });
     
-    // Clear any previous error
-    setError(null);
-    return true;
-  }, [annotations, scheduleSave]);
+    // Handle validation error outside of setState
+    if (validationError) {
+      setError(validationError);
+      return false;
+    }
+    
+    // Clear any previous error on success
+    if (success) {
+      setError(null);
+    }
+    
+    return success;
+  }, [scheduleSave]);
 
   // Delete annotation
   const deleteAnnotation = useCallback((id: string): boolean => {

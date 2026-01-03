@@ -1687,6 +1687,7 @@ export function PDFHighlighterAdapter({
 
                 if (isPin) {
                   const position = highlight.position;
+                  const pinComment = annotation?.comment || highlight.comment?.text;
                   // Pin position uses viewport coordinates (left, top)
                   return (
                     <div
@@ -1720,10 +1721,21 @@ export function PDFHighlighterAdapter({
                         ));
                       }}
                     >
-                      <StickyNote
-                        className="h-5 w-5 text-amber-500 drop-shadow-md"
-                        fill="currentColor"
-                      />
+                      <div className="flex flex-col items-center">
+                        <StickyNote
+                          className="h-5 w-5 text-amber-500 drop-shadow-md"
+                          fill="currentColor"
+                        />
+                        {/* Display pin comment text below the icon */}
+                        {pinComment && (
+                          <div 
+                            className="mt-1 px-2 py-1 bg-amber-100 dark:bg-amber-900/80 border border-amber-300 dark:border-amber-700 rounded shadow-sm text-xs text-amber-900 dark:text-amber-100 max-w-[150px] whitespace-pre-wrap break-words"
+                            style={{ transform: 'translateX(50%)' }}
+                          >
+                            {pinComment}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   );
                 }
