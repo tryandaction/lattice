@@ -1373,77 +1373,76 @@ export function PDFHighlighterAdapter({
           }
         >
           {(pdfDocument) => (
-            <div className="relative">
-              <PdfHighlighter
-                pdfDocument={pdfDocument}
-                enableAreaSelection={(event) => event.altKey || activeTool === 'area'}
-                onSelectionFinished={(
-                  position,
-                  content,
-                  hideTipAndSelection,
-                  transformSelection
-                ) => {
-                  // Check if this is an area selection (has image but no text)
-                  const isAreaSelection = content.image && !content.text;
-                  
-                  // If area tool is active or this is an area selection
-                  if (activeTool === 'area' || isAreaSelection) {
-                    const newHighlight: NewHighlight = {
-                      position,
-                      content,
-                      comment: { text: '', emoji: '' },
-                    };
-                    // Create area annotation with current color
-                    const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user', 'area');
-                    addAnnotation(annotationData);
-                    hideTipAndSelection();
-                    return null;
-                  }
-                  
-                  // If highlight or underline tool is active, use activeColor directly
-                  if (activeTool === 'highlight' || activeTool === 'underline') {
-                    const newHighlight: NewHighlight = {
-                      position,
-                      content,
-                      comment: { text: '', emoji: '' },
-                    };
-                    const styleType = activeTool === 'underline' ? 'underline' : 'highlight';
-                    const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user', styleType);
-                    addAnnotation(annotationData);
-                    hideTipAndSelection();
-                    return null;
-                  }
-                  
-                  // Otherwise show color picker for text selection
-                  return (
-                    <ColorPicker
-                      selectedText={content.text}
-                      onColorSelect={(color) => {
-                        const newHighlight: NewHighlight = {
-                          position,
-                          content,
-                          comment: { text: '', emoji: '' },
-                        };
-                        const annotationData = highlightToAnnotationData(newHighlight, color, 'user', 'highlight');
-                        addAnnotation(annotationData);
-                        hideTipAndSelection();
-                      }}
-                      onCancel={hideTipAndSelection}
-                    />
-                  );
-                }}
-                highlightTransform={(
-                  highlight,
-                  index,
-                  setTip,
-                  hideTip,
-                  viewportToScaled,
-                  screenshot,
-                  isScrolledTo
-                ) => {
-                  const annotation = annotations.find(a => a.id === highlight.id);
-                  const isPin = annotation && isPinAnnotation(annotation);
-                  const isHighlighted = highlightedId === highlight.id;
+            <PdfHighlighter
+              pdfDocument={pdfDocument}
+              enableAreaSelection={(event) => event.altKey || activeTool === 'area'}
+              onSelectionFinished={(
+                position,
+                content,
+                hideTipAndSelection,
+                transformSelection
+              ) => {
+                // Check if this is an area selection (has image but no text)
+                const isAreaSelection = content.image && !content.text;
+                
+                // If area tool is active or this is an area selection
+                if (activeTool === 'area' || isAreaSelection) {
+                  const newHighlight: NewHighlight = {
+                    position,
+                    content,
+                    comment: { text: '', emoji: '' },
+                  };
+                  // Create area annotation with current color
+                  const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user', 'area');
+                  addAnnotation(annotationData);
+                  hideTipAndSelection();
+                  return null;
+                }
+                
+                // If highlight or underline tool is active, use activeColor directly
+                if (activeTool === 'highlight' || activeTool === 'underline') {
+                  const newHighlight: NewHighlight = {
+                    position,
+                    content,
+                    comment: { text: '', emoji: '' },
+                  };
+                  const styleType = activeTool === 'underline' ? 'underline' : 'highlight';
+                  const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user', styleType);
+                  addAnnotation(annotationData);
+                  hideTipAndSelection();
+                  return null;
+                }
+                
+                // Otherwise show color picker for text selection
+                return (
+                  <ColorPicker
+                    selectedText={content.text}
+                    onColorSelect={(color) => {
+                      const newHighlight: NewHighlight = {
+                        position,
+                        content,
+                        comment: { text: '', emoji: '' },
+                      };
+                      const annotationData = highlightToAnnotationData(newHighlight, color, 'user', 'highlight');
+                      addAnnotation(annotationData);
+                      hideTipAndSelection();
+                    }}
+                    onCancel={hideTipAndSelection}
+                  />
+                );
+              }}
+              highlightTransform={(
+                highlight,
+                index,
+                setTip,
+                hideTip,
+                viewportToScaled,
+                screenshot,
+                isScrolledTo
+              ) => {
+                const annotation = annotations.find(a => a.id === highlight.id);
+                const isPin = annotation && isPinAnnotation(annotation);
+                const isHighlighted = highlightedId === highlight.id;
 
                 if (isPin) {
                   const position = highlight.position;
@@ -1534,31 +1533,32 @@ export function PDFHighlighterAdapter({
               onScrollChange={() => {}}
               scrollRef={() => {}}
             />
-            {/* Ink annotations overlay - rendered on top of PdfHighlighter */}
-            {inkAnnotations.map(ann => {
-              if (ann.target.type !== 'pdf') return null;
-              const target = ann.target as PdfTarget;
-              return (
-                <InkAnnotationPortal
-                  key={ann.id}
-                  annotation={ann}
-                  page={target.page}
-                  scale={scale}
-                />
-              );
-            })}
-            {/* Current drawing path */}
-            {currentInkPage !== null && currentInkPath.length > 0 && (
-              <CurrentInkPathPortal
-                path={currentInkPath}
-                page={currentInkPage}
-                color={activeColor}
-                scale={scale}
-              />
-            )}
-            </div>
           )}
         </PdfLoader>
+
+          {/* Ink annotations - rendered using portals to each page */}
+          {inkAnnotations.map(ann => {
+            if (ann.target.type !== 'pdf') return null;
+            const target = ann.target as PdfTarget;
+            return (
+              <InkAnnotationPortal
+                key={ann.id}
+                annotation={ann}
+                page={target.page}
+                scale={scale}
+              />
+            );
+          })}
+          
+          {/* Current drawing path */}
+          {currentInkPage !== null && currentInkPath.length > 0 && (
+            <CurrentInkPathPortal
+              path={currentInkPath}
+              page={currentInkPage}
+              color={activeColor}
+              scale={scale}
+            />
+          )}
         </div>
 
         {/* Annotation Sidebar */}
