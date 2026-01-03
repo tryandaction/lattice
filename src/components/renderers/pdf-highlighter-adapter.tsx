@@ -246,30 +246,83 @@ interface ColorPickerProps {
   onColorSelect: (color: string) => void;
   onCancel: () => void;
   selectedText?: string;
+  onAddNote?: () => void;
+  onAddComment?: () => void;
+  currentColor?: string;
 }
 
-function ColorPicker({ onColorSelect, onCancel, selectedText }: ColorPickerProps) {
+/**
+ * Zotero-style context menu color picker
+ * Features: Chinese labels, checkmark for selected color, add note/comment options
+ */
+function ColorPicker({ 
+  onColorSelect, 
+  onCancel, 
+  selectedText, 
+  onAddNote,
+  onAddComment,
+  currentColor 
+}: ColorPickerProps) {
   return (
-    <div className="bg-popover border border-border rounded-lg shadow-lg p-2 min-w-[200px]">
-      <div className="text-xs text-muted-foreground mb-2 truncate max-w-[180px]">
-        {selectedText ? `"${selectedText.slice(0, 30)}${selectedText.length > 30 ? '...' : ''}"` : 'Select color'}
-      </div>
-      <div className="flex gap-1 mb-2">
-        {HIGHLIGHT_COLORS.map((color) => (
-          <button
-            key={color.value}
-            onClick={() => onColorSelect(color.hex)}
-            className="w-7 h-7 rounded-full border-2 border-transparent hover:border-foreground/50 transition-colors"
-            style={{ backgroundColor: color.hex }}
-            title={color.name}
-          />
-        ))}
-      </div>
+    <div className="bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[160px] text-sm">
+      {/* Selected text preview */}
+      {selectedText && (
+        <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border truncate max-w-[200px]">
+          "{selectedText.slice(0, 40)}{selectedText.length > 40 ? '...' : ''}"
+        </div>
+      )}
+      
+      {/* Add note option */}
+      {onAddNote && (
+        <button
+          onClick={onAddNote}
+          className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
+        >
+          <StickyNote className="h-4 w-4 text-amber-500" />
+          <span>添加笔记</span>
+        </button>
+      )}
+      
+      {/* Add comment option */}
+      {onAddComment && (
+        <button
+          onClick={onAddComment}
+          className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
+        >
+          <MessageSquare className="h-4 w-4" />
+          <span>添加评论</span>
+        </button>
+      )}
+      
+      {(onAddNote || onAddComment) && <div className="border-t border-border my-1" />}
+      
+      {/* Color options - Zotero style with Chinese names */}
+      {HIGHLIGHT_COLORS.map((color) => (
+        <button
+          key={color.value}
+          onClick={() => onColorSelect(color.hex)}
+          className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
+        >
+          <div className="relative">
+            <div 
+              className="w-4 h-4 rounded-sm border border-black/10"
+              style={{ backgroundColor: color.hex }}
+            />
+            {currentColor === color.hex && (
+              <Check className="absolute -top-0.5 -right-0.5 h-3 w-3 text-foreground" />
+            )}
+          </div>
+          <span>{color.nameCN}</span>
+        </button>
+      ))}
+      
+      <div className="border-t border-border my-1" />
+      
       <button
         onClick={onCancel}
-        className="text-xs text-muted-foreground hover:text-foreground"
+        className="w-full px-3 py-1.5 text-left hover:bg-muted text-muted-foreground"
       >
-        Cancel
+        取消
       </button>
     </div>
   );
@@ -279,65 +332,176 @@ interface HighlightPopupProps {
   comment: { text: string; emoji: string };
   onDelete: () => void;
   onAddComment: (comment: string) => void;
+  onChangeColor?: (color: string) => void;
+  onConvertToUnderline?: () => void;
+  currentColor?: string;
+  styleType?: 'highlight' | 'underline' | 'area' | 'ink';
+  highlightText?: string;
 }
 
-function HighlightPopupContent({ comment, onDelete, onAddComment }: HighlightPopupProps) {
+/**
+ * Zotero-style highlight context menu
+ * Features: Add note, change color, convert to underline, delete
+ */
+function HighlightPopupContent({ 
+  comment, 
+  onDelete, 
+  onAddComment,
+  onChangeColor,
+  onConvertToUnderline,
+  currentColor,
+  styleType = 'highlight',
+  highlightText,
+}: HighlightPopupProps) {
   const [showCommentInput, setShowCommentInput] = useState(false);
   const [commentText, setCommentText] = useState(comment.text || "");
+  const [showColorPicker, setShowColorPicker] = useState(false);
 
   const handleSaveComment = () => {
     onAddComment(commentText);
     setShowCommentInput(false);
   };
 
-  return (
-    <div className="bg-popover border border-border rounded-lg shadow-lg p-2 min-w-[200px]">
-      {comment.text && !showCommentInput && (
-        <div className="text-sm mb-2 p-2 bg-muted rounded">
-          {comment.text}
+  // Show comment input mode
+  if (showCommentInput) {
+    return (
+      <div className="bg-popover border border-border rounded-lg shadow-xl p-3 min-w-[280px]">
+        <div className="text-xs font-medium mb-2 text-muted-foreground">添加评论</div>
+        <textarea
+          value={commentText}
+          onChange={(e) => setCommentText(e.target.value)}
+          placeholder="输入评论..."
+          className="w-full p-2 text-sm border border-border rounded bg-background resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+          rows={3}
+          autoFocus
+        />
+        <div className="flex justify-end gap-2 mt-2">
+          <Button size="sm" variant="ghost" onClick={() => setShowCommentInput(false)}>
+            取消
+          </Button>
+          <Button size="sm" onClick={handleSaveComment}>
+            保存
+          </Button>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {showCommentInput ? (
-        <div className="space-y-2">
-          <textarea
-            value={commentText}
-            onChange={(e) => setCommentText(e.target.value)}
-            placeholder="Add a comment..."
-            className="w-full p-2 text-sm border border-border rounded bg-background resize-none"
-            rows={2}
-            autoFocus
-          />
-          <div className="flex gap-1">
-            <Button size="sm" variant="ghost" onClick={() => setShowCommentInput(false)}>
-              <X className="h-3 w-3" />
-            </Button>
-            <Button size="sm" onClick={handleSaveComment}>
-              <Check className="h-3 w-3" />
-            </Button>
+  // Show color picker mode
+  if (showColorPicker && onChangeColor) {
+    return (
+      <div className="bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[160px]">
+        <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground border-b border-border">
+          选择颜色
+        </div>
+        {HIGHLIGHT_COLORS.map((color) => (
+          <button
+            key={color.value}
+            onClick={() => {
+              onChangeColor(color.hex);
+              setShowColorPicker(false);
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2 text-sm"
+          >
+            <div className="relative">
+              <div 
+                className="w-4 h-4 rounded-sm border border-black/10"
+                style={{ backgroundColor: color.hex }}
+              />
+              {currentColor === color.hex && (
+                <Check className="absolute -top-0.5 -right-0.5 h-3 w-3 text-foreground" />
+              )}
+            </div>
+            <span>{color.nameCN}</span>
+          </button>
+        ))}
+        <div className="border-t border-border my-1" />
+        <button
+          onClick={() => setShowColorPicker(false)}
+          className="w-full px-3 py-1.5 text-left hover:bg-muted text-sm text-muted-foreground"
+        >
+          返回
+        </button>
+      </div>
+    );
+  }
+
+  // Main context menu - Zotero style
+  return (
+    <div className="bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[180px] text-sm">
+      {/* Show highlighted text preview if available */}
+      {highlightText && (
+        <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border">
+          <div className="truncate max-w-[200px]" style={{ backgroundColor: `${currentColor}40` }}>
+            "{highlightText.slice(0, 50)}{highlightText.length > 50 ? '...' : ''}"
           </div>
         </div>
-      ) : (
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setShowCommentInput(true)}
-            title="Add comment"
-          >
-            <MessageSquare className="h-3 w-3" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={onDelete}
-            className="text-destructive hover:text-destructive"
-            title="Delete highlight"
-          >
-            <X className="h-3 w-3" />
-          </Button>
+      )}
+      
+      {/* Show existing comment */}
+      {comment.text && (
+        <div className="px-3 py-2 border-b border-border">
+          <div className="text-xs text-muted-foreground mb-1">评论:</div>
+          <div className="text-sm bg-muted rounded p-1.5">{comment.text}</div>
         </div>
       )}
+      
+      {/* Add/Edit comment */}
+      <button
+        onClick={() => setShowCommentInput(true)}
+        className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
+      >
+        <MessageSquare className="h-4 w-4" />
+        <span>{comment.text ? '编辑评论' : '添加评论'}</span>
+      </button>
+      
+      {/* Change color */}
+      {onChangeColor && (
+        <button
+          onClick={() => setShowColorPicker(true)}
+          className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
+        >
+          <div 
+            className="w-4 h-4 rounded-sm border border-black/10"
+            style={{ backgroundColor: currentColor || '#FFD400' }}
+          />
+          <span>更改颜色</span>
+          <ChevronDown className="h-3 w-3 ml-auto" />
+        </button>
+      )}
+      
+      {/* Convert to underline (only for highlights) */}
+      {styleType === 'highlight' && onConvertToUnderline && (
+        <button
+          onClick={onConvertToUnderline}
+          className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
+        >
+          <Underline className="h-4 w-4" />
+          <span>转换为下划线</span>
+        </button>
+      )}
+      
+      {/* Convert to highlight (only for underlines) */}
+      {styleType === 'underline' && onConvertToUnderline && (
+        <button
+          onClick={onConvertToUnderline}
+          className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
+        >
+          <Highlighter className="h-4 w-4" />
+          <span>转换为高亮</span>
+        </button>
+      )}
+      
+      <div className="border-t border-border my-1" />
+      
+      {/* Delete */}
+      <button
+        onClick={onDelete}
+        className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2 text-destructive"
+      >
+        <X className="h-4 w-4" />
+        <span>删除</span>
+      </button>
     </div>
   );
 }
@@ -348,29 +512,35 @@ interface PinCommentPopupProps {
   onCancel: () => void;
 }
 
+/**
+ * Zotero-style sticky note popup
+ */
 function PinCommentPopup({ position, onSave, onCancel }: PinCommentPopupProps) {
   const [comment, setComment] = useState("");
 
   return (
     <div
-      className="fixed bg-popover border border-border rounded-lg shadow-lg p-3 z-50 min-w-[250px]"
+      className="fixed bg-popover border border-border rounded-lg shadow-xl p-3 z-50 min-w-[280px]"
       style={{ left: position.x, top: position.y }}
     >
-      <div className="text-sm font-medium mb-2">Add Note</div>
+      <div className="flex items-center gap-2 mb-2">
+        <StickyNote className="h-4 w-4 text-amber-500" />
+        <span className="text-sm font-medium">添加笔记</span>
+      </div>
       <textarea
         value={comment}
         onChange={(e) => setComment(e.target.value)}
-        placeholder="Enter your note..."
-        className="w-full p-2 text-sm border border-border rounded bg-background resize-none mb-2"
-        rows={3}
+        placeholder="输入笔记内容..."
+        className="w-full p-2 text-sm border border-border rounded bg-background resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+        rows={4}
         autoFocus
       />
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-2 mt-2">
         <Button size="sm" variant="ghost" onClick={onCancel}>
-          Cancel
+          取消
         </Button>
         <Button size="sm" onClick={() => onSave(comment)}>
-          Save
+          保存
         </Button>
       </div>
     </div>
@@ -383,29 +553,35 @@ interface TextAnnotationPopupProps {
   onCancel: () => void;
 }
 
+/**
+ * Zotero-style text annotation popup
+ */
 function TextAnnotationPopup({ position, onSave, onCancel }: TextAnnotationPopupProps) {
   const [text, setText] = useState("");
 
   return (
     <div
-      className="fixed bg-popover border border-border rounded-lg shadow-lg p-3 z-50 min-w-[250px]"
+      className="fixed bg-popover border border-border rounded-lg shadow-xl p-3 z-50 min-w-[280px]"
       style={{ left: position.x, top: position.y }}
     >
-      <div className="text-sm font-medium mb-2">Add Text</div>
+      <div className="flex items-center gap-2 mb-2">
+        <Type className="h-4 w-4" />
+        <span className="text-sm font-medium">添加文本</span>
+      </div>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder="Enter text..."
-        className="w-full p-2 text-sm border border-border rounded bg-background resize-none mb-2"
-        rows={2}
+        placeholder="输入文本..."
+        className="w-full p-2 text-sm border border-border rounded bg-background resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+        rows={3}
         autoFocus
       />
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-2 mt-2">
         <Button size="sm" variant="ghost" onClick={onCancel}>
-          Cancel
+          取消
         </Button>
         <Button size="sm" onClick={() => onSave(text)} disabled={!text.trim()}>
-          Add
+          添加
         </Button>
       </div>
     </div>
@@ -1056,7 +1232,7 @@ export function PDFHighlighterAdapter({
       {/* Error banner */}
       {annotationsError && (
         <div className="bg-red-50 dark:bg-red-950 border-b border-red-200 dark:border-red-800 px-4 py-2 text-sm text-red-700 dark:text-red-300">
-          Error: {annotationsError}
+          错误: {annotationsError}
         </div>
       )}
       
@@ -1076,7 +1252,7 @@ export function PDFHighlighterAdapter({
               size="icon"
               className="h-8 w-8"
               onClick={() => setActiveTool(activeTool === 'highlight' ? 'select' : 'highlight')}
-              title="Highlight (H)"
+              title="高亮 (H)"
             >
               <Highlighter className="h-4 w-4" style={{ color: activeColor }} />
             </Button>
@@ -1089,23 +1265,28 @@ export function PDFHighlighterAdapter({
               <ChevronDown className="h-3 w-3" />
             </Button>
             {showColorPicker && (
-              <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-lg shadow-lg p-2">
-                <div className="flex gap-1">
-                  {HIGHLIGHT_COLORS.map((color) => (
-                    <button
-                      key={color.value}
-                      onClick={() => {
-                        setActiveColor(color.hex);
-                        setShowColorPicker(false);
-                      }}
-                      className={`w-6 h-6 rounded-full border-2 transition-colors ${
-                        activeColor === color.hex ? 'border-foreground' : 'border-transparent hover:border-foreground/50'
-                      }`}
-                      style={{ backgroundColor: color.hex }}
-                      title={color.name}
-                    />
-                  ))}
-                </div>
+              <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[140px]">
+                {HIGHLIGHT_COLORS.map((color) => (
+                  <button
+                    key={color.value}
+                    onClick={() => {
+                      setActiveColor(color.hex);
+                      setShowColorPicker(false);
+                    }}
+                    className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2 text-sm"
+                  >
+                    <div className="relative">
+                      <div 
+                        className="w-4 h-4 rounded-sm border border-black/10"
+                        style={{ backgroundColor: color.hex }}
+                      />
+                      {activeColor === color.hex && (
+                        <Check className="absolute -top-0.5 -right-0.5 h-3 w-3 text-foreground" />
+                      )}
+                    </div>
+                    <span>{color.nameCN}</span>
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -1116,9 +1297,9 @@ export function PDFHighlighterAdapter({
             size="icon"
             className="h-8 w-8"
             onClick={() => setActiveTool(activeTool === 'underline' ? 'select' : 'underline')}
-            title="Underline (U)"
+            title="下划线 (U)"
           >
-            <Underline className="h-4 w-4" />
+            <Underline className="h-4 w-4" style={{ color: activeTool === 'underline' ? activeColor : undefined }} />
           </Button>
 
           {/* Sticky Note tool */}
@@ -1127,9 +1308,9 @@ export function PDFHighlighterAdapter({
             size="icon"
             className="h-8 w-8"
             onClick={() => setActiveTool(activeTool === 'note' ? 'select' : 'note')}
-            title="Sticky Note (N)"
+            title="便签 (N)"
           >
-            <StickyNote className="h-4 w-4" />
+            <StickyNote className="h-4 w-4 text-amber-500" />
           </Button>
 
           {/* Text tool */}
@@ -1138,7 +1319,7 @@ export function PDFHighlighterAdapter({
             size="icon"
             className="h-8 w-8"
             onClick={() => setActiveTool(activeTool === 'text' ? 'select' : 'text')}
-            title="Text (T)"
+            title="文本 (T)"
           >
             <Type className="h-4 w-4" />
           </Button>
@@ -1149,7 +1330,7 @@ export function PDFHighlighterAdapter({
             size="icon"
             className="h-8 w-8"
             onClick={() => setActiveTool(activeTool === 'area' ? 'select' : 'area')}
-            title="Area Selection (A)"
+            title="区域选择 (A)"
           >
             <Square className="h-4 w-4" />
           </Button>
@@ -1160,9 +1341,9 @@ export function PDFHighlighterAdapter({
             size="icon"
             className="h-8 w-8"
             onClick={() => setActiveTool(activeTool === 'ink' ? 'select' : 'ink')}
-            title="Draw (D)"
+            title="绘图 (D)"
           >
-            <Pencil className="h-4 w-4" />
+            <Pencil className="h-4 w-4" style={{ color: activeTool === 'ink' ? activeColor : undefined }} />
           </Button>
         </div>
 
@@ -1174,13 +1355,13 @@ export function PDFHighlighterAdapter({
             className="h-8 w-8"
             onClick={zoomOut}
             disabled={scale <= ZOOM_MIN}
-            title="Zoom out (Ctrl+-)"
+            title="缩小 (Ctrl+-)"
           >
             <ZoomOut className="h-4 w-4" />
           </Button>
           
           <span className="min-w-[3.5rem] text-center text-sm tabular-nums">
-            {zoomMode === 'fit-width' ? 'Fit W' : zoomMode === 'fit-page' ? 'Fit P' : `${Math.round(scale * 100)}%`}
+            {zoomMode === 'fit-width' ? '适宽' : zoomMode === 'fit-page' ? '适页' : `${Math.round(scale * 100)}%`}
           </span>
           
           <Button
@@ -1189,7 +1370,7 @@ export function PDFHighlighterAdapter({
             className="h-8 w-8"
             onClick={zoomIn}
             disabled={scale >= ZOOM_MAX}
-            title="Zoom in (Ctrl++)"
+            title="放大 (Ctrl++)"
           >
             <ZoomIn className="h-4 w-4" />
           </Button>
@@ -1200,7 +1381,7 @@ export function PDFHighlighterAdapter({
             size="icon"
             className="h-8 w-8"
             onClick={() => applyZoomMode(zoomMode === 'fit-width' ? 'manual' : 'fit-width')}
-            title="Fit width"
+            title="适应宽度"
           >
             <FitWidthIcon className="h-4 w-4" />
           </Button>
@@ -1218,7 +1399,7 @@ export function PDFHighlighterAdapter({
             size="icon"
             className="h-8 w-8"
             onClick={() => setShowSidebar(!showSidebar)}
-            title={showSidebar ? "Hide annotations panel" : "Show annotations panel"}
+            title={showSidebar ? "隐藏批注面板" : "显示批注面板"}
           >
             {showSidebar ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
           </Button>
@@ -1231,37 +1412,37 @@ export function PDFHighlighterAdapter({
           {activeTool === 'highlight' && (
             <>
               <Highlighter className="h-3 w-3" />
-              Select text to highlight
+              选择文本以添加高亮
             </>
           )}
           {activeTool === 'underline' && (
             <>
               <Underline className="h-3 w-3" />
-              Select text to underline
+              选择文本以添加下划线
             </>
           )}
           {activeTool === 'note' && (
             <>
               <StickyNote className="h-3 w-3" />
-              Click anywhere to add a sticky note
+              点击任意位置添加便签
             </>
           )}
           {activeTool === 'text' && (
             <>
               <Type className="h-3 w-3" />
-              Click to add text annotation
+              点击添加文本批注
             </>
           )}
           {activeTool === 'area' && (
             <>
               <Square className="h-3 w-3" />
-              Drag to select an area
+              拖动选择区域
             </>
           )}
           {activeTool === 'ink' && (
             <>
               <Pencil className="h-3 w-3" />
-              Draw on the PDF
+              在PDF上绘制
             </>
           )}
           <button 
@@ -1295,7 +1476,7 @@ export function PDFHighlighterAdapter({
           beforeLoad={
             <div className="flex items-center justify-center gap-2 py-8">
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-sm text-muted-foreground">Loading PDF...</span>
+              <span className="text-sm text-muted-foreground">正在加载PDF...</span>
             </div>
           }
         >
@@ -1372,6 +1553,23 @@ export function PDFHighlighterAdapter({
                 const isPin = annotation && isPinAnnotation(annotation);
                 const isHighlighted = highlightedId === highlight.id;
 
+                // Handler for changing color
+                const handleChangeColor = (color: string) => {
+                  if (annotation) {
+                    updateAnnotation(highlight.id, { style: { ...annotation.style, color } });
+                  }
+                  hideTip();
+                };
+
+                // Handler for converting highlight to underline or vice versa
+                const handleConvertStyle = () => {
+                  if (annotation) {
+                    const newType = annotation.style.type === 'highlight' ? 'underline' : 'highlight';
+                    updateAnnotation(highlight.id, { style: { ...annotation.style, type: newType } });
+                    hideTip();
+                  }
+                };
+
                 if (isPin) {
                   const position = highlight.position;
                   // Pin position uses viewport coordinates (left, top)
@@ -1391,6 +1589,9 @@ export function PDFHighlighterAdapter({
                         setTip(highlight, () => (
                           <HighlightPopupContent
                             comment={highlight.comment}
+                            highlightText={highlight.content?.text}
+                            currentColor={annotation?.style.color}
+                            styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
                             onDelete={() => {
                               deleteAnnotation(highlight.id);
                               hideTip();
@@ -1399,6 +1600,7 @@ export function PDFHighlighterAdapter({
                               updateAnnotation(highlight.id, { comment });
                               hideTip();
                             }}
+                            onChangeColor={handleChangeColor}
                           />
                         ));
                       }}
@@ -1416,6 +1618,9 @@ export function PDFHighlighterAdapter({
                     popupContent={
                       <HighlightPopupContent
                         comment={highlight.comment}
+                        highlightText={highlight.content?.text}
+                        currentColor={annotation?.style.color}
+                        styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
                         onDelete={() => {
                           deleteAnnotation(highlight.id);
                           hideTip();
@@ -1424,6 +1629,8 @@ export function PDFHighlighterAdapter({
                           updateAnnotation(highlight.id, { comment });
                           hideTip();
                         }}
+                        onChangeColor={handleChangeColor}
+                        onConvertToUnderline={handleConvertStyle}
                       />
                     }
                     onMouseOver={(popupContent) => setTip(highlight, () => popupContent)}
@@ -1435,6 +1642,9 @@ export function PDFHighlighterAdapter({
                         setTip(highlight, () => (
                           <HighlightPopupContent
                             comment={highlight.comment}
+                            highlightText={highlight.content?.text}
+                            currentColor={annotation?.style.color}
+                            styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
                             onDelete={() => {
                               deleteAnnotation(highlight.id);
                               hideTip();
@@ -1443,6 +1653,8 @@ export function PDFHighlighterAdapter({
                               updateAnnotation(highlight.id, { comment });
                               hideTip();
                             }}
+                            onChangeColor={handleChangeColor}
+                            onConvertToUnderline={handleConvertStyle}
                           />
                         ));
                       }}
@@ -1491,12 +1703,26 @@ export function PDFHighlighterAdapter({
 
         {/* Annotation Sidebar */}
         {showSidebar && (
-          <div className="w-64 border-l border-border bg-background flex-shrink-0 overflow-hidden">
+          <div className="w-72 border-l border-border bg-background flex-shrink-0 overflow-hidden">
             <PdfAnnotationSidebar
               annotations={annotations}
               selectedId={selectedAnnotationId}
               onSelect={handleSidebarSelect}
               onDelete={handleSidebarDelete}
+              onUpdateColor={(id, color) => {
+                const ann = annotations.find(a => a.id === id);
+                if (ann) {
+                  updateAnnotation(id, { style: { ...ann.style, color } });
+                }
+              }}
+              onUpdateComment={(id, comment) => updateAnnotation(id, { comment })}
+              onConvertToUnderline={(id) => {
+                const ann = annotations.find(a => a.id === id);
+                if (ann) {
+                  const newType = ann.style.type === 'highlight' ? 'underline' : 'highlight';
+                  updateAnnotation(id, { style: { ...ann.style, type: newType } });
+                }
+              }}
             />
           </div>
         )}
