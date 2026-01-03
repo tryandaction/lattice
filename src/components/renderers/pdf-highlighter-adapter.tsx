@@ -13,23 +13,25 @@ import {
   PdfHighlighter,
   Highlight,
   Popup,
-  AreaHighlight,
 } from "react-pdf-highlighter";
 import type { 
   IHighlight, 
   NewHighlight, 
-  ScaledPosition, 
-  Content,
-  LTWHP,
 } from "react-pdf-highlighter";
 import { 
   ZoomIn, 
   ZoomOut, 
   Loader2, 
-  Pin, 
+  StickyNote,
   MessageSquare,
   X,
   Check,
+  Highlighter,
+  Underline,
+  Type,
+  Square,
+  Pencil,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAnnotationSystem } from "@/hooks/use-annotation-system";
@@ -49,6 +51,19 @@ interface PDFHighlighterAdapterProps {
   fileName: string;
   fileHandle: FileSystemFileHandle;
   rootHandle: FileSystemDirectoryHandle;
+}
+
+// Annotation tool types (Zotero-style)
+type AnnotationTool = 'select' | 'highlight' | 'underline' | 'note' | 'text' | 'area' | 'ink';
+
+// Fit width icon component (Zotero style)
+function FitWidthIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M7 12h10M7 12l2-2M7 12l2 2M17 12l-2-2M17 12l-2 2" />
+    </svg>
+  );
 }
 
 // ============================================================================
@@ -333,7 +348,6 @@ export function PDFHighlighterAdapter({
 }: PDFHighlighterAdapterProps) {
   const {
     annotations,
-    isLoading: annotationsLoading,
     error: annotationsError,
     addAnnotation,
     updateAnnotation,
@@ -346,10 +360,199 @@ export function PDFHighlighterAdapter({
   });
 
   const [scale, setScale] = useState(1.2);
-  const [pinMode, setPinMode] = useState(false);
+  const [zoomMode, setZoomMode] = useState<'manual' | 'fit-width' | 'fit-page'>('manual');
+  const [activeTool, setActiveTool] = useState<AnnotationTool>('select');
+  const [activeColor, setActiveColor] = useState('#FFEB3B'); // Yellow default
   const [pendingPin, setPendingPin] = useState<{ x: number; y: number; page: number } | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const [showColorPicker, setShowColorPicker] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Zoom limits
+  const ZOOM_MIN = 0.25;
+  const ZOOM_MAX = 4.0;
+  const ZOOM_STEP = 0.25;
+
+  // Calculate fit-width scale
+  const calculateFitWidth = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return 1.0;
+    
+    // Assume standard PDF page width of 612 points (8.5 inches)
+    const pageWidth = 612;
+    const containerWidth = container.clientWidth - 48; // Account for padding
+    return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, containerWidth / pageWidth));
+  }, []);
+
+  // Calculate fit-page scale
+  const calculateFitPage = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return 1.0;
+    
+    // Assume standard PDF page dimensions (612 x 792 points)
+    const pageWidth = 612;
+    const pageHeight = 792;
+    const containerWidth = container.clientWidth - 48;
+    const containerHeight = container.clientHeight - 48;
+    
+    const scaleX = containerWidth / pageWidth;
+    const scaleY = containerHeight / pageHeight;
+    return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(scaleX, scaleY)));
+  }, []);
+
+  // Helper to preserve viewport center during zoom
+  const preserveViewportCenter = useCallback((oldScale: number, newScale: number) => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    // Get current scroll position and viewport dimensions
+    const scrollLeft = container.scrollLeft;
+    const scrollTop = container.scrollTop;
+    const viewportWidth = container.clientWidth;
+    const viewportHeight = container.clientHeight;
+
+    // Calculate the center point in document coordinates (at old scale)
+    const centerX = scrollLeft + viewportWidth / 2;
+    const centerY = scrollTop + viewportHeight / 2;
+
+    // Convert to normalized coordinates (independent of scale)
+    const normalizedX = centerX / oldScale;
+    const normalizedY = centerY / oldScale;
+
+    // After scale change, restore the center point
+    requestAnimationFrame(() => {
+      // Calculate new scroll position to keep the same center
+      const newCenterX = normalizedX * newScale;
+      const newCenterY = normalizedY * newScale;
+      
+      container.scrollLeft = newCenterX - viewportWidth / 2;
+      container.scrollTop = newCenterY - viewportHeight / 2;
+    });
+  }, []);
+
+  // Apply zoom mode
+  const applyZoomMode = useCallback((mode: 'manual' | 'fit-width' | 'fit-page') => {
+    setZoomMode(mode);
+    if (mode === 'fit-width') {
+      const newScale = calculateFitWidth();
+      setScale((s) => {
+        if (s !== newScale) preserveViewportCenter(s, newScale);
+        return newScale;
+      });
+    } else if (mode === 'fit-page') {
+      const newScale = calculateFitPage();
+      setScale((s) => {
+        if (s !== newScale) preserveViewportCenter(s, newScale);
+        return newScale;
+      });
+    }
+  }, [calculateFitWidth, calculateFitPage, preserveViewportCenter]);
+
+  // Zoom functions with proper bounds and viewport preservation
+  const zoomIn = useCallback(() => {
+    setScale((s) => {
+      const newScale = Math.min(s + ZOOM_STEP, ZOOM_MAX);
+      if (newScale !== s) {
+        preserveViewportCenter(s, newScale);
+      }
+      return newScale;
+    });
+  }, [preserveViewportCenter]);
+
+  const zoomOut = useCallback(() => {
+    setScale((s) => {
+      const newScale = Math.max(s - ZOOM_STEP, ZOOM_MIN);
+      if (newScale !== s) {
+        preserveViewportCenter(s, newScale);
+      }
+      return newScale;
+    });
+  }, [preserveViewportCenter]);
+
+  const resetZoom = useCallback(() => {
+    setScale((s) => {
+      if (s !== 1.0) {
+        preserveViewportCenter(s, 1.0);
+      }
+      return 1.0;
+    });
+  }, [preserveViewportCenter]);
+
+  // Handle Ctrl+Wheel zoom
+  const handleWheel = useCallback((e: WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+      setScale((s) => {
+        const newScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, s + delta));
+        if (newScale !== s) {
+          preserveViewportCenter(s, newScale);
+        }
+        return newScale;
+      });
+    }
+  }, [preserveViewportCenter]);
+
+  // Handle keyboard shortcuts for zoom and tools
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    // Zoom shortcuts
+    if (e.ctrlKey || e.metaKey) {
+      if (e.key === '=' || e.key === '+') {
+        e.preventDefault();
+        zoomIn();
+      } else if (e.key === '-') {
+        e.preventDefault();
+        zoomOut();
+      } else if (e.key === '0') {
+        e.preventDefault();
+        resetZoom();
+      }
+    }
+    // Tool shortcuts (without modifiers)
+    if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+      switch (e.key.toLowerCase()) {
+        case 'h':
+          setActiveTool(activeTool === 'highlight' ? 'select' : 'highlight');
+          break;
+        case 'u':
+          setActiveTool(activeTool === 'underline' ? 'select' : 'underline');
+          break;
+        case 'n':
+          setActiveTool(activeTool === 'note' ? 'select' : 'note');
+          break;
+        case 't':
+          setActiveTool(activeTool === 'text' ? 'select' : 'text');
+          break;
+        case 'a':
+          setActiveTool(activeTool === 'area' ? 'select' : 'area');
+          break;
+        case 'd':
+          setActiveTool(activeTool === 'ink' ? 'select' : 'ink');
+          break;
+        case 'escape':
+          setActiveTool('select');
+          setShowColorPicker(false);
+          break;
+      }
+    }
+  }, [zoomIn, zoomOut, resetZoom, activeTool]);
+
+  // Set up wheel and keyboard event listeners
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (container) {
+      container.addEventListener('wheel', handleWheel, { passive: false });
+    }
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      if (container) {
+        container.removeEventListener('wheel', handleWheel);
+      }
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handleWheel, handleKeyDown]);
 
   // Create blob URL from ArrayBuffer
   const pdfUrl = useMemo(() => {
@@ -380,10 +583,10 @@ export function PDFHighlighterAdapter({
     },
   });
 
-  // Handle PDF click in pin mode
+  // Handle PDF click in note mode
   const handlePdfClick = useCallback(
     (event: React.MouseEvent) => {
-      if (!pinMode) return;
+      if (activeTool !== 'note') return;
 
       const target = event.target as HTMLElement;
       const pageElement = target.closest('[data-page-number]');
@@ -397,7 +600,7 @@ export function PDFHighlighterAdapter({
         page: pageNumber,
       });
     },
-    [pinMode]
+    [activeTool]
   );
 
   // Save pin
@@ -428,65 +631,158 @@ export function PDFHighlighterAdapter({
     [pendingPin, addAnnotation]
   );
 
-  const zoomIn = () => setScale((s) => Math.min(s + 0.25, 3.0));
-  const zoomOut = () => setScale((s) => Math.max(s - 0.25, 0.5));
-
-  const getHighlightById = useCallback(
-    (id: string) => highlights.find((h) => h.id === id),
-    [highlights]
-  );
-
   if (annotationsError) {
     console.error('Annotation error:', annotationsError);
   }
 
   return (
     <div ref={containerRef} className="flex h-full flex-col">
-      {/* Toolbar */}
-      <div className="flex items-center justify-between border-b border-border bg-muted/50 px-4 py-2">
-        <span className="text-sm text-muted-foreground truncate max-w-xs">
+      {/* Zotero-style Toolbar */}
+      <div className="flex items-center justify-between border-b border-border bg-muted/50 px-2 py-1.5">
+        {/* Left: File name */}
+        <span className="text-sm text-muted-foreground truncate max-w-[200px]">
           {fileName}
         </span>
 
-        <div className="flex items-center gap-2">
+        {/* Center: Annotation Tools (Zotero style) */}
+        <div className="flex items-center gap-0.5">
+          {/* Highlight tool with color picker */}
+          <div className="relative">
+            <Button
+              variant={activeTool === 'highlight' ? "secondary" : "ghost"}
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setActiveTool(activeTool === 'highlight' ? 'select' : 'highlight')}
+              title="Highlight (H)"
+            >
+              <Highlighter className="h-4 w-4" style={{ color: activeColor }} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-4 px-0"
+              onClick={() => setShowColorPicker(!showColorPicker)}
+            >
+              <ChevronDown className="h-3 w-3" />
+            </Button>
+            {showColorPicker && (
+              <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-lg shadow-lg p-2">
+                <div className="flex gap-1">
+                  {HIGHLIGHT_COLORS.map((color) => (
+                    <button
+                      key={color.value}
+                      onClick={() => {
+                        setActiveColor(color.hex);
+                        setShowColorPicker(false);
+                      }}
+                      className={`w-6 h-6 rounded-full border-2 transition-colors ${
+                        activeColor === color.hex ? 'border-foreground' : 'border-transparent hover:border-foreground/50'
+                      }`}
+                      style={{ backgroundColor: color.hex }}
+                      title={color.name}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Underline tool */}
           <Button
-            variant={pinMode ? "secondary" : "ghost"}
-            size="sm"
-            onClick={() => setPinMode(!pinMode)}
-            title={pinMode ? "Exit Pin Mode" : "Enter Pin Mode"}
-            className="gap-1"
+            variant={activeTool === 'underline' ? "secondary" : "ghost"}
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setActiveTool(activeTool === 'underline' ? 'select' : 'underline')}
+            title="Underline (U)"
           >
-            <Pin className="h-4 w-4" />
-            {pinMode && <span className="text-xs">Pin Mode</span>}
+            <Underline className="h-4 w-4" />
           </Button>
 
-          <div className="mx-2 h-4 w-px bg-border" />
+          {/* Sticky Note tool */}
+          <Button
+            variant={activeTool === 'note' ? "secondary" : "ghost"}
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setActiveTool(activeTool === 'note' ? 'select' : 'note')}
+            title="Sticky Note (N)"
+          >
+            <StickyNote className="h-4 w-4" />
+          </Button>
 
+          {/* Text tool */}
+          <Button
+            variant={activeTool === 'text' ? "secondary" : "ghost"}
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setActiveTool(activeTool === 'text' ? 'select' : 'text')}
+            title="Text (T)"
+          >
+            <Type className="h-4 w-4" />
+          </Button>
+
+          {/* Area selection tool */}
+          <Button
+            variant={activeTool === 'area' ? "secondary" : "ghost"}
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setActiveTool(activeTool === 'area' ? 'select' : 'area')}
+            title="Area Selection (A)"
+          >
+            <Square className="h-4 w-4" />
+          </Button>
+
+          {/* Ink/Draw tool */}
+          <Button
+            variant={activeTool === 'ink' ? "secondary" : "ghost"}
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setActiveTool(activeTool === 'ink' ? 'select' : 'ink')}
+            title="Draw (D)"
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {/* Right: Zoom Controls (Zotero style) */}
+        <div className="flex items-center gap-1">
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="h-8 w-8"
             onClick={zoomOut}
-            disabled={scale <= 0.5}
-            title="Zoom out"
+            disabled={scale <= ZOOM_MIN}
+            title="Zoom out (Ctrl+-)"
           >
             <ZoomOut className="h-4 w-4" />
           </Button>
-          <span className="min-w-[4rem] text-center text-sm">
+          
+          <span className="min-w-[3.5rem] text-center text-sm tabular-nums">
             {Math.round(scale * 100)}%
           </span>
+          
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="h-8 w-8"
             onClick={zoomIn}
-            disabled={scale >= 3.0}
-            title="Zoom in"
+            disabled={scale >= ZOOM_MAX}
+            title="Zoom in (Ctrl++)"
           >
             <ZoomIn className="h-4 w-4" />
           </Button>
 
-          <div className="mx-2 h-4 w-px bg-border" />
+          {/* Fit width button (Zotero style) */}
+          <Button
+            variant={zoomMode === 'fit-width' ? "secondary" : "ghost"}
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => applyZoomMode(zoomMode === 'fit-width' ? 'manual' : 'fit-width')}
+            title="Fit width"
+          >
+            <FitWidthIcon className="h-4 w-4" />
+          </Button>
+
+          <div className="mx-1 h-4 w-px bg-border" />
 
           <PDFExportButton
             originalContent={content}
@@ -496,17 +792,63 @@ export function PDFHighlighterAdapter({
         </div>
       </div>
 
-      {pinMode && (
-        <div className="bg-amber-50 dark:bg-amber-950 border-b border-amber-200 dark:border-amber-800 px-4 py-1 text-xs text-amber-700 dark:text-amber-300 flex items-center gap-2">
-          <Pin className="h-3 w-3" />
-          Click anywhere on the PDF to add a sticky note
+      {/* Tool hint bar */}
+      {activeTool !== 'select' && (
+        <div className="bg-blue-50 dark:bg-blue-950 border-b border-blue-200 dark:border-blue-800 px-4 py-1 text-xs text-blue-700 dark:text-blue-300 flex items-center gap-2">
+          {activeTool === 'highlight' && (
+            <>
+              <Highlighter className="h-3 w-3" />
+              Select text to highlight
+            </>
+          )}
+          {activeTool === 'underline' && (
+            <>
+              <Underline className="h-3 w-3" />
+              Select text to underline
+            </>
+          )}
+          {activeTool === 'note' && (
+            <>
+              <StickyNote className="h-3 w-3" />
+              Click anywhere to add a sticky note
+            </>
+          )}
+          {activeTool === 'text' && (
+            <>
+              <Type className="h-3 w-3" />
+              Click to add text annotation
+            </>
+          )}
+          {activeTool === 'area' && (
+            <>
+              <Square className="h-3 w-3" />
+              Drag to select an area
+            </>
+          )}
+          {activeTool === 'ink' && (
+            <>
+              <Pencil className="h-3 w-3" />
+              Draw on the PDF
+            </>
+          )}
+          <button 
+            className="ml-auto text-blue-500 hover:text-blue-700"
+            onClick={() => setActiveTool('select')}
+          >
+            <X className="h-3 w-3" />
+          </button>
         </div>
       )}
 
       <div
+        ref={scrollContainerRef}
         className="flex-1 overflow-auto bg-muted/30"
         onClick={handlePdfClick}
-        style={{ cursor: pinMode ? 'crosshair' : 'default' }}
+        style={{ 
+          cursor: activeTool === 'note' ? 'crosshair' : 
+                  activeTool === 'area' ? 'crosshair' :
+                  activeTool === 'ink' ? 'crosshair' : 'default' 
+        }}
       >
         <PdfLoader
           url={pdfUrl}
@@ -520,28 +862,43 @@ export function PDFHighlighterAdapter({
           {(pdfDocument) => (
             <PdfHighlighter
               pdfDocument={pdfDocument}
-              enableAreaSelection={(event) => event.altKey}
+              enableAreaSelection={(event) => event.altKey || activeTool === 'area'}
               onSelectionFinished={(
                 position,
                 content,
                 hideTipAndSelection,
                 transformSelection
-              ) => (
-                <ColorPicker
-                  selectedText={content.text}
-                  onColorSelect={(color) => {
-                    const newHighlight: NewHighlight = {
-                      position,
-                      content,
-                      comment: { text: '', emoji: '' },
-                    };
-                    const annotationData = highlightToAnnotationData(newHighlight, color, 'user');
-                    addAnnotation(annotationData);
-                    hideTipAndSelection();
-                  }}
-                  onCancel={hideTipAndSelection}
-                />
-              )}
+              ) => {
+                // If highlight or underline tool is active, use activeColor directly
+                if (activeTool === 'highlight' || activeTool === 'underline') {
+                  const newHighlight: NewHighlight = {
+                    position,
+                    content,
+                    comment: { text: '', emoji: '' },
+                  };
+                  const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user');
+                  addAnnotation(annotationData);
+                  hideTipAndSelection();
+                  return null;
+                }
+                // Otherwise show color picker
+                return (
+                  <ColorPicker
+                    selectedText={content.text}
+                    onColorSelect={(color) => {
+                      const newHighlight: NewHighlight = {
+                        position,
+                        content,
+                        comment: { text: '', emoji: '' },
+                      };
+                      const annotationData = highlightToAnnotationData(newHighlight, color, 'user');
+                      addAnnotation(annotationData);
+                      hideTipAndSelection();
+                    }}
+                    onCancel={hideTipAndSelection}
+                  />
+                );
+              }}
               highlightTransform={(
                 highlight,
                 index,
@@ -557,6 +914,7 @@ export function PDFHighlighterAdapter({
 
                 if (isPin) {
                   const position = highlight.position;
+                  // Pin position uses viewport coordinates (left, top)
                   return (
                     <div
                       key={highlight.id}
@@ -566,6 +924,8 @@ export function PDFHighlighterAdapter({
                       style={{
                         left: position.boundingRect.left,
                         top: position.boundingRect.top,
+                        // Offset to center the pin icon
+                        transform: 'translate(-50%, -100%)',
                       }}
                       onClick={() => {
                         setTip(highlight, () => (
@@ -583,7 +943,7 @@ export function PDFHighlighterAdapter({
                         ));
                       }}
                     >
-                      <Pin
+                      <StickyNote
                         className="h-5 w-5 text-amber-500 drop-shadow-md"
                         fill="currentColor"
                       />
@@ -610,11 +970,29 @@ export function PDFHighlighterAdapter({
                     onMouseOut={hideTip}
                     key={highlight.id}
                   >
-                    <Highlight
-                      isScrolledTo={isScrolledTo || isHighlighted}
-                      position={highlight.position}
-                      comment={highlight.comment}
-                    />
+                    <div
+                      onClick={() => {
+                        setTip(highlight, () => (
+                          <HighlightPopupContent
+                            comment={highlight.comment}
+                            onDelete={() => {
+                              deleteAnnotation(highlight.id);
+                              hideTip();
+                            }}
+                            onAddComment={(comment) => {
+                              updateAnnotation(highlight.id, { comment });
+                              hideTip();
+                            }}
+                          />
+                        ));
+                      }}
+                    >
+                      <Highlight
+                        isScrolledTo={isScrolledTo || isHighlighted}
+                        position={highlight.position}
+                        comment={highlight.comment}
+                      />
+                    </div>
                   </Popup>
                 );
               }}

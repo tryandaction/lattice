@@ -165,6 +165,68 @@ See [UX_GUIDELINES.md](./UX_GUIDELINES.md) for the "Structure-First" interaction
 
 ---
 
+## PDF Annotation System
+
+### Overview (Zotero-style)
+
+The PDF annotation system is designed to match Zotero's professional annotation experience.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  [filename.pdf]     [H][U][N][T][A][D]     [-][120%][+][⟷]     │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │                                                         │   │
+│  │                    PDF Content                          │   │
+│  │                                                         │   │
+│  │    ████████████  ← Highlighted text                     │   │
+│  │                                                         │   │
+│  │    📝 ← Sticky note                                     │   │
+│  │                                                         │   │
+│  └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Toolbar Layout
+
+| Section | Tools |
+|---------|-------|
+| **Left** | File name |
+| **Center** | Annotation tools: Highlight (H), Underline (U), Note (N), Text (T), Area (A), Draw (D) |
+| **Right** | Zoom controls: Zoom out (-), Percentage, Zoom in (+), Fit width (⟷), Export |
+
+### Annotation Tools
+
+| Tool | Shortcut | Description |
+|------|----------|-------------|
+| **Highlight** | H | Select text to highlight with chosen color |
+| **Underline** | U | Select text to underline |
+| **Sticky Note** | N | Click anywhere to add a note |
+| **Text** | T | Add text annotation |
+| **Area** | A | Drag to select rectangular area |
+| **Draw** | D | Freehand drawing (ink) |
+| **Escape** | Esc | Return to select mode |
+
+### Zoom Controls
+
+| Control | Shortcut | Description |
+|---------|----------|-------------|
+| **Zoom In** | Ctrl++ | Increase by 25% |
+| **Zoom Out** | Ctrl+- | Decrease by 25% |
+| **Reset** | Ctrl+0 | Reset to 100% |
+| **Wheel Zoom** | Ctrl+Scroll | Smooth zoom |
+| **Fit Width** | Button | Fit PDF to container width |
+
+### Key Features
+
+1. **Viewport Center Preservation**: When zooming, the document point at viewport center stays centered
+2. **Color Picker**: Quick color selection for highlights (dropdown from highlight tool)
+3. **Tool Hints**: Status bar shows current tool and usage instructions
+4. **Persistent Storage**: Annotations saved to `.lattice/annotations/` directory
+5. **Export**: Export PDF with embedded annotations
+
+---
+
 ## Execution Engine
 
 ### Pyodide (Python in WebAssembly)

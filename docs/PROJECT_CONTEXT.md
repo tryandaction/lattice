@@ -68,6 +68,19 @@ None currently.
   - Word document viewer
   - Code syntax highlighting (read-only)
 
+### Step 5.5: PDF Annotation System (Zotero-style)
+- **Status**: ✅ Complete
+- **Deliverables**:
+  - Zotero-style annotation toolbar
+  - Text highlighting with color picker
+  - Sticky notes (click to add)
+  - Area selection (Alt+drag or tool button)
+  - Zoom controls (Ctrl+wheel, Ctrl++/-, fit-width)
+  - Viewport center preservation during zoom
+  - Keyboard shortcuts for tools (H/U/N/T/A/D/Esc)
+  - Annotation persistence (.lattice/annotations/)
+  - PDF export with annotations
+
 ---
 
 ## Component Status

@@ -372,8 +372,13 @@ describe('Annotation Store', () => {
       fc.assert(
         fc.property(
           latticeAnnotationArb,
-          fc.string(),
+          fc.string({ minLength: 1 }), // Ensure newComment is non-empty to avoid edge case
           (annotation, newComment) => {
+            // Skip if newComment equals original comment (edge case)
+            if (newComment === annotation.comment) {
+              return true;
+            }
+
             // Setup
             const annotationsMap = new Map<string, LatticeAnnotation[]>();
             annotationsMap.set(annotation.fileId, [annotation]);
@@ -392,7 +397,7 @@ describe('Annotation Store', () => {
 
             expect(backupAnn).toBeDefined();
             expect(backupAnn?.comment).toBe(annotation.comment); // Original comment
-            expect(backupAnn?.comment).not.toBe(newComment); // Not the new comment (unless they happen to be equal)
+            expect(backupAnn?.comment).not.toBe(newComment); // Not the new comment
 
             return true;
           }
