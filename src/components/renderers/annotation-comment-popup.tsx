@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { X, Trash2, Save } from "lucide-react";
 import type { LatticeAnnotation } from "../../types/annotation";
+import { adjustPopupPosition, type PopupSize } from "@/lib/coordinate-adapter";
 
 // ============================================================================
 // Types
@@ -108,11 +109,9 @@ export function AnnotationCommentPopup({
     }
   }, [handleSave]);
 
-  // Calculate position to keep popup in viewport
-  const adjustedPosition = {
-    x: Math.max(10, Math.min(position.x, window.innerWidth - 320)),
-    y: Math.max(10, Math.min(position.y, window.innerHeight - 200)),
-  };
+  // Calculate position to keep popup in viewport using coordinate adapter
+  const popupSize: PopupSize = { width: 288, height: 280 }; // w-72 = 288px
+  const adjustedPosition = adjustPopupPosition(position, popupSize, 10);
 
   // Get color indicator style - support both named colors and hex colors
   const colorStyles: Record<string, string> = {
@@ -270,11 +269,9 @@ interface CommentTooltipProps {
 export function AnnotationCommentTooltip({ comment, position }: CommentTooltipProps) {
   if (!comment) return null;
 
-  // Calculate position to keep tooltip in viewport
-  const adjustedPosition = {
-    x: Math.max(10, Math.min(position.x, window.innerWidth - 200)),
-    y: Math.max(10, position.y),
-  };
+  // Calculate position to keep tooltip in viewport using coordinate adapter
+  const tooltipSize: PopupSize = { width: 200, height: 60 };
+  const adjustedPosition = adjustPopupPosition(position, tooltipSize, 10);
 
   return (
     <div

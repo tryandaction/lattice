@@ -553,7 +553,7 @@ export function PDFViewerWithAnnotations({
         {/* PDF Content */}
         <div 
           ref={containerRef}
-          className="flex-1 overflow-auto bg-muted/30 p-4"
+          className="flex-1 overflow-auto bg-gray-100 dark:bg-gray-800 p-4"
         >
           <Document
             file={fileData}

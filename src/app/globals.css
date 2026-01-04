@@ -1937,3 +1937,161 @@ math-field::part(placeholder) {
 .loading-progress-bar {
   animation: loading-progress 2s ease-in-out infinite;
 }
+
+
+/* ============================================================================
+   Dark Mode Content Preservation
+   ============================================================================
+   In dark mode, file preview areas (PDF, documents, markdown) should maintain
+   their original appearance (typically white background) while the surrounding
+   UI uses dark colors. This provides better readability for documents.
+   ============================================================================ */
+
+/* Content viewer wrapper - preserves light background in dark mode */
+.content-viewer-light {
+  background-color: white;
+  color: #1a1a1a;
+}
+
+.dark .content-viewer-light {
+  background-color: white;
+  color: #1a1a1a;
+}
+
+/* PDF viewer content area */
+.dark .pdf-page-container,
+.dark .react-pdf__Page,
+.dark .react-pdf__Page__canvas {
+  background-color: transparent !important;
+}
+
+/* Markdown/Editor content area - keep white in dark mode */
+.dark .prose-lattice,
+.dark .ProseMirror {
+  background-color: white;
+  color: #111827;
+  border-radius: 0;
+}
+
+/* Ensure editor container has white background */
+.dark .editor-content-area {
+  background-color: white;
+}
+
+/* Document viewers (Word, etc.) */
+.dark .document-container {
+  background-color: white;
+  color: #111827;
+}
+
+/* Slide content in PPT viewer */
+.dark .ppt-slide-container,
+.dark .pptx-wrapper,
+.dark .ppt-slide-content,
+.dark .ppt-main-slide-area .ppt-slide-container {
+  background-color: white !important;
+  color: #1a1a1a !important;
+}
+
+/* PPT content overlay must also be light */
+.dark .pptx-content-overlay {
+  background-color: transparent !important;
+  color: #222 !important;
+}
+
+.dark .pptx-content-overlay * {
+  color: inherit !important;
+}
+
+/* PPT thumbnail panel can stay dark */
+.dark .ppt-thumbnail-panel {
+  background-color: hsl(var(--muted) / 0.2);
+}
+
+/* Ensure slide content text is dark on white background */
+.dark .ppt-slide-content *,
+.dark .pptx-wrapper * {
+  color: inherit;
+}
+
+/* PPT main slide area background (the area around the slide) */
+.dark .ppt-main-slide-area {
+  background-color: hsl(var(--muted) / 0.1);
+}
+
+/* PPT thumbnail containers should be white */
+.dark .ppt-thumbnail-container {
+  background-color: white !important;
+}
+
+/* Jupyter notebook cells */
+.dark .jupyter-container {
+  background-color: white;
+  color: #111827;
+}
+
+/* Code blocks should still use dark theme for better syntax highlighting */
+.dark .prose-lattice pre,
+.dark .ProseMirror pre,
+.dark .code-block {
+  background-color: #f3f4f6;
+}
+
+.dark .prose-lattice code,
+.dark .ProseMirror code {
+  background-color: #f3f4f6;
+  color: #1f2937;
+}
+
+/* Tables in dark mode content */
+.dark .prose-lattice table,
+.dark .ProseMirror table {
+  border-color: #d1d5db;
+}
+
+.dark .prose-lattice th,
+.dark .ProseMirror th {
+  background-color: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.dark .prose-lattice td,
+.dark .ProseMirror td {
+  border-color: #d1d5db;
+}
+
+.dark .prose-lattice tr:nth-child(even),
+.dark .ProseMirror tr:nth-child(even) {
+  background-color: #f9fafb;
+}
+
+/* Blockquotes */
+.dark .prose-lattice blockquote {
+  background-color: #f9fafb;
+  border-color: #d1d5db;
+  color: #374151;
+}
+
+/* Links in content */
+.dark .prose-lattice a {
+  color: #2563eb;
+}
+
+/* Headings */
+.dark .prose-lattice h1,
+.dark .prose-lattice h2,
+.dark .prose-lattice h3,
+.dark .prose-lattice h4,
+.dark .prose-lattice h5,
+.dark .prose-lattice h6,
+.dark .ProseMirror h1,
+.dark .ProseMirror h2,
+.dark .ProseMirror h3 {
+  color: #111827;
+  border-color: #e5e7eb;
+}
+
+/* Muted text in content */
+.dark .prose-lattice .muted-text {
+  color: #6b7280;
+}

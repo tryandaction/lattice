@@ -20,6 +20,7 @@ import {
   type TextAnnotationStyle,
 } from "../../types/universal-annotation";
 import type { LatticeAnnotation } from "../../types/annotation";
+import { adjustPopupPosition, type PopupSize } from "@/lib/coordinate-adapter";
 
 // ============================================================================
 // Types
@@ -132,11 +133,9 @@ export function TextAnnotationEditor({
     });
   }, []);
 
-  // Calculate position to keep editor in viewport
-  const adjustedPosition = {
-    x: Math.max(10, Math.min(position.x, window.innerWidth - 340)),
-    y: Math.max(10, Math.min(position.y, window.innerHeight - 450)),
-  };
+  // Calculate position to keep editor in viewport using coordinate adapter
+  const popupSize: PopupSize = { width: 320, height: 450 };
+  const adjustedPosition = adjustPopupPosition(position, popupSize, 10);
 
   return (
     <div

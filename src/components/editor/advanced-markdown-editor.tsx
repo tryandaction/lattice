@@ -446,10 +446,16 @@ export function AdvancedMarkdownEditor({
     // Only update if content is different from what we last set
     // This prevents feedback loops and unnecessary re-renders
     if (normalizedContent !== lastSetContentRef.current || fileChanged) {
-      isInternalUpdateRef.current = true;
-      editor.commands.setContent(normalizedContent);
-      lastSetContentRef.current = normalizedContent;
-      isInternalUpdateRef.current = false;
+      // Use setTimeout to avoid flushSync warning from React
+      // This moves the setContent call outside of the React lifecycle
+      setTimeout(() => {
+        if (!editor.isDestroyed) {
+          isInternalUpdateRef.current = true;
+          editor.commands.setContent(normalizedContent);
+          lastSetContentRef.current = normalizedContent;
+          isInternalUpdateRef.current = false;
+        }
+      }, 0);
     }
   }, [normalizedContent, editor, fileName]);
 
@@ -494,12 +500,12 @@ export function AdvancedMarkdownEditor({
 
   return (
     <div
-      className="flex h-full flex-col bg-background"
+      className="flex h-full flex-col bg-white dark:bg-white"
       onClick={(e) => e.stopPropagation()}
     >
       <EditorToolbar editor={editor} />
       <TableToolbar editor={editor} />
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto bg-white">
         <EditorContent editor={editor} className="h-full" />
       </div>
     </div>

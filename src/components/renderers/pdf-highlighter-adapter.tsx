@@ -41,6 +41,7 @@ import { useAnnotationNavigation } from "@/hooks/use-annotation-navigation";
 import { HIGHLIGHT_COLORS, BACKGROUND_COLORS, TEXT_COLORS, TEXT_FONT_SIZES, DEFAULT_TEXT_STYLE } from "@/lib/annotation-colors";
 import { PDFExportButton } from "./pdf-export-button";
 import { PdfAnnotationSidebar } from "./pdf-annotation-sidebar";
+import { adjustPopupPosition, type PopupSize } from "@/lib/coordinate-adapter";
 import type { AnnotationItem, PdfTarget, BoundingBox } from "@/types/universal-annotation";
 
 import "react-pdf-highlighter/dist/style.css";
@@ -681,11 +682,15 @@ interface PinCommentPopupProps {
  */
 function PinCommentPopup({ position, onSave, onCancel }: PinCommentPopupProps) {
   const [comment, setComment] = useState("");
+  
+  // Use coordinate adapter to adjust popup position
+  const popupSize: PopupSize = { width: 280, height: 180 };
+  const adjustedPosition = adjustPopupPosition(position, popupSize, 10);
 
   return (
     <div
       className="fixed bg-popover border border-border rounded-lg shadow-xl p-3 z-50 min-w-[280px]"
-      style={{ left: position.x, top: position.y }}
+      style={{ left: adjustedPosition.x, top: adjustedPosition.y }}
     >
       <div className="flex items-center gap-2 mb-2">
         <StickyNote className="h-4 w-4 text-amber-500" />
@@ -732,11 +737,15 @@ function TextAnnotationPopup({ position, onSave, onCancel, initialColor, initial
   const [showTextColorPicker, setShowTextColorPicker] = useState(false);
   const [showBgColorPicker, setShowBgColorPicker] = useState(false);
   const [showSizePicker, setShowSizePicker] = useState(false);
+  
+  // Use coordinate adapter to adjust popup position
+  const popupSize: PopupSize = { width: 320, height: 280 };
+  const adjustedPosition = adjustPopupPosition(position, popupSize, 10);
 
   return (
     <div
       className="fixed bg-popover border border-border rounded-lg shadow-xl p-3 z-50 min-w-[320px]"
-      style={{ left: position.x, top: position.y }}
+      style={{ left: adjustedPosition.x, top: adjustedPosition.y }}
     >
       <div className="flex items-center gap-2 mb-2">
         <Type className="h-4 w-4" />

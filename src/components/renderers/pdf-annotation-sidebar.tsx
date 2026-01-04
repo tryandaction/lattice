@@ -27,9 +27,7 @@ import {
   Tag,
   FileText,
   Check,
-  ChevronDown,
   Palette,
-  ALargeSmall,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HIGHLIGHT_COLORS, BACKGROUND_COLORS, TEXT_COLORS, TEXT_FONT_SIZES, DEFAULT_TEXT_STYLE } from "@/lib/annotation-colors";
@@ -76,6 +74,38 @@ function AnnotationContextMenu({
   const [fontSize, setFontSize] = useState(annotation.style.textStyle?.fontSize || DEFAULT_TEXT_STYLE.fontSize);
   const [bgColor, setBgColor] = useState(annotation.style.color || 'transparent');
   const isTextAnnotation = annotation.style.type === 'text';
+  
+  // Use coordinate adapter to adjust menu position
+  const [adjustedPosition, setAdjustedPosition] = useState({ x, y });
+  
+  useEffect(() => {
+    // Measure menu size and adjust position
+    if (menuRef.current) {
+      const rect = menuRef.current.getBoundingClientRect();
+      const menuSize = { width: rect.width || 240, height: rect.height || 300 };
+      const padding = 8;
+      const bounds = { width: window.innerWidth, height: window.innerHeight };
+      
+      let newX = x;
+      let newY = y;
+      
+      // Adjust horizontal position
+      if (newX + menuSize.width + padding > bounds.width) {
+        newX = bounds.width - menuSize.width - padding;
+      }
+      if (newX < padding) newX = padding;
+      
+      // Adjust vertical position
+      if (newY + menuSize.height + padding > bounds.height) {
+        newY = bounds.height - menuSize.height - padding;
+      }
+      if (newY < padding) newY = padding;
+      
+      if (newX !== adjustedPosition.x || newY !== adjustedPosition.y) {
+        setAdjustedPosition({ x: newX, y: newY });
+      }
+    }
+  }, [x, y, showTextStyleEditor, adjustedPosition.x, adjustedPosition.y]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -93,7 +123,7 @@ function AnnotationContextMenu({
       <div
         ref={menuRef}
         className="fixed z-50 bg-popover border border-border rounded-lg shadow-xl p-3 min-w-[240px]"
-        style={{ left: x, top: y }}
+        style={{ left: adjustedPosition.x, top: adjustedPosition.y }}
       >
         <div className="text-sm font-medium mb-2">编辑文字样式</div>
         
@@ -184,7 +214,7 @@ function AnnotationContextMenu({
     <div
       ref={menuRef}
       className="fixed z-50 bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[180px]"
-      style={{ left: x, top: y }}
+      style={{ left: adjustedPosition.x, top: adjustedPosition.y }}
     >
       {/* Color picker row - for non-text annotations */}
       {onUpdateColor && !isTextAnnotation && (

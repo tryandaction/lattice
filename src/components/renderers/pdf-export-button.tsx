@@ -5,6 +5,7 @@
  * 
  * Provides "Export with Annotations" functionality for PDF viewer toolbar.
  * Handles export with error fallback to JSON download.
+ * Supports both web download and Tauri native save dialog.
  */
 
 import React, { useState, useCallback } from "react";
@@ -12,9 +13,10 @@ import { Download, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   exportFlattenedPDF,
-  downloadFlattenedPDF,
   downloadAnnotationsJSON,
 } from "@/lib/pdf-burn-in-exporter";
+import { exportFile } from "@/lib/export-adapter";
+import { showExportToast, updateExportToast, dismissExportToast } from "@/components/ui/export-toast";
 import type { AnnotationItem } from "@/types/universal-annotation";
 
 // ============================================================================
@@ -51,28 +53,66 @@ export function PDFExportButton({
     setIsExporting(true);
     setError(null);
     
+    // Show progress toast
+    const toastId = showExportToast({
+      type: 'progress',
+      message: 'Exporting PDF...',
+      progress: 0,
+    });
+    
     try {
       // Filter to only PDF annotations
       const pdfAnnotations = annotations.filter(a => a.target.type === 'pdf');
       
+      let pdfBytes: Uint8Array;
+      
       if (pdfAnnotations.length === 0) {
-        // No annotations to export, just download original
-        const blob = new Blob([originalContent], { type: 'application/pdf' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileName;
-        a.click();
-        URL.revokeObjectURL(url);
+        // No annotations to export, just use original
+        pdfBytes = new Uint8Array(originalContent);
+        updateExportToast(toastId, { progress: 50 });
+      } else {
+        // Export with annotations burned in
+        updateExportToast(toastId, { progress: 30 });
+        pdfBytes = await exportFlattenedPDF(originalContent, pdfAnnotations);
+        updateExportToast(toastId, { progress: 70 });
+      }
+      
+      // Generate export filename
+      const exportFileName = fileName.replace(/\.pdf$/i, '') + '_annotated.pdf';
+      
+      // Use export adapter for cross-platform support
+      const result = await exportFile(pdfBytes, {
+        defaultFileName: exportFileName,
+        filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
+      });
+      
+      dismissExportToast(toastId);
+      
+      if (result.cancelled) {
+        // User cancelled, no toast needed
         return;
       }
       
-      // Export with annotations burned in
-      const pdfBytes = await exportFlattenedPDF(originalContent, pdfAnnotations);
-      downloadFlattenedPDF(pdfBytes, fileName);
+      if (result.success) {
+        showExportToast({
+          type: 'success',
+          message: 'Export successful',
+          filePath: result.filePath,
+        });
+      } else {
+        throw new Error(result.error || 'Export failed');
+      }
     } catch (err) {
       console.error('PDF export failed:', err);
-      setError(err instanceof Error ? err.message : 'Export failed');
+      const errorMessage = err instanceof Error ? err.message : 'Export failed';
+      setError(errorMessage);
+      
+      dismissExportToast(toastId);
+      showExportToast({
+        type: 'error',
+        message: 'Export failed',
+        error: errorMessage,
+      });
       
       // Offer JSON fallback
       const shouldDownloadJSON = window.confirm(
