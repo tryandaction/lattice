@@ -27,21 +27,21 @@
 
 | 安装包类型 | 大小 | 适用场景 | 下载链接 |
 |-----------|------|---------|---------|
-| NSIS 安装包 | ~6 MB | 普通用户（推荐） | [下载](https://github.com/YOUR_USERNAME/lattice/releases/download/v0.1.0/Lattice_0.1.0_x64-setup.exe) |
-| MSI 安装包 | ~7 MB | 企业部署 | [下载](https://github.com/YOUR_USERNAME/lattice/releases/download/v0.1.0/Lattice_0.1.0_x64_en-US.msi) |
+| NSIS 安装包 | ~6 MB | 普通用户（推荐） | [下载](https://github.com/tryandaction/lattice/releases/download/v0.1.0/Lattice_0.1.0_x64-setup.exe) |
+| MSI 安装包 | ~7 MB | 企业部署 | [下载](https://github.com/tryandaction/lattice/releases/download/v0.1.0/Lattice_0.1.0_x64_en-US.msi) |
 
 ### macOS
 
 | 安装包类型 | 大小 | 下载链接 |
 |-----------|------|---------|
-| DMG 镜像 | ~8 MB | [下载](https://github.com/YOUR_USERNAME/lattice/releases/download/v0.1.0/Lattice_0.1.0_x64.dmg) |
+| DMG 镜像 | ~8 MB | [下载](https://github.com/tryandaction/lattice/releases/download/v0.1.0/Lattice_0.1.0_x64.dmg) |
 
 ### Linux
 
 | 安装包类型 | 大小 | 适用系统 | 下载链接 |
 |-----------|------|---------|---------|
-| AppImage | ~7 MB | 所有发行版 | [下载](https://github.com/YOUR_USERNAME/lattice/releases/download/v0.1.0/lattice_0.1.0_amd64.AppImage) |
-| DEB 包 | ~7 MB | Debian/Ubuntu | [下载](https://github.com/YOUR_USERNAME/lattice/releases/download/v0.1.0/lattice_0.1.0_amd64.deb) |
+| AppImage | ~7 MB | 所有发行版 | [下载](https://github.com/tryandaction/lattice/releases/download/v0.1.0/lattice_0.1.0_amd64.AppImage) |
+| DEB 包 | ~7 MB | Debian/Ubuntu | [下载](https://github.com/tryandaction/lattice/releases/download/v0.1.0/lattice_0.1.0_amd64.deb) |
 
 ## 🌐 在线体验
 
@@ -61,9 +61,9 @@
 
 ## 📚 文档
 
-- [安装指南](https://github.com/YOUR_USERNAME/lattice/blob/main/INSTALLATION.md)
-- [桌面功能说明](https://github.com/YOUR_USERNAME/lattice/blob/main/docs/DESKTOP_FEATURES.md)
-- [构建指南](https://github.com/YOUR_USERNAME/lattice/blob/main/DESKTOP_APP.md)
+- [安装指南](https://github.com/tryandaction/lattice/blob/main/INSTALLATION.md)
+- [桌面功能说明](https://github.com/tryandaction/lattice/blob/main/docs/DESKTOP_FEATURES.md)
+- [构建指南](https://github.com/tryandaction/lattice/blob/main/DESKTOP_APP.md)
 
 ## 🔧 技术栈
 
@@ -96,7 +96,7 @@
 
 ## 🐛 已知问题
 
-无重大已知问题。如果遇到问题，请查看 [故障排除文档](https://github.com/YOUR_USERNAME/lattice/blob/main/INSTALLATION.md#-故障排除) 或提交 Issue。
+无重大已知问题。如果遇到问题，请查看 [故障排除文档](https://github.com/tryandaction/lattice/blob/main/INSTALLATION.md#-故障排除) 或提交 Issue。
 
 ## 🤝 贡献
 

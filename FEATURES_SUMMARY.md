@@ -480,8 +480,8 @@
 
 ### 社区
 
-- [GitHub Issues](https://github.com/YOUR_USERNAME/lattice/issues) - 报告问题
-- [GitHub Discussions](https://github.com/YOUR_USERNAME/lattice/discussions) - 讨论交流
+- [GitHub Issues](https://github.com/tryandaction/lattice/issues) - 报告问题
+- [GitHub Discussions](https://github.com/tryandaction/lattice/discussions) - 讨论交流
 - Email: your-email@example.com
 
 ---

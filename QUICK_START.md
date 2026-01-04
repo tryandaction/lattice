@@ -18,9 +18,9 @@
 #### 方式 2：桌面应用（推荐）🖥️
 
 1. **下载适合你系统的版本**：
-   - Windows: [下载 NSIS 安装包](https://github.com/YOUR_USERNAME/lattice/releases/latest/download/Lattice_0.1.0_x64-setup.exe)
-   - macOS: [下载 DMG 镜像](https://github.com/YOUR_USERNAME/lattice/releases/latest/download/Lattice_0.1.0_x64.dmg)
-   - Linux: [下载 AppImage](https://github.com/YOUR_USERNAME/lattice/releases/latest/download/lattice_0.1.0_amd64.AppImage)
+   - Windows: [下载 NSIS 安装包](https://github.com/tryandaction/lattice/releases/latest/download/Lattice_0.1.0_x64-setup.exe)
+   - macOS: [下载 DMG 镜像](https://github.com/tryandaction/lattice/releases/latest/download/Lattice_0.1.0_x64.dmg)
+   - Linux: [下载 AppImage](https://github.com/tryandaction/lattice/releases/latest/download/lattice_0.1.0_amd64.AppImage)
 
 2. **安装并启动**：
    - Windows: 双击安装包，按向导完成安装
@@ -270,8 +270,8 @@ A:
 
 ## 🤝 获取帮助
 
-- [GitHub Issues](https://github.com/YOUR_USERNAME/lattice/issues)
-- [讨论区](https://github.com/YOUR_USERNAME/lattice/discussions)
+- [GitHub Issues](https://github.com/tryandaction/lattice/issues)
+- [讨论区](https://github.com/tryandaction/lattice/discussions)
 - 邮件：your-email@example.com
 
 ---

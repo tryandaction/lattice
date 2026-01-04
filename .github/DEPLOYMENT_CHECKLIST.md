@@ -155,7 +155,7 @@ git push origin main --tags
 
 #### 步骤 3：创建 GitHub Release
 
-1. 访问：https://github.com/YOUR_USERNAME/lattice/releases/new
+1. 访问：https://github.com/tryandaction/lattice/releases/new
 2. 选择标签：v0.1.0
 3. 填写发布标题：Lattice v0.1.0
 4. 复制 `.github/RELEASE_TEMPLATE.md` 内容
@@ -178,7 +178,7 @@ git push origin main --tags
 如果是首次发布，需要更新 README 中的下载链接：
 
 ```markdown
-将 YOUR_USERNAME 替换为实际的 GitHub 用户名
+将 tryandaction 替换为实际的 GitHub 用户名
 ```
 
 **检查**：
@@ -196,7 +196,7 @@ git push origin v0.1.0
 
 #### 步骤 2：等待 GitHub Actions
 
-访问：https://github.com/YOUR_USERNAME/lattice/actions
+访问：https://github.com/tryandaction/lattice/actions
 
 **检查**：
 - [ ] 工作流触发成功
@@ -207,7 +207,7 @@ git push origin v0.1.0
 
 #### 步骤 3：审核并发布 Draft Release
 
-1. 访问：https://github.com/YOUR_USERNAME/lattice/releases
+1. 访问：https://github.com/tryandaction/lattice/releases
 2. 找到 Draft Release
 3. 审核发布说明
 4. 审核构建产物
@@ -262,7 +262,7 @@ git push origin v0.1.0
 
 ### 1. 删除 Release
 
-1. 访问：https://github.com/YOUR_USERNAME/lattice/releases
+1. 访问：https://github.com/tryandaction/lattice/releases
 2. 找到问题版本
 3. 点击"Delete"
 
@@ -384,7 +384,7 @@ git push origin :refs/tags/v0.1.0
 如果发布过程中遇到问题：
 
 1. 查看 [故障排除文档](../INSTALLATION.md#-故障排除)
-2. 搜索 [GitHub Issues](https://github.com/YOUR_USERNAME/lattice/issues)
+2. 搜索 [GitHub Issues](https://github.com/tryandaction/lattice/issues)
 3. 联系维护者：your-email@example.com
 
 ---

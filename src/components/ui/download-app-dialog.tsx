@@ -110,7 +110,7 @@ export function DownloadAppDialog() {
           {/* 下载按钮 */}
           <div className="space-y-3">
             <a
-              href="https://github.com/YOUR_USERNAME/lattice/releases/latest"
+              href="https://github.com/tryandaction/lattice/releases/latest"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"

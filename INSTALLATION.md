@@ -11,8 +11,8 @@
 #### Windows
 
 1. 下载安装包：
-   - [NSIS 安装包](https://github.com/YOUR_USERNAME/lattice/releases/latest/download/Lattice_0.1.0_x64-setup.exe)（推荐）
-   - [MSI 安装包](https://github.com/YOUR_USERNAME/lattice/releases/latest/download/Lattice_0.1.0_x64_en-US.msi)
+   - [NSIS 安装包](https://github.com/tryandaction/lattice/releases/latest/download/Lattice_0.1.0_x64-setup.exe)（推荐）
+   - [MSI 安装包](https://github.com/tryandaction/lattice/releases/latest/download/Lattice_0.1.0_x64_en-US.msi)
 
 2. 双击运行安装程序
 
@@ -20,7 +20,7 @@
 
 #### macOS
 
-1. 下载 [DMG 镜像](https://github.com/YOUR_USERNAME/lattice/releases/latest/download/Lattice_0.1.0_x64.dmg)
+1. 下载 [DMG 镜像](https://github.com/tryandaction/lattice/releases/latest/download/Lattice_0.1.0_x64.dmg)
 
 2. 打开 DMG 文件
 
@@ -34,7 +34,7 @@
 
 ```bash
 # 下载
-wget https://github.com/YOUR_USERNAME/lattice/releases/latest/download/lattice_0.1.0_amd64.AppImage
+wget https://github.com/tryandaction/lattice/releases/latest/download/lattice_0.1.0_amd64.AppImage
 
 # 添加执行权限
 chmod +x lattice_0.1.0_amd64.AppImage
@@ -47,7 +47,7 @@ chmod +x lattice_0.1.0_amd64.AppImage
 
 ```bash
 # 下载
-wget https://github.com/YOUR_USERNAME/lattice/releases/latest/download/lattice_0.1.0_amd64.deb
+wget https://github.com/tryandaction/lattice/releases/latest/download/lattice_0.1.0_amd64.deb
 
 # 安装
 sudo dpkg -i lattice_0.1.0_amd64.deb
@@ -67,7 +67,7 @@ lattice
 ### 1. 克隆项目
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/lattice.git
+git clone https://github.com/tryandaction/lattice.git
 cd lattice
 ```
 
@@ -254,7 +254,7 @@ lsof -ti:3000 | xargs kill -9
 如果遇到问题：
 
 1. 查看 [故障排除](#-故障排除) 部分
-2. 搜索 [GitHub Issues](https://github.com/YOUR_USERNAME/lattice/issues)
+2. 搜索 [GitHub Issues](https://github.com/tryandaction/lattice/issues)
 3. 提交新的 Issue
 4. 加入社区讨论
 
