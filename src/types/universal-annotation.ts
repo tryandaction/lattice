@@ -82,9 +82,55 @@ export type AnnotationStyleType = 'highlight' | 'underline' | 'area' | 'ink' | '
  * Text annotation style configuration
  */
 export interface TextAnnotationStyle {
-  textColor?: string;    // Text color (hex)
-  fontSize?: number;     // Font size in pixels (default: 14)
+  textColor: string;     // Text color (hex), default: '#000000'
+  fontSize: number;      // Font size in pixels (default: 14)
+  fontWeight?: 'normal' | 'bold';  // Font weight
+  fontStyle?: 'normal' | 'italic'; // Font style
 }
+
+/**
+ * Default text annotation style
+ */
+export const DEFAULT_TEXT_STYLE: TextAnnotationStyle = {
+  textColor: '#000000',
+  fontSize: 14,
+  fontWeight: 'normal',
+  fontStyle: 'normal',
+};
+
+/**
+ * Available text colors for annotations
+ */
+export const TEXT_COLORS = [
+  { value: '#000000', label: '黑色' },
+  { value: '#FF0000', label: '红色' },
+  { value: '#00AA00', label: '绿色' },
+  { value: '#0066FF', label: '蓝色' },
+  { value: '#9933FF', label: '紫色' },
+  { value: '#FF6600', label: '橙色' },
+  { value: '#FF00FF', label: '洋红色' },
+  { value: '#666666', label: '灰色' },
+] as const;
+
+/**
+ * Available background colors for annotations (including transparent)
+ */
+export const BACKGROUND_COLORS = [
+  { value: 'transparent', label: '无背景', isTransparent: true },
+  { value: '#FFEB3B', label: '黄色' },
+  { value: '#FF5252', label: '红色' },
+  { value: '#4CAF50', label: '绿色' },
+  { value: '#2196F3', label: '蓝色' },
+  { value: '#9C27B0', label: '紫色' },
+  { value: '#FF4081', label: '洋红色' },
+  { value: '#FF9800', label: '橙色' },
+  { value: '#9E9E9E', label: '灰色' },
+] as const;
+
+/**
+ * Available font sizes for text annotations
+ */
+export const FONT_SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48] as const;
 
 /**
  * Annotation style configuration

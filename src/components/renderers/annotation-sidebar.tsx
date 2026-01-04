@@ -90,9 +90,22 @@ interface AnnotationItemProps {
  * Single annotation item in the sidebar
  */
 function AnnotationItem({ annotation, isSelected, onClick }: AnnotationItemProps) {
-  const previewText = annotation.type === 'text' 
-    ? annotation.content.text 
-    : 'Area highlight';
+  // Get preview text based on annotation type
+  let previewText: string;
+  if (annotation.type === 'textNote') {
+    previewText = annotation.content.displayText || '文字批注';
+  } else if (annotation.type === 'text') {
+    previewText = annotation.content.text || 'Text highlight';
+  } else {
+    previewText = 'Area highlight';
+  }
+
+  // Get icon based on type
+  const TypeIcon = annotation.type === 'textNote' 
+    ? FileText 
+    : annotation.type === 'text' 
+      ? FileText 
+      : Square;
 
   return (
     <button
@@ -105,20 +118,45 @@ function AnnotationItem({ annotation, isSelected, onClick }: AnnotationItemProps
     >
       <div className="flex items-start gap-2">
         {/* Color indicator */}
-        <div className={`mt-1 h-3 w-3 flex-shrink-0 rounded-full ${COLOR_STYLES[annotation.color]}`} />
+        <div 
+          className={`mt-1 h-3 w-3 flex-shrink-0 rounded-full ${
+            annotation.type === 'textNote' 
+              ? '' 
+              : COLOR_STYLES[annotation.color as keyof typeof COLOR_STYLES] || ''
+          }`}
+          style={
+            annotation.type === 'textNote' && annotation.content.backgroundColor
+              ? { 
+                  backgroundColor: annotation.content.backgroundColor === 'transparent' 
+                    ? '#e5e7eb' 
+                    : annotation.content.backgroundColor 
+                }
+              : undefined
+          }
+        />
         
         <div className="min-w-0 flex-1">
           {/* Type icon and preview */}
           <div className="flex items-center gap-1">
-            {annotation.type === 'text' ? (
-              <FileText className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
-            ) : (
-              <Square className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
-            )}
-            <span className="truncate text-sm">
+            <TypeIcon className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+            <span 
+              className="truncate text-sm"
+              style={
+                annotation.type === 'textNote' && annotation.content.textStyle
+                  ? { color: annotation.content.textStyle.textColor }
+                  : undefined
+              }
+            >
               {previewText ? truncateText(previewText, 40) : 'No text'}
             </span>
           </div>
+
+          {/* Type label for textNote */}
+          {annotation.type === 'textNote' && (
+            <div className="mt-0.5 text-xs text-blue-500">
+              文字批注
+            </div>
+          )}
 
           {/* Comment preview */}
           {annotation.comment && (

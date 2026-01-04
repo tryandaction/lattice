@@ -21,19 +21,32 @@ export interface BoundingRect {
  * Content captured from the highlighted region
  */
 export interface AnnotationContent {
-  text?: string;   // Selected text content (for text highlights)
-  image?: string;  // Base64 thumbnail (for area highlights)
+  text?: string;           // Selected text content (for text highlights)
+  image?: string;          // Base64 thumbnail (for area highlights)
+  displayText?: string;    // Display text for textNote annotations
+  backgroundColor?: string; // Background color for textNote (hex or 'transparent')
+  textStyle?: TextNoteStyle; // Text styling for textNote annotations
+}
+
+/**
+ * Text annotation style for textNote type
+ */
+export interface TextNoteStyle {
+  textColor: string;     // Text color (hex)
+  fontSize: number;      // Font size in pixels
+  fontWeight?: 'normal' | 'bold';
+  fontStyle?: 'normal' | 'italic';
 }
 
 /**
  * Available highlight colors
  */
-export type AnnotationColor = 'yellow' | 'red' | 'green' | 'blue';
+export type AnnotationColor = 'yellow' | 'red' | 'green' | 'blue' | string;
 
 /**
  * Annotation type discriminator
  */
-export type AnnotationType = 'text' | 'area';
+export type AnnotationType = 'text' | 'area' | 'textNote';
 
 /**
  * Position data for an annotation
@@ -76,7 +89,7 @@ export const ANNOTATION_COLORS: readonly AnnotationColor[] = ['yellow', 'red', '
 /**
  * Valid annotation types array for validation
  */
-export const ANNOTATION_TYPES: readonly AnnotationType[] = ['text', 'area'] as const;
+export const ANNOTATION_TYPES: readonly AnnotationType[] = ['text', 'area', 'textNote'] as const;
 
 // ============================================================================
 // Type Guards
@@ -86,7 +99,11 @@ export const ANNOTATION_TYPES: readonly AnnotationType[] = ['text', 'area'] as c
  * Type guard to check if a value is a valid AnnotationColor
  */
 export function isAnnotationColor(value: unknown): value is AnnotationColor {
-  return typeof value === 'string' && ANNOTATION_COLORS.includes(value as AnnotationColor);
+  // Accept standard colors or any hex color string
+  if (typeof value !== 'string') return false;
+  if (ANNOTATION_COLORS.includes(value as any)) return true;
+  // Accept hex colors and 'transparent'
+  return value === 'transparent' || /^#[0-9A-Fa-f]{6}$/.test(value);
 }
 
 /**
@@ -139,9 +156,19 @@ export function isAnnotationContent(value: unknown): value is AnnotationContent 
   if (typeof value !== 'object' || value === null) return false;
   const content = value as Record<string, unknown>;
   
-  // Both fields are optional, but if present must be strings
+  // All fields are optional, but if present must be correct types
   if (content.text !== undefined && typeof content.text !== 'string') return false;
   if (content.image !== undefined && typeof content.image !== 'string') return false;
+  if (content.displayText !== undefined && typeof content.displayText !== 'string') return false;
+  if (content.backgroundColor !== undefined && typeof content.backgroundColor !== 'string') return false;
+  
+  // textStyle validation
+  if (content.textStyle !== undefined) {
+    if (typeof content.textStyle !== 'object' || content.textStyle === null) return false;
+    const style = content.textStyle as Record<string, unknown>;
+    if (typeof style.textColor !== 'string') return false;
+    if (typeof style.fontSize !== 'number') return false;
+  }
   
   return true;
 }

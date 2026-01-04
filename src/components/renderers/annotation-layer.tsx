@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useCallback } from "react";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, Type } from "lucide-react";
 import type { LatticeAnnotation } from "../../types/annotation";
 import { denormalizePosition, type PixelRect } from "../../lib/annotation-coordinates";
+import type { TextAnnotationStyle } from "../../types/universal-annotation";
 
 // ============================================================================
 // Types
@@ -66,9 +67,39 @@ const HIGHLIGHT_COLORS = {
   },
 } as const;
 
+/**
+ * Convert hex color to rgba with opacity
+ */
+function hexToRgba(hex: string, opacity: number): string {
+  if (hex === 'transparent') return 'transparent';
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!result) return hex;
+  const r = parseInt(result[1], 16);
+  const g = parseInt(result[2], 16);
+  const b = parseInt(result[3], 16);
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+}
+
 // ============================================================================
 // Helper Components
 // ============================================================================
+
+/**
+ * Get highlight colors for a given color value
+ */
+function getHighlightColors(color: string): { fill: string; border: string; selected: string } {
+  // Check if it's a named color
+  if (color in HIGHLIGHT_COLORS) {
+    return HIGHLIGHT_COLORS[color as keyof typeof HIGHLIGHT_COLORS];
+  }
+  
+  // For hex colors, generate appropriate fill/border/selected colors
+  return {
+    fill: hexToRgba(color, 0.35),
+    border: hexToRgba(color, 0.8),
+    selected: color,
+  };
+}
 
 /**
  * Renders a single rectangle highlight
@@ -84,7 +115,7 @@ function HighlightRect({
   onMouseLeave,
 }: {
   rect: PixelRect;
-  color: keyof typeof HIGHLIGHT_COLORS;
+  color: string;
   isSelected: boolean;
   hasComment: boolean;
   showCommentIndicator: boolean;
@@ -92,7 +123,7 @@ function HighlightRect({
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
 }) {
-  const colors = HIGHLIGHT_COLORS[color];
+  const colors = getHighlightColors(color);
 
   return (
     <div
@@ -176,7 +207,7 @@ function AreaHighlight({
     [annotation.position, scale]
   );
 
-  const colors = HIGHLIGHT_COLORS[annotation.color];
+  const colors = getHighlightColors(annotation.color);
   const hasComment = annotation.comment.length > 0;
 
   return (
@@ -195,6 +226,93 @@ function AreaHighlight({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
+      {/* Comment indicator */}
+      {hasComment && (
+        <div
+          className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm"
+          title="Has comment"
+        >
+          <MessageSquare className="h-2.5 w-2.5" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Renders a text annotation (visible text with optional background)
+ */
+function TextAnnotationHighlight({
+  annotation,
+  scale,
+  isSelected,
+  onClick,
+  onMouseEnter,
+  onMouseLeave,
+}: HighlightProps) {
+  const { boundingRect } = useMemo(
+    () => denormalizePosition(annotation.position, scale),
+    [annotation.position, scale]
+  );
+
+  // Get text style from annotation content
+  const textStyle: TextAnnotationStyle = (annotation.content as any)?.textStyle || {
+    textColor: '#000000',
+    fontSize: 14,
+  };
+  
+  // Get background color - check both new format and legacy format
+  const backgroundColor = (annotation.content as any)?.backgroundColor || 
+    (annotation.color !== 'yellow' && annotation.color !== 'red' && 
+     annotation.color !== 'green' && annotation.color !== 'blue' 
+      ? annotation.color 
+      : 'transparent');
+  
+  // Get the display text
+  const displayText = (annotation.content as any)?.displayText || 
+    annotation.content?.text || '';
+
+  const hasComment = annotation.comment.length > 0;
+  
+  // Calculate scaled font size
+  const scaledFontSize = textStyle.fontSize * scale;
+
+  return (
+    <div
+      className="absolute cursor-pointer transition-all duration-150 select-none"
+      style={{
+        left: boundingRect.x,
+        top: boundingRect.y,
+        minWidth: Math.max(boundingRect.width, 20),
+        minHeight: Math.max(boundingRect.height, scaledFontSize + 8),
+        backgroundColor: backgroundColor === 'transparent' ? 'transparent' : hexToRgba(backgroundColor, 0.85),
+        color: textStyle.textColor,
+        fontSize: `${scaledFontSize}px`,
+        fontWeight: textStyle.fontWeight || 'normal',
+        fontStyle: textStyle.fontStyle || 'normal',
+        padding: `${2 * scale}px ${4 * scale}px`,
+        borderRadius: `${2 * scale}px`,
+        border: isSelected ? '2px solid #2196F3' : '1px solid rgba(0,0,0,0.1)',
+        boxShadow: isSelected ? '0 0 8px rgba(33, 150, 243, 0.5)' : '0 1px 3px rgba(0,0,0,0.1)',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        lineHeight: 1.4,
+        zIndex: isSelected ? 100 : 1,
+      }}
+      onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      {displayText}
+      
+      {/* Text annotation indicator */}
+      <div
+        className="absolute -left-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-blue-500 text-white shadow-sm"
+        title="文字批注"
+      >
+        <Type className="h-2.5 w-2.5" />
+      </div>
+      
       {/* Comment indicator */}
       {hasComment && (
         <div
@@ -295,6 +413,8 @@ export function AnnotationLayer({
           >
             {annotation.type === 'text' ? (
               <TextHighlight {...commonProps} />
+            ) : annotation.type === 'textNote' ? (
+              <TextAnnotationHighlight {...commonProps} />
             ) : (
               <AreaHighlight {...commonProps} />
             )}

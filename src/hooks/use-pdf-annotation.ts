@@ -6,7 +6,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import type { LatticeAnnotation, AnnotationColor, AnnotationType } from '../types/annotation';
+import type { LatticeAnnotation, AnnotationColor, AnnotationType, TextNoteStyle } from '../types/annotation';
 import { createAnnotation } from '../lib/annotation-utils';
 import {
   normalizePosition,
@@ -38,6 +38,15 @@ export interface AreaSelectionInfo {
   page: number;
 }
 
+export interface TextNoteData {
+  /** Display text for the annotation */
+  displayText: string;
+  /** Background color (hex or 'transparent') */
+  backgroundColor: string;
+  /** Text styling */
+  textStyle: TextNoteStyle;
+}
+
 export interface UsePdfAnnotationOptions {
   /** File ID for the PDF */
   fileId: string;
@@ -64,6 +73,8 @@ export interface UsePdfAnnotationReturn {
   createTextHighlight: (color: AnnotationColor) => LatticeAnnotation | null;
   /** Create an area highlight */
   createAreaHighlight: (rect: PixelRect, page: number, color: AnnotationColor) => LatticeAnnotation | null;
+  /** Create a text note annotation */
+  createTextNote: (rect: PixelRect, page: number, data: TextNoteData) => LatticeAnnotation | null;
   /** Handle mouse down for area selection */
   handleAreaMouseDown: (e: React.MouseEvent, page: number) => void;
   /** Handle mouse move for area selection */
@@ -147,6 +158,31 @@ export function usePdfAnnotation({
         content: {},
         color,
         type: 'area',
+      });
+
+      onAnnotationCreate?.(annotation);
+
+      return annotation;
+    },
+    [fileId, pageWidth, pageHeight, onAnnotationCreate]
+  );
+
+  // Create text note annotation
+  const createTextNote = useCallback(
+    (rect: PixelRect, page: number, data: TextNoteData): LatticeAnnotation | null => {
+      const position = normalizePosition(rect, [rect], pageWidth, pageHeight);
+
+      const annotation = createAnnotation({
+        fileId,
+        page,
+        position,
+        content: {
+          displayText: data.displayText,
+          backgroundColor: data.backgroundColor,
+          textStyle: data.textStyle,
+        },
+        color: data.backgroundColor === 'transparent' ? 'yellow' : data.backgroundColor,
+        type: 'textNote',
       });
 
       onAnnotationCreate?.(annotation);
@@ -313,6 +349,7 @@ export function usePdfAnnotation({
     clearTextSelection,
     createTextHighlight,
     createAreaHighlight,
+    createTextNote,
     handleAreaMouseDown,
     handleAreaMouseMove,
     handleAreaMouseUp,

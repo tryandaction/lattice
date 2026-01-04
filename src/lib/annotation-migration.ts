@@ -58,12 +58,14 @@ export function isLegacyAnnotationJson(json: string): boolean {
 /**
  * Maps legacy annotation type to new style type
  */
-function mapLegacyTypeToStyleType(legacyType: 'text' | 'area'): AnnotationStyleType {
+function mapLegacyTypeToStyleType(legacyType: string): AnnotationStyleType {
   switch (legacyType) {
     case 'text':
       return 'highlight';
     case 'area':
       return 'area';
+    case 'textNote':
+      return 'text';
     default:
       return 'highlight';
   }

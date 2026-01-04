@@ -114,12 +114,44 @@ export function AnnotationCommentPopup({
     y: Math.max(10, Math.min(position.y, window.innerHeight - 200)),
   };
 
-  // Get color indicator style
-  const colorStyles = {
+  // Get color indicator style - support both named colors and hex colors
+  const colorStyles: Record<string, string> = {
     yellow: 'bg-yellow-400',
     red: 'bg-red-500',
     green: 'bg-green-500',
     blue: 'bg-blue-500',
+  };
+
+  // Get the appropriate color style
+  const getColorStyle = () => {
+    if (annotation.type === 'textNote') {
+      const bgColor = annotation.content.backgroundColor;
+      if (bgColor === 'transparent' || !bgColor) {
+        return { className: 'bg-gray-200 border border-dashed border-gray-400' };
+      }
+      return { style: { backgroundColor: bgColor } };
+    }
+    const namedColor = colorStyles[annotation.color as keyof typeof colorStyles];
+    if (namedColor) {
+      return { className: namedColor };
+    }
+    return { style: { backgroundColor: annotation.color } };
+  };
+
+  const colorStyle = getColorStyle();
+
+  // Get annotation type label
+  const getTypeLabel = () => {
+    switch (annotation.type) {
+      case 'textNote':
+        return '文字批注';
+      case 'text':
+        return 'Text Highlight';
+      case 'area':
+        return 'Area Highlight';
+      default:
+        return 'Annotation';
+    }
   };
 
   return (
@@ -136,9 +168,12 @@ export function AnnotationCommentPopup({
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <div className="flex items-center gap-2">
-          <div className={`h-3 w-3 rounded-full ${colorStyles[annotation.color]}`} />
+          <div 
+            className={`h-3 w-3 rounded-full ${colorStyle.className || ''}`}
+            style={colorStyle.style}
+          />
           <span className="text-sm font-medium">
-            {annotation.type === 'text' ? 'Text Highlight' : 'Area Highlight'}
+            {getTypeLabel()}
           </span>
         </div>
         <button
@@ -150,12 +185,30 @@ export function AnnotationCommentPopup({
         </button>
       </div>
 
-      {/* Content preview (for text highlights) */}
+      {/* Content preview */}
       {annotation.type === 'text' && annotation.content.text && (
         <div className="border-b border-border px-3 py-2">
           <p className="line-clamp-2 text-xs text-muted-foreground italic">
             "{annotation.content.text}"
           </p>
+        </div>
+      )}
+      
+      {/* Text note preview */}
+      {annotation.type === 'textNote' && annotation.content.displayText && (
+        <div className="border-b border-border px-3 py-2">
+          <div 
+            className="rounded p-2 text-sm"
+            style={{
+              backgroundColor: annotation.content.backgroundColor === 'transparent' 
+                ? 'transparent' 
+                : annotation.content.backgroundColor,
+              color: annotation.content.textStyle?.textColor || '#000000',
+              fontSize: `${Math.min(annotation.content.textStyle?.fontSize || 14, 14)}px`,
+            }}
+          >
+            {annotation.content.displayText}
+          </div>
         </div>
       )}
 

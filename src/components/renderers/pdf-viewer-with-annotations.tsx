@@ -2,14 +2,15 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
-import { ZoomIn, ZoomOut, Loader2, PanelRightOpen, PanelRightClose } from "lucide-react";
+import { ZoomIn, ZoomOut, Loader2, PanelRightOpen, PanelRightClose, Type, Highlighter, Square } from "lucide-react";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 
 import { AnnotationLayer } from "./annotation-layer";
 import { AnnotationColorPicker } from "./annotation-color-picker";
 import { AnnotationCommentPopup, AnnotationCommentTooltip } from "./annotation-comment-popup";
 import { AnnotationSidebar } from "./annotation-sidebar";
-import { usePdfAnnotation } from "../../hooks/use-pdf-annotation";
+import { TextAnnotationPicker, type TextAnnotationData } from "./text-annotation-picker";
+import { usePdfAnnotation, type TextNoteData } from "../../hooks/use-pdf-annotation";
 import { useAnnotationStore, deriveFileId } from "../../stores/annotation-store";
 import { useAnnotationNavigation } from "../../hooks/use-annotation-navigation";
 import type { LatticeAnnotation, AnnotationColor } from "../../types/annotation";
@@ -33,6 +34,8 @@ interface PageDimensions {
   width: number;
   height: number;
 }
+
+type AnnotationMode = 'select' | 'highlight' | 'area' | 'textNote';
 
 // ============================================================================
 // Constants
@@ -79,6 +82,12 @@ export function PDFViewerWithAnnotations({
   const [hoveredAnnotation, setHoveredAnnotation] = useState<LatticeAnnotation | null>(null);
   const [hoverPosition, setHoverPosition] = useState<{ x: number; y: number } | null>(null);
   const [commentPopupPosition, setCommentPopupPosition] = useState<{ x: number; y: number } | null>(null);
+  const [annotationMode, setAnnotationMode] = useState<AnnotationMode>('select');
+  const [textNotePickerInfo, setTextNotePickerInfo] = useState<{
+    position: { x: number; y: number };
+    rect: { x: number; y: number; width: number; height: number };
+    page: number;
+  } | null>(null);
   
   // Refs
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -110,6 +119,7 @@ export function PDFViewerWithAnnotations({
     clearTextSelection,
     createTextHighlight,
     createAreaHighlight,
+    createTextNote,
     handleAreaMouseDown,
     handleAreaMouseMove,
     handleAreaMouseUp,
@@ -302,6 +312,48 @@ export function PDFViewerWithAnnotations({
     handleAreaMouseUp(e, DEFAULT_AREA_HIGHLIGHT_COLOR);
   }, [handleAreaMouseUp]);
 
+  // Handle text note mode click
+  const handleTextNoteClick = useCallback((e: React.MouseEvent, pageNum: number) => {
+    if (annotationMode !== 'textNote') return;
+    
+    const pageElement = pageRefs.current.get(pageNum);
+    if (!pageElement) return;
+    
+    const pageRect = pageElement.getBoundingClientRect();
+    const x = (e.clientX - pageRect.left) / scale;
+    const y = (e.clientY - pageRect.top) / scale;
+    
+    // Create a default size for the text note
+    const defaultWidth = 150;
+    const defaultHeight = 40;
+    
+    setTextNotePickerInfo({
+      position: { x: e.clientX, y: e.clientY },
+      rect: { x, y, width: defaultWidth, height: defaultHeight },
+      page: pageNum,
+    });
+  }, [annotationMode, scale]);
+
+  // Handle text note creation
+  const handleTextNoteConfirm = useCallback((data: TextAnnotationData) => {
+    if (!textNotePickerInfo) return;
+    
+    const textNoteData: TextNoteData = {
+      displayText: data.text,
+      backgroundColor: data.backgroundColor,
+      textStyle: data.textStyle,
+    };
+    
+    createTextNote(textNotePickerInfo.rect, textNotePickerInfo.page, textNoteData);
+    setTextNotePickerInfo(null);
+    setAnnotationMode('select');
+  }, [textNotePickerInfo, createTextNote]);
+
+  // Handle text note picker close
+  const handleTextNotePickerClose = useCallback(() => {
+    setTextNotePickerInfo(null);
+  }, []);
+
   // Toggle sidebar
   const toggleSidebar = useCallback(() => {
     setShowSidebar((prev) => !prev);
@@ -326,6 +378,56 @@ export function PDFViewerWithAnnotations({
           </span>
           
           <div className="flex items-center gap-4">
+            {/* Annotation mode buttons */}
+            <div className="flex items-center gap-1 border-r border-border pr-4">
+              <button
+                onClick={() => setAnnotationMode('select')}
+                className={`rounded p-1.5 ${
+                  annotationMode === 'select' 
+                    ? 'bg-primary text-primary-foreground' 
+                    : 'hover:bg-muted'
+                }`}
+                title="选择模式"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
+                </svg>
+              </button>
+              <button
+                onClick={() => setAnnotationMode('highlight')}
+                className={`rounded p-1.5 ${
+                  annotationMode === 'highlight' 
+                    ? 'bg-primary text-primary-foreground' 
+                    : 'hover:bg-muted'
+                }`}
+                title="高亮模式 - 选择文字后高亮"
+              >
+                <Highlighter className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setAnnotationMode('area')}
+                className={`rounded p-1.5 ${
+                  annotationMode === 'area' 
+                    ? 'bg-primary text-primary-foreground' 
+                    : 'hover:bg-muted'
+                }`}
+                title="区域高亮 - 按住Alt拖动"
+              >
+                <Square className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setAnnotationMode('textNote')}
+                className={`rounded p-1.5 ${
+                  annotationMode === 'textNote' 
+                    ? 'bg-primary text-primary-foreground' 
+                    : 'hover:bg-muted'
+                }`}
+                title="文字批注 - 点击添加文字"
+              >
+                <Type className="h-4 w-4" />
+              </button>
+            </div>
+
             {/* Page navigation */}
             <div className="flex items-center gap-1">
               <span className="text-sm text-muted-foreground">Page</span>
@@ -404,14 +506,25 @@ export function PDFViewerWithAnnotations({
                     ref={(el) => {
                       if (el) pageRefs.current.set(pageNum, el);
                     }}
-                    className="relative"
-                    onMouseDown={(e) => handleAreaMouseDown(e, pageNum)}
+                    className={`relative ${annotationMode === 'textNote' ? 'cursor-crosshair' : ''}`}
+                    onMouseDown={(e) => {
+                      if (annotationMode === 'area' || e.altKey) {
+                        handleAreaMouseDown(e, pageNum);
+                      }
+                    }}
                     onMouseMove={handleAreaMouseMove}
                     onMouseUp={(e) => {
                       if (isAreaSelecting) {
                         handleAreaSelectionMouseUp(e);
+                      } else if (annotationMode === 'textNote') {
+                        handleTextNoteClick(e, pageNum);
                       } else {
                         handlePageMouseUp(pageNum, e);
+                      }
+                    }}
+                    onClick={(e) => {
+                      if (annotationMode === 'textNote' && !isAreaSelecting) {
+                        handleTextNoteClick(e, pageNum);
                       }
                     }}
                   >
@@ -499,6 +612,15 @@ export function PDFViewerWithAnnotations({
         <AnnotationCommentTooltip
           comment={hoveredAnnotation.comment}
           position={hoverPosition}
+        />
+      )}
+
+      {/* Text note picker */}
+      {textNotePickerInfo && (
+        <TextAnnotationPicker
+          position={textNotePickerInfo.position}
+          onConfirm={handleTextNoteConfirm}
+          onClose={handleTextNotePickerClose}
         />
       )}
     </div>

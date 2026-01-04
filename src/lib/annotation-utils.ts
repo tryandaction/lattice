@@ -12,6 +12,7 @@ import type {
   AnnotationColor,
   AnnotationType,
   AnnotationFile,
+  TextNoteStyle,
 } from '../types/annotation';
 import {
   isBoundingRect,
@@ -129,6 +130,29 @@ export function validateAnnotationContent(value: unknown): ValidationResult {
     errors.push('AnnotationContent.image must be a string if provided');
   }
   
+  if (content.displayText !== undefined && typeof content.displayText !== 'string') {
+    errors.push('AnnotationContent.displayText must be a string if provided');
+  }
+  
+  if (content.backgroundColor !== undefined && typeof content.backgroundColor !== 'string') {
+    errors.push('AnnotationContent.backgroundColor must be a string if provided');
+  }
+  
+  // Validate textStyle if present
+  if (content.textStyle !== undefined) {
+    if (typeof content.textStyle !== 'object' || content.textStyle === null) {
+      errors.push('AnnotationContent.textStyle must be an object if provided');
+    } else {
+      const style = content.textStyle as Record<string, unknown>;
+      if (typeof style.textColor !== 'string') {
+        errors.push('AnnotationContent.textStyle.textColor must be a string');
+      }
+      if (typeof style.fontSize !== 'number') {
+        errors.push('AnnotationContent.textStyle.fontSize must be a number');
+      }
+    }
+  }
+  
   return { valid: errors.length === 0, errors };
 }
 
@@ -182,9 +206,9 @@ export function validateAnnotation(value: unknown): ValidationResult {
     errors.push('Annotation.comment must be a string');
   }
   
-  // Validate color
+  // Validate color - now accepts hex colors and 'transparent' as well
   if (!isAnnotationColor(ann.color)) {
-    errors.push(`Annotation.color must be one of: yellow, red, green, blue`);
+    errors.push(`Annotation.color must be a valid color (yellow, red, green, blue, hex color, or transparent)`);
   }
   
   // Validate timestamp
@@ -194,7 +218,7 @@ export function validateAnnotation(value: unknown): ValidationResult {
   
   // Validate type
   if (!isAnnotationType(ann.type)) {
-    errors.push('Annotation.type must be one of: text, area');
+    errors.push('Annotation.type must be one of: text, area, textNote');
   }
   
   return { valid: errors.length === 0, errors };
