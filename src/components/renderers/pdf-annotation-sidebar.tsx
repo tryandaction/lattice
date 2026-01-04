@@ -462,18 +462,22 @@ function AnnotationCard({
           {/* Text annotation - show with actual styling */}
           {isTextAnnotation && annotation.content && (
             <div 
-              className="text-sm leading-relaxed mb-2 px-1.5 py-1 rounded"
+              className="text-sm leading-relaxed mb-2 px-2 py-1.5 rounded border"
               style={{ 
                 backgroundColor: annotation.style.color && annotation.style.color !== 'transparent' 
-                  ? `${annotation.style.color}40` 
-                  : 'transparent',
-                border: annotation.style.color === 'transparent' ? '1px dashed var(--border)' : 'none',
+                  ? `${annotation.style.color}90` 
+                  : 'rgba(255, 255, 255, 0.95)',
+                borderColor: annotation.style.color && annotation.style.color !== 'transparent'
+                  ? `${annotation.style.color}cc`
+                  : 'var(--border)',
               }}
             >
               <span 
                 style={{ 
                   color: textStyle.textColor,
                   fontSize: `${Math.min(textStyle.fontSize || 14, 16)}px`,
+                  fontWeight: textStyle.fontWeight || 'normal',
+                  fontStyle: textStyle.fontStyle || 'normal',
                 }}
                 className="line-clamp-3"
               >

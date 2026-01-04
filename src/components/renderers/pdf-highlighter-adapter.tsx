@@ -716,15 +716,18 @@ interface TextAnnotationPopupProps {
   onSave: (text: string, textColor: string, fontSize: number, bgColor: string) => void;
   onCancel: () => void;
   initialColor?: string;
+  initialText?: string;
+  initialTextColor?: string;
+  initialFontSize?: number;
 }
 
 /**
  * Zotero-style text annotation popup with color and size options
  */
-function TextAnnotationPopup({ position, onSave, onCancel, initialColor }: TextAnnotationPopupProps) {
-  const [text, setText] = useState("");
-  const [textColor, setTextColor] = useState<string>(DEFAULT_TEXT_STYLE.textColor);
-  const [fontSize, setFontSize] = useState<number>(DEFAULT_TEXT_STYLE.fontSize);
+function TextAnnotationPopup({ position, onSave, onCancel, initialColor, initialText, initialTextColor, initialFontSize }: TextAnnotationPopupProps) {
+  const [text, setText] = useState(initialText || "");
+  const [textColor, setTextColor] = useState<string>(initialTextColor || DEFAULT_TEXT_STYLE.textColor);
+  const [fontSize, setFontSize] = useState<number>(initialFontSize || DEFAULT_TEXT_STYLE.fontSize);
   const [bgColor, setBgColor] = useState(initialColor || 'transparent');
   const [showTextColorPicker, setShowTextColorPicker] = useState(false);
   const [showBgColorPicker, setShowBgColorPicker] = useState(false);
@@ -737,7 +740,7 @@ function TextAnnotationPopup({ position, onSave, onCancel, initialColor }: TextA
     >
       <div className="flex items-center gap-2 mb-2">
         <Type className="h-4 w-4" />
-        <span className="text-sm font-medium">添加文本</span>
+        <span className="text-sm font-medium">{initialText ? '编辑文本' : '添加文本'}</span>
       </div>
       
       {/* Style options row */}
@@ -904,7 +907,7 @@ function TextAnnotationPopup({ position, onSave, onCancel, initialColor }: TextA
           取消
         </Button>
         <Button size="sm" onClick={() => onSave(text, textColor, fontSize, bgColor)} disabled={!text.trim()}>
-          添加
+          {initialText ? '保存' : '添加'}
         </Button>
       </div>
     </div>
@@ -945,25 +948,34 @@ function TextAnnotationOverlay({ annotation, scale, onClick, isHighlighted }: Te
 
   return (
     <div
-      className={`absolute cursor-pointer transition-all ${isHighlighted ? 'ring-2 ring-primary ring-offset-1' : ''}`}
+      className={`absolute cursor-pointer transition-all hover:ring-2 hover:ring-blue-400/50 ${isHighlighted ? 'ring-2 ring-primary ring-offset-1 animate-pulse' : ''}`}
       style={{
         left: `${rect.x1 * 100}%`,
         top: `${rect.y1 * 100}%`,
-        backgroundColor: hasBackground ? `${bgColor}60` : 'transparent',
-        padding: '2px 4px',
-        borderRadius: '2px',
+        backgroundColor: hasBackground ? `${bgColor}85` : 'rgba(255, 255, 255, 0.9)',
+        padding: `${4 * scale}px ${6 * scale}px`,
+        borderRadius: `${2 * scale}px`,
+        border: hasBackground ? '1px solid rgba(0,0,0,0.1)' : '1px solid rgba(0,0,0,0.2)',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
         maxWidth: '50%',
         zIndex: 15,
+        pointerEvents: 'auto',
       }}
-      onClick={onClick}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick?.();
+      }}
+      title="点击编辑文字批注"
     >
       <span
         style={{
           color: textStyle.textColor || '#000000',
           fontSize: `${(textStyle.fontSize || 14) * scale}px`,
-          lineHeight: 1.3,
+          lineHeight: 1.4,
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
+          fontWeight: textStyle.fontWeight || 'normal',
+          fontStyle: textStyle.fontStyle || 'normal',
         }}
       >
         {annotation.content}
@@ -1240,6 +1252,7 @@ export function PDFHighlighterAdapter({
   const [currentInkPath, setCurrentInkPath] = useState<{ x: number; y: number }[]>([]);
   const [currentInkPage, setCurrentInkPage] = useState<number | null>(null);
   const [textAnnotationPosition, setTextAnnotationPosition] = useState<{ x: number; y: number; page: number } | null>(null);
+  const [editingTextAnnotation, setEditingTextAnnotation] = useState<{ annotation: AnnotationItem; position: { x: number; y: number } } | null>(null);
   const [pdfPageDimensions, setPdfPageDimensions] = useState<Map<number, { width: number; height: number }>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -1573,6 +1586,25 @@ export function PDFHighlighterAdapter({
     addAnnotation(textAnnotation);
     setTextAnnotationPosition(null);
   }, [textAnnotationPosition, addAnnotation]);
+
+  // Handle editing existing text annotation
+  const handleUpdateTextAnnotation = useCallback((text: string, textColor: string, fontSize: number, bgColor: string) => {
+    if (!editingTextAnnotation) return;
+
+    updateAnnotation(editingTextAnnotation.annotation.id, {
+      content: text,
+      style: {
+        color: bgColor,
+        type: 'text' as any,
+        textStyle: {
+          textColor,
+          fontSize,
+        },
+      },
+    });
+
+    setEditingTextAnnotation(null);
+  }, [editingTextAnnotation, updateAnnotation]);
 
   // Save pin with correct coordinate calculation
   const handleSavePin = useCallback(
@@ -2159,9 +2191,22 @@ export function PDFHighlighterAdapter({
                 scale={scale}
                 isHighlighted={highlightedId === ann.id}
                 onClick={() => {
-                  setSelectedAnnotationId(ann.id);
-                  setHighlightedId(ann.id);
-                  setTimeout(() => setHighlightedId(null), 2000);
+                  // Open text annotation editor
+                  const pageElement = document.querySelector(`[data-page-number="${target.page}"]`);
+                  if (pageElement && target.rects.length > 0) {
+                    const pageRect = pageElement.getBoundingClientRect();
+                    const rect = target.rects[0];
+                    
+                    // Calculate position for editor popup (center of annotation)
+                    const x = pageRect.left + ((rect.x1 + rect.x2) / 2 * pageRect.width);
+                    const y = pageRect.top + (rect.y1 * pageRect.height);
+                    
+                    setEditingTextAnnotation({
+                      annotation: ann,
+                      position: { x, y }
+                    });
+                    setSelectedAnnotationId(ann.id);
+                  }
                 }}
               />
             );
@@ -2224,6 +2269,18 @@ export function PDFHighlighterAdapter({
           onSave={handleSaveTextAnnotation}
           onCancel={() => setTextAnnotationPosition(null)}
           initialColor={activeColor}
+        />
+      )}
+
+      {editingTextAnnotation && (
+        <TextAnnotationPopup
+          position={{ x: editingTextAnnotation.position.x, y: editingTextAnnotation.position.y }}
+          onSave={handleUpdateTextAnnotation}
+          onCancel={() => setEditingTextAnnotation(null)}
+          initialColor={editingTextAnnotation.annotation.style.color}
+          initialText={editingTextAnnotation.annotation.content}
+          initialTextColor={editingTextAnnotation.annotation.style.textStyle?.textColor}
+          initialFontSize={editingTextAnnotation.annotation.style.textStyle?.fontSize}
         />
       )}
     </div>
