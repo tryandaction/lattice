@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
-import { ZoomIn, ZoomOut, Loader2, PanelRightOpen, PanelRightClose, Type, Highlighter, Square } from "lucide-react";
+import { ZoomIn, ZoomOut, Loader2, PanelLeftOpen, PanelLeftClose, Type, Highlighter, Square } from "lucide-react";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 
 import { AnnotationLayer } from "./annotation-layer";
@@ -426,6 +426,18 @@ export function PDFViewerWithAnnotations({
 
   return (
     <div className="flex h-full">
+      {/* Annotation sidebar - moved to left */}
+      {showSidebar && (
+        <div className="w-64 border-r border-border bg-background">
+          <AnnotationSidebar
+            fileId={fileId}
+            annotations={fileAnnotations}
+            onAnnotationClick={jumpToAnnotation}
+            selectedAnnotationId={selectedAnnotation?.id}
+          />
+        </div>
+      )}
+
       {/* Main content area */}
       <div className="flex flex-1 flex-col">
         {/* Toolbar */}
@@ -527,12 +539,12 @@ export function PDFViewerWithAnnotations({
             <button
               onClick={toggleSidebar}
               className="rounded p-1 hover:bg-muted"
-              title={showSidebar ? "Hide annotations" : "Show annotations"}
+              title={showSidebar ? "隐藏批注" : "显示批注"}
             >
               {showSidebar ? (
-                <PanelRightClose className="h-4 w-4" />
+                <PanelLeftClose className="h-4 w-4" />
               ) : (
-                <PanelRightOpen className="h-4 w-4" />
+                <PanelLeftOpen className="h-4 w-4" />
               )}
             </button>
           </div>
@@ -631,18 +643,6 @@ export function PDFViewerWithAnnotations({
           </Document>
         </div>
       </div>
-
-      {/* Annotation sidebar */}
-      {showSidebar && (
-        <div className="w-64 border-l border-border bg-background">
-          <AnnotationSidebar
-            fileId={fileId}
-            annotations={fileAnnotations}
-            onAnnotationClick={jumpToAnnotation}
-            selectedAnnotationId={selectedAnnotation?.id}
-          />
-        </div>
-      )}
 
       {/* Color picker popover */}
       {textSelection && (
