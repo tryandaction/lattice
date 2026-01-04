@@ -12,9 +12,9 @@
 
 | 平台 | 下载链接 | 大小 |
 |------|---------|------|
-| 🪟 **Windows** | [NSIS 安装包](https://github.com/tryandaction/lattice/releases/latest/download/Lattice_0.1.0_x64-setup.exe) · [MSI 安装包](https://github.com/tryandaction/lattice/releases/latest/download/Lattice_0.1.0_x64_en-US.msi) | ~6 MB |
-| 🍎 **macOS** | [DMG 镜像](https://github.com/tryandaction/lattice/releases/latest/download/Lattice_0.1.0_x64.dmg) | ~8 MB |
-| 🐧 **Linux** | [AppImage](https://github.com/tryandaction/lattice/releases/latest/download/lattice_0.1.0_amd64.AppImage) · [DEB 包](https://github.com/tryandaction/lattice/releases/latest/download/lattice_0.1.0_amd64.deb) | ~7 MB |
+| 🪟 **Windows** | [NSIS 安装包](https://github.com/tryandaction/lattice/releases/download/v0.1.0/Lattice_0.1.0_x64-setup.exe) · [MSI 安装包](https://github.com/tryandaction/lattice/releases/download/v0.1.0/Lattice_0.1.0_x64_en-US.msi) | ~6 MB |
+| 🍎 **macOS** | 暂未提供 | - |
+| 🐧 **Linux** | 暂未提供 | - |
 
 **桌面应用优势：**
 - ✅ 无需浏览器，双击即用

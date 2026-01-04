@@ -11,8 +11,8 @@
 #### Windows
 
 1. 下载安装包：
-   - [NSIS 安装包](https://github.com/tryandaction/lattice/releases/latest/download/Lattice_0.1.0_x64-setup.exe)（推荐）
-   - [MSI 安装包](https://github.com/tryandaction/lattice/releases/latest/download/Lattice_0.1.0_x64_en-US.msi)
+   - [NSIS 安装包](https://github.com/tryandaction/lattice/releases/download/v0.1.0/Lattice_0.1.0_x64-setup.exe)（推荐）
+   - [MSI 安装包](https://github.com/tryandaction/lattice/releases/download/v0.1.0/Lattice_0.1.0_x64_en-US.msi)
 
 2. 双击运行安装程序
 
@@ -20,41 +20,11 @@
 
 #### macOS
 
-1. 下载 [DMG 镜像](https://github.com/tryandaction/lattice/releases/latest/download/Lattice_0.1.0_x64.dmg)
-
-2. 打开 DMG 文件
-
-3. 将 Lattice 拖拽到 Applications 文件夹
-
-4. 首次运行时，右键点击应用选择"打开"（绕过 Gatekeeper）
+暂未提供，如有需要请在 Issues 中反馈。
 
 #### Linux
 
-**AppImage（推荐）**：
-
-```bash
-# 下载
-wget https://github.com/tryandaction/lattice/releases/latest/download/lattice_0.1.0_amd64.AppImage
-
-# 添加执行权限
-chmod +x lattice_0.1.0_amd64.AppImage
-
-# 运行
-./lattice_0.1.0_amd64.AppImage
-```
-
-**DEB 包（Debian/Ubuntu）**：
-
-```bash
-# 下载
-wget https://github.com/tryandaction/lattice/releases/latest/download/lattice_0.1.0_amd64.deb
-
-# 安装
-sudo dpkg -i lattice_0.1.0_amd64.deb
-
-# 运行
-lattice
-```
+暂未提供，如有需要请在 Issues 中反馈。
 
 ## 🔧 开发环境安装
 

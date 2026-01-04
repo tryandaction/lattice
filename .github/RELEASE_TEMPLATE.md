@@ -30,18 +30,9 @@
 | NSIS 安装包 | ~6 MB | 普通用户（推荐） | [下载](https://github.com/tryandaction/lattice/releases/download/v0.1.0/Lattice_0.1.0_x64-setup.exe) |
 | MSI 安装包 | ~7 MB | 企业部署 | [下载](https://github.com/tryandaction/lattice/releases/download/v0.1.0/Lattice_0.1.0_x64_en-US.msi) |
 
-### macOS
+### macOS / Linux
 
-| 安装包类型 | 大小 | 下载链接 |
-|-----------|------|---------|
-| DMG 镜像 | ~8 MB | [下载](https://github.com/tryandaction/lattice/releases/download/v0.1.0/Lattice_0.1.0_x64.dmg) |
-
-### Linux
-
-| 安装包类型 | 大小 | 适用系统 | 下载链接 |
-|-----------|------|---------|---------|
-| AppImage | ~7 MB | 所有发行版 | [下载](https://github.com/tryandaction/lattice/releases/download/v0.1.0/lattice_0.1.0_amd64.AppImage) |
-| DEB 包 | ~7 MB | Debian/Ubuntu | [下载](https://github.com/tryandaction/lattice/releases/download/v0.1.0/lattice_0.1.0_amd64.deb) |
+暂未提供，如有需要请在 Issues 中反馈。
 
 ## 🌐 在线体验
 
