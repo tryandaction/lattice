@@ -1,7 +1,6 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::Manager;
 use tauri_plugin_store::StoreExt;
 use serde::{Deserialize, Serialize};
 
@@ -61,7 +60,8 @@ fn set_last_opened_folder(app: tauri::AppHandle, folder: String) -> Result<(), S
 #[tauri::command]
 fn clear_default_folder(app: tauri::AppHandle) -> Result<(), String> {
     let store = app.store("settings.json").map_err(|e| e.to_string())?;
-    store.delete("default_folder").map_err(|e| e.to_string())?;
+    // delete() returns bool, not Result
+    store.delete("default_folder");
     store.save().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -78,12 +78,8 @@ fn main() {
             set_last_opened_folder,
             clear_default_folder,
         ])
-        .setup(|app| {
-            // 启动时可以读取默认文件夹
-            let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                // 这里可以添加启动时的逻辑
-            });
+        .setup(|_app| {
+            // 启动时的初始化逻辑
             Ok(())
         })
         .run(tauri::generate_context!())
