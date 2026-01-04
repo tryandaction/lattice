@@ -136,6 +136,7 @@ src/
 - [安装指南](./INSTALLATION.md) - 详细的安装和更新说明
 - [桌面功能](./docs/DESKTOP_FEATURES.md) - 桌面应用独有功能说明
 - [桌面应用打包](./DESKTOP_APP.md) - Tauri 桌面应用构建指南
+- [手动发布指南](./docs/MANUAL_RELEASE_GUIDE.md) - 本地构建和发布（无需 CI/CD）
 - [架构设计](./docs/ARCHITECTURE.md) - 技术架构和组件关系
 - [项目上下文](./docs/PROJECT_CONTEXT.md) - 当前状态和决策日志
 - [UX 指南](./docs/UX_GUIDELINES.md) - 交互设计原则
