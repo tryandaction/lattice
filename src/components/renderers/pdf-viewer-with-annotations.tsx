@@ -10,6 +10,7 @@ import { AnnotationColorPicker } from "./annotation-color-picker";
 import { AnnotationCommentPopup, AnnotationCommentTooltip } from "./annotation-comment-popup";
 import { AnnotationSidebar } from "./annotation-sidebar";
 import { TextAnnotationPicker, type TextAnnotationData } from "./text-annotation-picker";
+import { TextAnnotationEditor, type TextAnnotationEditData } from "./text-annotation-editor";
 import { usePdfAnnotation, type TextNoteData } from "../../hooks/use-pdf-annotation";
 import { useAnnotationStore, deriveFileId } from "../../stores/annotation-store";
 import { useAnnotationNavigation } from "../../hooks/use-annotation-navigation";
@@ -87,6 +88,10 @@ export function PDFViewerWithAnnotations({
     position: { x: number; y: number };
     rect: { x: number; y: number; width: number; height: number };
     page: number;
+  } | null>(null);
+  const [textNoteEditorInfo, setTextNoteEditorInfo] = useState<{
+    annotation: LatticeAnnotation;
+    position: { x: number; y: number };
   } | null>(null);
   
   // Refs
@@ -242,19 +247,35 @@ export function PDFViewerWithAnnotations({
   }, [createTextHighlight]);
 
   // Handle annotation click
-  const handleAnnotationClick = useCallback((annotation: LatticeAnnotation) => {
+  const handleAnnotationClick = useCallback((annotation: LatticeAnnotation, event?: React.MouseEvent) => {
+    // Prevent triggering when not in select mode
+    if (annotationMode !== 'select') return;
+    
     setSelectedAnnotation(annotation);
     
     const pageElement = pageRefs.current.get(annotation.page);
     if (pageElement) {
       const pageRect = pageElement.getBoundingClientRect();
       const { boundingRect } = denormalizePosition(annotation.position, scale);
-      setCommentPopupPosition({
-        x: pageRect.left + boundingRect.x + boundingRect.width / 2,
-        y: pageRect.top + boundingRect.y + boundingRect.height,
-      });
+      
+      // For text annotations, show the editor
+      if (annotation.type === 'textNote') {
+        setTextNoteEditorInfo({
+          annotation,
+          position: {
+            x: event?.clientX || (pageRect.left + boundingRect.x + boundingRect.width / 2),
+            y: event?.clientY || (pageRect.top + boundingRect.y),
+          },
+        });
+      } else {
+        // For other annotations, show comment popup
+        setCommentPopupPosition({
+          x: pageRect.left + boundingRect.x + boundingRect.width / 2,
+          y: pageRect.top + boundingRect.y + boundingRect.height,
+        });
+      }
     }
-  }, [scale]);
+  }, [scale, annotationMode]);
 
   // Handle annotation hover
   const handleAnnotationHover = useCallback((annotation: LatticeAnnotation | null) => {
@@ -301,11 +322,14 @@ export function PDFViewerWithAnnotations({
 
   // Handle text selection on page
   const handlePageMouseUp = useCallback((pageNum: number, e: React.MouseEvent) => {
+    // Only handle text selection in highlight mode
+    if (annotationMode !== 'highlight') return;
+    
     const pageElement = pageRefs.current.get(pageNum);
     if (pageElement) {
       handleTextSelectionChange(pageNum, pageElement);
     }
-  }, [handleTextSelectionChange]);
+  }, [handleTextSelectionChange, annotationMode]);
 
   // Handle area selection mouse up
   const handleAreaSelectionMouseUp = useCallback((e: React.MouseEvent) => {
@@ -352,6 +376,39 @@ export function PDFViewerWithAnnotations({
   // Handle text note picker close
   const handleTextNotePickerClose = useCallback(() => {
     setTextNotePickerInfo(null);
+  }, []);
+
+  // Handle text note edit
+  const handleTextNoteEdit = useCallback((data: TextAnnotationEditData) => {
+    if (!textNoteEditorInfo) return;
+    
+    updateAnnotation(textNoteEditorInfo.annotation.id, {
+      content: {
+        ...textNoteEditorInfo.annotation.content,
+        displayText: data.text,
+        backgroundColor: data.backgroundColor,
+        textStyle: data.textStyle,
+      },
+      color: data.backgroundColor === 'transparent' ? 'yellow' : data.backgroundColor,
+    });
+    
+    setTextNoteEditorInfo(null);
+    setSelectedAnnotation(null);
+  }, [textNoteEditorInfo, updateAnnotation]);
+
+  // Handle text note editor delete
+  const handleTextNoteEditorDelete = useCallback(() => {
+    if (!textNoteEditorInfo) return;
+    
+    deleteAnnotation(textNoteEditorInfo.annotation.id);
+    setTextNoteEditorInfo(null);
+    setSelectedAnnotation(null);
+  }, [textNoteEditorInfo, deleteAnnotation]);
+
+  // Handle text note editor close
+  const handleTextNoteEditorClose = useCallback(() => {
+    setTextNoteEditorInfo(null);
+    setSelectedAnnotation(null);
   }, []);
 
   // Toggle sidebar
@@ -621,6 +678,17 @@ export function PDFViewerWithAnnotations({
           position={textNotePickerInfo.position}
           onConfirm={handleTextNoteConfirm}
           onClose={handleTextNotePickerClose}
+        />
+      )}
+
+      {/* Text note editor */}
+      {textNoteEditorInfo && (
+        <TextAnnotationEditor
+          annotation={textNoteEditorInfo.annotation}
+          position={textNoteEditorInfo.position}
+          onUpdate={handleTextNoteEdit}
+          onDelete={handleTextNoteEditorDelete}
+          onClose={handleTextNoteEditorClose}
         />
       )}
     </div>

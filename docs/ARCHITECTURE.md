@@ -192,20 +192,36 @@ The PDF annotation system is designed to match Zotero's professional annotation 
 | Section | Tools |
 |---------|-------|
 | **Left** | File name |
-| **Center** | Annotation tools: Highlight (H), Underline (U), Note (N), Text (T), Area (A), Draw (D) |
-| **Right** | Zoom controls: Zoom out (-), Percentage, Zoom in (+), Fit width (⟷), Export |
+| **Center** | Annotation modes: Select, Highlight, Area, Text Note |
+| **Right** | Page navigation, Zoom controls, Sidebar toggle |
 
-### Annotation Tools
+### Annotation Modes
 
-| Tool | Shortcut | Description |
-|------|----------|-------------|
-| **Highlight** | H | Select text to highlight with chosen color |
-| **Underline** | U | Select text to underline |
-| **Sticky Note** | N | Click anywhere to add a note |
-| **Text** | T | Add text annotation |
-| **Area** | A | Drag to select rectangular area |
-| **Draw** | D | Freehand drawing (ink) |
-| **Escape** | Esc | Return to select mode |
+| Mode | Icon | Description |
+|------|------|-------------|
+| **Select** | Cursor | Default mode - click annotations to edit/comment |
+| **Highlight** | Highlighter | Select text to highlight with color picker |
+| **Area** | Square | Drag to create area highlights (or Alt+drag in any mode) |
+| **Text Note** | Type | Click to add editable text annotations |
+
+### Annotation Interaction
+
+**Text Annotations (Type icon)**:
+- Click anywhere on the annotation to open editor
+- Edit text content, background color, text color, and font size
+- Delete annotation from editor
+- Full area responds to clicks (not just initial point)
+
+**Other Annotations (Highlights, Areas)**:
+- Click to add/edit comments
+- Hover shows existing comments
+- Visual feedback on hover (brightness increase)
+
+**Mode-Based Behavior**:
+- Select mode: Click annotations to interact
+- Highlight mode: Select text to create highlights
+- Area mode: Drag to create area highlights
+- Text Note mode: Click to add new text annotations
 
 ### Zoom Controls
 
@@ -219,11 +235,22 @@ The PDF annotation system is designed to match Zotero's professional annotation 
 
 ### Key Features
 
-1. **Viewport Center Preservation**: When zooming, the document point at viewport center stays centered
-2. **Color Picker**: Quick color selection for highlights (dropdown from highlight tool)
-3. **Tool Hints**: Status bar shows current tool and usage instructions
-4. **Persistent Storage**: Annotations saved to `.lattice/annotations/` directory
-5. **Export**: Export PDF with embedded annotations
+1. **Full Editing Capabilities**: 
+   - Text annotations are fully editable (content, colors, font size)
+   - Click anywhere on annotation to edit
+   - Delete annotations directly from editor
+2. **Enhanced Click Detection**:
+   - Entire annotation area responds to clicks
+   - Visual hover feedback (ring highlight, brightness increase)
+   - Pointer-events optimization for indicators
+3. **Mode-Based Interaction**:
+   - Clear separation between select, highlight, area, and text note modes
+   - Prevents accidental operations
+   - Visual mode indicators in toolbar
+4. **Viewport Center Preservation**: When zooming, the document point at viewport center stays centered
+5. **Color Picker**: Quick color selection for highlights and text annotations
+6. **Persistent Storage**: Annotations saved to `.lattice/annotations/` directory
+7. **Annotation Sidebar**: Navigate between annotations with preview
 
 ---
 

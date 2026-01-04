@@ -7,7 +7,7 @@
 ## ✨ 特性
 
 - **多格式支持** - Markdown、Jupyter Notebook、PowerPoint、Word、PDF、图片等
-- **PDF 批注** - Zotero 风格的批注工具栏，支持高亮、下划线、便签、区域选择
+- **PDF 批注** - 专业的批注系统，支持文字高亮、区域选择、文字批注（可编辑）、评论功能
 - **数学公式编辑** - 基于 MathLive 的结构化数学编辑，支持 LaTeX
 - **代码高亮** - 使用 CodeMirror 6 实现轻量级代码编辑
 - **本地文件系统** - 通过 File System Access API 直接读写本地文件

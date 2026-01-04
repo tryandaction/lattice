@@ -24,7 +24,7 @@ interface AnnotationLayerProps {
   /** Annotations to render on this page */
   annotations: LatticeAnnotation[];
   /** Callback when an annotation is clicked */
-  onAnnotationClick?: (annotation: LatticeAnnotation) => void;
+  onAnnotationClick?: (annotation: LatticeAnnotation, event: React.MouseEvent) => void;
   /** Callback when an annotation is hovered */
   onAnnotationHover?: (annotation: LatticeAnnotation | null) => void;
   /** Currently selected annotation ID */
@@ -35,7 +35,7 @@ interface HighlightProps {
   annotation: LatticeAnnotation;
   scale: number;
   isSelected: boolean;
-  onClick?: () => void;
+  onClick?: (event: React.MouseEvent) => void;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
 }
@@ -119,7 +119,7 @@ function HighlightRect({
   isSelected: boolean;
   hasComment: boolean;
   showCommentIndicator: boolean;
-  onClick?: () => void;
+  onClick?: (event: React.MouseEvent) => void;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
 }) {
@@ -127,7 +127,7 @@ function HighlightRect({
 
   return (
     <div
-      className="absolute cursor-pointer transition-all duration-150"
+      className="absolute cursor-pointer transition-all duration-150 hover:brightness-110"
       style={{
         left: rect.x,
         top: rect.y,
@@ -144,7 +144,7 @@ function HighlightRect({
       {/* Comment indicator */}
       {showCommentIndicator && hasComment && (
         <div
-          className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm"
+          className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm pointer-events-none"
           title="Has comment"
         >
           <MessageSquare className="h-2.5 w-2.5" />
@@ -212,7 +212,7 @@ function AreaHighlight({
 
   return (
     <div
-      className="absolute cursor-pointer transition-all duration-150"
+      className="absolute cursor-pointer transition-all duration-150 hover:brightness-110"
       style={{
         left: boundingRect.x,
         top: boundingRect.y,
@@ -229,7 +229,7 @@ function AreaHighlight({
       {/* Comment indicator */}
       {hasComment && (
         <div
-          className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm"
+          className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm pointer-events-none"
           title="Has comment"
         >
           <MessageSquare className="h-2.5 w-2.5" />
@@ -279,7 +279,7 @@ function TextAnnotationHighlight({
 
   return (
     <div
-      className="absolute cursor-pointer transition-all duration-150 select-none"
+      className="absolute cursor-pointer transition-all duration-150 select-none hover:ring-2 hover:ring-blue-400/50"
       style={{
         left: boundingRect.x,
         top: boundingRect.y,
@@ -290,7 +290,7 @@ function TextAnnotationHighlight({
         fontSize: `${scaledFontSize}px`,
         fontWeight: textStyle.fontWeight || 'normal',
         fontStyle: textStyle.fontStyle || 'normal',
-        padding: `${2 * scale}px ${4 * scale}px`,
+        padding: `${4 * scale}px ${6 * scale}px`,
         borderRadius: `${2 * scale}px`,
         border: isSelected ? '2px solid #2196F3' : '1px solid rgba(0,0,0,0.1)',
         boxShadow: isSelected ? '0 0 8px rgba(33, 150, 243, 0.5)' : '0 1px 3px rgba(0,0,0,0.1)',
@@ -302,12 +302,13 @@ function TextAnnotationHighlight({
       onClick={onClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      title="点击编辑文字批注"
     >
       {displayText}
       
       {/* Text annotation indicator */}
       <div
-        className="absolute -left-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-blue-500 text-white shadow-sm"
+        className="absolute -left-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-blue-500 text-white shadow-sm pointer-events-none"
         title="文字批注"
       >
         <Type className="h-2.5 w-2.5" />
@@ -316,7 +317,7 @@ function TextAnnotationHighlight({
       {/* Comment indicator */}
       {hasComment && (
         <div
-          className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm"
+          className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm pointer-events-none"
           title="Has comment"
         >
           <MessageSquare className="h-2.5 w-2.5" />
@@ -362,8 +363,9 @@ export function AnnotationLayer({
   }, [annotations, fileId, page]);
 
   const handleClick = useCallback(
-    (annotation: LatticeAnnotation) => {
-      onAnnotationClick?.(annotation);
+    (annotation: LatticeAnnotation, event: React.MouseEvent) => {
+      event.stopPropagation(); // Prevent event bubbling
+      onAnnotationClick?.(annotation, event);
     },
     [onAnnotationClick]
   );
@@ -399,7 +401,7 @@ export function AnnotationLayer({
           annotation,
           scale,
           isSelected,
-          onClick: () => handleClick(annotation),
+          onClick: (event: React.MouseEvent) => handleClick(annotation, event),
           onMouseEnter: () => handleMouseEnter(annotation),
           onMouseLeave: handleMouseLeave,
         };

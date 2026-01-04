@@ -68,18 +68,25 @@ None currently.
   - Word document viewer
   - Code syntax highlighting (read-only)
 
-### Step 5.5: PDF Annotation System (Zotero-style)
+### Step 5.5: PDF Annotation System
 - **Status**: ✅ Complete
 - **Deliverables**:
-  - Zotero-style annotation toolbar
-  - Text highlighting with color picker
-  - Sticky notes (click to add)
-  - Area selection (Alt+drag or tool button)
+  - Professional annotation toolbar with mode switching
+  - Text highlighting with color picker (highlight mode)
+  - Area selection (Alt+drag or area mode)
+  - Text annotations with full editing capabilities
+  - Annotation editing system:
+    - Click text annotations to edit content, colors, and font size
+    - Click other annotations to add/edit comments
+    - Delete annotations directly from editor
+  - Enhanced click detection:
+    - Full annotation area responds to clicks
+    - Visual hover feedback on all annotation types
+    - Mode-based interaction (select/highlight/area/textNote)
   - Zoom controls (Ctrl+wheel, Ctrl++/-, fit-width)
   - Viewport center preservation during zoom
-  - Keyboard shortcuts for tools (H/U/N/T/A/D/Esc)
   - Annotation persistence (.lattice/annotations/)
-  - PDF export with annotations
+  - Annotation sidebar with navigation
 
 ---
 
