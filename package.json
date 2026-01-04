@@ -8,7 +8,10 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.0",
@@ -71,6 +74,8 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.9.6",
+    "@tauri-apps/plugin-store": "^2.0.0",
     "@testing-library/react": "^16.0.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",

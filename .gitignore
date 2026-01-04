@@ -39,3 +39,10 @@ yarn-error.log*
 
 # kiro
 .kiro/
+
+# tauri
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# app icons
+app-icon.png

@@ -2,7 +2,32 @@
 
 一个轻量级、高性能的现代编辑器，专为笔记、数学公式和代码编辑设计。
 
-**🌐 在线体验：https://lattice-apq.pages.dev/** | [备用链接](https://lattice-three-alpha.vercel.app/)
+## 🚀 快速开始
+
+### 🖥️ 桌面应用（推荐）
+
+**体积小巧 · 启动快速 · 原生体验**
+
+立即下载适合你系统的版本：
+
+| 平台 | 下载链接 | 大小 |
+|------|---------|------|
+| 🪟 **Windows** | [NSIS 安装包](https://github.com/YOUR_USERNAME/lattice/releases/latest/download/Lattice_0.1.0_x64-setup.exe) · [MSI 安装包](https://github.com/YOUR_USERNAME/lattice/releases/latest/download/Lattice_0.1.0_x64_en-US.msi) | ~6 MB |
+| 🍎 **macOS** | [DMG 镜像](https://github.com/YOUR_USERNAME/lattice/releases/latest/download/Lattice_0.1.0_x64.dmg) | ~8 MB |
+| 🐧 **Linux** | [AppImage](https://github.com/YOUR_USERNAME/lattice/releases/latest/download/lattice_0.1.0_amd64.AppImage) · [DEB 包](https://github.com/YOUR_USERNAME/lattice/releases/latest/download/lattice_0.1.0_amd64.deb) | ~7 MB |
+
+**桌面应用优势：**
+- ✅ 无需浏览器，双击即用
+- ✅ 记住上次打开的文件夹
+- ✅ 更好的文件系统访问权限
+- ✅ 启动速度快，内存占用低
+- ✅ 原生窗口体验
+
+### 🌐 在线体验
+
+**https://lattice-apq.pages.dev/** | [备用链接](https://lattice-three-alpha.vercel.app/)
+
+> 💡 首次访问会提示下载桌面应用以获得更好的体验
 
 ## ✨ 特性
 
@@ -13,6 +38,7 @@
 - **本地文件系统** - 通过 File System Access API 直接读写本地文件
 - **灵活布局** - 可拖拽、可调整大小的多窗格布局
 - **Python 执行** - 通过 Pyodide 在浏览器中运行 Python 代码（按需加载）
+- **🖥️ 桌面应用** - 基于 Tauri 的原生桌面应用，体积小、速度快（详见 [DESKTOP_APP.md](./DESKTOP_APP.md)）
 
 ## 🛠️ 技术栈
 
@@ -28,12 +54,13 @@
 | MathLive | 数学公式编辑 |
 | Pyodide | Python WASM 运行时 |
 
-## 🚀 快速开始
+## � 本速地开发
 
 ### 环境要求
 
 - Node.js 18+
 - npm 或 yarn
+- Rust 1.70+（仅桌面应用需要）
 
 ### 安装
 
@@ -56,10 +83,24 @@ npm run dev
 
 ### 构建
 
+#### Web 版本
+
 ```bash
 npm run build
 npm run start
 ```
+
+#### 桌面应用
+
+```bash
+# 开发模式
+npm run tauri:dev
+
+# 生产构建
+npm run tauri:build
+```
+
+详细说明请参考 [DESKTOP_APP.md](./DESKTOP_APP.md)
 
 ### 测试
 
@@ -91,9 +132,14 @@ src/
 
 ## 📖 文档
 
+- [快速上手](./QUICK_START.md) - 5 分钟快速开始指南
+- [安装指南](./INSTALLATION.md) - 详细的安装和更新说明
+- [桌面功能](./docs/DESKTOP_FEATURES.md) - 桌面应用独有功能说明
+- [桌面应用打包](./DESKTOP_APP.md) - Tauri 桌面应用构建指南
 - [架构设计](./docs/ARCHITECTURE.md) - 技术架构和组件关系
 - [项目上下文](./docs/PROJECT_CONTEXT.md) - 当前状态和决策日志
 - [UX 指南](./docs/UX_GUIDELINES.md) - 交互设计原则
+- [更新日志](./CHANGELOG.md) - 版本变更记录
 
 ## 🎯 设计理念
 
