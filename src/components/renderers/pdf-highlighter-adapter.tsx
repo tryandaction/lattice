@@ -38,9 +38,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { useAnnotationSystem } from "@/hooks/use-annotation-system";
 import { useAnnotationNavigation } from "@/hooks/use-annotation-navigation";
+import { useInkAnnotation, type MergedInkAnnotation, type InkStroke } from "@/hooks/use-ink-annotation";
 import { HIGHLIGHT_COLORS, BACKGROUND_COLORS, TEXT_COLORS, TEXT_FONT_SIZES, DEFAULT_TEXT_STYLE } from "@/lib/annotation-colors";
 import { PDFExportButton } from "./pdf-export-button";
 import { PdfAnnotationSidebar } from "./pdf-annotation-sidebar";
+import { InkSessionIndicator } from "./ink-session-indicator";
 import { adjustPopupPosition, type PopupSize } from "@/lib/coordinate-adapter";
 import type { AnnotationItem, PdfTarget, BoundingBox } from "@/types/universal-annotation";
 
@@ -404,7 +406,7 @@ function ColorPicker({
       {/* Selected text preview */}
       {selectedText && (
         <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border truncate max-w-[200px]">
-          "{selectedText.slice(0, 40)}{selectedText.length > 40 ? '...' : ''}"
+          &ldquo;{selectedText.slice(0, 40)}{selectedText.length > 40 ? '...' : ''}&rdquo;
         </div>
       )}
       
@@ -601,7 +603,7 @@ function HighlightPopupContent({
               borderRadius: '2px',
             }}
           >
-            "{highlightText.slice(0, 50)}{highlightText.length > 50 ? '...' : ''}"
+            &ldquo;{highlightText.slice(0, 50)}{highlightText.length > 50 ? '...' : ''}&rdquo;
           </div>
         </div>
       )}
@@ -1056,15 +1058,29 @@ function InkAnnotationOverlay({ annotation, scale }: InkAnnotationOverlayProps) 
   }
 
   try {
-    const path = JSON.parse(annotation.content || '[]') as { x: number; y: number }[];
-    if (path.length < 2) return null;
+    const content = JSON.parse(annotation.content || '[]');
+    
+    // Support both old format (single path) and new format (array of paths)
+    let paths: { x: number; y: number }[][];
+    
+    if (Array.isArray(content) && content.length > 0) {
+      // Check if it's the old format (array of points) or new format (array of arrays)
+      if (typeof content[0].x === 'number') {
+        // Old format: single path
+        paths = [content as { x: number; y: number }[]];
+      } else if (Array.isArray(content[0])) {
+        // New format: array of paths
+        paths = content as { x: number; y: number }[][];
+      } else {
+        return null;
+      }
+    } else {
+      return null;
+    }
 
-    // Create SVG path data from normalized coordinates
-    const pathData = path.map((point, i) => {
-      const cmd = i === 0 ? 'M' : 'L';
-      // Convert normalized (0-1) to percentage for SVG viewBox
-      return `${cmd} ${point.x * 100} ${point.y * 100}`;
-    }).join(' ');
+    // Filter out paths with less than 2 points
+    const validPaths = paths.filter(path => path.length >= 2);
+    if (validPaths.length === 0) return null;
 
     return (
       <svg
@@ -1073,15 +1089,27 @@ function InkAnnotationOverlay({ annotation, scale }: InkAnnotationOverlayProps) 
         preserveAspectRatio="none"
         style={{ width: '100%', height: '100%' }}
       >
-        <path
-          d={pathData}
-          fill="none"
-          stroke={annotation.style.color}
-          strokeWidth={0.3 / scale}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke"
-        />
+        {validPaths.map((path, pathIndex) => {
+          // Create SVG path data from normalized coordinates
+          const pathData = path.map((point, i) => {
+            const cmd = i === 0 ? 'M' : 'L';
+            // Convert normalized (0-1) to percentage for SVG viewBox
+            return `${cmd} ${point.x * 100} ${point.y * 100}`;
+          }).join(' ');
+
+          return (
+            <path
+              key={pathIndex}
+              d={pathData}
+              fill="none"
+              stroke={annotation.style.color}
+              strokeWidth={0.3 / scale}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        })}
       </svg>
     );
   } catch (e) {
@@ -1255,16 +1283,86 @@ export function PDFHighlighterAdapter({
   const [pendingPin, setPendingPin] = useState<{ x: number; y: number; page: number } | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
-  const [showSidebar, setShowSidebar] = useState(true); // Show sidebar by default
+  const [showSidebar, setShowSidebar] = useState(false); // Sidebar closed by default (Bug 7 fix)
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
-  const [isDrawing, setIsDrawing] = useState(false);
+  
+  // Current stroke state (for real-time drawing preview)
   const [currentInkPath, setCurrentInkPath] = useState<{ x: number; y: number }[]>([]);
   const [currentInkPage, setCurrentInkPage] = useState<number | null>(null);
+  const [isDrawingStroke, setIsDrawingStroke] = useState(false);
+  
   const [textAnnotationPosition, setTextAnnotationPosition] = useState<{ x: number; y: number; page: number } | null>(null);
   const [editingTextAnnotation, setEditingTextAnnotation] = useState<{ annotation: AnnotationItem; position: { x: number; y: number } } | null>(null);
   const [pdfPageDimensions, setPdfPageDimensions] = useState<Map<number, { width: number; height: number }>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Ink annotation merge callback - creates merged annotation from buffered strokes
+  const handleCreateMergedInkAnnotation = useCallback((merged: MergedInkAnnotation) => {
+    const inkAnnotation: Omit<AnnotationItem, 'id' | 'createdAt'> = {
+      target: {
+        type: 'pdf',
+        page: merged.page,
+        rects: [{
+          x1: Math.max(0, merged.boundingBox.x1),
+          y1: Math.max(0, merged.boundingBox.y1),
+          x2: Math.min(1, merged.boundingBox.x2),
+          y2: Math.min(1, merged.boundingBox.y2),
+        }],
+      } as PdfTarget,
+      style: {
+        color: merged.color,
+        type: 'ink',
+      },
+      // Store all stroke paths as JSON for rendering
+      content: merged.content,
+      author: 'user',
+    };
+    addAnnotation(inkAnnotation);
+  }, [addAnnotation]);
+
+  // Use ink annotation merge hook
+  const {
+    addStroke: addInkStroke,
+    isDrawing: isInkBuffering,
+    strokeCount: inkStrokeCount,
+    finalizeNow: finalizeInkNow,
+    cancelDrawing: cancelInkDrawing,
+  } = useInkAnnotation({
+    onCreateAnnotation: handleCreateMergedInkAnnotation,
+    mergeCriteria: {
+      timeThreshold: 2000,
+      distanceThreshold: 0.1,
+    },
+  });
+
+  // Sidebar state persistence key
+  const sidebarStorageKey = `lattice:pdf-sidebar:${fileName}`;
+
+  // Load sidebar state from localStorage on mount
+  useEffect(() => {
+    const savedState = localStorage.getItem(sidebarStorageKey);
+    if (savedState !== null) {
+      setShowSidebar(savedState === 'true');
+    }
+  }, [sidebarStorageKey]);
+
+  // Save sidebar state to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem(sidebarStorageKey, String(showSidebar));
+  }, [showSidebar, sidebarStorageKey]);
+
+  // Keyboard shortcut: Ctrl+Shift+A to toggle sidebar
+  useEffect(() => {
+    const handleSidebarShortcut = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        setShowSidebar(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleSidebarShortcut);
+    return () => window.removeEventListener('keydown', handleSidebarShortcut);
+  }, []);
 
   // Zoom limits
   const ZOOM_MIN = 0.25;
@@ -1474,7 +1572,7 @@ export function PDFHighlighterAdapter({
     const clampedX = Math.max(0, Math.min(1, x));
     const clampedY = Math.max(0, Math.min(1, y));
     
-    setIsDrawing(true);
+    setIsDrawingStroke(true);
     setCurrentInkPage(pageNumber);
     setCurrentInkPath([{ x: clampedX, y: clampedY }]);
     
@@ -1484,7 +1582,7 @@ export function PDFHighlighterAdapter({
 
   // Handle ink drawing move
   const handleInkMouseMove = useCallback((event: React.MouseEvent) => {
-    if (!isDrawing || activeTool !== 'ink' || currentInkPage === null) return;
+    if (!isDrawingStroke || activeTool !== 'ink' || currentInkPage === null) return;
     
     // Find the page element
     const pageElement = document.querySelector(`[data-page-number="${currentInkPage}"]`);
@@ -1503,52 +1601,31 @@ export function PDFHighlighterAdapter({
     setCurrentInkPath(prev => [...prev, { x: clampedX, y: clampedY }]);
     
     event.preventDefault();
-  }, [isDrawing, activeTool, currentInkPage]);
+  }, [isDrawingStroke, activeTool, currentInkPage]);
 
-  // Handle ink drawing end
+  // Handle ink drawing end - now uses stroke buffer for merging
   const handleInkMouseUp = useCallback(() => {
-    if (!isDrawing || currentInkPage === null || currentInkPath.length < 2) {
-      setIsDrawing(false);
+    if (!isDrawingStroke || currentInkPage === null || currentInkPath.length < 2) {
+      setIsDrawingStroke(false);
       setCurrentInkPath([]);
       setCurrentInkPage(null);
       return;
     }
 
-    // Create ink annotation from path
-    // Convert path to bounding box for storage
-    const xs = currentInkPath.map(p => p.x);
-    const ys = currentInkPath.map(p => p.y);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-
-    const inkAnnotation: Omit<AnnotationItem, 'id' | 'createdAt'> = {
-      target: {
-        type: 'pdf',
-        page: currentInkPage,
-        rects: [{
-          x1: Math.max(0, minX),
-          y1: Math.max(0, minY),
-          x2: Math.min(1, maxX),
-          y2: Math.min(1, maxY),
-        }],
-      } as PdfTarget,
-      style: {
-        color: activeColor,
-        type: 'ink',
-      },
-      // Store the path as JSON in content for later rendering
-      content: JSON.stringify(currentInkPath),
-      author: 'user',
+    // Add stroke to buffer instead of creating annotation immediately
+    const stroke: InkStroke = {
+      points: currentInkPath.map(p => ({ x: p.x, y: p.y })),
+      page: currentInkPage,
+      color: activeColor,
     };
-
-    addAnnotation(inkAnnotation);
     
-    setIsDrawing(false);
+    addInkStroke(stroke);
+    
+    // Clear current stroke state
+    setIsDrawingStroke(false);
     setCurrentInkPath([]);
     setCurrentInkPage(null);
-  }, [isDrawing, currentInkPage, currentInkPath, activeColor, addAnnotation]);
+  }, [isDrawingStroke, currentInkPage, currentInkPath, activeColor, addInkStroke]);
 
   // Handle text annotation save
   const handleSaveTextAnnotation = useCallback((text: string, textColor: string, fontSize: number, bgColor: string) => {
@@ -1745,10 +1822,28 @@ export function PDFHighlighterAdapter({
       
       {/* Zotero-style Toolbar */}
       <div className="flex items-center justify-between border-b border-border bg-muted/50 px-2 py-1.5">
-        {/* Left: File name */}
-        <span className="text-sm text-muted-foreground truncate max-w-[200px]">
-          {fileName}
-        </span>
+        {/* Left: Sidebar toggle + File name */}
+        <div className="flex items-center gap-2">
+          {/* Sidebar toggle button - moved to left side (Bug 6 fix) */}
+          <Button
+            variant={showSidebar ? "secondary" : "ghost"}
+            size="icon"
+            className="h-8 w-8 relative"
+            onClick={() => setShowSidebar(!showSidebar)}
+            title={showSidebar ? "隐藏批注面板 (Ctrl+Shift+A)" : "显示批注面板 (Ctrl+Shift+A)"}
+          >
+            {showSidebar ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+            {/* Badge showing annotation count when sidebar is closed */}
+            {!showSidebar && annotations.length > 0 && (
+              <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-[10px] rounded-full min-w-[16px] h-4 flex items-center justify-center px-1">
+                {annotations.length > 99 ? '99+' : annotations.length}
+              </span>
+            )}
+          </Button>
+          <span className="text-sm text-muted-foreground truncate max-w-[200px]">
+            {fileName}
+          </span>
+        </div>
 
         {/* Center: Annotation Tools (Zotero style) */}
         <div className="flex items-center gap-0.5">
@@ -1900,16 +1995,6 @@ export function PDFHighlighterAdapter({
             annotations={annotations}
             fileName={fileName}
           />
-
-          <Button
-            variant={showSidebar ? "secondary" : "ghost"}
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => setShowSidebar(!showSidebar)}
-            title={showSidebar ? "隐藏批注面板" : "显示批注面板"}
-          >
-            {showSidebar ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
-          </Button>
         </div>
       </div>
 
@@ -2287,6 +2372,14 @@ export function PDFHighlighterAdapter({
               scale={scale}
             />
           )}
+
+          {/* Ink session indicator - shows when strokes are being buffered */}
+          <InkSessionIndicator
+            isDrawing={isInkBuffering}
+            strokeCount={inkStrokeCount}
+            onFinalize={finalizeInkNow}
+            onCancel={cancelInkDrawing}
+          />
         </div>
       </div>
 

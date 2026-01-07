@@ -71,7 +71,7 @@ export function SaveReminderDialog({
               保存更改？
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              文件 "<span className="font-medium text-foreground">{fileName}</span>" 有未保存的更改。
+              文件 &ldquo;<span className="font-medium text-foreground">{fileName}</span>&rdquo; 有未保存的更改。
             </p>
           </div>
         </div>

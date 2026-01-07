@@ -139,7 +139,7 @@ describe('usePythonRunner Logic', () => {
     });
 
     it('should handle error output messages', () => {
-      const message = { 
+      const message: { type: string; id: string; error: string; traceback?: string } = { 
         type: 'error', 
         id: 'exec-1', 
         error: 'NameError', 
@@ -161,7 +161,7 @@ describe('usePythonRunner Logic', () => {
     });
 
     it('should handle error without traceback', () => {
-      const message = { 
+      const message: { type: string; id: string; error: string; traceback?: string } = { 
         type: 'error', 
         id: 'exec-1', 
         error: 'SyntaxError' 

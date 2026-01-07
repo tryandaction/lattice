@@ -1,6 +1,6 @@
 "use client";
 
-import { FilePlus, BookPlus } from "lucide-react";
+import { FilePlus, BookPlus, FolderPlus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -9,16 +9,18 @@ import { cn } from "@/lib/utils";
 interface NewFileButtonsProps {
   onCreateNote: () => void;
   onCreateNotebook: () => void;
+  onCreateFolder?: () => void;
   disabled?: boolean;
 }
 
 /**
  * NewFileButtons component
- * Provides buttons for creating new notes (.md) and notebooks (.ipynb)
+ * Provides buttons for creating new notes (.md), notebooks (.ipynb), and folders
  */
 export function NewFileButtons({
   onCreateNote,
   onCreateNotebook,
+  onCreateFolder,
   disabled = false,
 }: NewFileButtonsProps) {
   return (
@@ -45,6 +47,19 @@ export function NewFileButtons({
       >
         <BookPlus className="h-4 w-4 text-muted-foreground" />
       </button>
+      {onCreateFolder && (
+        <button
+          onClick={onCreateFolder}
+          disabled={disabled}
+          title="New Folder"
+          className={cn(
+            "p-1 rounded hover:bg-accent transition-colors",
+            disabled && "opacity-50 cursor-not-allowed"
+          )}
+        >
+          <FolderPlus className="h-4 w-4 text-muted-foreground" />
+        </button>
+      )}
     </div>
   );
 }

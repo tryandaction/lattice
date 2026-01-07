@@ -188,7 +188,7 @@ export function AnnotationCommentPopup({
       {annotation.type === 'text' && annotation.content.text && (
         <div className="border-b border-border px-3 py-2">
           <p className="line-clamp-2 text-xs text-muted-foreground italic">
-            "{annotation.content.text}"
+            &ldquo;{annotation.content.text}&rdquo;
           </p>
         </div>
       )}

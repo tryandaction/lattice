@@ -105,11 +105,73 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const mode = computeMode({ isOpen, activeSymbolKey });
   const optimalPosition = computeOptimalPosition();
 
+  // ============================================================================
+  // MathLive Integration (moved before useEffects that depend on it)
+  // ============================================================================
+
+  const findCurrentMathField = useCallback((): HTMLElement | null => {
+    // 使用全局的活动 math-field
+    const { getActiveMathField } = require('./hud-provider');
+    const activeMf = getActiveMathField();
+    if (activeMf) {
+      activeMathFieldRef.current = activeMf;
+      return activeMf;
+    }
+    
+    // 如果没有，检查当前聚焦的
+    const focused = document.activeElement;
+    if (focused?.tagName?.toLowerCase() === 'math-field') {
+      activeMathFieldRef.current = focused as HTMLElement;
+      return focused as HTMLElement;
+    }
+    
+    // 不要自动选择最后一个 math-field！
+    // 这会导致输入跳转到错误的位置
+    
+    return activeMathFieldRef.current;
+  }, []);
 
   // ============================================================================
   // Cursor Position Tracking
   // ============================================================================
   
+  // Highlight active math-field when HUD is open (Bug 5 fix)
+  useEffect(() => {
+    if (!isOpen) {
+      // Remove highlight from all math-fields when HUD closes
+      document.querySelectorAll('math-field.quantum-keyboard-active').forEach(el => {
+        el.classList.remove('quantum-keyboard-active');
+      });
+      return;
+    }
+    
+    const updateHighlight = () => {
+      // Remove existing highlights
+      document.querySelectorAll('math-field.quantum-keyboard-active').forEach(el => {
+        el.classList.remove('quantum-keyboard-active');
+      });
+      
+      // Add highlight to active math-field
+      const mathField = findCurrentMathField();
+      if (mathField) {
+        mathField.classList.add('quantum-keyboard-active');
+      }
+    };
+    
+    updateHighlight();
+    
+    // Update highlight when focus changes
+    const handleFocusChange = () => setTimeout(updateHighlight, 50);
+    document.addEventListener('focusin', handleFocusChange);
+    
+    return () => {
+      document.removeEventListener('focusin', handleFocusChange);
+      document.querySelectorAll('math-field.quantum-keyboard-active').forEach(el => {
+        el.classList.remove('quantum-keyboard-active');
+      });
+    };
+  }, [isOpen, findCurrentMathField]);
+
   // Update cursor position when HUD opens and periodically while open
   useEffect(() => {
     if (!isOpen) return;
@@ -293,36 +355,8 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
 
 
   // ============================================================================
-  // MathLive Integration
+  // MathLive Key Forwarding
   // ============================================================================
-
-  const findCurrentMathField = useCallback((): HTMLElement | null => {
-    // 使用全局的活动 math-field
-    const { getActiveMathField } = require('./hud-provider');
-    const activeMf = getActiveMathField();
-    if (activeMf) {
-      activeMathFieldRef.current = activeMf;
-      return activeMf;
-    }
-    
-    // 如果没有，检查当前聚焦的
-    const focused = document.activeElement;
-    if (focused?.tagName?.toLowerCase() === 'math-field') {
-      activeMathFieldRef.current = focused as HTMLElement;
-      return focused as HTMLElement;
-    }
-    
-    // 不要自动选择最后一个 math-field！
-    // 这会导致输入跳转到错误的位置
-    
-    return activeMathFieldRef.current;
-  }, []);
-
-  useEffect(() => {
-    if (isOpen) {
-      // 不要自动查找 math-field，使用 provider 设置的
-    }
-  }, [isOpen]);
 
   const forwardKeyToMathField = useCallback((event: React.KeyboardEvent) => {
     const mathField = findCurrentMathField();

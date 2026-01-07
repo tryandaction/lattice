@@ -10,6 +10,7 @@
  * - Highlighted text with background
  * - Comment section
  * - Context menu on right-click
+ * - Multi-select and batch operations
  */
 
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
@@ -28,10 +29,74 @@ import {
   FileText,
   Check,
   Palette,
+  CheckSquare,
+  Square as SquareIcon,
+  X,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HIGHLIGHT_COLORS, BACKGROUND_COLORS, TEXT_COLORS, TEXT_FONT_SIZES, DEFAULT_TEXT_STYLE } from "@/lib/annotation-colors";
 import type { AnnotationItem, PdfTarget } from "@/types/universal-annotation";
+import { cn } from "@/lib/utils";
+
+// Helper function to export annotations to Markdown format
+function exportAnnotationsToMarkdown(annotations: AnnotationItem[]): string {
+  const lines: string[] = [
+    '# 批注导出',
+    '',
+    `*导出时间: ${new Date().toLocaleString('zh-CN')}*`,
+    '',
+    `共 ${annotations.length} 条批注`,
+    '',
+    '---',
+    '',
+  ];
+
+  // Group by page
+  const byPage = new Map<number, AnnotationItem[]>();
+  for (const ann of annotations) {
+    const page = (ann.target as PdfTarget).page;
+    if (!byPage.has(page)) {
+      byPage.set(page, []);
+    }
+    byPage.get(page)!.push(ann);
+  }
+
+  // Sort pages
+  const sortedPages = Array.from(byPage.keys()).sort((a, b) => a - b);
+
+  for (const page of sortedPages) {
+    const pageAnnotations = byPage.get(page)!;
+    lines.push(`## 第 ${page} 页`);
+    lines.push('');
+
+    for (const ann of pageAnnotations) {
+      const typeLabel = {
+        highlight: '🟡 高亮',
+        underline: '📝 下划线',
+        area: '📦 区域',
+        ink: '✏️ 手绘',
+        text: '💬 文字',
+      }[ann.style.type] || '📌 批注';
+
+      lines.push(`### ${typeLabel}`);
+      
+      if (ann.content) {
+        lines.push('');
+        lines.push(`> ${ann.content}`);
+      }
+      
+      if (ann.comment) {
+        lines.push('');
+        lines.push(`**笔记:** ${ann.comment}`);
+      }
+      
+      lines.push('');
+    }
+  }
+
+  return lines.join('\n');
+}
 
 interface PdfAnnotationSidebarProps {
   annotations: AnnotationItem[];
@@ -42,6 +107,127 @@ interface PdfAnnotationSidebarProps {
   onUpdateComment?: (id: string, comment: string) => void;
   onConvertToUnderline?: (id: string) => void;
   onUpdateTextStyle?: (id: string, textColor: string, fontSize: number, bgColor: string) => void;
+  onBatchDelete?: (ids: string[]) => void;
+  onBatchUpdateColor?: (ids: string[], color: string) => void;
+  onBatchExport?: (annotations: AnnotationItem[]) => void;
+}
+
+// Batch selection toolbar component
+function BatchSelectionToolbar({
+  selectedCount,
+  totalCount,
+  onSelectAll,
+  onClearSelection,
+  onDelete,
+  onChangeColor,
+  onExport,
+}: {
+  selectedCount: number;
+  totalCount: number;
+  onSelectAll: () => void;
+  onClearSelection: () => void;
+  onDelete: () => void;
+  onChangeColor: (color: string) => void;
+  onExport?: () => void;
+}) {
+  const [showColorPicker, setShowColorPicker] = useState(false);
+  const colorPickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (colorPickerRef.current && !colorPickerRef.current.contains(e.target as Node)) {
+        setShowColorPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  if (selectedCount === 0) return null;
+
+  return (
+    <div className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border px-2 py-1.5 flex items-center gap-1.5">
+      <span className="text-xs font-medium text-muted-foreground">
+        已选 {selectedCount}/{totalCount}
+      </span>
+
+      <div className="flex items-center gap-0.5 ml-auto">
+        <Button 
+          variant="ghost" 
+          size="sm" 
+          className="h-6 text-xs px-2"
+          onClick={selectedCount === totalCount ? onClearSelection : onSelectAll}
+        >
+          {selectedCount === totalCount ? '取消全选' : '全选'}
+        </Button>
+
+        <div className="w-px h-4 bg-border mx-1" />
+
+        {/* Color change dropdown */}
+        <div className="relative" ref={colorPickerRef}>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-6 text-xs px-2"
+            onClick={() => setShowColorPicker(!showColorPicker)}
+          >
+            <Palette className="h-3 w-3 mr-1" />
+            颜色
+          </Button>
+          {showColorPicker && (
+            <div className="absolute top-full right-0 mt-1 bg-popover border border-border rounded-lg shadow-lg p-2 z-20">
+              <div className="flex gap-1">
+                {HIGHLIGHT_COLORS.map((color) => (
+                  <button
+                    key={color.value}
+                    onClick={() => {
+                      onChangeColor(color.hex);
+                      setShowColorPicker(false);
+                    }}
+                    className="w-6 h-6 rounded-full border border-transparent hover:border-foreground/30 transition-all hover:scale-110"
+                    style={{ backgroundColor: color.hex }}
+                    title={color.nameCN}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Export button */}
+        {onExport && (
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-6 text-xs px-2"
+            onClick={onExport}
+          >
+            <Download className="h-3 w-3 mr-1" />
+            导出
+          </Button>
+        )}
+
+        <Button 
+          variant="ghost" 
+          size="sm" 
+          className="h-6 text-xs px-2 text-destructive hover:text-destructive"
+          onClick={onDelete}
+        >
+          <Trash2 className="h-3 w-3 mr-1" />
+          删除
+        </Button>
+
+        <Button 
+          variant="ghost" 
+          size="icon" 
+          className="h-6 w-6"
+          onClick={onClearSelection}
+        >
+          <X className="h-3 w-3" />
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 // Zotero-style context menu component
@@ -355,7 +541,10 @@ function AnnotationContextMenu({
 function AnnotationCard({
   annotation,
   isSelected,
+  isMultiSelected,
+  isMultiSelectMode,
   onSelect,
+  onToggleMultiSelect,
   onDelete,
   onUpdateColor,
   onUpdateComment,
@@ -364,7 +553,10 @@ function AnnotationCard({
 }: {
   annotation: AnnotationItem;
   isSelected: boolean;
+  isMultiSelected: boolean;
+  isMultiSelectMode: boolean;
   onSelect: () => void;
+  onToggleMultiSelect: () => void;
   onDelete: () => void;
   onUpdateColor?: (color: string) => void;
   onUpdateComment?: (comment: string) => void;
@@ -397,6 +589,18 @@ function AnnotationCard({
       navigator.clipboard.writeText(annotation.content);
     }
   }, [annotation.content]);
+
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    // Ctrl/Cmd + Click toggles multi-select
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      onToggleMultiSelect();
+    } else if (isMultiSelectMode) {
+      onToggleMultiSelect();
+    } else {
+      onSelect();
+    }
+  }, [isMultiSelectMode, onSelect, onToggleMultiSelect]);
 
   useEffect(() => {
     if (isEditing && textareaRef.current) {
@@ -450,9 +654,9 @@ function AnnotationCard({
     <>
       <div
         className={`group relative cursor-pointer transition-all duration-150 ${
-          isSelected ? 'bg-muted/80' : 'hover:bg-muted/40'
+          isSelected ? 'bg-muted/80' : isMultiSelected ? 'bg-accent/30' : 'hover:bg-muted/40'
         }`}
-        onClick={onSelect}
+        onClick={handleClick}
         onContextMenu={handleContextMenu}
       >
         {/* Color bar (Zotero style) */}
@@ -462,8 +666,26 @@ function AnnotationCard({
         />
 
         <div className="pl-3 pr-2 py-2.5">
-          {/* Header: Page badge + type icon */}
+          {/* Header: Checkbox (in multi-select) + Page badge + type icon */}
           <div className="flex items-center gap-2 mb-1.5">
+            {/* Multi-select checkbox */}
+            {isMultiSelectMode && (
+              <button
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  onToggleMultiSelect();
+                }}
+                className={cn(
+                  "h-4 w-4 rounded border flex items-center justify-center transition-colors",
+                  isMultiSelected 
+                    ? "bg-primary border-primary text-primary-foreground" 
+                    : "border-muted-foreground/50 hover:border-primary"
+                )}
+              >
+                {isMultiSelected && <Check className="h-3 w-3" />}
+              </button>
+            )}
+            
             <span 
               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium"
               style={{ 
@@ -627,7 +849,14 @@ export function PdfAnnotationSidebar({
   onUpdateComment,
   onConvertToUnderline,
   onUpdateTextStyle,
+  onBatchDelete,
+  onBatchUpdateColor,
+  onBatchExport,
 }: PdfAnnotationSidebarProps) {
+  // Multi-select state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const isMultiSelectMode = selectedIds.size > 0;
+
   // Sort annotations by page, then by position (top to bottom)
   const sortedAnnotations = useMemo(() => {
     return [...annotations]
@@ -646,6 +875,67 @@ export function PdfAnnotationSidebar({
         return a.createdAt - b.createdAt;
       });
   }, [annotations]);
+
+  // Multi-select handlers
+  const toggleSelection = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    setSelectedIds(new Set(sortedAnnotations.map(a => a.id)));
+  }, [sortedAnnotations]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  const handleBatchDelete = useCallback(() => {
+    const ids = Array.from(selectedIds);
+    if (onBatchDelete) {
+      onBatchDelete(ids);
+    } else {
+      // Fallback to individual deletes
+      ids.forEach(id => onDelete(id));
+    }
+    clearSelection();
+  }, [selectedIds, onBatchDelete, onDelete, clearSelection]);
+
+  const handleBatchColorChange = useCallback((color: string) => {
+    const ids = Array.from(selectedIds);
+    if (onBatchUpdateColor) {
+      onBatchUpdateColor(ids, color);
+    } else if (onUpdateColor) {
+      // Fallback to individual updates
+      ids.forEach(id => onUpdateColor(id, color));
+    }
+  }, [selectedIds, onBatchUpdateColor, onUpdateColor]);
+
+  const handleBatchExport = useCallback(() => {
+    const selectedAnnotations = sortedAnnotations.filter(a => selectedIds.has(a.id));
+    if (onBatchExport) {
+      onBatchExport(selectedAnnotations);
+    } else {
+      // Default export: download as Markdown
+      const markdown = exportAnnotationsToMarkdown(selectedAnnotations);
+      const blob = new Blob([markdown], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `annotations-${new Date().toISOString().slice(0, 10)}.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  }, [selectedIds, sortedAnnotations, onBatchExport]);
 
   if (annotations.length === 0) {
     return (
@@ -666,10 +956,37 @@ export function PdfAnnotationSidebar({
       {/* Header */}
       <div className="px-3 py-2.5 border-b border-border flex items-center justify-between">
         <h3 className="text-sm font-medium">批注</h3>
-        <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-          {annotations.length}
-        </span>
+        <div className="flex items-center gap-2">
+          {/* Multi-select toggle button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={() => isMultiSelectMode ? clearSelection() : selectAll()}
+            title={isMultiSelectMode ? "退出多选" : "多选模式"}
+          >
+            {isMultiSelectMode ? (
+              <CheckSquare className="h-3.5 w-3.5 text-primary" />
+            ) : (
+              <SquareIcon className="h-3.5 w-3.5" />
+            )}
+          </Button>
+          <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+            {annotations.length}
+          </span>
+        </div>
       </div>
+
+      {/* Batch selection toolbar */}
+      <BatchSelectionToolbar
+        selectedCount={selectedIds.size}
+        totalCount={sortedAnnotations.length}
+        onSelectAll={selectAll}
+        onClearSelection={clearSelection}
+        onDelete={handleBatchDelete}
+        onChangeColor={handleBatchColorChange}
+        onExport={handleBatchExport}
+      />
       
       {/* Annotation list */}
       <div className="flex-1 overflow-auto">
@@ -679,7 +996,10 @@ export function PdfAnnotationSidebar({
               key={ann.id}
               annotation={ann}
               isSelected={selectedId === ann.id}
+              isMultiSelected={selectedIds.has(ann.id)}
+              isMultiSelectMode={isMultiSelectMode}
               onSelect={() => onSelect(ann)}
+              onToggleMultiSelect={() => toggleSelection(ann.id)}
               onDelete={() => onDelete(ann.id)}
               onUpdateColor={onUpdateColor ? (color) => onUpdateColor(ann.id, color) : undefined}
               onUpdateComment={onUpdateComment ? (comment) => onUpdateComment(ann.id, comment) : undefined}

@@ -53,6 +53,7 @@
     "framer-motion": "^12.23.26",
     "geist": "^1.5.1",
     "gray-matter": "^4.0.3",
+    "highlight.js": "^11.11.1",
     "html2canvas": "^1.4.1",
     "jotai": "^2.10.0",
     "jszip": "^3.10.1",
@@ -78,6 +79,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.3",
     "@tauri-apps/cli": "^2.9.6",
     "@tauri-apps/plugin-store": "^2.0.0",
     "@testing-library/react": "^16.0.0",

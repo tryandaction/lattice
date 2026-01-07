@@ -327,7 +327,7 @@ function parseInline(text: string): ContentNode[] {
     }
     
     // Bold **...**
-    const boldMatch = remaining.match(/^\*\*([^*]+?)\*\*/);
+    const boldMatch = remaining.match(/^\*\*(.+?)\*\*/);
     if (boldMatch) {
       const innerContent = parseInline(boldMatch[1]);
       innerContent.forEach(node => {
@@ -342,7 +342,7 @@ function parseInline(text: string): ContentNode[] {
     }
     
     // Bold __...__
-    const boldUnderMatch = remaining.match(/^__([^_]+?)__/);
+    const boldUnderMatch = remaining.match(/^__(.+?)__/);
     if (boldUnderMatch) {
       const innerContent = parseInline(boldUnderMatch[1]);
       innerContent.forEach(node => {
@@ -356,7 +356,7 @@ function parseInline(text: string): ContentNode[] {
       continue;
     }
     
-    // Italic *...*
+    // Italic *...* - be careful not to match ** (bold)
     const italicMatch = remaining.match(/^\*([^*]+?)\*/);
     if (italicMatch) {
       const innerContent = parseInline(italicMatch[1]);
@@ -387,12 +387,14 @@ function parseInline(text: string): ContentNode[] {
     }
     
     // Strikethrough ~~...~~
-    const strikeMatch = remaining.match(/^~~([^~]+?)~~/);
+    const strikeMatch = remaining.match(/^~~(.+?)~~/);
     if (strikeMatch) {
-      result.push({
-        type: 'text',
-        text: strikeMatch[1],
-        marks: [{ type: 'strike' }],
+      const innerContent = parseInline(strikeMatch[1]);
+      innerContent.forEach(node => {
+        if (node.type === 'text') {
+          node.marks = [...(node.marks || []), { type: 'strike' }];
+        }
+        result.push(node);
       });
       remaining = remaining.slice(strikeMatch[0].length);
       matched = true;

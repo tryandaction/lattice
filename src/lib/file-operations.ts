@@ -290,3 +290,84 @@ export async function renameFile(
     };
   }
 }
+
+/**
+ * Result of a directory operation
+ */
+export interface DirectoryOperationResult {
+  success: boolean;
+  handle?: FileSystemDirectoryHandle;
+  path?: string;
+  error?: string;
+}
+
+/**
+ * Check if a directory exists
+ */
+async function directoryExists(
+  parentHandle: FileSystemDirectoryHandle,
+  dirName: string
+): Promise<boolean> {
+  try {
+    await parentHandle.getDirectoryHandle(dirName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Generate a unique directory name that doesn't collide with existing directories
+ * 
+ * @param parentHandle - Parent directory handle to check for existing directories
+ * @param baseName - Base name for the directory
+ * @returns Unique directory name
+ */
+export async function generateUniqueDirectoryName(
+  parentHandle: FileSystemDirectoryHandle,
+  baseName: string
+): Promise<string> {
+  const sanitized = sanitizeFileName(baseName) || 'New Folder';
+  let candidate = sanitized;
+  let counter = 1;
+
+  while (await directoryExists(parentHandle, candidate)) {
+    candidate = `${sanitized} ${counter}`;
+    counter++;
+  }
+
+  return candidate;
+}
+
+/**
+ * Create a new directory in the specified parent directory
+ * 
+ * @param parentHandle - Parent directory handle where the new directory will be created
+ * @param name - Desired directory name
+ * @returns DirectoryOperationResult with the created directory handle
+ */
+export async function createDirectory(
+  parentHandle: FileSystemDirectoryHandle,
+  name: string
+): Promise<DirectoryOperationResult> {
+  try {
+    const uniqueName = await generateUniqueDirectoryName(parentHandle, name);
+    
+    // Create the directory
+    const dirHandle = await parentHandle.getDirectoryHandle(uniqueName, { create: true });
+
+    // Build the path
+    const path = `${parentHandle.name}/${uniqueName}`;
+
+    return {
+      success: true,
+      handle: dirHandle,
+      path,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to create directory',
+    };
+  }
+}

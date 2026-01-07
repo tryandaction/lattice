@@ -82,9 +82,10 @@ export interface HUDState {
 // ============================================================================
 
 const HUD_HEIGHT = 320; // Approximate height of the keyboard HUD (including drag handle)
-const HUD_MARGIN = 40;  // Margin between cursor and HUD
+const _HUD_WIDTH = 480;  // Approximate width of the keyboard HUD (reserved for future use)
+const HUD_MARGIN = 20;  // Margin between cursor and HUD (reduced for better positioning)
 const VIEWPORT_PADDING = 20; // Padding from viewport edges
-const BOTTOM_THRESHOLD = 0.50; // If cursor is below this % of viewport, show HUD on top
+const BOTTOM_THRESHOLD = 0.55; // If cursor is below this % of viewport, show HUD on top
 
 
 // ============================================================================
@@ -297,12 +298,13 @@ export const useHUDStore = create<HUDState>((set, get) => ({
    * Compute optimal position based on cursor location
    * Returns 'top' if keyboard should appear above cursor, 'bottom' otherwise
    * 
-   * Decision logic:
+   * Decision logic (Bug 5 fix - ensure keyboard never blocks formula):
    * 1. If user has set a fixed position (not 'auto'), use it
    * 2. If user has dragged to a custom offset, maintain current position
-   * 3. If cursor is in bottom half of screen -> show on top
-   * 4. If not enough space below cursor -> show on top (if space above)
-   * 5. Default to bottom
+   * 3. Calculate if keyboard would overlap with the math field
+   * 4. If cursor is in bottom half of screen -> show on top
+   * 5. If not enough space below cursor -> show on top (if space above)
+   * 6. Default to bottom
    */
   computeOptimalPosition: () => {
     const state = get();
@@ -337,15 +339,39 @@ export const useHUDStore = create<HUDState>((set, get) => ({
     // Calculate the threshold position (where cursor is considered "in bottom part")
     const thresholdY = viewportHeight * BOTTOM_THRESHOLD;
     
+    // Check if keyboard would overlap with the math field when positioned at bottom
+    // The keyboard is centered horizontally and positioned at bottom: 20px
+    const keyboardBottomPosition = viewportHeight - 20; // bottom edge of keyboard
+    const keyboardTopPosition = keyboardBottomPosition - HUD_HEIGHT; // top edge of keyboard
+    
+    // Would the keyboard overlap with the cursor/math field?
+    const wouldOverlapAtBottom = cursorBottom > keyboardTopPosition - HUD_MARGIN;
+    
+    // Check if keyboard would overlap when positioned at top
+    const keyboardTopAtTop = 20; // top edge when positioned at top
+    const keyboardBottomAtTop = keyboardTopAtTop + HUD_HEIGHT; // bottom edge when at top
+    const wouldOverlapAtTop = cursorTop < keyboardBottomAtTop + HUD_MARGIN;
+    
     // Decision logic:
-    // 1. If cursor center is below threshold -> show on top
-    // 2. If not enough space below but enough above -> show on top
-    // 3. Otherwise -> show on bottom
+    // 1. If cursor center is below threshold -> show on top (if it won't overlap)
+    // 2. If keyboard would overlap at bottom but not at top -> show on top
+    // 3. If not enough space below but enough above -> show on top
+    // 4. Otherwise -> show on bottom
     
     const cursorInBottomPart = centerY > thresholdY;
     const notEnoughSpaceBelow = spaceBelow < HUD_HEIGHT + HUD_MARGIN;
     const enoughSpaceAbove = spaceAbove >= HUD_HEIGHT + HUD_MARGIN;
     
+    // Prefer position that doesn't overlap
+    if (wouldOverlapAtBottom && !wouldOverlapAtTop) {
+      return 'top';
+    }
+    
+    if (!wouldOverlapAtBottom && wouldOverlapAtTop) {
+      return 'bottom';
+    }
+    
+    // If both would overlap or neither would, use traditional logic
     if (cursorInBottomPart || (notEnoughSpaceBelow && enoughSpaceAbove)) {
       return 'top';
     }

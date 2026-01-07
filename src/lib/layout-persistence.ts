@@ -16,7 +16,7 @@ import type {
   SerializedSplitNode,
   SerializedTab,
 } from "@/types/layout";
-import { isPaneNode, isSplitNode } from "@/types/layout";
+import { isPaneNode } from "@/types/layout";
 import { createEmptyPane } from "./layout-utils";
 
 const LAYOUT_STORAGE_KEY = "lattice-layout-v1";

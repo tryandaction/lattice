@@ -8,7 +8,6 @@
 import { create } from 'zustand';
 import type { LatticeAnnotation, AnnotationFile } from '../types/annotation';
 import {
-  createAnnotationFile,
   validateAnnotation,
 } from '../lib/annotation-utils';
 import {

@@ -240,6 +240,31 @@
   @apply my-1;
 }
 
+/* Nested list styles for prose-lattice */
+.prose-lattice ul ul {
+  list-style-type: circle;
+}
+
+.prose-lattice ul ul ul {
+  list-style-type: square;
+}
+
+.prose-lattice ul ul ul ul {
+  list-style-type: disc;
+}
+
+.prose-lattice ol ol {
+  list-style-type: lower-alpha;
+}
+
+.prose-lattice ol ol ol {
+  list-style-type: lower-roman;
+}
+
+.prose-lattice ol ol ol ol {
+  list-style-type: decimal;
+}
+
 .prose-lattice blockquote {
   @apply border-l-4 border-primary/40 pl-4 my-4 italic text-muted-foreground bg-muted/30 py-2 pr-4 rounded-r;
 }
@@ -339,11 +364,14 @@ code[class*="language-"] {
 /* Table Styles in Editor */
 .ProseMirror table {
   @apply w-full border-collapse border border-border my-4;
+  table-layout: fixed;
 }
 
 .ProseMirror th,
 .ProseMirror td {
-  @apply border border-border p-2 text-left;
+  @apply border border-border p-2 text-left relative;
+  min-width: 50px;
+  vertical-align: top;
 }
 
 .ProseMirror th {
@@ -357,6 +385,40 @@ code[class*="language-"] {
 /* Selected cell highlight */
 .ProseMirror .selectedCell {
   @apply bg-primary/10;
+}
+
+/* Table wrapper for resizable tables */
+.ProseMirror .tableWrapper {
+  @apply overflow-x-auto my-4;
+}
+
+/* Column resize handle */
+.ProseMirror .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background-color: hsl(var(--primary));
+  cursor: col-resize;
+  z-index: 20;
+}
+
+/* Resize cursor when hovering table borders */
+.ProseMirror.resize-cursor {
+  cursor: col-resize;
+}
+
+/* Table cell paragraph spacing */
+.ProseMirror td > p,
+.ProseMirror th > p {
+  margin: 0;
+}
+
+/* Allow multiple paragraphs in cells */
+.ProseMirror td > p + p,
+.ProseMirror th > p + p {
+  margin-top: 0.5rem;
 }
 
 /* Code Block Styles */
@@ -401,6 +463,57 @@ code[class*="language-"] {
 
 .ProseMirror li {
   @apply my-1;
+}
+
+/* Nested list indentation - 4 levels */
+.ProseMirror ul ul,
+.ProseMirror ol ol,
+.ProseMirror ul ol,
+.ProseMirror ol ul {
+  @apply pl-6 my-1;
+}
+
+/* Different bullet styles for nested lists */
+.ProseMirror ul {
+  list-style-type: disc;
+}
+
+.ProseMirror ul ul {
+  list-style-type: circle;
+}
+
+.ProseMirror ul ul ul {
+  list-style-type: square;
+}
+
+.ProseMirror ul ul ul ul {
+  list-style-type: disc;
+}
+
+/* Ordered list styles */
+.ProseMirror ol {
+  list-style-type: decimal;
+}
+
+.ProseMirror ol ol {
+  list-style-type: lower-alpha;
+}
+
+.ProseMirror ol ol ol {
+  list-style-type: lower-roman;
+}
+
+.ProseMirror ol ol ol ol {
+  list-style-type: decimal;
+}
+
+/* List item content alignment */
+.ProseMirror li > p {
+  @apply my-0;
+}
+
+.ProseMirror li > p + p {
+  @apply mt-2;
 }
 
 /* Math Block Styles */
@@ -1341,6 +1454,22 @@ math-field::part(placeholder) {
   animation: keycap-flash 200ms ease-out;
 }
 
+/* Active math-field highlight when quantum keyboard is open (Bug 5 fix) */
+math-field.quantum-keyboard-active {
+  box-shadow: 0 0 0 2px hsl(var(--primary));
+  border-radius: 4px;
+  animation: quantum-math-pulse 2s ease-in-out infinite;
+}
+
+@keyframes quantum-math-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px hsl(var(--primary));
+  }
+  50% {
+    box-shadow: 0 0 0 4px hsl(var(--primary) / 0.5);
+  }
+}
+
 /* Quantum HUD Container - Smart positioning based on cursor location */
 .quantum-hud-container {
   position: fixed;
@@ -2094,4 +2223,411 @@ math-field::part(placeholder) {
 /* Muted text in content */
 .dark .prose-lattice .muted-text {
   color: #6b7280;
+}
+
+
+/* ============================================================================
+   Enhanced Code Block Styles (Phase 1 - Feature 5)
+   ============================================================================ */
+
+/* Code block wrapper with header */
+.code-block-wrapper {
+  @apply relative my-4 rounded-lg overflow-hidden;
+  @apply border border-border;
+  background: hsl(var(--muted) / 0.3);
+}
+
+.dark .code-block-wrapper {
+  background: hsl(var(--muted) / 0.5);
+}
+
+/* Code block header with language select and copy button */
+.code-block-header {
+  @apply flex items-center justify-between px-3 py-1.5;
+  @apply border-b border-border;
+  @apply bg-muted/50;
+}
+
+.dark .code-block-header {
+  @apply bg-muted/30;
+}
+
+/* Language selector dropdown */
+.code-language-select {
+  @apply text-xs bg-transparent border-none;
+  @apply text-muted-foreground cursor-pointer;
+  @apply focus:outline-none focus:ring-0;
+  padding: 2px 4px;
+}
+
+.code-language-select:hover {
+  @apply text-foreground;
+}
+
+/* Copy button */
+.code-copy-btn {
+  @apply text-xs px-2 py-1 rounded;
+  @apply bg-transparent text-muted-foreground;
+  @apply hover:bg-muted hover:text-foreground;
+  @apply transition-colors cursor-pointer;
+  border: none;
+}
+
+.code-copy-btn:active {
+  @apply bg-primary/20;
+}
+
+/* Pre element inside code block */
+.code-block-wrapper pre {
+  @apply m-0 p-4 overflow-x-auto;
+  @apply bg-transparent;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.code-block-wrapper pre code {
+  @apply bg-transparent p-0;
+  font-family: inherit;
+}
+
+/* Highlight.js syntax highlighting colors - One Dark theme */
+.hljs {
+  color: #abb2bf;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #5c6370;
+  font-style: italic;
+}
+
+.hljs-doctag,
+.hljs-keyword,
+.hljs-formula {
+  color: #c678dd;
+}
+
+.hljs-section,
+.hljs-name,
+.hljs-selector-tag,
+.hljs-deletion,
+.hljs-subst {
+  color: #e06c75;
+}
+
+.hljs-literal {
+  color: #56b6c2;
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-attribute,
+.hljs-meta .hljs-string {
+  color: #98c379;
+}
+
+.hljs-attr,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-type,
+.hljs-selector-class,
+.hljs-selector-attr,
+.hljs-selector-pseudo,
+.hljs-number {
+  color: #d19a66;
+}
+
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link,
+.hljs-meta,
+.hljs-selector-id,
+.hljs-title {
+  color: #61afef;
+}
+
+.hljs-built_in,
+.hljs-title.class_,
+.hljs-class .hljs-title {
+  color: #e5c07b;
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: bold;
+}
+
+.hljs-link {
+  text-decoration: underline;
+}
+
+/* Light mode syntax highlighting adjustments */
+.light .hljs,
+:not(.dark) .hljs {
+  color: #383a42;
+}
+
+.light .hljs-comment,
+.light .hljs-quote,
+:not(.dark) .hljs-comment,
+:not(.dark) .hljs-quote {
+  color: #a0a1a7;
+}
+
+.light .hljs-doctag,
+.light .hljs-keyword,
+.light .hljs-formula,
+:not(.dark) .hljs-doctag,
+:not(.dark) .hljs-keyword,
+:not(.dark) .hljs-formula {
+  color: #a626a4;
+}
+
+.light .hljs-section,
+.light .hljs-name,
+.light .hljs-selector-tag,
+.light .hljs-deletion,
+.light .hljs-subst,
+:not(.dark) .hljs-section,
+:not(.dark) .hljs-name,
+:not(.dark) .hljs-selector-tag,
+:not(.dark) .hljs-deletion,
+:not(.dark) .hljs-subst {
+  color: #e45649;
+}
+
+.light .hljs-literal,
+:not(.dark) .hljs-literal {
+  color: #0184bb;
+}
+
+.light .hljs-string,
+.light .hljs-regexp,
+.light .hljs-addition,
+.light .hljs-attribute,
+.light .hljs-meta .hljs-string,
+:not(.dark) .hljs-string,
+:not(.dark) .hljs-regexp,
+:not(.dark) .hljs-addition,
+:not(.dark) .hljs-attribute,
+:not(.dark) .hljs-meta .hljs-string {
+  color: #50a14f;
+}
+
+.light .hljs-attr,
+.light .hljs-variable,
+.light .hljs-template-variable,
+.light .hljs-type,
+.light .hljs-selector-class,
+.light .hljs-selector-attr,
+.light .hljs-selector-pseudo,
+.light .hljs-number,
+:not(.dark) .hljs-attr,
+:not(.dark) .hljs-variable,
+:not(.dark) .hljs-template-variable,
+:not(.dark) .hljs-type,
+:not(.dark) .hljs-selector-class,
+:not(.dark) .hljs-selector-attr,
+:not(.dark) .hljs-selector-pseudo,
+:not(.dark) .hljs-number {
+  color: #986801;
+}
+
+.light .hljs-symbol,
+.light .hljs-bullet,
+.light .hljs-link,
+.light .hljs-meta,
+.light .hljs-selector-id,
+.light .hljs-title,
+:not(.dark) .hljs-symbol,
+:not(.dark) .hljs-bullet,
+:not(.dark) .hljs-link,
+:not(.dark) .hljs-meta,
+:not(.dark) .hljs-selector-id,
+:not(.dark) .hljs-title {
+  color: #4078f2;
+}
+
+.light .hljs-built_in,
+.light .hljs-title.class_,
+.light .hljs-class .hljs-title,
+:not(.dark) .hljs-built_in,
+:not(.dark) .hljs-title.class_,
+:not(.dark) .hljs-class .hljs-title {
+  color: #c18401;
+}
+
+/* Task List Styles (Phase 1 - Feature 3) */
+.ProseMirror .task-list {
+  list-style-type: none;
+  padding-left: 0;
+}
+
+.ProseMirror .task-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.25rem 0;
+}
+
+.ProseMirror .task-item > label {
+  display: flex;
+  align-items: center;
+  margin-top: 0.125rem;
+}
+
+.ProseMirror .task-item input[type="checkbox"] {
+  @apply w-4 h-4 rounded border-border;
+  @apply cursor-pointer;
+  accent-color: hsl(var(--primary));
+}
+
+.ProseMirror .task-item[data-checked="true"] > div {
+  @apply text-muted-foreground line-through;
+}
+
+/* Nested task lists */
+.ProseMirror .task-list .task-list {
+  padding-left: 1.5rem;
+  margin-top: 0.25rem;
+}
+
+/* prose-lattice task list styles */
+.prose-lattice .task-list {
+  list-style-type: none;
+  padding-left: 0;
+}
+
+.prose-lattice .task-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.prose-lattice .task-item input[type="checkbox"] {
+  @apply w-4 h-4 mt-1;
+  accent-color: hsl(var(--primary));
+}
+
+
+/* ============================================================================
+   Enhanced Image Styles (Phase 1 - Feature 6)
+   ============================================================================ */
+
+/* Image wrapper for alignment */
+.image-wrapper {
+  @apply my-4;
+  display: block;
+}
+
+.image-wrapper.image-align-left {
+  text-align: left;
+}
+
+.image-wrapper.image-align-center {
+  text-align: center;
+}
+
+.image-wrapper.image-align-right {
+  text-align: right;
+}
+
+/* Enhanced image styling */
+.enhanced-image {
+  @apply max-w-full h-auto rounded-lg;
+  @apply cursor-pointer transition-all duration-200;
+  @apply border border-transparent;
+}
+
+.enhanced-image:hover {
+  @apply border-primary/30;
+}
+
+/* Selected image */
+.ProseMirror-selectednode .enhanced-image,
+.enhanced-image.selected {
+  @apply border-primary ring-2 ring-primary/30;
+}
+
+/* Image resize handles (for future implementation) */
+.image-resize-handle {
+  @apply absolute w-3 h-3 bg-primary rounded-full;
+  @apply border-2 border-white shadow-md;
+  @apply cursor-nwse-resize;
+  @apply opacity-0 transition-opacity;
+}
+
+.image-wrapper:hover .image-resize-handle,
+.ProseMirror-selectednode .image-resize-handle {
+  @apply opacity-100;
+}
+
+.image-resize-handle.top-left {
+  top: -6px;
+  left: -6px;
+  cursor: nwse-resize;
+}
+
+.image-resize-handle.top-right {
+  top: -6px;
+  right: -6px;
+  cursor: nesw-resize;
+}
+
+.image-resize-handle.bottom-left {
+  bottom: -6px;
+  left: -6px;
+  cursor: nesw-resize;
+}
+
+.image-resize-handle.bottom-right {
+  bottom: -6px;
+  right: -6px;
+  cursor: nwse-resize;
+}
+
+/* Image caption */
+.image-caption {
+  @apply mt-2 text-sm text-muted-foreground text-center;
+  @apply italic;
+}
+
+/* Drag & drop overlay */
+.image-drop-overlay {
+  @apply fixed inset-0 z-50;
+  @apply bg-primary/10 border-2 border-dashed border-primary;
+  @apply flex items-center justify-center;
+  @apply pointer-events-none;
+}
+
+.image-drop-overlay-text {
+  @apply text-lg font-medium text-primary;
+  @apply bg-background/90 px-6 py-3 rounded-lg;
+}
+
+/* ProseMirror image styles */
+.ProseMirror img {
+  @apply max-w-full h-auto rounded-lg my-4;
+}
+
+.ProseMirror img.ProseMirror-selectednode {
+  @apply outline outline-2 outline-primary outline-offset-2;
+}
+
+/* Figure element for images with captions */
+.ProseMirror figure {
+  @apply my-4;
+}
+
+.ProseMirror figure img {
+  @apply my-0;
+}
+
+.ProseMirror figcaption {
+  @apply mt-2 text-sm text-muted-foreground text-center italic;
 }

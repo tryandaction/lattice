@@ -139,7 +139,8 @@ describe('OutputArea', () => {
       expect(container.textContent).toContain('Warning');
 
       // Should be in a container with spacing
-      expect(container.firstChild?.className).toContain('space-y-2');
+      const firstChild = container.firstChild as HTMLElement | null;
+      expect(firstChild?.className).toContain('space-y-2');
     });
   });
 
@@ -153,7 +154,8 @@ describe('OutputArea', () => {
         <OutputArea outputs={outputs} className="custom-class" />
       );
 
-      expect(container.firstChild?.className).toContain('custom-class');
+      const firstChild = container.firstChild as HTMLElement | null;
+      expect(firstChild?.className).toContain('custom-class');
     });
   });
 });

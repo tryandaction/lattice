@@ -74,7 +74,8 @@ describe('KernelStatus', () => {
         <KernelStatus status="loading" className="custom-class" />
       );
 
-      expect(container.firstChild?.className).toContain('custom-class');
+      const firstChild = container.firstChild as HTMLElement | null;
+      expect(firstChild?.className).toContain('custom-class');
     });
 
     it('should apply custom className when running', () => {
@@ -82,7 +83,8 @@ describe('KernelStatus', () => {
         <KernelStatus status="running" className="custom-class" />
       );
 
-      expect(container.firstChild?.className).toContain('custom-class');
+      const firstChild = container.firstChild as HTMLElement | null;
+      expect(firstChild?.className).toContain('custom-class');
     });
   });
 });

@@ -288,7 +288,7 @@ interface DirectoryNodeProps {
 
 /**
  * Directory node component
- * Displays folder with expand/collapse functionality and smooth animation
+ * Displays folder with expand/collapse functionality
  */
 function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
   const toggleDirectory = useWorkspaceStore((state) => state.toggleDirectory);
@@ -322,23 +322,18 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
         </span>
       </button>
 
-      <div
-        className={cn(
-          "overflow-hidden transition-all duration-150 ease-in-out",
-          node.isExpanded ? "opacity-100" : "opacity-0 h-0"
-        )}
-        style={{
-          maxHeight: node.isExpanded ? `${node.children.length * 100}px` : '0px',
-        }}
-      >
-        {node.children.map((child) => (
-          <TreeNodeComponent
-            key={child.path}
-            node={child}
-            depth={depth + 1}
-          />
-        ))}
-      </div>
+      {/* Children container - render only when expanded */}
+      {node.isExpanded && (
+        <div className="animate-in fade-in-0 slide-in-from-top-1 duration-150">
+          {node.children.map((child) => (
+            <TreeNodeComponent
+              key={child.path}
+              node={child}
+              depth={depth + 1}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -560,8 +560,9 @@ function extractInnerText(xml: string): string {
 
 /**
  * Extract plain text from OMML as fallback - with basic structure preservation
+ * @internal Reserved for future use
  */
-function extractTextFromOmml(ommlXml: string): string {
+function _extractTextFromOmml(ommlXml: string): string {
   // Try manual parsing first
   const manualResult = parseOmmlManually(ommlXml);
   if (manualResult && manualResult.trim()) {
@@ -1155,8 +1156,9 @@ function processPreScript(element: Element): string {
 
 /**
  * LaTeX delimiter patterns
+ * @internal Reserved for future refactoring
  */
-const LATEX_PATTERNS = {
+const _LATEX_PATTERNS = {
   // Display math: $$...$$ or \[...\]
   displayDollar: /\$\$([^$]+)\$\$/g,
   displayBracket: /\\\[([^\]]+)\\\]/g,

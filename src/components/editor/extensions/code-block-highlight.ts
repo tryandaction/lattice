@@ -1,93 +1,138 @@
 /**
- * Code Block with Syntax Highlighting Extension for Tiptap
+ * Code Block Highlight Extension for Tiptap
  * 
- * Extends the default code block with syntax highlighting using lowlight.
+ * Provides syntax highlighting for code blocks using highlight.js
+ * Features:
+ * - Syntax highlighting for 15+ languages
+ * - Language selector dropdown
+ * - Copy button
+ * - Line numbers (optional)
  */
 
-import { Node, mergeAttributes, textblockTypeInputRule } from "@tiptap/core";
+import { Node, mergeAttributes } from "@tiptap/core";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import hljs from "highlight.js/lib/core";
 
-// Language detection patterns
-const LANGUAGE_PATTERNS: Record<string, RegExp[]> = {
-  python: [
-    /^(import|from)\s+\w+/m,
-    /^def\s+\w+\s*\(/m,
-    /^class\s+\w+/m,
-    /print\s*\(/,
-    /__init__/,
-  ],
-  javascript: [
-    /^(const|let|var)\s+\w+\s*=/m,
-    /^function\s+\w+/m,
-    /=>\s*{/,
-    /console\.(log|error|warn)/,
-    /^import\s+.*from\s+['"]/m,
-  ],
-  typescript: [
-    /:\s*(string|number|boolean|any|void)\b/,
-    /interface\s+\w+/,
-    /type\s+\w+\s*=/,
-    /<\w+>/,
-  ],
-  html: [
-    /^<!DOCTYPE/i,
-    /<html/i,
-    /<\/?\w+[^>]*>/,
-  ],
-  css: [
-    /^\s*\.\w+\s*{/m,
-    /^\s*#\w+\s*{/m,
-    /:\s*(flex|grid|block|inline)/,
-    /background(-color)?:/,
-  ],
-  json: [
-    /^\s*{[\s\S]*"[\w-]+":/m,
-    /^\s*\[[\s\S]*{/m,
-  ],
-  latex: [
-    /\\(begin|end)\{/,
-    /\\(frac|sum|int|sqrt)/,
-    /\\(alpha|beta|gamma)/,
-  ],
-  sql: [
-    /^SELECT\s+/im,
-    /^INSERT\s+INTO/im,
-    /^UPDATE\s+\w+\s+SET/im,
-    /^CREATE\s+(TABLE|DATABASE)/im,
-  ],
-  bash: [
-    /^#!/,
-    /^\$\s+/m,
-    /\|\s*grep/,
-    /&&\s*\w+/,
-  ],
-  cpp: [
-    /#include\s*</,
-    /std::/,
-    /int\s+main\s*\(/,
-    /cout\s*<</,
-  ],
-};
+// Register common languages
+import javascript from "highlight.js/lib/languages/javascript";
+import typescript from "highlight.js/lib/languages/typescript";
+import python from "highlight.js/lib/languages/python";
+import java from "highlight.js/lib/languages/java";
+import cpp from "highlight.js/lib/languages/cpp";
+import c from "highlight.js/lib/languages/c";
+import csharp from "highlight.js/lib/languages/csharp";
+import go from "highlight.js/lib/languages/go";
+import rust from "highlight.js/lib/languages/rust";
+import ruby from "highlight.js/lib/languages/ruby";
+import php from "highlight.js/lib/languages/php";
+import swift from "highlight.js/lib/languages/swift";
+import kotlin from "highlight.js/lib/languages/kotlin";
+import sql from "highlight.js/lib/languages/sql";
+import bash from "highlight.js/lib/languages/bash";
+import json from "highlight.js/lib/languages/json";
+import xml from "highlight.js/lib/languages/xml";
+import css from "highlight.js/lib/languages/css";
+import markdown from "highlight.js/lib/languages/markdown";
+import yaml from "highlight.js/lib/languages/yaml";
+import latex from "highlight.js/lib/languages/latex";
+
+// Register languages
+hljs.registerLanguage("javascript", javascript);
+hljs.registerLanguage("js", javascript);
+hljs.registerLanguage("typescript", typescript);
+hljs.registerLanguage("ts", typescript);
+hljs.registerLanguage("python", python);
+hljs.registerLanguage("py", python);
+hljs.registerLanguage("java", java);
+hljs.registerLanguage("cpp", cpp);
+hljs.registerLanguage("c", c);
+hljs.registerLanguage("csharp", csharp);
+hljs.registerLanguage("cs", csharp);
+hljs.registerLanguage("go", go);
+hljs.registerLanguage("rust", rust);
+hljs.registerLanguage("rs", rust);
+hljs.registerLanguage("ruby", ruby);
+hljs.registerLanguage("rb", ruby);
+hljs.registerLanguage("php", php);
+hljs.registerLanguage("swift", swift);
+hljs.registerLanguage("kotlin", kotlin);
+hljs.registerLanguage("kt", kotlin);
+hljs.registerLanguage("sql", sql);
+hljs.registerLanguage("bash", bash);
+hljs.registerLanguage("sh", bash);
+hljs.registerLanguage("shell", bash);
+hljs.registerLanguage("json", json);
+hljs.registerLanguage("xml", xml);
+hljs.registerLanguage("html", xml);
+hljs.registerLanguage("css", css);
+hljs.registerLanguage("markdown", markdown);
+hljs.registerLanguage("md", markdown);
+hljs.registerLanguage("yaml", yaml);
+hljs.registerLanguage("yml", yaml);
+hljs.registerLanguage("latex", latex);
+hljs.registerLanguage("tex", latex);
+
+// Supported languages list for UI
+export const SUPPORTED_LANGUAGES = [
+  { value: "plaintext", label: "Plain Text" },
+  { value: "javascript", label: "JavaScript" },
+  { value: "typescript", label: "TypeScript" },
+  { value: "python", label: "Python" },
+  { value: "java", label: "Java" },
+  { value: "cpp", label: "C++" },
+  { value: "c", label: "C" },
+  { value: "csharp", label: "C#" },
+  { value: "go", label: "Go" },
+  { value: "rust", label: "Rust" },
+  { value: "ruby", label: "Ruby" },
+  { value: "php", label: "PHP" },
+  { value: "swift", label: "Swift" },
+  { value: "kotlin", label: "Kotlin" },
+  { value: "sql", label: "SQL" },
+  { value: "bash", label: "Bash/Shell" },
+  { value: "json", label: "JSON" },
+  { value: "xml", label: "XML/HTML" },
+  { value: "css", label: "CSS" },
+  { value: "markdown", label: "Markdown" },
+  { value: "yaml", label: "YAML" },
+  { value: "latex", label: "LaTeX" },
+];
 
 /**
- * Detect language from code content
+ * Highlight code using highlight.js
  */
-export function detectLanguage(code: string): string | null {
-  for (const [lang, patterns] of Object.entries(LANGUAGE_PATTERNS)) {
-    for (const pattern of patterns) {
-      if (pattern.test(code)) {
-        return lang;
-      }
-    }
+function highlightCode(code: string, language: string | null): string {
+  if (!language || language === "plaintext") {
+    return escapeHtml(code);
   }
-  return null;
+
+  try {
+    const result = hljs.highlight(code, { language, ignoreIllegals: true });
+    return result.value;
+  } catch {
+    // Fallback to plain text if language not supported
+    return escapeHtml(code);
+  }
 }
 
 /**
- * Code Block with Highlighting Extension
+ * Escape HTML special characters
+ */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+/**
+ * Code Block with Syntax Highlighting
  */
 export const CodeBlockHighlight = Node.create({
   name: "codeBlock",
-  
   group: "block",
   content: "text*",
   marks: "",
@@ -104,8 +149,12 @@ export const CodeBlockHighlight = Node.create({
           return langClass ? langClass.replace("language-", "") : null;
         },
         renderHTML: (attributes) => {
-          if (!attributes.language) return {};
-          return { class: `language-${attributes.language}` };
+          if (!attributes.language) {
+            return {};
+          }
+          return {
+            class: `language-${attributes.language}`,
+          };
         },
       },
     };
@@ -121,122 +170,242 @@ export const CodeBlockHighlight = Node.create({
   },
 
   renderHTML({ node, HTMLAttributes }) {
+    const language = node.attrs.language || "plaintext";
+    const code = node.textContent;
+    const highlighted = highlightCode(code, language);
+
     return [
-      "pre",
-      mergeAttributes(HTMLAttributes, {
-        class: `code-block ${HTMLAttributes.class || ""}`.trim(),
-      }),
-      ["code", {}, 0],
-    ];
-  },
-
-  addNodeView() {
-    return ({ node, getPos, editor }) => {
-      const dom = document.createElement("div");
-      dom.className = "code-block-wrapper relative";
-
-      const pre = document.createElement("pre");
-      pre.className = "code-block rounded-lg bg-muted p-4 overflow-x-auto";
-      pre.style.fontFamily = "var(--font-mono), ui-monospace, monospace";
-      pre.style.fontSize = "0.875rem";
-      pre.style.lineHeight = "1.5";
-
-      const code = document.createElement("code");
-      code.className = node.attrs.language ? `language-${node.attrs.language}` : "";
-      code.textContent = node.textContent;
-
-      // Language selector
-      const langSelector = document.createElement("select");
-      langSelector.className = "absolute top-2 right-2 text-xs bg-background border border-border rounded px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity";
-      langSelector.innerHTML = `
-        <option value="">Auto</option>
-        <option value="javascript">JavaScript</option>
-        <option value="typescript">TypeScript</option>
-        <option value="python">Python</option>
-        <option value="html">HTML</option>
-        <option value="css">CSS</option>
-        <option value="json">JSON</option>
-        <option value="sql">SQL</option>
-        <option value="bash">Bash</option>
-        <option value="cpp">C++</option>
-        <option value="latex">LaTeX</option>
-      `;
-      langSelector.value = node.attrs.language || "";
-      
-      langSelector.addEventListener("change", (e) => {
-        const pos = typeof getPos === "function" ? getPos() : null;
-        if (pos !== null && pos !== undefined) {
-          editor.chain().focus().updateAttributes("codeBlock", {
-            language: (e.target as HTMLSelectElement).value || null,
-          }).run();
-        }
-      });
-
-      dom.classList.add("group");
-      pre.appendChild(code);
-      dom.appendChild(pre);
-      dom.appendChild(langSelector);
-
-      // Auto-detect language if not set
-      if (!node.attrs.language && node.textContent) {
-        const detected = detectLanguage(node.textContent);
-        if (detected) {
-          langSelector.value = detected;
-          code.className = `language-${detected}`;
-        }
-      }
-
-      return {
-        dom,
-        contentDOM: code,
-        update: (updatedNode) => {
-          if (updatedNode.type.name !== "codeBlock") return false;
-          
-          const lang = updatedNode.attrs.language;
-          code.className = lang ? `language-${lang}` : "";
-          langSelector.value = lang || "";
-          
-          // Auto-detect if no language set
-          if (!lang && updatedNode.textContent) {
-            const detected = detectLanguage(updatedNode.textContent);
-            if (detected) {
-              code.className = `language-${detected}`;
-            }
-          }
-          
-          return true;
-        },
-      };
-    };
-  },
-
-  addInputRules() {
-    return [
-      // ```language or ``` at start of line
-      textblockTypeInputRule({
-        find: /^```(\w+)?\s$/,
-        type: this.type,
-        getAttributes: (match) => ({
-          language: match[1] || null,
-        }),
-      }),
+      "div",
+      { class: "code-block-wrapper", "data-language": language },
+      [
+        "div",
+        { class: "code-block-header" },
+        [
+          "select",
+          {
+            class: "code-language-select",
+            "data-language-select": "true",
+          },
+          ...SUPPORTED_LANGUAGES.map((lang) => [
+            "option",
+            { value: lang.value, ...(lang.value === language ? { selected: "selected" } : {}) },
+            lang.label,
+          ]),
+        ],
+        [
+          "button",
+          {
+            class: "code-copy-btn",
+            "data-copy-code": "true",
+            title: "Copy code",
+          },
+          "Copy",
+        ],
+      ],
+      [
+        "pre",
+        mergeAttributes(HTMLAttributes, { class: `language-${language}` }),
+        ["code", { class: `hljs language-${language}` }],
+      ],
     ];
   },
 
   addKeyboardShortcuts() {
     return {
-      // Tab to indent
+      "Mod-Alt-c": () => this.editor.commands.toggleCodeBlock(),
+      // Tab for indentation inside code block
       Tab: () => {
         if (this.editor.isActive("codeBlock")) {
-          this.editor.commands.insertContent("  ");
-          return true;
+          return this.editor.commands.insertContent("  ");
         }
         return false;
       },
-      // Mod-` to toggle code block
-      "Mod-`": () => {
-        return this.editor.commands.toggleCodeBlock();
+      // Shift+Tab for outdent
+      "Shift-Tab": () => {
+        if (this.editor.isActive("codeBlock")) {
+          // Simple outdent - remove leading spaces
+          const { state } = this.editor;
+          const { from } = state.selection;
+          const $from = state.doc.resolve(from);
+          const lineStart = from - $from.parentOffset;
+          const lineText = state.doc.textBetween(lineStart, from);
+          
+          if (lineText.startsWith("  ")) {
+            this.editor.commands.deleteRange({ from: lineStart, to: lineStart + 2 });
+            return true;
+          }
+        }
+        return false;
       },
     };
   },
+
+  addProseMirrorPlugins() {
+    const editor = this.editor;
+
+    return [
+      // Syntax highlighting decoration plugin
+      new Plugin({
+        key: new PluginKey("codeBlockHighlight"),
+        state: {
+          init(_, { doc }) {
+            return getDecorations(doc);
+          },
+          apply(tr, decorationSet, oldState, newState) {
+            if (tr.docChanged) {
+              return getDecorations(newState.doc);
+            }
+            return decorationSet;
+          },
+        },
+        props: {
+          decorations(state) {
+            return this.getState(state);
+          },
+        },
+      }),
+      // Event handler plugin for copy button and language select
+      new Plugin({
+        key: new PluginKey("codeBlockEvents"),
+        props: {
+          handleDOMEvents: {
+            click(view, event) {
+              const target = event.target as HTMLElement;
+              
+              // Handle copy button click
+              if (target.hasAttribute("data-copy-code") || target.closest("[data-copy-code]")) {
+                const wrapper = target.closest(".code-block-wrapper");
+                const pre = wrapper?.querySelector("pre");
+                const code = pre?.textContent || "";
+                
+                navigator.clipboard.writeText(code).then(() => {
+                  const btn = target.closest("[data-copy-code]") || target;
+                  const originalText = btn.textContent;
+                  btn.textContent = "Copied!";
+                  setTimeout(() => {
+                    btn.textContent = originalText;
+                  }, 2000);
+                });
+                
+                return true;
+              }
+              
+              return false;
+            },
+            change(view, event) {
+              const target = event.target as HTMLSelectElement;
+              
+              // Handle language select change
+              if (target.hasAttribute("data-language-select")) {
+                const newLanguage = target.value;
+                const wrapper = target.closest(".code-block-wrapper");
+                
+                if (wrapper) {
+                  // Find the code block node position
+                  const pre = wrapper.querySelector("pre");
+                  if (pre) {
+                    const pos = view.posAtDOM(pre, 0);
+                    const $pos = view.state.doc.resolve(pos);
+                    const node = $pos.parent;
+                    
+                    if (node.type.name === "codeBlock") {
+                      const nodePos = $pos.before($pos.depth);
+                      editor.chain()
+                        .focus()
+                        .setNodeSelection(nodePos)
+                        .updateAttributes("codeBlock", { language: newLanguage })
+                        .run();
+                    }
+                  }
+                }
+                
+                return true;
+              }
+              
+              return false;
+            },
+          },
+        },
+      }),
+    ];
+  },
 });
+
+/**
+ * Generate decorations for syntax highlighting
+ */
+function getDecorations(doc: any): DecorationSet {
+  const decorations: Decoration[] = [];
+
+  doc.descendants((node: any, pos: number) => {
+    if (node.type.name === "codeBlock") {
+      const language = node.attrs.language || "plaintext";
+      const code = node.textContent;
+
+      if (code && language !== "plaintext") {
+        try {
+          const result = hljs.highlight(code, { language, ignoreIllegals: true });
+          
+          // Parse highlighted HTML and create decorations
+          const tokens = parseHighlightedTokens(result.value);
+          let offset = pos + 1; // +1 for the node start
+
+          tokens.forEach((token) => {
+            if (token.className) {
+              decorations.push(
+                Decoration.inline(offset, offset + token.text.length, {
+                  class: token.className,
+                })
+              );
+            }
+            offset += token.text.length;
+          });
+        } catch {
+          // Ignore highlighting errors
+        }
+      }
+    }
+  });
+
+  return DecorationSet.create(doc, decorations);
+}
+
+interface HighlightToken {
+  text: string;
+  className: string | null;
+}
+
+/**
+ * Parse highlight.js output into tokens
+ */
+function parseHighlightedTokens(html: string): HighlightToken[] {
+  const tokens: HighlightToken[] = [];
+  const regex = /<span class="([^"]+)">([^<]*)<\/span>|([^<]+)/g;
+  let match;
+
+  while ((match = regex.exec(html)) !== null) {
+    if (match[1] && match[2]) {
+      // Span with class
+      tokens.push({ text: decodeHtml(match[2]), className: match[1] });
+    } else if (match[3]) {
+      // Plain text
+      tokens.push({ text: decodeHtml(match[3]), className: null });
+    }
+  }
+
+  return tokens;
+}
+
+/**
+ * Decode HTML entities
+ */
+function decodeHtml(html: string): string {
+  return html
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'");
+}
+
+export default CodeBlockHighlight;

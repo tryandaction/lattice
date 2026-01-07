@@ -12,10 +12,12 @@ import {
   createFile as createFileUtil,
   deleteFile as deleteFileUtil,
   renameFile as renameFileUtil,
+  createDirectory as createDirectoryUtil,
   findParentDirectory,
   getFileName,
   type FileType,
   type FileOperationResult,
+  type DirectoryOperationResult,
 } from "@/lib/file-operations";
 
 /**
@@ -31,6 +33,7 @@ interface UseFileSystemReturn {
   // Actions
   openDirectory: () => Promise<void>;
   createFile: (name: string, type: FileType, parentHandle?: FileSystemDirectoryHandle) => Promise<FileOperationResult>;
+  createDirectory: (name: string, parentHandle?: FileSystemDirectoryHandle) => Promise<DirectoryOperationResult>;
   deleteFile: (path: string) => Promise<FileOperationResult>;
   renameFile: (path: string, newName: string) => Promise<FileOperationResult>;
   refreshDirectory: () => Promise<void>;
@@ -236,6 +239,36 @@ export function useFileSystem(): UseFileSystemReturn {
   }, [rootHandle, refreshDirectory]);
 
   /**
+   * Create a new directory in the workspace
+   * 
+   * @param name - Desired directory name
+   * @param parentHandle - Optional parent directory handle (defaults to root)
+   * @returns DirectoryOperationResult with the created directory handle
+   */
+  const createDirectory = useCallback(async (
+    name: string,
+    parentHandle?: FileSystemDirectoryHandle
+  ): Promise<DirectoryOperationResult> => {
+    const targetDir = parentHandle ?? rootHandle;
+    
+    if (!targetDir) {
+      return {
+        success: false,
+        error: "No directory is open. Please open a folder first.",
+      };
+    }
+
+    const result = await createDirectoryUtil(targetDir, name);
+    
+    if (result.success) {
+      // Refresh the file tree to show the new directory
+      await refreshDirectory();
+    }
+
+    return result;
+  }, [rootHandle, refreshDirectory]);
+
+  /**
    * Delete a file from the workspace
    * 
    * @param path - Full path to the file to delete
@@ -327,6 +360,7 @@ export function useFileSystem(): UseFileSystemReturn {
     error,
     openDirectory,
     createFile,
+    createDirectory,
     deleteFile,
     renameFile,
     refreshDirectory,
@@ -339,4 +373,4 @@ export function useFileSystem(): UseFileSystemReturn {
 export { readDirectoryRecursive };
 
 // Re-export types
-export type { FileType, FileOperationResult };
+export type { FileType, FileOperationResult, DirectoryOperationResult };

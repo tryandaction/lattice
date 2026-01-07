@@ -31,7 +31,6 @@ import {
   Calculator,
   Highlighter,
   ListTodo,
-  Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SlashCommands } from "./extensions/slash-commands";
@@ -201,7 +200,7 @@ function EditorToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
         isActive={editor.isActive("heading", { level: 1 })}
-        title="Heading 1"
+        title="Heading 1 (Ctrl+Alt+1)"
       >
         <Heading1 className="h-4 w-4" />
       </ToolbarButton>
@@ -209,7 +208,7 @@ function EditorToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
         isActive={editor.isActive("heading", { level: 2 })}
-        title="Heading 2"
+        title="Heading 2 (Ctrl+Alt+2)"
       >
         <Heading2 className="h-4 w-4" />
       </ToolbarButton>
@@ -217,7 +216,7 @@ function EditorToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
         isActive={editor.isActive("heading", { level: 3 })}
-        title="Heading 3"
+        title="Heading 3 (Ctrl+Alt+3)"
       >
         <Heading3 className="h-4 w-4" />
       </ToolbarButton>
@@ -228,7 +227,7 @@ function EditorToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleBulletList().run()}
         isActive={editor.isActive("bulletList")}
-        title="Bullet List"
+        title="Bullet List (Ctrl+Shift+8)"
       >
         <List className="h-4 w-4" />
       </ToolbarButton>
@@ -236,7 +235,7 @@ function EditorToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleOrderedList().run()}
         isActive={editor.isActive("orderedList")}
-        title="Numbered List"
+        title="Numbered List (Ctrl+Shift+7)"
       >
         <ListOrdered className="h-4 w-4" />
       </ToolbarButton>
@@ -244,7 +243,7 @@ function EditorToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleTaskList().run()}
         isActive={editor.isActive("taskList")}
-        title="Task List (- [ ] text)"
+        title="Task List (Ctrl+Shift+9)"
       >
         <ListTodo className="h-4 w-4" />
       </ToolbarButton>
@@ -255,7 +254,7 @@ function EditorToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleHighlight().run()}
         isActive={editor.isActive("highlight")}
-        title="Highlight (==text==)"
+        title="Highlight (Ctrl+Shift+H)"
       >
         <Highlighter className="h-4 w-4" />
       </ToolbarButton>
@@ -266,7 +265,7 @@ function EditorToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleCodeBlock().run()}
         isActive={editor.isActive("codeBlock")}
-        title="Code Block"
+        title="Code Block (Ctrl+Alt+C)"
       >
         <Code className="h-4 w-4" />
       </ToolbarButton>
@@ -274,7 +273,7 @@ function EditorToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleBlockquote().run()}
         isActive={editor.isActive("blockquote")}
-        title="Quote"
+        title="Quote (Ctrl+Shift+B)"
       >
         <Quote className="h-4 w-4" />
       </ToolbarButton>
@@ -286,7 +285,7 @@ function EditorToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
         onClick={() =>
           editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
         }
-        title="Insert Table"
+        title="Insert Table (|---|---|)"
       >
         <TableIcon className="h-4 w-4" />
       </ToolbarButton>

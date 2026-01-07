@@ -292,7 +292,7 @@ export function removePane(
       ];
 
       // Recalculate sizes proportionally
-      const removedSize = node.sizes[targetIndex];
+      const _removedSize = node.sizes[targetIndex];
       const remainingSizes = [
         ...node.sizes.slice(0, targetIndex),
         ...node.sizes.slice(targetIndex + 1),

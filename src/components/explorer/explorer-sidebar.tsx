@@ -13,7 +13,7 @@ import { Loader2, AlertCircle, PanelLeftClose, PanelLeft } from "lucide-react";
  * Shows empty state when no folder is opened, tree view when folder is opened
  */
 export function ExplorerSidebar() {
-  const { fileTree, isLoading, error, openDirectory, isSupported, isCheckingSupport, createFile } = useFileSystem();
+  const { fileTree, isLoading, error, openDirectory, isSupported, isCheckingSupport, createFile, createDirectory } = useFileSystem();
   const sidebarCollapsed = useWorkspaceStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
@@ -40,6 +40,16 @@ export function ExplorerSidebar() {
     }
   }, [createFile, openFileInActivePane]);
 
+  /**
+   * Create a new folder in the root directory
+   */
+  const handleCreateFolder = useCallback(async () => {
+    const result = await createDirectory("New Folder");
+    if (!result.success && result.error) {
+      console.error("Failed to create folder:", result.error);
+    }
+  }, [createDirectory]);
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -53,6 +63,7 @@ export function ExplorerSidebar() {
             <NewFileButtons
               onCreateNote={handleCreateNote}
               onCreateNotebook={handleCreateNotebook}
+              onCreateFolder={handleCreateFolder}
               disabled={isLoading}
             />
           )}

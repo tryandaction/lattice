@@ -12,6 +12,7 @@ import {
   Tldraw,
   Editor,
   TLShapeId,
+  TLShape,
   createShapeId,
   TLAssetId,
   AssetRecordType,
@@ -212,6 +213,31 @@ export function ImageTldrawAdapter({
     editorInstance.store.listen(() => {
       setCurrentTool(editorInstance.getCurrentToolId());
     }, { source: 'user', scope: 'session' });
+
+    // Protect background from selection (Bug 1 fix)
+    const backgroundId = createShapeId('background');
+    editorInstance.store.listen(() => {
+      const selectedIds = editorInstance.getSelectedShapeIds();
+      if (selectedIds.includes(backgroundId)) {
+        // Remove background from selection
+        editorInstance.setSelectedShapes(selectedIds.filter(id => id !== backgroundId));
+      }
+    }, { source: 'user', scope: 'session' });
+
+    // Override deleteShapes to protect background (Bug 1 fix)
+    const originalDeleteShapes = editorInstance.deleteShapes.bind(editorInstance);
+    editorInstance.deleteShapes = (shapesOrIds: TLShapeId[] | TLShape[]) => {
+      // Convert to IDs if shapes were passed
+      const ids = shapesOrIds.map(item => 
+        typeof item === 'string' ? item : (item as TLShape).id
+      );
+      const filteredIds = ids.filter(id => id !== backgroundId);
+      if (filteredIds.length !== ids.length) {
+        console.warn('[ImageTldraw] Prevented background deletion');
+      }
+      if (filteredIds.length === 0) return editorInstance;
+      return originalDeleteShapes(filteredIds);
+    };
   }, []);
 
   // Set up background image

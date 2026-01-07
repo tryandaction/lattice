@@ -22,6 +22,7 @@ import { ExportToastContainer } from "@/components/ui/export-toast";
 import { isTauri } from "@/lib/storage-adapter";
 import { setLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { Settings, HelpCircle } from "lucide-react";
 
 /**
  * Main application layout with collapsible sidebar and resizable panels
@@ -91,9 +92,40 @@ export function AppLayout() {
                 defaultSize={20}
                 minSize={15}
                 maxSize={40}
-                className="bg-card"
+                className="bg-card flex flex-col"
               >
-                <ExplorerSidebar />
+                {/* Main sidebar content */}
+                <div className="flex-1 overflow-hidden">
+                  <ExplorerSidebar />
+                </div>
+                
+                {/* Sidebar Footer - Settings (Obsidian style) */}
+                <div className="border-t border-border p-2 flex items-center justify-between">
+                  <button
+                    onClick={() => setShowSettings(true)}
+                    className={cn(
+                      "flex items-center gap-2 px-2 py-1.5 rounded-md",
+                      "text-sm text-muted-foreground",
+                      "hover:bg-muted hover:text-foreground transition-colors",
+                      "flex-1"
+                    )}
+                    title={`${t('settings.title')} (Ctrl+,)`}
+                  >
+                    <Settings className="h-4 w-4" />
+                    <span>{t('settings.title')}</span>
+                  </button>
+                  <button
+                    onClick={() => window.open('https://github.com/your-repo/lattice', '_blank')}
+                    className={cn(
+                      "p-1.5 rounded-md",
+                      "text-muted-foreground",
+                      "hover:bg-muted hover:text-foreground transition-colors"
+                    )}
+                    title="Help"
+                  >
+                    <HelpCircle className="h-4 w-4" />
+                  </button>
+                </div>
               </ResizablePanel>
               <ResizableHandle withHandle />
             </>
@@ -108,55 +140,44 @@ export function AppLayout() {
           </ResizablePanel>
         </ResizablePanelGroup>
         
-        {/* Collapsed sidebar indicator */}
+        {/* Collapsed sidebar indicator with settings */}
         {sidebarCollapsed && (
-          <button
-            onClick={toggleSidebar}
+          <div
             className={cn(
-              "fixed left-0 top-0 z-50 h-full w-8",
-              "flex items-center justify-center",
-              "bg-card/80 backdrop-blur-sm border-r border-border",
-              "hover:bg-accent transition-colors",
-              "text-muted-foreground hover:text-foreground"
+              "fixed left-0 top-0 z-50 h-full w-12",
+              "flex flex-col items-center",
+              "bg-card/80 backdrop-blur-sm border-r border-border"
             )}
-            title={`${t('explorer.title')} (Ctrl+B)`}
           >
-            <span className="rotate-90 text-xs font-medium tracking-wider">EXPLORER</span>
-          </button>
+            {/* Expand button */}
+            <button
+              onClick={toggleSidebar}
+              className={cn(
+                "flex-1 w-full flex items-center justify-center",
+                "hover:bg-accent transition-colors",
+                "text-muted-foreground hover:text-foreground"
+              )}
+              title={`${t('explorer.title')} (Ctrl+B)`}
+            >
+              <span className="rotate-90 text-xs font-medium tracking-wider">EXPLORER</span>
+            </button>
+            
+            {/* Settings button at bottom */}
+            <div className="border-t border-border p-2 w-full flex flex-col items-center gap-1">
+              <button
+                onClick={() => setShowSettings(true)}
+                className={cn(
+                  "p-2 rounded-md",
+                  "text-muted-foreground",
+                  "hover:bg-muted hover:text-foreground transition-colors"
+                )}
+                title={`${t('settings.title')} (Ctrl+,)`}
+              >
+                <Settings className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
         )}
-
-        {/* Settings button */}
-        <button
-          onClick={() => setShowSettings(true)}
-          className={cn(
-            "fixed bottom-4 right-4 z-40",
-            "p-3 rounded-full",
-            "bg-primary hover:bg-primary/90 text-primary-foreground",
-            "shadow-lg hover:shadow-xl transition-all",
-            "flex items-center gap-2"
-          )}
-          title={`${t('settings.title')} (Ctrl+,)`}
-        >
-          <svg
-            className="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-            />
-          </svg>
-        </button>
       </div>
 
       {/* Download app dialog (web only) */}

@@ -60,8 +60,9 @@ class WebStorageAdapter implements StorageAdapter {
 /**
  * Tauri Storage Adapter using Tauri invoke commands
  * Falls back to localStorage if Tauri commands fail
+ * @internal Reserved for future Tauri backend integration
  */
-class TauriStorageAdapter implements StorageAdapter {
+class _TauriStorageAdapter implements StorageAdapter {
   private webFallback = new WebStorageAdapter();
 
   async get<T>(key: string): Promise<T | null> {

@@ -148,7 +148,7 @@ export function addAnnotationNote(
   page: PDFPage,
   x: number,
   y: number,
-  content: string
+  _content: string
 ): void {
   const { width: pageWidth, height: pageHeight } = page.getSize();
   

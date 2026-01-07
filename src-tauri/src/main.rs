@@ -11,6 +11,7 @@
 // Prevents additional console window on Windows in release builds
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use tauri::Manager;
 use tauri_plugin_store::StoreExt;
 use serde::{Deserialize, Serialize};
 
@@ -92,6 +93,7 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         // Register command handlers
         .invoke_handler(tauri::generate_handler![
             get_default_folder,
@@ -101,7 +103,11 @@ fn main() {
             clear_default_folder,
         ])
         // Application setup
-        .setup(|_app| {
+        .setup(|app| {
+            // Ensure window starts maximized
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.maximize();
+            }
             #[cfg(debug_assertions)]
             {
                 // Open devtools in debug mode

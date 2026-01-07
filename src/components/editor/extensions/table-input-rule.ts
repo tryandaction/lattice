@@ -2,12 +2,13 @@
  * Table Input Rule Extension for Tiptap
  * 
  * Converts pipe-delimited text to tables.
- * Pattern: | Col1 | Col2 | followed by Enter creates a table.
+ * Patterns supported:
+ * 1. | Col1 | Col2 | followed by Enter creates a table
+ * 2. |---|---| separator row triggers table creation from previous header row
  */
 
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import { TextSelection } from "@tiptap/pm/state";
 
 /**
  * Parse a pipe-delimited line into column values
@@ -23,7 +24,7 @@ function parseTableRow(line: string): string[] | null {
   // Split by | and filter out empty first/last elements
   const parts = trimmed.split("|").slice(1, -1);
   
-  if (parts.length < 2) {
+  if (parts.length < 1) {
     return null;
   }
   
@@ -58,70 +59,110 @@ export const TableInputRule = Extension.create({
             const { state } = view;
             const { selection, doc } = state;
             
-            // Only handle at end of line
+            // Only handle at end of line with empty selection
             if (!selection.empty) {
               return false;
             }
 
-            const pos = selection.$from;
-            const currentLine = doc.textBetween(
-              pos.start(),
-              pos.pos,
-              "\n"
-            );
-
-            // Check if current line looks like a table header row
-            const columns = parseTableRow(currentLine);
-            if (!columns) {
-              return false;
+            const $from = selection.$from;
+            
+            // Check if we're already in a table
+            for (let d = $from.depth; d > 0; d--) {
+              const node = $from.node(d);
+              if (node.type.name === "table" || 
+                  node.type.name === "tableCell" || 
+                  node.type.name === "tableHeader") {
+                return false;
+              }
             }
 
-            // Check if there's already a table at this position
-            const resolvedPos = state.doc.resolve(pos.pos);
-            if (resolvedPos.parent.type.name === "tableCell" || 
-                resolvedPos.parent.type.name === "tableHeader") {
+            // Get the current paragraph/block content
+            const parent = $from.parent;
+            if (parent.type.name !== "paragraph") {
               return false;
             }
-
-            // Create a table with the parsed columns
-            const { tr } = state;
             
-            // Delete the current line content
-            const lineStart = pos.start();
-            const lineEnd = pos.pos;
+            const currentText = parent.textContent;
             
-            // Use editor commands to insert table
-            setTimeout(() => {
-              editor
-                .chain()
-                .focus()
-                .deleteRange({ from: lineStart, to: lineEnd })
-                .insertTable({ 
-                  rows: 2, 
-                  cols: columns.length, 
-                  withHeaderRow: true 
-                })
-                .run();
+            // Check if current line is a separator row (|---|---|)
+            if (isSeparatorRow(currentText)) {
+              // Look for header row in previous paragraph
+              const parentPos = $from.before($from.depth);
+              if (parentPos > 0) {
+                const prevPos = doc.resolve(parentPos - 1);
+                const prevNode = prevPos.parent;
+                
+                if (prevNode.type.name === "paragraph") {
+                  const headerText = prevNode.textContent;
+                  const headers = parseTableRow(headerText);
+                  
+                  if (headers && headers.length >= 1) {
+                    event.preventDefault();
+                    
+                    // Calculate positions to delete both paragraphs
+                    const headerStart = prevPos.before(prevPos.depth);
+                    const separatorEnd = $from.after($from.depth);
+                    
+                    // Create table with headers
+                    const numCols = headers.length;
+                    
+                    // Use setTimeout to avoid state conflicts
+                    setTimeout(() => {
+                      // Delete the header and separator lines
+                      editor
+                        .chain()
+                        .focus()
+                        .deleteRange({ from: headerStart, to: separatorEnd })
+                        .insertTable({ 
+                          rows: 2, 
+                          cols: numCols, 
+                          withHeaderRow: true 
+                        })
+                        .run();
 
-              // Fill in the header cells with column names
-              const { state: newState } = editor.view;
-              let cellIndex = 0;
-              
-              newState.doc.descendants((node, pos) => {
-                if (node.type.name === "tableHeader" && cellIndex < columns.length) {
-                  editor
-                    .chain()
-                    .focus()
-                    .setTextSelection(pos + 1)
-                    .insertContent(columns[cellIndex])
-                    .run();
-                  cellIndex++;
+                      // Fill in the header cells
+                      setTimeout(() => {
+                        const { state: newState } = editor.view;
+                        let cellIndex = 0;
+                        let firstDataCellPos: number | null = null;
+                        
+                        newState.doc.descendants((node, pos) => {
+                          if (node.type.name === "tableHeader" && cellIndex < headers.length) {
+                            const cellContent = headers[cellIndex];
+                            if (cellContent) {
+                              editor.view.dispatch(
+                                editor.view.state.tr.insertText(cellContent, pos + 1)
+                              );
+                            }
+                            cellIndex++;
+                          } else if (node.type.name === "tableCell" && firstDataCellPos === null) {
+                            firstDataCellPos = pos + 1;
+                          }
+                          return true;
+                        });
+                        
+                        // Move cursor to first data cell
+                        if (firstDataCellPos !== null) {
+                          editor.commands.setTextSelection(firstDataCellPos);
+                        }
+                      }, 10);
+                    }, 0);
+                    
+                    return true;
+                  }
                 }
-                return cellIndex < columns.length;
-              });
-            }, 0);
+              }
+            }
+            
+            // Check if current line looks like a table header row (| Col1 | Col2 |)
+            const columns = parseTableRow(currentText);
+            if (columns && columns.length >= 1) {
+              // Don't create table yet - wait for separator row
+              // This allows user to type the separator row |---|---|
+              return false;
+            }
 
-            return true;
+            return false;
           },
         },
       }),
