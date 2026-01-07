@@ -30,6 +30,11 @@ interface UseNotebookEditorReturn {
   activateCell: (cellId: string) => void;
   changeType: (cellId: string, type: "markdown" | "code") => void;
 
+  // Output operations (for Run All)
+  updateCellOutputs: (cellId: string, outputs: NotebookCell["outputs"]) => void;
+  updateCellExecutionCount: (cellId: string, count: number) => void;
+  clearCellOutputs: (cellId: string) => void;
+
   // Navigation
   activateNextCell: () => void;
   activatePrevCell: () => void;
@@ -103,6 +108,44 @@ export function useNotebookEditor(initialContent: string): UseNotebookEditorRetu
   const changeType = useCallback((cellId: string, type: "markdown" | "code") => {
     setState((prev) => changeCellType(prev, cellId, type));
     setIsDirty(true);
+  }, []);
+
+  /**
+   * Update a cell's outputs (for Run All)
+   */
+  const updateCellOutputs = useCallback((cellId: string, outputs: NotebookCell["outputs"]) => {
+    setState((prev) => ({
+      ...prev,
+      cells: prev.cells.map((cell) =>
+        cell.id === cellId ? { ...cell, outputs } : cell
+      ),
+    }));
+    setIsDirty(true);
+  }, []);
+
+  /**
+   * Update a cell's execution count
+   */
+  const updateCellExecutionCount = useCallback((cellId: string, count: number) => {
+    setState((prev) => ({
+      ...prev,
+      cells: prev.cells.map((cell) =>
+        cell.id === cellId ? { ...cell, execution_count: count } : cell
+      ),
+    }));
+    setIsDirty(true);
+  }, []);
+
+  /**
+   * Clear a cell's outputs
+   */
+  const clearCellOutputs = useCallback((cellId: string) => {
+    setState((prev) => ({
+      ...prev,
+      cells: prev.cells.map((cell) =>
+        cell.id === cellId ? { ...cell, outputs: [], execution_count: null } : cell
+      ),
+    }));
   }, []);
 
   /**
@@ -203,6 +246,9 @@ export function useNotebookEditor(initialContent: string): UseNotebookEditorRetu
     updateSource,
     activateCell,
     changeType,
+    updateCellOutputs,
+    updateCellExecutionCount,
+    clearCellOutputs,
     activateNextCell,
     activatePrevCell,
     addCellAboveActive,

@@ -54,7 +54,7 @@ function RenderedMarkdown({ content }: { content: string }) {
             
             if (!inline) {
               return (
-                <pre className="bg-muted rounded-lg p-3 my-2 overflow-x-auto text-sm">
+                <pre className="bg-muted rounded-lg p-3 my-2 overflow-x-auto text-sm font-mono">
                   <code className={className} {...props}>
                     {children}
                   </code>
@@ -63,21 +63,52 @@ function RenderedMarkdown({ content }: { content: string }) {
             }
             
             return (
-              <code className="bg-muted rounded px-1 py-0.5 text-sm font-mono" {...props}>
+              <code className="bg-muted rounded px-1.5 py-0.5 text-sm font-mono text-primary" {...props}>
                 {children}
               </code>
             );
           },
+          // Images with error handling and loading state
+          img: ({ src, alt, ...props }) => {
+            // Handle relative paths and data URLs
+            const srcStr = typeof src === 'string' ? src : '';
+            const imageSrc = srcStr.startsWith('data:') || srcStr.startsWith('http') || srcStr.startsWith('/')
+              ? srcStr
+              : srcStr; // Keep as-is for relative paths
+            
+            return (
+              <span className="block my-2 pointer-events-auto">
+                <img
+                  src={imageSrc}
+                  alt={alt || 'Image'}
+                  className="max-w-full h-auto rounded-lg border border-border"
+                  loading="lazy"
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.style.display = 'none';
+                    // Show error placeholder
+                    const placeholder = document.createElement('div');
+                    placeholder.className = 'bg-muted rounded-lg p-4 text-center text-muted-foreground text-sm';
+                    placeholder.innerHTML = `<span>⚠️ Failed to load image: ${alt || srcStr}</span>`;
+                    target.parentNode?.appendChild(placeholder);
+                  }}
+                  {...props}
+                />
+              </span>
+            );
+          },
           // Headings
-          h1: ({ children }) => <h1 className="text-2xl font-bold mt-4 mb-2">{children}</h1>,
-          h2: ({ children }) => <h2 className="text-xl font-bold mt-3 mb-2">{children}</h2>,
+          h1: ({ children }) => <h1 className="text-2xl font-bold mt-4 mb-2 border-b border-border pb-1">{children}</h1>,
+          h2: ({ children }) => <h2 className="text-xl font-bold mt-3 mb-2 border-b border-border/50 pb-1">{children}</h2>,
           h3: ({ children }) => <h3 className="text-lg font-semibold mt-2 mb-1">{children}</h3>,
           h4: ({ children }) => <h4 className="text-base font-semibold mt-2 mb-1">{children}</h4>,
+          h5: ({ children }) => <h5 className="text-sm font-semibold mt-2 mb-1">{children}</h5>,
+          h6: ({ children }) => <h6 className="text-sm font-medium mt-2 mb-1 text-muted-foreground">{children}</h6>,
           // Paragraphs - use div to avoid nesting issues with pre/code blocks
           p: ({ children, node }) => {
             // Check if children contain block-level elements
             const hasBlockChild = node?.children?.some((child: any) => 
-              child.type === 'element' && ['pre', 'div', 'table', 'ul', 'ol', 'blockquote'].includes(child.tagName)
+              child.type === 'element' && ['pre', 'div', 'table', 'ul', 'ol', 'blockquote', 'img'].includes(child.tagName)
             );
             // Use div if contains block elements, otherwise use p
             if (hasBlockChild) {
@@ -88,31 +119,33 @@ function RenderedMarkdown({ content }: { content: string }) {
           // Lists
           ul: ({ children }) => <ul className="list-disc pl-5 my-2 space-y-1">{children}</ul>,
           ol: ({ children }) => <ol className="list-decimal pl-5 my-2 space-y-1">{children}</ol>,
-          li: ({ children }) => <li>{children}</li>,
+          li: ({ children }) => <li className="leading-relaxed">{children}</li>,
           // Blockquotes
           blockquote: ({ children }) => (
-            <blockquote className="border-l-4 border-primary/40 pl-3 my-2 italic text-muted-foreground">
+            <blockquote className="border-l-4 border-primary/40 pl-4 my-3 py-1 italic text-muted-foreground bg-muted/30 rounded-r">
               {children}
             </blockquote>
           ),
           // Tables
           table: ({ children }) => (
-            <div className="overflow-x-auto my-2">
+            <div className="overflow-x-auto my-3 rounded-lg border border-border">
               <table className="w-full border-collapse text-sm">{children}</table>
             </div>
           ),
           thead: ({ children }) => <thead className="bg-muted">{children}</thead>,
+          tbody: ({ children }) => <tbody className="divide-y divide-border">{children}</tbody>,
+          tr: ({ children }) => <tr className="hover:bg-muted/50 transition-colors">{children}</tr>,
           th: ({ children }) => (
-            <th className="border border-border px-2 py-1 text-left font-semibold">{children}</th>
+            <th className="px-3 py-2 text-left font-semibold border-b border-border">{children}</th>
           ),
           td: ({ children }) => (
-            <td className="border border-border px-2 py-1">{children}</td>
+            <td className="px-3 py-2">{children}</td>
           ),
           // Links - need pointer events for clicking
           a: ({ href, children }) => (
             <a 
               href={href} 
-              className="text-primary underline hover:text-primary/80 pointer-events-auto" 
+              className="text-primary underline decoration-primary/30 hover:decoration-primary transition-colors pointer-events-auto" 
               target="_blank" 
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
@@ -127,6 +160,23 @@ function RenderedMarkdown({ content }: { content: string }) {
           strong: ({ children }) => <strong className="font-bold">{children}</strong>,
           // Emphasis/Italic
           em: ({ children }) => <em className="italic">{children}</em>,
+          // Strikethrough
+          del: ({ children }) => <del className="line-through text-muted-foreground">{children}</del>,
+          // Task lists (GFM)
+          input: ({ type, checked, ...props }) => {
+            if (type === 'checkbox') {
+              return (
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  readOnly
+                  className="mr-2 rounded border-border pointer-events-none"
+                  {...props}
+                />
+              );
+            }
+            return <input type={type} {...props} />;
+          },
         }}
       >
         {content}

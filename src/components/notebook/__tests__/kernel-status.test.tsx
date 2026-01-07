@@ -23,16 +23,21 @@ describe('KernelStatus', () => {
   });
 
   describe('Ready state', () => {
-    it('should render nothing when status is ready', () => {
+    it('should render ready indicator when status is ready', () => {
       const { container } = render(<KernelStatus status="ready" />);
-      expect(container.firstChild).toBeNull();
+      expect(container.textContent).toContain('Kernel ready');
     });
   });
 
   describe('Error state', () => {
-    it('should render nothing when status is error', () => {
+    it('should render error indicator when status is error', () => {
       const { container } = render(<KernelStatus status="error" />);
-      expect(container.firstChild).toBeNull();
+      expect(container.textContent).toContain('Kernel error');
+    });
+    
+    it('should render custom error message when provided', () => {
+      const { container } = render(<KernelStatus status="error" error="Custom error" />);
+      expect(container.textContent).toContain('Custom error');
     });
   });
 
@@ -40,7 +45,7 @@ describe('KernelStatus', () => {
     it('should render loading indicator when status is loading', () => {
       const { container } = render(<KernelStatus status="loading" />);
 
-      expect(container.textContent).toContain('Initializing Python...');
+      expect(container.textContent).toContain('Initializing Python kernel...');
     });
 
     it('should show progress bar during loading', () => {
@@ -56,7 +61,7 @@ describe('KernelStatus', () => {
     it('should render running indicator when status is running', () => {
       const { container } = render(<KernelStatus status="running" />);
 
-      expect(container.textContent).toContain('Running...');
+      expect(container.textContent).toContain('Executing...');
     });
 
     it('should show spinner during running', () => {

@@ -43,8 +43,10 @@ import { HIGHLIGHT_COLORS, BACKGROUND_COLORS, TEXT_COLORS, TEXT_FONT_SIZES, DEFA
 import { PDFExportButton } from "./pdf-export-button";
 import { PdfAnnotationSidebar } from "./pdf-annotation-sidebar";
 import { InkSessionIndicator } from "./ink-session-indicator";
+import { InkColorPicker, InkWidthPicker } from "./ink-color-picker";
 import { adjustPopupPosition, type PopupSize } from "@/lib/coordinate-adapter";
 import type { AnnotationItem, PdfTarget, BoundingBox } from "@/types/universal-annotation";
+import { useInkAnnotationStore } from "@/stores/ink-annotation-store";
 
 import "react-pdf-highlighter/dist/style.css";
 
@@ -1286,6 +1288,10 @@ export function PDFHighlighterAdapter({
   const [showSidebar, setShowSidebar] = useState(false); // Sidebar closed by default (Bug 7 fix)
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   
+  // Ink style from store
+  const inkStyle = useInkAnnotationStore((state) => state.currentStyle);
+  const setInkStyle = useInkAnnotationStore((state) => state.setCurrentStyle);
+  
   // Current stroke state (for real-time drawing preview)
   const [currentInkPath, setCurrentInkPath] = useState<{ x: number; y: number }[]>([]);
   const [currentInkPage, setCurrentInkPage] = useState<number | null>(null);
@@ -1427,6 +1433,25 @@ export function PDFHighlighterAdapter({
       // Ignore if user is typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
+      }
+
+      // Undo/Redo shortcuts (Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z)
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'z' && !e.shiftKey) {
+          e.preventDefault();
+          // Use ink store's undo (it has its own undo stack)
+          const inkStore = useInkAnnotationStore.getState();
+          if (inkStore.canUndo()) {
+            inkStore.undo();
+          }
+        } else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+          e.preventDefault();
+          // Use ink store's redo
+          const inkStore = useInkAnnotationStore.getState();
+          if (inkStore.canRedo()) {
+            inkStore.redo();
+          }
+        }
       }
 
       // Zoom shortcuts
@@ -1937,16 +1962,31 @@ export function PDFHighlighterAdapter({
             <Square className="h-4 w-4" />
           </Button>
 
-          {/* Ink/Draw tool */}
-          <Button
-            variant={activeTool === 'ink' ? "secondary" : "ghost"}
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => setActiveTool(activeTool === 'ink' ? 'select' : 'ink')}
-            title="绘图 (D)"
-          >
-            <Pencil className="h-4 w-4" style={{ color: activeTool === 'ink' ? activeColor : undefined }} />
-          </Button>
+          {/* Ink/Draw tool with color picker */}
+          <div className="flex items-center">
+            <Button
+              variant={activeTool === 'ink' ? "secondary" : "ghost"}
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setActiveTool(activeTool === 'ink' ? 'select' : 'ink')}
+              title="绘图 (D)"
+            >
+              <Pencil className="h-4 w-4" style={{ color: activeTool === 'ink' ? inkStyle.color : undefined }} />
+            </Button>
+            {activeTool === 'ink' && (
+              <div className="flex items-center ml-1 pl-1 border-l border-border">
+                <InkColorPicker
+                  currentColor={inkStyle.color}
+                  onColorChange={(color) => setInkStyle({ color })}
+                  variant="button"
+                />
+                <InkWidthPicker
+                  currentWidth={inkStyle.width}
+                  onWidthChange={(width) => setInkStyle({ width })}
+                />
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right: Zoom Controls (Zotero style) */}

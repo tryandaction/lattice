@@ -540,12 +540,12 @@ export function AdvancedMarkdownEditor({
 
   return (
     <div
-      className="flex h-full flex-col bg-white dark:bg-white"
+      className="flex h-full flex-col bg-background"
       onClick={(e) => e.stopPropagation()}
     >
       <EditorToolbar editor={editor} />
       <TableToolbar editor={editor} />
-      <div className="flex-1 overflow-auto bg-white">
+      <div className="flex-1 overflow-auto bg-background">
         <EditorContent editor={editor} className="h-full" />
       </div>
     </div>

@@ -9,6 +9,8 @@ import {
 import { ExplorerSidebar } from "@/components/explorer/explorer-sidebar";
 import { MainArea } from "@/components/main-area/main-area";
 import { DndProvider } from "@/components/dnd/dnd-provider";
+import { MobileSidebar, MobileSidebarTrigger } from "@/components/layout/mobile-sidebar";
+import { ResponsiveProvider, useResponsive } from "@/contexts/responsive-context";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useUnsavedWarning } from "@/hooks/use-unsaved-warning";
@@ -22,178 +24,279 @@ import { ExportToastContainer } from "@/components/ui/export-toast";
 import { isTauri } from "@/lib/storage-adapter";
 import { setLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import { Settings, HelpCircle } from "lucide-react";
+import { TOUCH_TARGET_MIN } from "@/lib/responsive";
+import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft } from "lucide-react";
 
 /**
- * Main application layout with collapsible sidebar and resizable panels
+ * Main application layout with responsive support
  */
 export function AppLayout() {
+  return (
+    <ResponsiveProvider>
+      <DndProvider>
+        <AppLayoutContent />
+      </DndProvider>
+    </ResponsiveProvider>
+  );
+}
+
+function AppLayoutContent() {
+  const { isMobile, isTablet, isDesktop, isLandscape } = useResponsive();
   const sidebarCollapsed = useWorkspaceStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
+  const setSidebarCollapsed = useWorkspaceStore((state) => state.setSidebarCollapsed);
   const [showSettings, setShowSettings] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   
-  // Settings and theme
   const loadSettings = useSettingsStore((state) => state.loadSettings);
   const settings = useSettingsStore((state) => state.settings);
   const isInitialized = useSettingsStore((state) => state.isInitialized);
   const { toggleTheme } = useTheme();
   const { t } = useI18n();
   
-  // Auto-open default folder on startup
   useAutoOpenFolder();
 
-  // Load settings on mount
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
 
-  // Sync locale with settings
   useEffect(() => {
     if (isInitialized) {
       setLocale(settings.language);
     }
   }, [isInitialized, settings.language]);
 
-  // Warn user before closing browser with unsaved changes
+  useEffect(() => {
+    if (isMobile) {
+      setSidebarCollapsed(true);
+    }
+  }, [isMobile, setSidebarCollapsed]);
+
   useUnsavedWarning();
 
-  // Keyboard shortcuts
   useEffect(() => {
+    if (isMobile) return;
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+B: Toggle sidebar
-      if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+      if ((e.ctrlKey || e.metaKey) && e.key === "b") {
         e.preventDefault();
         toggleSidebar();
       }
-      // Ctrl+,: Open settings
-      if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+      if ((e.ctrlKey || e.metaKey) && e.key === ",") {
         e.preventDefault();
         setShowSettings(true);
       }
-      // Ctrl+Shift+T: Toggle theme
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'T') {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "T") {
         e.preventDefault();
         toggleTheme();
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [toggleSidebar, toggleTheme]);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isMobile, toggleSidebar, toggleTheme]);
 
-  return (
-    <DndProvider>
+  const SidebarContent = (
+    <>
+      <div className="flex-1 overflow-hidden">
+        <ExplorerSidebar />
+      </div>
+      <div className="border-t border-border p-2 flex items-center justify-between">
+        <button
+          onClick={() => setShowSettings(true)}
+          className={cn(
+            "flex items-center gap-2 px-2 py-1.5 rounded-md",
+            "text-sm text-muted-foreground",
+            "hover:bg-muted hover:text-foreground transition-colors",
+            "flex-1"
+          )}
+          style={(isMobile || isTablet) ? { minHeight: TOUCH_TARGET_MIN } : undefined}
+          title={`${t("settings.title")} (Ctrl+,)`}
+        >
+          <Settings className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
+          <span>{t("settings.title")}</span>
+        </button>
+        <button
+          onClick={() => window.open("https://github.com/your-repo/lattice", "_blank")}
+          className={cn(
+            "p-1.5 rounded-md",
+            "text-muted-foreground",
+            "hover:bg-muted hover:text-foreground transition-colors"
+          )}
+          style={(isMobile || isTablet) ? { minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN } : undefined}
+          title="Help"
+        >
+          <HelpCircle className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
+        </button>
+      </div>
+    </>
+  );
+
+  // Mobile Layout
+  if (isMobile) {
+    return (
+      <div className="h-screen w-screen overflow-hidden bg-background flex flex-col">
+        <header className="flex items-center justify-between px-2 py-2 border-b border-border bg-card shrink-0">
+          <MobileSidebarTrigger onClick={() => setMobileSidebarOpen(true)}>
+            <Menu className="h-5 w-5" />
+          </MobileSidebarTrigger>
+          <h1 className="text-sm font-medium">Lattice 格致</h1>
+          <button
+            onClick={() => setShowSettings(true)}
+            className={cn(
+              "flex items-center justify-center rounded-md",
+              "text-muted-foreground hover:text-foreground",
+              "hover:bg-muted transition-colors"
+            )}
+            style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
+          >
+            <Settings className="h-5 w-5" />
+          </button>
+        </header>
+        <main className="flex-1 overflow-hidden">
+          <MainArea />
+        </main>
+        <MobileSidebar isOpen={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)}>
+          {SidebarContent}
+        </MobileSidebar>
+        <Dialogs showSettings={showSettings} setShowSettings={setShowSettings} />
+      </div>
+    );
+  }
+
+  // Tablet Layout
+  if (isTablet) {
+    const showSidebar = isLandscape && !sidebarCollapsed;
+
+    return (
       <div className="h-screen w-screen overflow-hidden bg-background">
         <ResizablePanelGroup direction="horizontal" className="h-full">
-          {/* Explorer Sidebar - Collapsible */}
-          {!sidebarCollapsed && (
+          {showSidebar && (
             <>
-              <ResizablePanel
-                defaultSize={20}
-                minSize={15}
-                maxSize={40}
-                className="bg-card flex flex-col"
-              >
-                {/* Main sidebar content */}
-                <div className="flex-1 overflow-hidden">
-                  <ExplorerSidebar />
-                </div>
-                
-                {/* Sidebar Footer - Settings (Obsidian style) */}
-                <div className="border-t border-border p-2 flex items-center justify-between">
+              <ResizablePanel defaultSize={30} minSize={20} maxSize={45} className="bg-card flex flex-col">
+                <div className="flex items-center justify-end p-2 border-b border-border">
                   <button
-                    onClick={() => setShowSettings(true)}
+                    onClick={toggleSidebar}
                     className={cn(
-                      "flex items-center gap-2 px-2 py-1.5 rounded-md",
-                      "text-sm text-muted-foreground",
-                      "hover:bg-muted hover:text-foreground transition-colors",
-                      "flex-1"
+                      "flex items-center justify-center rounded-md",
+                      "text-muted-foreground hover:text-foreground",
+                      "hover:bg-muted transition-colors"
                     )}
-                    title={`${t('settings.title')} (Ctrl+,)`}
+                    style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
+                    title="Collapse sidebar"
                   >
-                    <Settings className="h-4 w-4" />
-                    <span>{t('settings.title')}</span>
-                  </button>
-                  <button
-                    onClick={() => window.open('https://github.com/your-repo/lattice', '_blank')}
-                    className={cn(
-                      "p-1.5 rounded-md",
-                      "text-muted-foreground",
-                      "hover:bg-muted hover:text-foreground transition-colors"
-                    )}
-                    title="Help"
-                  >
-                    <HelpCircle className="h-4 w-4" />
+                    <PanelLeftClose className="h-5 w-5" />
                   </button>
                 </div>
+                {SidebarContent}
               </ResizablePanel>
-              <ResizableHandle withHandle />
+              <ResizableHandle withHandle className="w-2 touch-none" />
             </>
           )}
-
-          {/* Main Content Area */}
-          <ResizablePanel 
-            defaultSize={sidebarCollapsed ? 100 : 80} 
-            minSize={40}
-          >
-            <MainArea />
+          <ResizablePanel defaultSize={showSidebar ? 70 : 100} minSize={40} className="flex flex-col">
+            {!showSidebar && (
+              <header className="flex items-center gap-2 px-2 py-2 border-b border-border bg-card shrink-0">
+                <button
+                  onClick={() => (isLandscape ? toggleSidebar() : setMobileSidebarOpen(true))}
+                  className={cn(
+                    "flex items-center justify-center rounded-md",
+                    "text-muted-foreground hover:text-foreground",
+                    "hover:bg-muted transition-colors"
+                  )}
+                  style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
+                  title="Open sidebar"
+                >
+                  {isLandscape ? <PanelLeft className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+                </button>
+                <h1 className="text-sm font-medium flex-1">Lattice 格致</h1>
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className={cn(
+                    "flex items-center justify-center rounded-md",
+                    "text-muted-foreground hover:text-foreground",
+                    "hover:bg-muted transition-colors"
+                  )}
+                  style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
+                >
+                  <Settings className="h-5 w-5" />
+                </button>
+              </header>
+            )}
+            <div className="flex-1 overflow-hidden">
+              <MainArea />
+            </div>
           </ResizablePanel>
         </ResizablePanelGroup>
-        
-        {/* Collapsed sidebar indicator with settings */}
-        {sidebarCollapsed && (
-          <div
-            className={cn(
-              "fixed left-0 top-0 z-50 h-full w-12",
-              "flex flex-col items-center",
-              "bg-card/80 backdrop-blur-sm border-r border-border"
-            )}
-          >
-            {/* Expand button */}
-            <button
-              onClick={toggleSidebar}
-              className={cn(
-                "flex-1 w-full flex items-center justify-center",
-                "hover:bg-accent transition-colors",
-                "text-muted-foreground hover:text-foreground"
-              )}
-              title={`${t('explorer.title')} (Ctrl+B)`}
-            >
-              <span className="rotate-90 text-xs font-medium tracking-wider">EXPLORER</span>
-            </button>
-            
-            {/* Settings button at bottom */}
-            <div className="border-t border-border p-2 w-full flex flex-col items-center gap-1">
-              <button
-                onClick={() => setShowSettings(true)}
-                className={cn(
-                  "p-2 rounded-md",
-                  "text-muted-foreground",
-                  "hover:bg-muted hover:text-foreground transition-colors"
-                )}
-                title={`${t('settings.title')} (Ctrl+,)`}
-              >
-                <Settings className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
+        {!isLandscape && (
+          <MobileSidebar isOpen={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)}>
+            {SidebarContent}
+          </MobileSidebar>
         )}
+        <Dialogs showSettings={showSettings} setShowSettings={setShowSettings} />
       </div>
+    );
+  }
 
-      {/* Download app dialog (web only) */}
+  // Desktop Layout
+  return (
+    <div className="h-screen w-screen overflow-hidden bg-background">
+      <ResizablePanelGroup direction="horizontal" className="h-full">
+        {!sidebarCollapsed && (
+          <>
+            <ResizablePanel defaultSize={20} minSize={15} maxSize={40} className="bg-card flex flex-col">
+              {SidebarContent}
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+          </>
+        )}
+        <ResizablePanel defaultSize={sidebarCollapsed ? 100 : 80} minSize={40}>
+          <MainArea />
+        </ResizablePanel>
+      </ResizablePanelGroup>
+      {sidebarCollapsed && (
+        <div className={cn(
+          "fixed left-0 top-0 z-50 h-full w-12",
+          "flex flex-col items-center",
+          "bg-card/80 backdrop-blur-sm border-r border-border"
+        )}>
+          <button
+            onClick={toggleSidebar}
+            className={cn(
+              "flex-1 w-full flex items-center justify-center",
+              "hover:bg-accent transition-colors",
+              "text-muted-foreground hover:text-foreground"
+            )}
+            title={`${t("explorer.title")} (Ctrl+B)`}
+          >
+            <span className="rotate-90 text-xs font-medium tracking-wider">EXPLORER</span>
+          </button>
+          <div className="border-t border-border p-2 w-full flex flex-col items-center gap-1">
+            <button
+              onClick={() => setShowSettings(true)}
+              className={cn(
+                "p-2 rounded-md",
+                "text-muted-foreground",
+                "hover:bg-muted hover:text-foreground transition-colors"
+              )}
+              title={`${t("settings.title")} (Ctrl+,)`}
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+      <Dialogs showSettings={showSettings} setShowSettings={setShowSettings} />
+    </div>
+  );
+}
+
+function Dialogs({ showSettings, setShowSettings }: { showSettings: boolean; setShowSettings: (show: boolean) => void }) {
+  return (
+    <>
       {!isTauri() && <DownloadAppDialog />}
-
-      {/* Settings dialog */}
-      <SettingsDialog
-        isOpen={showSettings}
-        onClose={() => setShowSettings(false)}
-      />
-
-      {/* Onboarding wizard */}
+      <SettingsDialog isOpen={showSettings} onClose={() => setShowSettings(false)} />
       <OnboardingWizard />
-
-      {/* Export toast notifications */}
       <ExportToastContainer />
-    </DndProvider>
+    </>
   );
 }

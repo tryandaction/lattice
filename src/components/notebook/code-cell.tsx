@@ -156,6 +156,7 @@ export const CodeCell = memo(function CodeCell({
   const { 
     status, 
     outputs: executionOutputs, 
+    error: kernelError,
     runCode, 
     clearOutputs,
     isRunning,
@@ -284,12 +285,12 @@ export const CodeCell = memo(function CodeCell({
         )}
       </div>
 
-      {/* Kernel status indicator (loading/running) */}
-      <KernelStatus status={status} />
+      {/* Kernel status indicator (loading/running/error) */}
+      <KernelStatus status={status} error={kernelError} />
 
       {/* Execution outputs (from Python runner) */}
       {hasExecutionOutputs && (
-        <OutputArea outputs={executionOutputs} />
+        <OutputArea outputs={executionOutputs} onClear={clearOutputs} />
       )}
 
       {/* File outputs (from notebook file) - show only if no execution outputs */}

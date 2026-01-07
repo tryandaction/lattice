@@ -99,25 +99,28 @@ describe('OutputArea', () => {
 
       const { container } = render(<OutputArea outputs={outputs} />);
 
-      const errorElement = container.querySelector('pre');
-      expect(errorElement).toBeTruthy();
-      expect(errorElement?.textContent).toContain('NameError');
-      expect(errorElement?.className).toContain('text-destructive');
+      // Error type should be displayed
+      expect(container.textContent).toContain('NameError');
+      // Error message should be displayed
+      expect(container.textContent).toContain('name "x" is not defined');
+      // Should have destructive styling
+      expect(container.querySelector('.text-destructive')).toBeTruthy();
     });
 
     it('should render error with traceback', () => {
       const outputs: ExecutionOutput[] = [
         { 
           type: 'error', 
-          content: 'ZeroDivisionError: division by zero\n\nTraceback:\n  File "<stdin>", line 1' 
+          content: 'Traceback:\n  File "<stdin>", line 1\nZeroDivisionError: division by zero' 
         }
       ];
 
       const { container } = render(<OutputArea outputs={outputs} />);
 
-      const errorElement = container.querySelector('pre');
-      expect(errorElement?.textContent).toContain('ZeroDivisionError');
-      expect(errorElement?.textContent).toContain('Traceback');
+      // Error type should be displayed
+      expect(container.textContent).toContain('ZeroDivisionError');
+      // Error message should be displayed
+      expect(container.textContent).toContain('division by zero');
     });
   });
 

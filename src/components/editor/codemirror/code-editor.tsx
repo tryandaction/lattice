@@ -30,6 +30,20 @@ export type CodeEditorLanguage =
   | "typescript";
 
 /**
+ * Ref handle for CodeEditor component
+ */
+export interface CodeEditorRef {
+  /** Focus the editor */
+  focus: () => void;
+  /** Get current content */
+  getContent: () => string;
+  /** Get selected text (empty string if no selection) */
+  getSelection: () => string;
+  /** Check if there's a selection */
+  hasSelection: () => boolean;
+}
+
+/**
  * Props for the CodeEditor component
  */
 export interface CodeEditorProps {
@@ -58,6 +72,9 @@ export interface CodeEditorProps {
   onNavigateUp?: () => void;
   onNavigateDown?: () => void;
   onEscape?: () => void;
+  
+  /** Ref for accessing editor methods */
+  editorRef?: React.RefObject<CodeEditorRef | null>;
 }
 
 /**
@@ -120,6 +137,7 @@ function CodeEditorComponent({
   onNavigateUp,
   onNavigateDown,
   onEscape,
+  editorRef,
 }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -315,6 +333,38 @@ function CodeEditorComponent({
   const getContent = useCallback(() => {
     return viewRef.current?.state.doc.toString() ?? initialValue;
   }, [initialValue]);
+
+  // Get selected text
+  const getSelection = useCallback(() => {
+    if (!viewRef.current) return "";
+    const state = viewRef.current.state;
+    const selection = state.selection.main;
+    if (selection.empty) return "";
+    return state.sliceDoc(selection.from, selection.to);
+  }, []);
+
+  // Check if there's a selection
+  const hasSelection = useCallback(() => {
+    if (!viewRef.current) return false;
+    return !viewRef.current.state.selection.main.empty;
+  }, []);
+
+  // Expose methods via ref
+  useEffect(() => {
+    if (editorRef && 'current' in editorRef) {
+      editorRef.current = {
+        focus,
+        getContent,
+        getSelection,
+        hasSelection,
+      };
+    }
+    return () => {
+      if (editorRef && 'current' in editorRef) {
+        editorRef.current = null;
+      }
+    };
+  }, [editorRef, focus, getContent, getSelection, hasSelection]);
 
   // Error state
   if (error) {

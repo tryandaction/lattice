@@ -149,20 +149,53 @@ function extractImports(code) {
   return Array.from(imports);
 }
 
+// Packages that are known to not work in Pyodide (browser environment)
+const UNSUPPORTED_PACKAGES = new Set([
+  'tensorflow', 'torch', 'pytorch', 'keras', 'jax',
+  'multiprocessing', 'subprocess', 'os.fork',
+  'psutil', 'pywin32', 'win32api',
+]);
+
+// Standard library modules that don't need installation
+const STDLIB_MODULES = new Set([
+  'os', 'sys', 'io', 'math', 'random', 'datetime', 'time', 'json',
+  'collections', 'itertools', 'functools', 'operator', 'string',
+  're', 'copy', 'types', 'typing', 'abc', 'contextlib', 'warnings',
+  'decimal', 'fractions', 'statistics', 'cmath', 'numbers',
+  'hashlib', 'hmac', 'secrets', 'base64', 'binascii', 'struct',
+  'codecs', 'unicodedata', 'locale', 'gettext',
+  'calendar', 'heapq', 'bisect', 'array', 'weakref',
+  'enum', 'dataclasses', 'graphlib', 'pprint', 'reprlib', 'textwrap',
+]);
+
 /**
  * Check if a package is available and install if needed
+ * Enhanced with better error handling, retry logic, and informative messages
  */
 async function ensurePackagesInstalled(packages, id) {
   const toInstall = [];
+  const unsupported = [];
   
   for (const pkg of packages) {
     // Skip if already installed
     if (installedPackages.has(pkg)) continue;
     
+    // Skip standard library modules
+    if (STDLIB_MODULES.has(pkg)) {
+      installedPackages.add(pkg);
+      continue;
+    }
+    
     // Map import name to package name if needed
     const packageName = PACKAGE_MAPPINGS[pkg] || pkg;
     
-    // Check if it's a standard library module
+    // Check for unsupported packages
+    if (UNSUPPORTED_PACKAGES.has(pkg.toLowerCase()) || UNSUPPORTED_PACKAGES.has(packageName.toLowerCase())) {
+      unsupported.push(packageName);
+      continue;
+    }
+    
+    // Check if it's a standard library module by trying to import
     try {
       pyodide.runPython('import ' + pkg);
       installedPackages.add(pkg);
@@ -172,6 +205,16 @@ async function ensurePackagesInstalled(packages, id) {
     }
     
     toInstall.push({ importName: pkg, packageName });
+  }
+  
+  // Warn about unsupported packages
+  if (unsupported.length > 0) {
+    postMsg({ 
+      type: 'stderr', 
+      id, 
+      content: '⚠️ Unsupported packages (not available in browser): ' + unsupported.join(', ') + '\\n' +
+               '   These packages require native code or system access.\\n'
+    });
   }
   
   if (toInstall.length === 0) return true;
@@ -184,45 +227,98 @@ async function ensurePackagesInstalled(packages, id) {
     content: '📦 Installing packages: ' + packageNames.join(', ') + '...\\n' 
   });
   
+  let micropip = null;
+  
   try {
     // Load micropip if not already loaded
     await pyodide.loadPackage('micropip');
-    const micropip = pyodide.pyimport('micropip');
-    
-    for (const { importName, packageName } of toInstall) {
-      try {
-        // First try loadPackage for Pyodide-native packages (faster)
-        if (PYODIDE_PACKAGES.has(packageName.toLowerCase())) {
-          await pyodide.loadPackage(packageName.toLowerCase());
-        } else {
-          // Use micropip for PyPI packages
-          await micropip.install(packageName);
-        }
-        installedPackages.add(importName);
-        postMsg({ 
-          type: 'stdout', 
-          id, 
-          content: '✓ Installed ' + packageName + '\\n' 
-        });
-      } catch (installError) {
-        postMsg({ 
-          type: 'stderr', 
-          id, 
-          content: '✗ Failed to install ' + packageName + ': ' + installError.message + '\\n' 
-        });
-        return false;
-      }
-    }
-    
-    return true;
+    micropip = pyodide.pyimport('micropip');
   } catch (error) {
     postMsg({ 
       type: 'stderr', 
       id, 
-      content: 'Failed to initialize package installer: ' + error.message + '\\n' 
+      content: '❌ Failed to initialize package installer: ' + (error.message || String(error)) + '\\n' +
+               '   Try restarting the kernel.\\n'
     });
     return false;
   }
+  
+  let allSucceeded = true;
+  const failedPackages = [];
+  
+  for (const { importName, packageName } of toInstall) {
+    let installed = false;
+    let lastError = null;
+    
+    // Retry logic with 2 attempts
+    for (let attempt = 1; attempt <= 2 && !installed; attempt++) {
+      try {
+        // First try loadPackage for Pyodide-native packages (faster)
+        if (PYODIDE_PACKAGES.has(packageName.toLowerCase())) {
+          await pyodide.loadPackage(packageName.toLowerCase());
+          installed = true;
+        } else {
+          // Use micropip for PyPI packages
+          await micropip.install(packageName);
+          installed = true;
+        }
+      } catch (installError) {
+        lastError = installError;
+        if (attempt < 2) {
+          postMsg({ 
+            type: 'stdout', 
+            id, 
+            content: '⟳ Retrying ' + packageName + '...\\n' 
+          });
+          // Small delay before retry
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+    }
+    
+    if (installed) {
+      installedPackages.add(importName);
+      postMsg({ 
+        type: 'stdout', 
+        id, 
+        content: '✓ Installed ' + packageName + '\\n' 
+      });
+    } else {
+      allSucceeded = false;
+      failedPackages.push(packageName);
+      
+      // Provide helpful error message based on error type
+      let errorMsg = lastError?.message || String(lastError);
+      let helpText = '';
+      
+      if (errorMsg.includes('404') || errorMsg.includes('not found')) {
+        helpText = '   Package may not exist on PyPI or may have a different name.\\n';
+      } else if (errorMsg.includes('network') || errorMsg.includes('fetch')) {
+        helpText = '   Check your internet connection.\\n';
+      } else if (errorMsg.includes('wheel') || errorMsg.includes('pure Python')) {
+        helpText = '   Package requires native code and is not available in browser.\\n';
+      }
+      
+      postMsg({ 
+        type: 'stderr', 
+        id, 
+        content: '✗ Failed to install ' + packageName + ': ' + errorMsg + '\\n' + helpText
+      });
+    }
+  }
+  
+  // Summary message if some packages failed
+  if (!allSucceeded && failedPackages.length < toInstall.length) {
+    postMsg({ 
+      type: 'stdout', 
+      id, 
+      content: '⚠️ Some packages installed. Code may still run with limited functionality.\\n' 
+    });
+    // Continue execution even if some packages failed
+    return true;
+  }
+  
+  return allSucceeded;
 }
 
 async function initializePyodide() {
@@ -272,7 +368,7 @@ async function initializePyodide() {
 
 async function runCode(code, id) {
   if (!pyodide) {
-    postMsg({ type: 'error', id, error: 'Pyodide not initialized' });
+    postMsg({ type: 'error', id, error: 'Python kernel not initialized. Please wait for initialization to complete.' });
     return;
   }
   
@@ -288,7 +384,7 @@ async function runCode(code, id) {
       postMsg({ 
         type: 'error', 
         id, 
-        error: 'Failed to install required packages' 
+        error: 'Failed to install required packages. Check the output above for details.' 
       });
       return;
     }
@@ -312,13 +408,36 @@ async function runCode(code, id) {
     
     if (error instanceof Error) {
       errorMessage = error.message;
+      
+      // Parse Python traceback for better error display
       if (errorMessage.includes('Traceback')) {
         const parts = errorMessage.split('\\n');
         const tbIndex = parts.findIndex(p => p.includes('Traceback'));
         if (tbIndex >= 0) {
           traceback = parts.slice(tbIndex).join('\\n');
-          errorMessage = parts[parts.length - 1] || errorMessage;
+          // Extract the actual error message (usually the last non-empty line)
+          const errorLines = parts.filter(p => p.trim());
+          errorMessage = errorLines[errorLines.length - 1] || errorMessage;
         }
+      }
+      
+      // Provide helpful hints for common errors
+      if (errorMessage.includes('ModuleNotFoundError') || errorMessage.includes('No module named')) {
+        const moduleMatch = errorMessage.match(/No module named ['\"]?([^'\"\\s]+)['\"]?/);
+        if (moduleMatch) {
+          const moduleName = moduleMatch[1];
+          if (UNSUPPORTED_PACKAGES.has(moduleName.toLowerCase())) {
+            errorMessage += '\\n\\nThis package is not available in the browser environment.';
+          } else {
+            errorMessage += '\\n\\nTry adding an import statement at the top of your code.';
+          }
+        }
+      } else if (errorMessage.includes('SyntaxError')) {
+        errorMessage += '\\n\\nCheck your code for syntax issues like missing colons, brackets, or indentation.';
+      } else if (errorMessage.includes('NameError')) {
+        errorMessage += '\\n\\nMake sure the variable or function is defined before use.';
+      } else if (errorMessage.includes('TypeError')) {
+        errorMessage += '\\n\\nCheck that you are using the correct types for operations and function arguments.';
       }
     } else {
       errorMessage = String(error);

@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { Save, Loader2, Check, AlertCircle, Plus, Code, FileText } from "lucide-react";
+import { Save, Loader2, Check, AlertCircle, Plus, Code, FileText, Play, Square, RotateCcw, ChevronDown } from "lucide-react";
 import { useNotebookEditor } from "@/hooks/use-notebook-editor";
+import { useNotebookExecutor } from "@/hooks/use-notebook-executor";
 import { NotebookCellComponent } from "./notebook-cell";
 import { cn } from "@/lib/utils";
 import { debounce } from "@/lib/fast-save";
@@ -64,6 +65,7 @@ function SaveIndicator({ status }: { status: SaveStatus }) {
  * - Ctrl+Shift+B: Add code cell below
  * - Ctrl+Shift+M: Add markdown cell below
  * - Ctrl+Shift+D: Delete active cell
+ * - Ctrl+Shift+Enter: Run all cells
  * - Arrow Up/Down: Navigate between cells (when not editing)
  */
 export function NotebookEditor({ content, fileName, onContentChange, onSave }: NotebookEditorProps) {
@@ -84,10 +86,59 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
     serialize,
     markClean,
     resetState,
+    updateCellOutputs,
+    updateCellExecutionCount,
+    clearCellOutputs,
   } = useNotebookEditor(content);
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [runMenuOpen, setRunMenuOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Notebook executor for Run All functionality
+  const {
+    executionState,
+    progress,
+    runAll,
+    runAllAbove,
+    runAllBelow,
+    interrupt,
+    restartKernel,
+  } = useNotebookExecutor({
+    onCellStart: (cellId) => {
+      clearCellOutputs(cellId);
+    },
+    onCellOutput: (cellId, output) => {
+      // Append output to cell
+      const cell = state.cells.find(c => c.id === cellId);
+      if (cell) {
+        const newOutputs = [...(cell.outputs || [])];
+        if (output.type === "image") {
+          newOutputs.push({
+            output_type: "display_data",
+            data: { "image/png": output.content.replace("data:image/png;base64,", "") },
+          });
+        } else if (output.type === "error") {
+          newOutputs.push({
+            output_type: "error",
+            ename: "Error",
+            evalue: output.content,
+            traceback: [output.content],
+          });
+        } else {
+          newOutputs.push({
+            output_type: "stream",
+            name: "stdout",
+            text: output.content,
+          });
+        }
+        updateCellOutputs(cellId, newOutputs);
+      }
+    },
+    onCellComplete: (cellId, result) => {
+      updateCellExecutionCount(cellId, result.executionCount);
+    },
+  });
   
   // Track the current file to detect file switches
   const currentFileRef = useRef(fileName);
@@ -96,7 +147,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
   // Track the last serialized content to avoid unnecessary updates
   const lastSerializedRef = useRef<string | null>(content);
   // Track if initial load is complete
-  const initialLoadRef = useRef(true); // Start as true since we have initial content
+  const hasInitializedRef = useRef(true); // Start as true since we have initial content
 
   // Debounced content change notification for better performance
   const debouncedNotifyChange = useMemo(
@@ -157,6 +208,44 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
     }
   }, [onSave, markClean]);
 
+  /**
+   * Handle Run All
+   */
+  const handleRunAll = useCallback(async () => {
+    const cells = state.cells.map(c => ({
+      id: c.id,
+      source: c.source,
+      type: c.cell_type,
+    }));
+    await runAll(cells);
+  }, [state.cells, runAll]);
+
+  /**
+   * Handle Run All Above
+   */
+  const handleRunAllAbove = useCallback(async () => {
+    if (!state.activeCellId) return;
+    const cells = state.cells.map(c => ({
+      id: c.id,
+      source: c.source,
+      type: c.cell_type,
+    }));
+    await runAllAbove(cells, state.activeCellId);
+  }, [state.cells, state.activeCellId, runAllAbove]);
+
+  /**
+   * Handle Run All Below
+   */
+  const handleRunAllBelow = useCallback(async () => {
+    if (!state.activeCellId) return;
+    const cells = state.cells.map(c => ({
+      id: c.id,
+      source: c.source,
+      type: c.cell_type,
+    }));
+    await runAllBelow(cells, state.activeCellId);
+  }, [state.cells, state.activeCellId, runAllBelow]);
+
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -164,6 +253,13 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
         handleSave();
+        return;
+      }
+
+      // Ctrl+Shift+Enter: Run all cells
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "Enter") {
+        e.preventDefault();
+        handleRunAll();
         return;
       }
 
@@ -198,7 +294,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [handleSave, addCellAboveActive, addCellBelowActive, deleteActiveCell]);
+  }, [handleSave, handleRunAll, addCellAboveActive, addCellBelowActive, deleteActiveCell]);
 
   return (
     <div ref={containerRef} className="h-full overflow-auto bg-background">
@@ -213,6 +309,95 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
           </div>
           
           <div className="flex items-center gap-2">
+            {/* Run All dropdown */}
+            <div className="relative">
+              {executionState === "running" ? (
+                <button
+                  onClick={interrupt}
+                  className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+                  title="Interrupt execution"
+                >
+                  <Square className="h-3 w-3" />
+                  <span>Stop</span>
+                  {progress.total > 0 && (
+                    <span className="text-[10px] opacity-70">
+                      ({progress.current}/{progress.total})
+                    </span>
+                  )}
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={handleRunAll}
+                    className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs hover:bg-accent transition-colors"
+                    title="Run all cells (Ctrl+Shift+Enter)"
+                  >
+                    <Play className="h-3 w-3" />
+                    <span>Run All</span>
+                  </button>
+                  <button
+                    onClick={() => setRunMenuOpen(!runMenuOpen)}
+                    className="rounded-md px-1 py-1 text-xs hover:bg-accent transition-colors"
+                  >
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                  {runMenuOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-10"
+                        onClick={() => setRunMenuOpen(false)}
+                      />
+                      <div className="absolute right-0 top-full z-20 mt-1 rounded-md border border-border bg-popover p-1 shadow-md min-w-[140px]">
+                        <button
+                          onClick={() => {
+                            handleRunAll();
+                            setRunMenuOpen(false);
+                          }}
+                          className="flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs hover:bg-accent"
+                        >
+                          <Play className="h-3 w-3" />
+                          <span>Run All</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            handleRunAllAbove();
+                            setRunMenuOpen(false);
+                          }}
+                          className="flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs hover:bg-accent"
+                        >
+                          <Play className="h-3 w-3" />
+                          <span>Run All Above</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            handleRunAllBelow();
+                            setRunMenuOpen(false);
+                          }}
+                          className="flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs hover:bg-accent"
+                        >
+                          <Play className="h-3 w-3" />
+                          <span>Run All Below</span>
+                        </button>
+                        <div className="my-1 border-t border-border" />
+                        <button
+                          onClick={() => {
+                            restartKernel();
+                            setRunMenuOpen(false);
+                          }}
+                          className="flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs hover:bg-accent text-destructive"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          <span>Restart Kernel</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+            
+            <div className="w-px h-4 bg-border" />
+            
             {/* Quick add buttons */}
             <button
               onClick={() => addCellBelowActive("code")}
@@ -253,9 +438,9 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
         {/* Keyboard shortcuts hint */}
         <div className="flex items-center gap-4 px-6 py-1.5 text-[10px] text-muted-foreground border-t border-border/50 bg-muted/30">
           <span><kbd className="px-1 py-0.5 rounded bg-muted text-[9px]">Ctrl+S</kbd> Save</span>
+          <span><kbd className="px-1 py-0.5 rounded bg-muted text-[9px]">Ctrl+Shift+Enter</kbd> Run All</span>
           <span><kbd className="px-1 py-0.5 rounded bg-muted text-[9px]">Ctrl+Shift+B</kbd> Add code</span>
           <span><kbd className="px-1 py-0.5 rounded bg-muted text-[9px]">Ctrl+Shift+M</kbd> Add markdown</span>
-          <span><kbd className="px-1 py-0.5 rounded bg-muted text-[9px]">Ctrl+Shift+D</kbd> Delete cell</span>
         </div>
       </div>
 

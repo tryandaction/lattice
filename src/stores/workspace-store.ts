@@ -111,6 +111,12 @@ interface WorkspaceState {
   moveTabToPane: (sourcePaneId: PaneId, tabIndex: number, targetPaneId: PaneId) => void;
   moveTabToNewSplit: (sourcePaneId: PaneId, tabIndex: number, targetPaneId: PaneId, direction: SplitDirection) => void;
   setTabDirty: (paneId: PaneId, tabIndex: number, isDirty: boolean) => void;
+  
+  // Batch tab operations
+  closeAllTabs: (paneId: PaneId) => TabState[];
+  closeSavedTabs: (paneId: PaneId) => void;
+  closeOtherTabs: (paneId: PaneId, keepTabIndex: number) => TabState[];
+  getUnsavedTabs: (paneId: PaneId) => TabState[];
 
   // Sidebar actions
   toggleSidebar: () => void;
@@ -319,6 +325,93 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         root: setTabDirtyUtil(state.layout.root, paneId, tabIndex, isDirty),
       },
     })),
+
+  // Batch tab operations
+  closeAllTabs: (paneId) => {
+    const state = get();
+    const pane = findPane(state.layout.root, paneId);
+    if (!pane) return [];
+    
+    const unsavedTabs = pane.tabs.filter(tab => tab.isDirty);
+    
+    // Close all tabs by removing them one by one from the end
+    let newRoot = state.layout.root;
+    for (let i = pane.tabs.length - 1; i >= 0; i--) {
+      newRoot = removeTabFromPane(newRoot, paneId, i);
+    }
+    
+    set({
+      layout: {
+        ...state.layout,
+        root: newRoot,
+      },
+    });
+    
+    return unsavedTabs;
+  },
+
+  closeSavedTabs: (paneId) => {
+    const state = get();
+    const pane = findPane(state.layout.root, paneId);
+    if (!pane) return;
+    
+    // Find indices of saved tabs (not dirty)
+    const savedIndices = pane.tabs
+      .map((tab, index) => ({ tab, index }))
+      .filter(({ tab }) => !tab.isDirty)
+      .map(({ index }) => index)
+      .reverse(); // Reverse to remove from end first
+    
+    let newRoot = state.layout.root;
+    for (const index of savedIndices) {
+      newRoot = removeTabFromPane(newRoot, paneId, index);
+    }
+    
+    set({
+      layout: {
+        ...state.layout,
+        root: newRoot,
+      },
+    });
+  },
+
+  closeOtherTabs: (paneId, keepTabIndex) => {
+    const state = get();
+    const pane = findPane(state.layout.root, paneId);
+    if (!pane || keepTabIndex < 0 || keepTabIndex >= pane.tabs.length) return [];
+    
+    const unsavedTabs = pane.tabs.filter((tab, index) => index !== keepTabIndex && tab.isDirty);
+    
+    // Remove all tabs except the one to keep
+    let newRoot = state.layout.root;
+    for (let i = pane.tabs.length - 1; i >= 0; i--) {
+      if (i !== keepTabIndex) {
+        newRoot = removeTabFromPane(newRoot, paneId, i);
+      }
+    }
+    
+    // Adjust active tab index
+    const newPane = findPane(newRoot, paneId);
+    if (newPane && newPane.tabs.length > 0) {
+      newRoot = setActiveTabInPane(newRoot, paneId, 0);
+    }
+    
+    set({
+      layout: {
+        ...state.layout,
+        root: newRoot,
+      },
+    });
+    
+    return unsavedTabs;
+  },
+
+  getUnsavedTabs: (paneId) => {
+    const state = get();
+    const pane = findPane(state.layout.root, paneId);
+    if (!pane) return [];
+    return pane.tabs.filter(tab => tab.isDirty);
+  },
 
   // Sidebar actions
   toggleSidebar: () =>

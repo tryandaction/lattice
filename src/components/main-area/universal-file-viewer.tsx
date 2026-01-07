@@ -1,6 +1,7 @@
 "use client";
 
-import { Loader2, AlertCircle, FileQuestion } from "lucide-react";
+import { useState, useCallback } from "react";
+import { Loader2, AlertCircle, FileQuestion, Edit3, Eye } from "lucide-react";
 import { getRendererForExtension, getFileExtension, getImageMimeType, RendererType, isEditableCodeFile } from "@/lib/file-utils";
 import dynamic from "next/dynamic";
 import type { PaneId } from "@/stores/workspace-store";
@@ -47,6 +48,11 @@ function EmptyPanePlaceholder() {
 const AdvancedMarkdownEditor = dynamic(
   () => import("@/components/editor/advanced-markdown-editor").then((mod) => mod.AdvancedMarkdownEditor),
   { loading: () => <LoadingState message="Loading editor..." />, ssr: false }
+);
+
+const ObsidianMarkdownViewer = dynamic(
+  () => import("@/components/editor/obsidian-markdown-viewer").then((mod) => mod.ObsidianMarkdownViewer),
+  { loading: () => <LoadingState message="Loading viewer..." />, ssr: false }
 );
 
 const TiptapEditor = dynamic(
@@ -160,15 +166,14 @@ function FileViewer({
         textContent = content;
       }
 
-      // Use AdvancedMarkdownEditor for editable markdown
+      // Use ObsidianMarkdownViewer for Obsidian-like experience (default render, click to edit)
       if (onContentChange) {
         return (
-          <AdvancedMarkdownEditor
+          <ObsidianMarkdownViewer
             content={textContent}
             onChange={onContentChange}
             fileName={fileName}
             onSave={onSave}
-            useMathLive={true}
           />
         );
       }
