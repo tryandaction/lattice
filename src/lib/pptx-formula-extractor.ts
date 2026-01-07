@@ -1,9 +1,9 @@
 /**
  * PPTX Formula Extractor
- * 
+ *
  * Extracts mathematical formulas (OMML) directly from PPTX files.
  * PPTX files are ZIP archives containing XML files with slide content.
- * 
+ *
  * This module:
  * 1. Unzips the PPTX file
  * 2. Parses slide XML files
@@ -13,6 +13,40 @@
 
 import JSZip from 'jszip';
 import { convertOmmlToLatex, renderLatex } from './formula-converter';
+
+/**
+ * Validates if the ArrayBuffer is a valid ZIP file
+ * ZIP files start with the signature: PK\x03\x04 (0x504B0304)
+ */
+function isValidZipBuffer(buffer: ArrayBuffer): boolean {
+  if (!buffer || buffer.byteLength < 4) {
+    return false;
+  }
+
+  try {
+    const view = new Uint8Array(buffer.slice(0, 4));
+    // ZIP file signature: PK\x03\x04
+    return view[0] === 0x50 && view[1] === 0x4B && view[2] === 0x03 && view[3] === 0x04;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Creates a safe copy of an ArrayBuffer to prevent detached buffer issues
+ */
+function safeBufferCopy(buffer: ArrayBuffer): ArrayBuffer {
+  try {
+    // Check if buffer is detached
+    if (buffer.byteLength === 0 && !(buffer instanceof ArrayBuffer)) {
+      throw new Error('Buffer appears to be detached');
+    }
+    return buffer.slice(0);
+  } catch (e) {
+    console.warn('[PPTX] Failed to copy buffer:', e);
+    throw e;
+  }
+}
 
 /**
  * Extracted formula with position information
@@ -56,7 +90,7 @@ export interface SlideTextParagraph {
 
 /**
  * Extract text content from a PPTX file with structure
- * 
+ *
  * @param pptxBuffer - ArrayBuffer containing the PPTX file
  * @returns Array of slide text content
  */
@@ -64,7 +98,22 @@ export async function extractTextFromPptx(
   pptxBuffer: ArrayBuffer
 ): Promise<SlideTextContent[]> {
   try {
-    const zip = await JSZip.loadAsync(pptxBuffer);
+    // Validate input
+    if (!pptxBuffer || pptxBuffer.byteLength === 0) {
+      console.warn('[PPTX] Empty buffer provided');
+      return [];
+    }
+
+    // Create a safe copy to prevent detached buffer issues
+    const bufferCopy = safeBufferCopy(pptxBuffer);
+
+    // Validate ZIP format
+    if (!isValidZipBuffer(bufferCopy)) {
+      console.warn('[PPTX] Invalid ZIP file format, skipping text extraction');
+      return [];
+    }
+
+    const zip = await JSZip.loadAsync(bufferCopy);
     const slideTexts: SlideTextContent[] = [];
     
     // Find all slide XML files
@@ -217,7 +266,7 @@ function extractTextFromSlideXml(slideXml: string): SlideTextParagraph[] {
 
 /**
  * Extract all formulas from a PPTX file
- * 
+ *
  * @param pptxBuffer - ArrayBuffer containing the PPTX file
  * @returns Array of slide formulas
  */
@@ -225,7 +274,22 @@ export async function extractFormulasFromPptx(
   pptxBuffer: ArrayBuffer
 ): Promise<SlideFormulas[]> {
   try {
-    const zip = await JSZip.loadAsync(pptxBuffer);
+    // Validate input
+    if (!pptxBuffer || pptxBuffer.byteLength === 0) {
+      console.warn('[PPTX] Empty buffer provided for formula extraction');
+      return [];
+    }
+
+    // Create a safe copy to prevent detached buffer issues
+    const bufferCopy = safeBufferCopy(pptxBuffer);
+
+    // Validate ZIP format
+    if (!isValidZipBuffer(bufferCopy)) {
+      console.warn('[PPTX] Invalid ZIP file format, skipping formula extraction');
+      return [];
+    }
+
+    const zip = await JSZip.loadAsync(bufferCopy);
     const slideFormulas: SlideFormulas[] = [];
     
     // Find all slide XML files

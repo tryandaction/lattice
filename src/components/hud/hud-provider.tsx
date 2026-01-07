@@ -181,7 +181,64 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
   const closeHUD = useHUDStore((state) => state.closeHUD);
   const isOpen = useHUDStore((state) => state.isOpen);
   const updateCursorPosition = useHUDStore((state) => state.updateCursorPosition);
-  
+
+  // Track registered math-fields to avoid duplicate listeners
+  const registeredMathFieldsRef = useRef<WeakSet<Element>>(new WeakSet());
+
+  // ============================================================================
+  // MutationObserver: 自动监听所有新创建的 math-field
+  // 这确保粘贴创建的公式也能被量子键盘编辑
+  // ============================================================================
+  useEffect(() => {
+    const registerMathField = (mathField: Element) => {
+      if (registeredMathFieldsRef.current.has(mathField)) return;
+      registeredMathFieldsRef.current.add(mathField);
+
+      const handleFocus = () => {
+        console.log('[HUD] math-field 获得焦点');
+        setActiveMathField(mathField as MathfieldElement);
+        updateCursorPosition((mathField as HTMLElement).getBoundingClientRect());
+      };
+
+      const handleClick = (e: Event) => {
+        e.stopPropagation();
+        console.log('[HUD] math-field 被点击');
+        setActiveMathField(mathField as MathfieldElement);
+        updateCursorPosition((mathField as HTMLElement).getBoundingClientRect());
+      };
+
+      mathField.addEventListener('focus', handleFocus);
+      mathField.addEventListener('click', handleClick);
+    };
+
+    // 注册已存在的 math-field
+    const existingFields = document.querySelectorAll('math-field');
+    existingFields.forEach(registerMathField);
+
+    // 监听新创建的 math-field
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node instanceof HTMLElement) {
+            // 检查节点本身是否是 math-field
+            if (node.tagName?.toLowerCase() === 'math-field') {
+              registerMathField(node);
+            }
+            // 检查子节点中是否有 math-field
+            const mathFields = node.querySelectorAll?.('math-field');
+            mathFields?.forEach(registerMathField);
+          }
+        }
+      }
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [updateCursorPosition]);
+
   // HUD 打开时，监听编辑器点击以切换输入位置
   useEffect(() => {
     if (!isOpen || !globalTiptapEditor || globalTiptapEditor.isDestroyed) {

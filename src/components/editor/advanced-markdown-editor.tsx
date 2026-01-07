@@ -8,6 +8,9 @@ import { TableCell } from "@tiptap/extension-table-cell";
 import { TableHeader } from "@tiptap/extension-table-header";
 import { Image } from "@tiptap/extension-image";
 import { Placeholder } from "@tiptap/extension-placeholder";
+import Highlight from "@tiptap/extension-highlight";
+import TaskList from "@tiptap/extension-task-list";
+import TaskItem from "@tiptap/extension-task-item";
 import { useEffect, useRef, useMemo, useCallback } from "react";
 import {
   Bold,
@@ -26,6 +29,9 @@ import {
   ImageIcon,
   Keyboard,
   Calculator,
+  Highlighter,
+  ListTodo,
+  Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SlashCommands } from "./extensions/slash-commands";
@@ -235,6 +241,25 @@ function EditorToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
         <ListOrdered className="h-4 w-4" />
       </ToolbarButton>
 
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleTaskList().run()}
+        isActive={editor.isActive("taskList")}
+        title="Task List (- [ ] text)"
+      >
+        <ListTodo className="h-4 w-4" />
+      </ToolbarButton>
+
+      <div className="w-px h-4 bg-border mx-1.5" />
+
+      {/* Highlight */}
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleHighlight().run()}
+        isActive={editor.isActive("highlight")}
+        title="Highlight (==text==)"
+      >
+        <Highlighter className="h-4 w-4" />
+      </ToolbarButton>
+
       <div className="w-px h-4 bg-border mx-1.5" />
 
       {/* Code & Quote */}
@@ -378,6 +403,22 @@ export function AdvancedMarkdownEditor({
       }),
       Placeholder.configure({
         placeholder: 'Type "/" for commands, "$...$" for math, paste images...',
+      }),
+      // Highlight extension for ==text== syntax
+      Highlight.configure({
+        multicolor: true,
+      }),
+      // Task list extension for - [ ] syntax
+      TaskList.configure({
+        HTMLAttributes: {
+          class: 'task-list',
+        },
+      }),
+      TaskItem.configure({
+        nested: true,
+        HTMLAttributes: {
+          class: 'task-item',
+        },
       }),
       SlashCommands,
       TableInputRule,

@@ -1649,51 +1649,77 @@ export function PDFHighlighterAdapter({
   const handleSidebarSelect = useCallback((annotation: AnnotationItem) => {
     setSelectedAnnotationId(annotation.id);
     setHighlightedId(annotation.id);
-    
+
     if (annotation.target.type === 'pdf') {
       const target = annotation.target as PdfTarget;
       const pageElement = document.querySelector(`[data-page-number="${target.page}"]`);
-      
-      if (pageElement && target.rects.length > 0) {
-        const pageRect = pageElement.getBoundingClientRect();
-        const container = scrollContainerRef.current;
-        
-        if (container) {
-          // Get the first rect of the annotation (normalized 0-1 coordinates)
-          const firstRect = target.rects[0];
-          
-          // Calculate the center of the annotation in page coordinates
-          const annotationCenterX = (firstRect.x1 + firstRect.x2) / 2;
-          const annotationCenterY = (firstRect.y1 + firstRect.y2) / 2;
-          
-          // Convert to pixel position within the page
-          const annotationPixelX = annotationCenterX * pageRect.width;
-          const annotationPixelY = annotationCenterY * pageRect.height;
-          
-          // Get page position relative to container
-          const containerRect = container.getBoundingClientRect();
-          const pageOffsetTop = pageRect.top - containerRect.top + container.scrollTop;
-          const pageOffsetLeft = pageRect.left - containerRect.left + container.scrollLeft;
-          
-          // Calculate target scroll position to center the annotation
-          const targetScrollTop = pageOffsetTop + annotationPixelY - container.clientHeight / 2;
-          const targetScrollLeft = pageOffsetLeft + annotationPixelX - container.clientWidth / 2;
-          
-          // Smooth scroll to the annotation
-          container.scrollTo({
-            top: Math.max(0, targetScrollTop),
-            left: Math.max(0, targetScrollLeft),
-            behavior: 'smooth'
+      const container = scrollContainerRef.current;
+
+      if (!pageElement || !container) {
+        // Fallback: try scrolling to page later
+        setTimeout(() => {
+          const retryPage = document.querySelector(`[data-page-number="${target.page}"]`);
+          if (retryPage) {
+            retryPage.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 100);
+        setTimeout(() => setHighlightedId(null), 2000);
+        return;
+      }
+
+      // Use IntersectionObserver for more reliable scroll completion detection
+      const observer = new IntersectionObserver((entries) => {
+        const entry = entries[0];
+        if (entry.isIntersecting && entry.intersectionRatio > 0.3) {
+          observer.disconnect();
+
+          // Wait a frame for rendering to stabilize
+          requestAnimationFrame(() => {
+            if (target.rects.length > 0) {
+              const pageRect = pageElement.getBoundingClientRect();
+              const firstRect = target.rects[0];
+
+              // Calculate the center of the annotation in page coordinates
+              const annotationCenterX = (firstRect.x1 + firstRect.x2) / 2;
+              const annotationCenterY = (firstRect.y1 + firstRect.y2) / 2;
+
+              // Convert to pixel position within the page
+              const annotationPixelX = annotationCenterX * pageRect.width;
+              const annotationPixelY = annotationCenterY * pageRect.height;
+
+              // Get page position relative to container
+              const containerRect = container.getBoundingClientRect();
+              const pageOffsetTop = pageRect.top - containerRect.top + container.scrollTop;
+              const pageOffsetLeft = pageRect.left - containerRect.left + container.scrollLeft;
+
+              // Calculate target scroll position to center the annotation
+              const targetScrollTop = pageOffsetTop + annotationPixelY - container.clientHeight / 2;
+              const targetScrollLeft = pageOffsetLeft + annotationPixelX - container.clientWidth / 2;
+
+              // Second scroll to fine-tune position after page is visible
+              container.scrollTo({
+                top: Math.max(0, targetScrollTop),
+                left: Math.max(0, targetScrollLeft),
+                behavior: 'smooth'
+              });
+            }
           });
         }
-      } else if (pageElement) {
-        // Fallback: just scroll to the page
-        pageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
+      }, { threshold: [0.3, 0.5, 0.8] });
+
+      observer.observe(pageElement);
+
+      // Initial scroll to bring page into view
+      pageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+      // Timeout fallback to disconnect observer if page never becomes visible
+      setTimeout(() => {
+        observer.disconnect();
+      }, 3000);
     }
-    
+
     // Clear highlight after animation
-    setTimeout(() => setHighlightedId(null), 2000);
+    setTimeout(() => setHighlightedId(null), 2500);
   }, []);
 
   // Handle sidebar delete
@@ -1937,6 +1963,37 @@ export function PDFHighlighterAdapter({
 
       {/* Main content area with PDF and sidebar */}
       <div className="flex flex-1 overflow-hidden">
+        {/* Annotation Sidebar - Left side (Zotero style) */}
+        {showSidebar && (
+          <div className="w-72 border-r border-border bg-background flex-shrink-0 overflow-hidden">
+            <PdfAnnotationSidebar
+              annotations={annotations}
+              selectedId={selectedAnnotationId}
+              onSelect={handleSidebarSelect}
+              onDelete={handleSidebarDelete}
+              onUpdateColor={(id, color) => {
+                updateAnnotation(id, { style: { color } });
+              }}
+              onUpdateComment={(id, comment) => updateAnnotation(id, { comment })}
+              onConvertToUnderline={(id) => {
+                const ann = annotations.find(a => a.id === id);
+                if (ann) {
+                  const newType = ann.style.type === 'highlight' ? 'underline' : 'highlight';
+                  updateAnnotation(id, { style: { type: newType } });
+                }
+              }}
+              onUpdateTextStyle={(id, textColor, fontSize, bgColor) => {
+                updateAnnotation(id, {
+                  style: {
+                    color: bgColor,
+                    textStyle: { textColor, fontSize }
+                  }
+                });
+              }}
+            />
+          </div>
+        )}
+
         <div
           ref={scrollContainerRef}
           className="flex-1 overflow-auto bg-muted/30 relative"
@@ -1945,11 +2002,11 @@ export function PDFHighlighterAdapter({
           onMouseMove={handleInkMouseMove}
           onMouseUp={handleInkMouseUp}
           onMouseLeave={handleInkMouseUp}
-          style={{ 
-            cursor: activeTool === 'note' ? 'crosshair' : 
+          style={{
+            cursor: activeTool === 'note' ? 'crosshair' :
                     activeTool === 'area' ? 'crosshair' :
                     activeTool === 'ink' ? 'crosshair' :
-                    activeTool === 'text' ? 'text' : 'default' 
+                    activeTool === 'text' ? 'text' : 'default'
           }}
         >
         <PdfLoader
@@ -2231,37 +2288,6 @@ export function PDFHighlighterAdapter({
             />
           )}
         </div>
-
-        {/* Annotation Sidebar */}
-        {showSidebar && (
-          <div className="w-72 border-l border-border bg-background flex-shrink-0 overflow-hidden">
-            <PdfAnnotationSidebar
-              annotations={annotations}
-              selectedId={selectedAnnotationId}
-              onSelect={handleSidebarSelect}
-              onDelete={handleSidebarDelete}
-              onUpdateColor={(id, color) => {
-                updateAnnotation(id, { style: { color } });
-              }}
-              onUpdateComment={(id, comment) => updateAnnotation(id, { comment })}
-              onConvertToUnderline={(id) => {
-                const ann = annotations.find(a => a.id === id);
-                if (ann) {
-                  const newType = ann.style.type === 'highlight' ? 'underline' : 'highlight';
-                  updateAnnotation(id, { style: { type: newType } });
-                }
-              }}
-              onUpdateTextStyle={(id, textColor, fontSize, bgColor) => {
-                updateAnnotation(id, { 
-                  style: { 
-                    color: bgColor,
-                    textStyle: { textColor, fontSize }
-                  } 
-                });
-              }}
-            />
-          </div>
-        )}
       </div>
 
       {pendingPin && (

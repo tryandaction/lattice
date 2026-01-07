@@ -330,18 +330,86 @@ export function ImageTldrawAdapter({
   // Subscribe to store changes
   useEffect(() => {
     if (!editor || !isReady) return;
-    
+
     const unsubscribe = editor.store.listen(() => {
       if (isRestoringRef.current) return;
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(saveShapes, SAVE_DEBOUNCE_MS);
     }, { source: 'user', scope: 'document' });
-    
+
     return () => {
       unsubscribe();
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
   }, [editor, isReady, saveShapes]);
+
+  // Background image existence check and auto-recovery
+  // This ensures the background image is recreated if it gets lost during operations
+  useEffect(() => {
+    if (!editor || !isReady || !imageUrl || imageSize.width === 0) return;
+
+    const checkBackgroundExists = () => {
+      try {
+        const shapes = editor.getCurrentPageShapes();
+        const backgroundId = createShapeId('background');
+        const hasBackground = shapes.some(s => s.id === backgroundId);
+
+        if (!hasBackground) {
+          console.warn('[ImageTldraw] Background image lost, recreating...');
+          imageSetupDoneRef.current = false;
+
+          // Recreate the background
+          const assetId: TLAssetId = AssetRecordType.createId('background-image');
+          const existingAsset = editor.getAsset(assetId);
+
+          if (!existingAsset) {
+            editor.createAssets([{
+              id: assetId,
+              type: 'image',
+              typeName: 'asset',
+              props: {
+                name: fileName,
+                src: imageUrl,
+                w: imageSize.width,
+                h: imageSize.height,
+                mimeType: mimeType,
+                isAnimated: false,
+              },
+              meta: {},
+            }]);
+          }
+
+          editor.createShape<TLImageShape>({
+            id: backgroundId,
+            type: 'image',
+            x: 0,
+            y: 0,
+            isLocked: true,
+            props: { assetId, w: imageSize.width, h: imageSize.height },
+          });
+
+          editor.sendToBack([backgroundId]);
+          imageSetupDoneRef.current = true;
+        }
+      } catch (err) {
+        console.error('[ImageTldraw] Error checking/recreating background:', err);
+      }
+    };
+
+    // Check periodically and after any store change
+    const interval = setInterval(checkBackgroundExists, 2000);
+
+    // Also listen to store changes for immediate recovery
+    const unsubscribe = editor.store.listen(() => {
+      // Debounce the check slightly to avoid excessive calls
+      setTimeout(checkBackgroundExists, 100);
+    }, { source: 'all', scope: 'document' });
+
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
+  }, [editor, isReady, imageUrl, imageSize, fileName, mimeType]);
 
   // Tool handlers
   const setTool = (toolId: string) => editor?.setCurrentTool(toolId);

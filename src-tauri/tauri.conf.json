@@ -18,33 +18,30 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      }
+    }
   },
   "app": {
     "windows": [
       {
-        "title": "Lattice",
+        "title": "Lattice 格致",
         "width": 1400,
         "height": 900,
+        "minWidth": 800,
+        "minHeight": 600,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "center": true
       }
     ],
     "security": {
       "csp": null
     }
   },
-  "plugins": {
-    "fs": {
-      "scope": ["**"]
-    },
-    "dialog": {
-      "all": true,
-      "open": true,
-      "save": true
-    },
-    "store": {
-      "default": true
-    }
-  }
+  "plugins": {}
 }

@@ -145,12 +145,26 @@ function FileViewer({
   const extension = getFileExtension(fileName);
   
   switch (rendererType) {
-    case "markdown":
+    case "markdown": {
+      // Ensure content is a string for markdown/text editors
+      let textContent: string;
+      if (content instanceof ArrayBuffer) {
+        console.warn('[FileViewer] Markdown received ArrayBuffer, converting to string');
+        try {
+          textContent = new TextDecoder('utf-8').decode(content);
+        } catch (e) {
+          console.error('[FileViewer] Failed to decode ArrayBuffer:', e);
+          textContent = '';
+        }
+      } else {
+        textContent = content;
+      }
+
       // Use AdvancedMarkdownEditor for editable markdown
       if (onContentChange) {
         return (
-          <AdvancedMarkdownEditor 
-            content={content as string} 
+          <AdvancedMarkdownEditor
+            content={textContent}
             onChange={onContentChange}
             fileName={fileName}
             onSave={onSave}
@@ -159,7 +173,8 @@ function FileViewer({
         );
       }
       // Fallback to read-only renderer if no onChange handler
-      return <MarkdownRenderer content={content as string} fileName={fileName} />;
+      return <MarkdownRenderer content={textContent} fileName={fileName} />;
+    }
     case "pdf":
       // Use PDFHighlighterAdapter if we have file handles for annotation support
       if (fileHandle && rootHandle) {
@@ -174,12 +189,26 @@ function FileViewer({
       }
       // Fallback to basic PDF viewer
       return <PDFViewer content={content as ArrayBuffer} fileName={fileName} />;
-    case "jupyter":
+    case "jupyter": {
+      // Ensure content is a string for notebook editors
+      let notebookContent: string;
+      if (content instanceof ArrayBuffer) {
+        console.warn('[FileViewer] Jupyter received ArrayBuffer, converting to string');
+        try {
+          notebookContent = new TextDecoder('utf-8').decode(content);
+        } catch (e) {
+          console.error('[FileViewer] Failed to decode ArrayBuffer:', e);
+          notebookContent = '{}';
+        }
+      } else {
+        notebookContent = content;
+      }
+
       // Use NotebookEditor for editable notebooks
       if (onContentChange) {
         return (
           <NotebookEditor
-            content={content as string}
+            content={notebookContent}
             fileName={fileName}
             onContentChange={onContentChange}
             onSave={onSave}
@@ -187,13 +216,28 @@ function FileViewer({
         );
       }
       // Fallback to read-only renderer
-      return <JupyterRenderer content={content as string} fileName={fileName} />;
-    case "code":
+      return <JupyterRenderer content={notebookContent} fileName={fileName} />;
+    }
+    case "code": {
+      // Ensure content is a string for code editors
+      let codeContent: string;
+      if (content instanceof ArrayBuffer) {
+        console.warn('[FileViewer] Code received ArrayBuffer, converting to string');
+        try {
+          codeContent = new TextDecoder('utf-8').decode(content);
+        } catch (e) {
+          console.error('[FileViewer] Failed to decode ArrayBuffer:', e);
+          codeContent = '';
+        }
+      } else {
+        codeContent = content;
+      }
+
       // Use CodeEditorViewer for editable code files (Requirements 4.1-4.4)
       if (onContentChange && isEditableCodeFile(extension)) {
         return (
           <CodeEditorViewer
-            content={content as string}
+            content={codeContent}
             fileName={fileName}
             onContentChange={onContentChange}
             onSave={onSave}
@@ -201,13 +245,28 @@ function FileViewer({
         );
       }
       // Fallback to read-only CodeReader for non-editable code files
-      return <CodeReader content={content as string} fileName={fileName} />;
+      return <CodeReader content={codeContent} fileName={fileName} />;
+    }
     case "word":
       return <WordViewer content={content as ArrayBuffer} fileName={fileName} />;
     case "powerpoint":
       return <PowerPointViewer content={content as ArrayBuffer} fileName={fileName} />;
-    case "html":
-      return <HTMLViewer content={content as string} fileName={fileName} />;
+    case "html": {
+      // Ensure content is a string for HTML viewer
+      let htmlContent: string;
+      if (content instanceof ArrayBuffer) {
+        console.warn('[FileViewer] HTML received ArrayBuffer, converting to string');
+        try {
+          htmlContent = new TextDecoder('utf-8').decode(content);
+        } catch (e) {
+          console.error('[FileViewer] Failed to decode ArrayBuffer:', e);
+          htmlContent = '';
+        }
+      } else {
+        htmlContent = content;
+      }
+      return <HTMLViewer content={htmlContent} fileName={fileName} />;
+    }
     case "image":
       // Use ImageTldrawAdapter if we have file handles for annotation support
       if (fileHandle && rootHandle) {

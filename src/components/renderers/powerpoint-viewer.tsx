@@ -81,16 +81,22 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
         setLoadingStatus("Parsing presentation...");
         setError(null);
 
-        // Extract formulas from PPTX file first (before pptx-preview modifies the buffer)
+        // Create separate buffer copies upfront to avoid detachment issues
+        // Each operation gets its own copy of the buffer
+        const contentForFormulas = content.slice(0);
+        const contentForTexts = content.slice(0);
+        const contentForPreview = content.slice(0);
+
+        // Extract formulas from PPTX file first
         setLoadingProgress(15);
         setLoadingStatus("Extracting formulas...");
-        
+
         try {
-          const formulas = await extractFormulasFromPptx(content);
+          const formulas = await extractFormulasFromPptx(contentForFormulas);
           setSlideFormulas(formulas);
           const totalFormulas = formulas.reduce((sum, s) => sum + s.formulas.length, 0);
           console.log(`[PPT] Extracted ${totalFormulas} formulas from ${formulas.length} slides`);
-          
+
           // Log details for each slide with formulas
           formulas.forEach(sf => {
             if (sf.formulas.length > 0) {
@@ -100,9 +106,9 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
               });
             }
           });
-          
-          // Also extract text content
-          const texts = await extractTextFromPptx(content);
+
+          // Also extract text content using separate buffer
+          const texts = await extractTextFromPptx(contentForTexts);
           setSlideTexts(texts);
           console.log(`[PPT] Extracted text from ${texts.length} slides`);
           texts.forEach(st => {
@@ -112,7 +118,7 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
           });
         } catch (formulaError) {
           console.warn('[PPT] Formula/text extraction failed:', formulaError);
-          // Continue without formulas
+          // Continue without formulas - don't block slide rendering
         }
 
         // Initialize pptx-preview with larger dimensions to capture all content
@@ -126,11 +132,8 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
         setLoadingProgress(30);
         setLoadingStatus("Rendering slides...");
 
-        // Copy ArrayBuffer to avoid detached buffer issues
-        const contentCopy = new Uint8Array(content).buffer;
-        
-        // Preview the PPTX file
-        await previewer.preview(contentCopy);
+        // Preview the PPTX file using the dedicated buffer copy
+        await previewer.preview(contentForPreview);
 
         setLoadingProgress(70);
         setLoadingStatus("Processing slides...");
