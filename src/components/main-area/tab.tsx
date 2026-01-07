@@ -66,6 +66,16 @@ export function Tab({
     onClose();
   };
 
+  // Handle middle-click to close
+  const handleMouseDown = (e: React.MouseEvent) => {
+    // Middle click (button 1)
+    if (e.button === 1) {
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+    }
+  };
+
   return (
     <div
       ref={setNodeRef}
@@ -81,6 +91,7 @@ export function Tab({
         isDragging && "opacity-50 shadow-lg z-50"
       )}
       onClick={onClick}
+      onMouseDown={handleMouseDown}
       title={tab.filePath}
     >
       {/* File Icon */}

@@ -247,8 +247,9 @@ export function usePdfAnnotation({
         return;
       }
 
-      // Only create annotation if area is large enough
-      if (areaSelection.rect.width > 10 && areaSelection.rect.height > 10) {
+      // Only create annotation if area is large enough (reduced threshold for easier use)
+      const minArea = 5; // Minimum width/height in PDF units
+      if (areaSelection.rect.width > minArea && areaSelection.rect.height > minArea) {
         createAreaHighlight(areaSelection.rect, areaSelection.page, color);
       }
 

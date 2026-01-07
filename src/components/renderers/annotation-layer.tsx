@@ -102,7 +102,7 @@ function getHighlightColors(color: string): { fill: string; border: string; sele
 }
 
 /**
- * Renders a single rectangle highlight
+ * Renders a single rectangle highlight with improved click detection
  */
 function HighlightRect({
   rect,
@@ -125,22 +125,33 @@ function HighlightRect({
 }) {
   const colors = getHighlightColors(color);
 
+  // Expand click area by adding padding for small highlights
+  const minClickSize = 16;
+  const paddingX = Math.max(0, (minClickSize - rect.width) / 2);
+  const paddingY = Math.max(0, (minClickSize - rect.height) / 2);
+
   return (
     <div
-      className="absolute cursor-pointer transition-all duration-150 hover:brightness-110"
+      className="absolute cursor-pointer transition-all duration-150"
       style={{
-        left: rect.x,
-        top: rect.y,
-        width: rect.width,
-        height: rect.height,
-        backgroundColor: colors.fill,
-        border: isSelected ? `2px solid ${colors.selected}` : 'none',
-        boxShadow: isSelected ? `0 0 4px ${colors.selected}` : 'none',
+        left: rect.x - paddingX,
+        top: rect.y - paddingY,
+        width: rect.width + paddingX * 2,
+        height: rect.height + paddingY * 2,
+        padding: `${paddingY}px ${paddingX}px`,
       }}
       onClick={onClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
+      <div
+        className="h-full w-full transition-all duration-150 hover:brightness-110"
+        style={{
+          backgroundColor: colors.fill,
+          border: isSelected ? `2px solid ${colors.selected}` : 'none',
+          boxShadow: isSelected ? `0 0 4px ${colors.selected}` : 'none',
+        }}
+      />
       {/* Comment indicator */}
       {showCommentIndicator && hasComment && (
         <div
@@ -193,6 +204,7 @@ function TextHighlight({
 
 /**
  * Renders an area highlight (single rectangle with border)
+ * Includes expanded click area for easier selection
  */
 function AreaHighlight({
   annotation,
@@ -210,22 +222,33 @@ function AreaHighlight({
   const colors = getHighlightColors(annotation.color);
   const hasComment = annotation.comment.length > 0;
 
+  // Expand click area for small annotations
+  const minClickSize = 24;
+  const paddingX = Math.max(4, (minClickSize - boundingRect.width) / 2);
+  const paddingY = Math.max(4, (minClickSize - boundingRect.height) / 2);
+
   return (
     <div
-      className="absolute cursor-pointer transition-all duration-150 hover:brightness-110"
+      className="absolute cursor-pointer transition-all duration-150"
       style={{
-        left: boundingRect.x,
-        top: boundingRect.y,
-        width: boundingRect.width,
-        height: boundingRect.height,
-        backgroundColor: colors.fill,
-        border: `2px solid ${isSelected ? colors.selected : colors.border}`,
-        boxShadow: isSelected ? `0 0 6px ${colors.selected}` : 'none',
+        left: boundingRect.x - paddingX,
+        top: boundingRect.y - paddingY,
+        width: boundingRect.width + paddingX * 2,
+        height: boundingRect.height + paddingY * 2,
+        padding: `${paddingY}px ${paddingX}px`,
       }}
       onClick={onClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
+      <div
+        className="h-full w-full transition-all duration-150 hover:brightness-110"
+        style={{
+          backgroundColor: colors.fill,
+          border: `2px solid ${isSelected ? colors.selected : colors.border}`,
+          boxShadow: isSelected ? `0 0 6px ${colors.selected}` : 'none',
+        }}
+      />
       {/* Comment indicator */}
       {hasComment && (
         <div
@@ -406,12 +429,13 @@ export function AnnotationLayer({
           onMouseLeave: handleMouseLeave,
         };
 
-        // Wrap in a container with pointer-events and z-index
+        {/* Wrap in a container with pointer-events and z-index */}
+        {/* Selected annotations should appear on top */}
         return (
           <div
             key={annotation.id}
             className="pointer-events-auto"
-            style={{ zIndex: index + 1 }}
+            style={{ zIndex: isSelected ? 1000 : index + 1 }}
           >
             {annotation.type === 'text' ? (
               <TextHighlight {...commonProps} />

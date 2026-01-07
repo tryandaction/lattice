@@ -151,8 +151,9 @@ function AddCellButton({
 
 /**
  * Notebook Cell Component
- * 
+ *
  * Wrapper component for notebook cells with controls.
+ * Provides clear visual indication of active state and keyboard navigation support.
  */
 export function NotebookCellComponent({
   cell,
@@ -169,15 +170,72 @@ export function NotebookCellComponent({
 }: NotebookCellProps) {
   const [showControls, setShowControls] = useState(false);
 
+  // Handle keyboard navigation
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Only handle when cell is active but not editing
+    if (!isActive) return;
+
+    // Escape - deselect cell
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      // Let the cell blur
+    }
+
+    // A - Add cell above
+    if (e.key === 'a' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      // Only trigger if target is not an input/textarea
+      if ((e.target as HTMLElement).tagName !== 'INPUT' &&
+          (e.target as HTMLElement).tagName !== 'TEXTAREA' &&
+          !(e.target as HTMLElement).closest('.cm-editor')) {
+        e.preventDefault();
+        onAddAbove('code');
+      }
+    }
+
+    // B - Add cell below
+    if (e.key === 'b' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      if ((e.target as HTMLElement).tagName !== 'INPUT' &&
+          (e.target as HTMLElement).tagName !== 'TEXTAREA' &&
+          !(e.target as HTMLElement).closest('.cm-editor')) {
+        e.preventDefault();
+        onAddBelow('code');
+      }
+    }
+
+    // M - Change to markdown
+    if (e.key === 'm' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      if ((e.target as HTMLElement).tagName !== 'INPUT' &&
+          (e.target as HTMLElement).tagName !== 'TEXTAREA' &&
+          !(e.target as HTMLElement).closest('.cm-editor')) {
+        e.preventDefault();
+        onTypeChange('markdown');
+      }
+    }
+
+    // Y - Change to code
+    if (e.key === 'y' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      if ((e.target as HTMLElement).tagName !== 'INPUT' &&
+          (e.target as HTMLElement).tagName !== 'TEXTAREA' &&
+          !(e.target as HTMLElement).closest('.cm-editor')) {
+        e.preventDefault();
+        onTypeChange('code');
+      }
+    }
+  };
+
   return (
     <div
       className={cn(
         "group relative",
-        "border-l-2 transition-colors pl-4",
-        isActive ? "border-primary" : "border-transparent hover:border-muted"
+        "border-l-2 transition-all duration-150 pl-4",
+        isActive
+          ? "border-primary bg-primary/5"
+          : "border-transparent hover:border-muted"
       )}
       onMouseEnter={() => setShowControls(true)}
       onMouseLeave={() => setShowControls(false)}
+      onKeyDown={handleKeyDown}
+      tabIndex={isActive ? 0 : -1}
     >
       {/* Cell toolbar */}
       <div

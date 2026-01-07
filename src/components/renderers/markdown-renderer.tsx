@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -7,6 +8,7 @@ import rehypeKatex from "rehype-katex";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import type { Components } from "react-markdown";
+import { Check, Copy } from "lucide-react";
 
 interface MarkdownRendererProps {
   content: string;
@@ -15,38 +17,76 @@ interface MarkdownRendererProps {
 }
 
 /**
+ * Copy button component for code blocks
+ */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }, [text]);
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="absolute top-2 right-2 p-1.5 rounded bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors opacity-0 group-hover:opacity-100"
+      title={copied ? "Copied!" : "Copy code"}
+    >
+      {copied ? (
+        <Check className="h-4 w-4 text-green-500" />
+      ) : (
+        <Copy className="h-4 w-4" />
+      )}
+    </button>
+  );
+}
+
+/**
  * Custom components for ReactMarkdown
  */
 const components: Components = {
-  // Code blocks with syntax highlighting
+  // Code blocks with syntax highlighting and copy button
   code({ node, inline, className, children, ...props }: any) {
     const match = /language-(\w+)/.exec(className || "");
     const language = match ? match[1] : "";
-    
+    const codeString = String(children).replace(/\n$/, "");
+
     if (!inline && language) {
       return (
-        <SyntaxHighlighter
-          style={oneDark}
-          language={language}
-          PreTag="div"
-          className="rounded-lg my-4 text-sm"
-          {...props}
-        >
-          {String(children).replace(/\n$/, "")}
-        </SyntaxHighlighter>
+        <div className="relative group my-4">
+          <SyntaxHighlighter
+            style={oneDark}
+            language={language}
+            PreTag="div"
+            className="rounded-lg text-sm !mt-0 !mb-0"
+            {...props}
+          >
+            {codeString}
+          </SyntaxHighlighter>
+          <CopyButton text={codeString} />
+        </div>
       );
     }
-    
+
     if (!inline) {
       return (
-        <pre className="bg-muted rounded-lg p-4 my-4 overflow-x-auto">
-          <code className={className} {...props}>
-            {children}
-          </code>
-        </pre>
+        <div className="relative group my-4">
+          <pre className="bg-muted rounded-lg p-4 overflow-x-auto">
+            <code className={className} {...props}>
+              {children}
+            </code>
+          </pre>
+          <CopyButton text={codeString} />
+        </div>
       );
     }
-    
+
     return (
       <code className="bg-muted rounded px-1.5 py-0.5 text-sm font-mono" {...props}>
         {children}
@@ -134,20 +174,28 @@ const components: Components = {
     );
   },
   
-  // Lists
+  // Lists with better nesting support
   ul({ children, ...props }: any) {
     return (
-      <ul className="list-disc pl-6 my-3 space-y-1" {...props}>
+      <ul className="list-disc pl-6 my-3 space-y-1.5 [&_ul]:my-1.5 [&_ul]:space-y-1 [&_ol]:my-1.5 [&_ol]:space-y-1" {...props}>
         {children}
       </ul>
     );
   },
-  
+
   ol({ children, ...props }: any) {
     return (
-      <ol className="list-decimal pl-6 my-3 space-y-1" {...props}>
+      <ol className="list-decimal pl-6 my-3 space-y-1.5 [&_ul]:my-1.5 [&_ul]:space-y-1 [&_ol]:my-1.5 [&_ol]:space-y-1" {...props}>
         {children}
       </ol>
+    );
+  },
+
+  li({ children, ...props }: any) {
+    return (
+      <li className="leading-relaxed" {...props}>
+        {children}
+      </li>
     );
   },
   

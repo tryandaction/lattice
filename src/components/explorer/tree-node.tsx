@@ -288,7 +288,7 @@ interface DirectoryNodeProps {
 
 /**
  * Directory node component
- * Displays folder with expand/collapse functionality
+ * Displays folder with expand/collapse functionality and smooth animation
  */
 function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
   const toggleDirectory = useWorkspaceStore((state) => state.toggleDirectory);
@@ -311,7 +311,10 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
         )}
         style={{ paddingLeft: `${depth * 12 + 4}px` }}
       >
-        <ChevronIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <ChevronIcon className={cn(
+          "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-150",
+          node.isExpanded && "transform rotate-0"
+        )} />
         <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="truncate font-medium">{node.name}</span>
         <span className="ml-auto font-scientific text-muted-foreground">
@@ -319,17 +322,23 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
         </span>
       </button>
 
-      {node.isExpanded && (
-        <div>
-          {node.children.map((child) => (
-            <TreeNodeComponent
-              key={child.path}
-              node={child}
-              depth={depth + 1}
-            />
-          ))}
-        </div>
-      )}
+      <div
+        className={cn(
+          "overflow-hidden transition-all duration-150 ease-in-out",
+          node.isExpanded ? "opacity-100" : "opacity-0 h-0"
+        )}
+        style={{
+          maxHeight: node.isExpanded ? `${node.children.length * 100}px` : '0px',
+        }}
+      >
+        {node.children.map((child) => (
+          <TreeNodeComponent
+            key={child.path}
+            node={child}
+            depth={depth + 1}
+          />
+        ))}
+      </div>
     </div>
   );
 }

@@ -1004,14 +1004,17 @@ export function MainSlideArea({
     console.log(`[PPT] Successfully injected ${validFormulas.length} formulas`);
   }
 
-  // Wheel navigation
+  // Wheel navigation with improved debouncing
   const handleWheel = useCallback((event: WheelEvent) => {
     event.preventDefault();
     const now = Date.now();
-    if (now - lastWheelTime.current < 200) return;
-    if (Math.abs(event.deltaY) < 30) return;
-    
+    // Increase debounce time for smoother transitions
+    if (now - lastWheelTime.current < 300) return;
+    // Increase threshold for more intentional scrolling
+    if (Math.abs(event.deltaY) < 40) return;
+
     lastWheelTime.current = now;
+    setIsTransitioning(true);
     onNavigate(event.deltaY > 0 ? 'next' : 'prev');
   }, [onNavigate]);
 
@@ -1023,14 +1026,21 @@ export function MainSlideArea({
     }
   }, [handleWheel]);
 
-  // Keyboard navigation
+  // Keyboard navigation with smooth transitions
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Ignore if typing in an input
+      if ((event.target as HTMLElement)?.tagName === 'INPUT' ||
+          (event.target as HTMLElement)?.tagName === 'TEXTAREA') {
+        return;
+      }
+
       switch (event.key) {
         case 'ArrowLeft':
         case 'ArrowUp':
         case 'PageUp':
           event.preventDefault();
+          setIsTransitioning(true);
           onNavigate('prev');
           break;
         case 'ArrowRight':
@@ -1038,6 +1048,7 @@ export function MainSlideArea({
         case 'PageDown':
         case ' ':
           event.preventDefault();
+          setIsTransitioning(true);
           onNavigate('next');
           break;
       }
@@ -1063,7 +1074,8 @@ export function MainSlideArea({
             "relative bg-white rounded-lg overflow-hidden",
             "shadow-[0_4px_20px_rgba(0,0,0,0.1),0_8px_40px_rgba(0,0,0,0.08)]",
             "ring-1 ring-black/5",
-            isTransitioning && "opacity-95"
+            "transition-opacity duration-200 ease-out",
+            isTransitioning && "opacity-90"
           )}
           style={{ width: slideWidth, height: slideHeight }}
         >

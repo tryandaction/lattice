@@ -4,10 +4,11 @@ import { useEffect } from "react";
 import { FileText, Code, Sparkles, Image } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useContentCacheStore } from "@/stores/content-cache-store";
 import { LayoutRenderer } from "./layout-renderer";
 import { findPane } from "@/lib/layout-utils";
 import { getFileExtension, isEditableFile } from "@/lib/file-utils";
-import { saveFileContent } from "@/lib/save-utils";
+import { fastSaveFile } from "@/lib/fast-save";
 
 /**
  * Welcome placeholder component - shown when no workspace is open
@@ -69,23 +70,23 @@ export function MainArea() {
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
       // Check for Ctrl+S or Cmd+S
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's' && !e.shiftKey) {
         e.preventDefault();
-        
+
         const { layout } = useWorkspaceStore.getState();
         const activePane = findPane(layout.root, layout.activePaneId);
-        
+
         if (!activePane || activePane.activeTabIndex < 0) {
           return;
         }
-        
+
         const activeTab = activePane.tabs[activePane.activeTabIndex];
         if (!activeTab) {
           return;
         }
-        
+
         const extension = getFileExtension(activeTab.fileName);
-        
+
         // Check if file is editable
         if (!isEditableFile(extension)) {
           toast.info('Read Only', {
@@ -93,49 +94,95 @@ export function MainArea() {
           });
           return;
         }
-        
-        // Get content from the DOM (we need to access the editor content)
-        // For now, we'll show a message that save is triggered
-        // The actual save will be handled by the editor component
-        
-        // Try to get content from the active pane's editor
-        // This is a simplified approach - in production, we'd use a ref or context
+
+        // Get content from cache - this is the edited content
+        const cached = useContentCacheStore.getState().getContent(activeTab.id);
+
+        if (!cached || typeof cached.content !== 'string') {
+          toast.info('No Changes', {
+            description: 'No changes to save.',
+          });
+          return;
+        }
+
+        // Check if there are actual changes
+        if (!cached.isDirty) {
+          toast.info('No Changes', {
+            description: 'No changes to save.',
+          });
+          return;
+        }
+
         try {
-          const file = await activeTab.fileHandle.getFile();
-          const currentContent = await file.text();
-          
-          // Save the file
-          const result = await saveFileContent(
-            activeTab.fileHandle,
-            currentContent
-          );
-          
-          if (result.success) {
-            setTabDirty(layout.activePaneId, activePane.activeTabIndex, false);
-            toast.success('Saved', {
-              description: `${activeTab.fileName} saved successfully.`,
-            });
-          } else {
-            toast.error('Save Failed', {
-              description: result.error || 'Failed to save file.',
-            });
-          }
+          // Save using the fast save function
+          await fastSaveFile(activeTab.fileHandle, cached.content);
+
+          // Mark as saved in cache
+          useContentCacheStore.getState().markAsSaved(activeTab.id, cached.content);
+
+          // Clear dirty state in layout
+          setTabDirty(layout.activePaneId, activePane.activeTabIndex, false);
+
+          toast.success('Saved', {
+            description: `${activeTab.fileName} saved successfully.`,
+          });
         } catch (err) {
           toast.error('Save Failed', {
             description: err instanceof Error ? err.message : 'Failed to save file.',
           });
         }
       }
-      
+
       // Ctrl+W to close active tab
       if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
         e.preventDefault();
-        
+
         const { layout, closeTab } = useWorkspaceStore.getState();
         const activePane = findPane(layout.root, layout.activePaneId);
-        
+
         if (activePane && activePane.activeTabIndex >= 0) {
           closeTab(layout.activePaneId, activePane.activeTabIndex);
+        }
+      }
+
+      // Ctrl+Tab to switch to next tab
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Tab' && !e.shiftKey) {
+        e.preventDefault();
+
+        const { layout, setActiveTab } = useWorkspaceStore.getState();
+        const activePane = findPane(layout.root, layout.activePaneId);
+
+        if (activePane && activePane.tabs.length > 1) {
+          const nextIndex = (activePane.activeTabIndex + 1) % activePane.tabs.length;
+          setActiveTab(layout.activePaneId, nextIndex);
+        }
+      }
+
+      // Ctrl+Shift+Tab to switch to previous tab
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Tab' && e.shiftKey) {
+        e.preventDefault();
+
+        const { layout, setActiveTab } = useWorkspaceStore.getState();
+        const activePane = findPane(layout.root, layout.activePaneId);
+
+        if (activePane && activePane.tabs.length > 1) {
+          const prevIndex = activePane.activeTabIndex === 0
+            ? activePane.tabs.length - 1
+            : activePane.activeTabIndex - 1;
+          setActiveTab(layout.activePaneId, prevIndex);
+        }
+      }
+
+      // Ctrl+1-9 to switch to specific tab
+      if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '9') {
+        e.preventDefault();
+
+        const { layout, setActiveTab } = useWorkspaceStore.getState();
+        const activePane = findPane(layout.root, layout.activePaneId);
+        const tabIndex = parseInt(e.key) - 1;
+
+        if (activePane && tabIndex < activePane.tabs.length) {
+          setActiveTab(layout.activePaneId, tabIndex);
         }
       }
 

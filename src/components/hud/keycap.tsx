@@ -84,10 +84,11 @@ export const Keycap = forwardRef<HTMLButtonElement, KeycapProps>(function Keycap
         flex flex-col items-center justify-center
         cursor-pointer select-none
         group
-        ${isFlashing ? 'animate-keycap-flash bg-indigo-500/40 border-indigo-400/50 shadow-lg shadow-indigo-500/30' : ''}
+        ${isFlashing ? 'animate-keycap-flash bg-indigo-400/50 border-indigo-300/60 shadow-xl shadow-indigo-500/40 scale-105' : ''}
         ${isActive ? 'bg-indigo-500/30 border-indigo-400/40 ring-2 ring-indigo-400/50' : ''}
       `}
       aria-label={`Insert ${displaySymbol}`}
+      title={hasVariants ? 'Click for symbol, Shift+Click for variants' : `Insert ${displaySymbol}`}
     >
       {/* Physical key label - top left */}
       <span 

@@ -115,12 +115,18 @@ function LatticeMathNode({
         mf.style.fontSize = "1.2em";
       } else {
         mf.style.display = "inline-block";
-        mf.style.verticalAlign = "middle";
+        // Use baseline alignment for better text flow
+        mf.style.verticalAlign = "baseline";
+        // Adjust position slightly for visual alignment
+        mf.style.position = "relative";
+        mf.style.top = "0.1em";
       }
-      
+
       // Common styles
       mf.style.outline = "none";
       mf.style.minWidth = "1em";
+      // Inherit color for dark mode support
+      mf.style.color = "inherit";
       
       // Append to container
       containerRef.current.appendChild(mf);
@@ -167,27 +173,33 @@ function LatticeMathNode({
 
       if (e.shiftKey) {
         // Shift+Tab: move to previous placeholder or exit left
-        const moved = mf.executeCommand("moveToPreviousPlaceholder");
-        if (!moved) {
-          // At left boundary, exit the node
+        try {
+          const moved = mf.executeCommand("moveToPreviousPlaceholder");
+          // executeCommand may return void/undefined, so check if cursor actually moved
+          if (!moved) {
+            onFocusExit("left");
+          }
+        } catch {
           onFocusExit("left");
         }
       } else {
         // Tab: move to next placeholder or exit right
-        const moved = mf.executeCommand("moveToNextPlaceholder");
-        if (!moved) {
-          // No more placeholders, try to move to right boundary
-          // Check if we're already at the end
-          const selection = mf.selection;
-          const isAtEnd = selection.ranges[0]?.[1] === mf.value.length;
-          
-          if (isAtEnd) {
-            // Already at right boundary, exit the node
-            onFocusExit("right");
-          } else {
-            // Move to end
-            mf.executeCommand("moveToMathfieldEnd");
+        try {
+          const moved = mf.executeCommand("moveToNextPlaceholder");
+          if (!moved) {
+            // No more placeholders, check if we're at the end
+            const selection = mf.selection;
+            const atEnd = !selection || selection.ranges.length === 0 ||
+              (selection.ranges[0]?.[1] ?? 0) >= mf.value.length;
+
+            if (atEnd) {
+              onFocusExit("right");
+            } else {
+              mf.executeCommand("moveToMathfieldEnd");
+            }
           }
+        } catch {
+          onFocusExit("right");
         }
       }
     } else if (e.key === "Escape") {
@@ -198,11 +210,20 @@ function LatticeMathNode({
     }
   }, [onFocusExit]);
 
+  // Handle click to focus the math field
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (mathfieldRef.current) {
+      mathfieldRef.current.focus();
+    }
+  }, []);
+
   return (
     <span
       ref={containerRef}
       className={`mathlive-container ${displayMode}`}
       onKeyDown={handleKeyDown}
+      onClick={handleClick}
       data-display-mode={displayMode}
     >
       {!isLoaded && (
