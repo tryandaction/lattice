@@ -5,7 +5,7 @@ import { Toaster } from "sonner";
 import "katex/dist/katex.min.css";
 import "./globals.css";
 import { HUDProvider } from "@/components/hud";
-import { ServiceWorkerRegister, PWAInstallPrompt } from "@/components/pwa";
+import { ServiceWorkerRegister } from "@/components/pwa";
 
 export const metadata: Metadata = {
   title: "Lattice 格致 - Scientific Workbench",
@@ -50,7 +50,7 @@ export default function RootLayout({
         </HUDProvider>
         <Toaster position="bottom-right" richColors />
         <ServiceWorkerRegister />
-        <PWAInstallPrompt />
+        {/* PWA 安装提示已禁用 */}
       </body>
     </html>
   );
