@@ -15,6 +15,7 @@ export type RendererType =
   | 'html'
   | 'code'
   | 'image'
+  | 'handwriting'
   | 'unsupported';
 
 /**
@@ -233,6 +234,8 @@ export const CODE_EXTENSIONS: Record<string, string> = {
 export const TEXT_EXTENSIONS = new Set([
   'md',
   'ipynb',
+  'ink',      // Handwriting note files
+  'lattice',  // Lattice handwriting files
   ...Object.keys(CODE_EXTENSIONS),
 ]);
 
@@ -316,6 +319,7 @@ export function getRendererForExtension(extension: string): RendererType {
   if (ext === 'doc' || ext === 'docx') return 'word';
   if (ext === 'ppt' || ext === 'pptx') return 'powerpoint';
   if (ext === 'html' || ext === 'htm') return 'html';
+  if (ext === 'ink' || ext === 'lattice') return 'handwriting';
   
   // Check image files
   if (isImageFile(ext)) return 'image';
@@ -352,7 +356,7 @@ export function getFileExtension(filename: string): string {
 /**
  * Editable file extensions (files that can be modified and saved)
  */
-export const EDITABLE_EXTENSIONS = new Set(['md', 'txt', 'ipynb']);
+export const EDITABLE_EXTENSIONS = new Set(['md', 'txt', 'ipynb', 'ink', 'lattice']);
 
 /**
  * Editable code file extensions (code files that can be edited with CodeEditor)

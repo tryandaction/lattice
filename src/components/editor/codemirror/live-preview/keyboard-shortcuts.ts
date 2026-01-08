@@ -1,0 +1,307 @@
+/**
+ * Keyboard Shortcuts for Live Preview Editor
+ * Comprehensive shortcuts for markdown editing
+ * 
+ * Requirements: 10.1-10.12
+ */
+
+import { keymap } from '@codemirror/view';
+import { EditorSelection } from '@codemirror/state';
+import type { Command } from '@codemirror/view';
+
+/**
+ * Toggle wrapper around selection (bold, italic, etc.)
+ */
+function toggleWrapper(wrapper: string): Command {
+  return (view) => {
+    const { state } = view;
+    const changes = state.changeByRange((range) => {
+      const text = state.sliceDoc(range.from, range.to);
+      const wrapperLen = wrapper.length;
+      
+      // Check if already wrapped
+      const before = state.sliceDoc(
+        Math.max(0, range.from - wrapperLen),
+        range.from
+      );
+      const after = state.sliceDoc(
+        range.to,
+        Math.min(state.doc.length, range.to + wrapperLen)
+      );
+      
+      if (before === wrapper && after === wrapper) {
+        // Remove wrapper
+        return {
+          changes: [
+            { from: range.from - wrapperLen, to: range.from, insert: '' },
+            { from: range.to, to: range.to + wrapperLen, insert: '' },
+          ],
+          range: EditorSelection.range(
+            range.from - wrapperLen,
+            range.to - wrapperLen
+          ),
+        };
+      } else {
+        // Add wrapper
+        return {
+          changes: [
+            { from: range.from, insert: wrapper },
+            { from: range.to, insert: wrapper },
+          ],
+          range: EditorSelection.range(
+            range.from + wrapperLen,
+            range.to + wrapperLen
+          ),
+        };
+      }
+    });
+    
+    view.dispatch(changes);
+    return true;
+  };
+}
+
+/**
+ * Insert link at cursor
+ */
+const insertLink: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+  const selectedText = state.sliceDoc(selection.from, selection.to);
+  
+  const linkText = selectedText || 'link text';
+  const insert = `[${linkText}](url)`;
+  
+  view.dispatch({
+    changes: { from: selection.from, to: selection.to, insert },
+    selection: EditorSelection.cursor(
+      selection.from + linkText.length + 3 // Position cursor at "url"
+    ),
+  });
+  
+  return true;
+};
+
+/**
+ * Insert inline math
+ */
+const insertInlineMath: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+  const selectedText = state.sliceDoc(selection.from, selection.to);
+  
+  const mathText = selectedText || '';
+  const insert = `$${mathText}$`;
+  
+  view.dispatch({
+    changes: { from: selection.from, to: selection.to, insert },
+    selection: EditorSelection.cursor(selection.from + 1 + mathText.length),
+  });
+  
+  return true;
+};
+
+/**
+ * Insert code block
+ */
+const insertCodeBlock: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+  const line = state.doc.lineAt(selection.head);
+  
+  const insert = '\n```\n\n```\n';
+  
+  view.dispatch({
+    changes: { from: line.to, insert },
+    selection: EditorSelection.cursor(line.to + 5), // Position inside code block
+  });
+  
+  return true;
+};
+
+/**
+ * Move line up
+ */
+const moveLineUp: Command = (view) => {
+  const { state } = view;
+  const line = state.doc.lineAt(state.selection.main.head);
+  
+  if (line.number === 1) return false;
+  
+  const prevLine = state.doc.line(line.number - 1);
+  const lineText = state.sliceDoc(line.from, line.to);
+  const prevLineText = state.sliceDoc(prevLine.from, prevLine.to);
+  
+  view.dispatch({
+    changes: [
+      { from: prevLine.from, to: line.to, insert: `${lineText}\n${prevLineText}` },
+    ],
+    selection: EditorSelection.cursor(
+      prevLine.from + (state.selection.main.head - line.from)
+    ),
+  });
+  
+  return true;
+};
+
+/**
+ * Move line down
+ */
+const moveLineDown: Command = (view) => {
+  const { state } = view;
+  const line = state.doc.lineAt(state.selection.main.head);
+  
+  if (line.number === state.doc.lines) return false;
+  
+  const nextLine = state.doc.line(line.number + 1);
+  const lineText = state.sliceDoc(line.from, line.to);
+  const nextLineText = state.sliceDoc(nextLine.from, nextLine.to);
+  
+  view.dispatch({
+    changes: [
+      { from: line.from, to: nextLine.to, insert: `${nextLineText}\n${lineText}` },
+    ],
+    selection: EditorSelection.cursor(
+      line.from + nextLineText.length + 1 + (state.selection.main.head - line.from)
+    ),
+  });
+  
+  return true;
+};
+
+/**
+ * Duplicate line
+ */
+const duplicateLine: Command = (view) => {
+  const { state } = view;
+  const line = state.doc.lineAt(state.selection.main.head);
+  const lineText = state.sliceDoc(line.from, line.to);
+  
+  view.dispatch({
+    changes: { from: line.to, insert: `\n${lineText}` },
+    selection: EditorSelection.cursor(
+      line.to + 1 + (state.selection.main.head - line.from)
+    ),
+  });
+  
+  return true;
+};
+
+/**
+ * Toggle HTML comment
+ */
+const toggleComment: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+  const text = state.sliceDoc(selection.from, selection.to);
+  
+  // Check if already commented
+  if (text.startsWith('<!--') && text.endsWith('-->')) {
+    // Remove comment
+    const uncommented = text.slice(4, -3);
+    view.dispatch({
+      changes: { from: selection.from, to: selection.to, insert: uncommented },
+    });
+  } else {
+    // Add comment
+    view.dispatch({
+      changes: { from: selection.from, to: selection.to, insert: `<!--${text}-->` },
+    });
+  }
+  
+  return true;
+};
+
+/**
+ * Insert new line below current block
+ */
+const insertLineBelow: Command = (view) => {
+  const { state } = view;
+  const line = state.doc.lineAt(state.selection.main.head);
+  
+  view.dispatch({
+    changes: { from: line.to, insert: '\n' },
+    selection: EditorSelection.cursor(line.to + 1),
+  });
+  
+  return true;
+};
+
+/**
+ * Indent line or selection
+ */
+const indentMore: Command = (view) => {
+  const { state } = view;
+  const changes = state.changeByRange((range) => {
+    const line = state.doc.lineAt(range.head);
+    return {
+      changes: { from: line.from, insert: '  ' },
+      range: EditorSelection.range(range.from + 2, range.to + 2),
+    };
+  });
+  
+  view.dispatch(changes);
+  return true;
+};
+
+/**
+ * Outdent line or selection
+ */
+const indentLess: Command = (view) => {
+  const { state } = view;
+  const changes = state.changeByRange((range) => {
+    const line = state.doc.lineAt(range.head);
+    const lineText = line.text;
+    
+    if (lineText.startsWith('  ')) {
+      return {
+        changes: { from: line.from, to: line.from + 2, insert: '' },
+        range: EditorSelection.range(
+          Math.max(line.from, range.from - 2),
+          Math.max(line.from, range.to - 2)
+        ),
+      };
+    } else if (lineText.startsWith('\t')) {
+      return {
+        changes: { from: line.from, to: line.from + 1, insert: '' },
+        range: EditorSelection.range(
+          Math.max(line.from, range.from - 1),
+          Math.max(line.from, range.to - 1)
+        ),
+      };
+    }
+    
+    return { range };
+  });
+  
+  view.dispatch(changes);
+  return true;
+};
+
+/**
+ * Complete keyboard shortcuts keymap
+ */
+export const markdownKeymap = keymap.of([
+  // Text formatting
+  { key: 'Ctrl-b', mac: 'Cmd-b', run: toggleWrapper('**') },
+  { key: 'Ctrl-i', mac: 'Cmd-i', run: toggleWrapper('*') },
+  { key: 'Ctrl-`', run: toggleWrapper('`') },
+  { key: 'Ctrl-Shift-s', run: toggleWrapper('~~') },
+  { key: 'Ctrl-Shift-h', run: toggleWrapper('==') },
+  
+  // Links and media
+  { key: 'Ctrl-k', mac: 'Cmd-k', run: insertLink },
+  { key: 'Ctrl-Shift-m', mac: 'Cmd-Shift-m', run: insertInlineMath },
+  { key: 'Ctrl-Shift-`', run: insertCodeBlock },
+  
+  // Line operations
+  { key: 'Alt-ArrowUp', run: moveLineUp },
+  { key: 'Alt-ArrowDown', run: moveLineDown },
+  { key: 'Ctrl-d', mac: 'Cmd-d', run: duplicateLine },
+  { key: 'Ctrl-/', mac: 'Cmd-/', run: toggleComment },
+  { key: 'Ctrl-Enter', mac: 'Cmd-Enter', run: insertLineBelow },
+  
+  // Indentation
+  { key: 'Ctrl-]', mac: 'Cmd-]', run: indentMore },
+  { key: 'Ctrl-[', mac: 'Cmd-[', run: indentLess },
+]);

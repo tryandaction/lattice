@@ -1,40 +1,66 @@
 # Lattice 格致
 
-一个本地优先、轻量级的科研工作台，专为论文阅读、笔记和代码编辑设计。
+<p align="center">
+  <strong>本地优先 · 轻量高效 · 科研工作台</strong>
+</p>
+
+<p align="center">
+  专为论文阅读、笔记和代码编辑设计的现代化工具
+</p>
+
+<p align="center">
+  <a href="https://github.com/tryandaction/lattice/releases/latest">下载桌面版</a> ·
+  <a href="https://lattice-apq.pages.dev/">在线体验</a> ·
+  <a href="./docs/USER_GUIDE.md">用户指南</a>
+</p>
+
+---
+
+## ✨ 特性
+
+- **PDF 阅读与批注** — 高亮、区域选择、文字批注、评论
+- **Markdown 实时预览** — 类 Obsidian 体验，Wiki 链接，大纲导航
+- **手写笔记** — 压感支持，多种笔刷，平板优化
+- **Jupyter Notebook** — 浏览器内运行 Python
+- **多格式支持** — PowerPoint、Word、图片、代码
+- **本地优先** — 直接读写本地文件，数据完全掌控
 
 ## 🚀 快速开始
 
-### 🖥️ 桌面应用（推荐）
+### 桌面应用（推荐）
 
-**体积小巧 · 启动快速 · 完全离线**
+| 平台 | 下载 | 大小 |
+|------|------|------|
+| Windows | [安装包](https://github.com/tryandaction/lattice/releases/latest) | ~6 MB |
+| macOS | 即将推出 | - |
+| Linux | 即将推出 | - |
 
-| 平台 | 下载链接 | 大小 |
-|------|---------|------|
-| 🪟 **Windows** | [安装包 (.exe)](https://github.com/tryandaction/lattice/releases/latest) | ~6 MB |
-| 🍎 **macOS** | 即将推出 | - |
-| 🐧 **Linux** | 即将推出 | - |
+**桌面版优势：**
+- 完全离线运行
+- 启动快速，内存占用低
+- 记住工作目录
+- 原生文件系统访问
 
-**桌面应用优势：**
-- ✅ 完全离线运行，无需网络
-- ✅ 双击即用，无需浏览器
-- ✅ 记住工作目录，下次自动打开
-- ✅ 原生文件系统访问
-- ✅ 启动快速，内存占用低
+### Android 平板/手机
 
-### 🌐 在线体验
+1. 用 Chrome 访问 [lattice-apq.pages.dev](https://lattice-apq.pages.dev/)
+2. 点击「安装」或菜单 →「添加到主屏幕」
+3. 从主屏幕启动，全屏 App 体验
 
-[https://lattice-apq.pages.dev/](https://lattice-apq.pages.dev/)
+### 在线版
 
-> 在线版功能完整，但推荐下载桌面应用获得最佳体验
+访问 [lattice-apq.pages.dev](https://lattice-apq.pages.dev/) 立即使用
 
-## ✨ 核心功能
+## 📖 文档
 
-- **PDF 阅读与批注** - 高亮、区域选择、文字批注、评论
-- **多格式支持** - Markdown、Jupyter Notebook、PowerPoint、Word、图片
-- **数学公式** - 基于 MathLive 的可视化公式编辑
-- **代码高亮** - CodeMirror 6 轻量级代码编辑器
-- **本地文件系统** - 直接读写本地文件夹
-- **灵活布局** - 可拖拽、可调整的多窗格布局
+| 文档 | 说明 |
+|------|------|
+| [用户指南](./docs/USER_GUIDE.md) | 完整功能介绍和使用教程 |
+| [快速上手](./QUICK_START.md) | 5 分钟入门 |
+| [安装指南](./INSTALLATION.md) | 安装和故障排除 |
+| [桌面应用](./DESKTOP_APP.md) | 桌面版构建指南 |
+| [架构设计](./docs/ARCHITECTURE.md) | 技术架构文档 |
+| [更新日志](./CHANGELOG.md) | 版本更新记录 |
 
 ## 🛠️ 开发
 
@@ -43,7 +69,7 @@
 - Node.js 18+
 - Rust 1.70+（桌面应用）
 
-### 安装与运行
+### 运行
 
 ```bash
 # 安装依赖
@@ -59,28 +85,23 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
-## 📁 项目结构
+### 项目结构
 
 ```
-├── src/                # Next.js 前端源码
+├── src/                # Next.js 前端
 │   ├── app/            # 页面
 │   ├── components/     # React 组件
 │   ├── hooks/          # 自定义 Hooks
-│   ├── lib/            # 工具函数
+│   ├── lib/            # 工具库
 │   └── stores/         # 状态管理
-├── src-tauri/          # Tauri 桌面应用后端
-│   ├── src/main.rs     # Rust 入口
-│   └── tauri.conf.json # Tauri 配置
-└── out/                # 静态导出目录
+├── src-tauri/          # Tauri 桌面后端
+├── docs/               # 文档
+└── public/             # 静态资源
 ```
 
-## 📖 文档
+## 🤝 贡献
 
-- [快速上手](./QUICK_START.md)
-- [安装指南](./INSTALLATION.md)
-- [桌面应用](./DESKTOP_APP.md)
-- [架构设计](./docs/ARCHITECTURE.md)
-- [更新日志](./CHANGELOG.md)
+欢迎提交 Issue 和 Pull Request！
 
 ## 📄 License
 

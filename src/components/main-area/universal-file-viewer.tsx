@@ -45,11 +45,6 @@ function EmptyPanePlaceholder() {
 }
 
 // Lazy load renderers to minimize bundle size
-const AdvancedMarkdownEditor = dynamic(
-  () => import("@/components/editor/advanced-markdown-editor").then((mod) => mod.AdvancedMarkdownEditor),
-  { loading: () => <LoadingState message="Loading editor..." />, ssr: false }
-);
-
 const ObsidianMarkdownViewer = dynamic(
   () => import("@/components/editor/obsidian-markdown-viewer").then((mod) => mod.ObsidianMarkdownViewer),
   { loading: () => <LoadingState message="Loading viewer..." />, ssr: false }
@@ -126,6 +121,12 @@ const UnsupportedFile = dynamic(
 const CodeEditorViewer = dynamic(
   () => import("@/components/renderers/code-editor-viewer").then((mod) => mod.CodeEditorViewer),
   { loading: () => <LoadingState message="Loading code editor..." />, ssr: false }
+);
+
+// HandwritingViewer for handwriting note files
+const HandwritingViewer = dynamic(
+  () => import("@/components/renderers/handwriting-viewer").then((mod) => mod.HandwritingViewer),
+  { loading: () => <LoadingState message="Loading handwriting editor..." />, ssr: false }
 );
 
 /**
@@ -287,6 +288,29 @@ function FileViewer({
       }
       // Fallback to basic image viewer
       return <ImageViewer content={content as ArrayBuffer} fileName={fileName} mimeType={getImageMimeType(extension)} />;
+    case "handwriting": {
+      // Ensure content is a string for handwriting editor
+      let handwritingContent: string;
+      if (content instanceof ArrayBuffer) {
+        try {
+          handwritingContent = new TextDecoder('utf-8').decode(content);
+        } catch (e) {
+          console.error('[FileViewer] Failed to decode ArrayBuffer:', e);
+          handwritingContent = '';
+        }
+      } else {
+        handwritingContent = content;
+      }
+      return (
+        <HandwritingViewer
+          filePath={fileName}
+          content={handwritingContent}
+          onChange={onContentChange}
+          onSave={onSave}
+          readOnly={!onContentChange}
+        />
+      );
+    }
     case "unsupported":
     default:
       return <UnsupportedFile fileName={fileName} />;

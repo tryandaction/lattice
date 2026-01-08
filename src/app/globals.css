@@ -2896,3 +2896,632 @@ math-field.quantum-keyboard-active {
 .contain-strict {
   contain: strict;
 }
+
+/* ============================================
+   Live Preview Editor Styles
+   Obsidian-style markdown editing
+   ============================================ */
+
+/* Live Preview Editor Container */
+.live-preview-editor {
+  @apply h-full w-full;
+}
+
+.live-preview-editor .cm-editor {
+  @apply h-full border-none rounded-none;
+}
+
+.live-preview-editor .cm-editor.cm-focused {
+  @apply outline-none ring-0;
+}
+
+.live-preview-editor .cm-scroller {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+.live-preview-editor .cm-content {
+  padding: 1.5rem 2rem;
+}
+
+.live-preview-editor .cm-line {
+  padding: 0;
+}
+
+/* Inline formatting styles */
+.live-preview-editor .cm-bold {
+  font-weight: 700;
+}
+
+.live-preview-editor .cm-italic {
+  font-style: italic;
+}
+
+.live-preview-editor .cm-strikethrough {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.live-preview-editor .cm-highlight {
+  background-color: #fef08a;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.dark .live-preview-editor .cm-highlight {
+  background-color: #854d0e;
+}
+
+.live-preview-editor .cm-inline-code {
+  @apply bg-muted rounded px-1.5 py-0.5;
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  font-size: 0.9em;
+}
+
+/* Link styles */
+.live-preview-editor .cm-link {
+  @apply text-primary underline;
+  text-decoration-color: hsl(var(--primary) / 0.5);
+  cursor: pointer;
+}
+
+.live-preview-editor .cm-link:hover {
+  text-decoration-color: hsl(var(--primary));
+}
+
+.live-preview-editor .cm-wiki-link {
+  @apply text-purple-600 dark:text-purple-400;
+  background-color: hsl(var(--primary) / 0.1);
+  padding: 0 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.live-preview-editor .cm-wiki-link:hover {
+  background-color: hsl(var(--primary) / 0.2);
+}
+
+.live-preview-editor .cm-wiki-link.broken {
+  @apply text-destructive line-through;
+}
+
+/* Heading styles */
+.live-preview-editor .cm-heading {
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.live-preview-editor .cm-heading-1 {
+  font-size: 2em;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.live-preview-editor .cm-heading-2 {
+  font-size: 1.5em;
+  margin-top: 0.8em;
+  margin-bottom: 0.4em;
+}
+
+.live-preview-editor .cm-heading-3 {
+  font-size: 1.25em;
+  margin-top: 0.6em;
+  margin-bottom: 0.3em;
+}
+
+.live-preview-editor .cm-heading-4 {
+  font-size: 1.1em;
+}
+
+.live-preview-editor .cm-heading-5 {
+  font-size: 1em;
+}
+
+.live-preview-editor .cm-heading-6 {
+  font-size: 0.9em;
+  @apply text-muted-foreground;
+}
+
+/* Blockquote styles */
+.live-preview-editor .cm-blockquote {
+  border-left: 4px solid hsl(var(--primary));
+  padding-left: 1em;
+  @apply text-muted-foreground italic;
+}
+
+/* List styles */
+.live-preview-editor .cm-list-item {
+  padding-left: 0.5em;
+}
+
+.live-preview-editor .cm-list-marker {
+  @apply text-primary font-bold;
+  margin-right: 0.5em;
+}
+
+.live-preview-editor .cm-task-checkbox {
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  cursor: pointer;
+  accent-color: hsl(var(--primary));
+}
+
+/* Horizontal rule */
+.live-preview-editor .cm-horizontal-rule {
+  border: none;
+  border-top: 2px solid hsl(var(--border));
+  margin: 1.5em 0;
+}
+
+/* Code block widget */
+.live-preview-editor .cm-code-block-widget {
+  @apply bg-muted rounded-lg my-4 overflow-hidden;
+}
+
+.live-preview-editor .cm-code-block-header {
+  @apply flex justify-between items-center px-3 py-2 border-b border-border;
+  background-color: hsl(var(--muted) / 0.5);
+}
+
+.live-preview-editor .cm-code-block-lang {
+  @apply text-xs font-medium text-muted-foreground uppercase;
+}
+
+.live-preview-editor .cm-code-block-copy {
+  @apply text-xs px-2 py-1 rounded;
+  @apply text-muted-foreground hover:bg-accent hover:text-accent-foreground;
+  @apply transition-colors cursor-pointer;
+  border: none;
+  background: transparent;
+}
+
+.live-preview-editor .cm-code-block-pre {
+  @apply m-0 p-4 overflow-x-auto;
+}
+
+.live-preview-editor .cm-code-block-code {
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.live-preview-editor .cm-code-block-line {
+  background-color: hsl(var(--muted) / 0.5);
+}
+
+/* Math styles */
+.live-preview-editor .cm-math-inline {
+  display: inline-block;
+  vertical-align: middle;
+  padding: 0 2px;
+}
+
+.live-preview-editor .cm-math-block {
+  display: block;
+  text-align: center;
+  margin: 1em 0;
+  padding: 1em;
+  background-color: hsl(var(--muted) / 0.3);
+  border-radius: 8px;
+}
+
+.live-preview-editor .cm-math-error {
+  @apply text-destructive italic;
+}
+
+.live-preview-editor .cm-math-loading {
+  @apply text-muted-foreground italic;
+}
+
+.live-preview-editor .cm-math-source-inline {
+  background-color: hsl(var(--primary) / 0.1);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.9em;
+}
+
+.live-preview-editor .cm-math-source-block {
+  background-color: hsl(var(--primary) / 0.1);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.9em;
+  display: block;
+  margin: 0.5em 0;
+}
+
+/* Table widget */
+.live-preview-editor .cm-table-widget {
+  @apply w-full border-collapse my-4 text-sm;
+}
+
+.live-preview-editor .cm-table-widget th,
+.live-preview-editor .cm-table-widget td {
+  @apply border border-border px-3 py-2 text-left;
+}
+
+.live-preview-editor .cm-table-widget th {
+  @apply bg-muted font-semibold;
+}
+
+.live-preview-editor .cm-table-widget tr:nth-child(even) {
+  @apply bg-muted/30;
+}
+
+.live-preview-editor .cm-table-line {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 14px;
+}
+
+/* Image styles */
+.live-preview-editor .cm-image-container {
+  display: inline-block;
+  max-width: 100%;
+}
+
+.live-preview-editor .cm-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.live-preview-editor .cm-image-error {
+  @apply text-destructive italic p-2 rounded;
+  background-color: hsl(var(--destructive) / 0.1);
+}
+
+/* Fold markers */
+.live-preview-editor .cm-fold-marker {
+  cursor: pointer;
+  @apply text-muted-foreground;
+  font-size: 12px;
+  padding: 0 4px;
+  user-select: none;
+}
+
+.live-preview-editor .cm-fold-marker:hover {
+  @apply text-foreground;
+}
+
+.live-preview-editor .cm-fold-open {
+  opacity: 0.5;
+}
+
+.live-preview-editor .cm-fold-closed {
+  opacity: 1;
+}
+
+/* Hidden syntax */
+.live-preview-editor .cm-hidden-syntax {
+  display: none;
+}
+
+/* Search highlights */
+.live-preview-editor .cm-searchMatch {
+  background-color: #fef08a;
+  outline: 1px solid hsl(var(--primary) / 0.4);
+}
+
+.live-preview-editor .cm-searchMatch.cm-searchMatch-selected {
+  background-color: hsl(var(--primary) / 0.4);
+}
+
+/* Outline panel styles */
+.outline-panel {
+  @apply text-sm;
+}
+
+.outline-panel .outline-item-container {
+  @apply py-0.5;
+}
+
+/* Search panel styles */
+.search-panel {
+  @apply border-b border-border bg-background/95 backdrop-blur p-2;
+}
+
+.search-panel input {
+  @apply text-sm;
+}
+
+/* Mode indicator */
+.live-preview-editor[data-mode="source"] .cm-content {
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  font-size: 14px;
+}
+
+.live-preview-editor[data-mode="reading"] .cm-cursor {
+  display: none !important;
+}
+
+/* Loading state */
+.live-preview-editor[data-loading="true"] {
+  @apply opacity-50;
+}
+
+/* ============================================
+   Source Mode Styles (when cursor is on line)
+   Shows subtle styling for markdown syntax
+   ============================================ */
+
+/* Bold source - subtle background when editing */
+.live-preview-editor .cm-bold-source {
+  background-color: hsl(var(--primary) / 0.08);
+  border-radius: 2px;
+}
+
+/* Italic source */
+.live-preview-editor .cm-italic-source {
+  background-color: hsl(var(--primary) / 0.08);
+  border-radius: 2px;
+}
+
+/* Strikethrough source */
+.live-preview-editor .cm-strikethrough-source {
+  background-color: hsl(var(--muted) / 0.5);
+  border-radius: 2px;
+}
+
+/* Highlight source */
+.live-preview-editor .cm-highlight-source {
+  background-color: hsl(60 100% 50% / 0.2);
+  border-radius: 2px;
+}
+
+/* Code source */
+.live-preview-editor .cm-code-source {
+  background-color: hsl(var(--muted));
+  border-radius: 2px;
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  font-size: 0.9em;
+}
+
+/* Link source */
+.live-preview-editor .cm-link-source {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+/* Wiki link source */
+.live-preview-editor .cm-wikilink-source {
+  color: hsl(var(--primary));
+  background-color: hsl(var(--primary) / 0.1);
+  border-radius: 2px;
+}
+
+/* Image source */
+.live-preview-editor .cm-image-source {
+  color: hsl(var(--muted-foreground));
+  background-color: hsl(var(--muted) / 0.5);
+  border-radius: 2px;
+}
+
+/* Math source */
+.live-preview-editor .cm-math-source {
+  background-color: hsl(var(--primary) / 0.1);
+  border-radius: 2px;
+  font-family: "JetBrains Mono", monospace;
+}
+
+/* Active line highlight - subtle */
+.live-preview-editor .cm-activeLine {
+  background-color: hsl(var(--primary) / 0.05);
+}
+
+/* Gutter active line */
+.live-preview-editor .cm-activeLineGutter {
+  background-color: hsl(var(--primary) / 0.1);
+}
+
+/* Better cursor visibility */
+.live-preview-editor .cm-cursor {
+  border-left-width: 2px;
+  border-left-color: hsl(var(--primary));
+}
+
+/* Selection styling */
+.live-preview-editor .cm-selectionBackground {
+  background-color: hsl(var(--primary) / 0.2) !important;
+}
+
+.live-preview-editor.cm-focused .cm-selectionBackground {
+  background-color: hsl(var(--primary) / 0.25) !important;
+}
+
+/* Line numbers styling */
+.live-preview-editor .cm-lineNumbers {
+  @apply text-muted-foreground;
+  min-width: 3em;
+}
+
+.live-preview-editor .cm-lineNumbers .cm-gutterElement {
+  padding: 0 8px 0 4px;
+  font-size: 12px;
+}
+
+/* Fold gutter */
+.live-preview-editor .cm-foldGutter {
+  width: 16px;
+}
+
+.live-preview-editor .cm-foldGutter .cm-gutterElement {
+  padding: 0;
+  cursor: pointer;
+  @apply text-muted-foreground hover:text-foreground;
+}
+
+
+/* ============================================
+   Enhanced Live Preview Styles
+   Obsidian-like editing experience
+   ============================================ */
+
+/* Smooth transitions for decorations */
+.live-preview-editor .cm-line {
+  transition: background-color 0.15s ease;
+}
+
+/* Better visual feedback for active editing line */
+.live-preview-editor .cm-activeLine {
+  background-color: hsl(var(--primary) / 0.06);
+  border-radius: 2px;
+}
+
+/* Heading styles - ensure proper rendering */
+.live-preview-editor .cm-heading.cm-line {
+  font-weight: 700;
+}
+
+.live-preview-editor .cm-heading-1.cm-line {
+  font-size: 2em;
+  line-height: 1.3;
+  margin-top: 0.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.live-preview-editor .cm-heading-2.cm-line {
+  font-size: 1.5em;
+  line-height: 1.35;
+  margin-top: 0.4em;
+}
+
+.live-preview-editor .cm-heading-3.cm-line {
+  font-size: 1.25em;
+  line-height: 1.4;
+  margin-top: 0.3em;
+}
+
+/* Blockquote line styling */
+.live-preview-editor .cm-blockquote.cm-line {
+  border-left: 4px solid hsl(var(--primary));
+  padding-left: 1em;
+  margin-left: 0;
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+  background-color: hsl(var(--muted) / 0.2);
+}
+
+/* List item styling */
+.live-preview-editor .cm-list-item.cm-line {
+  padding-left: 0.5em;
+}
+
+.live-preview-editor .cm-list-bullet.cm-line {
+  list-style-type: disc;
+}
+
+.live-preview-editor .cm-list-numbered.cm-line {
+  list-style-type: decimal;
+}
+
+.live-preview-editor .cm-list-task.cm-line {
+  list-style-type: none;
+}
+
+/* Code block editing mode */
+.live-preview-editor .cm-code-block-editing {
+  background-color: hsl(var(--muted) / 0.5);
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  font-size: 14px;
+}
+
+/* Table editing mode */
+.live-preview-editor .cm-table-line {
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  font-size: 14px;
+  background-color: hsl(var(--muted) / 0.3);
+}
+
+/* Improved widget styling */
+.live-preview-editor .cm-code-block-widget {
+  margin: 0.5em 0;
+  border: 1px solid hsl(var(--border));
+}
+
+.live-preview-editor .cm-table-widget {
+  margin: 0.5em 0;
+}
+
+/* Math block styling */
+.live-preview-editor .cm-math-block {
+  margin: 0.5em 0;
+  padding: 1em;
+  background-color: hsl(var(--muted) / 0.3);
+  border-radius: 8px;
+  text-align: center;
+}
+
+/* Ensure proper spacing for rendered content */
+.live-preview-editor .cm-content > .cm-line:first-child {
+  margin-top: 0;
+}
+
+/* Dark mode adjustments */
+.dark .live-preview-editor .cm-activeLine {
+  background-color: hsl(var(--primary) / 0.08);
+}
+
+.dark .live-preview-editor .cm-code-block-editing {
+  background-color: hsl(var(--muted) / 0.4);
+}
+
+.dark .live-preview-editor .cm-table-line {
+  background-color: hsl(var(--muted) / 0.25);
+}
+
+/* Reading mode - hide cursor */
+.live-preview-editor[data-mode="reading"] .cm-cursor {
+  display: none !important;
+}
+
+.live-preview-editor[data-mode="reading"] .cm-selectionBackground {
+  display: none !important;
+}
+
+/* Source mode - monospace font */
+.live-preview-editor[data-mode="source"] .cm-content {
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* Ensure widgets don't break layout */
+.live-preview-editor .cm-widgetBuffer {
+  display: none;
+}
+
+/* Better image rendering */
+.live-preview-editor .cm-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  margin: 0.5em 0;
+}
+
+/* Link hover effects */
+.live-preview-editor .cm-link:hover,
+.live-preview-editor .cm-wiki-link:hover {
+  opacity: 0.8;
+}
+
+/* Checkbox styling */
+.live-preview-editor .cm-task-checkbox {
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  cursor: pointer;
+  accent-color: hsl(var(--primary));
+  vertical-align: middle;
+}
+
+.live-preview-editor .cm-task-checkbox:checked + span {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
