@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import rehypeRaw from "rehype-raw";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import type { Components } from "react-markdown";
@@ -161,6 +162,22 @@ const components: Components = {
       </h4>
     );
   },
+
+  h5({ children, ...props }: any) {
+    return (
+      <h5 className="text-base font-semibold mt-3 mb-1" {...props}>
+        {children}
+      </h5>
+    );
+  },
+
+  h6({ children, ...props }: any) {
+    return (
+      <h6 className="text-sm font-semibold mt-3 mb-1 text-muted-foreground" {...props}>
+        {children}
+      </h6>
+    );
+  },
   
   // Blockquotes
   blockquote({ children, ...props }: any) {
@@ -245,6 +262,37 @@ const components: Components = {
       </em>
     );
   },
+
+  // Strikethrough
+  del({ children, ...props }: any) {
+    return (
+      <del className="line-through text-muted-foreground" {...props}>
+        {children}
+      </del>
+    );
+  },
+
+  // Images
+  img({ src, alt, ...props }: any) {
+    return (
+      <img 
+        src={src}
+        alt={alt || ""}
+        className="rounded-lg my-4 max-w-full h-auto"
+        loading="lazy"
+        {...props}
+      />
+    );
+  },
+
+  // Pre element (for code blocks without language)
+  pre({ children, ...props }: any) {
+    return (
+      <pre className="bg-muted rounded-lg p-4 my-4 overflow-x-auto text-sm" {...props}>
+        {children}
+      </pre>
+    );
+  },
 };
 
 /**
@@ -253,13 +301,38 @@ const components: Components = {
  * - Math rendering via KaTeX
  * - Syntax highlighting for code blocks
  * - Responsive tables
+ * - HTML content support (for content from rich text editors)
  */
 export function MarkdownRenderer({ content, fileName, className = "" }: MarkdownRendererProps) {
+  // Detect if content is HTML (from Tiptap editor) vs Markdown
+  const isHtmlContent = useMemo(() => {
+    if (!content) return false;
+    // Check for common HTML tags that indicate Tiptap output
+    return content.trim().startsWith('<') && (
+      content.includes('<p>') || 
+      content.includes('<h1>') || 
+      content.includes('<h2>') ||
+      content.includes('<ul>') ||
+      content.includes('<ol>') ||
+      content.includes('<blockquote>')
+    );
+  }, [content]);
+
+  // If content is HTML, render it directly with proper styling
+  if (isHtmlContent) {
+    return (
+      <div 
+        className={`prose prose-lattice dark:prose-invert max-w-none ${className}`}
+        dangerouslySetInnerHTML={{ __html: content }}
+      />
+    );
+  }
+  
   return (
-    <div className={`markdown-content ${className}`}>
+    <div className={`prose prose-lattice dark:prose-invert max-w-none ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        rehypePlugins={[rehypeRaw, rehypeKatex]}
         components={components}
       >
         {content}
