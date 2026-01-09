@@ -7,6 +7,8 @@
  * This plugin provides Obsidian-like live preview for block elements:
  * - When cursor is NOT on a line, block elements are rendered (syntax hidden)
  * - When cursor IS on a line, raw markdown syntax is shown for editing
+ * 
+ * Key design: Use widget replacement for complete syntax hiding
  */
 
 import {
@@ -32,16 +34,59 @@ interface DecorationEntry {
 }
 
 /**
- * Hidden widget for syntax markers
+ * Heading content widget - renders heading text without # markers
  */
-class HiddenWidget extends WidgetType {
-  toDOM() {
+class HeadingContentWidget extends WidgetType {
+  constructor(
+    private content: string,
+    private level: number,
+    private originalFrom: number,
+    private originalTo: number
+  ) {
+    super();
+  }
+  
+  eq(other: HeadingContentWidget) {
+    return other.content === this.content && other.level === this.level;
+  }
+  
+  toDOM(view: EditorView) {
     const span = document.createElement('span');
-    span.style.display = 'none';
+    span.className = `cm-heading-content cm-heading-${this.level}-content`;
+    span.textContent = this.content;
+    span.dataset.from = String(this.originalFrom);
+    span.dataset.to = String(this.originalTo);
+    
+    // Handle click to position cursor
+    span.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Calculate position within the text
+      const rect = span.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const textWidth = rect.width;
+      const textLength = this.content.length;
+      
+      let charOffset = Math.round((clickX / textWidth) * textLength);
+      charOffset = Math.max(0, Math.min(charOffset, textLength));
+      
+      // Position is at the start of content (after # markers) + offset
+      const pos = this.originalFrom + charOffset;
+      
+      view.dispatch({
+        selection: { anchor: pos, head: pos },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+    
     return span;
   }
-  eq() { return true; }
-  ignoreEvent() { return false; }
+  
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
+  }
 }
 
 /**
@@ -107,27 +152,86 @@ class ListBulletWidget extends WidgetType {
  * Horizontal rule widget
  */
 class HorizontalRuleWidget extends WidgetType {
-  toDOM() {
+  constructor(private originalFrom: number, private originalTo: number) {
+    super();
+  }
+  
+  toDOM(view: EditorView) {
     const hr = document.createElement('hr');
     hr.className = 'cm-horizontal-rule';
+    
+    // Handle click to position cursor
+    hr.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({
+        selection: { anchor: this.originalFrom, head: this.originalFrom },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+    
     return hr;
   }
+  
   eq() { return true; }
-  ignoreEvent() { return true; }
+  
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
+  }
 }
 
 /**
- * Blockquote marker widget - renders the styled quote bar
+ * Blockquote content widget - renders quote content without > marker
  */
-class BlockquoteMarkerWidget extends WidgetType {
-  toDOM() {
+class BlockquoteContentWidget extends WidgetType {
+  constructor(
+    private content: string,
+    private originalFrom: number,
+    private originalTo: number
+  ) {
+    super();
+  }
+  
+  eq(other: BlockquoteContentWidget) {
+    return other.content === this.content;
+  }
+  
+  toDOM(view: EditorView) {
     const span = document.createElement('span');
-    span.className = 'cm-blockquote-marker';
-    span.style.display = 'none';
+    span.className = 'cm-blockquote-content';
+    span.textContent = this.content;
+    span.dataset.from = String(this.originalFrom);
+    span.dataset.to = String(this.originalTo);
+    
+    // Handle click to position cursor
+    span.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const rect = span.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const textWidth = rect.width;
+      const textLength = this.content.length;
+      
+      let charOffset = Math.round((clickX / textWidth) * textLength);
+      charOffset = Math.max(0, Math.min(charOffset, textLength));
+      
+      const pos = this.originalFrom + charOffset;
+      
+      view.dispatch({
+        selection: { anchor: pos, head: pos },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+    
     return span;
   }
-  eq() { return true; }
-  ignoreEvent() { return false; }
+  
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
+  }
 }
 
 /**
@@ -152,6 +256,8 @@ function buildBlockDecorations(view: EditorView): DecorationSet {
     const headingMatch = lineText.match(/^(#{1,6})\s+(.*)$/);
     if (headingMatch) {
       const level = headingMatch[1].length;
+      const content = headingMatch[2];
+      const markerEnd = line.from + headingMatch[1].length + 1; // +1 for space
       
       // Always add heading style to the line
       decorations.push({
@@ -161,12 +267,15 @@ function buildBlockDecorations(view: EditorView): DecorationSet {
         isLine: true,
       });
       
-      // Hide # markers when not revealed
-      if (!lineRevealed) {
+      // Hide # markers when not revealed - replace with content widget
+      if (!lineRevealed && content) {
+        // Replace the entire line content with a heading widget
         decorations.push({
           from: line.from,
-          to: line.from + headingMatch[1].length + 1, // +1 for space
-          decoration: Decoration.replace({ widget: new HiddenWidget() }),
+          to: line.to,
+          decoration: Decoration.replace({
+            widget: new HeadingContentWidget(content, level, markerEnd, line.to),
+          }),
         });
       }
       continue;
@@ -178,7 +287,9 @@ function buildBlockDecorations(view: EditorView): DecorationSet {
         decorations.push({
           from: line.from,
           to: line.to,
-          decoration: Decoration.replace({ widget: new HorizontalRuleWidget() }),
+          decoration: Decoration.replace({ 
+            widget: new HorizontalRuleWidget(line.from, line.to) 
+          }),
         });
       }
       continue;
@@ -195,13 +306,18 @@ function buildBlockDecorations(view: EditorView): DecorationSet {
         isLine: true,
       });
       
-      // Hide > marker when not revealed
+      // Hide > marker when not revealed - replace with content widget
       if (!lineRevealed) {
-        decorations.push({
-          from: blockquote.markerFrom,
-          to: blockquote.markerTo,
-          decoration: Decoration.replace({ widget: new HiddenWidget() }),
-        });
+        const content = lineText.slice(blockquote.markerTo - line.from);
+        if (content) {
+          decorations.push({
+            from: line.from,
+            to: line.to,
+            decoration: Decoration.replace({
+              widget: new BlockquoteContentWidget(content, blockquote.markerTo, line.to),
+            }),
+          });
+        }
       }
       continue;
     }

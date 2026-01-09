@@ -133,7 +133,12 @@ function buildExtensions(
     EditorView.lineWrapping,
   ];
   
-  // Line numbers
+  // Fold gutter FIRST (leftmost position)
+  if (showFoldGutter && mode === 'live') {
+    extensions.push(...foldingExtension);
+  }
+  
+  // Line numbers AFTER fold gutter
   if (showLineNumbers) {
     extensions.push(lineNumbers());
     extensions.push(highlightActiveLineGutter());
@@ -154,10 +159,6 @@ function buildExtensions(
       ...wikiLinkAutocomplete,
       createImageDropExtension(onImageUpload, useWikiImageStyle)
     );
-    
-    if (showFoldGutter) {
-      extensions.push(...foldingExtension);
-    }
   } else if (mode === 'source') {
     // Source mode: just syntax highlighting, no decorations
     extensions.push(

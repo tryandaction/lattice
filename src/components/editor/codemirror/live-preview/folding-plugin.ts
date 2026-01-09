@@ -54,7 +54,7 @@ export const markdownFoldService = foldService.of((state, lineStart, lineEnd) =>
 });
 
 /**
- * Fold gutter configuration
+ * Fold gutter configuration - positioned at the leftmost
  */
 export const markdownFoldGutter = foldGutter({
   markerDOM: (open) => {

@@ -7,6 +7,11 @@
  * This plugin provides Obsidian-like live preview editing:
  * - When cursor is NOT on a line, markdown is rendered (syntax hidden)
  * - When cursor IS on a line, raw markdown syntax is shown for editing
+ * 
+ * Key design decisions for Obsidian-like behavior:
+ * - Use atomic ranges to hide syntax markers completely
+ * - Ensure cursor position accuracy by using proper decoration types
+ * - Handle click events to position cursor correctly
  */
 
 import {
@@ -22,33 +27,15 @@ import { shouldRevealLine } from './cursor-context-plugin';
 import type { MarkdownElement } from './types';
 
 /**
- * Empty widget to hide syntax markers
- */
-class HiddenWidget extends WidgetType {
-  toDOM() {
-    const span = document.createElement('span');
-    span.className = 'cm-hidden-syntax';
-    span.style.display = 'none';
-    return span;
-  }
-  
-  ignoreEvent() {
-    return false;
-  }
-  
-  eq() {
-    return true;
-  }
-}
-
-/**
  * Link widget for rendered links
  */
 class LinkWidget extends WidgetType {
   constructor(
     private text: string,
     private url: string,
-    private isWikiLink: boolean = false
+    private isWikiLink: boolean = false,
+    private originalFrom: number = 0,
+    private originalTo: number = 0
   ) {
     super();
   }
@@ -64,13 +51,17 @@ class LinkWidget extends WidgetType {
     link.href = this.isWikiLink ? '#' : this.url;
     link.title = this.isWikiLink ? `Link to: ${this.url}` : this.url;
     
-    // Handle Ctrl+Click
-    link.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+    // Store original position for cursor placement
+    link.dataset.from = String(this.originalFrom);
+    link.dataset.to = String(this.originalTo);
+    
+    // Handle click - position cursor at the start of the element
+    link.addEventListener('mousedown', (e) => {
       if (e.ctrlKey || e.metaKey) {
+        // Ctrl+Click for navigation
+        e.preventDefault();
+        e.stopPropagation();
         if (this.isWikiLink) {
-          // Dispatch custom event for wiki link navigation
           view.dom.dispatchEvent(new CustomEvent('wiki-link-click', {
             detail: { target: this.url },
             bubbles: true,
@@ -78,6 +69,16 @@ class LinkWidget extends WidgetType {
         } else {
           window.open(this.url, '_blank', 'noopener,noreferrer');
         }
+      } else {
+        // Normal click - position cursor at the element
+        e.preventDefault();
+        e.stopPropagation();
+        const pos = this.originalFrom;
+        view.dispatch({
+          selection: { anchor: pos, head: pos },
+          scrollIntoView: true,
+        });
+        view.focus();
       }
     });
     
@@ -85,7 +86,8 @@ class LinkWidget extends WidgetType {
   }
   
   ignoreEvent(e: Event) {
-    return e.type !== 'click';
+    // Let mousedown through for cursor positioning
+    return e.type !== 'mousedown';
   }
 }
 
@@ -96,7 +98,9 @@ class ImageWidget extends WidgetType {
   constructor(
     private alt: string,
     private url: string,
-    private width?: number
+    private width?: number,
+    private originalFrom: number = 0,
+    private originalTo: number = 0
   ) {
     super();
   }
@@ -105,9 +109,11 @@ class ImageWidget extends WidgetType {
     return other.alt === this.alt && other.url === this.url && other.width === this.width;
   }
   
-  toDOM() {
+  toDOM(view: EditorView) {
     const container = document.createElement('span');
     container.className = 'cm-image-container';
+    container.dataset.from = String(this.originalFrom);
+    container.dataset.to = String(this.originalTo);
     
     const img = document.createElement('img');
     img.className = 'cm-image';
@@ -130,12 +136,85 @@ class ImageWidget extends WidgetType {
       container.appendChild(errorSpan);
     };
     
+    // Handle click to position cursor
+    container.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const pos = this.originalFrom;
+      view.dispatch({
+        selection: { anchor: pos, head: pos },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+    
     container.appendChild(img);
     return container;
   }
   
-  ignoreEvent() {
-    return true;
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
+  }
+}
+
+/**
+ * Formatted text widget - renders styled content with click handling
+ * Used for bold, italic, strikethrough, highlight, inline code
+ */
+class FormattedTextWidget extends WidgetType {
+  constructor(
+    private content: string,
+    private className: string,
+    private originalFrom: number,
+    private originalTo: number
+  ) {
+    super();
+  }
+  
+  eq(other: FormattedTextWidget) {
+    return other.content === this.content && 
+           other.className === this.className &&
+           other.originalFrom === this.originalFrom;
+  }
+  
+  toDOM(view: EditorView) {
+    const span = document.createElement('span');
+    span.className = this.className;
+    span.textContent = this.content;
+    span.dataset.from = String(this.originalFrom);
+    span.dataset.to = String(this.originalTo);
+    
+    // Handle click to position cursor correctly
+    span.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Calculate position within the text based on click position
+      const rect = span.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const textWidth = rect.width;
+      const textLength = this.content.length;
+      
+      // Estimate character position based on click position
+      let charOffset = Math.round((clickX / textWidth) * textLength);
+      charOffset = Math.max(0, Math.min(charOffset, textLength));
+      
+      // Position cursor at the content start + offset
+      // The content starts after the opening syntax markers
+      const pos = this.originalFrom + charOffset;
+      
+      view.dispatch({
+        selection: { anchor: pos, head: pos },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+    
+    return span;
+  }
+  
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
   }
 }
 
@@ -361,7 +440,7 @@ function buildInlineDecorations(view: EditorView): DecorationSet {
 
 /**
  * Add rendered decoration for a markdown element
- * Hides syntax markers and applies formatting
+ * Uses widget replacement for complete syntax hiding and proper cursor handling
  */
 function addRenderedDecoration(
   decorations: DecorationEntry[],
@@ -369,107 +448,82 @@ function addRenderedDecoration(
 ) {
   switch (element.type) {
     case 'bold':
-      // Hide opening markers **
+      // Replace entire bold syntax with formatted widget
       decorations.push({
         from: element.from,
-        to: element.contentFrom,
-        decoration: Decoration.replace({ widget: new HiddenWidget() }),
-      });
-      // Style content as bold
-      decorations.push({
-        from: element.contentFrom,
-        to: element.contentTo,
-        decoration: Decoration.mark({ class: 'cm-bold' }),
-      });
-      // Hide closing markers **
-      decorations.push({
-        from: element.contentTo,
         to: element.to,
-        decoration: Decoration.replace({ widget: new HiddenWidget() }),
+        decoration: Decoration.replace({
+          widget: new FormattedTextWidget(
+            element.content,
+            'cm-bold',
+            element.from,
+            element.to
+          ),
+        }),
       });
       break;
       
     case 'italic':
-      // Hide opening marker *
+      // Replace entire italic syntax with formatted widget
       decorations.push({
         from: element.from,
-        to: element.contentFrom,
-        decoration: Decoration.replace({ widget: new HiddenWidget() }),
-      });
-      // Style content as italic
-      decorations.push({
-        from: element.contentFrom,
-        to: element.contentTo,
-        decoration: Decoration.mark({ class: 'cm-italic' }),
-      });
-      // Hide closing marker *
-      decorations.push({
-        from: element.contentTo,
         to: element.to,
-        decoration: Decoration.replace({ widget: new HiddenWidget() }),
+        decoration: Decoration.replace({
+          widget: new FormattedTextWidget(
+            element.content,
+            'cm-italic',
+            element.from,
+            element.to
+          ),
+        }),
       });
       break;
       
     case 'strikethrough':
-      // Hide opening markers ~~
+      // Replace entire strikethrough syntax with formatted widget
       decorations.push({
         from: element.from,
-        to: element.contentFrom,
-        decoration: Decoration.replace({ widget: new HiddenWidget() }),
-      });
-      // Style content as strikethrough
-      decorations.push({
-        from: element.contentFrom,
-        to: element.contentTo,
-        decoration: Decoration.mark({ class: 'cm-strikethrough' }),
-      });
-      // Hide closing markers ~~
-      decorations.push({
-        from: element.contentTo,
         to: element.to,
-        decoration: Decoration.replace({ widget: new HiddenWidget() }),
+        decoration: Decoration.replace({
+          widget: new FormattedTextWidget(
+            element.content,
+            'cm-strikethrough',
+            element.from,
+            element.to
+          ),
+        }),
       });
       break;
       
     case 'highlight':
-      // Hide opening markers ==
+      // Replace entire highlight syntax with formatted widget
       decorations.push({
         from: element.from,
-        to: element.contentFrom,
-        decoration: Decoration.replace({ widget: new HiddenWidget() }),
-      });
-      // Style content as highlight
-      decorations.push({
-        from: element.contentFrom,
-        to: element.contentTo,
-        decoration: Decoration.mark({ class: 'cm-highlight' }),
-      });
-      // Hide closing markers ==
-      decorations.push({
-        from: element.contentTo,
         to: element.to,
-        decoration: Decoration.replace({ widget: new HiddenWidget() }),
+        decoration: Decoration.replace({
+          widget: new FormattedTextWidget(
+            element.content,
+            'cm-highlight',
+            element.from,
+            element.to
+          ),
+        }),
       });
       break;
       
     case 'code':
-      // Hide opening backtick
+      // Replace entire inline code syntax with formatted widget
       decorations.push({
         from: element.from,
-        to: element.contentFrom,
-        decoration: Decoration.replace({ widget: new HiddenWidget() }),
-      });
-      // Style content as inline code
-      decorations.push({
-        from: element.contentFrom,
-        to: element.contentTo,
-        decoration: Decoration.mark({ class: 'cm-inline-code' }),
-      });
-      // Hide closing backtick
-      decorations.push({
-        from: element.contentTo,
         to: element.to,
-        decoration: Decoration.replace({ widget: new HiddenWidget() }),
+        decoration: Decoration.replace({
+          widget: new FormattedTextWidget(
+            element.content,
+            'cm-inline-code',
+            element.from,
+            element.to
+          ),
+        }),
       });
       break;
       
@@ -482,7 +536,9 @@ function addRenderedDecoration(
           widget: new LinkWidget(
             element.content,
             (element.extra?.url as string) || '#',
-            false
+            false,
+            element.from,
+            element.to
           ),
         }),
       });
@@ -497,7 +553,9 @@ function addRenderedDecoration(
           widget: new LinkWidget(
             element.content,
             (element.extra?.target as string) || '',
-            true
+            true,
+            element.from,
+            element.to
           ),
         }),
       });
@@ -512,7 +570,9 @@ function addRenderedDecoration(
           widget: new ImageWidget(
             element.content,
             (element.extra?.url as string) || '',
-            element.extra?.width as number | undefined
+            element.extra?.width as number | undefined,
+            element.from,
+            element.to
           ),
         }),
       });

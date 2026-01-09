@@ -46,11 +46,24 @@ export const livePreviewTheme = EditorView.theme({
     caretColor: colors.cursor,
   },
   
-  // Gutters
+  // Gutters - fold gutter should be leftmost
   '.cm-gutters': {
     backgroundColor: 'transparent',
     borderRight: 'none',
     color: colors.mutedForeground,
+    display: 'flex',
+    flexDirection: 'row',
+  },
+  
+  // Fold gutter - leftmost position
+  '.cm-gutter.cm-foldGutter': {
+    order: 0,
+    width: '16px',
+  },
+  
+  // Line numbers - after fold gutter
+  '.cm-gutter.cm-lineNumbers': {
+    order: 1,
   },
   
   '.cm-lineNumbers .cm-gutterElement': {
@@ -93,21 +106,25 @@ export const livePreviewTheme = EditorView.theme({
   
   '.cm-bold': {
     fontWeight: 'bold',
+    cursor: 'text',
   },
   
   '.cm-italic': {
     fontStyle: 'italic',
+    cursor: 'text',
   },
   
   '.cm-strikethrough': {
     textDecoration: 'line-through',
     color: colors.mutedForeground,
+    cursor: 'text',
   },
   
   '.cm-highlight': {
     backgroundColor: colors.highlight,
     borderRadius: '2px',
     padding: '0 2px',
+    cursor: 'text',
   },
   
   '.cm-inline-code': {
@@ -116,6 +133,7 @@ export const livePreviewTheme = EditorView.theme({
     padding: '2px 6px',
     fontFamily: '"JetBrains Mono", "Fira Code", monospace',
     fontSize: '0.9em',
+    cursor: 'text',
   },
   
   // === Links ===
@@ -180,6 +198,54 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-heading-4': {
     fontSize: '1.1em',
     lineHeight: '1.45',
+  },
+  
+  // Heading content widgets (rendered without # markers)
+  '.cm-heading-content': {
+    display: 'inline',
+    cursor: 'text',
+  },
+  
+  '.cm-heading-1-content': {
+    fontSize: '2em',
+    fontWeight: 'bold',
+    lineHeight: '1.3',
+  },
+  
+  '.cm-heading-2-content': {
+    fontSize: '1.5em',
+    fontWeight: 'bold',
+    lineHeight: '1.35',
+  },
+  
+  '.cm-heading-3-content': {
+    fontSize: '1.25em',
+    fontWeight: 'bold',
+    lineHeight: '1.4',
+  },
+  
+  '.cm-heading-4-content': {
+    fontSize: '1.1em',
+    fontWeight: 'bold',
+  },
+  
+  '.cm-heading-5-content': {
+    fontSize: '1em',
+    fontWeight: 'bold',
+  },
+  
+  '.cm-heading-6-content': {
+    fontSize: '0.9em',
+    fontWeight: 'bold',
+    color: colors.mutedForeground,
+  },
+  
+  // Blockquote content widget
+  '.cm-blockquote-content': {
+    display: 'inline',
+    cursor: 'text',
+    fontStyle: 'italic',
+    color: colors.mutedForeground,
   },
   
   '.cm-heading-5': {

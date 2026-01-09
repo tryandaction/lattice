@@ -2930,21 +2930,25 @@ math-field.quantum-keyboard-active {
 /* Inline formatting styles */
 .live-preview-editor .cm-bold {
   font-weight: 700;
+  cursor: text;
 }
 
 .live-preview-editor .cm-italic {
   font-style: italic;
+  cursor: text;
 }
 
 .live-preview-editor .cm-strikethrough {
   text-decoration: line-through;
   opacity: 0.7;
+  cursor: text;
 }
 
 .live-preview-editor .cm-highlight {
   background-color: #fef08a;
   border-radius: 2px;
   padding: 0 2px;
+  cursor: text;
 }
 
 .dark .live-preview-editor .cm-highlight {
@@ -2955,6 +2959,7 @@ math-field.quantum-keyboard-active {
   @apply bg-muted rounded px-1.5 py-0.5;
   font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
   font-size: 0.9em;
+  cursor: text;
 }
 
 /* Link styles */
@@ -3345,15 +3350,34 @@ math-field.quantum-keyboard-active {
   font-size: 12px;
 }
 
-/* Fold gutter */
+/* Fold gutter - MUST be leftmost */
 .live-preview-editor .cm-foldGutter {
   width: 16px;
+  order: -1; /* Ensure it's first */
 }
 
 .live-preview-editor .cm-foldGutter .cm-gutterElement {
   padding: 0;
   cursor: pointer;
   @apply text-muted-foreground hover:text-foreground;
+}
+
+/* Ensure gutter order: fold -> line numbers */
+.live-preview-editor .cm-gutters {
+  display: flex;
+  flex-direction: row;
+}
+
+.live-preview-editor .cm-gutter.cm-foldGutter {
+  order: 0;
+}
+
+.live-preview-editor .cm-gutter.cm-lineNumbers {
+  order: 1;
+}
+
+.live-preview-editor .cm-gutter.cm-activeLineGutter {
+  order: 2;
 }
 
 
@@ -3396,6 +3420,54 @@ math-field.quantum-keyboard-active {
   font-size: 1.25em;
   line-height: 1.4;
   margin-top: 0.3em;
+}
+
+/* Heading content widget styles */
+.live-preview-editor .cm-heading-content {
+  display: inline;
+  cursor: text;
+}
+
+.live-preview-editor .cm-heading-1-content {
+  font-size: 2em;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.live-preview-editor .cm-heading-2-content {
+  font-size: 1.5em;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.live-preview-editor .cm-heading-3-content {
+  font-size: 1.25em;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.live-preview-editor .cm-heading-4-content {
+  font-size: 1.1em;
+  font-weight: 700;
+}
+
+.live-preview-editor .cm-heading-5-content {
+  font-size: 1em;
+  font-weight: 700;
+}
+
+.live-preview-editor .cm-heading-6-content {
+  font-size: 0.9em;
+  font-weight: 700;
+  @apply text-muted-foreground;
+}
+
+/* Blockquote content widget */
+.live-preview-editor .cm-blockquote-content {
+  display: inline;
+  cursor: text;
+  font-style: italic;
+  @apply text-muted-foreground;
 }
 
 /* Blockquote line styling */
