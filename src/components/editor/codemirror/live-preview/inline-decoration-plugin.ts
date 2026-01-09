@@ -17,8 +17,8 @@ import {
   WidgetType,
   EditorView,
 } from '@codemirror/view';
-import { RangeSetBuilder, RangeSet } from '@codemirror/state';
-import { shouldRevealAt, shouldRevealLine } from './cursor-context-plugin';
+import { RangeSetBuilder } from '@codemirror/state';
+import { shouldRevealLine } from './cursor-context-plugin';
 import type { MarkdownElement } from './types';
 
 /**
@@ -38,33 +38,6 @@ class HiddenWidget extends WidgetType {
   
   eq() {
     return true;
-  }
-}
-
-/**
- * Styled text widget - renders formatted text inline
- */
-class StyledTextWidget extends WidgetType {
-  constructor(
-    private text: string,
-    private className: string
-  ) {
-    super();
-  }
-  
-  eq(other: StyledTextWidget) {
-    return other.text === this.text && other.className === this.className;
-  }
-  
-  toDOM() {
-    const span = document.createElement('span');
-    span.className = this.className;
-    span.textContent = this.text;
-    return span;
-  }
-  
-  ignoreEvent() {
-    return false;
   }
 }
 

@@ -131,6 +131,7 @@ interface MathMatch {
   endLine: number;
 }
 
+
 function parseMathExpressions(doc: { toString: () => string; lineAt: (pos: number) => { number: number } }): MathMatch[] {
   const text = doc.toString();
   const matches: MathMatch[] = [];

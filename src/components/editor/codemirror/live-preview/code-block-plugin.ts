@@ -10,14 +10,12 @@
  */
 
 import {
-  ViewPlugin,
-  ViewUpdate,
   Decoration,
   DecorationSet,
   WidgetType,
   EditorView,
 } from '@codemirror/view';
-import { RangeSetBuilder } from '@codemirror/state';
+import { RangeSetBuilder, StateField, EditorState } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
 
 // Highlight.js will be loaded dynamically
@@ -207,9 +205,9 @@ function parseCodeBlocks(doc: { toString: () => string; lineAt: (pos: number) =>
  * Build code block decorations
  * Uses line-based reveal logic for Obsidian-like behavior
  */
-function buildCodeBlockDecorations(view: EditorView): DecorationSet {
+function buildCodeBlockDecorations(state: EditorState): DecorationSet {
   const decorations: DecorationEntry[] = [];
-  const doc = view.state.doc;
+  const doc = state.doc;
   
   const codeBlocks = parseCodeBlocks(doc);
   
@@ -217,20 +215,20 @@ function buildCodeBlockDecorations(view: EditorView): DecorationSet {
     // Check if any line of the code block should reveal syntax
     let shouldReveal = false;
     for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
-      if (shouldRevealLine(view.state, lineNum)) {
+      if (shouldRevealLine(state, lineNum)) {
         shouldReveal = true;
         break;
       }
     }
     
     if (!shouldReveal) {
-      // Replace entire block with widget
+      // Replace entire block with widget - use inline widget instead of block
+      // to avoid "Block decorations may not be specified via plugins" error
       decorations.push({
         from: block.from,
         to: block.to,
         decoration: Decoration.replace({
           widget: new CodeBlockWidget(block.code, block.language),
-          block: true,
         }),
       });
     } else {
@@ -268,23 +266,18 @@ function buildCodeBlockDecorations(view: EditorView): DecorationSet {
 }
 
 /**
- * Code block view plugin
+ * Code block StateField - using StateField instead of ViewPlugin
+ * to properly handle block-level decorations
  */
-export const codeBlockPlugin = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    
-    constructor(view: EditorView) {
-      this.decorations = buildCodeBlockDecorations(view);
-    }
-    
-    update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
-        this.decorations = buildCodeBlockDecorations(update.view);
-      }
-    }
+export const codeBlockPlugin = StateField.define<DecorationSet>({
+  create(state) {
+    return buildCodeBlockDecorations(state);
   },
-  {
-    decorations: (v) => v.decorations,
-  }
-);
+  update(decorations, tr) {
+    if (tr.docChanged || tr.selection) {
+      return buildCodeBlockDecorations(tr.state);
+    }
+    return decorations;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});

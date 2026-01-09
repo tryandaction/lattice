@@ -6,15 +6,13 @@
  */
 
 import {
-  ViewPlugin,
-  ViewUpdate,
   Decoration,
   DecorationSet,
   WidgetType,
   EditorView,
   keymap,
 } from '@codemirror/view';
-import { RangeSetBuilder, EditorSelection } from '@codemirror/state';
+import { RangeSetBuilder, EditorSelection, StateField, EditorState } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
 
 /**
@@ -143,9 +141,9 @@ function parseTables(text: string): TableMatch[] {
  * Build table decorations
  * Uses line-based reveal logic for Obsidian-like behavior
  */
-function buildTableDecorations(view: EditorView): DecorationSet {
+function buildTableDecorations(state: EditorState): DecorationSet {
   const decorations: { from: number; to: number; decoration: Decoration; isLine?: boolean }[] = [];
-  const doc = view.state.doc;
+  const doc = state.doc;
   const text = doc.toString();
   
   const tables = parseTables(text);
@@ -158,20 +156,20 @@ function buildTableDecorations(view: EditorView): DecorationSet {
     // Check if any line of the table should reveal syntax
     let shouldReveal = false;
     for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
-      if (shouldRevealLine(view.state, lineNum)) {
+      if (shouldRevealLine(state, lineNum)) {
         shouldReveal = true;
         break;
       }
     }
     
     if (!shouldReveal) {
-      // Replace entire table with widget
+      // Replace entire table with widget - use inline widget instead of block
+      // to avoid "Block decorations may not be specified via plugins" error
       decorations.push({
         from: table.from,
         to: table.to,
         decoration: Decoration.replace({
           widget: new TableWidget(table.rows, table.hasHeader),
-          block: true,
         }),
       });
     } else {
@@ -410,28 +408,23 @@ const tableKeymap = keymap.of([
 ]);
 
 /**
- * Table view plugin
+ * Table StateField - using StateField instead of ViewPlugin
+ * to properly handle block-level decorations
  */
-const tableViewPlugin = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    
-    constructor(view: EditorView) {
-      this.decorations = buildTableDecorations(view);
-    }
-    
-    update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
-        this.decorations = buildTableDecorations(update.view);
-      }
-    }
+const tableStateField = StateField.define<DecorationSet>({
+  create(state) {
+    return buildTableDecorations(state);
   },
-  {
-    decorations: (v) => v.decorations,
-  }
-);
+  update(decorations, tr) {
+    if (tr.docChanged || tr.selection) {
+      return buildTableDecorations(tr.state);
+    }
+    return decorations;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
 
 /**
  * Complete table plugin with navigation
  */
-export const tablePlugin = [tableViewPlugin, tableKeymap];
+export const tablePlugin = [tableStateField, tableKeymap];

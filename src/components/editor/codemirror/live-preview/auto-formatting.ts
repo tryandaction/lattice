@@ -6,74 +6,7 @@
  */
 
 import { EditorView, ViewPlugin, ViewUpdate, keymap } from '@codemirror/view';
-import { EditorState, Transaction, EditorSelection } from '@codemirror/state';
-
-/**
- * Input rules for auto-formatting
- */
-interface InputRule {
-  pattern: RegExp;
-  handler: (view: EditorView, match: RegExpMatchArray, from: number, to: number) => boolean;
-}
-
-const inputRules: InputRule[] = [
-  // Bullet list: - or * or +
-  {
-    pattern: /^([-*+])\s$/,
-    handler: (view, match, from, to) => {
-      // Already handled by default behavior
-      return false;
-    },
-  },
-  
-  // Numbered list: 1.
-  {
-    pattern: /^(\d+)\.\s$/,
-    handler: (view, match, from, to) => {
-      // Already handled by default behavior
-      return false;
-    },
-  },
-  
-  // Task list: - [ ]
-  {
-    pattern: /^-\s\[\s?\]\s$/,
-    handler: (view, match, from, to) => {
-      // Already handled by default behavior
-      return false;
-    },
-  },
-  
-  // Horizontal rule: --- or *** or ___
-  {
-    pattern: /^([-*_])\1{2,}$/,
-    handler: (view, match, from, to) => {
-      const line = view.state.doc.lineAt(from);
-      if (line.from === from && line.to === to) {
-        // This is a complete line, let it render as HR
-        return false;
-      }
-      return false;
-    },
-  },
-  
-  // Code block: ```
-  {
-    pattern: /^```(\w*)$/,
-    handler: (view, match, from, to) => {
-      const line = view.state.doc.lineAt(from);
-      if (line.from === from) {
-        // Insert closing fence
-        view.dispatch({
-          changes: { from: to, insert: '\n\n```' },
-          selection: EditorSelection.cursor(to + 1),
-        });
-        return true;
-      }
-      return false;
-    },
-  },
-];
+import { EditorSelection } from '@codemirror/state';
 
 /**
  * Handle Enter key in lists
@@ -247,6 +180,7 @@ export const autoFormattingPlugin = ViewPlugin.fromClass(
     }
   }
 );
+
 
 /**
  * Event handlers for auto-formatting
