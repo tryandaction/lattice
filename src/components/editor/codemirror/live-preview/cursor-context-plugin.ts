@@ -101,7 +101,10 @@ function computeCursorContext(state: EditorState): CursorContext {
  * State field for cursor context
  */
 export const cursorContextField = StateField.define<CursorContext>({
-  create: createInitialContext,
+  create(state) {
+    // Initialize with computed context based on initial cursor position
+    return computeCursorContext(state);
+  },
   update(value, tr) {
     // Check for explicit update effect
     for (const effect of tr.effects) {

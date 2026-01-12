@@ -149,7 +149,7 @@ class ListBulletWidget extends WidgetType {
 }
 
 /**
- * Horizontal rule widget
+ * Horizontal rule widget - renders a full-width horizontal line
  */
 class HorizontalRuleWidget extends WidgetType {
   constructor(private originalFrom: number, private originalTo: number) {
@@ -157,11 +157,24 @@ class HorizontalRuleWidget extends WidgetType {
   }
   
   toDOM(view: EditorView) {
+    // Use a container div to ensure full width
+    const container = document.createElement('div');
+    container.className = 'cm-horizontal-rule-container';
+    container.style.width = '100%';
+    container.style.padding = '1em 0';
+    container.style.cursor = 'pointer';
+    
     const hr = document.createElement('hr');
     hr.className = 'cm-horizontal-rule';
+    hr.style.border = 'none';
+    hr.style.borderTop = '2px solid var(--border, #e5e7eb)';
+    hr.style.margin = '0';
+    hr.style.width = '100%';
+    
+    container.appendChild(hr);
     
     // Handle click to position cursor
-    hr.addEventListener('mousedown', (e) => {
+    container.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
       view.dispatch({
@@ -171,7 +184,7 @@ class HorizontalRuleWidget extends WidgetType {
       view.focus();
     });
     
-    return hr;
+    return container;
   }
   
   eq() { return true; }

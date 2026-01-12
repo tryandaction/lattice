@@ -3055,10 +3055,18 @@ math-field.quantum-keyboard-active {
 }
 
 /* Horizontal rule */
+.live-preview-editor .cm-horizontal-rule-container {
+  display: block;
+  width: 100%;
+  padding: 1em 0;
+  cursor: pointer;
+}
+
 .live-preview-editor .cm-horizontal-rule {
   border: none;
   border-top: 2px solid hsl(var(--border));
-  margin: 1.5em 0;
+  margin: 0;
+  width: 100%;
 }
 
 /* Code block widget */
@@ -3155,6 +3163,65 @@ math-field.quantum-keyboard-active {
 
 .live-preview-editor .cm-table-widget tr:nth-child(even) {
   @apply bg-muted/30;
+}
+
+/* Table inline formatting */
+.live-preview-editor .cm-table-widget strong {
+  font-weight: bold;
+}
+
+.live-preview-editor .cm-table-widget em {
+  font-style: italic;
+}
+
+.live-preview-editor .cm-table-widget del {
+  text-decoration: line-through;
+  @apply text-muted-foreground;
+}
+
+.live-preview-editor .cm-table-widget mark {
+  background-color: hsl(var(--highlight, 48 96% 89%));
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.live-preview-editor .cm-table-widget code {
+  @apply bg-muted rounded px-1.5 py-0.5;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 0.9em;
+}
+
+.live-preview-editor .cm-wiki-link-table {
+  color: hsl(var(--accent, 262 83% 58%));
+  background-color: hsl(var(--accent, 262 83% 58%) / 0.15);
+  padding: 0 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color 150ms ease;
+}
+
+.live-preview-editor .cm-wiki-link-table:hover {
+  background-color: hsl(var(--accent, 262 83% 58%) / 0.25);
+}
+
+.live-preview-editor .cm-link-table {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--primary) / 0.6);
+}
+
+.live-preview-editor .cm-link-table:hover {
+  text-decoration-color: hsl(var(--primary));
+}
+
+.live-preview-editor .cm-math-inline-table {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.9em;
+  color: hsl(var(--accent, 262 83% 58%));
+  background-color: hsl(var(--accent, 262 83% 58%) / 0.1);
+  padding: 0 4px;
+  border-radius: 4px;
 }
 
 .live-preview-editor .cm-table-line {
@@ -3717,4 +3784,365 @@ math-field.quantum-keyboard-active {
 .cm-table-editing {
   outline: 2px solid hsl(var(--primary) / 0.3);
   outline-offset: 2px;
+}
+
+
+/* ============================================================================
+   Advanced Markdown Features Styles
+   Superscript, Subscript, Keyboard Keys, Footnotes, Embeds, Details, Callouts
+   ============================================================================ */
+
+/* Superscript */
+.live-preview-editor .cm-superscript {
+  vertical-align: super;
+  font-size: 0.8em;
+  cursor: text;
+}
+
+/* Subscript */
+.live-preview-editor .cm-subscript {
+  vertical-align: sub;
+  font-size: 0.8em;
+  cursor: text;
+}
+
+/* Keyboard Keys */
+.live-preview-editor .cm-kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 0.85em;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  line-height: 1.4;
+  color: hsl(var(--foreground));
+  background-color: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  box-shadow: 0 1px 0 hsl(var(--border)), inset 0 0 0 1px rgba(255,255,255,0.5);
+  cursor: text;
+}
+
+.dark .live-preview-editor .cm-kbd {
+  box-shadow: 0 1px 0 hsl(var(--border)), inset 0 0 0 1px rgba(255,255,255,0.1);
+}
+
+/* Footnote References */
+.live-preview-editor .cm-footnote-ref {
+  vertical-align: super;
+  font-size: 0.8em;
+  line-height: 1;
+}
+
+.live-preview-editor .cm-footnote-ref-link {
+  color: hsl(var(--primary));
+  text-decoration: none;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 2px;
+  transition: background-color 150ms ease;
+}
+
+.live-preview-editor .cm-footnote-ref-link:hover {
+  background-color: hsl(var(--primary) / 0.2);
+  text-decoration: underline;
+}
+
+/* Footnote Definitions */
+.live-preview-editor .cm-footnote-def {
+  display: block;
+  padding: 8px 12px;
+  margin: 8px 0;
+  background-color: hsl(var(--muted) / 0.5);
+  border-left: 3px solid hsl(var(--primary));
+  border-radius: 0 4px 4px 0;
+  font-size: 0.9em;
+}
+
+.live-preview-editor .cm-footnote-def-label {
+  font-weight: 600;
+  color: hsl(var(--primary));
+  margin-right: 8px;
+}
+
+.live-preview-editor .cm-footnote-def-content {
+  color: hsl(var(--foreground));
+}
+
+.live-preview-editor .cm-footnote-backlink {
+  color: hsl(var(--muted-foreground));
+  text-decoration: none;
+  margin-left: 4px;
+  cursor: pointer;
+}
+
+.live-preview-editor .cm-footnote-backlink:hover {
+  color: hsl(var(--primary));
+}
+
+/* Inline Embeds */
+.live-preview-editor .cm-embed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background-color: hsl(var(--accent) / 0.15);
+  border: 1px solid hsl(var(--accent) / 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.live-preview-editor .cm-embed:hover {
+  background-color: hsl(var(--accent) / 0.25);
+  border-color: hsl(var(--accent) / 0.5);
+}
+
+.live-preview-editor .cm-embed-icon {
+  font-size: 0.9em;
+}
+
+.live-preview-editor .cm-embed-text {
+  color: hsl(var(--accent));
+  font-size: 0.9em;
+}
+
+/* Block Embed Widget */
+.live-preview-editor .cm-embed-widget {
+  display: block;
+  margin: 12px 0;
+  padding: 12px 16px;
+  background-color: hsl(var(--muted) / 0.5);
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.live-preview-editor .cm-embed-widget:hover {
+  border-color: hsl(var(--accent));
+  box-shadow: 0 2px 8px hsl(var(--accent) / 0.2);
+}
+
+.live-preview-editor .cm-embed-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.live-preview-editor .cm-embed-title {
+  font-weight: 500;
+  color: hsl(var(--accent));
+}
+
+.live-preview-editor .cm-embed-content {
+  color: hsl(var(--muted-foreground));
+  font-size: 0.9em;
+}
+
+.live-preview-editor .cm-embed-open {
+  display: inline-block;
+  margin-top: 8px;
+  color: hsl(var(--primary));
+  font-size: 0.85em;
+  text-decoration: none;
+}
+
+.live-preview-editor .cm-embed-open:hover {
+  text-decoration: underline;
+}
+
+/* Details/Summary (Collapsible) */
+.live-preview-editor .cm-details-widget {
+  display: block;
+  margin: 8px 0;
+  padding: 0;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.live-preview-editor .cm-details-summary {
+  padding: 12px 16px;
+  background-color: hsl(var(--muted));
+  cursor: pointer;
+  font-weight: 500;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-preview-editor .cm-details-summary::-webkit-details-marker {
+  display: none;
+}
+
+.live-preview-editor .cm-details-summary::before {
+  content: "▶";
+  font-size: 0.8em;
+  transition: transform 150ms ease;
+}
+
+.live-preview-editor .cm-details-widget[open] .cm-details-summary::before {
+  transform: rotate(90deg);
+}
+
+.live-preview-editor .cm-details-content {
+  padding: 12px 16px;
+  border-top: 1px solid hsl(var(--border));
+}
+
+.live-preview-editor .cm-details-source {
+  background-color: hsl(var(--muted) / 0.3);
+}
+
+/* Callouts/Admonitions */
+.live-preview-editor .cm-callout {
+  display: block;
+  margin: 12px 0;
+  padding: 12px 16px;
+  border-radius: 4px;
+}
+
+.live-preview-editor .cm-callout-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.live-preview-editor .cm-callout-icon {
+  font-size: 1.1em;
+}
+
+.live-preview-editor .cm-callout-title {
+  flex: 1;
+}
+
+.live-preview-editor .cm-callout-fold {
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 150ms ease;
+}
+
+.live-preview-editor .cm-callout-fold:hover {
+  opacity: 1;
+}
+
+.live-preview-editor .cm-callout-content {
+  margin-top: 8px;
+  line-height: 1.6;
+}
+
+.live-preview-editor .cm-callout-source {
+  background-color: hsl(var(--muted) / 0.3);
+  border-left: 3px solid hsl(var(--muted-foreground));
+  padding-left: 12px;
+}
+
+/* Callout type-specific colors */
+.live-preview-editor .cm-callout-note,
+.live-preview-editor .cm-callout-info {
+  background-color: rgba(59, 130, 246, 0.1);
+  border-left: 4px solid #3b82f6;
+}
+
+.live-preview-editor .cm-callout-tip,
+.live-preview-editor .cm-callout-hint {
+  background-color: rgba(16, 185, 129, 0.1);
+  border-left: 4px solid #10b981;
+}
+
+.live-preview-editor .cm-callout-warning,
+.live-preview-editor .cm-callout-caution {
+  background-color: rgba(245, 158, 11, 0.1);
+  border-left: 4px solid #f59e0b;
+}
+
+.live-preview-editor .cm-callout-danger,
+.live-preview-editor .cm-callout-error,
+.live-preview-editor .cm-callout-bug {
+  background-color: rgba(239, 68, 68, 0.1);
+  border-left: 4px solid #ef4444;
+}
+
+.live-preview-editor .cm-callout-important,
+.live-preview-editor .cm-callout-example {
+  background-color: rgba(139, 92, 246, 0.1);
+  border-left: 4px solid #8b5cf6;
+}
+
+.live-preview-editor .cm-callout-quote,
+.live-preview-editor .cm-callout-cite {
+  background-color: rgba(107, 114, 128, 0.1);
+  border-left: 4px solid #6b7280;
+}
+
+.live-preview-editor .cm-callout-abstract,
+.live-preview-editor .cm-callout-summary,
+.live-preview-editor .cm-callout-tldr {
+  background-color: rgba(6, 182, 212, 0.1);
+  border-left: 4px solid #06b6d4;
+}
+
+.live-preview-editor .cm-callout-success,
+.live-preview-editor .cm-callout-check,
+.live-preview-editor .cm-callout-done {
+  background-color: rgba(16, 185, 129, 0.1);
+  border-left: 4px solid #10b981;
+}
+
+.live-preview-editor .cm-callout-question,
+.live-preview-editor .cm-callout-help,
+.live-preview-editor .cm-callout-faq {
+  background-color: rgba(245, 158, 11, 0.1);
+  border-left: 4px solid #f59e0b;
+}
+
+.live-preview-editor .cm-callout-failure,
+.live-preview-editor .cm-callout-fail,
+.live-preview-editor .cm-callout-missing {
+  background-color: rgba(239, 68, 68, 0.1);
+  border-left: 4px solid #ef4444;
+}
+
+/* Source mode for new elements */
+.live-preview-editor .cm-superscript-source,
+.live-preview-editor .cm-subscript-source,
+.live-preview-editor .cm-kbd-source,
+.live-preview-editor .cm-footnoteref-source,
+.live-preview-editor .cm-embed-source,
+.live-preview-editor .cm-mark-source {
+  color: hsl(var(--muted-foreground));
+  opacity: 0.6;
+}
+
+/* Dark mode adjustments for callouts */
+.dark .live-preview-editor .cm-callout-note,
+.dark .live-preview-editor .cm-callout-info {
+  background-color: rgba(59, 130, 246, 0.15);
+}
+
+.dark .live-preview-editor .cm-callout-tip,
+.dark .live-preview-editor .cm-callout-hint {
+  background-color: rgba(16, 185, 129, 0.15);
+}
+
+.dark .live-preview-editor .cm-callout-warning,
+.dark .live-preview-editor .cm-callout-caution {
+  background-color: rgba(245, 158, 11, 0.15);
+}
+
+.dark .live-preview-editor .cm-callout-danger,
+.dark .live-preview-editor .cm-callout-error,
+.dark .live-preview-editor .cm-callout-bug {
+  background-color: rgba(239, 68, 68, 0.15);
+}
+
+.dark .live-preview-editor .cm-details-widget {
+  border-color: hsl(var(--border));
+}
+
+.dark .live-preview-editor .cm-details-summary {
+  background-color: hsl(var(--muted) / 0.5);
 }

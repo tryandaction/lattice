@@ -19,6 +19,7 @@ import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/sea
 import { cursorContextExtension } from './cursor-context-plugin';
 import { inlineDecorationPlugin } from './inline-decoration-plugin';
 import { blockDecorationPlugin } from './block-decoration-plugin';
+import { advancedBlockPlugin } from './advanced-block-plugin';
 import { mathPlugin } from './math-plugin';
 import { codeBlockPlugin } from './code-block-plugin';
 import { tablePlugin } from './table-plugin';
@@ -150,6 +151,7 @@ function buildExtensions(
       cursorContextExtension,
       inlineDecorationPlugin,
       blockDecorationPlugin,
+      advancedBlockPlugin,
       mathPlugin,
       codeBlockPlugin,
       tablePlugin,
@@ -172,6 +174,7 @@ function buildExtensions(
       EditorState.readOnly.of(true),
       inlineDecorationPlugin,
       blockDecorationPlugin,
+      advancedBlockPlugin,
       mathPlugin,
       codeBlockPlugin,
       tablePlugin

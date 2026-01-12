@@ -76,6 +76,8 @@ function getCachedLineElements(lineText: string, lineFrom: number): MarkdownElem
 /**
  * Link widget for rendered links
  * Supports precise cursor positioning within link text
+ * - Single click: position cursor for editing
+ * - Double click or Ctrl+Click: navigate to link target
  */
 class LinkWidget extends WidgetType {
   constructor(
@@ -99,7 +101,9 @@ class LinkWidget extends WidgetType {
     link.className = `${this.isWikiLink ? 'cm-wiki-link' : 'cm-link'} cm-formatted-widget cm-syntax-transition`;
     link.textContent = this.text;
     link.href = this.isWikiLink ? '#' : this.url;
-    link.title = this.isWikiLink ? `Link to: ${this.url}` : this.url;
+    link.title = this.isWikiLink 
+      ? `${this.url} (Ctrl+Click or double-click to open)` 
+      : `${this.url} (Ctrl+Click to open)`;
     
     // Store positions for cursor placement
     link.dataset.contentFrom = String(this.contentFrom);
@@ -107,57 +111,78 @@ class LinkWidget extends WidgetType {
     link.dataset.elementFrom = String(this.elementFrom);
     link.dataset.elementTo = String(this.elementTo);
     
-    // Handle click - position cursor precisely within link text
-    link.addEventListener('mousedown', (e) => {
-      if (e.ctrlKey || e.metaKey) {
-        // Ctrl+Click for navigation
-        e.preventDefault();
-        e.stopPropagation();
-        if (this.isWikiLink) {
-          view.dom.dispatchEvent(new CustomEvent('wiki-link-click', {
-            detail: { target: this.url },
-            bubbles: true,
-          }));
-        } else {
-          window.open(this.url, '_blank', 'noopener,noreferrer');
-        }
+    // Track for double-click detection
+    let lastClickTime = 0;
+    const DOUBLE_CLICK_THRESHOLD = 300;
+    
+    // Navigate to link target
+    const navigateToLink = () => {
+      if (this.isWikiLink) {
+        view.dom.dispatchEvent(new CustomEvent('wiki-link-click', {
+          detail: { target: this.url },
+          bubbles: true,
+        }));
       } else {
-        // Normal click - position cursor precisely within link text
-        e.preventDefault();
-        e.stopPropagation();
-        
-        // Calculate character position based on click location
-        const rect = link.getBoundingClientRect();
-        const clickX = e.clientX - rect.left;
-        const textWidth = rect.width;
-        const textLength = this.text.length;
-        
-        let charOffset: number;
-        if (textWidth > 0 && textLength > 0) {
-          const avgCharWidth = textWidth / textLength;
-          charOffset = Math.round(clickX / avgCharWidth);
-          charOffset = Math.max(0, Math.min(charOffset, textLength));
-        } else {
-          charOffset = 0;
-        }
-        
-        // Position cursor within the link text content
-        const pos = this.contentFrom + charOffset;
-        
-        view.dispatch({
-          selection: { anchor: pos, head: pos },
-          scrollIntoView: true,
-        });
-        view.focus();
+        window.open(this.url, '_blank', 'noopener,noreferrer');
       }
+    };
+    
+    // Position cursor within link text
+    const positionCursor = (e: MouseEvent) => {
+      const rect = link.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const textWidth = rect.width;
+      const textLength = this.text.length;
+      
+      let charOffset: number;
+      if (textWidth > 0 && textLength > 0) {
+        const avgCharWidth = textWidth / textLength;
+        charOffset = Math.round(clickX / avgCharWidth);
+        charOffset = Math.max(0, Math.min(charOffset, textLength));
+      } else {
+        charOffset = 0;
+      }
+      
+      const pos = this.contentFrom + charOffset;
+      
+      view.dispatch({
+        selection: { anchor: pos, head: pos },
+        scrollIntoView: true,
+      });
+      view.focus();
+    };
+    
+    // Handle click
+    link.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const now = Date.now();
+      const isDoubleClick = (now - lastClickTime) < DOUBLE_CLICK_THRESHOLD;
+      lastClickTime = now;
+      
+      if (e.ctrlKey || e.metaKey || isDoubleClick) {
+        // Ctrl+Click or double-click for navigation
+        navigateToLink();
+      } else {
+        // Single click - position cursor for editing
+        positionCursor(e);
+      }
+    });
+    
+    // Also handle dblclick event for better compatibility
+    link.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      navigateToLink();
     });
     
     return link;
   }
   
   ignoreEvent(e: Event) {
-    // Let mousedown through for cursor positioning
-    return e.type !== 'mousedown';
+    // Let mousedown and dblclick through
+    return e.type !== 'mousedown' && e.type !== 'dblclick';
   }
 }
 
@@ -408,6 +433,266 @@ class FormattedTextWidget extends WidgetType {
     });
     
     return span;
+  }
+  
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
+  }
+}
+
+/**
+ * Superscript widget for ^text^ syntax
+ */
+class SuperscriptWidget extends WidgetType {
+  constructor(
+    private content: string,
+    private contentFrom: number,
+    private contentTo: number,
+    private elementFrom: number,
+    private elementTo: number
+  ) {
+    super();
+  }
+  
+  eq(other: SuperscriptWidget) {
+    return other.content === this.content && other.contentFrom === this.contentFrom;
+  }
+  
+  toDOM(view: EditorView) {
+    const sup = document.createElement('sup');
+    sup.className = 'cm-superscript cm-formatted-widget cm-syntax-transition';
+    sup.textContent = this.content;
+    sup.dataset.contentFrom = String(this.contentFrom);
+    sup.dataset.contentTo = String(this.contentTo);
+    
+    sup.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({
+        selection: { anchor: this.contentFrom, head: this.contentFrom },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+    
+    return sup;
+  }
+  
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
+  }
+}
+
+/**
+ * Subscript widget for ~text~ syntax (single tilde, not ~~)
+ */
+class SubscriptWidget extends WidgetType {
+  constructor(
+    private content: string,
+    private contentFrom: number,
+    private contentTo: number,
+    private elementFrom: number,
+    private elementTo: number
+  ) {
+    super();
+  }
+  
+  eq(other: SubscriptWidget) {
+    return other.content === this.content && other.contentFrom === this.contentFrom;
+  }
+  
+  toDOM(view: EditorView) {
+    const sub = document.createElement('sub');
+    sub.className = 'cm-subscript cm-formatted-widget cm-syntax-transition';
+    sub.textContent = this.content;
+    sub.dataset.contentFrom = String(this.contentFrom);
+    sub.dataset.contentTo = String(this.contentTo);
+    
+    sub.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({
+        selection: { anchor: this.contentFrom, head: this.contentFrom },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+    
+    return sub;
+  }
+  
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
+  }
+}
+
+/**
+ * Keyboard key widget for <kbd>text</kbd> syntax
+ */
+class KbdWidget extends WidgetType {
+  constructor(
+    private content: string,
+    private contentFrom: number,
+    private contentTo: number,
+    private elementFrom: number,
+    private elementTo: number
+  ) {
+    super();
+  }
+  
+  eq(other: KbdWidget) {
+    return other.content === this.content && other.contentFrom === this.contentFrom;
+  }
+  
+  toDOM(view: EditorView) {
+    const kbd = document.createElement('kbd');
+    kbd.className = 'cm-kbd cm-formatted-widget cm-syntax-transition';
+    kbd.textContent = this.content;
+    kbd.dataset.contentFrom = String(this.contentFrom);
+    kbd.dataset.contentTo = String(this.contentTo);
+    
+    kbd.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({
+        selection: { anchor: this.contentFrom, head: this.contentFrom },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+    
+    return kbd;
+  }
+  
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
+  }
+}
+
+/**
+ * Footnote reference widget for [^id] syntax
+ */
+class FootnoteRefWidget extends WidgetType {
+  constructor(
+    private id: string,
+    private contentFrom: number,
+    private contentTo: number,
+    private elementFrom: number,
+    private elementTo: number
+  ) {
+    super();
+  }
+  
+  eq(other: FootnoteRefWidget) {
+    return other.id === this.id;
+  }
+  
+  toDOM(view: EditorView) {
+    const sup = document.createElement('sup');
+    sup.className = 'cm-footnote-ref cm-formatted-widget cm-syntax-transition';
+    
+    const link = document.createElement('a');
+    link.href = `#fn-${this.id}`;
+    link.className = 'cm-footnote-ref-link';
+    link.textContent = this.id;
+    link.title = `Jump to footnote ${this.id}`;
+    
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Find footnote definition
+      const doc = view.state.doc;
+      const text = doc.toString();
+      const defPattern = new RegExp(`^\\[\\^${this.id}\\]:`, 'm');
+      const match = text.match(defPattern);
+      
+      if (match && match.index !== undefined) {
+        view.dispatch({
+          selection: { anchor: match.index, head: match.index },
+          scrollIntoView: true,
+        });
+        view.focus();
+      }
+    });
+    
+    sup.appendChild(link);
+    return sup;
+  }
+  
+  ignoreEvent(e: Event) {
+    return e.type !== 'click';
+  }
+}
+
+/**
+ * Embed widget for ![[file]] syntax
+ */
+class EmbedWidget extends WidgetType {
+  constructor(
+    private target: string,
+    private heading: string | undefined,
+    private contentFrom: number,
+    private contentTo: number,
+    private elementFrom: number,
+    private elementTo: number
+  ) {
+    super();
+  }
+  
+  eq(other: EmbedWidget) {
+    return other.target === this.target && other.heading === this.heading;
+  }
+  
+  toDOM(view: EditorView) {
+    const container = document.createElement('span');
+    container.className = 'cm-embed cm-formatted-widget cm-syntax-transition';
+    
+    const icon = document.createElement('span');
+    icon.className = 'cm-embed-icon';
+    icon.textContent = this.getFileIcon();
+    
+    const text = document.createElement('span');
+    text.className = 'cm-embed-text';
+    text.textContent = this.heading ? `${this.target}#${this.heading}` : this.target;
+    
+    container.appendChild(icon);
+    container.appendChild(text);
+    
+    container.addEventListener('mousedown', (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        view.dom.dispatchEvent(new CustomEvent('wiki-link-click', {
+          detail: { target: this.target, heading: this.heading },
+          bubbles: true,
+        }));
+      } else {
+        e.preventDefault();
+        e.stopPropagation();
+        view.dispatch({
+          selection: { anchor: this.elementFrom, head: this.elementFrom },
+          scrollIntoView: true,
+        });
+        view.focus();
+      }
+    });
+    
+    return container;
+  }
+  
+  private getFileIcon(): string {
+    const ext = this.target.split('.').pop()?.toLowerCase();
+    switch (ext) {
+      case 'md': return '📄';
+      case 'pdf': return '📕';
+      case 'png':
+      case 'jpg':
+      case 'jpeg':
+      case 'gif':
+      case 'webp': return '🖼️';
+      default: return '📎';
+    }
   }
   
   ignoreEvent(e: Event) {
@@ -667,6 +952,128 @@ function parseLineInlineElementsInternal(lineText: string, lineFrom: number): Ma
     }
   }
   
+  // 10. Superscript: ^text^ (not ^^)
+  const superscriptRegex = /(?<!\^)\^(?!\^)([^^]+)\^(?!\^)/g;
+  while ((match = superscriptRegex.exec(lineText)) !== null) {
+    const from = lineFrom + match.index;
+    const to = lineFrom + match.index + match[0].length;
+    if (!isOverlapping(from, to)) {
+      elements.push({
+        type: 'superscript',
+        from,
+        to,
+        syntaxFrom: from,
+        syntaxTo: from + 1,
+        contentFrom: from + 1,
+        contentTo: to - 1,
+        content: match[1],
+      });
+      addMatchedRange(from, to);
+    }
+  }
+  
+  // 11. Subscript: ~text~ (single tilde, not ~~)
+  const subscriptRegex = /(?<!~)~(?!~)([^~]+)~(?!~)/g;
+  while ((match = subscriptRegex.exec(lineText)) !== null) {
+    const from = lineFrom + match.index;
+    const to = lineFrom + match.index + match[0].length;
+    if (!isOverlapping(from, to)) {
+      elements.push({
+        type: 'subscript',
+        from,
+        to,
+        syntaxFrom: from,
+        syntaxTo: from + 1,
+        contentFrom: from + 1,
+        contentTo: to - 1,
+        content: match[1],
+      });
+      addMatchedRange(from, to);
+    }
+  }
+  
+  // 12. Keyboard keys: <kbd>text</kbd>
+  const kbdRegex = /<kbd>([^<]+)<\/kbd>/gi;
+  while ((match = kbdRegex.exec(lineText)) !== null) {
+    const from = lineFrom + match.index;
+    const to = lineFrom + match.index + match[0].length;
+    if (!isOverlapping(from, to)) {
+      elements.push({
+        type: 'kbd',
+        from,
+        to,
+        syntaxFrom: from,
+        syntaxTo: from + 5, // <kbd>
+        contentFrom: from + 5,
+        contentTo: to - 6, // </kbd>
+        content: match[1],
+      });
+      addMatchedRange(from, to);
+    }
+  }
+  
+  // 13. Footnote references: [^id] (not followed by :)
+  const footnoteRefRegex = /\[\^([^\]]+)\](?!:)/g;
+  while ((match = footnoteRefRegex.exec(lineText)) !== null) {
+    const from = lineFrom + match.index;
+    const to = lineFrom + match.index + match[0].length;
+    if (!isOverlapping(from, to)) {
+      elements.push({
+        type: 'footnoteref',
+        from,
+        to,
+        syntaxFrom: from,
+        syntaxTo: to,
+        contentFrom: from + 2,
+        contentTo: to - 1,
+        content: match[1],
+        extra: { id: match[1] },
+      });
+      addMatchedRange(from, to);
+    }
+  }
+  
+  // 14. Embeds: ![[file]] or ![[file#heading]]
+  const embedRegex = /!\[\[([^\]#]+)(?:#([^\]]+))?\]\]/g;
+  while ((match = embedRegex.exec(lineText)) !== null) {
+    const from = lineFrom + match.index;
+    const to = lineFrom + match.index + match[0].length;
+    if (!isOverlapping(from, to)) {
+      elements.push({
+        type: 'embed',
+        from,
+        to,
+        syntaxFrom: from,
+        syntaxTo: to,
+        contentFrom: from + 3,
+        contentTo: to - 2,
+        content: match[1],
+        extra: { target: match[1], heading: match[2] },
+      });
+      addMatchedRange(from, to);
+    }
+  }
+  
+  // 15. Mark/Highlight with <mark>: <mark>text</mark>
+  const markRegex = /<mark>([^<]+)<\/mark>/gi;
+  while ((match = markRegex.exec(lineText)) !== null) {
+    const from = lineFrom + match.index;
+    const to = lineFrom + match.index + match[0].length;
+    if (!isOverlapping(from, to)) {
+      elements.push({
+        type: 'mark',
+        from,
+        to,
+        syntaxFrom: from,
+        syntaxTo: from + 6, // <mark>
+        contentFrom: from + 6,
+        contentTo: to - 7, // </mark>
+        content: match[1],
+      });
+      addMatchedRange(from, to);
+    }
+  }
+  
   // Sort by position
   return elements.sort((a, b) => a.from - b.from);
 }
@@ -920,6 +1327,110 @@ function addRenderedDecoration(
             element.content,
             (element.extra?.url as string) || '',
             element.extra?.width as number | undefined,
+            element.contentFrom,
+            element.contentTo,
+            element.from,
+            element.to
+          ),
+        }),
+      });
+      break;
+      
+    case 'superscript':
+      // Replace ^text^ with superscript widget
+      decorations.push({
+        from: element.from,
+        to: element.to,
+        decoration: Decoration.replace({
+          widget: new SuperscriptWidget(
+            element.content,
+            element.contentFrom,
+            element.contentTo,
+            element.from,
+            element.to
+          ),
+        }),
+      });
+      break;
+      
+    case 'subscript':
+      // Replace ~text~ with subscript widget
+      decorations.push({
+        from: element.from,
+        to: element.to,
+        decoration: Decoration.replace({
+          widget: new SubscriptWidget(
+            element.content,
+            element.contentFrom,
+            element.contentTo,
+            element.from,
+            element.to
+          ),
+        }),
+      });
+      break;
+      
+    case 'kbd':
+      // Replace <kbd>text</kbd> with keyboard key widget
+      decorations.push({
+        from: element.from,
+        to: element.to,
+        decoration: Decoration.replace({
+          widget: new KbdWidget(
+            element.content,
+            element.contentFrom,
+            element.contentTo,
+            element.from,
+            element.to
+          ),
+        }),
+      });
+      break;
+      
+    case 'footnoteref':
+      // Replace [^id] with footnote reference widget
+      decorations.push({
+        from: element.from,
+        to: element.to,
+        decoration: Decoration.replace({
+          widget: new FootnoteRefWidget(
+            (element.extra?.id as string) || element.content,
+            element.contentFrom,
+            element.contentTo,
+            element.from,
+            element.to
+          ),
+        }),
+      });
+      break;
+      
+    case 'embed':
+      // Replace ![[file]] with embed widget
+      decorations.push({
+        from: element.from,
+        to: element.to,
+        decoration: Decoration.replace({
+          widget: new EmbedWidget(
+            (element.extra?.target as string) || element.content,
+            element.extra?.heading as string | undefined,
+            element.contentFrom,
+            element.contentTo,
+            element.from,
+            element.to
+          ),
+        }),
+      });
+      break;
+      
+    case 'mark':
+      // Replace <mark>text</mark> with highlight widget
+      decorations.push({
+        from: element.from,
+        to: element.to,
+        decoration: Decoration.replace({
+          widget: new FormattedTextWidget(
+            element.content,
+            'cm-highlight',
             element.contentFrom,
             element.contentTo,
             element.from,

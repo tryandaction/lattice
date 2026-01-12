@@ -20,6 +20,7 @@ export { getSavedMode, saveMode, clearSavedMode, useModePreference } from './mod
 export { cursorContextExtension, shouldRevealAt } from './cursor-context-plugin';
 export { inlineDecorationPlugin } from './inline-decoration-plugin';
 export { blockDecorationPlugin } from './block-decoration-plugin';
+export { advancedBlockPlugin } from './advanced-block-plugin';
 export { mathPlugin } from './math-plugin';
 export { codeBlockPlugin } from './code-block-plugin';
 export { tablePlugin } from './table-plugin';

@@ -319,10 +319,18 @@ export const livePreviewTheme = EditorView.theme({
   
   // === Horizontal Rule ===
   
+  '.cm-horizontal-rule-container': {
+    display: 'block',
+    width: '100%',
+    padding: '1em 0',
+    cursor: 'pointer',
+  },
+  
   '.cm-horizontal-rule': {
     border: 'none',
     borderTop: `2px solid ${colors.border}`,
-    margin: '1.5em 0',
+    margin: '0',
+    width: '100%',
   },
   
   // === Code Blocks ===
@@ -502,6 +510,65 @@ export const livePreviewTheme = EditorView.theme({
     backgroundColor: `${colors.muted}50`,
   },
   
+  // Table inline formatting styles
+  '.cm-table-widget strong': {
+    fontWeight: 'bold',
+  },
+  
+  '.cm-table-widget em': {
+    fontStyle: 'italic',
+  },
+  
+  '.cm-table-widget del': {
+    textDecoration: 'line-through',
+    color: colors.mutedForeground,
+  },
+  
+  '.cm-table-widget mark': {
+    backgroundColor: colors.highlight,
+    borderRadius: '2px',
+    padding: '0 2px',
+  },
+  
+  '.cm-table-widget code': {
+    backgroundColor: colors.codeBackground,
+    borderRadius: '4px',
+    padding: '2px 6px',
+    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+    fontSize: '0.9em',
+  },
+  
+  '.cm-wiki-link-table': {
+    color: colors.accent,
+    backgroundColor: `${colors.accent}15`,
+    padding: '0 4px',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    textDecoration: 'none',
+    transition: 'background-color 150ms ease',
+    '&:hover': {
+      backgroundColor: `${colors.accent}25`,
+    },
+  },
+  
+  '.cm-link-table': {
+    color: colors.primary,
+    textDecoration: 'underline',
+    textDecorationColor: `${colors.primary}60`,
+    '&:hover': {
+      textDecorationColor: colors.primary,
+    },
+  },
+  
+  '.cm-math-inline-table': {
+    fontFamily: '"JetBrains Mono", monospace',
+    fontSize: '0.9em',
+    color: colors.accent,
+    backgroundColor: `${colors.accent}10`,
+    padding: '0 4px',
+    borderRadius: '4px',
+  },
+  
   '.cm-table-line': {
     fontFamily: '"JetBrains Mono", monospace',
     fontSize: '14px',
@@ -592,6 +659,251 @@ export const livePreviewTheme = EditorView.theme({
   
   '.cm-searchMatch.cm-searchMatch-selected': {
     backgroundColor: `${colors.primary}40`,
+  },
+  
+  // === Superscript & Subscript ===
+  
+  '.cm-superscript': {
+    verticalAlign: 'super',
+    fontSize: '0.8em',
+    cursor: 'text',
+  },
+  
+  '.cm-subscript': {
+    verticalAlign: 'sub',
+    fontSize: '0.8em',
+    cursor: 'text',
+  },
+  
+  // === Keyboard Keys ===
+  
+  '.cm-kbd': {
+    display: 'inline-block',
+    padding: '2px 6px',
+    fontSize: '0.85em',
+    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+    lineHeight: '1.4',
+    color: colors.foreground,
+    backgroundColor: colors.muted,
+    border: `1px solid ${colors.border}`,
+    borderRadius: '4px',
+    boxShadow: `0 1px 0 ${colors.border}, inset 0 0 0 1px rgba(255,255,255,0.5)`,
+    cursor: 'text',
+  },
+  
+  // === Footnotes ===
+  
+  '.cm-footnote-ref': {
+    verticalAlign: 'super',
+    fontSize: '0.8em',
+    lineHeight: '1',
+  },
+  
+  '.cm-footnote-ref-link': {
+    color: colors.primary,
+    textDecoration: 'none',
+    cursor: 'pointer',
+    padding: '0 2px',
+    borderRadius: '2px',
+    transition: 'background-color 150ms ease',
+    '&:hover': {
+      backgroundColor: `${colors.primary}20`,
+      textDecoration: 'underline',
+    },
+  },
+  
+  '.cm-footnote-def': {
+    display: 'block',
+    padding: '8px 12px',
+    margin: '8px 0',
+    backgroundColor: `${colors.muted}50`,
+    borderLeft: `3px solid ${colors.primary}`,
+    borderRadius: '0 4px 4px 0',
+    fontSize: '0.9em',
+  },
+  
+  '.cm-footnote-def-label': {
+    fontWeight: '600',
+    color: colors.primary,
+    marginRight: '8px',
+  },
+  
+  '.cm-footnote-def-content': {
+    color: colors.foreground,
+  },
+  
+  '.cm-footnote-backlink': {
+    color: colors.mutedForeground,
+    textDecoration: 'none',
+    marginLeft: '4px',
+    cursor: 'pointer',
+    '&:hover': {
+      color: colors.primary,
+    },
+  },
+  
+  // === Embeds ===
+  
+  '.cm-embed': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '2px 8px',
+    backgroundColor: `${colors.accent}15`,
+    border: `1px solid ${colors.accent}30`,
+    borderRadius: '4px',
+    cursor: 'pointer',
+    transition: 'background-color 150ms ease, border-color 150ms ease',
+    '&:hover': {
+      backgroundColor: `${colors.accent}25`,
+      borderColor: `${colors.accent}50`,
+    },
+  },
+  
+  '.cm-embed-icon': {
+    fontSize: '0.9em',
+  },
+  
+  '.cm-embed-text': {
+    color: colors.accent,
+    fontSize: '0.9em',
+  },
+  
+  '.cm-embed-widget': {
+    display: 'block',
+    margin: '12px 0',
+    padding: '12px 16px',
+    backgroundColor: `${colors.muted}50`,
+    border: `1px solid ${colors.border}`,
+    borderRadius: '8px',
+    cursor: 'pointer',
+    transition: 'border-color 150ms ease, box-shadow 150ms ease',
+    '&:hover': {
+      borderColor: colors.accent,
+      boxShadow: `0 2px 8px ${colors.accent}20`,
+    },
+  },
+  
+  '.cm-embed-header': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    marginBottom: '8px',
+  },
+  
+  '.cm-embed-title': {
+    fontWeight: '500',
+    color: colors.accent,
+  },
+  
+  '.cm-embed-content': {
+    color: colors.mutedForeground,
+    fontSize: '0.9em',
+  },
+  
+  '.cm-embed-open': {
+    display: 'inline-block',
+    marginTop: '8px',
+    color: colors.primary,
+    fontSize: '0.85em',
+    textDecoration: 'none',
+    '&:hover': {
+      textDecoration: 'underline',
+    },
+  },
+  
+  // === Details/Summary (Collapsible) ===
+  
+  '.cm-details-widget': {
+    display: 'block',
+    margin: '8px 0',
+    padding: '0',
+    border: `1px solid ${colors.border}`,
+    borderRadius: '8px',
+    overflow: 'hidden',
+  },
+  
+  '.cm-details-summary': {
+    padding: '12px 16px',
+    backgroundColor: colors.muted,
+    cursor: 'pointer',
+    fontWeight: '500',
+    userSelect: 'none',
+    listStyle: 'none',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    '&::-webkit-details-marker': {
+      display: 'none',
+    },
+    '&::before': {
+      content: '"▶"',
+      fontSize: '0.8em',
+      transition: 'transform 150ms ease',
+    },
+  },
+  
+  '.cm-details-widget[open] .cm-details-summary::before': {
+    transform: 'rotate(90deg)',
+  },
+  
+  '.cm-details-content': {
+    padding: '12px 16px',
+    borderTop: `1px solid ${colors.border}`,
+  },
+  
+  '.cm-details-source': {
+    backgroundColor: `${colors.muted}30`,
+  },
+  
+  // === Callouts/Admonitions ===
+  
+  '.cm-callout': {
+    display: 'block',
+    margin: '12px 0',
+    padding: '12px 16px',
+    borderRadius: '4px',
+  },
+  
+  '.cm-callout-header': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    fontWeight: '600',
+  },
+  
+  '.cm-callout-icon': {
+    fontSize: '1.1em',
+  },
+  
+  '.cm-callout-title': {
+    flex: '1',
+  },
+  
+  '.cm-callout-fold': {
+    cursor: 'pointer',
+    opacity: '0.7',
+    transition: 'opacity 150ms ease',
+    '&:hover': {
+      opacity: '1',
+    },
+  },
+  
+  '.cm-callout-content': {
+    marginTop: '8px',
+    lineHeight: '1.6',
+  },
+  
+  '.cm-callout-source': {
+    backgroundColor: `${colors.muted}30`,
+    borderLeft: `3px solid ${colors.mutedForeground}`,
+    paddingLeft: '12px',
+  },
+  
+  // Source mode for new elements
+  '.cm-superscript-source, .cm-subscript-source, .cm-kbd-source, .cm-footnoteref-source, .cm-embed-source, .cm-mark-source': {
+    color: 'var(--muted-foreground, #6b7280)',
+    opacity: '0.6',
   },
 });
 

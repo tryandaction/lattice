@@ -15,8 +15,84 @@ import {
 import { RangeSetBuilder, EditorSelection, StateField, EditorState } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
 
+// Lazy load KaTeX for math rendering in tables
+let katex: any = null;
+let katexLoadPromise: Promise<any> | null = null;
+
+async function loadKatex() {
+  if (katex) return katex;
+  if (katexLoadPromise) return katexLoadPromise;
+  
+  katexLoadPromise = import('katex').then((module) => {
+    katex = module.default || module;
+    return katex;
+  });
+  
+  return katexLoadPromise;
+}
+
+// Try to load KaTeX immediately
+loadKatex().catch(() => {});
+
+/**
+ * Parse inline markdown formatting in text
+ * Returns HTML string with rendered formatting
+ */
+function parseInlineMarkdown(text: string): string {
+  let result = text;
+  
+  // Escape HTML first
+  result = result
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  
+  // Bold italic: ***text*** or ___text___
+  result = result.replace(/(\*\*\*|___)(.+?)\1/g, '<strong><em>$2</em></strong>');
+  
+  // Bold: **text** or __text__
+  result = result.replace(/(\*\*|__)(.+?)\1/g, '<strong>$2</strong>');
+  
+  // Italic: *text* or _text_ (avoid matching inside bold)
+  result = result.replace(/(?<![*_])([*_])(?![*_])(.+?)(?<![*_])\1(?![*_])/g, '<em>$2</em>');
+  
+  // Strikethrough: ~~text~~
+  result = result.replace(/~~(.+?)~~/g, '<del>$1</del>');
+  
+  // Highlight: ==text==
+  result = result.replace(/==(.+?)==/g, '<mark>$1</mark>');
+  
+  // Inline code: `code`
+  result = result.replace(/(?<!`)`(?!`)([^`]+)`(?!`)/g, '<code>$1</code>');
+  
+  // Inline math: $formula$ (render as KaTeX if available)
+  result = result.replace(/\$([^$\n]+)\$/g, (match, formula) => {
+    try {
+      if (katex) {
+        return katex.renderToString(formula, { throwOnError: false, displayMode: false });
+      }
+      // Fallback: show formula in styled span
+      return `<span class="cm-math-inline-table">$${formula}$</span>`;
+    } catch {
+      return `<span class="cm-math-inline-table">$${formula}$</span>`;
+    }
+  });
+  
+  // Wiki links: [[target]] or [[target|alias]]
+  result = result.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (match, target, alias) => {
+    const displayText = alias || target;
+    return `<a class="cm-wiki-link-table" href="#" data-target="${target}">${displayText}</a>`;
+  });
+  
+  // Regular links: [text](url)
+  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a class="cm-link-table" href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  
+  return result;
+}
+
 /**
  * Table widget for rendered tables with auto column width
+ * Now supports inline markdown formatting in cells
  */
 class TableWidget extends WidgetType {
   constructor(
@@ -45,7 +121,9 @@ class TableWidget extends WidgetType {
         return;
       }
       row.forEach((cell, colIndex) => {
-        const cellLen = cell.trim().length;
+        // Use plain text length for width calculation
+        const plainText = cell.trim().replace(/\*\*|__|~~|==|`|\[\[|\]\]|\[|\]|\(|\)/g, '');
+        const cellLen = plainText.length;
         colWidths[colIndex] = Math.max(colWidths[colIndex], cellLen);
       });
     });
@@ -74,11 +152,30 @@ class TableWidget extends WidgetType {
         const cellEl = document.createElement(
           this.hasHeader && rowIndex === 0 ? 'th' : 'td'
         );
-        cellEl.textContent = cell.trim();
+        // Parse and render inline markdown in cell content
+        const cellContent = cell.trim();
+        cellEl.innerHTML = parseInlineMarkdown(cellContent);
         tr.appendChild(cellEl);
       });
       
       table.appendChild(tr);
+    });
+    
+    // Add click handler for wiki links in table
+    table.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      if (target.classList.contains('cm-wiki-link-table')) {
+        e.preventDefault();
+        e.stopPropagation();
+        const linkTarget = target.dataset.target;
+        if (linkTarget) {
+          // Dispatch wiki link click event
+          table.dispatchEvent(new CustomEvent('wiki-link-click', {
+            detail: { target: linkTarget },
+            bubbles: true,
+          }));
+        }
+      }
     });
     
     return table;
