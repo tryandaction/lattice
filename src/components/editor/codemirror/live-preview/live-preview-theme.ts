@@ -77,9 +77,9 @@ export const livePreviewTheme = EditorView.theme({
     outline: 'none',
   },
   
-  // Active line
+  // Active line - Obsidian-style subtle blue highlight
   '.cm-activeLine': {
-    backgroundColor: `${colors.selection}20`,
+    backgroundColor: 'rgba(59, 130, 246, 0.08)',
   },
   
   // Selection
@@ -143,8 +143,10 @@ export const livePreviewTheme = EditorView.theme({
     textDecoration: 'underline',
     textDecorationColor: `${colors.primary}60`,
     cursor: 'pointer',
+    transition: 'text-decoration-color 150ms ease, color 150ms ease',
     '&:hover': {
       textDecorationColor: colors.primary,
+      color: `${colors.primary}`,
     },
   },
   
@@ -155,14 +157,41 @@ export const livePreviewTheme = EditorView.theme({
     borderRadius: '4px',
     cursor: 'pointer',
     textDecoration: 'none',
+    transition: 'background-color 150ms ease, color 150ms ease',
     '&:hover': {
       backgroundColor: `${colors.accent}25`,
+      color: colors.accent,
     },
   },
   
   '.cm-wiki-link.broken': {
     color: colors.destructive,
     textDecoration: 'line-through',
+  },
+  
+  // === Annotation Links ===
+  
+  '.cm-annotation-link': {
+    color: '#f59e0b',  // Amber color for annotations
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    padding: '1px 6px',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    textDecoration: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '2px',
+    transition: 'background-color 150ms ease, color 150ms ease, transform 150ms ease',
+    '&:hover': {
+      backgroundColor: 'rgba(245, 158, 11, 0.25)',
+      color: '#d97706',
+      transform: 'translateY(-1px)',
+    },
+  },
+  
+  '.cm-annotation-link-icon': {
+    fontSize: '0.85em',
+    lineHeight: '1',
   },
   
   // === Headings ===
@@ -329,15 +358,41 @@ export const livePreviewTheme = EditorView.theme({
     backgroundColor: 'transparent',
     color: colors.mutedForeground,
     cursor: 'pointer',
+    transition: 'background-color 150ms ease, color 150ms ease',
     '&:hover': {
       backgroundColor: colors.border,
+      color: colors.foreground,
     },
+  },
+  
+  '.cm-code-block-wrapper': {
+    display: 'flex',
+    overflow: 'auto',
+  },
+  
+  '.cm-code-block-line-numbers': {
+    display: 'flex',
+    flexDirection: 'column',
+    padding: '12px 0',
+    backgroundColor: `${colors.border}30`,
+    borderRight: `1px solid ${colors.border}`,
+    userSelect: 'none',
+  },
+  
+  '.cm-code-block-line-number': {
+    padding: '0 12px',
+    fontSize: '14px',
+    lineHeight: '1.5',
+    color: colors.mutedForeground,
+    textAlign: 'right',
+    minWidth: '32px',
   },
   
   '.cm-code-block-pre': {
     margin: '0',
     padding: '12px 16px',
     overflow: 'auto',
+    flex: '1',
   },
   
   '.cm-code-block-code': {
@@ -374,6 +429,30 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-math-error': {
     color: colors.destructive,
     fontStyle: 'italic',
+    border: `1px solid ${colors.destructive}`,
+    borderRadius: '4px',
+    padding: '2px 6px',
+    backgroundColor: `${colors.destructive}10`,
+    fontFamily: '"JetBrains Mono", monospace',
+    fontSize: '0.9em',
+  },
+  
+  '.cm-math-error-wrapper': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+  },
+  
+  '.cm-math-error-indicator': {
+    color: colors.destructive,
+    fontSize: '0.9em',
+    cursor: 'help',
+  },
+  
+  '.cm-math-error-source': {
+    fontFamily: '"JetBrains Mono", monospace',
+    fontSize: '0.9em',
+    color: colors.mutedForeground,
   },
   
   '.cm-math-loading': {
@@ -433,6 +512,11 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-image-container': {
     display: 'inline-block',
     maxWidth: '100%',
+    cursor: 'pointer',
+    transition: 'transform 150ms ease',
+    '&:hover': {
+      transform: 'scale(1.01)',
+    },
   },
   
   '.cm-image': {
@@ -440,6 +524,11 @@ export const livePreviewTheme = EditorView.theme({
     height: 'auto',
     borderRadius: '8px',
     boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+    transition: 'box-shadow 150ms ease',
+  },
+  
+  '.cm-image-container:hover .cm-image': {
+    boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
   },
   
   '.cm-image-error': {
@@ -448,6 +537,7 @@ export const livePreviewTheme = EditorView.theme({
     padding: '8px',
     backgroundColor: `${colors.destructive}10`,
     borderRadius: '4px',
+    border: `1px dashed ${colors.destructive}40`,
   },
   
   // === Folding ===
@@ -475,6 +565,22 @@ export const livePreviewTheme = EditorView.theme({
   
   '.cm-hidden-syntax': {
     display: 'none',
+  },
+  
+  // === Syntax Transitions (Obsidian-like smooth reveal/hide) ===
+  
+  '.cm-syntax-transition': {
+    transition: 'opacity 150ms ease-out, transform 150ms ease-out',
+  },
+  
+  '.cm-formatted-widget': {
+    cursor: 'text',
+  },
+  
+  // Source mode syntax markers (shown when editing)
+  '.cm-bold-source, .cm-italic-source, .cm-bolditalic-source, .cm-strikethrough-source, .cm-highlight-source, .cm-code-source': {
+    color: 'var(--muted-foreground, #6b7280)',
+    opacity: '0.6',
   },
   
   // === Search ===

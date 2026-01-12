@@ -5,7 +5,8 @@
       "Bash(npx tsc:*)",
       "Bash(npm run lint:*)",
       "Bash(grep:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(wc -l \"c:\\\\universe\\\\software development\\\\Lattice\\\\src\"/**/*.{ts,tsx,js,jsx})"
     ]
   }
 }

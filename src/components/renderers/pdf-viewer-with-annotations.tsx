@@ -2,19 +2,20 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
-import { ZoomIn, ZoomOut, Loader2, PanelLeftOpen, PanelLeftClose, Type, Highlighter, Square } from "lucide-react";
+import { ZoomIn, ZoomOut, Loader2, PanelLeftOpen, PanelLeftClose, Type, Highlighter, Square, Download } from "lucide-react";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 
 import { AnnotationLayer } from "./annotation-layer";
 import { AnnotationColorPicker } from "./annotation-color-picker";
 import { AnnotationCommentPopup, AnnotationCommentTooltip } from "./annotation-comment-popup";
 import { AnnotationSidebar } from "./annotation-sidebar";
+import { AnnotationExportDialog } from "./annotation-export-dialog";
 import { TextAnnotationPicker, type TextAnnotationData } from "./text-annotation-picker";
 import { TextAnnotationEditor, type TextAnnotationEditData } from "./text-annotation-editor";
 import { usePdfAnnotation, type TextNoteData } from "../../hooks/use-pdf-annotation";
 import { useAnnotationStore, deriveFileId } from "../../stores/annotation-store";
 import { useAnnotationNavigation } from "../../hooks/use-annotation-navigation";
-import type { LatticeAnnotation, AnnotationColor } from "../../types/annotation";
+import type { LatticeAnnotation, AnnotationColor, AnnotationFile } from "../../types/annotation";
 import { denormalizePosition } from "../../lib/annotation-coordinates";
 
 // Configure PDF.js worker
@@ -79,6 +80,7 @@ export function PDFViewerWithAnnotations({
   
   // UI state
   const [showSidebar, setShowSidebar] = useState(false);
+  const [showExportDialog, setShowExportDialog] = useState(false);
   const [selectedAnnotation, setSelectedAnnotation] = useState<LatticeAnnotation | null>(null);
   const [hoveredAnnotation, setHoveredAnnotation] = useState<LatticeAnnotation | null>(null);
   const [hoverPosition, setHoverPosition] = useState<{ x: number; y: number } | null>(null);
@@ -115,6 +117,14 @@ export function PDFViewerWithAnnotations({
   const fileAnnotations = useMemo(() => {
     return annotations.get(fileId) ?? [];
   }, [annotations, fileId]);
+
+  // Create AnnotationFile object for export
+  const annotationFileForExport = useMemo<AnnotationFile>(() => ({
+    version: 1,
+    fileId,
+    annotations: fileAnnotations,
+    lastModified: Date.now(),
+  }), [fileId, fileAnnotations]);
 
   // PDF annotation hook
   const {
@@ -547,6 +557,16 @@ export function PDFViewerWithAnnotations({
                 <PanelLeftOpen className="h-4 w-4" />
               )}
             </button>
+
+            {/* Export button */}
+            <button
+              onClick={() => setShowExportDialog(true)}
+              className="rounded p-1 hover:bg-muted"
+              title={`导出批注 (${fileAnnotations.length})`}
+              disabled={fileAnnotations.length === 0}
+            >
+              <Download className="h-4 w-4" />
+            </button>
           </div>
         </div>
 
@@ -691,6 +711,13 @@ export function PDFViewerWithAnnotations({
           onClose={handleTextNoteEditorClose}
         />
       )}
+
+      {/* Export Dialog */}
+      <AnnotationExportDialog
+        annotationFile={annotationFileForExport}
+        isOpen={showExportDialog}
+        onClose={() => setShowExportDialog(false)}
+      />
     </div>
   );
 }

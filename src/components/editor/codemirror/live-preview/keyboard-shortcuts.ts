@@ -2,7 +2,7 @@
  * Keyboard Shortcuts for Live Preview Editor
  * Comprehensive shortcuts for markdown editing
  * 
- * Requirements: 10.1-10.12
+ * Requirements: 10.1-10.12, 7.4 (math shortcuts)
  */
 
 import { keymap } from '@codemirror/view';
@@ -16,7 +16,6 @@ function toggleWrapper(wrapper: string): Command {
   return (view) => {
     const { state } = view;
     const changes = state.changeByRange((range) => {
-      const text = state.sliceDoc(range.from, range.to);
       const wrapperLen = wrapper.length;
       
       // Check if already wrapped
@@ -102,6 +101,115 @@ const insertInlineMath: Command = (view) => {
 };
 
 /**
+ * Insert block math
+ */
+const insertBlockMath: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+  const line = state.doc.lineAt(selection.head);
+  
+  const insert = '\n$$\n\n$$\n';
+  
+  view.dispatch({
+    changes: { from: line.to, insert },
+    selection: EditorSelection.cursor(line.to + 4), // Position inside math block
+  });
+  
+  return true;
+};
+
+/**
+ * Insert fraction (\\frac{}{})
+ */
+const insertFraction: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+  const selectedText = state.sliceDoc(selection.from, selection.to);
+  
+  const numerator = selectedText || '';
+  const insert = `\\frac{${numerator}}{}`;
+  
+  view.dispatch({
+    changes: { from: selection.from, to: selection.to, insert },
+    selection: EditorSelection.cursor(
+      selection.from + 6 + numerator.length + 2 // Position in denominator
+    ),
+  });
+  
+  return true;
+};
+
+/**
+ * Insert square root (\\sqrt{})
+ */
+const insertSquareRoot: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+  const selectedText = state.sliceDoc(selection.from, selection.to);
+  
+  const content = selectedText || '';
+  const insert = `\\sqrt{${content}}`;
+  
+  view.dispatch({
+    changes: { from: selection.from, to: selection.to, insert },
+    selection: EditorSelection.cursor(selection.from + 6 + content.length),
+  });
+  
+  return true;
+};
+
+/**
+ * Insert summation (\\sum_{i=1}^{n})
+ */
+const insertSum: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+  
+  const insert = '\\sum_{i=1}^{n}';
+  
+  view.dispatch({
+    changes: { from: selection.from, to: selection.to, insert },
+    selection: EditorSelection.cursor(selection.from + insert.length),
+  });
+  
+  return true;
+};
+
+/**
+ * Insert integral (\\int_{a}^{b})
+ */
+const insertIntegral: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+  
+  const insert = '\\int_{a}^{b}';
+  
+  view.dispatch({
+    changes: { from: selection.from, to: selection.to, insert },
+    selection: EditorSelection.cursor(selection.from + insert.length),
+  });
+  
+  return true;
+};
+
+/**
+ * Insert limit (\\lim_{x \\to })
+ */
+const insertLimit: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+  
+  const insert = '\\lim_{x \\to }';
+  
+  view.dispatch({
+    changes: { from: selection.from, to: selection.to, insert },
+    selection: EditorSelection.cursor(selection.from + insert.length - 1),
+  });
+  
+  return true;
+};
+
+/**
  * Insert code block
  */
 const insertCodeBlock: Command = (view) => {
@@ -118,6 +226,7 @@ const insertCodeBlock: Command = (view) => {
   
   return true;
 };
+
 
 /**
  * Move line up
@@ -193,19 +302,19 @@ const duplicateLine: Command = (view) => {
 const toggleComment: Command = (view) => {
   const { state } = view;
   const selection = state.selection.main;
-  const text = state.sliceDoc(selection.from, selection.to);
+  const selectedText = state.sliceDoc(selection.from, selection.to);
   
   // Check if already commented
-  if (text.startsWith('<!--') && text.endsWith('-->')) {
+  if (selectedText.startsWith('<!--') && selectedText.endsWith('-->')) {
     // Remove comment
-    const uncommented = text.slice(4, -3);
+    const uncommented = selectedText.slice(4, -3);
     view.dispatch({
       changes: { from: selection.from, to: selection.to, insert: uncommented },
     });
   } else {
     // Add comment
     view.dispatch({
-      changes: { from: selection.from, to: selection.to, insert: `<!--${text}-->` },
+      changes: { from: selection.from, to: selection.to, insert: `<!--${selectedText}-->` },
     });
   }
   
@@ -291,8 +400,13 @@ export const markdownKeymap = keymap.of([
   
   // Links and media
   { key: 'Ctrl-k', mac: 'Cmd-k', run: insertLink },
-  { key: 'Ctrl-Shift-m', mac: 'Cmd-Shift-m', run: insertInlineMath },
   { key: 'Ctrl-Shift-`', run: insertCodeBlock },
+  
+  // Math shortcuts
+  { key: 'Ctrl-Shift-m', mac: 'Cmd-Shift-m', run: insertInlineMath },
+  { key: 'Ctrl-Alt-m', mac: 'Cmd-Alt-m', run: insertBlockMath },
+  { key: 'Ctrl-Shift-f', mac: 'Cmd-Shift-f', run: insertFraction },
+  { key: 'Ctrl-Shift-r', mac: 'Cmd-Shift-r', run: insertSquareRoot },
   
   // Line operations
   { key: 'Alt-ArrowUp', run: moveLineUp },
@@ -305,3 +419,14 @@ export const markdownKeymap = keymap.of([
   { key: 'Ctrl-]', mac: 'Cmd-]', run: indentMore },
   { key: 'Ctrl-[', mac: 'Cmd-[', run: indentLess },
 ]);
+
+// Export individual commands for use elsewhere
+export {
+  insertInlineMath,
+  insertBlockMath,
+  insertFraction,
+  insertSquareRoot,
+  insertSum,
+  insertIntegral,
+  insertLimit,
+};

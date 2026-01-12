@@ -86,6 +86,40 @@ const _HUD_WIDTH = 480;  // Approximate width of the keyboard HUD (reserved for 
 const HUD_MARGIN = 20;  // Margin between cursor and HUD (reduced for better positioning)
 const VIEWPORT_PADDING = 20; // Padding from viewport edges
 const BOTTOM_THRESHOLD = 0.55; // If cursor is below this % of viewport, show HUD on top
+const POSITION_STORAGE_KEY = 'lattice-quantum-keyboard-position';
+
+// ============================================================================
+// Position Persistence Helpers
+// ============================================================================
+
+function loadSavedPosition(): HUDCoordinates | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const saved = localStorage.getItem(POSITION_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+        return parsed;
+      }
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return null;
+}
+
+function savePosition(offset: HUDCoordinates | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (offset) {
+      localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(offset));
+    } else {
+      localStorage.removeItem(POSITION_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 
 // ============================================================================
@@ -126,7 +160,7 @@ export const useHUDStore = create<HUDState>((set, get) => ({
   
   // Position state
   position: 'auto',
-  customOffset: null,
+  customOffset: loadSavedPosition(),  // Load saved position on init
   isDragging: false,
   cursorPosition: null,
   
@@ -242,6 +276,8 @@ export const useHUDStore = create<HUDState>((set, get) => ({
   
   setCustomOffset: (offset: HUDCoordinates | null) => {
     set({ customOffset: offset });
+    // Persist position to localStorage for memory across sessions
+    savePosition(offset);
   },
   
   setIsDragging: (isDragging: boolean) => {
@@ -268,6 +304,8 @@ export const useHUDStore = create<HUDState>((set, get) => ({
   
   resetPosition: () => {
     set({ position: 'auto', customOffset: null });
+    // Clear saved position
+    savePosition(null);
   },
   
   // Utility methods

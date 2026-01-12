@@ -5,6 +5,58 @@ All notable changes to Lattice will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-01-12
+
+### Added
+
+#### 📝 Live Preview 编辑器增强 (Obsidian 级别体验)
+- ✨ **智能光标定位**：点击渲染内容时精确定位到源码位置
+- ✨ **嵌套格式支持**：支持 `***粗斜体***` 和嵌套格式解析
+- ✨ **语法过渡动画**：150ms 淡入淡出动画，平滑切换编辑/预览
+- ✨ **活动行高亮**：Obsidian 风格的淡蓝色当前行高亮
+- ✨ **代码块增强**：行号显示、语法高亮、复制按钮
+- ✨ **表格编辑优化**：Tab 导航、自动列宽调整
+- ✨ **数学公式错误处理**：语法错误时显示指示但保留源码
+
+#### 📌 批注系统增强 (Zotero 级别体验)
+- ✨ **批注搜索筛选**：按颜色、类型、关键词筛选批注
+- ✨ **批注导出功能**：支持 Markdown、纯文本、JSON 格式导出
+- ✨ **分组导出选项**：按页码、颜色、类型分组
+- ✨ **单条批注复制**：一键复制批注到剪贴板
+- ✨ **批注引用语法**：支持 `[[file.pdf#ann-uuid]]` 语法链接到批注
+- ✨ **批注反向链接**：追踪笔记中的批注引用关系
+
+#### ⌨️ 量子键盘优化
+- ✨ **位置记忆**：记住用户拖动后的位置，下次打开时恢复
+- ✨ **智能定位**：自动检测输入区域，定位到不遮挡的位置
+- ✨ **活动 math-field 指示**：高亮当前活动的数学输入框
+
+#### 🎨 主题和样式
+- ✨ **批注链接样式**：琥珀色高亮的批注引用链接
+- ✨ **数学错误样式**：增强的错误显示，包含错误指示器
+
+### Changed
+
+- 🔧 优化装饰器更新性能，添加防抖处理
+- 🔧 优化大文档处理，使用 CodeMirror 内置虚拟化
+- 🔧 优化渲染性能，添加行解析缓存
+
+### Technical Details
+
+#### 新增文件
+- `src/lib/annotation-export.ts` - 批注导出工具
+- `src/lib/annotation-backlinks.ts` - 批注反向链接服务
+- `src/components/editor/codemirror/live-preview/types.ts` - 添加 `annotationlink` 类型
+
+#### 更新文件
+- `src/components/renderers/pdf-annotation-sidebar.tsx` - 添加搜索筛选功能
+- `src/components/renderers/annotation-export-dialog.tsx` - 使用新的导出 API
+- `src/components/editor/codemirror/live-preview/inline-decoration-plugin.ts` - 添加批注链接解析
+- `src/components/editor/codemirror/live-preview/live-preview-theme.ts` - 添加批注链接样式
+- `src/stores/hud-store.ts` - 添加位置持久化
+
+---
+
 ## [0.2.0] - 2026-01-04
 
 ### Added
@@ -196,5 +248,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[0.3.0]: https://github.com/tryandaction/lattice/releases/tag/v0.3.0
 [0.2.0]: https://github.com/tryandaction/lattice/releases/tag/v0.2.0
 [0.1.0]: https://github.com/tryandaction/lattice/releases/tag/v0.1.0

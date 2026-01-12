@@ -33,6 +33,9 @@ import {
   Square as SquareIcon,
   X,
   Download,
+  Search,
+  Filter,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HIGHLIGHT_COLORS, BACKGROUND_COLORS, TEXT_COLORS, TEXT_FONT_SIZES, DEFAULT_TEXT_STYLE } from "@/lib/annotation-colors";
@@ -225,6 +228,181 @@ function BatchSelectionToolbar({
         >
           <X className="h-3 w-3" />
         </Button>
+      </div>
+    </div>
+  );
+}
+
+// Search and filter toolbar component
+type AnnotationTypeFilter = 'all' | 'highlight' | 'underline' | 'area' | 'ink' | 'text';
+type ColorFilter = 'all' | string;
+
+function SearchFilterToolbar({
+  searchQuery,
+  onSearchChange,
+  typeFilter,
+  onTypeFilterChange,
+  colorFilter,
+  onColorFilterChange,
+  resultCount,
+  totalCount,
+}: {
+  searchQuery: string;
+  onSearchChange: (query: string) => void;
+  typeFilter: AnnotationTypeFilter;
+  onTypeFilterChange: (type: AnnotationTypeFilter) => void;
+  colorFilter: ColorFilter;
+  onColorFilterChange: (color: ColorFilter) => void;
+  resultCount: number;
+  totalCount: number;
+}) {
+  const [showFilters, setShowFilters] = useState(false);
+  const filterRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
+        setShowFilters(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const hasActiveFilters = typeFilter !== 'all' || colorFilter !== 'all' || searchQuery.length > 0;
+
+  const typeOptions: { value: AnnotationTypeFilter; label: string; icon: React.ReactNode }[] = [
+    { value: 'all', label: '全部类型', icon: null },
+    { value: 'highlight', label: '高亮', icon: <Highlighter className="h-3 w-3" /> },
+    { value: 'underline', label: '下划线', icon: <Underline className="h-3 w-3" /> },
+    { value: 'area', label: '区域', icon: <Square className="h-3 w-3" /> },
+    { value: 'ink', label: '手绘', icon: <Pencil className="h-3 w-3" /> },
+    { value: 'text', label: '文字', icon: <Type className="h-3 w-3" /> },
+  ];
+
+  return (
+    <div className="px-2 py-2 border-b border-border space-y-2">
+      {/* Search input */}
+      <div className="relative">
+        <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="搜索批注内容..."
+          className="w-full h-7 pl-7 pr-7 text-xs bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => onSearchChange('')}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+
+      {/* Filter button and dropdown */}
+      <div className="flex items-center gap-2">
+        <div className="relative" ref={filterRef}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn(
+              "h-6 text-xs px-2",
+              hasActiveFilters && "text-primary"
+            )}
+            onClick={() => setShowFilters(!showFilters)}
+          >
+            <Filter className="h-3 w-3 mr-1" />
+            筛选
+            {hasActiveFilters && (
+              <span className="ml-1 bg-primary text-primary-foreground rounded-full w-4 h-4 text-[10px] flex items-center justify-center">
+                {(typeFilter !== 'all' ? 1 : 0) + (colorFilter !== 'all' ? 1 : 0)}
+              </span>
+            )}
+            <ChevronDown className="h-3 w-3 ml-1" />
+          </Button>
+
+          {showFilters && (
+            <div className="absolute top-full left-0 mt-1 bg-popover border border-border rounded-lg shadow-lg p-3 z-20 min-w-[200px]">
+              {/* Type filter */}
+              <div className="mb-3">
+                <div className="text-xs font-medium mb-1.5">类型</div>
+                <div className="flex flex-wrap gap-1">
+                  {typeOptions.map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => onTypeFilterChange(opt.value)}
+                      className={cn(
+                        "px-2 py-1 text-xs rounded-md border transition-colors flex items-center gap-1",
+                        typeFilter === opt.value
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border hover:border-primary/50"
+                      )}
+                    >
+                      {opt.icon}
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Color filter */}
+              <div>
+                <div className="text-xs font-medium mb-1.5">颜色</div>
+                <div className="flex flex-wrap gap-1">
+                  <button
+                    onClick={() => onColorFilterChange('all')}
+                    className={cn(
+                      "px-2 py-1 text-xs rounded-md border transition-colors",
+                      colorFilter === 'all'
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border hover:border-primary/50"
+                    )}
+                  >
+                    全部
+                  </button>
+                  {HIGHLIGHT_COLORS.map((color) => (
+                    <button
+                      key={color.value}
+                      onClick={() => onColorFilterChange(color.hex)}
+                      className={cn(
+                        "w-6 h-6 rounded-full border-2 transition-all hover:scale-110",
+                        colorFilter === color.hex
+                          ? "border-foreground ring-1 ring-foreground ring-offset-1"
+                          : "border-transparent hover:border-foreground/30"
+                      )}
+                      style={{ backgroundColor: color.hex }}
+                      title={color.nameCN}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Clear filters */}
+              {hasActiveFilters && (
+                <button
+                  onClick={() => {
+                    onTypeFilterChange('all');
+                    onColorFilterChange('all');
+                    onSearchChange('');
+                  }}
+                  className="mt-3 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  清除所有筛选
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Result count */}
+        {hasActiveFilters && (
+          <span className="text-xs text-muted-foreground">
+            {resultCount}/{totalCount} 条结果
+          </span>
+        )}
       </div>
     </div>
   );
@@ -857,10 +1035,40 @@ export function PdfAnnotationSidebar({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const isMultiSelectMode = selectedIds.size > 0;
 
+  // Search and filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState<AnnotationTypeFilter>('all');
+  const [colorFilter, setColorFilter] = useState<ColorFilter>('all');
+
+  // Filter and sort annotations
+  const filteredAnnotations = useMemo(() => {
+    return annotations
+      .filter(a => a.target.type === 'pdf')
+      .filter(a => {
+        // Type filter
+        if (typeFilter !== 'all' && a.style.type !== typeFilter) {
+          return false;
+        }
+        // Color filter
+        if (colorFilter !== 'all' && a.style.color !== colorFilter) {
+          return false;
+        }
+        // Search filter
+        if (searchQuery.trim()) {
+          const query = searchQuery.toLowerCase();
+          const content = (a.content || '').toLowerCase();
+          const comment = (a.comment || '').toLowerCase();
+          if (!content.includes(query) && !comment.includes(query)) {
+            return false;
+          }
+        }
+        return true;
+      });
+  }, [annotations, typeFilter, colorFilter, searchQuery]);
+
   // Sort annotations by page, then by position (top to bottom)
   const sortedAnnotations = useMemo(() => {
-    return [...annotations]
-      .filter(a => a.target.type === 'pdf')
+    return [...filteredAnnotations]
       .sort((a, b) => {
         const pageA = (a.target as PdfTarget).page;
         const pageB = (b.target as PdfTarget).page;
@@ -874,7 +1082,7 @@ export function PdfAnnotationSidebar({
         }
         return a.createdAt - b.createdAt;
       });
-  }, [annotations]);
+  }, [filteredAnnotations]);
 
   // Multi-select handlers
   const toggleSelection = useCallback((id: string) => {
@@ -977,6 +1185,18 @@ export function PdfAnnotationSidebar({
         </div>
       </div>
 
+      {/* Search and filter toolbar */}
+      <SearchFilterToolbar
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        typeFilter={typeFilter}
+        onTypeFilterChange={setTypeFilter}
+        colorFilter={colorFilter}
+        onColorFilterChange={setColorFilter}
+        resultCount={sortedAnnotations.length}
+        totalCount={annotations.filter(a => a.target.type === 'pdf').length}
+      />
+
       {/* Batch selection toolbar */}
       <BatchSelectionToolbar
         selectedCount={selectedIds.size}
@@ -990,24 +1210,35 @@ export function PdfAnnotationSidebar({
       
       {/* Annotation list */}
       <div className="flex-1 overflow-auto">
-        <div className="divide-y divide-border">
-          {sortedAnnotations.map(ann => (
-            <AnnotationCard
-              key={ann.id}
-              annotation={ann}
-              isSelected={selectedId === ann.id}
-              isMultiSelected={selectedIds.has(ann.id)}
-              isMultiSelectMode={isMultiSelectMode}
-              onSelect={() => onSelect(ann)}
-              onToggleMultiSelect={() => toggleSelection(ann.id)}
-              onDelete={() => onDelete(ann.id)}
-              onUpdateColor={onUpdateColor ? (color) => onUpdateColor(ann.id, color) : undefined}
-              onUpdateComment={onUpdateComment ? (comment) => onUpdateComment(ann.id, comment) : undefined}
-              onConvertToUnderline={onConvertToUnderline ? () => onConvertToUnderline(ann.id) : undefined}
-              onUpdateTextStyle={onUpdateTextStyle ? (textColor, fontSize, bgColor) => onUpdateTextStyle(ann.id, textColor, fontSize, bgColor) : undefined}
-            />
-          ))}
-        </div>
+        {sortedAnnotations.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-32 p-4 text-center">
+            <Search className="h-6 w-6 text-muted-foreground mb-2" />
+            <p className="text-xs text-muted-foreground">
+              {searchQuery || typeFilter !== 'all' || colorFilter !== 'all'
+                ? '没有匹配的批注'
+                : '暂无批注'}
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {sortedAnnotations.map(ann => (
+              <AnnotationCard
+                key={ann.id}
+                annotation={ann}
+                isSelected={selectedId === ann.id}
+                isMultiSelected={selectedIds.has(ann.id)}
+                isMultiSelectMode={isMultiSelectMode}
+                onSelect={() => onSelect(ann)}
+                onToggleMultiSelect={() => toggleSelection(ann.id)}
+                onDelete={() => onDelete(ann.id)}
+                onUpdateColor={onUpdateColor ? (color) => onUpdateColor(ann.id, color) : undefined}
+                onUpdateComment={onUpdateComment ? (comment) => onUpdateComment(ann.id, comment) : undefined}
+                onConvertToUnderline={onConvertToUnderline ? () => onConvertToUnderline(ann.id) : undefined}
+                onUpdateTextStyle={onUpdateTextStyle ? (textColor, fontSize, bgColor) => onUpdateTextStyle(ann.id, textColor, fontSize, bgColor) : undefined}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -3597,3 +3597,124 @@ math-field.quantum-keyboard-active {
   text-decoration: line-through;
   opacity: 0.7;
 }
+
+
+/* ============================================================================
+   Live Preview Syntax Transition Animations (Obsidian-like)
+   Requirements: 2.5, 2.6, 2.7
+   ============================================================================ */
+
+/* Syntax reveal animation - when cursor enters a formatted region */
+@keyframes syntaxReveal {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Syntax hide animation - when cursor leaves a formatted region */
+@keyframes syntaxHide {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+
+/* Base transition class for all formatted widgets */
+.cm-formatted-widget {
+  cursor: text;
+}
+
+/* Syntax transition for smooth reveal/hide */
+.cm-syntax-transition {
+  transition: opacity 150ms ease-out, transform 150ms ease-out;
+}
+
+/* Revealing animation class */
+.cm-syntax-revealing {
+  animation: syntaxReveal 150ms ease-out forwards;
+}
+
+/* Hiding animation class */
+.cm-syntax-hiding {
+  animation: syntaxHide 150ms ease-out forwards;
+}
+
+/* Source mode syntax markers - shown when editing, styled subtly */
+.cm-bold-source,
+.cm-italic-source,
+.cm-bolditalic-source,
+.cm-strikethrough-source,
+.cm-highlight-source,
+.cm-code-source,
+.cm-link-source,
+.cm-wikilink-source,
+.cm-image-source {
+  color: hsl(var(--muted-foreground));
+  opacity: 0.6;
+  transition: opacity 150ms ease-out;
+}
+
+/* Hover effect for source mode markers */
+.cm-bold-source:hover,
+.cm-italic-source:hover,
+.cm-bolditalic-source:hover,
+.cm-strikethrough-source:hover,
+.cm-highlight-source:hover,
+.cm-code-source:hover {
+  opacity: 0.8;
+}
+
+/* Active line highlight - Obsidian style */
+.cm-activeLine {
+  background-color: hsl(var(--primary) / 0.05) !important;
+}
+
+/* Current editing region subtle highlight */
+.cm-editing-region {
+  background-color: hsl(var(--primary) / 0.03);
+  border-radius: 2px;
+}
+
+/* Link hover effects */
+.cm-link:hover,
+.cm-wiki-link:hover {
+  text-decoration-color: currentColor;
+  cursor: pointer;
+}
+
+/* Image hover effects */
+.cm-image-container:hover .cm-image {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Math error display - red border and error message */
+.cm-math-error {
+  border: 1px solid hsl(var(--destructive));
+  border-radius: 4px;
+  padding: 2px 4px;
+  background-color: hsl(var(--destructive) / 0.1);
+  color: hsl(var(--destructive));
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+}
+
+/* Code block editing state */
+.cm-code-block-editing {
+  background-color: hsl(var(--muted) / 0.8);
+  border: 1px solid hsl(var(--border));
+}
+
+/* Table editing state */
+.cm-table-editing {
+  outline: 2px solid hsl(var(--primary) / 0.3);
+  outline-offset: 2px;
+}

@@ -16,7 +16,7 @@ import { RangeSetBuilder, EditorSelection, StateField, EditorState } from '@code
 import { shouldRevealLine } from './cursor-context-plugin';
 
 /**
- * Table widget for rendered tables
+ * Table widget for rendered tables with auto column width
  */
 class TableWidget extends WidgetType {
   constructor(
@@ -34,7 +34,40 @@ class TableWidget extends WidgetType {
     const table = document.createElement('table');
     table.className = 'cm-table-widget';
     
+    // Calculate column widths based on content
+    const colCount = Math.max(...this.rows.map(r => r.length));
+    const colWidths: number[] = new Array(colCount).fill(0);
+    
+    // Measure max content width for each column
     this.rows.forEach((row, rowIndex) => {
+      // Skip separator row
+      if (rowIndex === 1 && this.hasHeader && row.every(c => /^[-:]+$/.test(c.trim()))) {
+        return;
+      }
+      row.forEach((cell, colIndex) => {
+        const cellLen = cell.trim().length;
+        colWidths[colIndex] = Math.max(colWidths[colIndex], cellLen);
+      });
+    });
+    
+    // Create colgroup for column widths
+    const colgroup = document.createElement('colgroup');
+    const totalWidth = colWidths.reduce((a, b) => a + b, 0);
+    colWidths.forEach(width => {
+      const col = document.createElement('col');
+      // Set proportional width with minimum
+      const percentage = Math.max(10, (width / totalWidth) * 100);
+      col.style.width = `${percentage}%`;
+      colgroup.appendChild(col);
+    });
+    table.appendChild(colgroup);
+    
+    this.rows.forEach((row, rowIndex) => {
+      // Skip separator row
+      if (rowIndex === 1 && this.hasHeader && row.every(c => /^[-:]+$/.test(c.trim()))) {
+        return;
+      }
+      
       const tr = document.createElement('tr');
       
       row.forEach((cell) => {
@@ -44,11 +77,6 @@ class TableWidget extends WidgetType {
         cellEl.textContent = cell.trim();
         tr.appendChild(cellEl);
       });
-      
-      // Skip separator row
-      if (rowIndex === 1 && this.hasHeader && row.every(c => /^[-:]+$/.test(c.trim()))) {
-        return;
-      }
       
       table.appendChild(tr);
     });

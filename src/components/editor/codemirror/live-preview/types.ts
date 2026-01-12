@@ -46,7 +46,7 @@ export interface FoldState {
 }
 
 export interface MarkdownElement {
-  type: 'bold' | 'italic' | 'strikethrough' | 'highlight' | 'code' | 'link' | 'wikilink' | 'math' | 'image';
+  type: 'bold' | 'italic' | 'bolditalic' | 'strikethrough' | 'highlight' | 'code' | 'link' | 'wikilink' | 'annotationlink' | 'math' | 'image';
   from: number;
   to: number;
   syntaxFrom: number;

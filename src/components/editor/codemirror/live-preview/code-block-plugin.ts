@@ -57,18 +57,21 @@ interface DecorationEntry {
 }
 
 /**
- * Code block widget
+ * Code block widget with line numbers and syntax highlighting
  */
 class CodeBlockWidget extends WidgetType {
   constructor(
     private code: string,
-    private language: string
+    private language: string,
+    private showLineNumbers: boolean = true
   ) {
     super();
   }
   
   eq(other: CodeBlockWidget) {
-    return other.code === this.code && other.language === this.language;
+    return other.code === this.code && 
+           other.language === this.language &&
+           other.showLineNumbers === this.showLineNumbers;
   }
   
   toDOM() {
@@ -101,6 +104,27 @@ class CodeBlockWidget extends WidgetType {
     header.appendChild(copyBtn);
     
     container.appendChild(header);
+    
+    // Code content wrapper (for line numbers + code)
+    const codeWrapper = document.createElement('div');
+    codeWrapper.className = 'cm-code-block-wrapper';
+    
+    const lines = this.code.split('\n');
+    
+    // Add line numbers if enabled
+    if (this.showLineNumbers && lines.length > 1) {
+      const lineNumbers = document.createElement('div');
+      lineNumbers.className = 'cm-code-block-line-numbers';
+      
+      for (let i = 1; i <= lines.length; i++) {
+        const lineNum = document.createElement('div');
+        lineNum.className = 'cm-code-block-line-number';
+        lineNum.textContent = String(i);
+        lineNumbers.appendChild(lineNum);
+      }
+      
+      codeWrapper.appendChild(lineNumbers);
+    }
     
     // Code content
     const pre = document.createElement('pre');
@@ -135,7 +159,8 @@ class CodeBlockWidget extends WidgetType {
     }
     
     pre.appendChild(code);
-    container.appendChild(pre);
+    codeWrapper.appendChild(pre);
+    container.appendChild(codeWrapper);
     
     return container;
   }
