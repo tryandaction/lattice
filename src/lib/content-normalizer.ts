@@ -1,9 +1,11 @@
 /**
  * Content Normalizer Utility
- * 
+ *
  * Normalizes scientific text content for consistent rendering.
- * Simplified version that doesn't break content.
+ * Includes auto-conversion from HTML to Markdown.
  */
+
+import { autoConvertToMarkdown } from './html-to-markdown';
 
 /**
  * LaTeX patterns that indicate mathematical content.
@@ -181,18 +183,22 @@ export function fixIncompleteDelimiters(content: string): string {
 
 /**
  * Main normalization function.
+ * Auto-converts HTML to Markdown if detected.
  */
 export function normalizeScientificText(rawContent: string): string {
   if (!rawContent || typeof rawContent !== 'string') return rawContent || '';
-  
+
   let result = rawContent;
-  
+
+  // Step 0: Auto-convert HTML to Markdown (for legacy files)
+  result = autoConvertToMarkdown(result);
+
   // Step 1: Normalize math delimiters (convert \(...\) to $...$, etc.)
   result = normalizeMathDelimiters(result);
-  
+
   // Step 2: Normalize table whitespace
   result = normalizeTableWhitespace(result);
-  
+
   return result;
 }
 

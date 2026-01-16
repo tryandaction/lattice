@@ -45,6 +45,7 @@ import { CodeBlockHighlight } from "./extensions/code-block-highlight";
 import { normalizeScientificText } from "@/lib/content-normalizer";
 import { registerTiptapEditor } from "@/components/hud/hud-provider";
 import { useHUDStore } from "@/stores/hud-store";
+import { getMarkdownFromEditor } from "@/lib/tiptap-markdown-serializer";
 
 /**
  * Props for AdvancedMarkdownEditor
@@ -466,10 +467,10 @@ export function AdvancedMarkdownEditor({
       if (isInternalUpdateRef.current) {
         return;
       }
-      // Get content as HTML for saving
-      const html = editor.getHTML();
-      lastSetContentRef.current = html;
-      onChange(html);
+      // Get content as Markdown for saving to .md files
+      const markdown = getMarkdownFromEditor(editor);
+      lastSetContentRef.current = markdown;
+      onChange(markdown);
     },
   });
 
