@@ -117,11 +117,7 @@ export const livePreviewTheme = EditorView.theme({
     marginTop: '0.25em',
   },
 
-  // Block spacing
-  '.cm-blockquote': {
-    marginTop: '0.5em',
-    marginBottom: '0.5em',
-  },
+  // Block spacing - blockquote styles are defined below in === Blockquotes === section
 
   // Improved reading width
   '.cm-formatted-content': {
@@ -321,6 +317,8 @@ export const livePreviewTheme = EditorView.theme({
     borderLeft: `4px solid ${colors.primary}`,
     paddingLeft: '1em',
     marginLeft: '0',
+    marginTop: '0.5em',
+    marginBottom: '0.5em',
     color: colors.mutedForeground,
     fontStyle: 'italic',
   },

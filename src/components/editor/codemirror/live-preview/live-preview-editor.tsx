@@ -245,6 +245,7 @@ function LivePreviewEditorComponent({
   }, []);
   
   // Initialize editor
+  // CRITICAL: fileId is included in dependencies to force re-initialization on file switch
   useEffect(() => {
     if (!containerRef.current || !librariesLoaded) return;
     
@@ -280,7 +281,7 @@ function LivePreviewEditorComponent({
           highContrast
         );
         
-        // Create state
+        // Create state with the current content
         const state = EditorState.create({
           doc: content,
           extensions,
@@ -323,23 +324,29 @@ function LivePreviewEditorComponent({
         viewRef.current = null;
       }
     };
-  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, fileId]);
+  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, fileId, onImageUpload, useWikiImageStyle, highContrast]);
   
   // Update content when it changes externally
+  // This is critical for file switching - must update editor content when fileId changes
   useEffect(() => {
     if (!viewRef.current) return;
     
     const currentContent = viewRef.current.state.doc.toString();
+    
+    // Always update if content differs, regardless of source
     if (content !== currentContent) {
+      // Use a transaction to replace all content
       viewRef.current.dispatch({
         changes: {
           from: 0,
           to: currentContent.length,
           insert: content,
         },
+        // Don't scroll on external content changes
+        scrollIntoView: false,
       });
     }
-  }, [content]);
+  }, [content, fileId]); // Include fileId to ensure update on file switch
   
   // Update available files for wiki link autocomplete
   useEffect(() => {
@@ -427,14 +434,21 @@ function LivePreviewEditorComponent({
 
 /**
  * Memoized Live Preview Editor
+ * Only re-render when critical props change
  */
 export const LivePreviewEditor = memo(LivePreviewEditorComponent, (prev, next) => {
+  // Always re-render if fileId changes (file switch)
   if (prev.fileId !== next.fileId) return false;
+  // Re-render if mode changes
   if (prev.mode !== next.mode) return false;
+  // Re-render if display options change
   if (prev.showLineNumbers !== next.showLineNumbers) return false;
   if (prev.showFoldGutter !== next.showFoldGutter) return false;
   if (prev.readOnly !== next.readOnly) return false;
   if (prev.className !== next.className) return false;
+  if (prev.highContrast !== next.highContrast) return false;
+  // Content changes are handled by the useEffect, so we can skip re-render
+  // But we need to ensure the content prop is passed through
   return true;
 });
 

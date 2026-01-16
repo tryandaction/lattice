@@ -150,7 +150,9 @@ export function ObsidianMarkdownViewer({
   const contentRef = useRef(content);
 
   // Sync with external content changes
+  // This is critical for file switching - must update local content when external content changes
   useEffect(() => {
+    // Always sync when content prop changes (file switch or external update)
     if (content !== contentRef.current) {
       contentRef.current = content;
       setLocalContent(content);

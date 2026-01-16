@@ -21,12 +21,15 @@ import { RangeSetBuilder } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
 
 // KaTeX will be loaded dynamically
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let katex: any = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let katexLoadPromise: Promise<any> | null = null;
 
 /**
  * Load KaTeX dynamically
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function loadKaTeX(): Promise<any> {
   if (katex) return katex;
   
@@ -63,7 +66,9 @@ interface DecorationEntry {
 class MathWidget extends WidgetType {
   constructor(
     private latex: string,
-    private isBlock: boolean
+    private isBlock: boolean,
+    private from: number,
+    private to: number
   ) {
     super();
   }
@@ -72,9 +77,22 @@ class MathWidget extends WidgetType {
     return other.latex === this.latex && other.isBlock === this.isBlock;
   }
   
-  toDOM() {
+  toDOM(view: EditorView) {
     const container = document.createElement(this.isBlock ? 'div' : 'span');
     container.className = this.isBlock ? 'cm-math-block' : 'cm-math-inline';
+    container.dataset.from = String(this.from);
+    container.dataset.to = String(this.to);
+    
+    // Handle click to position cursor
+    container.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({
+        selection: { anchor: this.from, head: this.from },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
     
     if (katex) {
       try {
@@ -85,7 +103,23 @@ class MathWidget extends WidgetType {
           trust: true,
         });
       } catch (e) {
-        container.textContent = this.latex;
+        // Show error with original LaTeX
+        container.innerHTML = '';
+        const errorWrapper = document.createElement('span');
+        errorWrapper.className = 'cm-math-error-wrapper';
+        
+        const errorIndicator = document.createElement('span');
+        errorIndicator.className = 'cm-math-error-indicator';
+        errorIndicator.textContent = '⚠️';
+        errorIndicator.title = e instanceof Error ? e.message : 'Math rendering error';
+        
+        const errorSource = document.createElement('span');
+        errorSource.className = 'cm-math-error-source';
+        errorSource.textContent = this.isBlock ? `$$${this.latex}$$` : `$${this.latex}$`;
+        
+        errorWrapper.appendChild(errorIndicator);
+        errorWrapper.appendChild(errorSource);
+        container.appendChild(errorWrapper);
         container.classList.add('cm-math-error');
       }
     } else {
@@ -101,6 +135,7 @@ class MathWidget extends WidgetType {
             displayMode: this.isBlock,
             throwOnError: false,
             errorColor: '#ef4444',
+            trust: true,
           });
           container.classList.remove('cm-math-loading');
         } catch {
@@ -114,8 +149,8 @@ class MathWidget extends WidgetType {
     return container;
   }
   
-  ignoreEvent() {
-    return true;
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
   }
 }
 
@@ -130,7 +165,6 @@ interface MathMatch {
   startLine: number;
   endLine: number;
 }
-
 
 function parseMathExpressions(doc: { toString: () => string; lineAt: (pos: number) => { number: number } }): MathMatch[] {
   const text = doc.toString();
@@ -152,7 +186,7 @@ function parseMathExpressions(doc: { toString: () => string; lineAt: (pos: numbe
     });
   }
   
-  // Inline math: $...$ (not inside block math)
+  // Inline math: $...$ (not inside block math, not spanning multiple lines)
   const inlineRegex = /(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)/g;
   while ((match = inlineRegex.exec(text)) !== null) {
     const from = match.index;
@@ -204,7 +238,7 @@ function buildMathDecorations(view: EditorView): DecorationSet {
         from: expr.from,
         to: expr.to,
         decoration: Decoration.replace({
-          widget: new MathWidget(expr.latex, expr.isBlock),
+          widget: new MathWidget(expr.latex, expr.isBlock, expr.from, expr.to),
         }),
       });
     } else {

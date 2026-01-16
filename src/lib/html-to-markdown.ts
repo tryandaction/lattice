@@ -81,14 +81,49 @@ export function htmlToMarkdown(html: string): string {
   // Line breaks
   markdown = markdown.replace(/<br\s*\/?>/g, '  \n');
 
-  // Math (Tiptap custom format)
-  // Inline math: <span latex="E = mc^2" data-type="inline-math">
-  markdown = markdown.replace(/<span latex="(.*?)" data-type="inline-math".*?>(.*?)<\/span>/g, '$$$1$$');
-  markdown = markdown.replace(/<span data-latex="(.*?)" data-type="inline-math".*?>(.*?)<\/span>/g, '$$$1$$');
+  // Math (Tiptap custom format) - Handle various attribute orders and formats
+  // IMPORTANT: Process math tags BEFORE removing other HTML tags
+  
+  // Inline math: <span latex="..." data-type="inline-math"> or <span data-type="inline-math" latex="...">
+  // Handle all possible attribute orderings
+  markdown = markdown.replace(/<span[^>]*?latex="([^"]*)"[^>]*?data-type="inline-math"[^>]*>.*?<\/span>/gi, '$$$1$$');
+  markdown = markdown.replace(/<span[^>]*?data-type="inline-math"[^>]*?latex="([^"]*)"[^>]*>.*?<\/span>/gi, '$$$1$$');
+  markdown = markdown.replace(/<span[^>]*?data-latex="([^"]*)"[^>]*?data-type="inline-math"[^>]*>.*?<\/span>/gi, '$$$1$$');
+  markdown = markdown.replace(/<span[^>]*?data-type="inline-math"[^>]*?data-latex="([^"]*)"[^>]*>.*?<\/span>/gi, '$$$1$$');
+  
+  // Handle class-based inline math nodes
+  markdown = markdown.replace(/<span[^>]*?class="[^"]*inline-math[^"]*"[^>]*?latex="([^"]*)"[^>]*>.*?<\/span>/gi, '$$$1$$');
+  markdown = markdown.replace(/<span[^>]*?class="[^"]*inline-math[^"]*"[^>]*?data-latex="([^"]*)"[^>]*>.*?<\/span>/gi, '$$$1$$');
+  markdown = markdown.replace(/<span[^>]*?latex="([^"]*)"[^>]*?class="[^"]*inline-math[^"]*"[^>]*>.*?<\/span>/gi, '$$$1$$');
+  markdown = markdown.replace(/<span[^>]*?data-latex="([^"]*)"[^>]*?class="[^"]*inline-math[^"]*"[^>]*>.*?<\/span>/gi, '$$$1$$');
+  
+  // Handle inline-mathlive-node class
+  markdown = markdown.replace(/<span[^>]*?class="[^"]*inline-mathlive-node[^"]*"[^>]*?latex="([^"]*)"[^>]*>.*?<\/span>/gi, '$$$1$$');
+  markdown = markdown.replace(/<span[^>]*?class="[^"]*inline-mathlive-node[^"]*"[^>]*?data-latex="([^"]*)"[^>]*>.*?<\/span>/gi, '$$$1$$');
+  
+  // Handle inline-math-node class (generic)
+  markdown = markdown.replace(/<span[^>]*?class="[^"]*inline-math-node[^"]*"[^>]*?latex="([^"]*)"[^>]*>.*?<\/span>/gi, '$$$1$$');
+  markdown = markdown.replace(/<span[^>]*?class="[^"]*inline-math-node[^"]*"[^>]*?data-latex="([^"]*)"[^>]*>.*?<\/span>/gi, '$$$1$$');
 
-  // Block math: <div data-type="block-math" latex="...">
-  markdown = markdown.replace(/<div data-type="block-math" latex="(.*?)".*?>(.*?)<\/div>/gs, '$$$$\n$1\n$$$$\n');
-  markdown = markdown.replace(/<div data-latex="(.*?)" data-type="block-math".*?>(.*?)<\/div>/gs, '$$$$\n$1\n$$$$\n');
+  // Block math: <div data-type="block-math" latex="..."> or <div latex="..." data-type="block-math">
+  markdown = markdown.replace(/<div[^>]*?data-type="block-math"[^>]*?latex="([^"]*)"[^>]*>.*?<\/div>/gis, '\n$$$$\n$1\n$$$$\n');
+  markdown = markdown.replace(/<div[^>]*?latex="([^"]*)"[^>]*?data-type="block-math"[^>]*>.*?<\/div>/gis, '\n$$$$\n$1\n$$$$\n');
+  markdown = markdown.replace(/<div[^>]*?data-type="block-math"[^>]*?data-latex="([^"]*)"[^>]*>.*?<\/div>/gis, '\n$$$$\n$1\n$$$$\n');
+  markdown = markdown.replace(/<div[^>]*?data-latex="([^"]*)"[^>]*?data-type="block-math"[^>]*>.*?<\/div>/gis, '\n$$$$\n$1\n$$$$\n');
+  
+  // Handle class-based block math nodes
+  markdown = markdown.replace(/<div[^>]*?class="[^"]*block-math[^"]*"[^>]*?latex="([^"]*)"[^>]*>.*?<\/div>/gis, '\n$$$$\n$1\n$$$$\n');
+  markdown = markdown.replace(/<div[^>]*?class="[^"]*block-math[^"]*"[^>]*?data-latex="([^"]*)"[^>]*>.*?<\/div>/gis, '\n$$$$\n$1\n$$$$\n');
+  markdown = markdown.replace(/<div[^>]*?latex="([^"]*)"[^>]*?class="[^"]*block-math[^"]*"[^>]*>.*?<\/div>/gis, '\n$$$$\n$1\n$$$$\n');
+  markdown = markdown.replace(/<div[^>]*?data-latex="([^"]*)"[^>]*?class="[^"]*block-math[^"]*"[^>]*>.*?<\/div>/gis, '\n$$$$\n$1\n$$$$\n');
+  
+  // Handle block-mathlive-node class
+  markdown = markdown.replace(/<div[^>]*?class="[^"]*block-mathlive-node[^"]*"[^>]*?latex="([^"]*)"[^>]*>.*?<\/div>/gis, '\n$$$$\n$1\n$$$$\n');
+  markdown = markdown.replace(/<div[^>]*?class="[^"]*block-mathlive-node[^"]*"[^>]*?data-latex="([^"]*)"[^>]*>.*?<\/div>/gis, '\n$$$$\n$1\n$$$$\n');
+  
+  // Handle block-math-node class (generic)
+  markdown = markdown.replace(/<div[^>]*?class="[^"]*block-math-node[^"]*"[^>]*?latex="([^"]*)"[^>]*>.*?<\/div>/gis, '\n$$$$\n$1\n$$$$\n');
+  markdown = markdown.replace(/<div[^>]*?class="[^"]*block-math-node[^"]*"[^>]*?data-latex="([^"]*)"[^>]*>.*?<\/div>/gis, '\n$$$$\n$1\n$$$$\n');
 
   // Tables (simple conversion)
   markdown = markdown.replace(/<table>(.*?)<\/table>/gs, convertTableToMarkdown);
@@ -158,17 +193,40 @@ function convertTableToMarkdown(tableHtml: string): string {
 
 /**
  * Auto-detect and convert HTML content to Markdown
+ * Enhanced detection for various HTML patterns including math nodes
  */
 export function autoConvertToMarkdown(content: string): string {
+  if (!content || typeof content !== 'string') return content || '';
+  
   // Check if content looks like HTML
   const trimmed = content.trim();
-  if (trimmed.startsWith('<') && (
+  
+  // Check for common HTML patterns
+  const hasHtmlTags = trimmed.startsWith('<') && (
     trimmed.includes('<p>') ||
     trimmed.includes('<h1>') ||
     trimmed.includes('<h2>') ||
+    trimmed.includes('<h3>') ||
     trimmed.includes('<div>') ||
-    trimmed.includes('<span')
-  )) {
+    trimmed.includes('<span') ||
+    trimmed.includes('<table') ||
+    trimmed.includes('<ul>') ||
+    trimmed.includes('<ol>') ||
+    trimmed.includes('<blockquote')
+  );
+  
+  // Check for math-specific HTML patterns (even if not starting with <)
+  const hasMathHtml = 
+    content.includes('data-type="inline-math"') ||
+    content.includes('data-type="block-math"') ||
+    content.includes('class="inline-math') ||
+    content.includes('class="block-math') ||
+    content.includes('class="inline-mathlive') ||
+    content.includes('class="block-mathlive') ||
+    (content.includes('latex="') && content.includes('<span')) ||
+    (content.includes('data-latex="') && content.includes('<span'));
+  
+  if (hasHtmlTags || hasMathHtml) {
     console.log('[HTML Detected] Converting to Markdown...');
     return htmlToMarkdown(content);
   }

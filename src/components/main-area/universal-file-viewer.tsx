@@ -198,6 +198,7 @@ function FileViewer({
       if (onContentChange) {
         return (
           <ObsidianMarkdownViewer
+            key={fileName} // Force re-mount on file change
             content={normalizedContent}
             onChange={onContentChange}
             fileName={fileName}
@@ -206,7 +207,7 @@ function FileViewer({
         );
       }
       // Fallback to read-only renderer if no onChange handler
-      return <MarkdownRenderer content={normalizedContent} fileName={fileName} />;
+      return <MarkdownRenderer key={fileName} content={normalizedContent} fileName={fileName} />;
     }
     case "pdf":
       // Use PDFHighlighterAdapter if we have file handles for annotation support

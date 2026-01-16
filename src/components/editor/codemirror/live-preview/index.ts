@@ -49,6 +49,22 @@ export {
   createDebouncedUpdateExtension,
 } from './performance-utils';
 
+// Large document optimizations
+export {
+  LineCache,
+  hashLine,
+  getDocumentMetrics,
+  getPrioritizedLineRanges,
+  shouldUseOptimizedProcessing,
+  iterateLinesByPriority,
+  performanceMetrics,
+  ChunkedProcessor,
+  IncrementalUpdateTracker,
+  type LargeDocumentConfig,
+  type DocumentMetrics,
+  type LineRange,
+} from './large-document-optimizer';
+
 // Theme
 export { livePreviewThemeExtension } from './live-preview-theme';
 

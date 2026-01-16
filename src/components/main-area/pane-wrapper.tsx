@@ -63,6 +63,8 @@ export function PaneWrapper({
   
   // Track which tab's content is currently loaded
   const loadedTabIdRef = useRef<string | null>(null);
+  // Track which tab is currently being loaded (for race condition prevention)
+  const loadingTabIdRef = useRef<string | null>(null);
   // Track the original content for dirty state comparison
   const originalContentRef = useRef<string | null>(null);
 
@@ -86,34 +88,44 @@ export function PaneWrapper({
       setIsLoading(false);
       setError(null);
       loadedTabIdRef.current = null;
+      loadingTabIdRef.current = null;
       originalContentRef.current = null;
       return;
     }
 
+    const currentTabId = activeTab.id;
+    
     // Same tab already loaded - no need to reload
-    if (loadedTabIdRef.current === activeTab.id) {
+    if (loadedTabIdRef.current === currentTabId) {
       return;
     }
 
     // PRIORITY 1: Check cache first - this preserves unsaved changes
-    const cached = getContentFromCache(activeTab.id);
+    const cached = getContentFromCache(currentTabId);
     if (cached) {
+      // Immediately update state for cached content
+      loadedTabIdRef.current = currentTabId;
+      loadingTabIdRef.current = null;
       setContent(cached.content);
       originalContentRef.current = cached.originalContent;
-      loadedTabIdRef.current = activeTab.id;
       setIsLoading(false);
       setError(null);
       return;
     }
 
     // PRIORITY 2: No cache - load from file
-    loadedTabIdRef.current = activeTab.id;
-    originalContentRef.current = null;
+    // Mark this tab as loading to prevent race conditions
+    loadingTabIdRef.current = currentTabId;
+    
+    // Clear previous content immediately to prevent showing stale data
+    setContent(null);
+    setIsLoading(true);
+    setError(null);
 
     const loadFile = async () => {
-      setIsLoading(true);
-      setError(null);
-
+      // Capture the tab ID at the start of this async operation
+      const loadingForTabId = currentTabId;
+      
       try {
         const file = await activeTab.fileHandle.getFile();
         const extension = getFileExtension(file.name);
@@ -122,19 +134,25 @@ export function PaneWrapper({
           ? await file.arrayBuffer()
           : await file.text();
 
-        // Only update if this is still the active tab (handles rapid switching)
-        if (loadedTabIdRef.current === activeTab.id) {
+        // CRITICAL: Only update if this is still the tab we're loading for
+        // Check both the loading ref AND the current activeTab
+        if (loadingTabIdRef.current === loadingForTabId) {
+          loadedTabIdRef.current = loadingForTabId;
+          loadingTabIdRef.current = null;
           setContent(fileContent);
           if (typeof fileContent === 'string') {
             originalContentRef.current = fileContent;
             // Initialize cache with original content
-            setContentToCache(activeTab.id, fileContent, fileContent);
+            setContentToCache(loadingForTabId, fileContent, fileContent);
           }
           setIsLoading(false);
         }
+        // If tab changed during load, discard this result silently
       } catch (err) {
-        // Only update error if this is still the active tab
-        if (loadedTabIdRef.current === activeTab.id) {
+        // Only update error if this is still the tab we're loading for
+        if (loadingTabIdRef.current === loadingForTabId) {
+          loadedTabIdRef.current = null;
+          loadingTabIdRef.current = null;
           setError(err instanceof Error ? err.message : "Failed to read file");
           setIsLoading(false);
         }
@@ -142,7 +160,7 @@ export function PaneWrapper({
     };
 
     loadFile();
-  }, [activeTab?.id, getContentFromCache, setContentToCache]);
+  }, [activeTab?.id, activeTab?.fileHandle, getContentFromCache, setContentToCache]);
 
   // Handle tab click
   const handleTabClick = useCallback((index: number) => {
