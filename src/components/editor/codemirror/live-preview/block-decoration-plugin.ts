@@ -2,18 +2,13 @@
  * Block Decoration Plugin for Live Preview
  * Handles headings, blockquotes, lists, and horizontal rules
  * 
- * Requirements: 3.1-3.7, 13.5
+ * Requirements: 3.1-3.7
  * 
  * This plugin provides Obsidian-like live preview for block elements:
  * - When cursor is NOT on a line, block elements are rendered (syntax hidden)
  * - When cursor IS on a line, raw markdown syntax is shown for editing
  * 
  * Key design: Use widget replacement for complete syntax hiding
- * 
- * Performance optimizations for large documents:
- * - Only processes visible viewport
- * - Efficient line-based processing
- * - Performance metrics collection
  */
 
 import {
@@ -27,11 +22,6 @@ import {
 import { RangeSetBuilder } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
 import { parseListItem, parseBlockquote } from './markdown-parser';
-import { 
-  shouldUseOptimizedProcessing, 
-  performanceMetrics,
-  getDocumentMetrics,
-} from './large-document-optimizer';
 
 /**
  * Decoration entry for sorting
@@ -260,23 +250,10 @@ class BlockquoteContentWidget extends WidgetType {
 /**
  * Build block decorations
  * Uses line-based reveal logic for Obsidian-like behavior
- * 
- * Performance optimizations for large documents:
- * - Only processes visible viewport
- * - Efficient line iteration
- * - Performance metrics collection
  */
 function buildBlockDecorations(view: EditorView): DecorationSet {
-  const startTime = performance.now();
   const decorations: DecorationEntry[] = [];
   const doc = view.state.doc;
-  const isLargeDoc = shouldUseOptimizedProcessing(view);
-
-  // For large documents, log metrics periodically
-  if (isLargeDoc && Math.random() < 0.01) {
-    const metrics = getDocumentMetrics(view);
-    console.debug('[BlockDecoration] Large document metrics:', metrics);
-  }
 
   // Optimize: only process visible viewport
   for (const { from, to } of view.visibleRanges) {
@@ -409,20 +386,9 @@ function buildBlockDecorations(view: EditorView): DecorationSet {
     try {
       builder.add(from, to, decoration);
     } catch (e) {
-      // Log rejected decorations for debugging (only in development)
-      if (process.env.NODE_ENV === 'development') {
-        console.error('[Block] Decoration rejected:', { from, to, decoration, error: e });
-      }
+      // Skip invalid decorations silently
+      console.warn('[Block] Decoration rejected:', { from, to });
     }
-  }
-  
-  // Record performance metrics
-  const duration = performance.now() - startTime;
-  performanceMetrics.record('blockDecorations', duration);
-  
-  // Warn if processing is slow
-  if (duration > 16 && isLargeDoc) {
-    console.warn(`[BlockDecoration] Slow processing: ${duration.toFixed(2)}ms for ${doc.lines} lines`);
   }
   
   return builder.finish();
@@ -430,16 +396,10 @@ function buildBlockDecorations(view: EditorView): DecorationSet {
 
 /**
  * Block decoration view plugin
- * 
- * Performance optimizations for large documents:
- * - Adaptive debounce based on document size
- * - Throttled updates during rapid changes
  */
 export const blockDecorationPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
-    private pendingUpdate: ReturnType<typeof setTimeout> | null = null;
-    private lastUpdateTime = 0;
     
     constructor(view: EditorView) {
       this.decorations = buildBlockDecorations(view);
@@ -447,41 +407,7 @@ export const blockDecorationPlugin = ViewPlugin.fromClass(
     
     update(update: ViewUpdate) {
       if (update.docChanged || update.selectionSet || update.viewportChanged) {
-        // Adaptive debounce based on document size
-        const isLargeDoc = shouldUseOptimizedProcessing(update.view);
-        const debounceMs = isLargeDoc ? 32 : 0; // Longer debounce for large docs
-        
-        // For selection changes in normal docs, update immediately
-        if (!isLargeDoc || (update.selectionSet && !update.docChanged)) {
-          this.decorations = buildBlockDecorations(update.view);
-          this.lastUpdateTime = performance.now();
-        } else {
-          // For large docs, use debounce
-          if (this.pendingUpdate) {
-            clearTimeout(this.pendingUpdate);
-          }
-          
-          const view = update.view;
-          this.pendingUpdate = setTimeout(() => {
-            this.decorations = buildBlockDecorations(view);
-            this.pendingUpdate = null;
-            this.lastUpdateTime = performance.now();
-            view.requestMeasure();
-          }, debounceMs);
-          
-          // Update immediately if not too recent
-          const timeSinceLastUpdate = performance.now() - this.lastUpdateTime;
-          if (timeSinceLastUpdate > debounceMs) {
-            this.decorations = buildBlockDecorations(update.view);
-            this.lastUpdateTime = performance.now();
-          }
-        }
-      }
-    }
-    
-    destroy() {
-      if (this.pendingUpdate) {
-        clearTimeout(this.pendingUpdate);
+        this.decorations = buildBlockDecorations(update.view);
       }
     }
   },

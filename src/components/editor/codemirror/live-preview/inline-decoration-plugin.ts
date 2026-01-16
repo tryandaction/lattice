@@ -32,105 +32,70 @@ import {
 import { RangeSetBuilder } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
 import type { MarkdownElement } from './types';
-import { 
-  LineCache, 
-  hashLine, 
-  shouldUseOptimizedProcessing,
-  performanceMetrics,
-  getDocumentMetrics,
-} from './large-document-optimizer';
 
 /**
  * Line parsing cache for performance optimization
- * Uses efficient LineCache with hash-based invalidation for large documents
+ * Caches parsed elements by line content hash to avoid re-parsing unchanged lines
  * 
- * IMPORTANT: Cache is keyed by line content hash, positions are recalculated
+ * IMPORTANT: Cache stores elements with positions relative to line start (0-based)
  */
-const lineParseCache = new LineCache<MarkdownElement[]>(10000, 30000);
-
-// Legacy cache for backward compatibility (will be phased out)
-const legacyLineParseCache = new Map<string, MarkdownElement[]>();
-const MAX_LEGACY_CACHE_SIZE = 500;
+const lineParseCache = new Map<string, MarkdownElement[]>();
+const MAX_CACHE_SIZE = 1000;
 
 /**
  * Clear the line parse cache - useful when switching files
  */
 export function clearLineParseCache(): void {
   lineParseCache.clear();
-  legacyLineParseCache.clear();
 }
 
-function getCachedLineElements(lineText: string, lineFrom: number, lineNumber?: number): MarkdownElement[] {
-  const lineHash = hashLine(lineText);
-  
-  // Try new cache first (if line number provided)
-  if (lineNumber !== undefined) {
-    const cached = lineParseCache.get(lineNumber, lineHash);
-    if (cached) {
-      // Adjust positions for the current line
-      return cached.map(el => ({
-        ...el,
-        from: lineFrom + (el.from - el.from + el.from - lineFrom),
-        to: lineFrom + (el.to - el.from),
-        syntaxFrom: lineFrom + (el.syntaxFrom - el.from),
-        syntaxTo: lineFrom + (el.syntaxTo - el.from),
-        contentFrom: lineFrom + (el.contentFrom - el.from),
-        contentTo: lineFrom + (el.contentTo - el.from),
-      }));
-    }
-  }
-  
-  // Fall back to legacy cache
+/**
+ * Get cached line elements or parse fresh
+ * Cache key is the line text content, positions are adjusted to actual line position
+ */
+function getCachedLineElements(lineText: string, lineFrom: number): MarkdownElement[] {
   const cacheKey = lineText;
   
-  if (legacyLineParseCache.has(cacheKey)) {
+  if (lineParseCache.has(cacheKey)) {
     // Return cached elements with adjusted positions
-    const cached = legacyLineParseCache.get(cacheKey)!;
+    const cached = lineParseCache.get(cacheKey)!;
     if (cached.length === 0) return [];
     
-    // Clone and adjust positions based on the first element's original position
-    const firstElementOriginalFrom = cached[0]?.from || 0;
+    // Clone and adjust positions - cached elements have positions starting from 0
     return cached.map(el => ({
       ...el,
-      from: lineFrom + (el.from - firstElementOriginalFrom),
-      to: lineFrom + (el.to - firstElementOriginalFrom),
-      syntaxFrom: lineFrom + (el.syntaxFrom - firstElementOriginalFrom),
-      syntaxTo: lineFrom + (el.syntaxTo - firstElementOriginalFrom),
-      contentFrom: lineFrom + (el.contentFrom - firstElementOriginalFrom),
-      contentTo: lineFrom + (el.contentTo - firstElementOriginalFrom),
+      from: lineFrom + el.from,
+      to: lineFrom + el.to,
+      syntaxFrom: lineFrom + el.syntaxFrom,
+      syntaxTo: lineFrom + el.syntaxTo,
+      contentFrom: lineFrom + el.contentFrom,
+      contentTo: lineFrom + el.contentTo,
     }));
   }
   
-  // Parse fresh
-  const elements = parseLineInlineElementsInternal(lineText, lineFrom);
+  // Parse fresh with positions starting from 0 (relative to line start)
+  const elements = parseLineInlineElementsInternal(lineText, 0);
   
-  // Store in new cache if line number provided
-  if (lineNumber !== undefined) {
-    // Store normalized version (positions relative to line start)
-    const normalizedElements = elements.map(el => ({
-      ...el,
-      from: el.from - lineFrom,
-      to: el.to - lineFrom,
-      syntaxFrom: el.syntaxFrom - lineFrom,
-      syntaxTo: el.syntaxTo - lineFrom,
-      contentFrom: el.contentFrom - lineFrom,
-      contentTo: el.contentTo - lineFrom,
-    }));
-    lineParseCache.set(lineNumber, lineHash, normalizedElements);
+  // Manage cache size
+  if (lineParseCache.size >= MAX_CACHE_SIZE) {
+    // Remove oldest entries (first 200)
+    const keysToDelete = Array.from(lineParseCache.keys()).slice(0, 200);
+    keysToDelete.forEach(key => lineParseCache.delete(key));
   }
   
-  // Also store in legacy cache for backward compatibility
-  if (legacyLineParseCache.size >= MAX_LEGACY_CACHE_SIZE) {
-    // Remove oldest entries (first 100)
-    const keysToDelete = Array.from(legacyLineParseCache.keys()).slice(0, 100);
-    keysToDelete.forEach(key => legacyLineParseCache.delete(key));
-  }
+  // Store normalized version (with position 0)
+  lineParseCache.set(cacheKey, elements);
   
-  // Store normalized version (with position 0) for reusability
-  const normalizedElements = parseLineInlineElementsInternal(lineText, 0);
-  legacyLineParseCache.set(cacheKey, normalizedElements);
-  
-  return elements;
+  // Return elements with actual positions
+  return elements.map(el => ({
+    ...el,
+    from: lineFrom + el.from,
+    to: lineFrom + el.to,
+    syntaxFrom: lineFrom + el.syntaxFrom,
+    syntaxTo: lineFrom + el.syntaxTo,
+    contentFrom: lineFrom + el.contentFrom,
+    contentTo: lineFrom + el.contentTo,
+  }));
 }
 
 /**
@@ -1142,22 +1107,13 @@ function parseLineInlineElementsInternal(lineText: string, lineFrom: number): Ma
  * Build decorations for inline elements
  * Uses line-based reveal logic for Obsidian-like behavior
  * 
- * Performance optimizations for large documents:
- * - Only processes visible viewport + small buffer
+ * Performance optimizations:
+ * - Only processes visible viewport
  * - Uses efficient line-based caching
- * - Measures performance for profiling
  */
 function buildInlineDecorations(view: EditorView): DecorationSet {
-  const startTime = performance.now();
   const decorations: DecorationEntry[] = [];
   const doc = view.state.doc;
-  const isLargeDoc = shouldUseOptimizedProcessing(view);
-  
-  // For large documents, log metrics periodically
-  if (isLargeDoc && Math.random() < 0.01) {
-    const metrics = getDocumentMetrics(view);
-    console.debug('[InlineDecoration] Large document metrics:', metrics);
-  }
   
   // Process visible ranges for performance
   for (const { from, to } of view.visibleRanges) {
@@ -1175,13 +1131,16 @@ function buildInlineDecorations(view: EditorView): DecorationSet {
       const lineRevealed = shouldRevealLine(view.state, lineNum);
       
       // Parse inline elements for this line (using cache for performance)
-      // Pass line number for efficient caching in large documents
-      const elements = getCachedLineElements(lineText, line.from, lineNum);
+      const elements = getCachedLineElements(lineText, line.from);
       
       for (const element of elements) {
+        // Validate element positions are within line bounds
+        if (element.from < line.from || element.to > line.to) {
+          continue; // Skip invalid elements that cross line boundaries
+        }
+        
         if (lineRevealed) {
           // Line is being edited - show raw markdown with subtle styling
-          // Just add a subtle background to indicate it's a markdown element
           decorations.push({
             from: element.from,
             to: element.to,
@@ -1204,20 +1163,9 @@ function buildInlineDecorations(view: EditorView): DecorationSet {
     try {
       builder.add(from, to, decoration);
     } catch (e) {
-      // Log rejected decorations for debugging (only in development)
-      if (process.env.NODE_ENV === 'development') {
-        console.error('[Inline] Decoration rejected:', { from, to, type: decoration, error: e });
-      }
+      // Skip invalid decorations silently
+      console.warn('[Inline] Decoration rejected:', { from, to });
     }
-  }
-  
-  // Record performance metrics
-  const duration = performance.now() - startTime;
-  performanceMetrics.record('inlineDecorations', duration);
-  
-  // Warn if processing is slow
-  if (duration > 16 && isLargeDoc) {
-    console.warn(`[InlineDecoration] Slow processing: ${duration.toFixed(2)}ms for ${doc.lines} lines`);
   }
   
   return builder.finish();
@@ -1530,17 +1478,12 @@ function addRenderedDecoration(
 /**
  * Inline decoration view plugin with debounced updates
  * Debouncing prevents excessive re-renders during rapid typing
- * 
- * Performance optimizations for large documents:
- * - Incremental updates for changed regions only
- * - Adaptive debounce based on document size
- * - Cache invalidation on document changes
  */
 export const inlineDecorationPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
     private pendingUpdate: ReturnType<typeof setTimeout> | null = null;
-    private lastUpdateTime = 0;
+    private readonly debounceMs = 16; // ~60fps
     
     constructor(view: EditorView) {
       this.decorations = buildInlineDecorations(view);
@@ -1549,49 +1492,24 @@ export const inlineDecorationPlugin = ViewPlugin.fromClass(
     update(update: ViewUpdate) {
       // Rebuild decorations on any change that might affect rendering
       if (update.docChanged || update.selectionSet || update.viewportChanged) {
-        // Invalidate cache for changed lines
-        if (update.docChanged) {
-          update.changes.iterChangedRanges((fromA, toA, fromB, toB) => {
-            try {
-              const startLine = update.state.doc.lineAt(fromB).number;
-              const endLine = update.state.doc.lineAt(Math.min(toB, update.state.doc.length)).number;
-              lineParseCache.invalidateRange(startLine, endLine);
-            } catch {
-              // Ignore if positions are out of bounds
-            }
-          });
-        }
-        
-        // Adaptive debounce based on document size
-        const isLargeDoc = shouldUseOptimizedProcessing(update.view);
-        const debounceMs = isLargeDoc ? 32 : 16; // Longer debounce for large docs
-        
         // For selection changes, update immediately for responsive cursor feedback
         if (update.selectionSet && !update.docChanged) {
           this.decorations = buildInlineDecorations(update.view);
-          this.lastUpdateTime = performance.now();
         } else {
-          // For document changes, use adaptive debounce to batch rapid updates
+          // For document changes, use debounce to batch rapid updates
           if (this.pendingUpdate) {
             clearTimeout(this.pendingUpdate);
           }
           
-          // Capture view reference for closure
           const view = update.view;
           this.pendingUpdate = setTimeout(() => {
             this.decorations = buildInlineDecorations(view);
             this.pendingUpdate = null;
-            this.lastUpdateTime = performance.now();
-            // Request a re-render
             view.requestMeasure();
-          }, debounceMs);
+          }, this.debounceMs);
           
-          // Also update immediately for visual feedback (if not too recent)
-          const timeSinceLastUpdate = performance.now() - this.lastUpdateTime;
-          if (timeSinceLastUpdate > debounceMs) {
-            this.decorations = buildInlineDecorations(update.view);
-            this.lastUpdateTime = performance.now();
-          }
+          // Also update immediately for visual feedback
+          this.decorations = buildInlineDecorations(update.view);
         }
       }
     }
