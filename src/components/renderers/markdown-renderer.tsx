@@ -301,32 +301,13 @@ const components: Components = {
  * - Math rendering via KaTeX
  * - Syntax highlighting for code blocks
  * - Responsive tables
- * - HTML content support (for content from rich text editors)
+ *
+ * Note: HTML content should be converted to Markdown before reaching this component
+ * via normalizeScientificText() in universal-file-viewer.tsx
  */
 export function MarkdownRenderer({ content, fileName, className = "" }: MarkdownRendererProps) {
-  // Detect if content is HTML (from Tiptap editor) vs Markdown
-  const isHtmlContent = useMemo(() => {
-    if (!content) return false;
-    // Check for common HTML tags that indicate Tiptap output
-    return content.trim().startsWith('<') && (
-      content.includes('<p>') || 
-      content.includes('<h1>') || 
-      content.includes('<h2>') ||
-      content.includes('<ul>') ||
-      content.includes('<ol>') ||
-      content.includes('<blockquote>')
-    );
-  }, [content]);
-
-  // If content is HTML, render it directly with proper styling
-  if (isHtmlContent) {
-    return (
-      <div 
-        className={`prose prose-lattice dark:prose-invert max-w-none ${className}`}
-        dangerouslySetInnerHTML={{ __html: content }}
-      />
-    );
-  }
+  // Content should already be normalized to Markdown by upstream (universal-file-viewer)
+  // If HTML is still present, it will be handled by rehypeRaw plugin safely
   
   return (
     <div className={`prose prose-lattice dark:prose-invert max-w-none ${className}`}>

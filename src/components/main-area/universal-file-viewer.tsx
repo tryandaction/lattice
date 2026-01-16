@@ -5,6 +5,7 @@ import { Loader2, AlertCircle, FileQuestion, Edit3, Eye } from "lucide-react";
 import { getRendererForExtension, getFileExtension, getImageMimeType, RendererType, isEditableCodeFile } from "@/lib/file-utils";
 import dynamic from "next/dynamic";
 import type { PaneId } from "@/stores/workspace-store";
+import { normalizeScientificText } from "@/lib/content-normalizer";
 
 /**
  * Loading state component
@@ -158,20 +159,46 @@ function FileViewer({
       if (content instanceof ArrayBuffer) {
         console.warn('[FileViewer] Markdown received ArrayBuffer, converting to string');
         try {
-          textContent = new TextDecoder('utf-8').decode(content);
+          // Try UTF-8 decoding
+          const decoder = new TextDecoder('utf-8', { fatal: true });
+          textContent = decoder.decode(content);
         } catch (e) {
-          console.error('[FileViewer] Failed to decode ArrayBuffer:', e);
-          textContent = '';
+          console.error('[FileViewer] UTF-8 decode failed, file may contain binary data:', e);
+          // Check if it's actually binary data (like PNG)
+          const bytes = new Uint8Array(content);
+          const isPng = bytes.length > 4 &&
+                        bytes[0] === 0x89 && bytes[1] === 0x50 &&
+                        bytes[2] === 0x4E && bytes[3] === 0x47;
+
+          if (isPng || bytes[0] === 0xFF || bytes[0] === 0x00) {
+            return (
+              <div className="flex h-full flex-col items-center justify-center bg-background p-8">
+                <AlertCircle className="h-8 w-8 text-destructive" />
+                <p className="mt-4 text-sm text-destructive">
+                  This .md file appears to contain binary data, not text.
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  File: {fileName}
+                </p>
+              </div>
+            );
+          }
+
+          // Fallback to lossy decode
+          textContent = new TextDecoder('utf-8', { fatal: false }).decode(content);
         }
       } else {
         textContent = content;
       }
 
+      // Normalize content: convert HTML to Markdown, fix LaTeX delimiters, etc.
+      const normalizedContent = normalizeScientificText(textContent);
+
       // Use ObsidianMarkdownViewer for Obsidian-like experience (default render, click to edit)
       if (onContentChange) {
         return (
           <ObsidianMarkdownViewer
-            content={textContent}
+            content={normalizedContent}
             onChange={onContentChange}
             fileName={fileName}
             onSave={onSave}
@@ -179,7 +206,7 @@ function FileViewer({
         );
       }
       // Fallback to read-only renderer if no onChange handler
-      return <MarkdownRenderer content={textContent} fileName={fileName} />;
+      return <MarkdownRenderer content={normalizedContent} fileName={fileName} />;
     }
     case "pdf":
       // Use PDFHighlighterAdapter if we have file handles for annotation support
