@@ -283,7 +283,7 @@ function buildCodeBlockDecorations(state: EditorState): DecorationSet {
     try {
       builder.add(from, to, decoration);
     } catch (e) {
-      console.warn('Invalid code block decoration range:', from, to, e);
+      console.error('[CodeBlock] Decoration rejected:', { from, to, decoration, error: e });
     }
   }
   

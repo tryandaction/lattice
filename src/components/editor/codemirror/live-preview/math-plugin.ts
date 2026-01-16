@@ -228,7 +228,7 @@ function buildMathDecorations(view: EditorView): DecorationSet {
     try {
       builder.add(from, to, decoration);
     } catch (e) {
-      console.warn('Invalid math decoration range:', from, to, e);
+      console.error('[Math] Decoration rejected:', { from, to, decoration, error: e });
     }
   }
   

@@ -101,6 +101,33 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-line': {
     padding: '0 1rem',
   },
+
+  // Vertical rhythm for paragraphs
+  '.cm-line + .cm-line': {
+    marginTop: '0.25em',
+  },
+
+  // Extra spacing after headings
+  '.cm-heading + .cm-line:not(.cm-heading)': {
+    marginTop: '0.75em',
+  },
+
+  // List item spacing
+  '.cm-list-item + .cm-list-item': {
+    marginTop: '0.25em',
+  },
+
+  // Block spacing
+  '.cm-blockquote': {
+    marginTop: '0.5em',
+    marginBottom: '0.5em',
+  },
+
+  // Improved reading width
+  '.cm-formatted-content': {
+    maxWidth: '65ch',
+    lineHeight: '1.75',
+  },
   
   // === Inline Styles ===
   

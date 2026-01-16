@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback, memo } from 'react';
+import { Loader2 } from 'lucide-react';
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
 import { EditorState, Extension } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
@@ -217,6 +218,7 @@ function LivePreviewEditorComponent({
   const viewRef = useRef<EditorView | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [librariesLoaded, setLibrariesLoaded] = useState(false);
   
   // Store callbacks in refs
   const onChangeRef = useRef(onChange);
@@ -228,10 +230,23 @@ function LivePreviewEditorComponent({
     onOutlineChangeRef.current = onOutlineChange;
     onSaveRef.current = onSave;
   }, [onChange, onOutlineChange, onSave]);
+
+  // Pre-load libraries before editor initialization
+  useEffect(() => {
+    Promise.all([
+      import('katex'),
+      import('highlight.js')
+    ]).then(() => {
+      setLibrariesLoaded(true);
+    }).catch((err) => {
+      console.error('Failed to load libraries:', err);
+      setLibrariesLoaded(true); // Continue anyway
+    });
+  }, []);
   
   // Initialize editor
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || !librariesLoaded) return;
     
     let mounted = true;
     
@@ -308,7 +323,7 @@ function LivePreviewEditorComponent({
         viewRef.current = null;
       }
     };
-  }, [mode, showLineNumbers, showFoldGutter, readOnly, fileId]);
+  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, fileId]);
   
   // Update content when it changes externally
   useEffect(() => {
@@ -381,7 +396,16 @@ function LivePreviewEditorComponent({
       effects: EditorView.scrollIntoView(line.from, { y: 'start' }),
     });
   }, []);
-  
+
+  if (!librariesLoaded) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <Loader2 className="h-8 w-8 animate-spin" />
+        <span className="ml-2">Loading editor...</span>
+      </div>
+    );
+  }
+
   if (error) {
     return (
       <div className={`p-4 text-destructive bg-destructive/10 rounded ${className}`}>

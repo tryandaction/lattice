@@ -254,10 +254,15 @@ class BlockquoteContentWidget extends WidgetType {
 function buildBlockDecorations(view: EditorView): DecorationSet {
   const decorations: DecorationEntry[] = [];
   const doc = view.state.doc;
-  
-  for (let lineNum = 1; lineNum <= doc.lines; lineNum++) {
-    const line = doc.line(lineNum);
-    const lineText = line.text;
+
+  // Optimize: only process visible viewport
+  for (const { from, to } of view.visibleRanges) {
+    const startLine = doc.lineAt(from).number;
+    const endLine = doc.lineAt(to).number;
+
+    for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
+      const line = doc.line(lineNum);
+      const lineText = line.text;
     
     // Skip empty lines
     if (!lineText.trim()) continue;
@@ -365,8 +370,9 @@ function buildBlockDecorations(view: EditorView): DecorationSet {
         });
       }
     }
-  }
-  
+  } // Close line loop
+  } // Close viewport loop
+
   // Sort decorations: line decorations first, then by position
   decorations.sort((a, b) => {
     if (a.isLine && !b.isLine) return -1;
@@ -380,8 +386,8 @@ function buildBlockDecorations(view: EditorView): DecorationSet {
     try {
       builder.add(from, to, decoration);
     } catch (e) {
-      // Skip invalid ranges
-      console.warn('Invalid block decoration range:', from, to, e);
+      // Log rejected decorations for debugging
+      console.error('[Block] Decoration rejected:', { from, to, decoration, error: e });
     }
   }
   

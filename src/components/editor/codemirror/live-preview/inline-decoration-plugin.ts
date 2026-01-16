@@ -1130,8 +1130,8 @@ function buildInlineDecorations(view: EditorView): DecorationSet {
     try {
       builder.add(from, to, decoration);
     } catch (e) {
-      // Skip invalid ranges
-      console.warn('Invalid decoration range:', from, to, e);
+      // Log rejected decorations for debugging
+      console.error('[Inline] Decoration rejected:', { from, to, type: decoration, error: e });
     }
   }
   

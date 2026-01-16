@@ -3,6 +3,7 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { Toaster } from "sonner";
 import "katex/dist/katex.min.css";
+import "highlight.js/styles/github-dark.css";
 import "./globals.css";
 import { HUDProvider } from "@/components/hud";
 import { ServiceWorkerRegister } from "@/components/pwa";

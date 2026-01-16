@@ -324,7 +324,7 @@ function buildTableDecorations(state: EditorState): DecorationSet {
     try {
       builder.add(from, to, decoration);
     } catch (e) {
-      console.warn('Invalid table decoration range:', from, to, e);
+      console.error('[Table] Decoration rejected:', { from, to, decoration, error: e });
     }
   }
   

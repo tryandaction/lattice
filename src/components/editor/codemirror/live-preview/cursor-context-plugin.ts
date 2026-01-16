@@ -163,14 +163,21 @@ export function shouldRevealAt(state: EditorState, from: number, to: number): bo
 
 /**
  * Check if a line should reveal syntax
+ * Returns false for both reading mode AND lines without cursor
  */
 export function shouldRevealLine(state: EditorState, lineNumber: number): boolean {
   try {
     const context = state.field(cursorContextField, false);
-    if (!context) return false; // No cursor context = reading mode, don't reveal
+    if (!context) {
+      // Reading mode or field not initialized - don't reveal
+      return false;
+    }
+    // Check if cursor is on this line
     return context.revealLines.has(lineNumber);
-  } catch {
-    return false; // No cursor context field = reading mode
+  } catch (error) {
+    // Field doesn't exist - safe default is don't reveal (show formatted)
+    console.warn('Cursor context field not available:', error);
+    return false;
   }
 }
 
