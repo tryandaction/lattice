@@ -35,6 +35,7 @@ import { createImageDropExtension, ImageUploadHandler } from './image-drop-plugi
 import { createAccessibilityExtension, addEditorDescription, announceChange } from './accessibility';
 import type { ViewMode, OutlineItem } from './types';
 import { parseHeadings, buildOutlineTree } from './markdown-parser';
+import { MathEditor } from '../../math-editor';
 
 export interface LivePreviewEditorProps {
   /** Initial content */
@@ -234,6 +235,15 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [librariesLoaded, setLibrariesLoaded] = useState(false);
+
+  // MathEditor state
+  const [mathEditor, setMathEditor] = useState<{
+    latex: string;
+    isBlock: boolean;
+    from: number;
+    to: number;
+    position: { top: number; left: number };
+  } | null>(null);
   
   // Store callbacks in refs
   const onChangeRef = useRef(onChange);
@@ -384,6 +394,60 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
       container.removeEventListener('wiki-link-click', handleWikiLinkClick);
     };
   }, [onWikiLinkClick]);
+
+  // Handle MathEditor open event
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleOpenMathEditor = (e: Event) => {
+      const customEvent = e as CustomEvent<{
+        latex: string;
+        isBlock: boolean;
+        from: number;
+        to: number;
+        position: { top: number; left: number };
+      }>;
+      setMathEditor(customEvent.detail);
+    };
+
+    container.addEventListener('open-math-editor', handleOpenMathEditor);
+    return () => {
+      container.removeEventListener('open-math-editor', handleOpenMathEditor);
+    };
+  }, []);
+
+  // Handle MathEditor save
+  const handleMathSave = useCallback((latex: string) => {
+    if (!mathEditor || !viewRef.current) return;
+
+    // Update document with new LaTeX
+    const newContent = mathEditor.isBlock ? `$$${latex}$$` : `$${latex}$`;
+
+    viewRef.current.dispatch({
+      changes: {
+        from: mathEditor.from,
+        to: mathEditor.to,
+        insert: newContent,
+      },
+      selection: { anchor: mathEditor.from + newContent.length },
+    });
+
+    // Close editor
+    setMathEditor(null);
+
+    // Focus back to editor
+    viewRef.current.focus();
+  }, [mathEditor]);
+
+  // Handle MathEditor cancel
+  const handleMathCancel = useCallback(() => {
+    setMathEditor(null);
+    // Focus back to editor
+    if (viewRef.current) {
+      viewRef.current.focus();
+    }
+  }, []);
   
   // Handle Ctrl+E for mode cycling
   useEffect(() => {
@@ -450,12 +514,25 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
   }
   
   return (
-    <div
-      ref={containerRef}
-      className={`live-preview-editor h-full ${className}`}
-      data-mode={mode}
-      data-loading={isLoading}
-    />
+    <>
+      <div
+        ref={containerRef}
+        className={`live-preview-editor h-full ${className}`}
+        data-mode={mode}
+        data-loading={isLoading}
+      />
+
+      {/* MathEditor overlay */}
+      {mathEditor && (
+        <MathEditor
+          initialLatex={mathEditor.latex}
+          isBlock={mathEditor.isBlock}
+          onSave={handleMathSave}
+          onCancel={handleMathCancel}
+          position={mathEditor.position}
+        />
+      )}
+    </>
   );
 });
 

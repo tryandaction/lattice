@@ -1035,15 +1035,30 @@ export class MathWidget extends WidgetType {
       view.focus();
     });
 
-    // 双击: 选择整个公式便于编辑
+    // 双击: 打开MathLive可视化编辑器
     container.addEventListener('dblclick', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      view.dispatch({
-        selection: { anchor: this.from, head: this.to },
-        scrollIntoView: true,
-      });
-      view.focus();
+
+      // 获取容器位置
+      const rect = container.getBoundingClientRect();
+
+      // 派发自定义事件打开MathEditor
+      view.dom.dispatchEvent(
+        new CustomEvent('open-math-editor', {
+          detail: {
+            latex: this.latex,
+            isBlock: this.isBlock,
+            from: this.from,
+            to: this.to,
+            position: {
+              top: rect.bottom + window.scrollY,
+              left: rect.left + window.scrollX,
+            },
+          },
+          bubbles: true,
+        })
+      );
     });
 
     // 右键: 复制LaTeX源码
