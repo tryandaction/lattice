@@ -51,11 +51,6 @@ const ObsidianMarkdownViewer = dynamic(
   { loading: () => <LoadingState message="Loading viewer..." />, ssr: false }
 );
 
-const TiptapEditor = dynamic(
-  () => import("@/components/renderers/tiptap-editor").then((mod) => mod.TiptapEditor),
-  { loading: () => <LoadingState message="Loading editor..." />, ssr: false }
-);
-
 const MarkdownRenderer = dynamic(
   () => import("@/components/renderers/markdown-renderer").then((mod) => mod.MarkdownRenderer),
   { loading: () => <LoadingState message="Loading Markdown renderer..." />, ssr: false }

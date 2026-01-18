@@ -9,7 +9,12 @@
       "Bash(wc -l \"c:\\\\universe\\\\software development\\\\Lattice\\\\src\"/**/*.{ts,tsx,js,jsx})",
       "Bash(cd:*)",
       "Bash(npm run dev:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: 全面修复Markdown渲染系统，实现Obsidian级别编辑体验\n\n修复以下关键问题：\n1. HTML文件自动转换为Markdown\n2. KaTeX和Highlight.js CSS全局导入\n3. CodeMirror装饰器更新机制修复\n4. 文件切换状态管理修复\n5. 公式正则表达式增强，支持所有上下文\n6. 公式交互功能（点击、双击、复制）\n7. 大文件支持（移除截断限制）\n\n核心修复：\n- cursor-context-plugin.ts: 添加requestMeasure\\(\\)触发装饰器更新\n- block-decoration-plugin.ts: 移除视口优化，处理所有行\n- math-plugin.ts: 改进正则表达式，添加交互功能\n- pane-wrapper.tsx: 修复文件切换bug\n- universal-file-viewer.tsx: 应用内容规范化\n- layout.tsx: KaTeX和Highlight.js CSS导入\n\n新增功能：\n- HTML-to-Markdown自动转换系统\n- Tiptap Markdown序列化器\n- 公式\"大一统\"交互体验\n- 大文件支持（50MB）\n\n测试文件：\n- test-markdown-rendering.md: 综合Markdown测试\n- test-formula-contexts.md: 公式上下文测试\n- VERIFICATION_CHECKLIST.md: 验证清单\n- MARKDOWN_FIX_SUMMARY.md: 修复总结\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(wc:*)",
+      "Bash(git rm:*)",
+      "Bash(npx next lint:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nrefactor: 第一阶段代码清理 - 删除废弃编辑器和冗余文档\n\n清理内容:\n- 删除 advanced-markdown-editor.tsx \\(Tiptap编辑器，生成HTML问题\\)\n- 删除 tiptap-editor.tsx \\(未使用的备用编辑器\\)\n- 移除 universal-file-viewer.tsx 中的 TiptapEditor 导入\n- 移动测试文件到 docs/tests/ 目录\n- 删除临时文档 CLAUDE_CODE_OBSIDIAN_MARKDOWN.md\n- 删除临时文档 VERIFICATION_CHECKLIST.md\n- 归档 .kiro/optimization-prompts/ 和 .kiro/roadmap-v2/\n\n影响:\n- 简化编辑器路径，只保留 CodeMirror LivePreviewEditor\n- 清理根目录文档混乱\n- 为后续重构做准备\n\n相关: Markdown编辑系统彻底重构计划 - 第1周 Day1-2\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
     ]
   }
 }
