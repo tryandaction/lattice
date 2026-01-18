@@ -17,6 +17,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MathfieldElement } from 'mathlive';
 import { MathSymbolPalette } from './math-symbol-palette';
+import { getTemplateByPrefix, insertTemplate, searchTemplates, type MathTemplate } from '@/lib/math-templates';
 
 export interface MathEditorProps {
   /** Initial LaTeX content */
@@ -55,6 +56,10 @@ export function MathEditor({
   const mathfieldRef = useRef<MathfieldElement | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showSymbolPalette, setShowSymbolPalette] = useState(false);
+  const [templateSuggestion, setTemplateSuggestion] = useState<{
+    key: string;
+    template: MathTemplate;
+  } | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -86,6 +91,48 @@ export function MathEditor({
           // Ctrl+Shift+M: Toggle symbol palette
           e.preventDefault();
           setShowSymbolPalette((prev) => !prev);
+        } else if (e.key === 'Tab' && templateSuggestion) {
+          // Tab: Insert template
+          e.preventDefault();
+
+          // Get current value and find the /prefix
+          const currentValue = mf.value;
+          const lastSlashIndex = currentValue.lastIndexOf('/');
+
+          if (lastSlashIndex !== -1) {
+            // Remove the /prefix
+            const beforeSlash = currentValue.substring(0, lastSlashIndex);
+            const afterPrefix = currentValue.substring(lastSlashIndex).replace(/^\/\w+/, '');
+
+            // Set value without prefix
+            mf.value = beforeSlash + afterPrefix;
+
+            // Insert template
+            insertTemplate(mf, templateSuggestion.template.latex);
+          }
+
+          setTemplateSuggestion(null);
+        }
+      });
+
+      // Handle input to detect template prefixes
+      mf.addEventListener('input', () => {
+        const value = mf.value;
+
+        // Check for /prefix pattern
+        const match = value.match(/\/(\w+)$/);
+
+        if (match) {
+          const prefix = match[1];
+          const template = getTemplateByPrefix(prefix);
+
+          if (template) {
+            setTemplateSuggestion({ key: prefix, template });
+          } else {
+            setTemplateSuggestion(null);
+          }
+        } else {
+          setTemplateSuggestion(null);
         }
       });
 
@@ -192,6 +239,23 @@ export function MathEditor({
           )}
         </div>
 
+        {/* Template Suggestion */}
+        {templateSuggestion && (
+          <div className="template-suggestion">
+            <div className="template-suggestion-content">
+              <span className="template-suggestion-label">
+                Template: <strong>/{templateSuggestion.key}</strong>
+              </span>
+              <span className="template-suggestion-desc">
+                {templateSuggestion.template.description}
+              </span>
+            </div>
+            <span className="template-suggestion-hint">
+              Press Tab to insert
+            </span>
+          </div>
+        )}
+
         <div className="math-editor-actions">
           <button
             onClick={() => setShowSymbolPalette(!showSymbolPalette)}
@@ -282,6 +346,59 @@ export function MathEditor({
           text-align: center;
           color: hsl(var(--muted-foreground));
           font-size: 14px;
+        }
+
+        .template-suggestion {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 8px 12px;
+          margin-bottom: 12px;
+          background: hsl(var(--accent) / 0.5);
+          border: 1px solid hsl(var(--primary) / 0.3);
+          border-radius: 4px;
+          animation: slideIn 0.2s ease-out;
+        }
+
+        @keyframes slideIn {
+          from {
+            opacity: 0;
+            transform: translateY(-4px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        .template-suggestion-content {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .template-suggestion-label {
+          font-size: 13px;
+          color: hsl(var(--foreground));
+        }
+
+        .template-suggestion-label strong {
+          color: hsl(var(--primary));
+          font-weight: 600;
+        }
+
+        .template-suggestion-desc {
+          font-size: 12px;
+          color: hsl(var(--muted-foreground));
+        }
+
+        .template-suggestion-hint {
+          font-size: 11px;
+          color: hsl(var(--muted-foreground));
+          background: hsl(var(--background));
+          padding: 4px 8px;
+          border-radius: 3px;
+          border: 1px solid hsl(var(--border));
         }
 
         .math-editor-actions {
