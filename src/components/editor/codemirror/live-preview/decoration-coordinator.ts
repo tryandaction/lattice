@@ -51,6 +51,7 @@ import {
   BlockquoteContentWidget,
   ListBulletWidget,
   HorizontalRuleWidget,
+  MathWidget,
 } from './widgets';
 import { parseListItem, parseBlockquote } from './markdown-parser';
 
@@ -1160,10 +1161,32 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
     // ========================================================================
 
     case ElementType.MATH_INLINE:
-      // TODO: 使用MathWidget (需要从math-plugin提取)
-      return Decoration.mark({
-        class: 'cm-math-inline',
-      });
+      // 使用MathWidget渲染行内公式
+      if (element.latex) {
+        return Decoration.replace({
+          widget: new MathWidget(
+            element.latex,
+            false, // isBlock
+            element.from,
+            element.to
+          ),
+        });
+      }
+      return null;
+
+    case ElementType.MATH_BLOCK:
+      // 使用MathWidget渲染块级公式
+      if (element.latex) {
+        return Decoration.replace({
+          widget: new MathWidget(
+            element.latex,
+            true, // isBlock
+            element.from,
+            element.to
+          ),
+        });
+      }
+      return null;
 
     default:
       return null;

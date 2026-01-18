@@ -20,9 +20,45 @@
  * 11. BlockquoteContentWidget - 引用内容 > Quote
  * 12. ListBulletWidget - 列表标记 - * + 1. [ ]
  * 13. HorizontalRuleWidget - 分割线 ---
+ *
+ * Math Widget类型:
+ * 14. MathWidget - LaTeX公式渲染 $...$ $$...$$
  */
 
 import { EditorView, WidgetType } from '@codemirror/view';
+
+// ============================================================================
+// KaTeX动态加载
+// ============================================================================
+
+let katex: any = null;
+let katexLoadPromise: Promise<any> | null = null;
+
+/**
+ * 动态加载KaTeX
+ */
+async function loadKaTeX(): Promise<any> {
+  if (katex) return katex;
+
+  if (katexLoadPromise) return katexLoadPromise;
+
+  katexLoadPromise = import('katex')
+    .then((module) => {
+      katex = module.default || module;
+      return katex;
+    })
+    .catch((err) => {
+      console.error('Failed to load KaTeX:', err);
+      throw err;
+    });
+
+  return katexLoadPromise;
+}
+
+// 预加载KaTeX
+if (typeof window !== 'undefined') {
+  loadKaTeX();
+}
 
 // ============================================================================
 // 1. FormattedTextWidget - 通用格式化文本
@@ -951,5 +987,152 @@ export class HorizontalRuleWidget extends WidgetType {
 
   ignoreEvent(e: Event) {
     return e.type !== 'mousedown';
+  }
+}
+
+// ============================================================================
+// 14. MathWidget - LaTeX公式渲染
+// ============================================================================
+
+/**
+ * 数学公式Widget - 使用KaTeX渲染LaTeX公式
+ *
+ * 交互:
+ * - 单击: 定位光标到公式开始位置（显示源码）
+ * - 双击: 选择整个公式（便于编辑）
+ * - 右键: 复制LaTeX源码到剪贴板
+ */
+export class MathWidget extends WidgetType {
+  constructor(
+    private latex: string,
+    private isBlock: boolean,
+    private from: number,
+    private to: number
+  ) {
+    super();
+  }
+
+  eq(other: MathWidget) {
+    return other.latex === this.latex && other.isBlock === this.isBlock;
+  }
+
+  toDOM(view: EditorView) {
+    const container = document.createElement(this.isBlock ? 'div' : 'span');
+    container.className = this.isBlock ? 'cm-math-block' : 'cm-math-inline';
+    container.dataset.from = String(this.from);
+    container.dataset.to = String(this.to);
+    container.dataset.latex = this.latex; // 存储LaTeX用于复制功能
+    container.title = `${this.isBlock ? 'Block' : 'Inline'} formula: Click to edit, Right-click to copy LaTeX`;
+
+    // 单击: 定位光标到公式开始位置（触发显示源码）
+    container.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({
+        selection: { anchor: this.from, head: this.from },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+
+    // 双击: 选择整个公式便于编辑
+    container.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({
+        selection: { anchor: this.from, head: this.to },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+
+    // 右键: 复制LaTeX源码
+    container.addEventListener('contextmenu', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const latexSource = this.isBlock ? `$$${this.latex}$$` : `$${this.latex}$`;
+
+      try {
+        await navigator.clipboard.writeText(latexSource);
+
+        // 视觉反馈
+        const originalTitle = container.title;
+        container.title = '✓ LaTeX copied to clipboard!';
+        container.style.backgroundColor = 'rgba(34, 197, 94, 0.1)'; // 绿色提示
+
+        setTimeout(() => {
+          container.title = originalTitle;
+          container.style.backgroundColor = '';
+        }, 1500);
+      } catch (err) {
+        console.error('Failed to copy LaTeX:', err);
+        container.title = '✗ Failed to copy';
+        setTimeout(() => {
+          container.title = `${this.isBlock ? 'Block' : 'Inline'} formula: Click to edit, Right-click to copy LaTeX`;
+        }, 1500);
+      }
+    });
+
+    // 渲染公式
+    if (katex) {
+      try {
+        katex.render(this.latex, container, {
+          displayMode: this.isBlock,
+          throwOnError: false,
+          errorColor: '#ef4444',
+          trust: true,
+        });
+      } catch (e) {
+        // 显示错误和原始LaTeX
+        container.innerHTML = '';
+        const errorWrapper = document.createElement('span');
+        errorWrapper.className = 'cm-math-error-wrapper';
+
+        const errorIndicator = document.createElement('span');
+        errorIndicator.className = 'cm-math-error-indicator';
+        errorIndicator.textContent = '⚠️';
+        errorIndicator.title = e instanceof Error ? e.message : 'Math rendering error';
+
+        const errorSource = document.createElement('span');
+        errorSource.className = 'cm-math-error-source';
+        errorSource.textContent = this.isBlock ? `$$${this.latex}$$` : `$${this.latex}$`;
+
+        errorWrapper.appendChild(errorIndicator);
+        errorWrapper.appendChild(errorSource);
+        container.appendChild(errorWrapper);
+        container.classList.add('cm-math-error');
+      }
+    } else {
+      // KaTeX未加载，显示占位符
+      container.textContent = this.isBlock ? `$$${this.latex}$$` : `$${this.latex}$`;
+      container.classList.add('cm-math-loading');
+
+      // 等待KaTeX加载后渲染
+      loadKaTeX()
+        .then((k) => {
+          try {
+            container.innerHTML = '';
+            k.render(this.latex, container, {
+              displayMode: this.isBlock,
+              throwOnError: false,
+              errorColor: '#ef4444',
+              trust: true,
+            });
+            container.classList.remove('cm-math-loading');
+          } catch {
+            container.classList.add('cm-math-error');
+          }
+        })
+        .catch(() => {
+          container.classList.add('cm-math-error');
+        });
+    }
+
+    return container;
+  }
+
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown' && e.type !== 'dblclick' && e.type !== 'contextmenu';
   }
 }
