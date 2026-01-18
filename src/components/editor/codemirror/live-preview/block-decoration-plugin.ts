@@ -19,7 +19,6 @@ import {
   WidgetType,
   EditorView,
 } from '@codemirror/view';
-import { RangeSetBuilder } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
 import { parseListItem, parseBlockquote } from './markdown-parser';
 
@@ -33,8 +32,15 @@ interface DecorationEntry {
   isLine?: boolean;
 }
 
+// KaTeX for inline math in headings
+let katexForHeading: any = null;
+import('katex').then((mod) => {
+  katexForHeading = mod.default || mod;
+}).catch(() => {});
+
 /**
  * Heading content widget - renders heading text without # markers
+ * Supports inline LaTeX math rendering
  */
 class HeadingContentWidget extends WidgetType {
   constructor(
@@ -53,35 +59,78 @@ class HeadingContentWidget extends WidgetType {
   toDOM(view: EditorView) {
     const span = document.createElement('span');
     span.className = `cm-heading-content cm-heading-${this.level}-content`;
-    span.textContent = this.content;
     span.dataset.from = String(this.originalFrom);
     span.dataset.to = String(this.originalTo);
+    
+    // Render content with inline math support
+    this.renderContentWithMath(span);
     
     // Handle click to position cursor
     span.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
       
-      // Calculate position within the text
-      const rect = span.getBoundingClientRect();
-      const clickX = e.clientX - rect.left;
-      const textWidth = rect.width;
-      const textLength = this.content.length;
-      
-      let charOffset = Math.round((clickX / textWidth) * textLength);
-      charOffset = Math.max(0, Math.min(charOffset, textLength));
-      
-      // Position is at the start of content (after # markers) + offset
-      const pos = this.originalFrom + charOffset;
-      
+      // Position cursor at the start of heading content
       view.dispatch({
-        selection: { anchor: pos, head: pos },
+        selection: { anchor: this.originalFrom, head: this.originalFrom },
         scrollIntoView: true,
       });
       view.focus();
     });
     
     return span;
+  }
+  
+  /**
+   * Render content with inline math support
+   */
+  private renderContentWithMath(container: HTMLElement) {
+    // Split content by inline math patterns $...$
+    const parts = this.content.split(/(\$[^$\n]+\$)/g);
+    
+    for (const part of parts) {
+      if (part.startsWith('$') && part.endsWith('$') && part.length > 2) {
+        // This is inline math
+        const latex = part.slice(1, -1);
+        const mathSpan = document.createElement('span');
+        mathSpan.className = 'cm-math-inline';
+        
+        if (katexForHeading) {
+          try {
+            katexForHeading.render(latex, mathSpan, {
+              displayMode: false,
+              throwOnError: false,
+              errorColor: '#ef4444',
+              trust: true,
+            });
+          } catch {
+            mathSpan.textContent = part;
+          }
+        } else {
+          mathSpan.textContent = part;
+          // Try to render when KaTeX loads
+          import('katex').then((mod) => {
+            const k = mod.default || mod;
+            katexForHeading = k;
+            try {
+              mathSpan.innerHTML = '';
+              k.render(latex, mathSpan, {
+                displayMode: false,
+                throwOnError: false,
+                errorColor: '#ef4444',
+                trust: true,
+              });
+            } catch {
+              mathSpan.textContent = part;
+            }
+          }).catch(() => {});
+        }
+        container.appendChild(mathSpan);
+      } else if (part) {
+        // Regular text
+        container.appendChild(document.createTextNode(part));
+      }
+    }
   }
   
   ignoreEvent(e: Event) {
@@ -255,28 +304,25 @@ function buildBlockDecorations(view: EditorView): DecorationSet {
   const decorations: DecorationEntry[] = [];
   const doc = view.state.doc;
 
-  // Optimize: only process visible viewport
-  for (const { from, to } of view.visibleRanges) {
-    const startLine = doc.lineAt(from).number;
-    const endLine = doc.lineAt(to).number;
+  // Process ALL lines (not just viewport) to ensure decorations persist
+  // Viewport-only optimization causes decorations to disappear when scrolling
+  for (let lineNum = 1; lineNum <= doc.lines; lineNum++) {
+    const line = doc.line(lineNum);
+    const lineText = line.text;
 
-    for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
-      const line = doc.line(lineNum);
-      const lineText = line.text;
-    
     // Skip empty lines
     if (!lineText.trim()) continue;
-    
+
     // Check if this line should reveal syntax
     const lineRevealed = shouldRevealLine(view.state, lineNum);
-    
+
     // Headings: # ## ### etc.
     const headingMatch = lineText.match(/^(#{1,6})\s+(.*)$/);
     if (headingMatch) {
       const level = headingMatch[1].length;
       const content = headingMatch[2];
       const markerEnd = line.from + headingMatch[1].length + 1; // +1 for space
-      
+
       // Always add heading style to the line
       decorations.push({
         from: line.from,
@@ -370,28 +416,29 @@ function buildBlockDecorations(view: EditorView): DecorationSet {
         });
       }
     }
-  } // Close line loop
-  } // Close viewport loop
+  }
 
-  // Sort decorations: line decorations first, then by position
+  // Sort decorations: line decorations first at same position, then by from/to
   decorations.sort((a, b) => {
+    if (a.from !== b.from) return a.from - b.from;
+    // Line decorations (point decorations) come before range decorations at same position
     if (a.isLine && !b.isLine) return -1;
     if (!a.isLine && b.isLine) return 1;
-    return a.from - b.from || a.to - b.to;
+    return a.to - b.to;
   });
   
-  // Build the decoration set
-  const builder = new RangeSetBuilder<Decoration>();
-  for (const { from, to, decoration } of decorations) {
-    try {
-      builder.add(from, to, decoration);
-    } catch (e) {
-      // Skip invalid decorations silently
-      console.warn('[Block] Decoration rejected:', { from, to });
+  // Convert to Range format
+  // Line decorations (isLine=true) only need from position
+  // Replace/Mark decorations need both from and to
+  const ranges = decorations.map(d => {
+    if (d.isLine) {
+      return d.decoration.range(d.from);
     }
-  }
+    return d.decoration.range(d.from, d.to);
+  });
   
-  return builder.finish();
+  // Decoration.set requires sorted ranges, pass true to indicate they are sorted
+  return Decoration.set(ranges, true);
 }
 
 /**
@@ -404,8 +451,13 @@ export const blockDecorationPlugin = ViewPlugin.fromClass(
     constructor(view: EditorView) {
       this.decorations = buildBlockDecorations(view);
     }
-    
+
     update(update: ViewUpdate) {
+      // Rebuild decorations when:
+      // 1. Document changes (text edited)
+      // 2. Selection changes (cursor moved - affects which lines reveal syntax)
+      // 3. Viewport changes (scrolling)
+      // Note: cursor context plugin calls requestMeasure() which triggers update
       if (update.docChanged || update.selectionSet || update.viewportChanged) {
         this.decorations = buildBlockDecorations(update.view);
       }

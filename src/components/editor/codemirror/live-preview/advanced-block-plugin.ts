@@ -17,7 +17,7 @@ import {
   WidgetType,
   EditorView,
 } from '@codemirror/view';
-import { RangeSetBuilder, StateField, EditorState } from '@codemirror/state';
+import { EditorState } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
 
 /**
@@ -641,6 +641,10 @@ function parseCalloutBlocks(text: string): CalloutBlock[] {
 
 /**
  * Build advanced block decorations
+ * 
+ * IMPORTANT: CodeMirror does not allow Decoration.replace() to span line breaks.
+ * For multi-line blocks, we use line decorations to hide content and
+ * place the widget on the first line.
  */
 function buildAdvancedBlockDecorations(state: EditorState): DecorationSet {
   const decorations: DecorationEntry[] = [];
@@ -651,7 +655,8 @@ function buildAdvancedBlockDecorations(state: EditorState): DecorationSet {
   const detailsBlocks = parseDetailsBlocks(text);
   for (const block of detailsBlocks) {
     const startLine = doc.lineAt(block.from).number;
-    const endLine = doc.lineAt(block.to).number;
+    const endLine = doc.lineAt(Math.min(block.to, doc.length - 1)).number;
+    const isMultiLine = startLine !== endLine;
     
     // Check if any line is being edited
     let shouldReveal = false;
@@ -663,19 +668,53 @@ function buildAdvancedBlockDecorations(state: EditorState): DecorationSet {
     }
     
     if (!shouldReveal) {
-      decorations.push({
-        from: block.from,
-        to: block.to,
-        decoration: Decoration.replace({
-          widget: new DetailsWidget(
-            block.summaryText,
-            block.contentLines,
-            block.isOpen,
-            block.from,
-            block.to
-          ),
-        }),
-      });
+      if (isMultiLine) {
+        // Multi-line: use widget + line hiding
+        const firstLine = doc.line(startLine);
+        
+        // Add widget at the start of the first line
+        decorations.push({
+          from: firstLine.from,
+          to: firstLine.from,
+          decoration: Decoration.widget({
+            widget: new DetailsWidget(
+              block.summaryText,
+              block.contentLines,
+              block.isOpen,
+              block.from,
+              block.to
+            ),
+            side: -1,
+          }),
+          isLine: true,
+        });
+        
+        // Hide all lines
+        for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
+          const line = doc.line(lineNum);
+          decorations.push({
+            from: line.from,
+            to: line.from,
+            decoration: Decoration.line({ class: 'cm-advanced-block-hidden' }),
+            isLine: true,
+          });
+        }
+      } else {
+        // Single line: safe to use replace
+        decorations.push({
+          from: block.from,
+          to: block.to,
+          decoration: Decoration.replace({
+            widget: new DetailsWidget(
+              block.summaryText,
+              block.contentLines,
+              block.isOpen,
+              block.from,
+              block.to
+            ),
+          }),
+        });
+      }
     } else {
       // Add styling for editing mode
       for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
@@ -694,7 +733,8 @@ function buildAdvancedBlockDecorations(state: EditorState): DecorationSet {
   const calloutBlocks = parseCalloutBlocks(text);
   for (const block of calloutBlocks) {
     const startLine = doc.lineAt(block.from).number;
-    const endLine = doc.lineAt(Math.min(block.to, doc.length - 1)).number;
+    const endLine = doc.lineAt(Math.min(block.to - 1, doc.length - 1)).number;
+    const isMultiLine = startLine !== endLine;
     
     let shouldReveal = false;
     for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
@@ -705,21 +745,57 @@ function buildAdvancedBlockDecorations(state: EditorState): DecorationSet {
     }
     
     if (!shouldReveal) {
-      decorations.push({
-        from: block.from,
-        to: Math.min(block.to, doc.length),
-        decoration: Decoration.replace({
-          widget: new CalloutWidget(
-            block.type,
-            block.title,
-            block.contentLines,
-            block.isFoldable,
-            block.isCollapsed,
-            block.from,
-            block.to
-          ),
-        }),
-      });
+      if (isMultiLine) {
+        // Multi-line: use widget + line hiding
+        const firstLine = doc.line(startLine);
+        
+        // Add widget at the start of the first line
+        decorations.push({
+          from: firstLine.from,
+          to: firstLine.from,
+          decoration: Decoration.widget({
+            widget: new CalloutWidget(
+              block.type,
+              block.title,
+              block.contentLines,
+              block.isFoldable,
+              block.isCollapsed,
+              block.from,
+              block.to
+            ),
+            side: -1,
+          }),
+          isLine: true,
+        });
+        
+        // Hide all lines
+        for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
+          const line = doc.line(lineNum);
+          decorations.push({
+            from: line.from,
+            to: line.from,
+            decoration: Decoration.line({ class: 'cm-advanced-block-hidden' }),
+            isLine: true,
+          });
+        }
+      } else {
+        // Single line: safe to use replace
+        decorations.push({
+          from: block.from,
+          to: Math.min(block.to, doc.length),
+          decoration: Decoration.replace({
+            widget: new CalloutWidget(
+              block.type,
+              block.title,
+              block.contentLines,
+              block.isFoldable,
+              block.isCollapsed,
+              block.from,
+              block.to
+            ),
+          }),
+        });
+      }
     } else {
       // Add styling for editing mode
       for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
@@ -734,39 +810,41 @@ function buildAdvancedBlockDecorations(state: EditorState): DecorationSet {
     }
   }
   
-  // Sort decorations
-  decorations.sort((a, b) => {
-    if (a.isLine && !b.isLine) return -1;
-    if (!a.isLine && b.isLine) return 1;
-    return a.from - b.from || a.to - b.to;
+  // Sort decorations by position
+  decorations.sort((a, b) => a.from - b.from || a.to - b.to);
+  
+  // Convert to Range format
+  // Line decorations (isLine=true) only need from position
+  const ranges = decorations.map(d => {
+    if (d.isLine) {
+      return d.decoration.range(d.from);
+    }
+    return d.decoration.range(d.from, d.to);
   });
   
-  const builder = new RangeSetBuilder<Decoration>();
-  for (const { from, to, decoration } of decorations) {
-    try {
-      builder.add(from, to, decoration);
-    } catch (e) {
-      console.warn('Invalid advanced block decoration range:', from, to, e);
-    }
-  }
-  
-  return builder.finish();
+  // Decoration.set requires sorted ranges, pass true to indicate they are sorted
+  return Decoration.set(ranges, true);
 }
 
 /**
- * Advanced block StateField
+ * Advanced block ViewPlugin - using ViewPlugin to properly handle block-level decorations
+ * StateField cannot provide block decorations via plugins
  */
-const advancedBlockStateField = StateField.define<DecorationSet>({
-  create(state) {
-    return buildAdvancedBlockDecorations(state);
-  },
-  update(decorations, tr) {
-    if (tr.docChanged || tr.selection) {
-      return buildAdvancedBlockDecorations(tr.state);
+export const advancedBlockPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    
+    constructor(view: EditorView) {
+      this.decorations = buildAdvancedBlockDecorations(view.state);
     }
-    return decorations;
+    
+    update(update: ViewUpdate) {
+      if (update.docChanged || update.selectionSet || update.viewportChanged) {
+        this.decorations = buildAdvancedBlockDecorations(update.state);
+      }
+    }
   },
-  provide: (field) => EditorView.decorations.from(field),
-});
-
-export const advancedBlockPlugin = advancedBlockStateField;
+  {
+    decorations: (v) => v.decorations,
+  }
+);

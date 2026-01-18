@@ -14,8 +14,10 @@ import {
   DecorationSet,
   WidgetType,
   EditorView,
+  ViewPlugin,
+  ViewUpdate,
 } from '@codemirror/view';
-import { RangeSetBuilder, StateField, EditorState } from '@codemirror/state';
+import { EditorState } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
 
 // Highlight.js will be loaded dynamically
@@ -63,7 +65,9 @@ class CodeBlockWidget extends WidgetType {
   constructor(
     private code: string,
     private language: string,
-    private showLineNumbers: boolean = true
+    private showLineNumbers: boolean = true,
+    private from: number = 0,
+    private to: number = 0
   ) {
     super();
   }
@@ -74,9 +78,28 @@ class CodeBlockWidget extends WidgetType {
            other.showLineNumbers === this.showLineNumbers;
   }
   
-  toDOM() {
+  toDOM(view: EditorView) {
     const container = document.createElement('div');
     container.className = 'cm-code-block-widget';
+    container.dataset.from = String(this.from);
+    container.dataset.to = String(this.to);
+    
+    // Handle click to position cursor at code block start
+    container.addEventListener('mousedown', (e) => {
+      // Don't intercept copy button clicks
+      if ((e.target as HTMLElement).closest('.cm-code-block-copy')) return;
+      
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Position cursor at the start of the code block (after ```lang)
+      const codeStart = this.from + 3 + this.language.length + 1; // ``` + lang + newline
+      view.dispatch({
+        selection: { anchor: codeStart, head: codeStart },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
     
     // Header with language label and copy button
     const header = document.createElement('div');
@@ -229,6 +252,10 @@ function parseCodeBlocks(doc: { toString: () => string; lineAt: (pos: number) =>
 /**
  * Build code block decorations
  * Uses line-based reveal logic for Obsidian-like behavior
+ * 
+ * IMPORTANT: CodeMirror does not allow Decoration.replace() to span line breaks.
+ * For multi-line code blocks, we use line decorations to hide content and
+ * place the widget on the first line.
  */
 function buildCodeBlockDecorations(state: EditorState): DecorationSet {
   const decorations: DecorationEntry[] = [];
@@ -246,16 +273,44 @@ function buildCodeBlockDecorations(state: EditorState): DecorationSet {
       }
     }
     
+    const isMultiLine = block.startLine !== block.endLine;
+    
     if (!shouldReveal) {
-      // Replace entire block with widget - use inline widget instead of block
-      // to avoid "Block decorations may not be specified via plugins" error
-      decorations.push({
-        from: block.from,
-        to: block.to,
-        decoration: Decoration.replace({
-          widget: new CodeBlockWidget(block.code, block.language),
-        }),
-      });
+      if (isMultiLine) {
+        // Multi-line code block: use widget + line hiding
+        const firstLine = doc.line(block.startLine);
+        
+        // Add widget at the start of the first line
+        decorations.push({
+          from: firstLine.from,
+          to: firstLine.from,
+          decoration: Decoration.widget({
+            widget: new CodeBlockWidget(block.code, block.language, true, block.from, block.to),
+            side: -1,
+          }),
+          isLine: true,
+        });
+        
+        // Hide all lines of the code block
+        for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
+          const line = doc.line(lineNum);
+          decorations.push({
+            from: line.from,
+            to: line.from,
+            decoration: Decoration.line({ class: 'cm-code-block-hidden' }),
+            isLine: true,
+          });
+        }
+      } else {
+        // Single line code block (rare but possible): safe to use replace
+        decorations.push({
+          from: block.from,
+          to: block.to,
+          decoration: Decoration.replace({
+            widget: new CodeBlockWidget(block.code, block.language, true, block.from, block.to),
+          }),
+        });
+      }
     } else {
       // Add styling for code block when editing
       for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
@@ -270,39 +325,41 @@ function buildCodeBlockDecorations(state: EditorState): DecorationSet {
     }
   }
   
-  // Sort decorations: line decorations first, then by position
-  decorations.sort((a, b) => {
-    if (a.isLine && !b.isLine) return -1;
-    if (!a.isLine && b.isLine) return 1;
-    return a.from - b.from || a.to - b.to;
+  // Sort decorations by position
+  decorations.sort((a, b) => a.from - b.from || a.to - b.to);
+  
+  // Convert to Range format
+  // Line decorations (isLine=true) only need from position
+  const ranges = decorations.map(d => {
+    if (d.isLine) {
+      return d.decoration.range(d.from);
+    }
+    return d.decoration.range(d.from, d.to);
   });
   
-  // Build the decoration set
-  const builder = new RangeSetBuilder<Decoration>();
-  for (const { from, to, decoration } of decorations) {
-    try {
-      builder.add(from, to, decoration);
-    } catch (e) {
-      console.error('[CodeBlock] Decoration rejected:', { from, to, decoration, error: e });
-    }
-  }
-  
-  return builder.finish();
+  // Decoration.set requires sorted ranges, pass true to indicate they are sorted
+  return Decoration.set(ranges, true);
 }
 
 /**
- * Code block StateField - using StateField instead of ViewPlugin
- * to properly handle block-level decorations
+ * Code block ViewPlugin - using ViewPlugin to properly handle block-level decorations
+ * StateField cannot provide block decorations via plugins
  */
-export const codeBlockPlugin = StateField.define<DecorationSet>({
-  create(state) {
-    return buildCodeBlockDecorations(state);
-  },
-  update(decorations, tr) {
-    if (tr.docChanged || tr.selection) {
-      return buildCodeBlockDecorations(tr.state);
+export const codeBlockPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    
+    constructor(view: EditorView) {
+      this.decorations = buildCodeBlockDecorations(view.state);
     }
-    return decorations;
+    
+    update(update: ViewUpdate) {
+      if (update.docChanged || update.selectionSet || update.viewportChanged) {
+        this.decorations = buildCodeBlockDecorations(update.state);
+      }
+    }
   },
-  provide: (field) => EditorView.decorations.from(field),
-});
+  {
+    decorations: (v) => v.decorations,
+  }
+);

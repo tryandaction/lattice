@@ -7,7 +7,7 @@
  * Requirements: All from spec
  */
 
-import { useEffect, useRef, useState, useCallback, memo } from 'react';
+import { useEffect, useRef, useState, useCallback, memo, forwardRef, useImperativeHandle } from 'react';
 import { Loader2 } from 'lucide-react';
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
 import { EditorState, Extension } from '@codemirror/state';
@@ -67,6 +67,14 @@ export interface LivePreviewEditorProps {
   useWikiImageStyle?: boolean;
   /** Enable high contrast mode */
   highContrast?: boolean;
+}
+
+/** Ref handle for LivePreviewEditor */
+export interface LivePreviewEditorRef {
+  /** Scroll to a specific line number */
+  scrollToLine: (lineNumber: number) => void;
+  /** Focus the editor */
+  focus: () => void;
 }
 
 /**
@@ -196,24 +204,25 @@ function buildExtensions(
 /**
  * Live Preview Editor Component
  */
-function LivePreviewEditorComponent({
-  content,
-  onChange,
-  mode = 'live',
-  onModeChange,
-  showLineNumbers = true,
-  showFoldGutter = true,
-  readOnly = false,
-  onOutlineChange,
-  onWikiLinkClick,
-  onSave,
-  className = '',
-  fileId,
-  availableFiles = [],
-  onImageUpload,
-  useWikiImageStyle = false,
-  highContrast = false,
-}: LivePreviewEditorProps) {
+const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewEditorProps>(
+  function LivePreviewEditorInner({
+    content,
+    onChange,
+    mode = 'live',
+    onModeChange,
+    showLineNumbers = true,
+    showFoldGutter = true,
+    readOnly = false,
+    onOutlineChange,
+    onWikiLinkClick,
+    onSave,
+    className = '',
+    fileId,
+    availableFiles = [],
+    onImageUpload,
+    useWikiImageStyle = false,
+    highContrast = false,
+  }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -398,11 +407,23 @@ function LivePreviewEditorComponent({
   const scrollToLine = useCallback((lineNumber: number) => {
     if (!viewRef.current) return;
     
-    const line = viewRef.current.state.doc.line(lineNumber);
-    viewRef.current.dispatch({
-      effects: EditorView.scrollIntoView(line.from, { y: 'start' }),
-    });
+    try {
+      const line = viewRef.current.state.doc.line(lineNumber);
+      viewRef.current.dispatch({
+        selection: { anchor: line.from },
+        effects: EditorView.scrollIntoView(line.from, { y: 'start' }),
+      });
+      viewRef.current.focus();
+    } catch (e) {
+      console.warn('Failed to scroll to line:', lineNumber, e);
+    }
   }, []);
+  
+  // Expose methods via ref
+  useImperativeHandle(ref, () => ({
+    scrollToLine,
+    focus,
+  }), [scrollToLine, focus]);
 
   if (!librariesLoaded) {
     return (
@@ -430,7 +451,7 @@ function LivePreviewEditorComponent({
       data-loading={isLoading}
     />
   );
-}
+});
 
 /**
  * Memoized Live Preview Editor

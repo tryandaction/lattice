@@ -17,7 +17,6 @@ import {
   WidgetType,
   EditorView,
 } from '@codemirror/view';
-import { RangeSetBuilder } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
 
 // KaTeX will be loaded dynamically
@@ -82,8 +81,10 @@ class MathWidget extends WidgetType {
     container.className = this.isBlock ? 'cm-math-block' : 'cm-math-inline';
     container.dataset.from = String(this.from);
     container.dataset.to = String(this.to);
-    
-    // Handle click to position cursor
+    container.dataset.latex = this.latex; // Store LaTeX for copy functionality
+    container.title = `${this.isBlock ? 'Block' : 'Inline'} formula: Click to edit, Right-click to copy LaTeX`;
+
+    // Handle click to position cursor at formula start (reveals source)
     container.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -93,7 +94,46 @@ class MathWidget extends WidgetType {
       });
       view.focus();
     });
-    
+
+    // Handle double-click to select entire formula for editing
+    container.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({
+        selection: { anchor: this.from, head: this.to },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+
+    // Handle right-click to copy LaTeX source
+    container.addEventListener('contextmenu', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const latexSource = this.isBlock ? `$$${this.latex}$$` : `$${this.latex}$`;
+
+      try {
+        await navigator.clipboard.writeText(latexSource);
+
+        // Visual feedback
+        const originalTitle = container.title;
+        container.title = '✓ LaTeX copied to clipboard!';
+        container.style.backgroundColor = 'rgba(34, 197, 94, 0.1)'; // green tint
+
+        setTimeout(() => {
+          container.title = originalTitle;
+          container.style.backgroundColor = '';
+        }, 1500);
+      } catch (err) {
+        console.error('Failed to copy LaTeX:', err);
+        container.title = '✗ Failed to copy';
+        setTimeout(() => {
+          container.title = `${this.isBlock ? 'Block' : 'Inline'} formula: Click to edit, Right-click to copy LaTeX`;
+        }, 1500);
+      }
+    });
+
     if (katex) {
       try {
         katex.render(this.latex, container, {
@@ -107,16 +147,16 @@ class MathWidget extends WidgetType {
         container.innerHTML = '';
         const errorWrapper = document.createElement('span');
         errorWrapper.className = 'cm-math-error-wrapper';
-        
+
         const errorIndicator = document.createElement('span');
         errorIndicator.className = 'cm-math-error-indicator';
         errorIndicator.textContent = '⚠️';
         errorIndicator.title = e instanceof Error ? e.message : 'Math rendering error';
-        
+
         const errorSource = document.createElement('span');
         errorSource.className = 'cm-math-error-source';
         errorSource.textContent = this.isBlock ? `$$${this.latex}$$` : `$${this.latex}$`;
-        
+
         errorWrapper.appendChild(errorIndicator);
         errorWrapper.appendChild(errorSource);
         container.appendChild(errorWrapper);
@@ -126,7 +166,7 @@ class MathWidget extends WidgetType {
       // KaTeX not loaded yet, show placeholder
       container.textContent = this.isBlock ? `$$${this.latex}$$` : `$${this.latex}$`;
       container.classList.add('cm-math-loading');
-      
+
       // Try to render when KaTeX loads
       loadKaTeX().then((k) => {
         try {
@@ -145,7 +185,7 @@ class MathWidget extends WidgetType {
         container.classList.add('cm-math-error');
       });
     }
-    
+
     return container;
   }
   
@@ -186,22 +226,37 @@ function parseMathExpressions(doc: { toString: () => string; lineAt: (pos: numbe
     });
   }
   
-  // Inline math: $...$ (not inside block math, not spanning multiple lines)
-  const inlineRegex = /(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)/g;
+  // Inline math: $...$ (not inside block math)
+  // IMPROVED regex to handle all contexts:
+  // - Formulas in bold: **text with $E=mc^2$ formula**
+  // - Formulas in tables: | cell with $x=1$ |
+  // - Formulas in headings: # Title with $\alpha$
+  // - Complex LaTeX with all symbols
+  //
+  // Pattern: (?<!\$)\$(?!\$)(.+?)\$(?!\$)
+  // - Allows ALL content except we manually filter newlines later
+  // - Non-greedy to match smallest possible formula
+  const inlineRegex = /(?<!\$)\$(?!\$)(.+?)\$(?!\$)/gs; // 's' flag allows . to match newlines
   while ((match = inlineRegex.exec(text)) !== null) {
     const from = match.index;
     const to = match.index + match[0].length;
-    
+    const latex = match[1];
+
+    // Skip if contains newlines (should use $$ for multi-line formulas)
+    if (latex.includes('\n')) {
+      continue;
+    }
+
     // Check if this is inside a block math
     const isInsideBlock = matches.some(
       (m) => m.isBlock && from >= m.from && to <= m.to
     );
-    
+
     if (!isInsideBlock) {
       matches.push({
         from,
         to,
-        latex: match[1],
+        latex: latex,
         isBlock: false,
         startLine: doc.lineAt(from).number,
         endLine: doc.lineAt(to).number,
@@ -213,11 +268,22 @@ function parseMathExpressions(doc: { toString: () => string; lineAt: (pos: numbe
 }
 
 /**
+ * Decoration entry with line flag for proper sorting
+ */
+interface ExtendedDecorationEntry extends DecorationEntry {
+  isLine?: boolean;
+}
+
+/**
  * Build math decorations
  * Uses line-based reveal logic for Obsidian-like behavior
+ * 
+ * IMPORTANT: CodeMirror does not allow Decoration.replace() to span line breaks.
+ * For multi-line block math, we use line decorations to hide content and
+ * place the widget on the first line.
  */
 function buildMathDecorations(view: EditorView): DecorationSet {
-  const decorations: DecorationEntry[] = [];
+  const decorations: ExtendedDecorationEntry[] = [];
   const doc = view.state.doc;
   
   const mathExpressions = parseMathExpressions(doc);
@@ -232,41 +298,83 @@ function buildMathDecorations(view: EditorView): DecorationSet {
       }
     }
     
+    const isMultiLine = expr.startLine !== expr.endLine;
+    
     if (!shouldReveal) {
-      // Render the math
-      decorations.push({
-        from: expr.from,
-        to: expr.to,
-        decoration: Decoration.replace({
-          widget: new MathWidget(expr.latex, expr.isBlock, expr.from, expr.to),
-        }),
-      });
+      if (isMultiLine && expr.isBlock) {
+        // Multi-line block math: use line decorations to hide content
+        // and place widget on the first line
+        const firstLine = doc.line(expr.startLine);
+        
+        // Add widget at the start of the first line (as a line decoration widget)
+        decorations.push({
+          from: firstLine.from,
+          to: firstLine.from,
+          decoration: Decoration.widget({
+            widget: new MathWidget(expr.latex, true, expr.from, expr.to),
+            side: -1, // Before line content
+          }),
+          isLine: true,
+        });
+        
+        // Hide all lines of the block math using line class
+        for (let lineNum = expr.startLine; lineNum <= expr.endLine; lineNum++) {
+          const line = doc.line(lineNum);
+          decorations.push({
+            from: line.from,
+            to: line.from,
+            decoration: Decoration.line({ class: 'cm-math-block-hidden' }),
+            isLine: true,
+          });
+        }
+      } else {
+        // Single-line math (inline or block): safe to use replace
+        decorations.push({
+          from: expr.from,
+          to: expr.to,
+          decoration: Decoration.replace({
+            widget: new MathWidget(expr.latex, expr.isBlock, expr.from, expr.to),
+          }),
+        });
+      }
     } else {
-      // Show source with styling
-      decorations.push({
-        from: expr.from,
-        to: expr.to,
-        decoration: Decoration.mark({
-          class: expr.isBlock ? 'cm-math-source-block' : 'cm-math-source-inline',
-        }),
-      });
+      // Show source with styling - use mark for single line, line decoration for multi-line
+      if (isMultiLine) {
+        for (let lineNum = expr.startLine; lineNum <= expr.endLine; lineNum++) {
+          const line = doc.line(lineNum);
+          decorations.push({
+            from: line.from,
+            to: line.from,
+            decoration: Decoration.line({ class: 'cm-math-source-block' }),
+            isLine: true,
+          });
+        }
+      } else {
+        decorations.push({
+          from: expr.from,
+          to: expr.to,
+          decoration: Decoration.mark({
+            class: expr.isBlock ? 'cm-math-source-block' : 'cm-math-source-inline',
+          }),
+        });
+      }
     }
   }
   
   // Sort decorations by position
   decorations.sort((a, b) => a.from - b.from || a.to - b.to);
   
-  // Build the decoration set
-  const builder = new RangeSetBuilder<Decoration>();
-  for (const { from, to, decoration } of decorations) {
-    try {
-      builder.add(from, to, decoration);
-    } catch (e) {
-      console.error('[Math] Decoration rejected:', { from, to, decoration, error: e });
+  // Convert to Range format
+  // Line decorations (isLine=true) only need from position
+  const ranges = decorations.map(d => {
+    if (d.isLine) {
+      return d.decoration.range(d.from);
     }
-  }
+    return d.decoration.range(d.from, d.to);
+  });
   
-  return builder.finish();
+  // Decoration.set requires sorted ranges, pass true to indicate they are sorted
+  return Decoration.set(ranges, true);
 }
 
 /**

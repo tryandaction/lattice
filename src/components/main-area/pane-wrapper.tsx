@@ -125,11 +125,17 @@ export function PaneWrapper({
     const loadFile = async () => {
       // Capture the tab ID at the start of this async operation
       const loadingForTabId = currentTabId;
-      
+
       try {
         const file = await activeTab.fileHandle.getFile();
         const extension = getFileExtension(file.name);
-        
+
+        // File size validation (warn for very large files)
+        const MAX_TEXT_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+        if (!isBinaryFile(extension) && file.size > MAX_TEXT_FILE_SIZE) {
+          console.warn(`Large text file detected: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
+        }
+
         const fileContent = isBinaryFile(extension)
           ? await file.arrayBuffer()
           : await file.text();
@@ -160,7 +166,13 @@ export function PaneWrapper({
     };
 
     loadFile();
-  }, [activeTab?.id, activeTab?.fileHandle, getContentFromCache, setContentToCache]);
+  }, [
+    activeTab?.id,
+    activeTab?.fileHandle,
+    activeTab, // CRITICAL: Include full activeTab object to detect reference changes
+    getContentFromCache,
+    setContentToCache,
+  ]);
 
   // Handle tab click
   const handleTabClick = useCallback((index: number) => {

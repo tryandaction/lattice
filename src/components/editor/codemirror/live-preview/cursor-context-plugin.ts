@@ -174,9 +174,8 @@ export function shouldRevealLine(state: EditorState, lineNumber: number): boolea
     }
     // Check if cursor is on this line
     return context.revealLines.has(lineNumber);
-  } catch (error) {
+  } catch {
     // Field doesn't exist - safe default is don't reveal (show formatted)
-    console.warn('Cursor context field not available:', error);
     return false;
   }
 }
@@ -191,14 +190,50 @@ export function getCursorLine(state: EditorState): number {
 /**
  * Cursor context view plugin
  * Triggers decoration updates when cursor moves
+ *
+ * CRITICAL: This plugin must request measure when cursor context changes
+ * so that other ViewPlugins know to rebuild their decorations
  */
 export const cursorContextPlugin = ViewPlugin.fromClass(
   class {
-    constructor(readonly view: EditorView) {}
-    
+    private lastContext: CursorContext | null = null;
+
+    constructor(readonly view: EditorView) {
+      this.lastContext = view.state.field(cursorContextField, false) ?? null;
+    }
+
     update(update: ViewUpdate) {
-      // The state field handles updates automatically
-      // This plugin can be used for additional side effects if needed
+      // Check if cursor context changed
+      const newContext = update.state.field(cursorContextField, false) ?? null;
+
+      // If context changed (cursor moved to different line or reveal set changed)
+      if (this.hasContextChanged(this.lastContext, newContext)) {
+        // Request a measure to trigger decoration updates in other plugins
+        // This is CRITICAL - without this, decoration plugins won't know to re-run
+        update.view.requestMeasure();
+        this.lastContext = newContext;
+      }
+    }
+
+    /**
+     * Check if cursor context has meaningfully changed
+     */
+    private hasContextChanged(old: CursorContext | null, current: CursorContext | null): boolean {
+      if (!old && !current) return false;
+      if (!old || !current) return true;
+
+      // Check if cursor line changed
+      if (old.cursorLine !== current.cursorLine) return true;
+
+      // Check if reveal lines set changed
+      if (old.revealLines.size !== current.revealLines.size) return true;
+
+      // Check if reveal lines content changed
+      for (const line of current.revealLines) {
+        if (!old.revealLines.has(line)) return true;
+      }
+
+      return false;
     }
   }
 );

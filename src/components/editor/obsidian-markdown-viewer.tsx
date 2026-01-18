@@ -28,6 +28,7 @@ import {
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
 import type { ViewMode, OutlineItem } from "./codemirror/live-preview/types";
+import type { LivePreviewEditorRef } from "./codemirror/live-preview/live-preview-editor";
 
 // Lazy load components
 const LivePreviewEditor = dynamic(
@@ -146,7 +147,7 @@ export function ObsidianMarkdownViewer({
   const [showOutline, setShowOutline] = useState(true);
   const [activeHeading, setActiveHeading] = useState<number | undefined>();
   const containerRef = useRef<HTMLDivElement>(null);
-  const editorRef = useRef<{ scrollToLine: (line: number) => void } | null>(null);
+  const editorRef = useRef<LivePreviewEditorRef>(null);
   const contentRef = useRef(content);
 
   // Sync with external content changes
@@ -191,8 +192,8 @@ export function ObsidianMarkdownViewer({
   // Handle outline navigation
   const handleOutlineNavigate = useCallback((line: number) => {
     setActiveHeading(line);
-    // Scroll to line in editor
-    // This would need to be implemented via ref
+    // Scroll to line in editor via ref
+    editorRef.current?.scrollToLine(line);
   }, []);
 
   // Handle outline update
@@ -302,6 +303,7 @@ export function ObsidianMarkdownViewer({
         {/* Editor */}
         <div className="flex-1 overflow-auto">
           <LivePreviewEditor
+            ref={editorRef}
             content={localContent}
             onChange={handleContentChange}
             mode={mode}

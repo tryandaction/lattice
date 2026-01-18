@@ -157,36 +157,32 @@ function FileViewer({
       // Ensure content is a string for markdown/text editors
       let textContent: string;
       if (content instanceof ArrayBuffer) {
-        console.warn('[FileViewer] Markdown received ArrayBuffer, converting to string');
-        try {
-          // Try UTF-8 decoding
-          const decoder = new TextDecoder('utf-8', { fatal: true });
-          textContent = decoder.decode(content);
-        } catch (e) {
-          console.error('[FileViewer] UTF-8 decode failed, file may contain binary data:', e);
-          // Check if it's actually binary data (like PNG)
-          const bytes = new Uint8Array(content);
-          const isPng = bytes.length > 4 &&
-                        bytes[0] === 0x89 && bytes[1] === 0x50 &&
-                        bytes[2] === 0x4E && bytes[3] === 0x47;
+        // Check if it's binary data first
+        const bytes = new Uint8Array(content);
+        const isPng = bytes.length > 4 &&
+                      bytes[0] === 0x89 && bytes[1] === 0x50 &&
+                      bytes[2] === 0x4E && bytes[3] === 0x47;
+        const isJpeg = bytes.length > 2 && bytes[0] === 0xFF && bytes[1] === 0xD8;
+        const isGif = bytes.length > 4 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46;
+        const isPdf = bytes.length > 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
 
-          if (isPng || bytes[0] === 0xFF || bytes[0] === 0x00) {
-            return (
-              <div className="flex h-full flex-col items-center justify-center bg-background p-8">
-                <AlertCircle className="h-8 w-8 text-destructive" />
-                <p className="mt-4 text-sm text-destructive">
-                  This .md file appears to contain binary data, not text.
-                </p>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  File: {fileName}
-                </p>
-              </div>
-            );
-          }
-
-          // Fallback to lossy decode
-          textContent = new TextDecoder('utf-8', { fatal: false }).decode(content);
+        if (isPng || isJpeg || isGif || isPdf) {
+          return (
+            <div className="flex h-full flex-col items-center justify-center bg-background p-8">
+              <AlertCircle className="h-8 w-8 text-destructive" />
+              <p className="mt-4 text-sm text-destructive">
+                This file appears to contain binary data, not text.
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                File: {fileName}
+              </p>
+            </div>
+          );
         }
+
+        // Use non-fatal decoder to avoid throwing errors
+        const decoder = new TextDecoder('utf-8', { fatal: false });
+        textContent = decoder.decode(content);
       } else {
         textContent = content;
       }

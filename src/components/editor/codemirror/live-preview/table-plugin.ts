@@ -10,9 +10,11 @@ import {
   DecorationSet,
   WidgetType,
   EditorView,
+  ViewPlugin,
+  ViewUpdate,
   keymap,
 } from '@codemirror/view';
-import { RangeSetBuilder, EditorSelection, StateField, EditorState } from '@codemirror/state';
+import { EditorSelection, EditorState } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
 
 // Lazy load KaTeX for math rendering in tables
@@ -97,7 +99,9 @@ function parseInlineMarkdown(text: string): string {
 class TableWidget extends WidgetType {
   constructor(
     private rows: string[][],
-    private hasHeader: boolean
+    private hasHeader: boolean,
+    private from: number = 0,
+    private to: number = 0
   ) {
     super();
   }
@@ -106,9 +110,28 @@ class TableWidget extends WidgetType {
     return JSON.stringify(other.rows) === JSON.stringify(this.rows);
   }
   
-  toDOM() {
+  toDOM(view: EditorView) {
     const table = document.createElement('table');
     table.className = 'cm-table-widget';
+    table.dataset.from = String(this.from);
+    table.dataset.to = String(this.to);
+    
+    // Handle click to position cursor at table start
+    table.addEventListener('mousedown', (e) => {
+      // Don't intercept wiki link clicks
+      if ((e.target as HTMLElement).classList.contains('cm-wiki-link-table')) return;
+      if ((e.target as HTMLElement).classList.contains('cm-link-table')) return;
+      
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Position cursor at the start of the table
+      view.dispatch({
+        selection: { anchor: this.from, head: this.from },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
     
     // Calculate column widths based on content
     const colCount = Math.max(...this.rows.map(r => r.length));
@@ -181,8 +204,8 @@ class TableWidget extends WidgetType {
     return table;
   }
   
-  ignoreEvent() {
-    return true;
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
   }
 }
 
@@ -265,6 +288,10 @@ function parseTables(text: string): TableMatch[] {
 /**
  * Build table decorations
  * Uses line-based reveal logic for Obsidian-like behavior
+ * 
+ * IMPORTANT: CodeMirror does not allow Decoration.replace() to span line breaks.
+ * For multi-line tables, we use line decorations to hide content and
+ * place the widget on the first line.
  */
 function buildTableDecorations(state: EditorState): DecorationSet {
   const decorations: { from: number; to: number; decoration: Decoration; isLine?: boolean }[] = [];
@@ -276,7 +303,8 @@ function buildTableDecorations(state: EditorState): DecorationSet {
   for (const table of tables) {
     // Get line numbers for the table
     const startLine = doc.lineAt(table.from).number;
-    const endLine = doc.lineAt(table.to).number;
+    const endLine = doc.lineAt(Math.min(table.to, doc.length - 1)).number;
+    const isMultiLine = startLine !== endLine;
     
     // Check if any line of the table should reveal syntax
     let shouldReveal = false;
@@ -288,15 +316,41 @@ function buildTableDecorations(state: EditorState): DecorationSet {
     }
     
     if (!shouldReveal) {
-      // Replace entire table with widget - use inline widget instead of block
-      // to avoid "Block decorations may not be specified via plugins" error
-      decorations.push({
-        from: table.from,
-        to: table.to,
-        decoration: Decoration.replace({
-          widget: new TableWidget(table.rows, table.hasHeader),
-        }),
-      });
+      if (isMultiLine) {
+        // Multi-line table: use widget + line hiding
+        const firstLine = doc.line(startLine);
+        
+        // Add widget at the start of the first line
+        decorations.push({
+          from: firstLine.from,
+          to: firstLine.from,
+          decoration: Decoration.widget({
+            widget: new TableWidget(table.rows, table.hasHeader, table.from, table.to),
+            side: -1,
+          }),
+          isLine: true,
+        });
+        
+        // Hide all lines of the table
+        for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
+          const line = doc.line(lineNum);
+          decorations.push({
+            from: line.from,
+            to: line.from,
+            decoration: Decoration.line({ class: 'cm-table-hidden' }),
+            isLine: true,
+          });
+        }
+      } else {
+        // Single line table (rare): safe to use replace
+        decorations.push({
+          from: table.from,
+          to: table.to,
+          decoration: Decoration.replace({
+            widget: new TableWidget(table.rows, table.hasHeader, table.from, table.to),
+          }),
+        });
+      }
     } else {
       // Add styling for table when editing
       for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
@@ -311,24 +365,20 @@ function buildTableDecorations(state: EditorState): DecorationSet {
     }
   }
   
-  // Sort decorations: line decorations first, then by position
-  decorations.sort((a, b) => {
-    if (a.isLine && !b.isLine) return -1;
-    if (!a.isLine && b.isLine) return 1;
-    return a.from - b.from || a.to - b.to;
+  // Sort decorations by position
+  decorations.sort((a, b) => a.from - b.from || a.to - b.to);
+  
+  // Convert to Range format
+  // Line decorations (isLine=true) only need from position
+  const ranges = decorations.map(d => {
+    if (d.isLine) {
+      return d.decoration.range(d.from);
+    }
+    return d.decoration.range(d.from, d.to);
   });
   
-  // Build the decoration set
-  const builder = new RangeSetBuilder<Decoration>();
-  for (const { from, to, decoration } of decorations) {
-    try {
-      builder.add(from, to, decoration);
-    } catch (e) {
-      console.error('[Table] Decoration rejected:', { from, to, decoration, error: e });
-    }
-  }
-  
-  return builder.finish();
+  // Decoration.set requires sorted ranges, pass true to indicate they are sorted
+  return Decoration.set(ranges, true);
 }
 
 /**
@@ -533,23 +583,29 @@ const tableKeymap = keymap.of([
 ]);
 
 /**
- * Table StateField - using StateField instead of ViewPlugin
- * to properly handle block-level decorations
+ * Table ViewPlugin - using ViewPlugin to properly handle block-level decorations
+ * StateField cannot provide block decorations via plugins
  */
-const tableStateField = StateField.define<DecorationSet>({
-  create(state) {
-    return buildTableDecorations(state);
-  },
-  update(decorations, tr) {
-    if (tr.docChanged || tr.selection) {
-      return buildTableDecorations(tr.state);
+const tableViewPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    
+    constructor(view: EditorView) {
+      this.decorations = buildTableDecorations(view.state);
     }
-    return decorations;
+    
+    update(update: ViewUpdate) {
+      if (update.docChanged || update.selectionSet || update.viewportChanged) {
+        this.decorations = buildTableDecorations(update.state);
+      }
+    }
   },
-  provide: (field) => EditorView.decorations.from(field),
-});
+  {
+    decorations: (v) => v.decorations,
+  }
+);
 
 /**
  * Complete table plugin with navigation
  */
-export const tablePlugin = [tableStateField, tableKeymap];
+export const tablePlugin = [tableViewPlugin, tableKeymap];

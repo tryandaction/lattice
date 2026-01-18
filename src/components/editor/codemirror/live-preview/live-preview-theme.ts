@@ -97,9 +97,10 @@ export const livePreviewTheme = EditorView.theme({
     borderLeftWidth: '2px',
   },
   
-  // Line wrapping
+  // Line wrapping with smooth transition for active line highlight
   '.cm-line': {
     padding: '0 1rem',
+    transition: 'background-color 150ms ease-out',
   },
 
   // Vertical rhythm for paragraphs
@@ -442,6 +443,15 @@ export const livePreviewTheme = EditorView.theme({
     backgroundColor: colors.codeBackground,
   },
   
+  // Hidden lines for multi-line code blocks (when not editing)
+  '.cm-code-block-hidden': {
+    display: 'none !important',
+    height: '0 !important',
+    overflow: 'hidden !important',
+    margin: '0 !important',
+    padding: '0 !important',
+  },
+  
   // === Math ===
   
   '.cm-math-inline': {
@@ -454,9 +464,13 @@ export const livePreviewTheme = EditorView.theme({
     display: 'block',
     textAlign: 'center',
     margin: '1em 0',
-    padding: '1em',
-    backgroundColor: `${colors.muted}50`,
-    borderRadius: '8px',
+    padding: '0.5em',
+    cursor: 'text',
+    width: '100%',
+  },
+  
+  '.cm-widgetBuffer + .cm-math-block, .cm-widgetBuffer + .cm-code-block-widget, .cm-widgetBuffer + .cm-table-widget': {
+    display: 'block',
   },
   
   '.cm-math-error': {
@@ -509,6 +523,15 @@ export const livePreviewTheme = EditorView.theme({
     fontSize: '0.9em',
     display: 'block',
     margin: '0.5em 0',
+  },
+  
+  // Hidden lines for multi-line block math (when not editing)
+  '.cm-math-block-hidden': {
+    display: 'none !important',
+    height: '0 !important',
+    overflow: 'hidden !important',
+    margin: '0 !important',
+    padding: '0 !important',
   },
   
   // === Tables ===
@@ -599,6 +622,15 @@ export const livePreviewTheme = EditorView.theme({
     fontSize: '14px',
   },
   
+  // Hidden lines for multi-line tables (when not editing)
+  '.cm-table-hidden': {
+    display: 'none !important',
+    height: '0 !important',
+    overflow: 'hidden !important',
+    margin: '0 !important',
+    padding: '0 !important',
+  },
+  
   // === Images ===
   
   '.cm-image-container': {
@@ -667,12 +699,33 @@ export const livePreviewTheme = EditorView.theme({
   
   '.cm-formatted-widget': {
     cursor: 'text',
+    // Smooth appearance animation
+    animation: 'cm-fade-in 150ms ease-out',
   },
   
-  // Source mode syntax markers (shown when editing)
+  // Keyframes for smooth animations
+  '@keyframes cm-fade-in': {
+    from: { opacity: '0', transform: 'translateY(-2px)' },
+    to: { opacity: '1', transform: 'translateY(0)' },
+  },
+  
+  '@keyframes cm-fade-out': {
+    from: { opacity: '1', transform: 'translateY(0)' },
+    to: { opacity: '0', transform: 'translateY(2px)' },
+  },
+  
+  // Source mode syntax markers (shown when editing) - with smooth reveal
   '.cm-bold-source, .cm-italic-source, .cm-bolditalic-source, .cm-strikethrough-source, .cm-highlight-source, .cm-code-source': {
     color: 'var(--muted-foreground, #6b7280)',
-    opacity: '0.6',
+    opacity: '0.7',
+    transition: 'opacity 150ms ease-out, color 150ms ease-out',
+  },
+  
+  // Smooth transition for link source markers
+  '.cm-link-source, .cm-wikilink-source, .cm-image-source': {
+    color: 'var(--muted-foreground, #6b7280)',
+    opacity: '0.7',
+    transition: 'opacity 150ms ease-out',
   },
   
   // === Search ===
@@ -923,6 +976,15 @@ export const livePreviewTheme = EditorView.theme({
     backgroundColor: `${colors.muted}30`,
     borderLeft: `3px solid ${colors.mutedForeground}`,
     paddingLeft: '12px',
+  },
+  
+  // Hidden lines for multi-line advanced blocks (details/callout when not editing)
+  '.cm-advanced-block-hidden': {
+    display: 'none !important',
+    height: '0 !important',
+    overflow: 'hidden !important',
+    margin: '0 !important',
+    padding: '0 !important',
   },
   
   // Source mode for new elements

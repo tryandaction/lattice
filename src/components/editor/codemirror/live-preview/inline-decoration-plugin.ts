@@ -29,7 +29,6 @@ import {
   WidgetType,
   EditorView,
 } from '@codemirror/view';
-import { RangeSetBuilder } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
 import type { MarkdownElement } from './types';
 
@@ -1154,21 +1153,14 @@ function buildInlineDecorations(view: EditorView): DecorationSet {
     }
   }
   
-  // Sort decorations by position (required by CodeMirror)
+  // Sort decorations by position
   decorations.sort((a, b) => a.from - b.from || a.to - b.to);
   
-  // Build the decoration set
-  const builder = new RangeSetBuilder<Decoration>();
-  for (const { from, to, decoration } of decorations) {
-    try {
-      builder.add(from, to, decoration);
-    } catch (e) {
-      // Skip invalid decorations silently
-      console.warn('[Inline] Decoration rejected:', { from, to });
-    }
-  }
+  // Convert to Range format
+  const ranges = decorations.map(d => d.decoration.range(d.from, d.to));
   
-  return builder.finish();
+  // Decoration.set requires sorted ranges, pass true to indicate they are sorted
+  return Decoration.set(ranges, true);
 }
 
 /**
