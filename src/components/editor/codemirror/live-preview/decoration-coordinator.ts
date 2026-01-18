@@ -37,6 +37,22 @@
 import { EditorView, ViewUpdate, ViewPlugin, DecorationSet, Decoration } from '@codemirror/view';
 import { EditorState, RangeSet } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
+import {
+  FormattedTextWidget,
+  LinkWidget,
+  AnnotationLinkWidget,
+  ImageWidget,
+  SuperscriptWidget,
+  SubscriptWidget,
+  KbdWidget,
+  FootnoteRefWidget,
+  EmbedWidget,
+  HeadingContentWidget,
+  BlockquoteContentWidget,
+  ListBulletWidget,
+  HorizontalRuleWidget,
+} from './widgets';
+import { parseListItem, parseBlockquote } from './markdown-parser';
 
 // ============================================================================
 // 类型定义
@@ -256,48 +272,129 @@ function parseLineElements(
   // 检测标题
   const headingMatch = lineText.match(/^(#{1,6})\s+(.*)$/);
   if (headingMatch) {
+    const level = headingMatch[1].length;
+    const content = headingMatch[2];
+    const markerEnd = line.from + headingMatch[1].length + 1; // +1 for space
+
+    // 1. 行装饰器（样式）
     elements.push({
       type: ElementType.HEADING,
       from: line.from,
-      to: line.to,
+      to: line.from, // 行装饰器是点装饰
       lineNumber: lineNum,
-      level: headingMatch[1].length,
-      content: headingMatch[2],
+      level: level,
+      content: content,
+      decorationData: {
+        isLineStyle: true,
+        level: level,
+      },
     });
+
+    // 2. Widget替换（隐藏#标记）
+    if (content) {
+      elements.push({
+        type: ElementType.HEADING,
+        from: line.from,
+        to: line.to,
+        lineNumber: lineNum,
+        level: level,
+        content: content,
+        decorationData: {
+          isWidget: true,
+          content: content,
+          level: level,
+          markerEnd: markerEnd,
+          originalFrom: line.from,
+          originalTo: line.to,
+        },
+      });
+    }
     // 标题内可能有行内元素，继续解析
   }
 
-  // 检测引用
-  const quoteMatch = lineText.match(/^>\s*(.*)/);
-  if (quoteMatch) {
+  // 检测引用（使用parseBlockquote）
+  const blockquote = parseBlockquote(lineText, line.from);
+  if (blockquote) {
+    const content = lineText.slice(blockquote.markerTo - line.from);
+
+    // 1. 行装饰器
     elements.push({
       type: ElementType.BLOCKQUOTE,
       from: line.from,
-      to: line.to,
+      to: line.from,
       lineNumber: lineNum,
-      content: quoteMatch[1],
+      content: content,
+      decorationData: {
+        isLineStyle: true,
+      },
     });
+
+    // 2. Widget替换
+    if (content) {
+      elements.push({
+        type: ElementType.BLOCKQUOTE,
+        from: line.from,
+        to: line.to,
+        lineNumber: lineNum,
+        content: content,
+        decorationData: {
+          isWidget: true,
+          content: content,
+          markerTo: blockquote.markerTo,
+          originalFrom: line.from,
+          originalTo: line.to,
+        },
+      });
+    }
   }
 
-  // 检测列表
-  const listMatch = lineText.match(/^(\s*)([-*+]|\d+\.)\s+(.*)/);
-  if (listMatch) {
+  // 检测列表（使用parseListItem）
+  const listItem = parseListItem(lineText, line.from);
+  if (listItem) {
+    // 1. 行装饰器
     elements.push({
       type: ElementType.LIST_ITEM,
       from: line.from,
-      to: line.to,
+      to: line.from,
       lineNumber: lineNum,
-      content: listMatch[3],
+      content: lineText.slice(listItem.markerTo - line.from),
+      decorationData: {
+        isLineStyle: true,
+        type: listItem.type,
+        indent: listItem.indent,
+      },
+    });
+
+    // 2. Widget替换标记
+    elements.push({
+      type: ElementType.LIST_ITEM,
+      from: listItem.markerFrom,
+      to: listItem.markerTo,
+      lineNumber: lineNum,
+      content: lineText.slice(listItem.markerTo - line.from),
+      decorationData: {
+        isWidget: true,
+        type: listItem.type,
+        marker: listItem.marker,
+        checked: listItem.checked,
+        markerFrom: listItem.markerFrom,
+        markerTo: listItem.markerTo,
+        lineFrom: line.from,
+      },
     });
   }
 
   // 检测横线
-  if (/^---+$/.test(lineText)) {
+  if (/^([-*_])\1{2,}\s*$/.test(lineText)) {
     elements.push({
       type: ElementType.HORIZONTAL_RULE,
       from: line.from,
       to: line.to,
       lineNumber: lineNum,
+      decorationData: {
+        originalFrom: line.from,
+        originalTo: line.to,
+      },
     });
     return elements;
   }
@@ -312,12 +409,23 @@ function parseLineElements(
 /**
  * 解析行内元素
  *
- * 优先级:
+ * 完整支持15种行内Markdown元素:
  * 1. 行内公式 $...$
- * 2. 粗体/斜体 **...** *...*
- * 3. 行内代码 `...`
- * 4. 链接 [text](url)
- * 5. 图片 ![alt](url)
+ * 2. 粗体+斜体 ***...***
+ * 3. 粗体 **...**
+ * 4. 斜体 *...* 或 _..._
+ * 5. 删除线 ~~...~~
+ * 6. 高亮 ==...==
+ * 7. 行内代码 `...`
+ * 8. 链接 [text](url)
+ * 9. Wiki链接 [[page]]
+ * 10. 批注链接 [[file.pdf#ann-uuid]]
+ * 11. 图片 ![alt](url)
+ * 12. 上标 ^text^
+ * 13. 下标 ~text~
+ * 14. 键盘按键 <kbd>text</kbd>
+ * 15. 脚注引用 [^1]
+ * 16. 嵌入 ![[file]]
  */
 function parseInlineElements(
   lineText: string,
@@ -325,16 +433,13 @@ function parseInlineElements(
   lineNum: number
 ): ParsedElement[] {
   const elements: ParsedElement[] = [];
-
-  // 行内公式: $...$
-  const inlineMathRegex = /(?<!\$)\$(?!\$)(.+?)\$(?!\$)/g;
   let match: RegExpExecArray | null;
 
+  // 1. 行内公式: $...$
+  const inlineMathRegex = /(?<!\$)\$(?!\$)(.+?)\$(?!\$)/g;
   while ((match = inlineMathRegex.exec(lineText)) !== null) {
     const latex = match[1];
-
-    // 过滤掉包含换行的（应该用块级公式）
-    if (latex.includes('\n')) continue;
+    if (latex.includes('\n')) continue; // 块级公式用$$
 
     elements.push({
       type: ElementType.MATH_INLINE,
@@ -343,10 +448,35 @@ function parseInlineElements(
       lineNumber: lineNum,
       latex: latex,
       isBlock: false,
+      decorationData: {
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 1, // 跳过 $
+        contentTo: lineFrom + match.index + match[0].length - 1, // 不含 $
+      },
     });
   }
 
-  // 粗体: **...**
+  // 2. 粗体+斜体: ***...***
+  const boldItalicRegex = /\*\*\*([^*]+?)\*\*\*/g;
+  while ((match = boldItalicRegex.exec(lineText)) !== null) {
+    elements.push({
+      type: ElementType.INLINE_OTHER,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      content: match[1],
+      decorationData: {
+        className: 'cm-strong cm-em',
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 3,
+        contentTo: lineFrom + match.index + match[0].length - 3,
+      },
+    });
+  }
+
+  // 3. 粗体: **...**
   const boldRegex = /\*\*([^*]+?)\*\*/g;
   while ((match = boldRegex.exec(lineText)) !== null) {
     elements.push({
@@ -355,22 +485,75 @@ function parseInlineElements(
       to: lineFrom + match.index + match[0].length,
       lineNumber: lineNum,
       content: match[1],
+      decorationData: {
+        className: 'cm-strong',
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 2,
+        contentTo: lineFrom + match.index + match[0].length - 2,
+      },
     });
   }
 
-  // 斜体: *...*
-  const italicRegex = /(?<!\*)\*(?!\*)([^*]+?)\*(?!\*)/g;
+  // 4. 斜体: *...* 或 _..._
+  const italicRegex = /(?<!\*)\*(?!\*)([^*]+?)\*(?!\*)|(?<!_)_(?!_)([^_]+?)_(?!_)/g;
   while ((match = italicRegex.exec(lineText)) !== null) {
+    const content = match[1] || match[2];
     elements.push({
       type: ElementType.INLINE_ITALIC,
       from: lineFrom + match.index,
       to: lineFrom + match.index + match[0].length,
       lineNumber: lineNum,
-      content: match[1],
+      content: content,
+      decorationData: {
+        className: 'cm-em',
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 1,
+        contentTo: lineFrom + match.index + match[0].length - 1,
+      },
     });
   }
 
-  // 行内代码: `...`
+  // 5. 删除线: ~~...~~
+  const strikeRegex = /~~([^~]+?)~~/g;
+  while ((match = strikeRegex.exec(lineText)) !== null) {
+    elements.push({
+      type: ElementType.INLINE_OTHER,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      content: match[1],
+      decorationData: {
+        className: 'cm-strikethrough',
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 2,
+        contentTo: lineFrom + match.index + match[0].length - 2,
+      },
+    });
+  }
+
+  // 6. 高亮: ==...==
+  const highlightRegex = /==([^=]+?)==/g;
+  while ((match = highlightRegex.exec(lineText)) !== null) {
+    elements.push({
+      type: ElementType.INLINE_OTHER,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      content: match[1],
+      decorationData: {
+        className: 'cm-highlight',
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 2,
+        contentTo: lineFrom + match.index + match[0].length - 2,
+      },
+    });
+  }
+
+  // 7. 行内代码: `...`
   const codeRegex = /`([^`]+?)`/g;
   while ((match = codeRegex.exec(lineText)) !== null) {
     elements.push({
@@ -379,10 +562,63 @@ function parseInlineElements(
       to: lineFrom + match.index + match[0].length,
       lineNumber: lineNum,
       content: match[1],
+      decorationData: {
+        className: 'cm-inline-code',
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 1,
+        contentTo: lineFrom + match.index + match[0].length - 1,
+      },
     });
   }
 
-  // 链接: [text](url)
+  // 8. 批注链接: [[file.pdf#ann-uuid]]
+  const annotationLinkRegex = /\[\[([^\]]+?\.pdf)#(ann-[^\]]+?)\]\]/gi;
+  while ((match = annotationLinkRegex.exec(lineText)) !== null) {
+    elements.push({
+      type: ElementType.INLINE_OTHER,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      content: match[1],
+      decorationData: {
+        type: 'annotation-link',
+        filePath: match[1],
+        annotationId: match[2],
+        displayText: match[1],
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 2,
+        contentTo: lineFrom + match.index + match[0].length - 2,
+      },
+    });
+  }
+
+  // 9. Wiki链接: [[page]] or [[page|display]]
+  const wikiLinkRegex = /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g;
+  while ((match = wikiLinkRegex.exec(lineText)) !== null) {
+    const target = match[1];
+    const displayText = match[2] || match[1];
+
+    elements.push({
+      type: ElementType.INLINE_LINK,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      content: displayText,
+      decorationData: {
+        type: 'wiki-link',
+        url: target,
+        isWikiLink: true,
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 2,
+        contentTo: lineFrom + match.index + match[0].length - 2,
+      },
+    });
+  }
+
+  // 10. Markdown链接: [text](url)
   const linkRegex = /\[([^\]]+?)\]\(([^)]+?)\)/g;
   while ((match = linkRegex.exec(lineText)) !== null) {
     elements.push({
@@ -391,12 +627,41 @@ function parseInlineElements(
       to: lineFrom + match.index + match[0].length,
       lineNumber: lineNum,
       content: match[1],
-      decorationData: { url: match[2] },
+      decorationData: {
+        type: 'link',
+        url: match[2],
+        isWikiLink: false,
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 1,
+        contentTo: lineFrom + match.index + 1 + match[1].length,
+      },
     });
   }
 
-  // 图片: ![alt](url)
-  const imageRegex = /!\[([^\]]*?)\]\(([^)]+?)\)/g;
+  // 11. 嵌入: ![[file]]
+  const embedRegex = /!\[\[([^\]]+?)\]\]/g;
+  while ((match = embedRegex.exec(lineText)) !== null) {
+    elements.push({
+      type: ElementType.INLINE_OTHER,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      content: match[1],
+      decorationData: {
+        type: 'embed',
+        target: match[1],
+        displayText: match[1],
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 3,
+        contentTo: lineFrom + match.index + match[0].length - 2,
+      },
+    });
+  }
+
+  // 12. 图片: ![alt](url) or ![alt|width](url)
+  const imageRegex = /!\[([^\]]*?)(?:\|(\d+))?\]\(([^)]+?)\)/g;
   while ((match = imageRegex.exec(lineText)) !== null) {
     elements.push({
       type: ElementType.INLINE_IMAGE,
@@ -404,7 +669,93 @@ function parseInlineElements(
       to: lineFrom + match.index + match[0].length,
       lineNumber: lineNum,
       content: match[1],
-      decorationData: { url: match[2] },
+      decorationData: {
+        type: 'image',
+        url: match[3],
+        alt: match[1],
+        width: match[2] ? parseInt(match[2]) : undefined,
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 2,
+        contentTo: lineFrom + match.index + 2 + match[1].length,
+      },
+    });
+  }
+
+  // 13. 上标: ^text^
+  const superscriptRegex = /\^([^^]+?)\^/g;
+  while ((match = superscriptRegex.exec(lineText)) !== null) {
+    elements.push({
+      type: ElementType.INLINE_OTHER,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      content: match[1],
+      decorationData: {
+        type: 'superscript',
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 1,
+        contentTo: lineFrom + match.index + match[0].length - 1,
+      },
+    });
+  }
+
+  // 14. 下标: ~text~
+  const subscriptRegex = /~([^~]+?)~/g;
+  while ((match = subscriptRegex.exec(lineText)) !== null) {
+    elements.push({
+      type: ElementType.INLINE_OTHER,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      content: match[1],
+      decorationData: {
+        type: 'subscript',
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 1,
+        contentTo: lineFrom + match.index + match[0].length - 1,
+      },
+    });
+  }
+
+  // 15. 键盘按键: <kbd>text</kbd>
+  const kbdRegex = /<kbd>([^<]+?)<\/kbd>/g;
+  while ((match = kbdRegex.exec(lineText)) !== null) {
+    elements.push({
+      type: ElementType.INLINE_OTHER,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      content: match[1],
+      decorationData: {
+        type: 'kbd',
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 5,
+        contentTo: lineFrom + match.index + match[0].length - 6,
+      },
+    });
+  }
+
+  // 16. 脚注引用: [^1]
+  const footnoteRegex = /\[\^([^\]]+?)\]/g;
+  while ((match = footnoteRegex.exec(lineText)) !== null) {
+    elements.push({
+      type: ElementType.INLINE_OTHER,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      content: match[1],
+      decorationData: {
+        type: 'footnote-ref',
+        identifier: match[1],
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 2,
+        contentTo: lineFrom + match.index + match[0].length - 1,
+      },
     });
   }
 
@@ -496,7 +847,7 @@ function buildDecorationsFromElements(elements: ParsedElement[]): DecorationSet 
         to: element.to,
         decoration,
         priority: element.type,
-        isLine: isLineDecoration(element.type),
+        isLine: isLineDecoration(element), // 传递整个元素而非类型
       });
     }
   }
@@ -519,47 +870,300 @@ function buildDecorationsFromElements(elements: ParsedElement[]): DecorationSet 
 }
 
 /**
- * 判断元素类型是否需要行装饰器
+ * 判断元素是否需要行装饰器（点装饰）
  */
-function isLineDecoration(type: ElementType): boolean {
-  return type === ElementType.HEADING ||
-         type === ElementType.BLOCKQUOTE ||
-         type === ElementType.LIST_ITEM ||
-         type === ElementType.CODE_BLOCK ||
-         type === ElementType.MATH_BLOCK;
+function isLineDecoration(element: ParsedElement): boolean {
+  const data = element.decorationData as any;
+
+  // 检查isLineStyle标志
+  if (data?.isLineStyle) {
+    return true;
+  }
+
+  // 块级元素默认情况
+  return (
+    element.type === ElementType.CODE_BLOCK ||
+    element.type === ElementType.MATH_BLOCK
+  );
 }
 
 /**
  * 为单个元素创建装饰器
  *
- * TODO: 这里需要实现每种元素类型的具体装饰器
- * 当前只是占位符实现
+ * 根据元素类型使用相应的Widget或Mark装饰器
  */
 function createDecorationForElement(element: ParsedElement): Decoration | null {
+  const data = element.decorationData as any;
+
   switch (element.type) {
+    // ========================================================================
+    // 块级元素 - 分为行装饰器和Widget替换
+    // ========================================================================
+
     case ElementType.HEADING:
-      // 行样式
+      if (data?.isLineStyle) {
+        // 行装饰器（样式）
+        return Decoration.line({
+          class: `cm-heading cm-heading-${data.level}`,
+        });
+      } else if (data?.isWidget && data?.content && data?.markerEnd && data?.originalTo) {
+        // Widget替换（隐藏#标记）
+        return Decoration.replace({
+          widget: new HeadingContentWidget(
+            data.content,
+            data.level || 1,
+            data.markerEnd,
+            data.originalTo
+          ),
+        });
+      }
+      return null;
+
+    case ElementType.BLOCKQUOTE:
+      if (data?.isLineStyle) {
+        // 行装饰器
+        return Decoration.line({
+          class: 'cm-blockquote',
+        });
+      } else if (data?.isWidget && data?.content && data?.markerTo && data?.originalTo) {
+        // Widget替换
+        return Decoration.replace({
+          widget: new BlockquoteContentWidget(
+            data.content,
+            data.markerTo,
+            data.originalTo
+          ),
+        });
+      }
+      return null;
+
+    case ElementType.LIST_ITEM:
+      if (data?.isLineStyle) {
+        // 行装饰器
+        return Decoration.line({
+          class: `cm-list-item cm-list-${data.type || 'bullet'}`,
+          attributes: { 'data-indent': String(data.indent || 0) },
+        });
+      } else if (data?.isWidget && data?.type && data?.marker) {
+        // Widget替换标记
+        return Decoration.replace({
+          widget: new ListBulletWidget(
+            data.type,
+            data.marker,
+            data.checked,
+            data.lineFrom
+          ),
+        });
+      }
+      return null;
+
+    case ElementType.HORIZONTAL_RULE:
+      if (data?.originalFrom !== undefined && data?.originalTo !== undefined) {
+        return Decoration.replace({
+          widget: new HorizontalRuleWidget(data.originalFrom, data.originalTo),
+        });
+      }
+      return null;
+
+    case ElementType.CODE_BLOCK:
       return Decoration.line({
-        class: `cm-heading cm-heading-${element.level}`
+        class: 'cm-code-block-line',
       });
 
+    case ElementType.MATH_BLOCK:
+      return Decoration.line({
+        class: 'cm-math-block-line',
+      });
+
+    // ========================================================================
+    // 行内元素 - 使用Widget替换
+    // ========================================================================
+
     case ElementType.INLINE_BOLD:
-      // 替换为带样式的span
-      return Decoration.mark({
-        class: 'cm-strong'
+      return Decoration.replace({
+        widget: new FormattedTextWidget(
+          element.content || '',
+          data?.className || 'cm-strong',
+          data?.contentFrom || element.from,
+          data?.contentTo || element.to,
+          data?.syntaxFrom || element.from,
+          data?.syntaxTo || element.to
+        ),
       });
 
     case ElementType.INLINE_ITALIC:
-      return Decoration.mark({
-        class: 'cm-em'
+      return Decoration.replace({
+        widget: new FormattedTextWidget(
+          element.content || '',
+          data?.className || 'cm-em',
+          data?.contentFrom || element.from,
+          data?.contentTo || element.to,
+          data?.syntaxFrom || element.from,
+          data?.syntaxTo || element.to
+        ),
       });
 
     case ElementType.INLINE_CODE:
-      return Decoration.mark({
-        class: 'cm-inline-code'
+      return Decoration.replace({
+        widget: new FormattedTextWidget(
+          element.content || '',
+          data?.className || 'cm-inline-code',
+          data?.contentFrom || element.from,
+          data?.contentTo || element.to,
+          data?.syntaxFrom || element.from,
+          data?.syntaxTo || element.to
+        ),
       });
 
-    // TODO: 添加其他元素类型的装饰器创建逻辑
+    case ElementType.INLINE_LINK:
+      if (data?.isWikiLink) {
+        return Decoration.replace({
+          widget: new LinkWidget(
+            element.content || '',
+            data?.url || '',
+            true, // isWikiLink
+            data?.contentFrom || element.from,
+            data?.contentTo || element.to,
+            data?.syntaxFrom || element.from,
+            data?.syntaxTo || element.to
+          ),
+        });
+      } else {
+        return Decoration.replace({
+          widget: new LinkWidget(
+            element.content || '',
+            data?.url || '',
+            false, // regular link
+            data?.contentFrom || element.from,
+            data?.contentTo || element.to,
+            data?.syntaxFrom || element.from,
+            data?.syntaxTo || element.to
+          ),
+        });
+      }
+
+    case ElementType.INLINE_IMAGE:
+      return Decoration.replace({
+        widget: new ImageWidget(
+          data?.alt || element.content || '',
+          data?.url || '',
+          data?.width,
+          data?.contentFrom || element.from,
+          data?.contentTo || element.to,
+          data?.syntaxFrom || element.from,
+          data?.syntaxTo || element.to
+        ),
+      });
+
+    case ElementType.INLINE_OTHER:
+      // 根据decorationData的type字段分发到不同Widget
+      if (!data?.type) {
+        // 通用格式化文本（删除线、高亮等）
+        return Decoration.replace({
+          widget: new FormattedTextWidget(
+            element.content || '',
+            data?.className || '',
+            data?.contentFrom || element.from,
+            data?.contentTo || element.to,
+            data?.syntaxFrom || element.from,
+            data?.syntaxTo || element.to
+          ),
+        });
+      }
+
+      switch (data.type) {
+        case 'annotation-link':
+          return Decoration.replace({
+            widget: new AnnotationLinkWidget(
+              data.displayText || '',
+              data.filePath || '',
+              data.annotationId || '',
+              data.contentFrom || element.from,
+              data.contentTo || element.to,
+              data.syntaxFrom || element.from,
+              data.syntaxTo || element.to
+            ),
+          });
+
+        case 'superscript':
+          return Decoration.replace({
+            widget: new SuperscriptWidget(
+              element.content || '',
+              data.contentFrom || element.from,
+              data.contentTo || element.to,
+              data.syntaxFrom || element.from,
+              data.syntaxTo || element.to
+            ),
+          });
+
+        case 'subscript':
+          return Decoration.replace({
+            widget: new SubscriptWidget(
+              element.content || '',
+              data.contentFrom || element.from,
+              data.contentTo || element.to,
+              data.syntaxFrom || element.from,
+              data.syntaxTo || element.to
+            ),
+          });
+
+        case 'kbd':
+          return Decoration.replace({
+            widget: new KbdWidget(
+              element.content || '',
+              data.contentFrom || element.from,
+              data.contentTo || element.to,
+              data.syntaxFrom || element.from,
+              data.syntaxTo || element.to
+            ),
+          });
+
+        case 'footnote-ref':
+          return Decoration.replace({
+            widget: new FootnoteRefWidget(
+              data.identifier || element.content || '',
+              data.contentFrom || element.from,
+              data.contentTo || element.to,
+              data.syntaxFrom || element.from,
+              data.syntaxTo || element.to
+            ),
+          });
+
+        case 'embed':
+          return Decoration.replace({
+            widget: new EmbedWidget(
+              data.target || '',
+              data.displayText || element.content || '',
+              data.contentFrom || element.from,
+              data.contentTo || element.to,
+              data.syntaxFrom || element.from,
+              data.syntaxTo || element.to
+            ),
+          });
+
+        default:
+          // 通用格式化文本
+          return Decoration.replace({
+            widget: new FormattedTextWidget(
+              element.content || '',
+              data.className || '',
+              data.contentFrom || element.from,
+              data.contentTo || element.to,
+              data.syntaxFrom || element.from,
+              data.syntaxTo || element.to
+            ),
+          });
+      }
+
+    // ========================================================================
+    // 数学公式 - TODO: 需要集成KaTeX
+    // ========================================================================
+
+    case ElementType.MATH_INLINE:
+      // TODO: 使用MathWidget (需要从math-plugin提取)
+      return Decoration.mark({
+        class: 'cm-math-inline',
+      });
 
     default:
       return null;

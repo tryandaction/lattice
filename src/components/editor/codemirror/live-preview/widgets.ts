@@ -1,10 +1,10 @@
 /**
  * Live Preview Widgets - 统一的Widget库
  *
- * 从inline-decoration-plugin提取所有Widget类，统一管理。
+ * 从inline-decoration-plugin和block-decoration-plugin提取所有Widget类，统一管理。
  * 所有Widget都实现精确的光标定位和交互功能。
  *
- * Widget类型:
+ * Inline Widget类型:
  * 1. FormattedTextWidget - 粗体、斜体、删除线、高亮、代码
  * 2. LinkWidget - 链接 [text](url)
  * 3. AnnotationLinkWidget - PDF批注链接 [[file.pdf#ann-uuid]]
@@ -14,6 +14,12 @@
  * 7. KbdWidget - 键盘按键 <kbd>text</kbd>
  * 8. FootnoteRefWidget - 脚注引用 [^1]
  * 9. EmbedWidget - 嵌入内容 ![[file]]
+ *
+ * Block Widget类型:
+ * 10. HeadingContentWidget - 标题内容 # Heading
+ * 11. BlockquoteContentWidget - 引用内容 > Quote
+ * 12. ListBulletWidget - 列表标记 - * + 1. [ ]
+ * 13. HorizontalRuleWidget - 分割线 ---
  */
 
 import { EditorView, WidgetType } from '@codemirror/view';
@@ -651,6 +657,296 @@ export class EmbedWidget extends WidgetType {
     });
 
     return container;
+  }
+
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
+  }
+}
+
+// ============================================================================
+// 10. HeadingContentWidget - 标题内容
+// ============================================================================
+
+// KaTeX for inline math in headings
+let katexForHeading: any = null;
+import('katex')
+  .then((mod) => {
+    katexForHeading = mod.default || mod;
+  })
+  .catch(() => {});
+
+/**
+ * 标题内容Widget - 渲染标题文本（隐藏#标记）
+ * 支持标题内的行内LaTeX公式渲染
+ */
+export class HeadingContentWidget extends WidgetType {
+  constructor(
+    private content: string,
+    private level: number,
+    private originalFrom: number,
+    private originalTo: number
+  ) {
+    super();
+  }
+
+  eq(other: HeadingContentWidget) {
+    return other.content === this.content && other.level === this.level;
+  }
+
+  toDOM(view: EditorView) {
+    const span = document.createElement('span');
+    span.className = `cm-heading-content cm-heading-${this.level}-content`;
+    span.dataset.from = String(this.originalFrom);
+    span.dataset.to = String(this.originalTo);
+
+    // 渲染内容（支持行内公式）
+    this.renderContentWithMath(span);
+
+    // 点击定位光标
+    span.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // 定位到标题内容开始位置
+      view.dispatch({
+        selection: { anchor: this.originalFrom, head: this.originalFrom },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+
+    return span;
+  }
+
+  /**
+   * 渲染内容（支持行内公式 $...$）
+   */
+  private renderContentWithMath(container: HTMLElement) {
+    // 按行内公式模式分割内容
+    const parts = this.content.split(/(\$[^$\n]+\$)/g);
+
+    for (const part of parts) {
+      if (part.startsWith('$') && part.endsWith('$') && part.length > 2) {
+        // 行内公式
+        const latex = part.slice(1, -1);
+        const mathSpan = document.createElement('span');
+        mathSpan.className = 'cm-math-inline';
+
+        if (katexForHeading) {
+          try {
+            katexForHeading.render(latex, mathSpan, {
+              displayMode: false,
+              throwOnError: false,
+              errorColor: '#ef4444',
+              trust: true,
+            });
+          } catch {
+            mathSpan.textContent = part;
+          }
+        } else {
+          mathSpan.textContent = part;
+          // 等待KaTeX加载
+          import('katex')
+            .then((mod) => {
+              const k = mod.default || mod;
+              katexForHeading = k;
+              try {
+                mathSpan.innerHTML = '';
+                k.render(latex, mathSpan, {
+                  displayMode: false,
+                  throwOnError: false,
+                  errorColor: '#ef4444',
+                  trust: true,
+                });
+              } catch {
+                mathSpan.textContent = part;
+              }
+            })
+            .catch(() => {});
+        }
+        container.appendChild(mathSpan);
+      } else if (part) {
+        // 普通文本
+        container.appendChild(document.createTextNode(part));
+      }
+    }
+  }
+
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
+  }
+}
+
+// ============================================================================
+// 11. BlockquoteContentWidget - 引用内容
+// ============================================================================
+
+/**
+ * 引用内容Widget - 渲染引用文本（隐藏>标记）
+ */
+export class BlockquoteContentWidget extends WidgetType {
+  constructor(
+    private content: string,
+    private originalFrom: number,
+    private originalTo: number
+  ) {
+    super();
+  }
+
+  eq(other: BlockquoteContentWidget) {
+    return other.content === this.content;
+  }
+
+  toDOM(view: EditorView) {
+    const span = document.createElement('span');
+    span.className = 'cm-blockquote-content';
+    span.textContent = this.content;
+    span.dataset.from = String(this.originalFrom);
+    span.dataset.to = String(this.originalTo);
+
+    // 点击定位光标（精确到字符）
+    span.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const rect = span.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const textWidth = rect.width;
+      const textLength = this.content.length;
+
+      let charOffset = Math.round((clickX / textWidth) * textLength);
+      charOffset = Math.max(0, Math.min(charOffset, textLength));
+
+      const pos = this.originalFrom + charOffset;
+
+      view.dispatch({
+        selection: { anchor: pos, head: pos },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+
+    return span;
+  }
+
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
+  }
+}
+
+// ============================================================================
+// 12. ListBulletWidget - 列表标记
+// ============================================================================
+
+/**
+ * 列表标记Widget - 渲染样式化的列表标记（•、数字、复选框）
+ */
+export class ListBulletWidget extends WidgetType {
+  constructor(
+    private type: 'bullet' | 'numbered' | 'task',
+    private marker: string,
+    private checked?: boolean,
+    private lineFrom?: number
+  ) {
+    super();
+  }
+
+  eq(other: ListBulletWidget) {
+    return (
+      other.type === this.type &&
+      other.marker === this.marker &&
+      other.checked === this.checked
+    );
+  }
+
+  toDOM(view: EditorView) {
+    const span = document.createElement('span');
+    span.className = 'cm-list-marker';
+
+    if (this.type === 'task') {
+      // 任务列表 - 可点击复选框
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = this.checked || false;
+      checkbox.className = 'cm-task-checkbox';
+      checkbox.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // 切换复选框状态
+        if (this.lineFrom !== undefined) {
+          const line = view.state.doc.lineAt(this.lineFrom);
+          const lineText = line.text;
+          const newText = this.checked
+            ? lineText.replace(/\[x\]/i, '[ ]')
+            : lineText.replace(/\[ \]/, '[x]');
+          view.dispatch({
+            changes: { from: line.from, to: line.to, insert: newText },
+          });
+        }
+      });
+      span.appendChild(checkbox);
+    } else if (this.type === 'bullet') {
+      // 无序列表 - 显示为•
+      span.textContent = '•';
+      span.style.marginRight = '0.5em';
+    } else {
+      // 有序列表 - 保留数字
+      span.textContent = this.marker;
+    }
+
+    return span;
+  }
+
+  ignoreEvent(e: Event) {
+    return e.type !== 'click';
+  }
+}
+
+// ============================================================================
+// 13. HorizontalRuleWidget - 分割线
+// ============================================================================
+
+/**
+ * 分割线Widget - 渲染全宽水平线
+ */
+export class HorizontalRuleWidget extends WidgetType {
+  constructor(private originalFrom: number, private originalTo: number) {
+    super();
+  }
+
+  toDOM(view: EditorView) {
+    // 容器确保全宽
+    const container = document.createElement('div');
+    container.className = 'cm-horizontal-rule-container';
+    container.style.width = '100%';
+    container.style.padding = '1em 0';
+    container.style.cursor = 'pointer';
+
+    const hr = document.createElement('hr');
+    hr.className = 'cm-horizontal-rule';
+    hr.style.border = 'none';
+    hr.style.borderTop = '2px solid var(--border, #e5e7eb)';
+    hr.style.margin = '0';
+    hr.style.width = '100%';
+
+    container.appendChild(hr);
+
+    // 点击定位光标
+    container.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({
+        selection: { anchor: this.originalFrom, head: this.originalFrom },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+
+    return container;
+  }
+
+  eq() {
+    return true;
   }
 
   ignoreEvent(e: Event) {
