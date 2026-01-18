@@ -16,6 +16,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { MathfieldElement } from 'mathlive';
+import { MathSymbolPalette } from './math-symbol-palette';
 
 export interface MathEditorProps {
   /** Initial LaTeX content */
@@ -53,6 +54,7 @@ export function MathEditor({
   const containerRef = useRef<HTMLDivElement>(null);
   const mathfieldRef = useRef<MathfieldElement | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [showSymbolPalette, setShowSymbolPalette] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -80,6 +82,10 @@ export function MathEditor({
           // Escape: Cancel
           e.preventDefault();
           onCancel();
+        } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'M') {
+          // Ctrl+Shift+M: Toggle symbol palette
+          e.preventDefault();
+          setShowSymbolPalette((prev) => !prev);
         }
       });
 
@@ -143,6 +149,14 @@ export function MathEditor({
     };
   }, [onCancel]);
 
+  // Handle symbol insertion from palette
+  const handleSymbolInsert = (latex: string) => {
+    if (mathfieldRef.current) {
+      mathfieldRef.current.insert(latex);
+      mathfieldRef.current.focus();
+    }
+  };
+
   return (
     <div
       className="math-editor-overlay"
@@ -180,6 +194,15 @@ export function MathEditor({
 
         <div className="math-editor-actions">
           <button
+            onClick={() => setShowSymbolPalette(!showSymbolPalette)}
+            className="math-editor-button math-editor-button-secondary"
+            disabled={isLoading}
+            title="Toggle symbol palette (Ctrl+Shift+M)"
+          >
+            Σ Symbols
+          </button>
+          <div style={{ flex: 1 }} />
+          <button
             onClick={handleSave}
             className="math-editor-button math-editor-button-primary"
             disabled={isLoading}
@@ -194,6 +217,13 @@ export function MathEditor({
           </button>
         </div>
       </div>
+
+      {/* Symbol Palette */}
+      <MathSymbolPalette
+        isOpen={showSymbolPalette}
+        onInsert={handleSymbolInsert}
+        onClose={() => setShowSymbolPalette(false)}
+      />
 
       <style jsx>{`
         .math-editor-overlay {
