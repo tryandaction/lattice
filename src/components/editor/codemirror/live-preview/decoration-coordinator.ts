@@ -151,8 +151,10 @@ class LRUCache<K, V> {
 
     // Evict oldest if over capacity
     if (this.cache.size > this.maxSize) {
-      const firstKey = this.cache.keys().next().value;
-      this.cache.delete(firstKey);
+      const firstKey = this.cache.keys().next().value as K;
+      if (firstKey !== undefined) {
+        this.cache.delete(firstKey);
+      }
     }
   }
 
@@ -226,7 +228,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
  * 3. 表格行 |
  * 4. 标题 #
  * 5. 引用 >
- * 6. 列表 -/*/+/1.
+ * 6. 列表 - * + 1.
  * 7. 行内元素
  */
 function parseLineElements(
