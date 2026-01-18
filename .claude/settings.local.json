@@ -14,7 +14,8 @@
       "Bash(wc:*)",
       "Bash(git rm:*)",
       "Bash(npx next lint:*)",
-      "Bash(git commit -m \"$\\(cat <<''EOF''\nrefactor: 第一阶段代码清理 - 删除废弃编辑器和冗余文档\n\n清理内容:\n- 删除 advanced-markdown-editor.tsx \\(Tiptap编辑器，生成HTML问题\\)\n- 删除 tiptap-editor.tsx \\(未使用的备用编辑器\\)\n- 移除 universal-file-viewer.tsx 中的 TiptapEditor 导入\n- 移动测试文件到 docs/tests/ 目录\n- 删除临时文档 CLAUDE_CODE_OBSIDIAN_MARKDOWN.md\n- 删除临时文档 VERIFICATION_CHECKLIST.md\n- 归档 .kiro/optimization-prompts/ 和 .kiro/roadmap-v2/\n\n影响:\n- 简化编辑器路径，只保留 CodeMirror LivePreviewEditor\n- 清理根目录文档混乱\n- 为后续重构做准备\n\n相关: Markdown编辑系统彻底重构计划 - 第1周 Day1-2\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nrefactor: 第一阶段代码清理 - 删除废弃编辑器和冗余文档\n\n清理内容:\n- 删除 advanced-markdown-editor.tsx \\(Tiptap编辑器，生成HTML问题\\)\n- 删除 tiptap-editor.tsx \\(未使用的备用编辑器\\)\n- 移除 universal-file-viewer.tsx 中的 TiptapEditor 导入\n- 移动测试文件到 docs/tests/ 目录\n- 删除临时文档 CLAUDE_CODE_OBSIDIAN_MARKDOWN.md\n- 删除临时文档 VERIFICATION_CHECKLIST.md\n- 归档 .kiro/optimization-prompts/ 和 .kiro/roadmap-v2/\n\n影响:\n- 简化编辑器路径，只保留 CodeMirror LivePreviewEditor\n- 清理根目录文档混乱\n- 为后续重构做准备\n\n相关: Markdown编辑系统彻底重构计划 - 第1周 Day1-2\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(npm run build:*)"
     ]
   }
 }

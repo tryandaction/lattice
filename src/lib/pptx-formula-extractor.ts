@@ -12,7 +12,7 @@
  */
 
 import JSZip from 'jszip';
-import { convertOmmlToLatex, renderLatex } from './formula-converter';
+import { convertOmmlToLatex, convertMathmlToLatex, renderLatex } from './markdown-converter';
 
 /**
  * Validates if the ArrayBuffer is a valid ZIP file
@@ -463,8 +463,7 @@ function extractFormulasFromSlideXml(
   
   for (const mathmlXml of mathmlMatches) {
     try {
-      // Import and use MathML converter
-      const { convertMathmlToLatex } = require('./formula-converter');
+      // Use MathML converter from markdown-converter
       const latex = convertMathmlToLatex(mathmlXml);
       
       if (latex && latex.trim()) {

@@ -5,7 +5,7 @@ import { Loader2, AlertCircle, FileQuestion, Edit3, Eye } from "lucide-react";
 import { getRendererForExtension, getFileExtension, getImageMimeType, RendererType, isEditableCodeFile } from "@/lib/file-utils";
 import dynamic from "next/dynamic";
 import type { PaneId } from "@/stores/workspace-store";
-import { normalizeScientificText } from "@/lib/content-normalizer";
+import { normalizeScientificText } from "@/lib/markdown-converter";
 
 /**
  * Loading state component

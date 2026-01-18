@@ -212,7 +212,7 @@ export const CodeBlockHighlight = Node.create({
 
   addKeyboardShortcuts() {
     return {
-      "Mod-Alt-c": () => this.editor.commands.toggleCodeBlock(),
+      "Mod-Alt-c": () => this.editor.commands.setNode("codeBlock"),
       // Tab for indentation inside code block
       Tab: () => {
         if (this.editor.isActive("codeBlock")) {

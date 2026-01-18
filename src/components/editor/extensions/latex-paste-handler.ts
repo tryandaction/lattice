@@ -10,7 +10,7 @@
 
 import { Extension, Editor } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import { detectLatexPatterns } from "@/lib/content-normalizer";
+import { detectLatexPatterns } from "@/lib/markdown-converter";
 
 /**
  * Detect which math node types are available in the editor schema
