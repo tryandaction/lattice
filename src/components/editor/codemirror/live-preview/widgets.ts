@@ -1,7 +1,7 @@
 /**
  * Live Preview Widgets - 统一的Widget库
  *
- * 从inline-decoration-plugin和block-decoration-plugin提取所有Widget类，统一管理。
+ * 从inline-decoration-plugin、block-decoration-plugin、code-block-plugin提取所有Widget类，统一管理。
  * 所有Widget都实现精确的光标定位和交互功能。
  *
  * Inline Widget类型:
@@ -23,6 +23,9 @@
  *
  * Math Widget类型:
  * 14. MathWidget - LaTeX公式渲染 $...$ $$...$$
+ *
+ * Code Widget类型:
+ * 15. CodeBlockWidget - 代码块语法高亮 ```lang...```
  */
 
 import { EditorView, WidgetType } from '@codemirror/view';
@@ -1151,3 +1154,368 @@ export class MathWidget extends WidgetType {
     return e.type !== 'mousedown' && e.type !== 'dblclick' && e.type !== 'contextmenu';
   }
 }
+
+// ============================================================================
+// 15. CodeBlockWidget - 代码块语法高亮
+// ============================================================================
+
+// Highlight.js动态加载
+let hljs: any = null;
+let hljsLoadPromise: Promise<any> | null = null;
+
+async function loadHighlightJS(): Promise<any> {
+  if (hljs) return hljs;
+  if (hljsLoadPromise) return hljsLoadPromise;
+
+  hljsLoadPromise = import('highlight.js')
+    .then((module) => {
+      hljs = module.default;
+      return hljs;
+    })
+    .catch((err) => {
+      console.error('Failed to load highlight.js:', err);
+      throw err;
+    });
+
+  return hljsLoadPromise;
+}
+
+// 预加载highlight.js
+if (typeof window !== 'undefined') {
+  loadHighlightJS();
+}
+
+/**
+ * 代码块Widget - 语法高亮渲染
+ *
+ * 功能:
+ * - 语法高亮（highlight.js）
+ * - 行号显示
+ * - 复制按钮
+ * - 语言标签
+ * - 点击定位光标
+ */
+export class CodeBlockWidget extends WidgetType {
+  constructor(
+    private code: string,
+    private language: string,
+    private showLineNumbers: boolean = true,
+    private from: number = 0,
+    private to: number = 0
+  ) {
+    super();
+  }
+
+  eq(other: CodeBlockWidget) {
+    return (
+      other.code === this.code &&
+      other.language === this.language &&
+      other.showLineNumbers === this.showLineNumbers
+    );
+  }
+
+  toDOM(view: EditorView) {
+    const container = document.createElement('div');
+    container.className = 'cm-code-block-widget';
+    container.dataset.from = String(this.from);
+    container.dataset.to = String(this.to);
+
+    // 点击定位光标到代码块开始
+    container.addEventListener('mousedown', (e) => {
+      // 不拦截复制按钮点击
+      if ((e.target as HTMLElement).closest('.cm-code-block-copy')) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      // 定位到代码块开始（```lang之后）
+      const codeStart = this.from + 3 + this.language.length + 1;
+      view.dispatch({
+        selection: { anchor: codeStart, head: codeStart },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+
+    // 头部：语言标签 + 复制按钮
+    const header = document.createElement('div');
+    header.className = 'cm-code-block-header';
+
+    const langLabel = document.createElement('span');
+    langLabel.className = 'cm-code-block-lang';
+    langLabel.textContent = this.language || 'text';
+    header.appendChild(langLabel);
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'cm-code-block-copy';
+    copyBtn.textContent = 'Copy';
+    copyBtn.title = 'Copy code';
+    copyBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      navigator.clipboard.writeText(this.code).then(() => {
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => {
+          copyBtn.textContent = 'Copy';
+        }, 2000);
+      });
+    });
+    header.appendChild(copyBtn);
+
+    container.appendChild(header);
+
+    // 代码内容包装器（行号 + 代码）
+    const codeWrapper = document.createElement('div');
+    codeWrapper.className = 'cm-code-block-wrapper';
+
+    const lines = this.code.split('\n');
+
+    // 行号
+    if (this.showLineNumbers && lines.length > 1) {
+      const lineNumbers = document.createElement('div');
+      lineNumbers.className = 'cm-code-block-line-numbers';
+
+      for (let i = 1; i <= lines.length; i++) {
+        const lineNum = document.createElement('div');
+        lineNum.className = 'cm-code-block-line-number';
+        lineNum.textContent = String(i);
+        lineNumbers.appendChild(lineNum);
+      }
+
+      codeWrapper.appendChild(lineNumbers);
+    }
+
+    // 代码内容
+    const pre = document.createElement('pre');
+    pre.className = 'cm-code-block-pre';
+
+    const code = document.createElement('code');
+    code.className = `cm-code-block-code language-${this.language}`;
+
+    // 性能优化：先显示纯文本，然后异步高亮
+    code.textContent = this.code;
+
+    // 延迟应用语法高亮（不阻塞主线程）
+    if (hljs && this.language) {
+      // 使用 setTimeout 延迟渲染，让主线程先完成其他工作
+      setTimeout(() => {
+        try {
+          const result = hljs.highlight(this.code, { language: this.language });
+          code.innerHTML = result.value;
+        } catch {
+          // 语言不支持，保持纯文本
+        }
+      }, 0);
+    } else if (!hljs) {
+      // 等待加载后高亮
+      loadHighlightJS()
+        .then((h) => {
+          if (this.language) {
+            try {
+              const result = h.highlight(this.code, { language: this.language });
+              code.innerHTML = result.value;
+            } catch {
+              // 语言不支持
+            }
+          }
+        })
+        .catch(() => {
+          // 加载失败，保持纯文本
+        });
+    }
+
+    pre.appendChild(code);
+    codeWrapper.appendChild(pre);
+    container.appendChild(codeWrapper);
+
+    return container;
+  }
+
+  ignoreEvent(e: Event) {
+    return e.type === 'click';
+  }
+}
+
+// ============================================================================
+// 16. TableWidget - 表格渲染
+// ============================================================================
+
+/**
+ * 解析行内Markdown格式
+ * 返回带有渲染格式的HTML字符串
+ */
+function parseInlineMarkdown(text: string): string {
+  let result = text;
+
+  // 先转义HTML
+  result = result
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // 粗体+斜体: ***text*** 或 ___text___
+  result = result.replace(/(\*\*\*|___)(.+?)\1/g, '<strong><em>$2</em></strong>');
+
+  // 粗体: **text** 或 __text__
+  result = result.replace(/(\*\*|__)(.+?)\1/g, '<strong>$2</strong>');
+
+  // 斜体: *text* 或 _text_ (避免匹配粗体内部)
+  result = result.replace(/(?<![*_])([*_])(?![*_])(.+?)(?<![*_])\1(?![*_])/g, '<em>$2</em>');
+
+  // 删除线: ~~text~~
+  result = result.replace(/~~(.+?)~~/g, '<del>$1</del>');
+
+  // 高亮: ==text==
+  result = result.replace(/==(.+?)==/g, '<mark>$1</mark>');
+
+  // 行内代码: `code`
+  result = result.replace(/(?<!`)`(?!`)([^`]+)`(?!`)/g, '<code>$1</code>');
+
+  // 行内公式: $formula$ (如果KaTeX可用则渲染)
+  result = result.replace(/\$([^$\n]+)\$/g, (match, formula) => {
+    try {
+      if (katex) {
+        return katex.renderToString(formula, { throwOnError: false, displayMode: false });
+      }
+      // 回退：显示公式在样式化的span中
+      return `<span class="cm-math-inline-table">$${formula}$</span>`;
+    } catch {
+      return `<span class="cm-math-inline-table">$${formula}$</span>`;
+    }
+  });
+
+  // Wiki链接: [[target]] 或 [[target|alias]]
+  result = result.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (match, target, alias) => {
+    const displayText = alias || target;
+    return `<a class="cm-wiki-link-table" href="#" data-target="${target}">${displayText}</a>`;
+  });
+
+  // 普通链接: [text](url)
+  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a class="cm-link-table" href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+  return result;
+}
+
+/**
+ * 表格Widget - 渲染Markdown表格
+ *
+ * 功能:
+ * - 自动列宽
+ * - 支持表头
+ * - 行内Markdown格式（粗体、斜体、链接、公式等）
+ * - Wiki链接点击
+ * - 点击定位光标
+ */
+export class TableWidget extends WidgetType {
+  constructor(
+    private rows: string[][],
+    private hasHeader: boolean,
+    private from: number = 0,
+    private to: number = 0
+  ) {
+    super();
+  }
+
+  eq(other: TableWidget) {
+    return JSON.stringify(other.rows) === JSON.stringify(this.rows);
+  }
+
+  toDOM(view: EditorView) {
+    const table = document.createElement('table');
+    table.className = 'cm-table-widget';
+    table.dataset.from = String(this.from);
+    table.dataset.to = String(this.to);
+
+    // 点击定位光标到表格开始
+    table.addEventListener('mousedown', (e) => {
+      // 不拦截wiki链接和普通链接点击
+      if ((e.target as HTMLElement).classList.contains('cm-wiki-link-table')) return;
+      if ((e.target as HTMLElement).classList.contains('cm-link-table')) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      // 定位到表格开始
+      view.dispatch({
+        selection: { anchor: this.from, head: this.from },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+
+    // 计算列宽（基于内容）
+    const colCount = Math.max(...this.rows.map(r => r.length));
+    const colWidths: number[] = new Array(colCount).fill(0);
+
+    // 测量每列的最大内容宽度
+    this.rows.forEach((row, rowIndex) => {
+      // 跳过分隔行
+      if (rowIndex === 1 && this.hasHeader && row.every(c => /^[-:]+$/.test(c.trim()))) {
+        return;
+      }
+      row.forEach((cell, colIndex) => {
+        // 使用纯文本长度计算宽度
+        const plainText = cell.trim().replace(/\*\*|__|~~|==|`|\[\[|\]\]|\[|\]|\(|\)/g, '');
+        const cellLen = plainText.length;
+        colWidths[colIndex] = Math.max(colWidths[colIndex], cellLen);
+      });
+    });
+
+    // 创建colgroup设置列宽
+    const colgroup = document.createElement('colgroup');
+    const totalWidth = colWidths.reduce((a, b) => a + b, 0);
+    colWidths.forEach(width => {
+      const col = document.createElement('col');
+      // 设置比例宽度（最小10%）
+      const percentage = Math.max(10, (width / totalWidth) * 100);
+      col.style.width = `${percentage}%`;
+      colgroup.appendChild(col);
+    });
+    table.appendChild(colgroup);
+
+    this.rows.forEach((row, rowIndex) => {
+      // 跳过分隔行
+      if (rowIndex === 1 && this.hasHeader && row.every(c => /^[-:]+$/.test(c.trim()))) {
+        return;
+      }
+
+      const tr = document.createElement('tr');
+
+      row.forEach((cell) => {
+        const cellEl = document.createElement(
+          this.hasHeader && rowIndex === 0 ? 'th' : 'td'
+        );
+        // 解析并渲染单元格中的行内Markdown
+        const cellContent = cell.trim();
+        cellEl.innerHTML = parseInlineMarkdown(cellContent);
+        tr.appendChild(cellEl);
+      });
+
+      table.appendChild(tr);
+    });
+
+    // 为表格中的wiki链接添加点击处理
+    table.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      if (target.classList.contains('cm-wiki-link-table')) {
+        e.preventDefault();
+        e.stopPropagation();
+        const linkTarget = target.dataset.target;
+        if (linkTarget) {
+          // 分发wiki链接点击事件
+          table.dispatchEvent(new CustomEvent('wiki-link-click', {
+            detail: { target: linkTarget },
+            bubbles: true,
+          }));
+        }
+      }
+    });
+
+    return table;
+  }
+
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
+  }
+}
+

@@ -52,6 +52,8 @@ import {
   ListBulletWidget,
   HorizontalRuleWidget,
   MathWidget,
+  CodeBlockWidget,
+  TableWidget,
 } from './widgets';
 import { parseListItem, parseBlockquote } from './markdown-parser';
 
@@ -97,11 +99,39 @@ export interface ParsedElement {
   latex?: string;         // LaTeX公式
   isBlock?: boolean;      // 是否块级元素
 
+  // 代码块特有属性
+  startLine?: number;     // 代码块起始行号
+  endLine?: number;       // 代码块结束行号
+
   // 嵌套子元素 (用于表格、Callout等)
   children?: ParsedElement[];
 
   // 用于装饰器创建
   decorationData?: unknown;
+}
+
+/**
+ * 代码块匹配结果
+ */
+interface CodeBlockMatch {
+  from: number;
+  to: number;
+  language: string;
+  code: string;
+  startLine: number;
+  endLine: number;
+}
+
+/**
+ * 表格匹配结果
+ */
+interface TableMatch {
+  from: number;
+  to: number;
+  rows: string[][];
+  hasHeader: boolean;
+  startLine: number;
+  endLine: number;
 }
 
 /**
@@ -167,23 +197,306 @@ class LRUCache<K, V> {
 const lineElementCache = new LRUCache<string, ParsedElement[]>(2000);
 
 // ============================================================================
+// 预编译正则表达式 - 性能优化
+// ============================================================================
+
+/**
+ * 预编译的正则表达式缓存
+ * 避免每次解析时重新创建正则对象
+ */
+const REGEX_PATTERNS = {
+  inlineMath: /(?<!\$)\$(?!\$)(.+?)\$(?!\$)/g,
+  boldItalic: /\*\*\*([^*]+?)\*\*\*/g,
+  bold: /\*\*([^*]+?)\*\*/g,
+  italic: /(?<!\*)\*(?!\*)([^*]+?)\*(?!\*)|(?<!_)_(?!_)([^_]+?)_(?!_)/g,
+  strikethrough: /~~([^~]+?)~~/g,
+  highlight: /==([^=]+?)==/g,
+  inlineCode: /`([^`]+?)`/g,
+  annotationLink: /\[\[([^\]]+?\.pdf)#(ann-[^\]]+?)\]\]/gi,
+  wikiLink: /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g,
+  link: /\[([^\]]+?)\]\(([^)]+?)\)/g,
+  embed: /!\[\[([^\]]+?)\]\]/g,
+  image: /!\[([^\]]*?)(?:\|(\d+))?\]\(([^)]+?)\)/g,
+  superscript: /\^([^^]+?)\^/g,
+  subscript: /~([^~]+?)~/g,
+  kbd: /<kbd>([^<]+?)<\/kbd>/g,
+  footnote: /\[\^([^\]]+?)\]/g,
+};
+
+/**
+ * 重置所有正则表达式的lastIndex
+ * 必须在每次使用前调用，因为正则对象是有状态的
+ */
+function resetRegexPatterns(): void {
+  Object.values(REGEX_PATTERNS).forEach(regex => {
+    regex.lastIndex = 0;
+  });
+}
+
+// ============================================================================
 // 解析器 - 单次文档遍历
 // ============================================================================
+
+/**
+ * 解析代码块 - 多行块级元素需要特殊处理
+ *
+ * 代码块格式:
+ * ```language
+ * code content
+ * ```
+ *
+ * 性能优化：接收预先分割的lines数组，避免重复split
+ */
+function parseCodeBlocks(lines: string[]): CodeBlockMatch[] {
+  const blocks: CodeBlockMatch[] = [];
+  let offset = 0;
+  let inBlock = false;
+  let blockStart = 0;
+  let blockLang = '';
+  let blockCode: string[] = [];
+  let blockStartLine = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineStart = offset;
+    const lineEnd = offset + line.length;
+
+    if (!inBlock && line.match(/^```(\w*)$/)) {
+      // 代码块开始
+      inBlock = true;
+      blockStart = lineStart;
+      blockLang = line.slice(3);
+      blockCode = [];
+      blockStartLine = i + 1; // 行号从1开始
+    } else if (inBlock && line === '```') {
+      // 代码块结束
+      blocks.push({
+        from: blockStart,
+        to: lineEnd,
+        language: blockLang,
+        code: blockCode.join('\n'),
+        startLine: blockStartLine,
+        endLine: i + 1,
+      });
+      inBlock = false;
+    } else if (inBlock) {
+      blockCode.push(line);
+    }
+
+    offset = lineEnd + 1; // +1 for newline
+  }
+
+  return blocks;
+}
+
+/**
+ * 解析表格 - 多行块级元素需要特殊处理
+ *
+ * 表格格式:
+ * | Header 1 | Header 2 |
+ * |----------|----------|
+ * | Cell 1   | Cell 2   |
+ *
+ * 性能优化：接收预先分割的lines数组，避免重复split
+ */
+function parseTables(lines: string[]): TableMatch[] {
+  const tables: TableMatch[] = [];
+  let offset = 0;
+  let tableStart = -1;
+  let tableRows: string[][] = [];
+  let hasHeader = false;
+  let tableStartLine = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineStart = offset;
+    const lineEnd = offset + line.length;
+
+    // 检查是否为表格行
+    const isTableRow = line.trim().startsWith('|') && line.trim().endsWith('|');
+    const isSeparator = /^\|[-:| ]+\|$/.test(line.trim());
+
+    if (isTableRow) {
+      if (tableStart === -1) {
+        tableStart = lineStart;
+        tableRows = [];
+        tableStartLine = i + 1; // 行号从1开始
+      }
+
+      // 解析单元格
+      const cells = line
+        .split('|')
+        .slice(1, -1) // 移除首尾空元素
+        .map(c => c.trim());
+
+      tableRows.push(cells);
+
+      // 检查表头分隔符
+      if (isSeparator && tableRows.length === 2) {
+        hasHeader = true;
+      }
+    } else if (tableStart !== -1) {
+      // 表格结束
+      if (tableRows.length >= 2) {
+        tables.push({
+          from: tableStart,
+          to: offset - 1, // 上一行结束
+          rows: tableRows,
+          hasHeader,
+          startLine: tableStartLine,
+          endLine: i, // 当前行号（表格结束的下一行）
+        });
+      }
+      tableStart = -1;
+      tableRows = [];
+      hasHeader = false;
+    }
+
+    offset = lineEnd + 1; // +1 for newline
+  }
+
+  // 处理文档末尾的表格
+  if (tableStart !== -1 && tableRows.length >= 2) {
+    tables.push({
+      from: tableStart,
+      to: offset - 1,
+      rows: tableRows,
+      hasHeader,
+      startLine: tableStartLine,
+      endLine: lines.length,
+    });
+  }
+
+  return tables;
+}
 
 /**
  * 解析整个文档，返回所有元素
  *
  * 性能优化:
  * - 只遍历一次文档
+ * - 只调用一次 toString() 和 split()
  * - 行级缓存 (行内容 hash → 解析结果)
  * - 视口优化 (可选)
+ *
+ * 新增: 先解析代码块和表格，然后逐行解析其他元素
  */
 function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedElement[] {
   const elements: ParsedElement[] = [];
   const doc = view.state.doc;
   const visibleRanges = view.visibleRanges;
 
-  // 决定处理范围
+  // 性能优化：只调用一次 toString() 和 split()
+  const text = doc.toString();
+  const lines = text.split('\n');
+
+  // 用于标记已被块级元素占用的行
+  const occupiedLines = new Set<number>();
+
+  // 1. 先解析所有代码块（多行块级元素）
+  const codeBlocks = parseCodeBlocks(lines);
+
+  for (const block of codeBlocks) {
+    // 检查代码块是否应该被reveal
+    let shouldReveal = false;
+    for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
+      if (shouldRevealLine(view.state, lineNum)) {
+        shouldReveal = true;
+        break;
+      }
+    }
+
+    if (!shouldReveal) {
+      // 添加代码块元素
+      elements.push({
+        type: ElementType.CODE_BLOCK,
+        from: block.from,
+        to: block.to,
+        lineNumber: block.startLine,
+        language: block.language,
+        content: block.code,
+        startLine: block.startLine,
+        endLine: block.endLine,
+        decorationData: {
+          isMultiLine: block.startLine !== block.endLine,
+          showLineNumbers: true,
+        },
+      });
+
+      // 标记这些行已被代码块占用
+      for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
+        occupiedLines.add(lineNum);
+      }
+    } else {
+      // 代码块被reveal，添加编辑样式
+      for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
+        occupiedLines.add(lineNum);
+        const line = doc.line(lineNum);
+        elements.push({
+          type: ElementType.CODE_BLOCK,
+          from: line.from,
+          to: line.from,
+          lineNumber: lineNum,
+          decorationData: {
+            isEditingStyle: true,
+          },
+        });
+      }
+    }
+  }
+
+  // 2. 解析所有表格（多行块级元素）
+  const tables = parseTables(lines);
+
+  for (const table of tables) {
+    // 检查表格是否应该被reveal
+    let shouldReveal = false;
+    for (let lineNum = table.startLine; lineNum <= table.endLine; lineNum++) {
+      if (shouldRevealLine(view.state, lineNum)) {
+        shouldReveal = true;
+        break;
+      }
+    }
+
+    if (!shouldReveal) {
+      // 添加表格元素
+      elements.push({
+        type: ElementType.TABLE,
+        from: table.from,
+        to: table.to,
+        lineNumber: table.startLine,
+        startLine: table.startLine,
+        endLine: table.endLine,
+        decorationData: {
+          rows: table.rows,
+          hasHeader: table.hasHeader,
+          isMultiLine: table.startLine !== table.endLine,
+        },
+      });
+
+      // 标记这些行已被表格占用
+      for (let lineNum = table.startLine; lineNum <= table.endLine; lineNum++) {
+        occupiedLines.add(lineNum);
+      }
+    } else {
+      // 表格被reveal，添加编辑样式
+      for (let lineNum = table.startLine; lineNum <= table.endLine; lineNum++) {
+        occupiedLines.add(lineNum);
+        const line = doc.line(lineNum);
+        elements.push({
+          type: ElementType.TABLE,
+          from: line.from,
+          to: line.from,
+          lineNumber: lineNum,
+          decorationData: {
+            isEditingStyle: true,
+          },
+        });
+      }
+    }
+  }
+
+  // 3. 逐行解析其他元素（跳过已占用的行）
   const ranges = viewportOnly
     ? visibleRanges
     : [{ from: 0, to: doc.length }];
@@ -193,6 +506,11 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
     const endLine = doc.lineAt(range.to);
 
     for (let lineNum = startLine.number; lineNum <= endLine.number; lineNum++) {
+      // 跳过已被块级元素占用的行
+      if (occupiedLines.has(lineNum)) {
+        continue;
+      }
+
       const line = doc.line(lineNum);
       const lineText = line.text;
 
@@ -223,13 +541,14 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
  * 解析单行元素
  *
  * 按优先级检测:
- * 1. 代码块标记 ```
- * 2. 块级公式 $$
- * 3. 表格行 |
- * 4. 标题 #
- * 5. 引用 >
- * 6. 列表 - * + 1.
- * 7. 行内元素
+ * 1. 块级公式 $$
+ * 2. 表格行 |
+ * 3. 标题 #
+ * 4. 引用 >
+ * 5. 列表 - * + 1.
+ * 6. 行内元素
+ *
+ * 注意: 代码块标记```已由parseCodeBlocks统一处理
  */
 function parseLineElements(
   state: EditorState,
@@ -243,20 +562,6 @@ function parseLineElements(
   // 如果行被光标激活，跳过渲染
   if (revealed) {
     return elements;
-  }
-
-  // 检测代码块标记
-  const codeBlockMatch = lineText.match(/^```(\w*)/);
-  if (codeBlockMatch) {
-    elements.push({
-      type: ElementType.CODE_BLOCK,
-      from: line.from,
-      to: line.to,
-      lineNumber: lineNum,
-      language: codeBlockMatch[1] || '',
-      content: lineText,
-    });
-    return elements; // 代码块标记行不再处理其他元素
   }
 
   // 检测块级公式
@@ -412,23 +717,8 @@ function parseLineElements(
 /**
  * 解析行内元素
  *
- * 完整支持15种行内Markdown元素:
- * 1. 行内公式 $...$
- * 2. 粗体+斜体 ***...***
- * 3. 粗体 **...**
- * 4. 斜体 *...* 或 _..._
- * 5. 删除线 ~~...~~
- * 6. 高亮 ==...==
- * 7. 行内代码 `...`
- * 8. 链接 [text](url)
- * 9. Wiki链接 [[page]]
- * 10. 批注链接 [[file.pdf#ann-uuid]]
- * 11. 图片 ![alt](url)
- * 12. 上标 ^text^
- * 13. 下标 ~text~
- * 14. 键盘按键 <kbd>text</kbd>
- * 15. 脚注引用 [^1]
- * 16. 嵌入 ![[file]]
+ * 完整支持15种行内Markdown元素
+ * 性能优化：使用预编译的正则表达式
  */
 function parseInlineElements(
   lineText: string,
@@ -438,11 +728,13 @@ function parseInlineElements(
   const elements: ParsedElement[] = [];
   let match: RegExpExecArray | null;
 
+  // 重置所有正则表达式的lastIndex
+  resetRegexPatterns();
+
   // 1. 行内公式: $...$
-  const inlineMathRegex = /(?<!\$)\$(?!\$)(.+?)\$(?!\$)/g;
-  while ((match = inlineMathRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.inlineMath.exec(lineText)) !== null) {
     const latex = match[1];
-    if (latex.includes('\n')) continue; // 块级公式用$$
+    if (latex.includes('\n')) continue;
 
     elements.push({
       type: ElementType.MATH_INLINE,
@@ -454,15 +746,14 @@ function parseInlineElements(
       decorationData: {
         syntaxFrom: lineFrom + match.index,
         syntaxTo: lineFrom + match.index + match[0].length,
-        contentFrom: lineFrom + match.index + 1, // 跳过 $
-        contentTo: lineFrom + match.index + match[0].length - 1, // 不含 $
+        contentFrom: lineFrom + match.index + 1,
+        contentTo: lineFrom + match.index + match[0].length - 1,
       },
     });
   }
 
   // 2. 粗体+斜体: ***...***
-  const boldItalicRegex = /\*\*\*([^*]+?)\*\*\*/g;
-  while ((match = boldItalicRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.boldItalic.exec(lineText)) !== null) {
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -480,8 +771,7 @@ function parseInlineElements(
   }
 
   // 3. 粗体: **...**
-  const boldRegex = /\*\*([^*]+?)\*\*/g;
-  while ((match = boldRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.bold.exec(lineText)) !== null) {
     elements.push({
       type: ElementType.INLINE_BOLD,
       from: lineFrom + match.index,
@@ -499,8 +789,7 @@ function parseInlineElements(
   }
 
   // 4. 斜体: *...* 或 _..._
-  const italicRegex = /(?<!\*)\*(?!\*)([^*]+?)\*(?!\*)|(?<!_)_(?!_)([^_]+?)_(?!_)/g;
-  while ((match = italicRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.italic.exec(lineText)) !== null) {
     const content = match[1] || match[2];
     elements.push({
       type: ElementType.INLINE_ITALIC,
@@ -519,8 +808,7 @@ function parseInlineElements(
   }
 
   // 5. 删除线: ~~...~~
-  const strikeRegex = /~~([^~]+?)~~/g;
-  while ((match = strikeRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.strikethrough.exec(lineText)) !== null) {
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -538,8 +826,7 @@ function parseInlineElements(
   }
 
   // 6. 高亮: ==...==
-  const highlightRegex = /==([^=]+?)==/g;
-  while ((match = highlightRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.highlight.exec(lineText)) !== null) {
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -557,8 +844,7 @@ function parseInlineElements(
   }
 
   // 7. 行内代码: `...`
-  const codeRegex = /`([^`]+?)`/g;
-  while ((match = codeRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.inlineCode.exec(lineText)) !== null) {
     elements.push({
       type: ElementType.INLINE_CODE,
       from: lineFrom + match.index,
@@ -576,8 +862,7 @@ function parseInlineElements(
   }
 
   // 8. 批注链接: [[file.pdf#ann-uuid]]
-  const annotationLinkRegex = /\[\[([^\]]+?\.pdf)#(ann-[^\]]+?)\]\]/gi;
-  while ((match = annotationLinkRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.annotationLink.exec(lineText)) !== null) {
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -598,8 +883,7 @@ function parseInlineElements(
   }
 
   // 9. Wiki链接: [[page]] or [[page|display]]
-  const wikiLinkRegex = /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g;
-  while ((match = wikiLinkRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.wikiLink.exec(lineText)) !== null) {
     const target = match[1];
     const displayText = match[2] || match[1];
 
@@ -622,8 +906,7 @@ function parseInlineElements(
   }
 
   // 10. Markdown链接: [text](url)
-  const linkRegex = /\[([^\]]+?)\]\(([^)]+?)\)/g;
-  while ((match = linkRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.link.exec(lineText)) !== null) {
     elements.push({
       type: ElementType.INLINE_LINK,
       from: lineFrom + match.index,
@@ -643,8 +926,7 @@ function parseInlineElements(
   }
 
   // 11. 嵌入: ![[file]]
-  const embedRegex = /!\[\[([^\]]+?)\]\]/g;
-  while ((match = embedRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.embed.exec(lineText)) !== null) {
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -664,8 +946,7 @@ function parseInlineElements(
   }
 
   // 12. 图片: ![alt](url) or ![alt|width](url)
-  const imageRegex = /!\[([^\]]*?)(?:\|(\d+))?\]\(([^)]+?)\)/g;
-  while ((match = imageRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.image.exec(lineText)) !== null) {
     elements.push({
       type: ElementType.INLINE_IMAGE,
       from: lineFrom + match.index,
@@ -686,8 +967,7 @@ function parseInlineElements(
   }
 
   // 13. 上标: ^text^
-  const superscriptRegex = /\^([^^]+?)\^/g;
-  while ((match = superscriptRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.superscript.exec(lineText)) !== null) {
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -705,8 +985,7 @@ function parseInlineElements(
   }
 
   // 14. 下标: ~text~
-  const subscriptRegex = /~([^~]+?)~/g;
-  while ((match = subscriptRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.subscript.exec(lineText)) !== null) {
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -724,8 +1003,7 @@ function parseInlineElements(
   }
 
   // 15. 键盘按键: <kbd>text</kbd>
-  const kbdRegex = /<kbd>([^<]+?)<\/kbd>/g;
-  while ((match = kbdRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.kbd.exec(lineText)) !== null) {
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -743,8 +1021,7 @@ function parseInlineElements(
   }
 
   // 16. 脚注引用: [^1]
-  const footnoteRegex = /\[\^([^\]]+?)\]/g;
-  while ((match = footnoteRegex.exec(lineText)) !== null) {
+  while ((match = REGEX_PATTERNS.footnote.exec(lineText)) !== null) {
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -839,10 +1116,149 @@ export function resolveConflicts(elements: ParsedElement[]): ParsedElement[] {
 /**
  * 从解析元素构建装饰器集合
  */
-function buildDecorationsFromElements(elements: ParsedElement[]): DecorationSet {
+function buildDecorationsFromElements(elements: ParsedElement[], view: EditorView): DecorationSet {
   const entries: DecorationEntry[] = [];
 
   for (const element of elements) {
+    // 多行代码块需要特殊处理
+    if (element.type === ElementType.CODE_BLOCK && element.decorationData) {
+      const data = element.decorationData as any;
+
+      if (data.isEditingStyle) {
+        // 编辑模式：每行添加样式
+        entries.push({
+          from: element.from,
+          to: element.to,
+          decoration: Decoration.line({
+            class: 'cm-code-block-line cm-code-block-editing',
+          }),
+          priority: element.type,
+          isLine: true,
+        });
+      } else if (data.isMultiLine && element.startLine && element.endLine) {
+        // 多行代码块：widget + 隐藏行
+        const doc = view.state.doc;
+        const firstLine = doc.line(element.startLine);
+
+        // 1. 在第一行添加widget
+        entries.push({
+          from: firstLine.from,
+          to: firstLine.from,
+          decoration: Decoration.widget({
+            widget: new CodeBlockWidget(
+              element.content || '',
+              element.language || '',
+              data.showLineNumbers !== false,
+              element.from,
+              element.to
+            ),
+            side: -1,
+          }),
+          priority: element.type,
+          isLine: true,
+        });
+
+        // 2. 隐藏所有代码块行
+        for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
+          const line = doc.line(lineNum);
+          entries.push({
+            from: line.from,
+            to: line.from,
+            decoration: Decoration.line({ class: 'cm-code-block-hidden' }),
+            priority: element.type,
+            isLine: true,
+          });
+        }
+      } else {
+        // 单行代码块
+        entries.push({
+          from: element.from,
+          to: element.to,
+          decoration: Decoration.replace({
+            widget: new CodeBlockWidget(
+              element.content || '',
+              element.language || '',
+              data.showLineNumbers !== false,
+              element.from,
+              element.to
+            ),
+          }),
+          priority: element.type,
+          isLine: false,
+        });
+      }
+      continue;
+    }
+
+    // 多行表格需要特殊处理
+    if (element.type === ElementType.TABLE && element.decorationData) {
+      const data = element.decorationData as any;
+
+      if (data.isEditingStyle) {
+        // 编辑模式：每行添加样式
+        entries.push({
+          from: element.from,
+          to: element.to,
+          decoration: Decoration.line({
+            class: 'cm-table-line',
+          }),
+          priority: element.type,
+          isLine: true,
+        });
+      } else if (data.isMultiLine && element.startLine && element.endLine) {
+        // 多行表格：widget + 隐藏行
+        const doc = view.state.doc;
+        const firstLine = doc.line(element.startLine);
+
+        // 1. 在第一行添加widget
+        entries.push({
+          from: firstLine.from,
+          to: firstLine.from,
+          decoration: Decoration.widget({
+            widget: new TableWidget(
+              data.rows || [],
+              data.hasHeader !== false,
+              element.from,
+              element.to
+            ),
+            side: -1,
+          }),
+          priority: element.type,
+          isLine: true,
+        });
+
+        // 2. 隐藏所有表格行
+        for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
+          const line = doc.line(lineNum);
+          entries.push({
+            from: line.from,
+            to: line.from,
+            decoration: Decoration.line({ class: 'cm-table-hidden' }),
+            priority: element.type,
+            isLine: true,
+          });
+        }
+      } else {
+        // 单行表格（罕见）
+        entries.push({
+          from: element.from,
+          to: element.to,
+          decoration: Decoration.replace({
+            widget: new TableWidget(
+              data.rows || [],
+              data.hasHeader !== false,
+              element.from,
+              element.to
+            ),
+          }),
+          priority: element.type,
+          isLine: false,
+        });
+      }
+      continue;
+    }
+
+    // 其他元素使用通用创建函数
     const decoration = createDecorationForElement(element);
     if (decoration) {
       entries.push({
@@ -850,7 +1266,7 @@ function buildDecorationsFromElements(elements: ParsedElement[]): DecorationSet 
         to: element.to,
         decoration,
         priority: element.type,
-        isLine: isLineDecoration(element), // 传递整个元素而非类型
+        isLine: isLineDecoration(element),
       });
     }
   }
@@ -969,9 +1385,9 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
       return null;
 
     case ElementType.CODE_BLOCK:
-      return Decoration.line({
-        class: 'cm-code-block-line',
-      });
+      // 代码块在buildDecorationsFromElements中特殊处理
+      // 这里不应该被调用
+      return null;
 
     case ElementType.MATH_BLOCK:
       return Decoration.line({
@@ -1207,15 +1623,30 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
 export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
+    private lastSelectionLine: number = -1;
 
     constructor(view: EditorView) {
       this.decorations = this.buildDecorations(view);
+      this.lastSelectionLine = view.state.doc.lineAt(view.state.selection.main.head).number;
     }
 
     update(update: ViewUpdate) {
-      // 只在必要时重建
-      if (update.docChanged || update.selectionSet) {
+      // CRITICAL PERFORMANCE FIX:
+      // Only rebuild decorations when:
+      // 1. Document content changed (docChanged)
+      // 2. Selection moved to a different line (affects reveal state)
+
+      if (update.docChanged) {
+        // Document changed - must rebuild
         this.decorations = this.buildDecorations(update.view);
+        this.lastSelectionLine = update.view.state.doc.lineAt(update.view.state.selection.main.head).number;
+      } else if (update.selectionSet) {
+        // Selection changed - only rebuild if it moved to a different line
+        const currentLine = update.view.state.doc.lineAt(update.view.state.selection.main.head).number;
+        if (currentLine !== this.lastSelectionLine) {
+          this.decorations = this.buildDecorations(update.view);
+          this.lastSelectionLine = currentLine;
+        }
       }
     }
 
@@ -1227,7 +1658,7 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
       const resolved = resolveConflicts(elements);
 
       // 3. 构建装饰器
-      return buildDecorationsFromElements(resolved);
+      return buildDecorationsFromElements(resolved, view);
     }
   },
   {
