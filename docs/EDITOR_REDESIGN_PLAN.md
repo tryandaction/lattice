@@ -307,10 +307,24 @@ function switchMode(mode: EditorMode) {
 
 ### Week 1: 紧急修复（1-2天）
 - [x] ~~分析当前问题~~
-- [ ] 修复line break decoration错误
-- [ ] 移除跨行的 `Decoration.replace()`
-- [ ] 重新设计Widget系统
+- [x] ~~修复line break decoration错误~~
+- [x] ~~移除跨行的 `Decoration.replace()`~~
+- [x] ~~重新设计Widget系统~~
+- [x] ~~移除不必要的行号显示~~
+- [x] ~~简化Widget光标处理~~
 - [ ] 测试基本功能
+
+**已完成工作 (2026-01-19):**
+1. 修复了所有line break decoration错误
+   - HEADING: `to: Math.max(line.from, line.to - 1)`
+   - BLOCKQUOTE: `to: Math.max(line.from, line.to - 1)`
+   - HORIZONTAL_RULE: `to: Math.max(line.from, line.to - 1)`
+2. 移除了代码块行号显示（默认false）
+3. 简化了Widget系统
+   - 移除了HeadingContentWidget的mousedown处理
+   - 移除了BlockquoteContentWidget的mousedown处理
+   - 移除了CodeBlockWidget的mousedown处理
+   - 所有Widget的ignoreEvent()返回false，让CodeMirror自然处理光标
 
 ### Week 2: Live Preview重构（3-5天）
 - [ ] 实现光标上下文感知
