@@ -603,7 +603,7 @@ function parseLineElements(
       elements.push({
         type: ElementType.HEADING,
         from: line.from,
-        to: line.to,
+        to: Math.max(line.from, line.to - 1), // Exclude newline character
         lineNumber: lineNum,
         level: level,
         content: content,
@@ -613,7 +613,7 @@ function parseLineElements(
           level: level,
           markerEnd: markerEnd,
           originalFrom: line.from,
-          originalTo: line.to,
+          originalTo: Math.max(line.from, line.to - 1), // Exclude newline character
         },
       });
     }
@@ -642,7 +642,7 @@ function parseLineElements(
       elements.push({
         type: ElementType.BLOCKQUOTE,
         from: line.from,
-        to: line.to,
+        to: Math.max(line.from, line.to - 1), // Exclude newline character
         lineNumber: lineNum,
         content: content,
         decorationData: {
@@ -650,7 +650,7 @@ function parseLineElements(
           content: content,
           markerTo: blockquote.markerTo,
           originalFrom: line.from,
-          originalTo: line.to,
+          originalTo: Math.max(line.from, line.to - 1), // Exclude newline character
         },
       });
     }
@@ -697,11 +697,11 @@ function parseLineElements(
     elements.push({
       type: ElementType.HORIZONTAL_RULE,
       from: line.from,
-      to: line.to,
+      to: Math.max(line.from, line.to - 1), // Exclude newline character
       lineNumber: lineNum,
       decorationData: {
         originalFrom: line.from,
-        originalTo: line.to,
+        originalTo: Math.max(line.from, line.to - 1), // Exclude newline character
       },
     });
     return elements;
