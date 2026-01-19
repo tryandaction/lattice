@@ -742,18 +742,7 @@ export class HeadingContentWidget extends WidgetType {
     // 渲染内容（支持行内公式）
     this.renderContentWithMath(span);
 
-    // 点击定位光标
-    span.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      // 定位到标题内容开始位置
-      view.dispatch({
-        selection: { anchor: this.originalFrom, head: this.originalFrom },
-        scrollIntoView: true,
-      });
-      view.focus();
-    });
+    // Let CodeMirror handle cursor positioning naturally - no custom mousedown handlers
 
     return span;
   }
@@ -813,7 +802,8 @@ export class HeadingContentWidget extends WidgetType {
   }
 
   ignoreEvent(e: Event) {
-    return e.type !== 'mousedown';
+    // Don't intercept any events - let CodeMirror handle everything
+    return false;
   }
 }
 
@@ -844,33 +834,14 @@ export class BlockquoteContentWidget extends WidgetType {
     span.dataset.from = String(this.originalFrom);
     span.dataset.to = String(this.originalTo);
 
-    // 点击定位光标（精确到字符）
-    span.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      const rect = span.getBoundingClientRect();
-      const clickX = e.clientX - rect.left;
-      const textWidth = rect.width;
-      const textLength = this.content.length;
-
-      let charOffset = Math.round((clickX / textWidth) * textLength);
-      charOffset = Math.max(0, Math.min(charOffset, textLength));
-
-      const pos = this.originalFrom + charOffset;
-
-      view.dispatch({
-        selection: { anchor: pos, head: pos },
-        scrollIntoView: true,
-      });
-      view.focus();
-    });
+    // Let CodeMirror handle cursor positioning naturally - no custom mousedown handlers
 
     return span;
   }
 
   ignoreEvent(e: Event) {
-    return e.type !== 'mousedown';
+    // Don't intercept any events - let CodeMirror handle everything
+    return false;
   }
 }
 
@@ -1199,7 +1170,7 @@ export class CodeBlockWidget extends WidgetType {
   constructor(
     private code: string,
     private language: string,
-    private showLineNumbers: boolean = true,
+    private showLineNumbers: boolean = false, // Default: no line numbers (cleaner like Obsidian)
     private from: number = 0,
     private to: number = 0
   ) {
@@ -1220,22 +1191,7 @@ export class CodeBlockWidget extends WidgetType {
     container.dataset.from = String(this.from);
     container.dataset.to = String(this.to);
 
-    // 点击定位光标到代码块开始
-    container.addEventListener('mousedown', (e) => {
-      // 不拦截复制按钮点击
-      if ((e.target as HTMLElement).closest('.cm-code-block-copy')) return;
-
-      e.preventDefault();
-      e.stopPropagation();
-
-      // 定位到代码块开始（```lang之后）
-      const codeStart = this.from + 3 + this.language.length + 1;
-      view.dispatch({
-        selection: { anchor: codeStart, head: codeStart },
-        scrollIntoView: true,
-      });
-      view.focus();
-    });
+    // Let CodeMirror handle cursor positioning naturally - no custom mousedown handlers
 
     // 头部：语言标签 + 复制按钮
     const header = document.createElement('div');
@@ -1332,7 +1288,9 @@ export class CodeBlockWidget extends WidgetType {
   }
 
   ignoreEvent(e: Event) {
-    return e.type === 'click';
+    // Don't intercept events - let CodeMirror handle cursor positioning
+    // (Copy button still works through normal event propagation)
+    return false;
   }
 }
 

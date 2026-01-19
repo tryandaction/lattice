@@ -1148,7 +1148,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
             widget: new CodeBlockWidget(
               element.content || '',
               element.language || '',
-              data.showLineNumbers !== false,
+              data.showLineNumbers === true, // Default: false (cleaner like Obsidian)
               element.from,
               element.to
             ),
@@ -1178,7 +1178,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
             widget: new CodeBlockWidget(
               element.content || '',
               element.language || '',
-              data.showLineNumbers !== false,
+              data.showLineNumbers === true, // Default: false (cleaner like Obsidian)
               element.from,
               element.to
             ),
