@@ -626,25 +626,19 @@ function parseLineElements(
       },
     });
 
-    // 2. Widget替换（隐藏#标记）
-    if (content) {
-      elements.push({
-        type: ElementType.HEADING,
-        from: line.from,
-        to: Math.max(line.from, line.to - 1), // Exclude newline character
-        lineNumber: lineNum,
-        level: level,
-        content: content,
-        decorationData: {
-          isWidget: true,
-          content: content,
-          level: level,
-          markerEnd: markerEnd,
-          originalFrom: line.from,
-          originalTo: Math.max(line.from, line.to - 1), // Exclude newline character
-        },
-      });
-    }
+    // 2. CSS mark to hide # markers (Obsidian-style)
+    elements.push({
+      type: ElementType.HEADING,
+      from: line.from,
+      to: markerEnd,
+      lineNumber: lineNum,
+      level: level,
+      content: content,
+      decorationData: {
+        isCSSMark: true,
+        className: `cm-formatting cm-formatting-header cm-formatting-header-${level}`,
+      },
+    });
     // 标题内可能有行内元素，继续解析
   }
 
@@ -1359,8 +1353,13 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
         return Decoration.line({
           class: `cm-heading cm-heading-${data.level}`,
         });
+      } else if (data?.isCSSMark && data?.className) {
+        // CSS mark to hide # markers (Obsidian-style)
+        return Decoration.mark({
+          class: data.className,
+        });
       } else if (data?.isWidget && data?.content && data?.markerEnd && data?.originalTo) {
-        // Widget替换（隐藏#标记）
+        // Widget替换（隐藏#标记）- Legacy, should not be used anymore
         return Decoration.replace({
           widget: new HeadingContentWidget(
             data.content,

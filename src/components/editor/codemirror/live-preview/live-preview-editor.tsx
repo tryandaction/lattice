@@ -219,7 +219,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     onChange,
     mode = 'live',
     onModeChange,
-    showLineNumbers = true,
+    showLineNumbers = mode !== 'live', // Hide in Live Preview, show in Source/Reading
     showFoldGutter = true,
     readOnly = false,
     onOutlineChange,
