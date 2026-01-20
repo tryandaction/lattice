@@ -29,6 +29,7 @@
  */
 
 import { EditorView, WidgetType } from '@codemirror/view';
+import { handleWidgetClick } from './cursor-positioning';
 
 // ============================================================================
 // KaTeX动态加载
@@ -108,29 +109,7 @@ export class FormattedTextWidget extends WidgetType {
 
     // 处理点击 - 精确光标定位
     span.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      // 计算点击位置对应的字符偏移
-      const rect = span.getBoundingClientRect();
-      const clickX = e.clientX - rect.left;
-      const textWidth = rect.width;
-      const textLength = this.content.length;
-
-      let charOffset = 0;
-      if (textWidth > 0 && textLength > 0) {
-        const avgCharWidth = textWidth / textLength;
-        charOffset = Math.round(clickX / avgCharWidth);
-        charOffset = Math.max(0, Math.min(charOffset, textLength));
-      }
-
-      // 定位光标到内容区域
-      const pos = this.contentFrom + charOffset;
-      view.dispatch({
-        selection: { anchor: pos, head: pos },
-        scrollIntoView: true,
-      });
-      view.focus();
+      handleWidgetClick(view, span, e, this.contentFrom, this.contentTo);
     });
 
     return span;
@@ -211,24 +190,7 @@ export class LinkWidget extends WidgetType {
 
     // 定位光标
     const positionCursor = (e: MouseEvent) => {
-      const rect = link.getBoundingClientRect();
-      const clickX = e.clientX - rect.left;
-      const textWidth = rect.width;
-      const textLength = this.text.length;
-
-      let charOffset = 0;
-      if (textWidth > 0 && textLength > 0) {
-        const avgCharWidth = textWidth / textLength;
-        charOffset = Math.round(clickX / avgCharWidth);
-        charOffset = Math.max(0, Math.min(charOffset, textLength));
-      }
-
-      const pos = this.contentFrom + charOffset;
-      view.dispatch({
-        selection: { anchor: pos, head: pos },
-        scrollIntoView: true,
-      });
-      view.focus();
+      handleWidgetClick(view, link, e, this.contentFrom, this.contentTo);
     };
 
     // 处理点击
@@ -333,27 +295,7 @@ export class AnnotationLinkWidget extends WidgetType {
           })
         );
       } else {
-        e.preventDefault();
-        e.stopPropagation();
-
-        const rect = link.getBoundingClientRect();
-        const clickX = e.clientX - rect.left;
-        const textWidth = rect.width;
-        const textLength = this.displayText.length;
-
-        let charOffset = 0;
-        if (textWidth > 0 && textLength > 0) {
-          const avgCharWidth = textWidth / textLength;
-          charOffset = Math.round(clickX / avgCharWidth);
-          charOffset = Math.max(0, Math.min(charOffset, textLength));
-        }
-
-        const pos = this.contentFrom + charOffset;
-        view.dispatch({
-          selection: { anchor: pos, head: pos },
-          scrollIntoView: true,
-        });
-        view.focus();
+        handleWidgetClick(view, link, e, this.contentFrom, this.contentTo);
       }
     });
 
@@ -424,14 +366,7 @@ export class ImageWidget extends WidgetType {
 
     // 点击定位到alt文本
     container.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const pos = this.contentFrom;
-      view.dispatch({
-        selection: { anchor: pos, head: pos },
-        scrollIntoView: true,
-      });
-      view.focus();
+      handleWidgetClick(view, container, e, this.contentFrom, this.contentTo);
     });
 
     container.appendChild(img);
@@ -470,13 +405,7 @@ export class SuperscriptWidget extends WidgetType {
     sup.dataset.contentTo = String(this.contentTo);
 
     sup.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      view.dispatch({
-        selection: { anchor: this.contentFrom, head: this.contentFrom },
-        scrollIntoView: true,
-      });
-      view.focus();
+      handleWidgetClick(view, sup, e, this.contentFrom, this.contentTo);
     });
 
     return sup;
@@ -514,13 +443,7 @@ export class SubscriptWidget extends WidgetType {
     sub.dataset.contentTo = String(this.contentTo);
 
     sub.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      view.dispatch({
-        selection: { anchor: this.contentFrom, head: this.contentFrom },
-        scrollIntoView: true,
-      });
-      view.focus();
+      handleWidgetClick(view, sub, e, this.contentFrom, this.contentTo);
     });
 
     return sub;
@@ -558,13 +481,7 @@ export class KbdWidget extends WidgetType {
     kbd.dataset.contentTo = String(this.contentTo);
 
     kbd.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      view.dispatch({
-        selection: { anchor: this.contentFrom, head: this.contentFrom },
-        scrollIntoView: true,
-      });
-      view.focus();
+      handleWidgetClick(view, kbd, e, this.contentFrom, this.contentTo);
     });
 
     return kbd;
@@ -616,13 +533,7 @@ export class FootnoteRefWidget extends WidgetType {
           })
         );
       } else {
-        e.preventDefault();
-        e.stopPropagation();
-        view.dispatch({
-          selection: { anchor: this.contentFrom, head: this.contentFrom },
-          scrollIntoView: true,
-        });
-        view.focus();
+        handleWidgetClick(view, link, e, this.contentFrom, this.contentTo);
       }
     });
 
@@ -686,13 +597,7 @@ export class EmbedWidget extends WidgetType {
     );
 
     container.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      view.dispatch({
-        selection: { anchor: this.contentFrom, head: this.contentFrom },
-        scrollIntoView: true,
-      });
-      view.focus();
+      handleWidgetClick(view, container, e, this.contentFrom, this.contentTo);
     });
 
     return container;
@@ -1000,13 +905,7 @@ export class MathWidget extends WidgetType {
 
     // 单击: 定位光标到公式开始位置（触发显示源码）
     container.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      view.dispatch({
-        selection: { anchor: this.from, head: this.from },
-        scrollIntoView: true,
-      });
-      view.focus();
+      handleWidgetClick(view, container, e, this.from, this.to);
     });
 
     // 双击: 打开MathLive可视化编辑器
@@ -1390,15 +1289,7 @@ export class TableWidget extends WidgetType {
       if ((e.target as HTMLElement).classList.contains('cm-wiki-link-table')) return;
       if ((e.target as HTMLElement).classList.contains('cm-link-table')) return;
 
-      e.preventDefault();
-      e.stopPropagation();
-
-      // 定位到表格开始
-      view.dispatch({
-        selection: { anchor: this.from, head: this.from },
-        scrollIntoView: true,
-      });
-      view.focus();
+      handleWidgetClick(view, table, e, this.from, this.to);
     });
 
     // 计算列宽（基于内容）
