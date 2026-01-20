@@ -30,38 +30,17 @@
 
 import { EditorView, WidgetType } from '@codemirror/view';
 import { handleWidgetClick } from './cursor-positioning';
+import { loadKaTeX } from './katex-loader';
 
 // ============================================================================
-// KaTeX动态加载
+// KaTeX动态加载 (使用共享加载器)
 // ============================================================================
 
 let katex: any = null;
-let katexLoadPromise: Promise<any> | null = null;
-
-/**
- * 动态加载KaTeX
- */
-async function loadKaTeX(): Promise<any> {
-  if (katex) return katex;
-
-  if (katexLoadPromise) return katexLoadPromise;
-
-  katexLoadPromise = import('katex')
-    .then((module) => {
-      katex = module.default || module;
-      return katex;
-    })
-    .catch((err) => {
-      console.error('Failed to load KaTeX:', err);
-      throw err;
-    });
-
-  return katexLoadPromise;
-}
 
 // 预加载KaTeX
 if (typeof window !== 'undefined') {
-  loadKaTeX();
+  loadKaTeX().then(k => { katex = k; });
 }
 
 // ============================================================================
@@ -612,11 +591,11 @@ export class EmbedWidget extends WidgetType {
 // 10. HeadingContentWidget - 标题内容
 // ============================================================================
 
-// KaTeX for inline math in headings
+// KaTeX for inline math in headings (使用共享加载器)
 let katexForHeading: any = null;
-import('katex')
-  .then((mod) => {
-    katexForHeading = mod.default || mod;
+loadKaTeX()
+  .then((k) => {
+    katexForHeading = k;
   })
   .catch(() => {});
 
@@ -679,10 +658,9 @@ export class HeadingContentWidget extends WidgetType {
           }
         } else {
           mathSpan.textContent = part;
-          // 等待KaTeX加载
-          import('katex')
-            .then((mod) => {
-              const k = mod.default || mod;
+          // 等待KaTeX加载 (使用共享加载器)
+          loadKaTeX()
+            .then((k) => {
               katexForHeading = k;
               try {
                 mathSpan.innerHTML = '';

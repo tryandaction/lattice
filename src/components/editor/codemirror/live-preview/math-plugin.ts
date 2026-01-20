@@ -1,12 +1,14 @@
 /**
  * Math Rendering Plugin for Live Preview
  * Renders LaTeX math expressions using KaTeX
- * 
+ *
  * Requirements: 4.1-4.6
- * 
+ *
  * This plugin provides Obsidian-like live preview for math:
  * - When cursor is NOT on a math expression line, it renders as formatted math
  * - When cursor IS on a math expression line, raw LaTeX is shown for editing
+ *
+ * Uses shared KaTeX loader to prevent duplicate loading
  */
 
 import {
@@ -18,36 +20,15 @@ import {
   EditorView,
 } from '@codemirror/view';
 import { shouldRevealLine } from './cursor-context-plugin';
+import { loadKaTeX } from './katex-loader';
 
-// KaTeX will be loaded dynamically
+// KaTeX instance (loaded via shared loader)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let katex: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let katexLoadPromise: Promise<any> | null = null;
-
-/**
- * Load KaTeX dynamically
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function loadKaTeX(): Promise<any> {
-  if (katex) return katex;
-  
-  if (katexLoadPromise) return katexLoadPromise;
-  
-  katexLoadPromise = import('katex').then((module) => {
-    katex = module.default || module;
-    return katex;
-  }).catch((err) => {
-    console.error('Failed to load KaTeX:', err);
-    throw err;
-  });
-  
-  return katexLoadPromise;
-}
 
 // Pre-load KaTeX
 if (typeof window !== 'undefined') {
-  loadKaTeX();
+  loadKaTeX().then(k => { katex = k; });
 }
 
 /**
