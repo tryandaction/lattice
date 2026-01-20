@@ -7,6 +7,8 @@
 
 import { ViewPlugin, ViewUpdate, EditorView } from '@codemirror/view';
 import { StateField, StateEffect, EditorState } from '@codemirror/state';
+import type { ParsedElement, ElementType } from './decoration-coordinator';
+import { parsedElementsField } from './decoration-coordinator';
 
 /**
  * State effect to update cursor context
@@ -31,6 +33,12 @@ export interface CursorContext {
   revealRanges: Set<string>;
   /** Lines that should reveal syntax */
   revealLines: Set<number>;
+
+  // NEW: Element-level tracking for Obsidian-style granular reveal
+  /** Set of elements that should reveal syntax (format: "type:from:to") */
+  revealElements: Set<string>;
+  /** Current element under cursor (null if not in any element) */
+  cursorElement: ParsedElement | null;
 }
 
 /**
@@ -45,7 +53,31 @@ function createInitialContext(): CursorContext {
     hasSelection: false,
     revealRanges: new Set(),
     revealLines: new Set(),
+    revealElements: new Set(),
+    cursorElement: null,
   };
+}
+
+/**
+ * Find the element at a given position
+ * Uses binary search for efficiency with large element arrays
+ *
+ * @param pos - Cursor position to check
+ * @param elements - Array of parsed elements (must be sorted by position)
+ * @returns The element containing the position, or null if not found
+ */
+function findElementAtPosition(
+  pos: number,
+  elements: ParsedElement[]
+): ParsedElement | null {
+  // Linear search for now (can optimize to binary search if needed)
+  // Elements are typically not sorted, so binary search wouldn't help
+  for (const element of elements) {
+    if (pos >= element.from && pos <= element.to) {
+      return element;
+    }
+  }
+  return null;
 }
 
 /**
@@ -56,13 +88,31 @@ function computeCursorContext(state: EditorState): CursorContext {
   const cursorPos = selection.head;
   const cursorLine = state.doc.lineAt(cursorPos).number;
   const hasSelection = !selection.empty;
-  
+
   const revealRanges = new Set<string>();
   const revealLines = new Set<number>();
-  
-  // Always reveal the current line
+  const revealElements = new Set<string>();
+
+  // Get parsed elements from decoration coordinator
+  let parsedElements: ParsedElement[] = [];
+  try {
+    parsedElements = state.field(parsedElementsField, false) || [];
+  } catch {
+    // Field not available yet
+  }
+
+  // Find element at cursor position
+  const cursorElement = findElementAtPosition(cursorPos, parsedElements);
+
+  // Add cursor element to reveal set
+  if (cursorElement) {
+    const elementKey = `${cursorElement.type}:${cursorElement.from}:${cursorElement.to}`;
+    revealElements.add(elementKey);
+  }
+
+  // Always reveal the current line (backward compatibility)
   revealLines.add(cursorLine);
-  
+
   if (hasSelection) {
     // Reveal all lines in selection
     const fromLine = state.doc.lineAt(selection.from).number;
@@ -70,22 +120,46 @@ function computeCursorContext(state: EditorState): CursorContext {
     for (let i = fromLine; i <= toLine; i++) {
       revealLines.add(i);
     }
+
+    // Reveal all elements in selection
+    for (const element of parsedElements) {
+      // Check if element overlaps with selection
+      if (element.from <= selection.to && element.to >= selection.from) {
+        const elementKey = `${element.type}:${element.from}:${element.to}`;
+        revealElements.add(elementKey);
+      }
+    }
   }
-  
+
   // Handle multi-cursor
   for (const range of state.selection.ranges) {
     const line = state.doc.lineAt(range.head).number;
     revealLines.add(line);
-    
+
+    // Find element at each cursor
+    const rangeElement = findElementAtPosition(range.head, parsedElements);
+    if (rangeElement) {
+      const elementKey = `${rangeElement.type}:${rangeElement.from}:${rangeElement.to}`;
+      revealElements.add(elementKey);
+    }
+
     if (!range.empty) {
       const fromLine = state.doc.lineAt(range.from).number;
       const toLine = state.doc.lineAt(range.to).number;
       for (let i = fromLine; i <= toLine; i++) {
         revealLines.add(i);
       }
+
+      // Reveal all elements in range
+      for (const element of parsedElements) {
+        if (element.from <= range.to && element.to >= range.from) {
+          const elementKey = `${element.type}:${element.from}:${element.to}`;
+          revealElements.add(elementKey);
+        }
+      }
     }
   }
-  
+
   return {
     cursorPos,
     cursorLine,
@@ -94,6 +168,8 @@ function computeCursorContext(state: EditorState): CursorContext {
     hasSelection,
     revealRanges,
     revealLines,
+    revealElements,
+    cursorElement,
   };
 }
 
@@ -124,27 +200,47 @@ export const cursorContextField = StateField.define<CursorContext>({
 
 /**
  * Check if a position should reveal syntax
+ * Now supports element-level granularity for Obsidian-style behavior
+ *
+ * @param state - Editor state
+ * @param from - Start position of the element
+ * @param to - End position of the element
+ * @param elementType - Optional element type for precise matching
+ * @returns true if syntax should be revealed, false otherwise
  */
-export function shouldRevealAt(state: EditorState, from: number, to: number): boolean {
+export function shouldRevealAt(
+  state: EditorState,
+  from: number,
+  to: number,
+  elementType?: ElementType
+): boolean {
   // Check if cursorContextField is available
   try {
     const context = state.field(cursorContextField, false);
     if (!context) return false; // No cursor context = reading mode, don't reveal
-    
+
+    // If element type is provided, check element-level reveal
+    if (elementType !== undefined) {
+      const elementKey = `${elementType}:${from}:${to}`;
+      if (context.revealElements.has(elementKey)) {
+        return true;
+      }
+    }
+
     const selection = state.selection.main;
-    
+
     // Check if cursor is inside the range
     if (selection.head >= from && selection.head <= to) {
       return true;
     }
-    
+
     // Check if selection overlaps with the range
     if (!selection.empty) {
       if (selection.from <= to && selection.to >= from) {
         return true;
       }
     }
-    
+
     // Check multi-cursor
     for (const range of state.selection.ranges) {
       if (range.head >= from && range.head <= to) {
@@ -154,7 +250,7 @@ export function shouldRevealAt(state: EditorState, from: number, to: number): bo
         return true;
       }
     }
-    
+
     return false;
   } catch {
     return false; // No cursor context field = reading mode
@@ -217,6 +313,7 @@ export const cursorContextPlugin = ViewPlugin.fromClass(
 
     /**
      * Check if cursor context has meaningfully changed
+     * Now includes element-level tracking for Obsidian-style granular reveal
      */
     private hasContextChanged(old: CursorContext | null, current: CursorContext | null): boolean {
       if (!old && !current) return false;
@@ -225,7 +322,22 @@ export const cursorContextPlugin = ViewPlugin.fromClass(
       // Check if cursor line changed
       if (old.cursorLine !== current.cursorLine) return true;
 
-      // Check if reveal lines set changed
+      // Check if cursor element changed (element-level tracking)
+      if (old.cursorElement?.type !== current.cursorElement?.type ||
+          old.cursorElement?.from !== current.cursorElement?.from ||
+          old.cursorElement?.to !== current.cursorElement?.to) {
+        return true;
+      }
+
+      // Check if reveal elements set changed (element-level tracking)
+      if (old.revealElements.size !== current.revealElements.size) return true;
+
+      // Check if reveal elements content changed
+      for (const element of current.revealElements) {
+        if (!old.revealElements.has(element)) return true;
+      }
+
+      // Check if reveal lines set changed (backward compatibility)
       if (old.revealLines.size !== current.revealLines.size) return true;
 
       // Check if reveal lines content changed

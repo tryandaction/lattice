@@ -23,7 +23,8 @@
       "Bash(exit 0)",
       "Bash(netstat:*)",
       "Bash(findstr:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git checkout:*)"
     ]
   }
 }

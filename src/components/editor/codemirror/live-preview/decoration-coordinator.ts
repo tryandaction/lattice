@@ -35,8 +35,8 @@
  */
 
 import { EditorView, ViewUpdate, ViewPlugin, DecorationSet, Decoration } from '@codemirror/view';
-import { EditorState, RangeSet } from '@codemirror/state';
-import { shouldRevealLine } from './cursor-context-plugin';
+import { EditorState, RangeSet, StateField, StateEffect } from '@codemirror/state';
+import { shouldRevealLine, shouldRevealAt } from './cursor-context-plugin';
 import {
   FormattedTextWidget,
   LinkWidget,
@@ -195,6 +195,38 @@ class LRUCache<K, V> {
 
 // 全局缓存实例
 const lineElementCache = new LRUCache<string, ParsedElement[]>(2000);
+
+// ============================================================================
+// StateField - 存储解析后的元素供其他插件使用
+// ============================================================================
+
+/**
+ * State effect to update parsed elements
+ */
+export const updateParsedElements = StateEffect.define<ParsedElement[]>();
+
+/**
+ * StateField to store parsed elements for cursor context plugin
+ * This allows the cursor context plugin to determine which element the cursor is in
+ */
+export const parsedElementsField = StateField.define<ParsedElement[]>({
+  create() {
+    return [];
+  },
+  update(value, tr) {
+    // Check for explicit update effect
+    for (const effect of tr.effects) {
+      if (effect.is(updateParsedElements)) {
+        return effect.value;
+      }
+    }
+    // Clear on document change (will be repopulated by decoration coordinator)
+    if (tr.docChanged) {
+      return [];
+    }
+    return value;
+  },
+});
 
 // ============================================================================
 // 预编译正则表达式 - 性能优化
@@ -397,14 +429,13 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   const codeBlocks = parseCodeBlocks(lines);
 
   for (const block of codeBlocks) {
-    // 检查代码块是否应该被reveal
-    let shouldReveal = false;
-    for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
-      if (shouldRevealLine(view.state, lineNum)) {
-        shouldReveal = true;
-        break;
-      }
-    }
+    // 检查代码块是否应该被reveal (element-level check)
+    const shouldReveal = shouldRevealAt(
+      view.state,
+      block.from,
+      block.to,
+      ElementType.CODE_BLOCK
+    );
 
     if (!shouldReveal) {
       // 添加代码块元素
@@ -449,14 +480,13 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   const tables = parseTables(lines);
 
   for (const table of tables) {
-    // 检查表格是否应该被reveal
-    let shouldReveal = false;
-    for (let lineNum = table.startLine; lineNum <= table.endLine; lineNum++) {
-      if (shouldRevealLine(view.state, lineNum)) {
-        shouldReveal = true;
-        break;
-      }
-    }
+    // 检查表格是否应该被reveal (element-level check)
+    const shouldReveal = shouldRevealAt(
+      view.state,
+      table.from,
+      table.to,
+      ElementType.TABLE
+    );
 
     if (!shouldReveal) {
       // 添加表格元素
@@ -557,12 +587,10 @@ function parseLineElements(
   lineText: string
 ): ParsedElement[] {
   const elements: ParsedElement[] = [];
-  const revealed = shouldRevealLine(state, lineNum);
 
-  // 如果行被光标激活，跳过渲染
-  if (revealed) {
-    return elements;
-  }
+  // NOTE: We no longer skip parsing based on line reveal
+  // Instead, we check element-level reveal for each element
+  // This enables Obsidian-style granular reveal (e.g., only reveal the bold text, not the whole line)
 
   // 检测块级公式
   const blockMathMatch = lineText.match(/^\$\$/);
@@ -1120,6 +1148,12 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
   const entries: DecorationEntry[] = [];
 
   for (const element of elements) {
+    // Element-level reveal check: Skip decoration if cursor is in this element
+    // This enables Obsidian-style granular reveal (e.g., only reveal the bold text, not the whole line)
+    if (shouldRevealAt(view.state, element.from, element.to, element.type)) {
+      continue; // Skip this element - show raw markdown instead
+    }
+
     // 多行代码块需要特殊处理
     if (element.type === ElementType.CODE_BLOCK && element.decorationData) {
       const data = element.decorationData as any;
@@ -1654,10 +1688,15 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
       // 1. 解析文档
       const elements = parseDocument(view, false);
 
-      // 2. 解决冲突
+      // 2. 更新 parsedElementsField 供 cursor context plugin 使用
+      view.dispatch({
+        effects: updateParsedElements.of(elements),
+      });
+
+      // 3. 解决冲突
       const resolved = resolveConflicts(elements);
 
-      // 3. 构建装饰器
+      // 4. 构建装饰器
       return buildDecorationsFromElements(resolved, view);
     }
   },

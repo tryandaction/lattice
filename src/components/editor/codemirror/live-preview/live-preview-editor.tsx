@@ -23,7 +23,7 @@ import { cursorContextExtension } from './cursor-context-plugin';
 // import { blockDecorationPlugin } from './block-decoration-plugin';
 // import { advancedBlockPlugin } from './advanced-block-plugin';
 // import { mathPlugin } from './math-plugin';
-import { decorationCoordinatorPlugin } from './decoration-coordinator';
+import { decorationCoordinatorPlugin, parsedElementsField } from './decoration-coordinator';
 import { codeBlockPlugin } from './code-block-plugin';
 import { tablePlugin } from './table-plugin';
 import { foldingExtension } from './folding-plugin';
@@ -160,6 +160,7 @@ function buildExtensions(
   // Mode-specific extensions
   if (mode === 'live') {
     extensions.push(
+      parsedElementsField,      // StateField for sharing parsed elements
       cursorContextExtension,
       // NEW: Unified decoration coordinator replaces 4 old plugins
       decorationCoordinatorPlugin,
@@ -186,6 +187,7 @@ function buildExtensions(
     // Don't include cursorContextExtension - we want everything rendered
     extensions.push(
       EditorState.readOnly.of(true),
+      parsedElementsField,      // StateField for sharing parsed elements
       // NEW: Unified decoration coordinator replaces 4 old plugins
       decorationCoordinatorPlugin,
       // inlineDecorationPlugin,  // ✅ Replaced by decorationCoordinatorPlugin
