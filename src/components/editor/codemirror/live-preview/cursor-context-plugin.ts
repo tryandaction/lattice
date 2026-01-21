@@ -96,7 +96,12 @@ function computeCursorContext(state: EditorState): CursorContext {
   // Get parsed elements from decoration coordinator
   let parsedElements: ParsedElement[] = [];
   try {
-    parsedElements = state.field(parsedElementsField, false) || [];
+    // Try to get from stored elements first (set by decoration coordinator)
+    parsedElements = (state as any)._parsedElements || [];
+    if (parsedElements.length === 0) {
+      // Fallback to state field if available
+      parsedElements = state.field(parsedElementsField, false) || [];
+    }
   } catch {
     // Field not available yet
   }

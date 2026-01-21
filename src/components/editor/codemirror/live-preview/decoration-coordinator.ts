@@ -1707,10 +1707,10 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
       // 1. 解析文档 (解析全文档以确保完整渲染)
       const elements = parseDocument(view, false);
 
-      // 2. 更新 parsedElementsField 供 cursor context plugin 使用
-      view.dispatch({
-        effects: updateParsedElements.of(elements),
-      });
+      // 2. Store elements for cursor context plugin
+      // Note: We cannot dispatch during decoration building
+      // The parsedElementsField will be updated through the normal update cycle
+      (view as any)._parsedElements = elements;
 
       // 3. 解决冲突
       const resolved = resolveConflicts(elements);
