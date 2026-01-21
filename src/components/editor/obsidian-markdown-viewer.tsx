@@ -308,7 +308,7 @@ export function ObsidianMarkdownViewer({
             onChange={handleContentChange}
             mode={mode}
             onModeChange={handleModeChange}
-            showLineNumbers={mode !== 'reading'}
+            showLineNumbers={mode === 'source'}
             showFoldGutter={mode === 'live'}
             readOnly={mode === 'reading'}
             onOutlineChange={handleOutlineChange}
