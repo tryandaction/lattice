@@ -18,12 +18,7 @@ export { getSavedMode, saveMode, clearSavedMode, useModePreference } from './mod
 
 // Plugins (for advanced usage)
 export { cursorContextExtension, shouldRevealAt } from './cursor-context-plugin';
-export { inlineDecorationPlugin } from './inline-decoration-plugin';
-export { blockDecorationPlugin } from './block-decoration-plugin';
-export { advancedBlockPlugin } from './advanced-block-plugin';
-export { mathPlugin } from './math-plugin';
-export { codeBlockPlugin } from './code-block-plugin';
-export { tablePlugin } from './table-plugin';
+export { decorationCoordinatorPlugin, parsedElementsField } from './decoration-coordinator';
 export { foldingExtension } from './folding-plugin';
 export { markdownKeymap } from './keyboard-shortcuts';
 export { autoFormattingExtension } from './auto-formatting';

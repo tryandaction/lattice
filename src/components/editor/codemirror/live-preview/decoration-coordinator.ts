@@ -659,23 +659,17 @@ function parseLineElements(
       },
     });
 
-    // 2. Widget替换
-    if (content) {
-      elements.push({
-        type: ElementType.BLOCKQUOTE,
-        from: line.from,
-        to: Math.max(line.from, line.to - 1), // Exclude newline character
-        lineNumber: lineNum,
-        content: content,
-        decorationData: {
-          isWidget: true,
-          content: content,
-          markerTo: blockquote.markerTo,
-          originalFrom: line.from,
-          originalTo: Math.max(line.from, line.to - 1), // Exclude newline character
-        },
-      });
-    }
+    // 2. Hide the marker (>) only
+    elements.push({
+      type: ElementType.BLOCKQUOTE,
+      from: line.from,
+      to: blockquote.markerTo,
+      lineNumber: lineNum,
+      content: content,
+      decorationData: {
+        isMarkerHide: true,
+      },
+    });
   }
 
   // 检测列表（使用parseListItem）
@@ -1396,15 +1390,9 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
         return Decoration.line({
           class: 'cm-blockquote',
         });
-      } else if (data?.isWidget && data?.content && data?.markerTo && data?.originalTo) {
-        // Widget替换
-        return Decoration.replace({
-          widget: new BlockquoteContentWidget(
-            data.content,
-            data.markerTo,
-            data.originalTo
-          ),
-        });
+      } else if (data?.isMarkerHide) {
+        // Hide the > marker (Obsidian-style)
+        return Decoration.replace({});
       }
       return null;
 
