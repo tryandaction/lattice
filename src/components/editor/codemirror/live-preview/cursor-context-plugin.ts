@@ -222,7 +222,7 @@ export function shouldRevealAt(
   // Check if cursorContextField is available
   try {
     const context = state.field(cursorContextField, false);
-    if (!context) return false; // No cursor context = reading mode, don't reveal
+    if (!context) return false; // No cursor context yet = don't reveal (hide syntax)
 
     // If element type is provided, check element-level reveal
     if (elementType !== undefined) {
@@ -246,19 +246,10 @@ export function shouldRevealAt(
       }
     }
 
-    // Check multi-cursor
-    for (const range of state.selection.ranges) {
-      if (range.head >= from && range.head <= to) {
-        return true;
-      }
-      if (!range.empty && range.from <= to && range.to >= from) {
-        return true;
-      }
-    }
-
-    return false;
+    return false; // Cursor not in range = don't reveal
   } catch {
-    return false; // No cursor context field = reading mode
+    // Field not available = don't reveal (hide syntax)
+    return false;
   }
 }
 
