@@ -16,79 +16,84 @@ import {
 } from '@codemirror/view';
 import { EditorSelection, EditorState } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
+import { loadKaTeX } from './katex-loader';
 
-// Lazy load KaTeX for math rendering in tables
+// KaTeX for math rendering in tables (using shared loader)
 let katex: any = null;
-let katexLoadPromise: Promise<any> | null = null;
 
-async function loadKatex() {
-  if (katex) return katex;
-  if (katexLoadPromise) return katexLoadPromise;
-  
-  katexLoadPromise = import('katex').then((module) => {
-    katex = module.default || module;
-    return katex;
-  });
-  
-  return katexLoadPromise;
+// Pre-load KaTeX
+if (typeof window !== 'undefined') {
+  loadKaTeX().then(k => { katex = k; }).catch(() => {});
 }
-
-// Try to load KaTeX immediately
-loadKatex().catch(() => {});
 
 /**
  * Parse inline markdown formatting in text
  * Returns HTML string with rendered formatting
+ * CRITICAL: Process math formulas FIRST to protect them from other replacements
  */
 function parseInlineMarkdown(text: string): string {
   let result = text;
-  
+
   // Escape HTML first
   result = result
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-  
-  // Bold italic: ***text*** or ___text___
-  result = result.replace(/(\*\*\*|___)(.+?)\1/g, '<strong><em>$2</em></strong>');
-  
-  // Bold: **text** or __text__
-  result = result.replace(/(\*\*|__)(.+?)\1/g, '<strong>$2</strong>');
-  
-  // Italic: *text* or _text_ (avoid matching inside bold)
-  result = result.replace(/(?<![*_])([*_])(?![*_])(.+?)(?<![*_])\1(?![*_])/g, '<em>$2</em>');
-  
-  // Strikethrough: ~~text~~
-  result = result.replace(/~~(.+?)~~/g, '<del>$1</del>');
-  
-  // Highlight: ==text==
-  result = result.replace(/==(.+?)==/g, '<mark>$1</mark>');
-  
-  // Inline code: `code`
-  result = result.replace(/(?<!`)`(?!`)([^`]+)`(?!`)/g, '<code>$1</code>');
-  
-  // Inline math: $formula$ (render as KaTeX if available)
+
+  // STEP 1: Process inline math FIRST and protect it with placeholders
+  const mathPlaceholders: string[] = [];
   result = result.replace(/\$([^$\n]+)\$/g, (match, formula) => {
     try {
+      let rendered: string;
       if (katex) {
-        return katex.renderToString(formula, { throwOnError: false, displayMode: false });
+        rendered = katex.renderToString(formula, { throwOnError: false, displayMode: false });
+      } else {
+        rendered = `<span class="cm-math-inline-table">$${formula}$</span>`;
       }
-      // Fallback: show formula in styled span
-      return `<span class="cm-math-inline-table">$${formula}$</span>`;
+      const placeholder = `__MATH_${mathPlaceholders.length}__`;
+      mathPlaceholders.push(rendered);
+      return placeholder;
     } catch {
-      return `<span class="cm-math-inline-table">$${formula}$</span>`;
+      const rendered = `<span class="cm-math-inline-table">$${formula}$</span>`;
+      const placeholder = `__MATH_${mathPlaceholders.length}__`;
+      mathPlaceholders.push(rendered);
+      return placeholder;
     }
   });
-  
+
+  // STEP 2: Process other formatting (bold, italic, etc.)
+  // Bold italic: ***text*** or ___text___
+  result = result.replace(/(\*\*\*|___)(.+?)\1/g, '<strong><em>$2</em></strong>');
+
+  // Bold: **text** or __text__
+  result = result.replace(/(\*\*|__)(.+?)\1/g, '<strong>$2</strong>');
+
+  // Italic: *text* or _text_ (avoid matching inside bold)
+  result = result.replace(/(?<![*_])([*_])(?![*_])(.+?)(?<![*_])\1(?![*_])/g, '<em>$2</em>');
+
+  // Strikethrough: ~~text~~
+  result = result.replace(/~~(.+?)~~/g, '<del>$1</del>');
+
+  // Highlight: ==text==
+  result = result.replace(/==(.+?)==/g, '<mark>$1</mark>');
+
+  // Inline code: `code`
+  result = result.replace(/(?<!`)`(?!`)([^`]+)`(?!`)/g, '<code>$1</code>');
+
   // Wiki links: [[target]] or [[target|alias]]
   result = result.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (match, target, alias) => {
     const displayText = alias || target;
     return `<a class="cm-wiki-link-table" href="#" data-target="${target}">${displayText}</a>`;
   });
-  
+
   // Regular links: [text](url)
   result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a class="cm-link-table" href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-  
+
+  // STEP 3: Restore math placeholders
+  mathPlaceholders.forEach((rendered, index) => {
+    result = result.replace(`__MATH_${index}__`, rendered);
+  });
+
   return result;
 }
 
