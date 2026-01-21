@@ -355,13 +355,26 @@ function buildMathDecorations(view: EditorView): DecorationSet {
 export const mathPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
-    
+    private lastSelectionLine: number = -1;
+
     constructor(view: EditorView) {
       this.decorations = buildMathDecorations(view);
+      this.lastSelectionLine = view.state.doc.lineAt(view.state.selection.main.head).number;
     }
-    
+
     update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
+      // Optimize: only rebuild when necessary
+      if (update.docChanged) {
+        this.decorations = buildMathDecorations(update.view);
+        this.lastSelectionLine = update.view.state.doc.lineAt(update.view.state.selection.main.head).number;
+      } else if (update.selectionSet) {
+        // Only rebuild if selection moved to different line
+        const currentLine = update.view.state.doc.lineAt(update.view.state.selection.main.head).number;
+        if (currentLine !== this.lastSelectionLine) {
+          this.decorations = buildMathDecorations(update.view);
+          this.lastSelectionLine = currentLine;
+        }
+      } else if (update.viewportChanged) {
         this.decorations = buildMathDecorations(update.view);
       }
     }
