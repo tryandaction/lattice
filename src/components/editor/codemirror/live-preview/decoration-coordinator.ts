@@ -123,6 +123,17 @@ interface CodeBlockMatch {
 }
 
 /**
+ * 数学公式块匹配结果
+ */
+interface MathBlockMatch {
+  from: number;
+  to: number;
+  latex: string;
+  startLine: number;
+  endLine: number;
+}
+
+/**
  * 表格匹配结果
  */
 interface TableMatch {
@@ -323,6 +334,55 @@ function parseCodeBlocks(lines: string[]): CodeBlockMatch[] {
 }
 
 /**
+ * 解析数学公式块 - 多行块级元素需要特殊处理
+ *
+ * 公式块格式:
+ * $$
+ * latex content
+ * $$
+ *
+ * 性能优化：接收预先分割的lines数组，避免重复split
+ */
+function parseMathBlocks(lines: string[]): MathBlockMatch[] {
+  const blocks: MathBlockMatch[] = [];
+  let offset = 0;
+  let inBlock = false;
+  let blockStart = 0;
+  let blockLatex: string[] = [];
+  let blockStartLine = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineStart = offset;
+    const lineEnd = offset + line.length;
+
+    if (!inBlock && line.trim() === '$$') {
+      // 公式块开始
+      inBlock = true;
+      blockStart = lineStart;
+      blockLatex = [];
+      blockStartLine = i + 1; // 行号从1开始
+    } else if (inBlock && line.trim() === '$$') {
+      // 公式块结束
+      blocks.push({
+        from: blockStart,
+        to: lineEnd,
+        latex: blockLatex.join('\n'),
+        startLine: blockStartLine,
+        endLine: i + 1,
+      });
+      inBlock = false;
+    } else if (inBlock) {
+      blockLatex.push(line);
+    }
+
+    offset = lineEnd + 1; // +1 for newline
+  }
+
+  return blocks;
+}
+
+/**
  * 解析表格 - 多行块级元素需要特殊处理
  *
  * 表格格式:
@@ -477,7 +537,57 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
     }
   }
 
-  // 2. 解析所有表格（多行块级元素）
+  // 2. 解析所有数学公式块（多行块级元素）
+  const mathBlocks = parseMathBlocks(lines);
+
+  for (const block of mathBlocks) {
+    // 检查公式块是否应该被reveal (element-level check)
+    const shouldReveal = shouldRevealAt(
+      view.state,
+      block.from,
+      block.to,
+      ElementType.MATH_BLOCK
+    );
+
+    if (!shouldReveal) {
+      // 添加公式块元素
+      elements.push({
+        type: ElementType.MATH_BLOCK,
+        from: block.from,
+        to: block.to,
+        lineNumber: block.startLine,
+        latex: block.latex,
+        isBlock: true,
+        startLine: block.startLine,
+        endLine: block.endLine,
+        decorationData: {
+          isMultiLine: block.startLine !== block.endLine,
+        },
+      });
+
+      // 标记这些行已被公式块占用
+      for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
+        occupiedLines.add(lineNum);
+      }
+    } else {
+      // 公式块被reveal，添加编辑样式
+      for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
+        occupiedLines.add(lineNum);
+        const line = doc.line(lineNum);
+        elements.push({
+          type: ElementType.MATH_BLOCK,
+          from: line.from,
+          to: line.from,
+          lineNumber: lineNum,
+          decorationData: {
+            isEditingStyle: true,
+          },
+        });
+      }
+    }
+  }
+
+  // 3. 解析所有表格（多行块级元素）
   const tables = parseTables(lines);
 
   for (const table of tables) {
@@ -593,18 +703,8 @@ function parseLineElements(
   // Instead, we check element-level reveal for each element
   // This enables Obsidian-style granular reveal (e.g., only reveal the bold text, not the whole line)
 
-  // 检测块级公式
-  const blockMathMatch = lineText.match(/^\$\$/);
-  if (blockMathMatch) {
-    elements.push({
-      type: ElementType.MATH_BLOCK,
-      from: line.from,
-      to: line.to,
-      lineNumber: lineNum,
-      content: lineText,
-    });
-    return elements;
-  }
+  // NOTE: Block math ($$) is now handled by parseMathBlocks() in parseDocument()
+  // This ensures proper multi-line block math support
 
   // 检测标题
   const headingMatch = lineText.match(/^(#{1,6})\s+(.*)$/);
