@@ -78,7 +78,6 @@ export class FormattedTextWidget extends WidgetType {
   toDOM(view: EditorView) {
     const span = document.createElement('span');
     span.className = `${this.className} cm-formatted-widget cm-syntax-transition`;
-    span.textContent = this.content;
 
     // 存储位置信息用于调试
     span.dataset.contentFrom = String(this.contentFrom);
@@ -86,12 +85,72 @@ export class FormattedTextWidget extends WidgetType {
     span.dataset.elementFrom = String(this.elementFrom);
     span.dataset.elementTo = String(this.elementTo);
 
+    // Check if content contains inline math formulas
+    const mathRegex = /\$([^$\n]+)\$/g;
+    if (mathRegex.test(this.content)) {
+      // Content has math - render with KaTeX
+      this.renderContentWithMath(span, this.content);
+    } else {
+      // Plain text
+      span.textContent = this.content;
+    }
+
     // 处理点击 - 精确光标定位
     span.addEventListener('mousedown', (e) => {
       handleWidgetClick(view, span, e, this.contentFrom, this.contentTo);
     });
 
     return span;
+  }
+
+  private renderContentWithMath(container: HTMLElement, text: string) {
+    // Split by math formulas
+    const parts = text.split(/(\$[^$\n]+\$)/g);
+
+    parts.forEach(part => {
+      const mathMatch = part.match(/^\$([^$\n]+)\$$/);
+      if (mathMatch) {
+        // This is a math formula
+        const latex = mathMatch[1];
+        const mathSpan = document.createElement('span');
+        mathSpan.className = 'cm-math-inline-nested';
+
+        if (katex) {
+          try {
+            katex.render(latex, mathSpan, {
+              displayMode: false,
+              throwOnError: false,
+              errorColor: '#ef4444',
+              trust: true,
+            });
+          } catch {
+            mathSpan.textContent = part;
+          }
+        } else {
+          mathSpan.textContent = part;
+          // Try to render when KaTeX loads
+          loadKaTeX()
+            .then((k) => {
+              try {
+                mathSpan.innerHTML = '';
+                k.render(latex, mathSpan, {
+                  displayMode: false,
+                  throwOnError: false,
+                  errorColor: '#ef4444',
+                  trust: true,
+                });
+              } catch {
+                mathSpan.textContent = part;
+              }
+            })
+            .catch(() => {});
+        }
+        container.appendChild(mathSpan);
+      } else if (part) {
+        // Plain text
+        container.appendChild(document.createTextNode(part));
+      }
+    });
   }
 
   ignoreEvent(e: Event) {

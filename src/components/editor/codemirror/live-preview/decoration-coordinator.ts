@@ -1110,6 +1110,19 @@ export function resolveConflicts(elements: ParsedElement[]): ParsedElement[] {
       );
 
       if (overlaps) {
+        // Check if this is a parent-child relationship (nesting)
+        // Parent completely contains child: keep both
+        const isParentChild = (
+          (other.from <= current.from && other.to >= current.to) || // other contains current
+          (current.from <= other.from && current.to >= other.to)    // current contains other
+        );
+
+        if (isParentChild) {
+          // Keep both - this is nesting (e.g., **$E=mc^2$**)
+          continue;
+        }
+
+        // Partial overlap - use priority to resolve
         // 如果other优先级更高，current被覆盖
         if (other.type < current.type) {
           shouldKeep = false;
