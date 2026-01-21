@@ -3,6 +3,11 @@
  * Hides markdown syntax when cursor is not on the element
  */
 
+/* Smooth transitions for all interactive elements */
+.cm-content * {
+  transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+
 /* Hide all formatting markers by default */
 .cm-formatting {
   display: none;
@@ -80,4 +85,75 @@
 
 .dark .cm-tag {
   color: var(--tag-color-dark, #a78bfa);
+}
+
+/* Blockquotes */
+.cm-blockquote {
+  border-left: 3px solid var(--blockquote-border, #d1d5db);
+  padding-left: 1em;
+  margin-left: 0;
+  color: var(--blockquote-text, #6b7280);
+  font-style: italic;
+}
+
+.dark .cm-blockquote {
+  border-left-color: var(--blockquote-border-dark, #4b5563);
+  color: var(--blockquote-text-dark, #9ca3af);
+}
+
+/* Lists */
+.cm-list-item {
+  line-height: 1.6;
+}
+
+.cm-list-marker {
+  color: var(--list-marker, #6b7280);
+  font-weight: 500;
+}
+
+.dark .cm-list-marker {
+  color: var(--list-marker-dark, #9ca3af);
+}
+
+/* Horizontal Rules */
+.cm-hr {
+  border: none;
+  border-top: 2px solid var(--hr-color, #e5e7eb);
+  margin: 1.5em 0;
+  opacity: 0.6;
+}
+
+.dark .cm-hr {
+  border-top-color: var(--hr-color-dark, #374151);
+}
+
+/* Links */
+.cm-link, .cm-wiki-link {
+  color: var(--link-color, #3b82f6);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.cm-link:hover, .cm-wiki-link:hover {
+  text-decoration: underline;
+  opacity: 0.8;
+}
+
+.dark .cm-link, .dark .cm-wiki-link {
+  color: var(--link-color-dark, #60a5fa);
+}
+
+/* Code Blocks */
+.cm-code-block {
+  background-color: var(--code-bg, #f3f4f6);
+  border-radius: 6px;
+  padding: 1em;
+  margin: 0.5em 0;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+
+.dark .cm-code-block {
+  background-color: var(--code-bg-dark, #1f2937);
 }
