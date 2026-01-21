@@ -31,6 +31,7 @@
 import { EditorView, WidgetType } from '@codemirror/view';
 import { handleWidgetClick } from './cursor-positioning';
 import { loadKaTeX } from './katex-loader';
+import { getKaTeXOptions } from './katex-config';
 
 // ============================================================================
 // KaTeX动态加载 (使用共享加载器)
@@ -117,12 +118,7 @@ export class FormattedTextWidget extends WidgetType {
 
         if (katex) {
           try {
-            katex.render(latex, mathSpan, {
-              displayMode: false,
-              throwOnError: false,
-              errorColor: '#ef4444',
-              trust: true,
-            });
+            katex.render(latex, mathSpan, getKaTeXOptions(false));
           } catch {
             mathSpan.textContent = part;
           }
@@ -133,12 +129,7 @@ export class FormattedTextWidget extends WidgetType {
             .then((k) => {
               try {
                 mathSpan.innerHTML = '';
-                k.render(latex, mathSpan, {
-                  displayMode: false,
-                  throwOnError: false,
-                  errorColor: '#ef4444',
-                  trust: true,
-                });
+                k.render(latex, mathSpan, getKaTeXOptions(false));
               } catch {
                 mathSpan.textContent = part;
               }
@@ -723,12 +714,7 @@ export class HeadingContentWidget extends WidgetType {
               katexForHeading = k;
               try {
                 mathSpan.innerHTML = '';
-                k.render(latex, mathSpan, {
-                  displayMode: false,
-                  throwOnError: false,
-                  errorColor: '#ef4444',
-                  trust: true,
-                });
+                k.render(latex, mathSpan, getKaTeXOptions(false));
               } catch {
                 mathSpan.textContent = part;
               }
@@ -1002,12 +988,7 @@ export class MathWidget extends WidgetType {
     // 渲染公式
     if (katex) {
       try {
-        katex.render(this.latex, container, {
-          displayMode: this.isBlock,
-          throwOnError: false,
-          errorColor: '#ef4444',
-          trust: true,
-        });
+        katex.render(this.latex, container, getKaTeXOptions(this.isBlock));
       } catch (e) {
         // 显示错误和原始LaTeX
         container.innerHTML = '';
@@ -1038,12 +1019,7 @@ export class MathWidget extends WidgetType {
         .then((k) => {
           try {
             container.innerHTML = '';
-            k.render(this.latex, container, {
-              displayMode: this.isBlock,
-              throwOnError: false,
-              errorColor: '#ef4444',
-              trust: true,
-            });
+            k.render(this.latex, container, getKaTeXOptions(this.isBlock));
             container.classList.remove('cm-math-loading');
           } catch {
             container.classList.add('cm-math-error');

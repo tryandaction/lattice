@@ -21,6 +21,7 @@ import {
 } from '@codemirror/view';
 import { shouldRevealLine } from './cursor-context-plugin';
 import { loadKaTeX } from './katex-loader';
+import { getKaTeXOptions } from './katex-config';
 
 // KaTeX instance (loaded via shared loader)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -117,12 +118,7 @@ class MathWidget extends WidgetType {
 
     if (katex) {
       try {
-        katex.render(this.latex, container, {
-          displayMode: this.isBlock,
-          throwOnError: false,
-          errorColor: '#ef4444',
-          trust: true,
-        });
+        katex.render(this.latex, container, getKaTeXOptions(this.isBlock));
       } catch (e) {
         // Show error with original LaTeX
         container.innerHTML = '';
@@ -152,12 +148,7 @@ class MathWidget extends WidgetType {
       loadKaTeX().then((k) => {
         try {
           container.innerHTML = '';
-          k.render(this.latex, container, {
-            displayMode: this.isBlock,
-            throwOnError: false,
-            errorColor: '#ef4444',
-            trust: true,
-          });
+          k.render(this.latex, container, getKaTeXOptions(this.isBlock));
           container.classList.remove('cm-math-loading');
         } catch {
           container.classList.add('cm-math-error');

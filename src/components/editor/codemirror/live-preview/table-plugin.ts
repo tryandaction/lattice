@@ -17,6 +17,7 @@ import {
 import { EditorSelection, EditorState } from '@codemirror/state';
 import { shouldRevealLine } from './cursor-context-plugin';
 import { loadKaTeX } from './katex-loader';
+import { getKaTeXOptions } from './katex-config';
 
 // KaTeX for math rendering in tables (using shared loader)
 let katex: any = null;
@@ -46,7 +47,7 @@ function parseInlineMarkdown(text: string): string {
     try {
       let rendered: string;
       if (katex) {
-        rendered = katex.renderToString(formula, { throwOnError: false, displayMode: false });
+        rendered = katex.renderToString(formula, getKaTeXOptions(false));
       } else {
         rendered = `<span class="cm-math-inline-table">$${formula}$</span>`;
       }
