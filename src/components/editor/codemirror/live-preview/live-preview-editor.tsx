@@ -352,28 +352,25 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
       }
     };
   }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, fileId, onImageUpload, useWikiImageStyle, highContrast]);
-  
-  // Update content when it changes externally
-  // This is critical for file switching - must update editor content when fileId changes
+
+  // Update content when it changes externally (but NOT when fileId changes - that triggers re-init)
   useEffect(() => {
-    if (!viewRef.current) return;
-    
+    if (!viewRef.current || isLoading) return;
+
     const currentContent = viewRef.current.state.doc.toString();
-    
-    // Always update if content differs, regardless of source
+
+    // Only update if content differs
     if (content !== currentContent) {
-      // Use a transaction to replace all content
       viewRef.current.dispatch({
         changes: {
           from: 0,
           to: currentContent.length,
           insert: content,
         },
-        // Don't scroll on external content changes
         scrollIntoView: false,
       });
     }
-  }, [content, fileId]); // Include fileId to ensure update on file switch
+  }, [content, isLoading]); // Don't include fileId - re-init handles that
   
   // Update available files for wiki link autocomplete
   useEffect(() => {
