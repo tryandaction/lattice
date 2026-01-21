@@ -64,3 +64,20 @@
 .dark .cm-inline-code {
   background-color: rgba(255, 255, 255, 0.1);
 }
+
+/* Tags */
+.cm-tag {
+  color: var(--tag-color, #7c3aed);
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.cm-tag:hover {
+  opacity: 0.7;
+  text-decoration: underline;
+}
+
+.dark .cm-tag {
+  color: var(--tag-color-dark, #a78bfa);
+}

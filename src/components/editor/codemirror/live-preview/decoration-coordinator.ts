@@ -80,7 +80,8 @@ export enum ElementType {
   INLINE_CODE = 13,    // 行内代码
   INLINE_LINK = 14,    // 链接
   INLINE_IMAGE = 15,   // 图片
-  INLINE_OTHER = 16,   // 其他行内元素
+  INLINE_TAG = 16,     // 标签 (#tag)
+  INLINE_OTHER = 17,   // 其他行内元素
 }
 
 /**
@@ -253,6 +254,7 @@ const REGEX_PATTERNS = {
   subscript: /~([^~]+?)~/g,
   kbd: /<kbd>([^<]+?)<\/kbd>/g,
   footnote: /\[\^([^\]]+?)\]/g,
+  tag: /#([a-zA-Z][a-zA-Z0-9_/-]*)/g,
 };
 
 /**
@@ -1061,6 +1063,24 @@ function parseInlineElements(
     });
   }
 
+  // 17. 标签: #tag
+  while ((match = REGEX_PATTERNS.tag.exec(lineText)) !== null) {
+    elements.push({
+      type: ElementType.INLINE_TAG,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      content: match[1],
+      decorationData: {
+        tag: match[1],
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 1,
+        contentTo: lineFrom + match.index + match[0].length,
+      },
+    });
+  }
+
   return elements;
 }
 
@@ -1518,6 +1538,15 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
           data?.syntaxFrom || element.from,
           data?.syntaxTo || element.to
         ),
+      });
+
+    case ElementType.INLINE_TAG:
+      // Render tag as styled span
+      return Decoration.mark({
+        class: 'cm-tag',
+        attributes: {
+          'data-tag': data?.tag || element.content || '',
+        },
       });
 
     case ElementType.INLINE_OTHER:
