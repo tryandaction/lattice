@@ -150,11 +150,33 @@ class MathWidget extends WidgetType {
           container.innerHTML = '';
           k.render(this.latex, container, getKaTeXOptions(this.isBlock));
           container.classList.remove('cm-math-loading');
-        } catch {
+        } catch (err) {
+          // Enhanced error handling with error message
+          container.innerHTML = '';
+          container.classList.remove('cm-math-loading');
           container.classList.add('cm-math-error');
+
+          const errorWrapper = document.createElement('span');
+          errorWrapper.className = 'cm-math-error-wrapper';
+
+          const errorIndicator = document.createElement('span');
+          errorIndicator.className = 'cm-math-error-indicator';
+          errorIndicator.textContent = '⚠️';
+          errorIndicator.title = err instanceof Error ? err.message : 'Math rendering error';
+
+          const errorSource = document.createElement('span');
+          errorSource.className = 'cm-math-error-source';
+          errorSource.textContent = this.isBlock ? `$$${this.latex}$$` : `$${this.latex}$`;
+
+          errorWrapper.appendChild(errorIndicator);
+          errorWrapper.appendChild(errorSource);
+          container.appendChild(errorWrapper);
         }
-      }).catch(() => {
+      }).catch((err) => {
+        // KaTeX loading failed
+        container.classList.remove('cm-math-loading');
         container.classList.add('cm-math-error');
+        container.title = 'Failed to load KaTeX: ' + (err instanceof Error ? err.message : 'Unknown error');
       });
     }
 
