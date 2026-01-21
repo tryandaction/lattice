@@ -1681,6 +1681,7 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
       // Only rebuild decorations when:
       // 1. Document content changed (docChanged)
       // 2. Selection moved to a different line (affects reveal state)
+      // 3. Viewport changed (user scrolled to new content)
 
       if (update.docChanged) {
         // Document changed - must rebuild
@@ -1693,12 +1694,15 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
           this.decorations = this.buildDecorations(update.view);
           this.lastSelectionLine = currentLine;
         }
+      } else if (update.viewportChanged) {
+        // Viewport changed (scrolling) - rebuild for new visible content
+        this.decorations = this.buildDecorations(update.view);
       }
     }
 
     private buildDecorations(view: EditorView): DecorationSet {
-      // 1. 解析文档
-      const elements = parseDocument(view, false);
+      // 1. 解析文档 (只解析可见区域以提升性能)
+      const elements = parseDocument(view, true);
 
       // 2. 更新 parsedElementsField 供 cursor context plugin 使用
       view.dispatch({
