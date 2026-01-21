@@ -109,18 +109,26 @@ graph TB
     CM6 --> CODE
 ```
 
-### Notes Editor: Tiptap
+### Markdown Editor: CodeMirror 6 Live Preview
 
-**Technology**: [Tiptap](https://tiptap.dev/) (built on ProseMirror)
+**Technology**: [CodeMirror 6](https://codemirror.net/) with custom decoration system
 
 **Features**:
-- Block-based Markdown editing
-- Extensible via custom NodeViews
-- Collaborative editing ready (Y.js compatible)
+- Obsidian-style live preview mode
+- Cursor-based syntax reveal
+- Real-time rendering of headings, math, code blocks, tables
+- Three view modes: Live Preview, Source, Reading
 
-**Integration Points**:
-- Math blocks → MathLive NodeView
-- Code blocks → CodeMirror 6 NodeView
+**Architecture**:
+- **Decoration Coordinator**: Unified rendering system that replaces 6+ legacy plugins
+- **Cursor Context Plugin**: Reveals syntax only near cursor position
+- **Widget System**: Custom widgets for math (KaTeX), code blocks (highlight.js), tables
+- **Performance**: Full document parsing with LRU cache for optimal speed
+
+**Why This Approach?**:
+- Single-pass document parsing eliminates redundant work
+- Conflict resolution prevents decoration overlaps
+- Viewport-independent rendering ensures long files display correctly
 
 ### Math Editor: MathLive
 

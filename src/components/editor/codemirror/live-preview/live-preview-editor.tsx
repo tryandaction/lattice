@@ -18,14 +18,7 @@ import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 
 import { cursorContextExtension } from './cursor-context-plugin';
-// OLD PLUGINS - Being replaced by decorationCoordinatorPlugin
-// import { inlineDecorationPlugin } from './inline-decoration-plugin';
-// import { blockDecorationPlugin } from './block-decoration-plugin';
-// import { advancedBlockPlugin } from './advanced-block-plugin';
-// import { mathPlugin } from './math-plugin';
 import { decorationCoordinatorPlugin, parsedElementsField } from './decoration-coordinator';
-import { codeBlockPlugin } from './code-block-plugin';
-import { tablePlugin } from './table-plugin';
 import { foldingExtension } from './folding-plugin';
 import { markdownKeymap } from './keyboard-shortcuts';
 import { autoFormattingExtension } from './auto-formatting';
@@ -169,14 +162,8 @@ function buildExtensions(
     extensions.push(
       parsedElementsField,      // StateField for sharing parsed elements
       cursorContextExtension,
-      // NEW: Unified decoration coordinator replaces 4 old plugins
+      // Unified decoration coordinator handles all rendering
       decorationCoordinatorPlugin,
-      // inlineDecorationPlugin,  // ✅ Replaced by decorationCoordinatorPlugin
-      // blockDecorationPlugin,   // ✅ Replaced by decorationCoordinatorPlugin
-      // advancedBlockPlugin,     // ⏳ TODO: Migrate callout/details logic
-      // mathPlugin,              // ✅ Replaced by decorationCoordinatorPlugin
-      codeBlockPlugin,            // ⏳ TODO: Integrate into coordinator
-      tablePlugin,                // ⏳ TODO: Integrate into coordinator
       markdownKeymap,
       autoFormattingExtension,
       closeBrackets(),
@@ -191,18 +178,11 @@ function buildExtensions(
     );
   } else if (mode === 'reading') {
     // Reading mode: full rendering, read-only
-    // Don't include cursorContextExtension - we want everything rendered
     extensions.push(
       EditorState.readOnly.of(true),
-      parsedElementsField,      // StateField for sharing parsed elements
-      // NEW: Unified decoration coordinator replaces 4 old plugins
-      decorationCoordinatorPlugin,
-      // inlineDecorationPlugin,  // ✅ Replaced by decorationCoordinatorPlugin
-      // blockDecorationPlugin,   // ✅ Replaced by decorationCoordinatorPlugin
-      // advancedBlockPlugin,     // ⏳ TODO: Migrate callout/details logic
-      // mathPlugin,              // ✅ Replaced by decorationCoordinatorPlugin
-      codeBlockPlugin,            // ⏳ TODO: Integrate into coordinator
-      tablePlugin                 // ⏳ TODO: Integrate into coordinator
+      parsedElementsField,
+      // Unified decoration coordinator handles all rendering
+      decorationCoordinatorPlugin
     );
   }
   

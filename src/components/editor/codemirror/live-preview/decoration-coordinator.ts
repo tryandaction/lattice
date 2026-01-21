@@ -47,7 +47,6 @@ import {
   KbdWidget,
   FootnoteRefWidget,
   EmbedWidget,
-  HeadingContentWidget,
   BlockquoteContentWidget,
   ListBulletWidget,
   HorizontalRuleWidget,
@@ -628,7 +627,7 @@ function parseLineElements(
       },
     });
 
-    // 2. CSS mark to hide # markers (Obsidian-style)
+    // 2. Replace decoration to hide # markers (Obsidian-style)
     elements.push({
       type: ElementType.HEADING,
       from: line.from,
@@ -637,8 +636,7 @@ function parseLineElements(
       level: level,
       content: content,
       decorationData: {
-        isCSSMark: true,
-        className: `cm-formatting cm-formatting-header cm-formatting-header-${level}`,
+        isMarkerHide: true,
       },
     });
     // 标题内可能有行内元素，继续解析
@@ -1386,21 +1384,9 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
         return Decoration.line({
           class: `cm-heading cm-heading-${data.level}`,
         });
-      } else if (data?.isCSSMark && data?.className) {
-        // CSS mark to hide # markers (Obsidian-style)
-        return Decoration.mark({
-          class: data.className,
-        });
-      } else if (data?.isWidget && data?.content && data?.markerEnd && data?.originalTo) {
-        // Widget替换（隐藏#标记）- Legacy, should not be used anymore
-        return Decoration.replace({
-          widget: new HeadingContentWidget(
-            data.content,
-            data.level || 1,
-            data.markerEnd,
-            data.originalTo
-          ),
-        });
+      } else if (data?.isMarkerHide) {
+        // Replace decoration to hide # markers (Obsidian-style)
+        return Decoration.replace({});
       }
       return null;
 
@@ -1730,8 +1716,8 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
     }
 
     private buildDecorations(view: EditorView): DecorationSet {
-      // 1. 解析文档 (只解析可见区域以提升性能)
-      const elements = parseDocument(view, true);
+      // 1. 解析文档 (解析全文档以确保完整渲染)
+      const elements = parseDocument(view, false);
 
       // 2. 更新 parsedElementsField 供 cursor context plugin 使用
       view.dispatch({
