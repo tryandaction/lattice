@@ -159,7 +159,7 @@ export function ObsidianMarkdownViewer({
       setLocalContent(content);
       setIsDirty(false);
     }
-  }, [content]);
+  }, [content, fileName]); // Include fileName to ensure file switch triggers update
 
   // Handle content changes from editor
   const handleContentChange = useCallback((newContent: string) => {
@@ -314,7 +314,7 @@ export function ObsidianMarkdownViewer({
             onOutlineChange={handleOutlineChange}
             onWikiLinkClick={handleWikiLinkClick}
             onSave={handleSave}
-            fileId={fileId}
+            fileId={fileName}
             className="min-h-full"
           />
         </div>
