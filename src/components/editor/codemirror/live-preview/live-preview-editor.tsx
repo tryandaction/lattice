@@ -127,17 +127,24 @@ function buildExtensions(
     // Markdown language
     markdown(),
     
-    // Update listener
+    // Update listener with debounced outline updates
     EditorView.updateListener.of((update) => {
       if (update.docChanged) {
         const content = update.state.doc.toString();
         onChange(content);
-        
-        // Update outline
+
+        // Debounced outline update (300ms delay)
         if (onOutlineChange) {
-          const headings = parseHeadings(content);
-          const outline = buildOutlineTree(headings);
-          onOutlineChange(outline);
+          // Clear existing timeout
+          if ((update.view as any)._outlineTimeout) {
+            clearTimeout((update.view as any)._outlineTimeout);
+          }
+          // Set new timeout
+          (update.view as any)._outlineTimeout = setTimeout(() => {
+            const headings = parseHeadings(content);
+            const outline = buildOutlineTree(headings);
+            onOutlineChange(outline);
+          }, 300);
         }
       }
     }),
