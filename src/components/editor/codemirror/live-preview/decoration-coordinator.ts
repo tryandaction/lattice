@@ -1801,8 +1801,8 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
     }
 
     private buildDecorations(view: EditorView): DecorationSet {
-      // 1. 解析文档 (使用视口优化以提升性能)
-      const elements = parseDocument(view, true);
+      // 1. 解析文档 (解析全文档以确保完整渲染)
+      const elements = parseDocument(view, false);
 
       // 2. Store elements for cursor context plugin
       // Note: We cannot dispatch during decoration building

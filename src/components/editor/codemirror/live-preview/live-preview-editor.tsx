@@ -340,7 +340,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     };
   }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, fileId, onImageUpload, useWikiImageStyle, highContrast]);
 
-  // Update content when it changes externally (but NOT when fileId changes - that triggers re-init)
+  // Update content when it changes externally
   useEffect(() => {
     if (!viewRef.current || isLoading) return;
 
@@ -357,7 +357,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         scrollIntoView: false,
       });
     }
-  }, [content, isLoading]); // Don't include fileId - re-init handles that
+  }, [content, isLoading, fileId]); // Include fileId to ensure content updates on file switch
   
   // Update available files for wiki link autocomplete
   useEffect(() => {
