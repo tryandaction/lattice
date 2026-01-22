@@ -148,18 +148,22 @@ export function ObsidianMarkdownViewer({
   const [activeHeading, setActiveHeading] = useState<number | undefined>();
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<LivePreviewEditorRef>(null);
-  const contentRef = useRef(content);
+  const prevFileNameRef = useRef(fileName);
 
-  // Sync with external content changes
-  // This is critical for file switching - must update local content when external content changes
+  // CRITICAL: Force content update when file changes
   useEffect(() => {
-    // Always sync when content prop changes (file switch or external update)
-    if (content !== contentRef.current) {
-      contentRef.current = content;
+    if (fileName !== prevFileNameRef.current) {
+      // File changed - force update
+      prevFileNameRef.current = fileName;
       setLocalContent(content);
       setIsDirty(false);
+      console.log('[FileSwitch] File changed to:', fileName, 'Content length:', content.length);
+    } else if (content !== localContent && !isDirty) {
+      // Content changed externally (not by user editing)
+      setLocalContent(content);
+      console.log('[ContentSync] External content update, length:', content.length);
     }
-  }, [content, fileName]); // Include fileName to ensure file switch triggers update
+  }, [content, fileName, localContent, isDirty]);
 
   // Handle content changes from editor
   const handleContentChange = useCallback((newContent: string) => {
