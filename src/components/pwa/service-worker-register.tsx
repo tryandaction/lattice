@@ -1,17 +1,25 @@
 "use client";
 
+import { useEffect } from 'react';
+
 /**
  * Service Worker Registration - DISABLED
  *
- * The service worker was causing critical issues with Next.js static export:
- * - "Failed to convert value to 'Response'" errors
- * - Chunk loading failures (ERR_FAILED)
- * - Network errors blocking application startup
- *
- * PWA offline support is not critical for this application.
- * Service worker has been removed to restore functionality.
+ * The service worker was causing critical issues with Next.js static export.
+ * This component now actively unregisters any existing service workers.
  */
 export function ServiceWorkerRegister() {
-  // Service worker registration disabled - see comment above
+  useEffect(() => {
+    // Unregister any existing service workers
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        registrations.forEach((registration) => {
+          registration.unregister();
+          console.log('[SW] Unregistered service worker');
+        });
+      });
+    }
+  }, []);
+
   return null;
 }
