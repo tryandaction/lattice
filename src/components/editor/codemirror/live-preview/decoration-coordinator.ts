@@ -645,9 +645,14 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
     ? visibleRanges
     : [{ from: 0, to: doc.length }];
 
+  // DEBUG: Log range info
+  console.log('[parseDocument] Ranges:', ranges.map(r => ({ from: r.from, to: r.to })));
+
   for (const range of ranges) {
     const startLine = doc.lineAt(range.from);
     const endLine = doc.lineAt(range.to);
+
+    console.log('[parseDocument] Processing lines:', startLine.number, 'to', endLine.number);
 
     for (let lineNum = startLine.number; lineNum <= endLine.number; lineNum++) {
       // 跳过已被块级元素占用的行
@@ -1269,6 +1274,8 @@ export function resolveConflicts(elements: ParsedElement[]): ParsedElement[] {
 function buildDecorationsFromElements(elements: ParsedElement[], view: EditorView): DecorationSet {
   const entries: DecorationEntry[] = [];
 
+  console.log('[buildDecorations] Building decorations for', elements.length, 'elements');
+
   for (const element of elements) {
     // Element-level reveal check: Skip decoration if cursor is in this element
     // This enables Obsidian-style granular reveal (e.g., only reveal the bold text, not the whole line)
@@ -1440,6 +1447,8 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
       ? entry.decoration.range(entry.from)
       : entry.decoration.range(entry.from, entry.to)
   );
+
+  console.log('[buildDecorations] Created', entries.length, 'decoration entries,', ranges.length, 'ranges');
 
   return Decoration.set(ranges, true);
 }
