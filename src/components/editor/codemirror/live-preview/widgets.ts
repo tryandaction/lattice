@@ -104,6 +104,37 @@ export class FormattedTextWidget extends WidgetType {
     return span;
   }
 
+  coordsAt(dom: HTMLElement, pos: number, side: number) {
+    // Enable precise cursor positioning within the widget
+    const textNode = this.findTextNode(dom);
+    if (!textNode) return null;
+
+    const range = document.createRange();
+    const offset = Math.min(pos - this.contentFrom, this.content.length);
+
+    try {
+      range.setStart(textNode, Math.max(0, offset));
+      range.setEnd(textNode, Math.max(0, offset));
+      const rect = range.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+    } catch {
+      return null;
+    }
+  }
+
+  private findTextNode(element: HTMLElement): Text | null {
+    for (let child of element.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        return child as Text;
+      }
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        const found = this.findTextNode(child as HTMLElement);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
   private renderContentWithMath(container: HTMLElement, text: string) {
     // Split by math formulas
     const parts = text.split(/(\$[^$\n]+\$)/g);
@@ -145,7 +176,8 @@ export class FormattedTextWidget extends WidgetType {
   }
 
   ignoreEvent(e: Event) {
-    return e.type !== 'mousedown';
+    // Allow CodeMirror to handle cursor positioning
+    return false;
   }
 }
 
