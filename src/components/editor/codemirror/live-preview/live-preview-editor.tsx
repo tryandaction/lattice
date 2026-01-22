@@ -338,16 +338,17 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         viewRef.current = null;
       }
     };
-  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, fileId, onImageUpload, useWikiImageStyle, highContrast]);
+  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, fileId, onImageUpload, useWikiImageStyle, highContrast, content]); // Add content to force re-init on file switch
 
-  // Update content when it changes externally
+  // Update content when it changes externally (but fileId change triggers re-init above)
   useEffect(() => {
     if (!viewRef.current || isLoading) return;
 
     const currentContent = viewRef.current.state.doc.toString();
 
-    // Only update if content differs
+    // Only update if content differs and fileId hasn't changed (fileId change triggers re-init)
     if (content !== currentContent) {
+      console.log('[ContentUpdate] Updating content, length:', content.length);
       viewRef.current.dispatch({
         changes: {
           from: 0,
@@ -357,8 +358,8 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         scrollIntoView: false,
       });
     }
-  }, [content, isLoading, fileId]); // Include fileId to ensure content updates on file switch
-  
+  }, [content, isLoading]); // Removed fileId - re-init handles that
+
   // Update available files for wiki link autocomplete
   useEffect(() => {
     if (!viewRef.current || availableFiles.length === 0) return;

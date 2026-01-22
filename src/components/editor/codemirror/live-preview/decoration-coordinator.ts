@@ -479,6 +479,9 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   const doc = view.state.doc;
   const visibleRanges = view.visibleRanges;
 
+  // DEBUG: Log parsing info
+  console.log('[parseDocument] Lines:', doc.lines, 'ViewportOnly:', viewportOnly);
+
   // 性能优化：只调用一次 toString() 和 split()
   const text = doc.toString();
   const lines = text.split('\n');
@@ -1803,6 +1806,9 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
     private buildDecorations(view: EditorView): DecorationSet {
       // 1. 解析文档 (解析全文档以确保完整渲染)
       const elements = parseDocument(view, false);
+
+      // DEBUG: Log document info
+      console.log('[Decoration] Doc lines:', view.state.doc.lines, 'Elements:', elements.length);
 
       // 2. Store elements for cursor context plugin
       // Note: We cannot dispatch during decoration building
