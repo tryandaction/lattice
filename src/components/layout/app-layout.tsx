@@ -47,14 +47,20 @@ function AppLayoutContent() {
   const setSidebarCollapsed = useWorkspaceStore((state) => state.setSidebarCollapsed);
   const [showSettings, setShowSettings] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  
+  const [mounted, setMounted] = useState(false);
+
   const loadSettings = useSettingsStore((state) => state.loadSettings);
   const settings = useSettingsStore((state) => state.settings);
   const isInitialized = useSettingsStore((state) => state.isInitialized);
   const { toggleTheme } = useTheme();
   const { t } = useI18n();
-  
+
   useAutoOpenFolder();
+
+  // Fix hydration mismatch
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     loadSettings();
@@ -131,6 +137,15 @@ function AppLayoutContent() {
       </div>
     </>
   );
+
+  // Prevent hydration mismatch - wait for client-side mount
+  if (!mounted) {
+    return (
+      <div className="h-screen w-screen overflow-hidden bg-background flex items-center justify-center">
+        <div className="text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
 
   // Mobile Layout
   if (isMobile) {
