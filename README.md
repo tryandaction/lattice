@@ -53,14 +53,26 @@
 
 ## 📖 文档
 
+### 用户文档
 | 文档 | 说明 |
 |------|------|
-| [用户指南](./docs/USER_GUIDE.md) | 完整功能介绍和使用教程 |
-| [快速上手](./QUICK_START.md) | 5 分钟入门 |
-| [安装指南](./INSTALLATION.md) | 安装和故障排除 |
-| [桌面应用](./DESKTOP_APP.md) | 桌面版构建指南 |
-| [架构设计](./docs/ARCHITECTURE.md) | 技术架构文档 |
+| [快速上手](./docs/guides/quick-start.md) | 5 分钟入门 |
+| [安装指南](./docs/guides/installation.md) | 安装和故障排除 |
+| [桌面应用](./docs/guides/desktop-app.md) | 桌面版构建指南 |
 | [更新日志](./CHANGELOG.md) | 版本更新记录 |
+
+### 开发文档
+| 文档 | 说明 |
+|------|------|
+| [AI开发指南](./AI_DEVELOPMENT_GUIDE.md) | AI助手开发指南（包含已知问题） |
+| [项目路线图](./docs/roadmap.md) | 功能规划和开发计划 |
+| [架构设计](./docs/ARCHITECTURE.md) | 技术架构文档 |
+
+### 技术文档
+| 文档 | 说明 |
+|------|------|
+| [Markdown修复总结](./docs/fixes/markdown-fix-summary.md) | Markdown渲染系统修复记录 |
+| [Week2重构完成](./docs/refactors/week2-refactor.md) | 装饰器系统重构文档 |
 
 ## 🛠️ 开发
 
