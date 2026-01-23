@@ -84,6 +84,7 @@ export function PaneWrapper({
   useEffect(() => {
     // No active tab - clear everything
     if (!activeTab) {
+      console.log('[PaneWrapper] No active tab, clearing content');
       setContent(null);
       setIsLoading(false);
       setError(null);
@@ -95,14 +96,25 @@ export function PaneWrapper({
 
     const currentTabId = activeTab.id;
     
+    console.log('[PaneWrapper] ===== TAB CHANGE DETECTED =====');
+    console.log('[PaneWrapper] PaneId:', paneId);
+    console.log('[PaneWrapper] Current tab ID:', currentTabId);
+    console.log('[PaneWrapper] Loaded tab ID:', loadedTabIdRef.current);
+    console.log('[PaneWrapper] File name:', activeTab.fileName);
+    
     // Same tab already loaded - no need to reload
     if (loadedTabIdRef.current === currentTabId) {
+      console.log('[PaneWrapper] Same tab already loaded, skipping');
       return;
     }
+
+    console.log('[PaneWrapper] Loading new tab content...');
 
     // PRIORITY 1: Check cache first - this preserves unsaved changes
     const cached = getContentFromCache(currentTabId);
     if (cached) {
+      console.log('[PaneWrapper] Found cached content, length:', 
+        typeof cached.content === 'string' ? cached.content.length : 'binary');
       // Immediately update state for cached content
       loadedTabIdRef.current = currentTabId;
       loadingTabIdRef.current = null;
@@ -112,6 +124,8 @@ export function PaneWrapper({
       setError(null);
       return;
     }
+
+    console.log('[PaneWrapper] No cache found, loading from file...');
 
     // PRIORITY 2: No cache - load from file
     // Mark this tab as loading to prevent race conditions
@@ -140,9 +154,13 @@ export function PaneWrapper({
           ? await file.arrayBuffer()
           : await file.text();
 
+        console.log('[PaneWrapper] File loaded, content length:', 
+          typeof fileContent === 'string' ? fileContent.length : 'binary');
+
         // CRITICAL: Only update if this is still the tab we're loading for
         // Check both the loading ref AND the current activeTab
         if (loadingTabIdRef.current === loadingForTabId) {
+          console.log('[PaneWrapper] Setting content for tab:', loadingForTabId);
           loadedTabIdRef.current = loadingForTabId;
           loadingTabIdRef.current = null;
           setContent(fileContent);
@@ -152,9 +170,12 @@ export function PaneWrapper({
             setContentToCache(loadingForTabId, fileContent, fileContent);
           }
           setIsLoading(false);
+        } else {
+          console.log('[PaneWrapper] Tab changed during load, discarding result');
         }
         // If tab changed during load, discard this result silently
       } catch (err) {
+        console.error('[PaneWrapper] Failed to load file:', err);
         // Only update error if this is still the tab we're loading for
         if (loadingTabIdRef.current === loadingForTabId) {
           loadedTabIdRef.current = null;
@@ -169,7 +190,7 @@ export function PaneWrapper({
   }, [
     activeTab?.id,
     activeTab?.fileHandle,
-    activeTab, // CRITICAL: Include full activeTab object to detect reference changes
+    paneId, // CRITICAL: Add paneId to detect pane changes
     getContentFromCache,
     setContentToCache,
   ]);
@@ -396,6 +417,7 @@ export function PaneWrapper({
             error={error}
             onContentChange={isEditable ? handleContentChange : undefined}
             onSave={isEditable ? handleSave : undefined}
+            fileId={activeTab.id} // CRITICAL: Pass tab ID as fileId for proper re-mounting
           />
         ) : (
           <EmptyPaneState />

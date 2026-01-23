@@ -374,6 +374,25 @@ function parseMathBlocks(lines: string[]): MathBlockMatch[] {
     const lineStart = offset;
     const lineEnd = offset + line.length;
 
+    // TASK 5.2: Support inline block math $$...$$ on single line
+    const inlineBlockMatch = line.match(/^\s*\$\$(.+?)\$\$\s*$/);
+    if (inlineBlockMatch && !inBlock) {
+      const latex = inlineBlockMatch[1].trim();
+      if (latex && latex !== 'undefined') {
+        blocks.push({
+          from: lineStart,
+          to: lineEnd,
+          latex: latex,
+          startLine: i + 1,
+          endLine: i + 1,
+        });
+      } else {
+        console.warn('[parseMathBlocks] Empty inline block math at line', i + 1);
+      }
+      offset = lineEnd + 1;
+      continue;
+    }
+
     if (!inBlock && line.trim() === '$$') {
       // 公式块开始
       inBlock = true;
@@ -384,7 +403,7 @@ function parseMathBlocks(lines: string[]): MathBlockMatch[] {
       // 公式块结束
       // PHASE 4 FIX: Validate latex content
       const latex = blockLatex.join('\n');
-      if (latex.trim() !== '') {
+      if (latex.trim() !== '' && latex.trim() !== 'undefined') {
         blocks.push({
           from: blockStart,
           to: lineEnd,
@@ -2044,6 +2063,7 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
 export function clearDecorationCache(): void {
   debugLog('[Cache] Clearing decoration cache');
   lineElementCache.clear();
+}ineElementCache.clear();
 }
 
 /**

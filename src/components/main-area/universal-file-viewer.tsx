@@ -136,6 +136,7 @@ function FileViewer({
   rootHandle,
   onContentChange,
   onSave,
+  fileId,
 }: {
   content: string | ArrayBuffer;
   fileName: string;
@@ -144,6 +145,7 @@ function FileViewer({
   rootHandle?: FileSystemDirectoryHandle | null;
   onContentChange?: (content: string) => void;
   onSave?: () => Promise<void>;
+  fileId?: string;
 }) {
   const extension = getFileExtension(fileName);
   
@@ -187,12 +189,16 @@ function FileViewer({
 
       // Use ObsidianMarkdownViewer for Obsidian-like experience (default render, click to edit)
       if (onContentChange) {
+        // CRITICAL: Use fileId as key to force re-mount when switching between different files
+        // This prevents content mixing between tabs/panes
+        const viewerKey = fileId || fileName;
         return (
           <ObsidianMarkdownViewer
-            key={fileName} // Force re-mount on file change
+            key={viewerKey} // Force re-mount on file change
             content={normalizedContent}
             onChange={onContentChange}
             fileName={fileName}
+            fileId={fileId} // Pass fileId for internal tracking
             onSave={onSave}
           />
         );
@@ -348,6 +354,7 @@ export interface UniversalFileViewerProps {
   error: string | null;
   onContentChange?: (content: string) => void;
   onSave?: () => Promise<void>;
+  fileId?: string; // Unique identifier for the file (e.g., tab.id)
 }
 
 /**
@@ -367,6 +374,7 @@ export function UniversalFileViewer({
   error,
   onContentChange,
   onSave,
+  fileId, // Unique identifier for the file
 }: UniversalFileViewerProps) {
   // No file selected - show empty placeholder
   if (!handle) {
@@ -402,6 +410,7 @@ export function UniversalFileViewer({
         rootHandle={rootHandle}
         onContentChange={onContentChange}
         onSave={onSave}
+        fileId={fileId}
       />
     </div>
   );

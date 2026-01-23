@@ -3,6 +3,17 @@
  * Hides markdown syntax when cursor is not on the element
  */
 
+/* TASK 7.1: Base font size and line height */
+.cm-content {
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+/* TASK 7.4: Line padding for readability */
+.cm-line {
+  padding: 2px 0;
+}
+
 /* Smooth transitions for all interactive elements */
 .cm-content * {
   transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
@@ -30,13 +41,13 @@
   opacity: 0.5;
 }
 
-/* Heading styles */
-.cm-heading-1 { font-size: 2em; font-weight: 600; line-height: 1.3; }
-.cm-heading-2 { font-size: 1.5em; font-weight: 600; line-height: 1.3; }
-.cm-heading-3 { font-size: 1.25em; font-weight: 600; line-height: 1.3; }
-.cm-heading-4 { font-size: 1.1em; font-weight: 600; line-height: 1.3; }
-.cm-heading-5 { font-size: 1em; font-weight: 600; line-height: 1.3; }
-.cm-heading-6 { font-size: 0.9em; font-weight: 600; line-height: 1.3; opacity: 0.8; }
+/* Heading styles - TASK 7.2 & 7.4 */
+.cm-heading-1 { font-size: 2em; font-weight: 600; line-height: 1.3; margin-top: 1em; margin-bottom: 0.5em; }
+.cm-heading-2 { font-size: 1.5em; font-weight: 600; line-height: 1.3; margin-top: 1em; margin-bottom: 0.5em; }
+.cm-heading-3 { font-size: 1.25em; font-weight: 600; line-height: 1.3; margin-top: 1em; margin-bottom: 0.5em; }
+.cm-heading-4 { font-size: 1.1em; font-weight: 600; line-height: 1.3; margin-top: 1em; margin-bottom: 0.5em; }
+.cm-heading-5 { font-size: 1em; font-weight: 600; line-height: 1.3; margin-top: 1em; margin-bottom: 0.5em; }
+.cm-heading-6 { font-size: 0.9em; font-weight: 600; line-height: 1.3; opacity: 0.8; margin-top: 1em; margin-bottom: 0.5em; }
 
 /* Bold/Italic/Strikethrough markers */
 .cm-formatting-strong,
@@ -190,4 +201,78 @@
 .cm-callout-info {
   border-left-color: #06b6d4;
   background-color: rgba(6, 182, 212, 0.1);
+}
+
+/* Math Formulas - TASK 5.3 */
+.cm-math-inline {
+  display: inline-block;
+  vertical-align: middle;
+  padding: 0 0.2em;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.cm-math-inline:hover {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+.cm-math-block {
+  display: block;
+  text-align: center;
+  padding: 1em 0;
+  margin: 0.5em 0;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.cm-math-block:hover {
+  background-color: rgba(59, 130, 246, 0.05);
+}
+
+.cm-math-error {
+  color: #ef4444;
+  background-color: rgba(239, 68, 68, 0.1);
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+}
+
+.cm-math-error-indicator {
+  margin-right: 0.3em;
+}
+
+.cm-math-error-source {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.9em;
+}
+
+.cm-math-loading {
+  color: #6b7280;
+  font-style: italic;
+}
+
+.dark .cm-math-inline:hover {
+  background-color: rgba(96, 165, 250, 0.15);
+}
+
+.dark .cm-math-block:hover {
+  background-color: rgba(96, 165, 250, 0.1);
+}
+
+.dark .cm-math-error {
+  color: #fca5a5;
+  background-color: rgba(239, 68, 68, 0.2);
+}
+
+.dark .cm-math-loading {
+  color: #9ca3af;
+}
+
+/* TASK 7.3: Hidden element styles - preserve layout space */
+.cm-code-block-hidden,
+.cm-math-block-hidden,
+.cm-table-hidden {
+  visibility: hidden;
+  height: 0;
+  overflow: hidden;
+  line-height: 0;
 }

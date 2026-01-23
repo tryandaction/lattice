@@ -29,34 +29,40 @@ This is **bold with $E=mc^2$ formula** inside.
 
 This is *italic with $\alpha$ formula* inside.
 
-## Test 3: Block Math
+## Test 3: Block Math - All Syntaxes
 
-Block formula:
+### Syntax 1: Single $ on separate lines
 
 $
 E = mc^2
 $
 
-Another block formula:
+### Syntax 2: Double $$ on separate lines
 
-$
+$$
 \int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}
-$
+$$
+
+### Syntax 3: Inline block math $$...$$ on single line
+
+$$\sum_{i=1}^{n} \frac{1}{i^2} = \frac{\pi^2}{6}$$
+
+All three syntaxes should render as centered block formulas.
 
 ## Test 4: Complex Formulas
 
 Inline: $\sum_{i=1}^{n} \frac{1}{i^2} = \frac{\pi^2}{6}$
 
-Block:
+Block (using $$):
 
-$
+$$
 \begin{aligned}
 \nabla \times \vec{\mathbf{B}} -\, \frac1c\, \frac{\partial\vec{\mathbf{E}}}{\partial t} &= \frac{4\pi}{c}\vec{\mathbf{j}} \\
 \nabla \cdot \vec{\mathbf{E}} &= 4 \pi \rho \\
 \nabla \times \vec{\mathbf{E}}\, +\, \frac1c\, \frac{\partial\vec{\mathbf{B}}}{\partial t} &= \vec{\mathbf{0}} \\
 \nabla \cdot \vec{\mathbf{B}} &= 0
 \end{aligned}
-$
+$$
 
 ## Test 5: Edge Cases
 
@@ -106,15 +112,30 @@ Double integral: $\iint_D f(x,y) dA$
 
 Inline matrix: $\begin{pmatrix} a & b \\ c & d \end{pmatrix}$
 
-Block matrix:
+Block matrix (using $$):
 
-$
+$$
 \begin{bmatrix}
 1 & 2 & 3 \\
 4 & 5 & 6 \\
 7 & 8 & 9
 \end{bmatrix}
+$$
+
+## Test 11: All Block Math Syntaxes Side by Side
+
+Single $ syntax:
 $
+x^2 + y^2 = z^2
+$
+
+Double $$ syntax:
+$$
+a^2 + b^2 = c^2
+$$
+
+Inline block $$ syntax:
+$$\sin^2(x) + \cos^2(x) = 1$$
 
 ## Expected Behavior
 

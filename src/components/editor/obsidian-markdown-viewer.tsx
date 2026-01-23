@@ -52,6 +52,8 @@ interface ObsidianMarkdownViewerProps {
   onNavigateToFile?: (filename: string) => void;
   /** Initial view mode */
   initialMode?: ViewMode;
+  /** Unique file identifier for proper re-mounting */
+  fileId?: string;
 }
 
 /**
@@ -138,6 +140,7 @@ export function ObsidianMarkdownViewer({
   onSave,
   onNavigateToFile,
   initialMode = "live",
+  fileId, // Unique file identifier
 }: ObsidianMarkdownViewerProps) {
   const [mode, setMode] = useState<ViewMode>(initialMode);
   const [localContent, setLocalContent] = useState(content);
@@ -148,21 +151,24 @@ export function ObsidianMarkdownViewer({
   const [activeHeading, setActiveHeading] = useState<number | undefined>();
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<LivePreviewEditorRef>(null);
-  const prevFileNameRef = useRef(fileName);
+  const prevFileIdRef = useRef(fileId);
 
   // CRITICAL: Force content update when file changes
+  // Use fileId instead of fileName for more reliable detection
   useEffect(() => {
-    console.log('[FileSwitch] useEffect triggered - fileName:', fileName, 'prevFileName:', prevFileNameRef.current);
+    const currentFileId = fileId || fileName; // Fallback to fileName if no fileId
+    console.log('[FileSwitch] useEffect triggered - fileId:', currentFileId, 'prevFileId:', prevFileIdRef.current);
+    console.log('[FileSwitch] fileName:', fileName);
     console.log('[FileSwitch] Content length:', content.length, 'LocalContent length:', localContent.length, 'isDirty:', isDirty);
     
-    if (fileName !== prevFileNameRef.current) {
+    if (currentFileId !== prevFileIdRef.current) {
       // File changed - force update with loading state
       console.log('[FileSwitch] ===== FILE CHANGED =====');
-      console.log('[FileSwitch] From:', prevFileNameRef.current, 'To:', fileName);
+      console.log('[FileSwitch] From:', prevFileIdRef.current, 'To:', currentFileId);
       console.log('[FileSwitch] New content length:', content.length);
       console.log('[FileSwitch] First 100 chars:', content.substring(0, 100));
       
-      prevFileNameRef.current = fileName;
+      prevFileIdRef.current = currentFileId;
       setLocalContent(content);
       setIsDirty(false);
       setSaveStatus('idle'); // Reset save status on file switch
@@ -175,7 +181,7 @@ export function ObsidianMarkdownViewer({
       console.log('[ContentSync] External content update, length:', content.length);
       setLocalContent(content);
     }
-  }, [content, fileName, localContent, isDirty]);
+  }, [content, fileName, fileId, localContent, isDirty]);
 
   // Handle content changes from editor
   const handleContentChange = useCallback((newContent: string) => {
@@ -221,9 +227,6 @@ export function ObsidianMarkdownViewer({
   const handleWikiLinkClick = useCallback((target: string) => {
     onNavigateToFile?.(target);
   }, [onNavigateToFile]);
-
-  // File ID for memoization
-  const fileId = useMemo(() => fileName, [fileName]);
 
   return (
     <div ref={containerRef} className="h-full flex flex-col bg-background">
@@ -330,7 +333,7 @@ export function ObsidianMarkdownViewer({
             onOutlineChange={handleOutlineChange}
             onWikiLinkClick={handleWikiLinkClick}
             onSave={handleSave}
-            fileId={fileName}
+            fileId={fileId || fileName}
             className="min-h-full"
           />
         </div>
