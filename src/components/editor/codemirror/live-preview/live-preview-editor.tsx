@@ -18,7 +18,7 @@ import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 
 import { cursorContextExtension } from './cursor-context-plugin';
-import { decorationCoordinatorPlugin, parsedElementsField } from './decoration-coordinator';
+import { decorationCoordinatorPlugin, parsedElementsField, clearDecorationCache } from './decoration-coordinator';
 import { foldingExtension } from './folding-plugin';
 import { markdownKeymap } from './keyboard-shortcuts';
 import { autoFormattingExtension } from './auto-formatting';
@@ -263,6 +263,11 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
   useEffect(() => {
     if (!containerRef.current || !librariesLoaded) return;
     
+    console.log('[EditorInit] ===== INITIALIZING EDITOR =====');
+    console.log('[EditorInit] fileId:', fileId);
+    console.log('[EditorInit] content length:', content.length);
+    console.log('[EditorInit] mode:', mode);
+    
     let mounted = true;
     
     async function initEditor() {
@@ -274,12 +279,18 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         
         // Destroy existing view
         if (viewRef.current) {
+          console.log('[EditorInit] Destroying existing view');
           viewRef.current.destroy();
           viewRef.current = null;
         }
         
+        // CRITICAL: Clear decoration cache on file switch to prevent stale data
+        clearDecorationCache();
+        console.log('[EditorInit] Decoration cache cleared');
+        
         // Clear container
         containerRef.current.innerHTML = '';
+        console.log('[EditorInit] Container cleared');
         
         // Build extensions
         const extensions = buildExtensions(
@@ -295,6 +306,8 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           highContrast
         );
         
+        console.log('[EditorInit] Extensions built, creating state with content length:', content.length);
+        
         // Create state with the current content
         const state = EditorState.create({
           doc: content,
@@ -308,6 +321,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         });
         
         viewRef.current = view;
+        console.log('[EditorInit] View created successfully');
         
         // Add accessibility description
         if (containerRef.current) {
@@ -322,8 +336,9 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         }
         
         setIsLoading(false);
+        console.log('[EditorInit] ===== INITIALIZATION COMPLETE =====');
       } catch (err) {
-        console.error('Failed to initialize Live Preview Editor:', err);
+        console.error('[EditorInit] Failed to initialize Live Preview Editor:', err);
         setError(err instanceof Error ? err : new Error('Failed to initialize editor'));
         setIsLoading(false);
       }
@@ -334,6 +349,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     return () => {
       mounted = false;
       if (viewRef.current) {
+        console.log('[EditorInit] Cleanup: destroying view');
         viewRef.current.destroy();
         viewRef.current = null;
       }
@@ -348,7 +364,10 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
 
     // Only update if content differs and fileId hasn't changed (fileId change triggers re-init)
     if (content !== currentContent) {
-      console.log('[ContentUpdate] Updating content, length:', content.length);
+      console.log('[ContentUpdate] ===== UPDATING CONTENT =====');
+      console.log('[ContentUpdate] Current length:', currentContent.length, 'New length:', content.length);
+      console.log('[ContentUpdate] First 100 chars of new content:', content.substring(0, 100));
+      
       viewRef.current.dispatch({
         changes: {
           from: 0,
@@ -357,6 +376,8 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         },
         scrollIntoView: false,
       });
+      
+      console.log('[ContentUpdate] Content updated successfully');
     }
   }, [content, isLoading]); // Removed fileId - re-init handles that
 

@@ -958,9 +958,17 @@ export class MathWidget extends WidgetType {
     container.dataset.latex = this.latex; // 存储LaTeX用于复制功能
     container.title = `${this.isBlock ? 'Block' : 'Inline'} formula: Click to edit, Right-click to copy LaTeX`;
 
+    // CRITICAL: Validate latex to prevent "undefined" rendering
+    if (!this.latex || this.latex === 'undefined') {
+      console.error('[MathWidget] Invalid latex:', this.latex, 'at', this.from, this.to);
+      container.textContent = '[Math Error: Invalid LaTeX]';
+      container.classList.add('cm-math-error');
+      return container;
+    }
+
     // 单击: 定位光标到公式开始位置（触发显示源码）
     container.addEventListener('mousedown', (e) => {
-      handleWidgetClick(view, container, e, this.from, this.to);
+      handleWidgetClick(view, container, e as MouseEvent, this.from, this.to);
     });
 
     // 双击: 打开MathLive可视化编辑器

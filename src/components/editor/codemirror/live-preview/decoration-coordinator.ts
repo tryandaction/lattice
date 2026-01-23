@@ -57,6 +57,24 @@ import {
 import { parseListItem, parseBlockquote } from './markdown-parser';
 
 // ============================================================================
+// Debug Configuration
+// ============================================================================
+
+/**
+ * Debug mode - set to false in production to disable verbose logging
+ */
+const DEBUG_MODE = process.env.NODE_ENV === 'development';
+
+/**
+ * Conditional debug log
+ */
+function debugLog(prefix: string, ...args: any[]) {
+  if (DEBUG_MODE) {
+    console.log(prefix, ...args);
+  }
+}
+
+// ============================================================================
 // 类型定义
 // ============================================================================
 
@@ -364,13 +382,19 @@ function parseMathBlocks(lines: string[]): MathBlockMatch[] {
       blockStartLine = i + 1; // 行号从1开始
     } else if (inBlock && line.trim() === '$$') {
       // 公式块结束
-      blocks.push({
-        from: blockStart,
-        to: lineEnd,
-        latex: blockLatex.join('\n'),
-        startLine: blockStartLine,
-        endLine: i + 1,
-      });
+      // PHASE 4 FIX: Validate latex content
+      const latex = blockLatex.join('\n');
+      if (latex.trim() !== '') {
+        blocks.push({
+          from: blockStart,
+          to: lineEnd,
+          latex: latex,
+          startLine: blockStartLine,
+          endLine: i + 1,
+        });
+      } else {
+        console.warn('[parseMathBlocks] Empty math block at lines', blockStartLine, '-', i + 1);
+      }
       inBlock = false;
     } else if (inBlock) {
       blockLatex.push(line);
@@ -479,18 +503,24 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   const doc = view.state.doc;
   const visibleRanges = view.visibleRanges;
 
-  // DEBUG: Log parsing info
-  console.log('[parseDocument] Lines:', doc.lines, 'ViewportOnly:', viewportOnly);
+  // DEBUG: Enhanced logging for long file truncation diagnosis
+  debugLog('[parseDocument] ===== START PARSING =====');
+  debugLog('[parseDocument] Doc lines:', doc.lines, 'Doc length:', doc.length);
+  debugLog('[parseDocument] ViewportOnly:', viewportOnly);
+  debugLog('[parseDocument] VisibleRanges:', visibleRanges.map(r => ({ from: r.from, to: r.to })));
 
   // 性能优化：只调用一次 toString() 和 split()
   const text = doc.toString();
   const lines = text.split('\n');
+  
+  debugLog('[parseDocument] Text length:', text.length, 'Lines array length:', lines.length);
 
   // 用于标记已被块级元素占用的行
   const occupiedLines = new Set<number>();
 
   // 1. 先解析所有代码块（多行块级元素）
   const codeBlocks = parseCodeBlocks(lines);
+  debugLog('[parseDocument] Found', codeBlocks.length, 'code blocks');
 
   for (const block of codeBlocks) {
     // 检查代码块是否应该被reveal (element-level check)
@@ -542,6 +572,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
 
   // 2. 解析所有数学公式块（多行块级元素）
   const mathBlocks = parseMathBlocks(lines);
+  debugLog('[parseDocument] Found', mathBlocks.length, 'math blocks');
 
   for (const block of mathBlocks) {
     // 检查公式块是否应该被reveal (element-level check)
@@ -592,6 +623,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
 
   // 3. 解析所有表格（多行块级元素）
   const tables = parseTables(lines);
+  debugLog('[parseDocument] Found', tables.length, 'tables');
 
   for (const table of tables) {
     // 检查表格是否应该被reveal (element-level check)
@@ -641,22 +673,40 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   }
 
   // 3. 逐行解析其他元素（跳过已占用的行）
+  // CRITICAL FIX: Ensure we parse the entire document
+  // Always parse full document to avoid truncation issues
   const ranges = viewportOnly
     ? visibleRanges
     : [{ from: 0, to: doc.length }];
 
-  // DEBUG: Log range info
-  console.log('[parseDocument] Ranges:', ranges.map(r => ({ from: r.from, to: r.to })));
+  // DEBUG: Enhanced range logging
+  debugLog('[parseDocument] Ranges count:', ranges.length);
+  debugLog('[parseDocument] Ranges:', ranges.map(r => ({ from: r.from, to: r.to })));
+  debugLog('[parseDocument] Using viewportOnly:', viewportOnly);
+  debugLog('[parseDocument] Document length:', doc.length, 'Last line:', doc.lines);
 
   for (const range of ranges) {
+    // CRITICAL FIX: Ensure range.to doesn't exceed document length
+    const safeTo = Math.min(range.to, doc.length);
+    
+    // CRITICAL FIX: Handle edge case where safeTo is 0 (empty document)
+    if (safeTo === 0) {
+      debugLog('[parseDocument] Empty document, skipping range');
+      continue;
+    }
+    
     const startLine = doc.lineAt(range.from);
-    const endLine = doc.lineAt(range.to);
+    const endLine = doc.lineAt(safeTo);
 
-    console.log('[parseDocument] Processing lines:', startLine.number, 'to', endLine.number);
+    debugLog('[parseDocument] Processing range - startLine:', startLine.number, 'endLine:', endLine.number, 'total lines to process:', endLine.number - startLine.number + 1);
 
+    // CRITICAL FIX: Ensure we process ALL lines including the last one
     for (let lineNum = startLine.number; lineNum <= endLine.number; lineNum++) {
       // 跳过已被块级元素占用的行
       if (occupiedLines.has(lineNum)) {
+        if (DEBUG_MODE) {
+          debugLog('[parseDocument] Skipping occupied line:', lineNum);
+        }
         continue;
       }
 
@@ -682,6 +732,16 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
       }
     }
   }
+
+  // DEBUG: Final statistics
+  debugLog('[parseDocument] ===== PARSING COMPLETE =====');
+  debugLog('[parseDocument] Total elements parsed:', elements.length);
+  debugLog('[parseDocument] Occupied lines:', occupiedLines.size);
+  debugLog('[parseDocument] Elements by type:', elements.reduce((acc, el) => {
+    const typeName = ElementType[el.type];
+    acc[typeName] = (acc[typeName] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>));
 
   return elements;
 }
@@ -859,6 +919,12 @@ function parseInlineElements(
   while ((match = REGEX_PATTERNS.inlineMath.exec(lineText)) !== null) {
     const latex = match[1];
     if (latex.includes('\n')) continue;
+    
+    // PHASE 4 FIX: Validate latex parameter to prevent "undefined" rendering
+    if (!latex || latex.trim() === '') {
+      console.warn('[parseInlineElements] Empty latex for inline math at', lineFrom + match.index);
+      continue;
+    }
 
     elements.push({
       type: ElementType.MATH_INLINE,
@@ -896,18 +962,31 @@ function parseInlineElements(
 
   // 3. 粗体: **...**
   while ((match = REGEX_PATTERNS.bold.exec(lineText)) !== null) {
+    // CRITICAL: Ensure we capture the entire **text** including markers
+    const fullMatch = match[0]; // e.g., "**bold**"
+    const content = match[1];   // e.g., "bold"
+    
+    // PHASE 3 FIX: Validate range to prevent text duplication
+    const from = lineFrom + match.index;
+    const to = lineFrom + match.index + fullMatch.length;
+    
+    if (from >= to) {
+      console.warn('[parseInlineElements] Invalid bold range:', from, to, 'content:', content);
+      continue;
+    }
+    
     elements.push({
       type: ElementType.INLINE_BOLD,
-      from: lineFrom + match.index,
-      to: lineFrom + match.index + match[0].length,
+      from: from,
+      to: to,
       lineNumber: lineNum,
-      content: match[1],
+      content: content,
       decorationData: {
         className: 'cm-strong',
-        syntaxFrom: lineFrom + match.index,
-        syntaxTo: lineFrom + match.index + match[0].length,
-        contentFrom: lineFrom + match.index + 2,
-        contentTo: lineFrom + match.index + match[0].length - 2,
+        syntaxFrom: from,
+        syntaxTo: to,
+        contentFrom: from + 2,
+        contentTo: to - 2,
       },
     });
   }
@@ -915,18 +994,29 @@ function parseInlineElements(
   // 4. 斜体: *...* 或 _..._
   while ((match = REGEX_PATTERNS.italic.exec(lineText)) !== null) {
     const content = match[1] || match[2];
+    const fullMatch = match[0]; // e.g., "*italic*" or "_italic_"
+    
+    // PHASE 3 FIX: Validate range to prevent text duplication
+    const from = lineFrom + match.index;
+    const to = lineFrom + match.index + fullMatch.length;
+    
+    if (from >= to) {
+      console.warn('[parseInlineElements] Invalid italic range:', from, to, 'content:', content);
+      continue;
+    }
+    
     elements.push({
       type: ElementType.INLINE_ITALIC,
-      from: lineFrom + match.index,
-      to: lineFrom + match.index + match[0].length,
+      from: from,
+      to: to,
       lineNumber: lineNum,
       content: content,
       decorationData: {
         className: 'cm-em',
-        syntaxFrom: lineFrom + match.index,
-        syntaxTo: lineFrom + match.index + match[0].length,
-        contentFrom: lineFrom + match.index + 1,
-        contentTo: lineFrom + match.index + match[0].length - 1,
+        syntaxFrom: from,
+        syntaxTo: to,
+        contentFrom: from + 1,
+        contentTo: to - 1,
       },
     });
   }
@@ -969,18 +1059,30 @@ function parseInlineElements(
 
   // 7. 行内代码: `...`
   while ((match = REGEX_PATTERNS.inlineCode.exec(lineText)) !== null) {
+    const fullMatch = match[0]; // e.g., "`code`"
+    const content = match[1];   // e.g., "code"
+    
+    // PHASE 3 FIX: Validate range to prevent text duplication
+    const from = lineFrom + match.index;
+    const to = lineFrom + match.index + fullMatch.length;
+    
+    if (from >= to) {
+      console.warn('[parseInlineElements] Invalid inline code range:', from, to, 'content:', content);
+      continue;
+    }
+    
     elements.push({
       type: ElementType.INLINE_CODE,
-      from: lineFrom + match.index,
-      to: lineFrom + match.index + match[0].length,
+      from: from,
+      to: to,
       lineNumber: lineNum,
-      content: match[1],
+      content: content,
       decorationData: {
         className: 'cm-inline-code',
-        syntaxFrom: lineFrom + match.index,
-        syntaxTo: lineFrom + match.index + match[0].length,
-        contentFrom: lineFrom + match.index + 1,
-        contentTo: lineFrom + match.index + match[0].length - 1,
+        syntaxFrom: from,
+        syntaxTo: to,
+        contentFrom: from + 1,
+        contentTo: to - 1,
       },
     });
   }
@@ -1010,27 +1112,45 @@ function parseInlineElements(
   while ((match = REGEX_PATTERNS.wikiLink.exec(lineText)) !== null) {
     const target = match[1];
     const displayText = match[2] || match[1];
+    
+    // PHASE 3 FIX: Validate range to prevent text duplication
+    const from = lineFrom + match.index;
+    const to = lineFrom + match.index + match[0].length;
+    
+    if (from >= to) {
+      console.warn('[parseInlineElements] Invalid wiki link range:', from, to, 'target:', target);
+      continue;
+    }
 
     elements.push({
       type: ElementType.INLINE_LINK,
-      from: lineFrom + match.index,
-      to: lineFrom + match.index + match[0].length,
+      from: from,
+      to: to,
       lineNumber: lineNum,
       content: displayText,
       decorationData: {
         type: 'wiki-link',
         url: target,
         isWikiLink: true,
-        syntaxFrom: lineFrom + match.index,
-        syntaxTo: lineFrom + match.index + match[0].length,
-        contentFrom: lineFrom + match.index + 2,
-        contentTo: lineFrom + match.index + match[0].length - 2,
+        syntaxFrom: from,
+        syntaxTo: to,
+        contentFrom: from + 2,
+        contentTo: to - 2,
       },
     });
   }
 
   // 10. Markdown链接: [text](url)
   while ((match = REGEX_PATTERNS.link.exec(lineText)) !== null) {
+    // PHASE 3 FIX: Validate range to prevent text duplication
+    const from = lineFrom + match.index;
+    const to = lineFrom + match.index + match[0].length;
+    
+    if (from >= to) {
+      console.warn('[parseInlineElements] Invalid link range:', from, to, 'text:', match[1]);
+      continue;
+    }
+    
     elements.push({
       type: ElementType.INLINE_LINK,
       from: lineFrom + match.index,
@@ -1071,10 +1191,19 @@ function parseInlineElements(
 
   // 12. 图片: ![alt](url) or ![alt|width](url)
   while ((match = REGEX_PATTERNS.image.exec(lineText)) !== null) {
+    // PHASE 3 FIX: Validate range to prevent text duplication
+    const from = lineFrom + match.index;
+    const to = lineFrom + match.index + match[0].length;
+    
+    if (from >= to) {
+      console.warn('[parseInlineElements] Invalid image range:', from, to, 'alt:', match[1]);
+      continue;
+    }
+    
     elements.push({
       type: ElementType.INLINE_IMAGE,
-      from: lineFrom + match.index,
-      to: lineFrom + match.index + match[0].length,
+      from: from,
+      to: to,
       lineNumber: lineNum,
       content: match[1],
       decorationData: {
@@ -1082,10 +1211,10 @@ function parseInlineElements(
         url: match[3],
         alt: match[1],
         width: match[2] ? parseInt(match[2]) : undefined,
-        syntaxFrom: lineFrom + match.index,
-        syntaxTo: lineFrom + match.index + match[0].length,
-        contentFrom: lineFrom + match.index + 2,
-        contentTo: lineFrom + match.index + 2 + match[1].length,
+        syntaxFrom: from,
+        syntaxTo: to,
+        contentFrom: from + 2,
+        contentTo: from + 2 + match[1].length,
       },
     });
   }
@@ -1273,15 +1402,22 @@ export function resolveConflicts(elements: ParsedElement[]): ParsedElement[] {
  */
 function buildDecorationsFromElements(elements: ParsedElement[], view: EditorView): DecorationSet {
   const entries: DecorationEntry[] = [];
+  let skippedCount = 0;
+  let processedCount = 0;
 
-  console.log('[buildDecorations] Building decorations for', elements.length, 'elements');
+  debugLog('[buildDecorations] ===== START BUILDING =====');
+  debugLog('[buildDecorations] Input elements:', elements.length);
+  debugLog('[buildDecorations] Doc lines:', view.state.doc.lines, 'Doc length:', view.state.doc.length);
 
   for (const element of elements) {
     // Element-level reveal check: Skip decoration if cursor is in this element
     // This enables Obsidian-style granular reveal (e.g., only reveal the bold text, not the whole line)
     if (shouldRevealAt(view.state, element.from, element.to, element.type)) {
+      skippedCount++;
       continue; // Skip this element - show raw markdown instead
     }
+
+    processedCount++;
 
     // 多行代码块需要特殊处理
     if (element.type === ElementType.CODE_BLOCK && element.decorationData) {
@@ -1448,7 +1584,16 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
       : entry.decoration.range(entry.from, entry.to)
   );
 
-  console.log('[buildDecorations] Created', entries.length, 'decoration entries,', ranges.length, 'ranges');
+  debugLog('[buildDecorations] ===== BUILDING COMPLETE =====');
+  debugLog('[buildDecorations] Processed elements:', processedCount, '/', elements.length);
+  debugLog('[buildDecorations] Skipped (revealed) elements:', skippedCount);
+  debugLog('[buildDecorations] Created', entries.length, 'decoration entries');
+  debugLog('[buildDecorations] Created', ranges.length, 'decoration ranges');
+  debugLog('[buildDecorations] Entries by priority:', entries.reduce((acc, entry) => {
+    const typeName = ElementType[entry.priority];
+    acc[typeName] = (acc[typeName] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>));
 
   return Decoration.set(ranges, true);
 }
@@ -1551,6 +1696,24 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
     // ========================================================================
 
     case ElementType.INLINE_BOLD:
+      // CRITICAL: Ensure we replace the ENTIRE syntax range including ** markers
+      // from and to should cover **text** not just text
+      if (element.from >= element.to) {
+        console.warn('[Decoration] Invalid range for INLINE_BOLD:', element.from, element.to);
+        return null;
+      }
+      
+      // PHASE 3 FIX: Enhanced validation and logging
+      debugLog('[Decoration] Creating INLINE_BOLD widget:', {
+        from: element.from,
+        to: element.to,
+        content: element.content,
+        syntaxFrom: data?.syntaxFrom,
+        syntaxTo: data?.syntaxTo,
+        contentFrom: data?.contentFrom,
+        contentTo: data?.contentTo,
+      });
+      
       return Decoration.replace({
         widget: new FormattedTextWidget(
           element.content || '',
@@ -1563,6 +1726,11 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
       });
 
     case ElementType.INLINE_ITALIC:
+      // CRITICAL: Ensure we replace the ENTIRE syntax range including * or _ markers
+      if (element.from >= element.to) {
+        console.warn('[Decoration] Invalid range for INLINE_ITALIC:', element.from, element.to);
+        return null;
+      }
       return Decoration.replace({
         widget: new FormattedTextWidget(
           element.content || '',
@@ -1587,6 +1755,11 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
       });
 
     case ElementType.INLINE_LINK:
+      // CRITICAL: Ensure we replace the ENTIRE syntax range including []() markers
+      if (element.from >= element.to) {
+        console.warn('[Decoration] Invalid range for INLINE_LINK:', element.from, element.to);
+        return null;
+      }
       if (data?.isWikiLink) {
         return Decoration.replace({
           widget: new LinkWidget(
@@ -1741,31 +1914,53 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
 
     case ElementType.MATH_INLINE:
       // 使用MathWidget渲染行内公式
-      if (element.latex) {
-        return Decoration.replace({
-          widget: new MathWidget(
-            element.latex,
-            false, // isBlock
-            element.from,
-            element.to
-          ),
-        });
+      // CRITICAL: Validate latex parameter to prevent "undefined" rendering
+      if (!element.latex || element.latex.trim() === '') {
+        console.warn('[Decoration] Empty latex for INLINE_MATH at', element.from, element.to);
+        return null;
       }
-      return null;
+      
+      // PHASE 4 FIX: Enhanced validation and logging
+      debugLog('[Decoration] Creating INLINE_MATH widget:', {
+        from: element.from,
+        to: element.to,
+        latex: element.latex,
+        latexLength: element.latex.length,
+      });
+      
+      return Decoration.replace({
+        widget: new MathWidget(
+          element.latex,
+          false, // isBlock
+          element.from,
+          element.to
+        ),
+      });
 
     case ElementType.MATH_BLOCK:
       // 使用MathWidget渲染块级公式
-      if (element.latex) {
-        return Decoration.replace({
-          widget: new MathWidget(
-            element.latex,
-            true, // isBlock
-            element.from,
-            element.to
-          ),
-        });
+      // CRITICAL: Validate latex parameter to prevent "undefined" rendering
+      if (!element.latex || element.latex.trim() === '') {
+        console.warn('[Decoration] Empty latex for MATH_BLOCK at', element.from, element.to);
+        return null;
       }
-      return null;
+      
+      // PHASE 4 FIX: Enhanced validation and logging
+      debugLog('[Decoration] Creating MATH_BLOCK widget:', {
+        from: element.from,
+        to: element.to,
+        latex: element.latex,
+        latexLength: element.latex.length,
+      });
+      
+      return Decoration.replace({
+        widget: new MathWidget(
+          element.latex,
+          true, // isBlock
+          element.from,
+          element.to
+        ),
+      });
 
     default:
       return null;
@@ -1814,10 +2009,12 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
 
     private buildDecorations(view: EditorView): DecorationSet {
       // 1. 解析文档 (解析全文档以确保完整渲染)
+      // CRITICAL FIX: Always pass false to ensure full document parsing
       const elements = parseDocument(view, false);
 
       // DEBUG: Log document info
-      console.log('[Decoration] Doc lines:', view.state.doc.lines, 'Elements:', elements.length);
+      debugLog('[Decoration] ===== BUILD DECORATIONS =====');
+      debugLog('[Decoration] Doc lines:', view.state.doc.lines, 'Elements:', elements.length);
 
       // 2. Store elements for cursor context plugin
       // Note: We cannot dispatch during decoration building
@@ -1842,8 +2039,10 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
 
 /**
  * 清除缓存 - 用于调试和测试
+ * CRITICAL: Call this when switching files to prevent stale cache
  */
 export function clearDecorationCache(): void {
+  debugLog('[Cache] Clearing decoration cache');
   lineElementCache.clear();
 }
 

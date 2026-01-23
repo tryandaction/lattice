@@ -28,7 +28,9 @@
       "Bash(lsof:*)",
       "Bash(curl:*)",
       "Bash(git branch:*)",
-      "Bash(while an update is in progress\"\n\nChanges:\n- Store parsed elements on view object instead of dispatching\n- Update cursor context plugin to read from stored elements\n- Remove illegal dispatch call that was blocking editor initialization\n\nThis fixes the application crash on startup.\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+      "Bash(while an update is in progress\"\n\nChanges:\n- Store parsed elements on view object instead of dispatching\n- Update cursor context plugin to read from stored elements\n- Remove illegal dispatch call that was blocking editor initialization\n\nThis fixes the application crash on startup.\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(ls:*)",
+      "Bash(git mv:*)"
     ]
   }
 }

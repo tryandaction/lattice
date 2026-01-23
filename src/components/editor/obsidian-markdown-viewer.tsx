@@ -152,16 +152,28 @@ export function ObsidianMarkdownViewer({
 
   // CRITICAL: Force content update when file changes
   useEffect(() => {
+    console.log('[FileSwitch] useEffect triggered - fileName:', fileName, 'prevFileName:', prevFileNameRef.current);
+    console.log('[FileSwitch] Content length:', content.length, 'LocalContent length:', localContent.length, 'isDirty:', isDirty);
+    
     if (fileName !== prevFileNameRef.current) {
-      // File changed - force update
+      // File changed - force update with loading state
+      console.log('[FileSwitch] ===== FILE CHANGED =====');
+      console.log('[FileSwitch] From:', prevFileNameRef.current, 'To:', fileName);
+      console.log('[FileSwitch] New content length:', content.length);
+      console.log('[FileSwitch] First 100 chars:', content.substring(0, 100));
+      
       prevFileNameRef.current = fileName;
       setLocalContent(content);
       setIsDirty(false);
-      console.log('[FileSwitch] File changed to:', fileName, 'Content length:', content.length);
+      setSaveStatus('idle'); // Reset save status on file switch
+      setOutline([]); // Clear outline
+      setActiveHeading(undefined); // Clear active heading
+      
+      console.log('[FileSwitch] State reset complete - all cleared');
     } else if (content !== localContent && !isDirty) {
       // Content changed externally (not by user editing)
-      setLocalContent(content);
       console.log('[ContentSync] External content update, length:', content.length);
+      setLocalContent(content);
     }
   }, [content, fileName, localContent, isDirty]);
 

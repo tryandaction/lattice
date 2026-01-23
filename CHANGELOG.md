@@ -5,6 +5,78 @@ All notable changes to Lattice will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed - Critical Bugs (2026-01-22)
+
+#### 🐛 Bug #1: Long File Truncation
+- Fixed files >100 lines being truncated and not fully visible
+- Changed CSS from `display: none` to `visibility: hidden` for hidden lines to maintain document flow
+- Added edge case handling for empty documents
+- Created comprehensive test files: 100, 500, 1000, 10000 lines
+
+#### 🐛 Bug #2: File Switching Content Error
+- Fixed incorrect content display when switching between files
+- Clear decoration cache on file switch to prevent stale data
+- Reset save status on file change
+- Added comprehensive file switching debug logs with `[FileSwitch]` prefix
+
+#### 🐛 Bug #3: Text Duplication
+- Fixed markdown elements showing both decoration and original text
+- Explicit range calculation for all inline elements (bold, italic, code, links)
+- Added range validation to prevent invalid decorations
+- Ensured `from` and `to` positions cover entire syntax including markers
+
+#### 🐛 Bug #4: Formula Rendering
+- Fixed formulas displaying as "undefined" or blank
+- Added latex parameter validation before creating MathWidget
+- Added validation in MathWidget.toDOM() to catch edge cases
+- Improved error messages for debugging formula issues
+
+#### 🐛 Bug #5: Markdown Syntax Markers
+- Verified existing implementation using `Decoration.replace({})`
+- Markers (# ** * > -) are hidden when not editing
+- Markers appear when cursor moves to element (Obsidian-style)
+
+### Added
+- 🔍 Debug mode controlled by NODE_ENV (development vs production)
+- 📊 Comprehensive debug logging with prefixes: `[parseDocument]`, `[FileSwitch]`, `[EditorInit]`, `[ContentUpdate]`, `[Cache]`
+- 🧪 Test files for all bug scenarios: `test-all-bugs.md`, `test-100-lines.md`, etc.
+- 📝 Documentation: `CRITICAL_BUGS_FIXED.md`, `QUICK_TEST_GUIDE.md`, `docs/fixes/critical-bugs-fix-summary.md`
+- 🛠️ Script: `scripts/generate-test-files.js` for creating test files
+
+### Changed
+- 💡 Improved code quality with explicit variable names (`fullMatch` instead of `match[0]`)
+- 📖 Enhanced comments explaining critical sections
+- ⚠️ Better error messages throughout the codebase
+- 🎯 More precise range calculations for inline elements
+
+### Performance
+- ⚡ Zero performance impact in production (debug logs disabled via `DEBUG_MODE`)
+- 🚀 Optimized decoration cache management with proper clearing on file switch
+- 📦 Conditional logging based on environment
+
+### Technical Details
+
+#### Modified Files
+- `src/components/editor/codemirror/live-preview/decoration-coordinator.ts` - Core parsing and decoration logic
+- `src/components/editor/codemirror/live-preview/live-preview-theme.ts` - CSS fixes for hidden lines
+- `src/components/editor/codemirror/live-preview/live-preview-editor.tsx` - Editor initialization and cache clearing
+- `src/components/editor/obsidian-markdown-viewer.tsx` - File switching logic
+- `src/components/editor/codemirror/live-preview/widgets.ts` - MathWidget validation
+
+#### New Files
+- `public/test-100-lines.md` - 100 line test file
+- `public/test-500-lines.md` - 500 line test file
+- `public/test-1000-lines.md` - 1000 line test file
+- `public/test-10000-lines.md` - 10000 line test file
+- `public/test-all-bugs.md` - Comprehensive test for all 5 bugs
+- `scripts/generate-test-files.js` - Test file generator
+- `CRITICAL_BUGS_FIXED.md` - Summary of all fixes
+- `QUICK_TEST_GUIDE.md` - Quick testing guide
+
+---
+
 ## [0.3.0] - 2026-01-12
 
 ### Added

@@ -445,12 +445,15 @@ export const livePreviewTheme = EditorView.theme({
   },
   
   // Hidden lines for multi-line code blocks (when not editing)
+  // CRITICAL FIX: Use visibility instead of display:none to maintain document flow
   '.cm-code-block-hidden': {
-    display: 'none !important',
-    height: '0 !important',
-    overflow: 'hidden !important',
-    margin: '0 !important',
-    padding: '0 !important',
+    visibility: 'hidden',
+    height: '0',
+    overflow: 'hidden',
+    margin: '0',
+    padding: '0',
+    lineHeight: '0',
+    fontSize: '0',
   },
   
   // === Math ===
@@ -527,12 +530,15 @@ export const livePreviewTheme = EditorView.theme({
   },
   
   // Hidden lines for multi-line block math (when not editing)
+  // CRITICAL FIX: Use visibility instead of display:none to maintain document flow
   '.cm-math-block-hidden': {
-    display: 'none !important',
-    height: '0 !important',
-    overflow: 'hidden !important',
-    margin: '0 !important',
-    padding: '0 !important',
+    visibility: 'hidden',
+    height: '0',
+    overflow: 'hidden',
+    margin: '0',
+    padding: '0',
+    lineHeight: '0',
+    fontSize: '0',
   },
   
   // === Tables ===
@@ -624,12 +630,15 @@ export const livePreviewTheme = EditorView.theme({
   },
   
   // Hidden lines for multi-line tables (when not editing)
+  // CRITICAL FIX: Use visibility instead of display:none to maintain document flow
   '.cm-table-hidden': {
-    display: 'none !important',
-    height: '0 !important',
-    overflow: 'hidden !important',
-    margin: '0 !important',
-    padding: '0 !important',
+    visibility: 'hidden',
+    height: '0',
+    overflow: 'hidden',
+    margin: '0',
+    padding: '0',
+    lineHeight: '0',
+    fontSize: '0',
   },
   
   // === Images ===
@@ -980,12 +989,15 @@ export const livePreviewTheme = EditorView.theme({
   },
   
   // Hidden lines for multi-line advanced blocks (details/callout when not editing)
+  // CRITICAL FIX: Use visibility instead of display:none to maintain document flow
   '.cm-advanced-block-hidden': {
-    display: 'none !important',
-    height: '0 !important',
-    overflow: 'hidden !important',
-    margin: '0 !important',
-    padding: '0 !important',
+    visibility: 'hidden',
+    height: '0',
+    overflow: 'hidden',
+    margin: '0',
+    padding: '0',
+    lineHeight: '0',
+    fontSize: '0',
   },
   
   // Source mode for new elements
