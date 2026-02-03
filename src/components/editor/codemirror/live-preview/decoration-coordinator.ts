@@ -1603,6 +1603,84 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
       continue;
     }
 
+    // 多行数学公式块需要特殊处理
+    if (element.type === ElementType.MATH_BLOCK && element.decorationData) {
+      const data = element.decorationData as any;
+
+      if (data.isEditingStyle) {
+        // 编辑模式：每行添加样式
+        entries.push({
+          from: element.from,
+          to: element.to,
+          decoration: Decoration.line({
+            class: 'cm-math-block-line cm-math-block-editing',
+          }),
+          priority: element.type,
+          isLine: true,
+        });
+      } else if (data.isMultiLine && element.startLine && element.endLine) {
+        // 多行公式块：widget + 隐藏行
+        // CRITICAL: Validate latex parameter
+        if (!element.latex || element.latex.trim() === '') {
+          console.warn('[buildDecorations] Empty latex for MATH_BLOCK at', element.from, element.to);
+          continue;
+        }
+
+        const doc = view.state.doc;
+        const firstLine = doc.line(element.startLine);
+
+        // 1. 在第一行添加widget
+        entries.push({
+          from: firstLine.from,
+          to: firstLine.from,
+          decoration: Decoration.widget({
+            widget: new MathWidget(
+              element.latex,
+              true, // isBlock
+              element.from,
+              element.to
+            ),
+            side: -1,
+          }),
+          priority: element.type,
+          isLine: true,
+        });
+
+        // 2. 隐藏所有公式块行
+        for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
+          const line = doc.line(lineNum);
+          entries.push({
+            from: line.from,
+            to: line.from,
+            decoration: Decoration.line({ class: 'cm-math-block-hidden' }),
+            priority: element.type,
+            isLine: true,
+          });
+        }
+      } else {
+        // 单行公式块
+        if (!element.latex || element.latex.trim() === '') {
+          console.warn('[buildDecorations] Empty latex for single-line MATH_BLOCK at', element.from, element.to);
+          continue;
+        }
+        entries.push({
+          from: element.from,
+          to: element.to,
+          decoration: Decoration.replace({
+            widget: new MathWidget(
+              element.latex,
+              true, // isBlock
+              element.from,
+              element.to
+            ),
+          }),
+          priority: element.type,
+          isLine: false,
+        });
+      }
+      continue;
+    }
+
     // 多行表格需要特殊处理
     if (element.type === ElementType.TABLE && element.decorationData) {
       const data = element.decorationData as any;

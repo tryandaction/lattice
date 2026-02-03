@@ -325,6 +325,14 @@ export const cursorContextPlugin = ViewPlugin.fromClass(
     }
 
     update(update: ViewUpdate) {
+      // CRITICAL FIX: Sync parsedElements from view to state
+      // The decoration coordinator stores elements on view._parsedElements
+      // but computeCursorContext needs them on state._parsedElements
+      const viewElements = (update.view as any)._parsedElements;
+      if (viewElements && viewElements.length > 0) {
+        (update.state as any)._parsedElements = viewElements;
+      }
+
       // Check if cursor context changed
       const newContext = update.state.field(cursorContextField, false) ?? null;
 

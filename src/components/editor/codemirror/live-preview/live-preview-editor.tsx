@@ -238,12 +238,15 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
   const onChangeRef = useRef(onChange);
   const onOutlineChangeRef = useRef(onOutlineChange);
   const onSaveRef = useRef(onSave);
-  
+  // Store content in ref for initialization (avoids content in dependency array)
+  const contentRef = useRef(content);
+
   useEffect(() => {
     onChangeRef.current = onChange;
     onOutlineChangeRef.current = onOutlineChange;
     onSaveRef.current = onSave;
-  }, [onChange, onOutlineChange, onSave]);
+    contentRef.current = content;
+  }, [onChange, onOutlineChange, onSave, content]);
 
   // Pre-load libraries before editor initialization
   useEffect(() => {
@@ -262,10 +265,13 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
   // CRITICAL: fileId is included in dependencies to force re-initialization on file switch
   useEffect(() => {
     if (!containerRef.current || !librariesLoaded) return;
-    
+
+    // Use contentRef to get current content without adding to dependencies
+    const initialContent = contentRef.current;
+
     console.log('[EditorInit] ===== INITIALIZING EDITOR =====');
     console.log('[EditorInit] fileId:', fileId);
-    console.log('[EditorInit] content length:', content.length);
+    console.log('[EditorInit] content length:', initialContent.length);
     console.log('[EditorInit] mode:', mode);
     
     let mounted = true;
@@ -306,31 +312,45 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           highContrast
         );
         
-        console.log('[EditorInit] Extensions built, creating state with content length:', content.length);
-        
+        console.log('[EditorInit] Extensions built, creating state with content length:', initialContent.length);
+
         // Create state with the current content
+        // CRITICAL: Set initial selection to position 0 to prevent select-all behavior
         const state = EditorState.create({
-          doc: content,
+          doc: initialContent,
           extensions,
+          selection: { anchor: 0, head: 0 }, // Cursor at start, no selection
         });
-        
+
         // Create view
         const view = new EditorView({
           state,
           parent: containerRef.current,
         });
-        
+
         viewRef.current = view;
+
+        // CRITICAL: Ensure cursor is at position 0 after view creation
+        // This prevents any browser-induced select-all behavior
+        requestAnimationFrame(() => {
+          if (viewRef.current) {
+            viewRef.current.dispatch({
+              selection: { anchor: 0, head: 0 },
+              scrollIntoView: false,
+            });
+          }
+        });
+
         console.log('[EditorInit] View created successfully');
-        
+
         // Add accessibility description
         if (containerRef.current) {
           addEditorDescription(containerRef.current);
         }
-        
+
         // Initial outline
         if (onOutlineChangeRef.current) {
-          const headings = parseHeadings(content);
+          const headings = parseHeadings(initialContent);
           const outline = buildOutlineTree(headings);
           onOutlineChangeRef.current(outline);
         }
@@ -354,7 +374,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         viewRef.current = null;
       }
     };
-  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, fileId, onImageUpload, useWikiImageStyle, highContrast, content]); // Add content to force re-init on file switch
+  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, fileId, onImageUpload, useWikiImageStyle, highContrast]); // fileId triggers re-init on file switch, content is handled by separate useEffect
 
   // Update content when it changes externally (but fileId change triggers re-init above)
   useEffect(() => {
