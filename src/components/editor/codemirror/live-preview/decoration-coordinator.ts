@@ -264,24 +264,62 @@ export const parsedElementsField = StateField.define<ParsedElement[]>({
 /**
  * 预编译的正则表达式缓存
  * 避免每次解析时重新创建正则对象
+ *
+ * CRITICAL: Order matters for conflict resolution:
+ * 1. boldItalic (***) must be checked before bold (**) and italic (*)
+ * 2. strikethrough (~~) must be checked before subscript (~)
+ * 3. Escape sequences (\*) should be handled
  */
 const REGEX_PATTERNS = {
+  // Inline math: $...$ (not $$)
   inlineMath: /(?<!\$)\$(?!\$)(.+?)\$(?!\$)/g,
-  boldItalic: /\*\*\*([^*]+?)\*\*\*/g,
-  bold: /\*\*([^*]+?)\*\*/g,
-  italic: /(?<!\*)\*(?!\*)([^*]+?)\*(?!\*)|(?<!_)_(?!_)([^_]+?)_(?!_)/g,
-  strikethrough: /~~([^~]+?)~~/g,
-  highlight: /==([^=]+?)==/g,
+
+  // Bold+Italic: ***text*** - allows nested content
+  boldItalic: /\*\*\*(.+?)\*\*\*/g,
+
+  // Bold: **text** - allows nested content, but not ***
+  bold: /(?<!\*)\*\*(?!\*)(.+?)(?<!\*)\*\*(?!\*)/g,
+
+  // Italic: *text* or _text_ - negative lookbehind/ahead to avoid ** and __
+  italic: /(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)|(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/g,
+
+  // Strikethrough: ~~text~~ - must be checked before subscript
+  strikethrough: /~~(.+?)~~/g,
+
+  // Highlight: ==text==
+  highlight: /==(.+?)==/g,
+
+  // Inline code: `text` - no nesting allowed
   inlineCode: /`([^`]+?)`/g,
+
+  // Annotation link: [[file.pdf#ann-uuid]]
   annotationLink: /\[\[([^\]]+?\.pdf)#(ann-[^\]]+?)\]\]/gi,
+
+  // Wiki link: [[page]] or [[page|display]]
   wikiLink: /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g,
+
+  // Markdown link: [text](url)
   link: /\[([^\]]+?)\]\(([^)]+?)\)/g,
+
+  // Embed: ![[file]]
   embed: /!\[\[([^\]]+?)\]\]/g,
+
+  // Image: ![alt](url) or ![alt|width](url)
   image: /!\[([^\]]*?)(?:\|(\d+))?\]\(([^)]+?)\)/g,
+
+  // Superscript: ^text^ - not inside math
   superscript: /\^([^^]+?)\^/g,
-  subscript: /~([^~]+?)~/g,
+
+  // Subscript: ~text~ - negative lookbehind/ahead to avoid ~~
+  subscript: /(?<!~)~(?!~)([^~]+?)(?<!~)~(?!~)/g,
+
+  // Keyboard: <kbd>text</kbd>
   kbd: /<kbd>([^<]+?)<\/kbd>/g,
+
+  // Footnote reference: [^1]
   footnote: /\[\^([^\]]+?)\]/g,
+
+  // Tag: #tag
   tag: /#([a-zA-Z][a-zA-Z0-9_/-]*)/g,
 };
 
@@ -308,8 +346,11 @@ function resetRegexPatterns(): void {
  * ```
  *
  * 性能优化：接收预先分割的lines数组，避免重复split
+ *
+ * @param lines - 文档按行分割的数组
+ * @param docLength - 文档总长度，用于边界检查
  */
-function parseCodeBlocks(lines: string[]): CodeBlockMatch[] {
+function parseCodeBlocks(lines: string[], docLength?: number): CodeBlockMatch[] {
   const blocks: CodeBlockMatch[] = [];
   let offset = 0;
   let inBlock = false;
@@ -332,9 +373,11 @@ function parseCodeBlocks(lines: string[]): CodeBlockMatch[] {
       blockStartLine = i + 1; // 行号从1开始
     } else if (inBlock && line === '```') {
       // 代码块结束
+      // CRITICAL FIX: Ensure 'to' doesn't exceed document length
+      const blockTo = docLength !== undefined ? Math.min(lineEnd, docLength) : lineEnd;
       blocks.push({
         from: blockStart,
-        to: lineEnd,
+        to: blockTo,
         language: blockLang,
         code: blockCode.join('\n'),
         startLine: blockStartLine,
@@ -360,8 +403,11 @@ function parseCodeBlocks(lines: string[]): CodeBlockMatch[] {
  * $$
  *
  * 性能优化：接收预先分割的lines数组，避免重复split
+ *
+ * @param lines - 文档按行分割的数组
+ * @param docLength - 文档总长度，用于边界检查
  */
-function parseMathBlocks(lines: string[]): MathBlockMatch[] {
+function parseMathBlocks(lines: string[], docLength?: number): MathBlockMatch[] {
   const blocks: MathBlockMatch[] = [];
   let offset = 0;
   let inBlock = false;
@@ -379,9 +425,11 @@ function parseMathBlocks(lines: string[]): MathBlockMatch[] {
     if (inlineBlockMatch && !inBlock) {
       const latex = inlineBlockMatch[1].trim();
       if (latex && latex !== 'undefined') {
+        // CRITICAL FIX: Ensure 'to' doesn't exceed document length
+        const blockTo = docLength !== undefined ? Math.min(lineEnd, docLength) : lineEnd;
         blocks.push({
           from: lineStart,
-          to: lineEnd,
+          to: blockTo,
           latex: latex,
           startLine: i + 1,
           endLine: i + 1,
@@ -404,9 +452,11 @@ function parseMathBlocks(lines: string[]): MathBlockMatch[] {
       // PHASE 4 FIX: Validate latex content
       const latex = blockLatex.join('\n');
       if (latex.trim() !== '' && latex.trim() !== 'undefined') {
+        // CRITICAL FIX: Ensure 'to' doesn't exceed document length
+        const blockTo = docLength !== undefined ? Math.min(lineEnd, docLength) : lineEnd;
         blocks.push({
           from: blockStart,
-          to: lineEnd,
+          to: blockTo,
           latex: latex,
           startLine: blockStartLine,
           endLine: i + 1,
@@ -434,8 +484,11 @@ function parseMathBlocks(lines: string[]): MathBlockMatch[] {
  * | Cell 1   | Cell 2   |
  *
  * 性能优化：接收预先分割的lines数组，避免重复split
+ *
+ * @param lines - 文档按行分割的数组
+ * @param docLength - 文档总长度，用于边界检查
  */
-function parseTables(lines: string[]): TableMatch[] {
+function parseTables(lines: string[], docLength?: number): TableMatch[] {
   const tables: TableMatch[] = [];
   let offset = 0;
   let tableStart = -1;
@@ -474,9 +527,11 @@ function parseTables(lines: string[]): TableMatch[] {
     } else if (tableStart !== -1) {
       // 表格结束
       if (tableRows.length >= 2) {
+        // CRITICAL FIX: Ensure 'to' doesn't exceed document length
+        const tableTo = docLength !== undefined ? Math.min(offset - 1, docLength) : offset - 1;
         tables.push({
           from: tableStart,
-          to: offset - 1, // 上一行结束
+          to: tableTo,
           rows: tableRows,
           hasHeader,
           startLine: tableStartLine,
@@ -493,9 +548,13 @@ function parseTables(lines: string[]): TableMatch[] {
 
   // 处理文档末尾的表格
   if (tableStart !== -1 && tableRows.length >= 2) {
+    // CRITICAL FIX: For tables at document end, calculate correct 'to' position
+    // offset - 1 might exceed document length if document doesn't end with newline
+    const lastLineEnd = offset - 1;
+    const tableTo = docLength !== undefined ? Math.min(lastLineEnd, docLength) : lastLineEnd;
     tables.push({
       from: tableStart,
-      to: offset - 1,
+      to: tableTo,
       rows: tableRows,
       hasHeader,
       startLine: tableStartLine,
@@ -538,7 +597,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   const occupiedLines = new Set<number>();
 
   // 1. 先解析所有代码块（多行块级元素）
-  const codeBlocks = parseCodeBlocks(lines);
+  const codeBlocks = parseCodeBlocks(lines, doc.length);
   debugLog('[parseDocument] Found', codeBlocks.length, 'code blocks');
 
   for (const block of codeBlocks) {
@@ -590,7 +649,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   }
 
   // 2. 解析所有数学公式块（多行块级元素）
-  const mathBlocks = parseMathBlocks(lines);
+  const mathBlocks = parseMathBlocks(lines, doc.length);
   debugLog('[parseDocument] Found', mathBlocks.length, 'math blocks');
 
   for (const block of mathBlocks) {
@@ -641,7 +700,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   }
 
   // 3. 解析所有表格（多行块级元素）
-  const tables = parseTables(lines);
+  const tables = parseTables(lines, doc.length);
   debugLog('[parseDocument] Found', tables.length, 'tables');
 
   for (const table of tables) {
@@ -1428,7 +1487,43 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
   debugLog('[buildDecorations] Input elements:', elements.length);
   debugLog('[buildDecorations] Doc lines:', view.state.doc.lines, 'Doc length:', view.state.doc.length);
 
+  const docLength = view.state.doc.length;
+
   for (const element of elements) {
+    // CRITICAL FIX: Validate element range to prevent truncation and errors
+    if (element.from < 0 || element.to < 0) {
+      debugLog('[buildDecorations] Skipping element with negative range:', element.from, element.to);
+      skippedCount++;
+      continue;
+    }
+
+    if (element.from > element.to) {
+      debugLog('[buildDecorations] Skipping element with invalid range (from > to):', element.from, element.to);
+      skippedCount++;
+      continue;
+    }
+
+    // CRITICAL FIX: Clamp element range to document bounds instead of skipping
+    // This ensures elements at the end of the document are still rendered
+    const safeFrom = Math.min(element.from, docLength);
+    const safeTo = Math.min(element.to, docLength);
+
+    if (safeFrom !== element.from || safeTo !== element.to) {
+      debugLog('[buildDecorations] Clamped element range:', element.from, '->', safeFrom, element.to, '->', safeTo);
+      // Update element range for this iteration
+      element.from = safeFrom;
+      element.to = safeTo;
+    }
+
+    // Skip empty ranges (can happen after clamping)
+    if (safeFrom === safeTo && element.type !== ElementType.HEADING &&
+        element.type !== ElementType.BLOCKQUOTE && element.type !== ElementType.LIST_ITEM) {
+      // Line decorations (HEADING, BLOCKQUOTE, LIST_ITEM) can have from === to
+      debugLog('[buildDecorations] Skipping empty range after clamping');
+      skippedCount++;
+      continue;
+    }
+
     // Element-level reveal check: Skip decoration if cursor is in this element
     // This enables Obsidian-style granular reveal (e.g., only reveal the bold text, not the whole line)
     if (shouldRevealAt(view.state, element.from, element.to, element.type)) {
@@ -2063,7 +2158,6 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
 export function clearDecorationCache(): void {
   debugLog('[Cache] Clearing decoration cache');
   lineElementCache.clear();
-}ineElementCache.clear();
 }
 
 /**

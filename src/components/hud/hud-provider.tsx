@@ -324,10 +324,11 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
     enabled,
   });
 
-  // 符号插入处理
+  // 符号插入处理 - 支持 MathLive、Tiptap 和 CodeMirror
   const handleInsertSymbol = useCallback((latex: string) => {
+    // Priority 1: Active MathLive math-field
     const mf = getActiveMathField();
-    
+
     if (mf) {
       // 有活动的 math-field，直接插入
       try {
@@ -337,16 +338,64 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
         });
         return;
       } catch (e) {
-        console.error('[HUD] 插入失败:', e);
+        console.error('[HUD] MathLive 插入失败:', e);
         setActiveMathField(null);
       }
     }
-    
-    // 没有活动的 math-field，在当前位置创建新的
+
+    // Priority 2: Check for CodeMirror editor (Markdown editor)
+    const cmEditor = document.querySelector('.cm-editor.cm-focused') as HTMLElement;
+    if (cmEditor) {
+      const cmContent = cmEditor.querySelector('.cm-content');
+      if (cmContent) {
+        const view = (cmContent as any).cmView?.view;
+        if (view) {
+          try {
+            const { from, to } = view.state.selection.main;
+            // Insert LaTeX wrapped in $ delimiters for inline math
+            const wrappedLatex = `$${latex}$`;
+            view.dispatch({
+              changes: { from, to, insert: wrappedLatex },
+              selection: { anchor: from + wrappedLatex.length },
+            });
+            console.log('[HUD] CodeMirror 插入成功:', latex);
+            return;
+          } catch (e) {
+            console.error('[HUD] CodeMirror 插入失败:', e);
+          }
+        }
+      }
+    }
+
+    // Priority 3: Check for any focused CodeMirror (not necessarily .cm-focused)
+    const activeElement = document.activeElement;
+    if (activeElement?.closest('.cm-editor')) {
+      const cmEditorEl = activeElement.closest('.cm-editor') as HTMLElement;
+      const cmContent = cmEditorEl?.querySelector('.cm-content');
+      if (cmContent) {
+        const view = (cmContent as any).cmView?.view;
+        if (view) {
+          try {
+            const { from, to } = view.state.selection.main;
+            const wrappedLatex = `$${latex}$`;
+            view.dispatch({
+              changes: { from, to, insert: wrappedLatex },
+              selection: { anchor: from + wrappedLatex.length },
+            });
+            console.log('[HUD] CodeMirror (active) 插入成功:', latex);
+            return;
+          } catch (e) {
+            console.error('[HUD] CodeMirror (active) 插入失败:', e);
+          }
+        }
+      }
+    }
+
+    // Priority 4: Tiptap editor - 在当前位置创建新的 math-field
     if (globalTiptapEditor && !globalTiptapEditor.isDestroyed) {
       const pos = currentInsertPosition;
-      console.log('[HUD] 在新位置创建公式:', pos);
-      
+      console.log('[HUD] 在 Tiptap 新位置创建公式:', pos);
+
       createMathLiveAtPosition(globalTiptapEditor, pos).then((newMf) => {
         if (newMf) {
           newMf.insert(latex, {

@@ -437,4 +437,214 @@ export const ExportUtils = {
   exportMarkdown,
   exportHTML,
   exportPDF,
+  exportLatex,
+  copyToClipboard,
+  copyAsFormat,
 };
+
+// ============================================================================
+// 4. LaTeX Export
+// ============================================================================
+
+/**
+ * Convert markdown to LaTeX
+ */
+export function exportLatex(content: string, options: ExportOptions = {}): void {
+  const filename = options.filename || 'document.tex';
+  const latexContent = convertMarkdownToLatex(content);
+
+  // Create blob and download
+  const blob = new Blob([latexContent], { type: 'application/x-latex;charset=utf-8' });
+  downloadBlob(blob, filename);
+}
+
+/**
+ * Convert markdown syntax to LaTeX
+ */
+function convertMarkdownToLatex(markdown: string): string {
+  let latex = markdown;
+
+  // Remove frontmatter
+  latex = latex.replace(/^---\n[\s\S]*?\n---\n/, '');
+
+  // Convert headings
+  latex = latex.replace(/^######\s+(.*)$/gm, '\\subparagraph{$1}');
+  latex = latex.replace(/^#####\s+(.*)$/gm, '\\paragraph{$1}');
+  latex = latex.replace(/^####\s+(.*)$/gm, '\\subsubsection{$1}');
+  latex = latex.replace(/^###\s+(.*)$/gm, '\\subsection{$1}');
+  latex = latex.replace(/^##\s+(.*)$/gm, '\\section{$1}');
+  latex = latex.replace(/^#\s+(.*)$/gm, '\\chapter{$1}');
+
+  // Convert bold and italic
+  latex = latex.replace(/\*\*\*(.+?)\*\*\*/g, '\\textbf{\\textit{$1}}');
+  latex = latex.replace(/\*\*(.+?)\*\*/g, '\\textbf{$1}');
+  latex = latex.replace(/\*(.+?)\*/g, '\\textit{$1}');
+  latex = latex.replace(/_(.+?)_/g, '\\textit{$1}');
+
+  // Convert strikethrough (requires ulem package)
+  latex = latex.replace(/~~(.+?)~~/g, '\\sout{$1}');
+
+  // Convert inline code
+  latex = latex.replace(/`([^`]+)`/g, '\\texttt{$1}');
+
+  // Convert code blocks
+  latex = latex.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const language = lang || 'text';
+    return `\\begin{lstlisting}[language=${language}]\n${code}\\end{lstlisting}`;
+  });
+
+  // Convert block quotes
+  latex = latex.replace(/^>\s+(.*)$/gm, '\\begin{quote}\n$1\n\\end{quote}');
+
+  // Convert links
+  latex = latex.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '\\href{$2}{$1}');
+
+  // Convert wiki links
+  latex = latex.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (_, target, alias) => {
+    const displayText = alias || target;
+    return `\\hyperref[${target}]{${displayText}}`;
+  });
+
+  // Convert images
+  latex = latex.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, url) => {
+    return `\\begin{figure}[h]\n\\centering\n\\includegraphics{${url}}\n\\caption{${alt}}\n\\end{figure}`;
+  });
+
+  // Convert horizontal rules
+  latex = latex.replace(/^[-*_]{3,}$/gm, '\\hrulefill');
+
+  // Convert block math: $$...$$ -> \[...\]
+  latex = latex.replace(/\$\$\n?([\s\S]*?)\n?\$\$/g, '\\[\n$1\n\\]');
+
+  // Escape special LaTeX characters (except in math mode and already converted)
+  // This is simplified - a full implementation would track context
+  latex = latex.replace(/(?<!\\)&(?![a-z]+;)/g, '\\&');
+  latex = latex.replace(/(?<!\\)%/g, '\\%');
+
+  // Wrap in document structure
+  return `\\documentclass{article}
+\\usepackage[utf8]{inputenc}
+\\usepackage{amsmath}
+\\usepackage{amssymb}
+\\usepackage{hyperref}
+\\usepackage{graphicx}
+\\usepackage{listings}
+\\usepackage[normalem]{ulem}
+
+\\begin{document}
+
+${latex}
+
+\\end{document}`;
+}
+
+// ============================================================================
+// 5. Clipboard Utilities
+// ============================================================================
+
+/**
+ * Copy content to clipboard
+ */
+export async function copyToClipboard(content: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(content);
+    return true;
+  } catch (err) {
+    console.error('Failed to copy to clipboard:', err);
+
+    // Fallback for older browsers
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = content;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * Copy content in a specific format
+ */
+export async function copyAsFormat(
+  content: string,
+  format: 'markdown' | 'latex' | 'html' | 'plaintext'
+): Promise<boolean> {
+  let exportedContent: string;
+
+  switch (format) {
+    case 'markdown':
+      exportedContent = content;
+      break;
+    case 'latex':
+      exportedContent = convertMarkdownToLatex(content);
+      break;
+    case 'html':
+      exportedContent = convertMarkdownToHTML(content);
+      break;
+    case 'plaintext':
+      exportedContent = convertMarkdownToPlainText(content);
+      break;
+    default:
+      exportedContent = content;
+  }
+
+  return copyToClipboard(exportedContent);
+}
+
+/**
+ * Convert markdown to plain text
+ */
+function convertMarkdownToPlainText(markdown: string): string {
+  let text = markdown;
+
+  // Remove frontmatter
+  text = text.replace(/^---\n[\s\S]*?\n---\n/, '');
+
+  // Remove heading markers
+  text = text.replace(/^#{1,6}\s+/gm, '');
+
+  // Remove bold/italic markers
+  text = text.replace(/\*\*\*(.+?)\*\*\*/g, '$1');
+  text = text.replace(/\*\*(.+?)\*\*/g, '$1');
+  text = text.replace(/\*(.+?)\*/g, '$1');
+  text = text.replace(/_(.+?)_/g, '$1');
+
+  // Remove strikethrough
+  text = text.replace(/~~(.+?)~~/g, '$1');
+
+  // Remove highlight
+  text = text.replace(/==(.+?)==/g, '$1');
+
+  // Remove inline code markers
+  text = text.replace(/`([^`]+)`/g, '$1');
+
+  // Remove code block markers
+  text = text.replace(/```\w*\n([\s\S]*?)```/g, '$1');
+
+  // Remove block quote markers
+  text = text.replace(/^>\s+/gm, '');
+
+  // Convert links to text
+  text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+
+  // Convert wiki links to text
+  text = text.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (_, target, alias) => {
+    return alias || target;
+  });
+
+  // Remove images
+  text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, '[$1]');
+
+  // Remove math delimiters
+  text = text.replace(/\$\$\n?([\s\S]*?)\n?\$\$/g, '$1');
+  text = text.replace(/\$([^$]+)\$/g, '$1');
+
+  return text;
+}

@@ -59,25 +59,51 @@ function createInitialContext(): CursorContext {
 }
 
 /**
- * Find the element at a given position
- * Uses binary search for efficiency with large element arrays
+ * Find all elements at a given position
+ * Returns all elements that contain the position (for nested elements)
  *
  * @param pos - Cursor position to check
- * @param elements - Array of parsed elements (must be sorted by position)
- * @returns The element containing the position, or null if not found
+ * @param elements - Array of parsed elements
+ * @returns Array of elements containing the position
+ */
+function findElementsAtPosition(
+  pos: number,
+  elements: ParsedElement[]
+): ParsedElement[] {
+  const result: ParsedElement[] = [];
+  for (const element of elements) {
+    if (pos >= element.from && pos <= element.to) {
+      result.push(element);
+    }
+  }
+  return result;
+}
+
+/**
+ * Find the innermost element at a given position
+ * For nested elements, returns the smallest (most specific) one
+ *
+ * @param pos - Cursor position to check
+ * @param elements - Array of parsed elements
+ * @returns The innermost element containing the position, or null if not found
  */
 function findElementAtPosition(
   pos: number,
   elements: ParsedElement[]
 ): ParsedElement | null {
-  // Linear search for now (can optimize to binary search if needed)
-  // Elements are typically not sorted, so binary search wouldn't help
+  let innermost: ParsedElement | null = null;
+  let smallestSize = Infinity;
+
   for (const element of elements) {
     if (pos >= element.from && pos <= element.to) {
-      return element;
+      const size = element.to - element.from;
+      if (size < smallestSize) {
+        smallestSize = size;
+        innermost = element;
+      }
     }
   }
-  return null;
+  return innermost;
 }
 
 /**
@@ -106,12 +132,13 @@ function computeCursorContext(state: EditorState): CursorContext {
     // Field not available yet
   }
 
-  // Find element at cursor position
-  const cursorElement = findElementAtPosition(cursorPos, parsedElements);
+  // CRITICAL FIX: Find ALL elements at cursor position (for nested elements)
+  // This ensures that when cursor is in **bold *italic* bold**, both bold and italic are revealed
+  const cursorElements = findElementsAtPosition(cursorPos, parsedElements);
 
-  // Add cursor element to reveal set
-  if (cursorElement) {
-    const elementKey = `${cursorElement.type}:${cursorElement.from}:${cursorElement.to}`;
+  // Add all cursor elements to reveal set
+  for (const element of cursorElements) {
+    const elementKey = `${element.type}:${element.from}:${element.to}`;
     revealElements.add(elementKey);
   }
 
@@ -141,10 +168,10 @@ function computeCursorContext(state: EditorState): CursorContext {
     const line = state.doc.lineAt(range.head).number;
     revealLines.add(line);
 
-    // Find element at each cursor
-    const rangeElement = findElementAtPosition(range.head, parsedElements);
-    if (rangeElement) {
-      const elementKey = `${rangeElement.type}:${rangeElement.from}:${rangeElement.to}`;
+    // CRITICAL FIX: Find ALL elements at each cursor (for nested elements)
+    const rangeElements = findElementsAtPosition(range.head, parsedElements);
+    for (const element of rangeElements) {
+      const elementKey = `${element.type}:${element.from}:${element.to}`;
       revealElements.add(elementKey);
     }
 
@@ -164,6 +191,9 @@ function computeCursorContext(state: EditorState): CursorContext {
       }
     }
   }
+
+  // Get the innermost element for backward compatibility
+  const cursorElement = findElementAtPosition(cursorPos, parsedElements);
 
   return {
     cursorPos,

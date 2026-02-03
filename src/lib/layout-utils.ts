@@ -500,6 +500,12 @@ export function removeTabFromPane(
     newActiveIndex = Math.max(0, pane.activeTabIndex - 1);
   }
 
+  // CRITICAL FIX: Ensure newActiveIndex doesn't exceed newTabs bounds
+  // This can happen when removing the last tab while it's active
+  if (newTabs.length > 0) {
+    newActiveIndex = Math.min(newActiveIndex, newTabs.length - 1);
+  }
+
   return updatePaneTabs(root, paneId, newTabs, newActiveIndex);
 }
 
