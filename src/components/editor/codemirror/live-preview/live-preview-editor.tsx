@@ -25,6 +25,7 @@ import { autoFormattingExtension } from './auto-formatting';
 import { livePreviewThemeExtension } from './live-preview-theme';
 import { wikiLinkAutocomplete, updateAvailableFiles } from './wiki-link-autocomplete';
 import { createImageDropExtension, ImageUploadHandler } from './image-drop-plugin';
+import { createMathPasteExtension } from './math-paste-plugin';
 import { createAccessibilityExtension, addEditorDescription, announceChange } from './accessibility';
 import type { ViewMode, OutlineItem } from './types';
 import { parseHeadings, buildOutlineTree } from './markdown-parser';
@@ -179,12 +180,14 @@ function buildExtensions(
       autoFormattingExtension,
       closeBrackets(),
       ...wikiLinkAutocomplete,
+      createMathPasteExtension(),
       createImageDropExtension(onImageUpload, useWikiImageStyle)
     );
   } else if (mode === 'source') {
     // Source mode: just syntax highlighting, no decorations
     extensions.push(
       closeBrackets(),
+      createMathPasteExtension(),
       createImageDropExtension(onImageUpload, useWikiImageStyle)
     );
   } else if (mode === 'reading') {

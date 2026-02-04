@@ -1,15 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
-import { ExplorerSidebar } from "@/components/explorer/explorer-sidebar";
-import { MainArea } from "@/components/main-area/main-area";
 import { DndProvider } from "@/components/dnd/dnd-provider";
-import { MobileSidebar, MobileSidebarTrigger } from "@/components/layout/mobile-sidebar";
 import { ResponsiveProvider, useResponsive } from "@/contexts/responsive-context";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -17,15 +15,51 @@ import { useUnsavedWarning } from "@/hooks/use-unsaved-warning";
 import { useTheme } from "@/hooks/use-theme";
 import { useI18n } from "@/hooks/use-i18n";
 import { useAutoOpenFolder } from "@/hooks/use-auto-open-folder";
-import { DownloadAppDialog } from "@/components/ui/download-app-dialog";
-import { SettingsDialog } from "@/components/settings/settings-dialog";
-import { OnboardingWizard } from "@/components/onboarding/onboarding-wizard";
-import { ExportToastContainer } from "@/components/ui/export-toast";
 import { isTauri } from "@/lib/storage-adapter";
 import { setLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { TOUCH_TARGET_MIN } from "@/lib/responsive";
 import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft } from "lucide-react";
+
+const ExplorerSidebar = dynamic(
+  () => import("@/components/explorer/explorer-sidebar").then((mod) => mod.ExplorerSidebar),
+  { ssr: false }
+);
+
+const MainArea = dynamic(
+  () => import("@/components/main-area/main-area").then((mod) => mod.MainArea),
+  { ssr: false }
+);
+
+const MobileSidebar = dynamic(
+  () => import("@/components/layout/mobile-sidebar").then((mod) => mod.MobileSidebar),
+  { ssr: false }
+);
+
+const MobileSidebarTrigger = dynamic(
+  () => import("@/components/layout/mobile-sidebar").then((mod) => mod.MobileSidebarTrigger),
+  { ssr: false }
+);
+
+const DownloadAppDialog = dynamic(
+  () => import("@/components/ui/download-app-dialog").then((mod) => mod.DownloadAppDialog),
+  { ssr: false }
+);
+
+const SettingsDialog = dynamic(
+  () => import("@/components/settings/settings-dialog").then((mod) => mod.SettingsDialog),
+  { ssr: false }
+);
+
+const OnboardingWizard = dynamic(
+  () => import("@/components/onboarding/onboarding-wizard").then((mod) => mod.OnboardingWizard),
+  { ssr: false }
+);
+
+const ExportToastContainer = dynamic(
+  () => import("@/components/ui/export-toast").then((mod) => mod.ExportToastContainer),
+  { ssr: false }
+);
 
 /**
  * Main application layout with responsive support

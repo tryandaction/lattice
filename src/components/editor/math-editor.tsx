@@ -18,6 +18,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { MathfieldElement } from 'mathlive';
 import { MathSymbolPalette } from './math-symbol-palette';
 import { getTemplateByPrefix, insertTemplate, searchTemplates, type MathTemplate } from '@/lib/math-templates';
+import { copyToClipboard } from '@/lib/export-utils';
+import { formatFormulaForClipboard, normalizeFormulaInput } from '@/lib/formula-utils';
 
 export interface MathEditorProps {
   /** Initial LaTeX content */
@@ -56,6 +58,7 @@ export function MathEditor({
   const mathfieldRef = useRef<MathfieldElement | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showSymbolPalette, setShowSymbolPalette] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<'markdown' | 'latex' | null>(null);
   const [templateSuggestion, setTemplateSuggestion] = useState<{
     key: string;
     template: MathTemplate;
@@ -177,6 +180,19 @@ export function MathEditor({
     onCancel();
   };
 
+  const handleCopy = async (format: 'markdown' | 'latex') => {
+    const raw = mathfieldRef.current?.value ?? initialLatex;
+    const normalized = normalizeFormulaInput(raw, { preferDisplay: isBlock });
+    const displayMode = isBlock || normalized.displayMode;
+    const payload = formatFormulaForClipboard(normalized.latex, format, displayMode);
+    if (!payload) return;
+    const success = await copyToClipboard(payload);
+    if (success) {
+      setCopyStatus(format);
+      setTimeout(() => setCopyStatus(null), 1200);
+    }
+  };
+
   // Handle click outside to cancel
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -264,6 +280,22 @@ export function MathEditor({
             title="Toggle symbol palette (Ctrl+Shift+M)"
           >
             Σ Symbols
+          </button>
+          <button
+            onClick={() => handleCopy('markdown')}
+            className="math-editor-button math-editor-button-secondary"
+            disabled={isLoading}
+            title="Copy as Markdown"
+          >
+            {copyStatus === 'markdown' ? 'Copied MD' : 'Copy MD'}
+          </button>
+          <button
+            onClick={() => handleCopy('latex')}
+            className="math-editor-button math-editor-button-secondary"
+            disabled={isLoading}
+            title="Copy as LaTeX"
+          >
+            {copyStatus === 'latex' ? 'Copied LaTeX' : 'Copy LaTeX'}
           </button>
           <div style={{ flex: 1 }} />
           <button

@@ -7,8 +7,8 @@
 
 import { ViewPlugin, ViewUpdate, EditorView } from '@codemirror/view';
 import { StateField, StateEffect, EditorState } from '@codemirror/state';
-import type { ParsedElement, ElementType } from './decoration-coordinator';
-import { parsedElementsField } from './decoration-coordinator';
+import { parsedElementsField, ElementType } from './decoration-coordinator';
+import type { ParsedElement } from './decoration-coordinator';
 
 /**
  * State effect to update cursor context

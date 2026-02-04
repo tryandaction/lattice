@@ -27,6 +27,8 @@
 
 ### 开发参考
 - **[AI_DEVELOPMENT_GUIDE.md](AI_DEVELOPMENT_GUIDE.md)** - AI开发指南
+- **[docs/guides/math-system.md](docs/guides/math-system.md)** - 数学公式系统指南
+- **[docs/guides/github-deploy.md](docs/guides/github-deploy.md)** - GitHub部署指南
 - **[CHANGELOG.md](CHANGELOG.md)** - 更新日志
 
 ---
@@ -72,6 +74,8 @@
 2. [EXPORT_INTEGRATION_GUIDE.md](EXPORT_INTEGRATION_GUIDE.md) - 功能集成
 3. [AI_DEVELOPMENT_GUIDE.md](AI_DEVELOPMENT_GUIDE.md) - AI开发
 4. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - 架构设计
+5. [docs/guides/math-system.md](docs/guides/math-system.md) - 数学公式系统
+6. [docs/guides/github-deploy.md](docs/guides/github-deploy.md) - GitHub部署
 
 ### 项目经理
 1. [FINAL_REPORT.md](FINAL_REPORT.md) - 最终报告
@@ -96,6 +100,8 @@ lattice/
 │   ├── USER_GUIDE.md                  # 用户指南
 │   ├── ARCHITECTURE.md                # 架构设计
 │   ├── guides/                        # 指南
+│   │   ├── math-system.md             # 数学公式系统
+│   │   ├── github-deploy.md           # GitHub部署
 │   ├── fixes/                         # 修复记录
 │   └── tests/                         # 测试文档
 └── public/                             # 测试文件

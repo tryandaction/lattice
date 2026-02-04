@@ -10,6 +10,7 @@
  */
 
 import { EditorView } from '@codemirror/view';
+import { normalizeFormulaInput, wrapLatexForMarkdown } from '@/lib/formula-utils';
 
 // ============================================================================
 // Types
@@ -412,11 +413,30 @@ export function insertTextAtCursor(text: string): boolean {
 /**
  * Insert LaTeX at the current cursor position in the active input
  */
-export function insertLatexAtCursor(latex: string): boolean {
+export function insertLatexAtCursor(
+  latex: string,
+  options: { displayMode?: boolean; format?: 'latex' | 'markdown' } = {}
+): boolean {
   const target = getActiveInputTarget() || getLastActiveInputTarget();
   if (!target) return false;
 
-  target.insertLatex(latex);
+  const normalized = normalizeFormulaInput(latex, { preferDisplay: options.displayMode });
+  const displayMode = options.displayMode ?? normalized.displayMode;
+
+  if (target.type === 'mathlive') {
+    target.insertLatex(normalized.latex);
+    return true;
+  }
+
+  const format = options.format ?? 'markdown';
+  if (format === 'markdown') {
+    const wrapped = wrapLatexForMarkdown(normalized.latex, displayMode);
+    if (!wrapped) return false;
+    target.insertText(wrapped);
+    return true;
+  }
+
+  target.insertText(normalized.latex);
   return true;
 }
 

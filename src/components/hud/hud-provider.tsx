@@ -331,7 +331,7 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
   // 符号插入处理 - 支持 MathLive、Tiptap 和 CodeMirror
   const handleInsertSymbol = useCallback((latex: string) => {
     // Unified input handling (CodeMirror / MathLive / textarea)
-    if (insertLatexAtCursor(latex)) {
+    if (insertLatexAtCursor(latex, { format: 'markdown' })) {
       return;
     }
 

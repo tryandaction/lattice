@@ -95,6 +95,9 @@ export function PaneWrapper({
     }
 
     const currentTabId = activeTab.id;
+    const isLoadingOtherTab =
+      loadingTabIdRef.current !== null &&
+      loadingTabIdRef.current !== currentTabId;
     
     console.log('[PaneWrapper] ===== TAB CHANGE DETECTED =====');
     console.log('[PaneWrapper] PaneId:', paneId);
@@ -102,9 +105,23 @@ export function PaneWrapper({
     console.log('[PaneWrapper] Loaded tab ID:', loadedTabIdRef.current);
     console.log('[PaneWrapper] File name:', activeTab.fileName);
     
-    // Same tab already loaded - no need to reload
-    if (loadedTabIdRef.current === currentTabId) {
-      console.log('[PaneWrapper] Same tab already loaded, skipping');
+    // If another tab is still loading, cancel its updates to prevent stale content
+    if (isLoadingOtherTab) {
+      console.log('[PaneWrapper] Cancelling in-flight load for tab:', loadingTabIdRef.current);
+      loadingTabIdRef.current = null;
+      setIsLoading(false);
+    }
+
+    const hasLoadedCurrent = loadedTabIdRef.current === currentTabId;
+    const hasContent = content !== null;
+    const isLoadingCurrent = loadingTabIdRef.current === currentTabId;
+
+    // Same tab already loaded with content and no active load - no need to reload
+    if (hasLoadedCurrent && hasContent && !isLoadingCurrent) {
+      if (error) {
+        setError(null);
+      }
+      console.log('[PaneWrapper] Same tab already loaded with content, skipping');
       return;
     }
 
@@ -126,6 +143,12 @@ export function PaneWrapper({
     }
 
     console.log('[PaneWrapper] No cache found, loading from file...');
+
+    // If we're already loading this tab, avoid duplicate loads
+    if (isLoadingCurrent) {
+      console.log('[PaneWrapper] Already loading this tab, skipping duplicate load');
+      return;
+    }
 
     // PRIORITY 2: No cache - load from file
     // Mark this tab as loading to prevent race conditions
@@ -191,6 +214,8 @@ export function PaneWrapper({
     activeTab?.id,
     activeTab?.fileHandle,
     paneId, // CRITICAL: Add paneId to detect pane changes
+    content,
+    error,
     getContentFromCache,
     setContentToCache,
   ]);

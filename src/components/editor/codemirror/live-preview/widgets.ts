@@ -991,7 +991,7 @@ export class MathWidget extends WidgetType {
     container.dataset.from = String(this.from);
     container.dataset.to = String(this.to);
     container.dataset.latex = this.latex; // 存储LaTeX用于复制功能
-    container.title = `${this.isBlock ? 'Block' : 'Inline'} formula: Click to edit, Right-click to copy LaTeX`;
+    container.title = `${this.isBlock ? 'Block' : 'Inline'} formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX`;
 
     // CRITICAL: Validate latex to prevent "undefined" rendering
     if (!this.latex || this.latex === 'undefined') {
@@ -1037,14 +1037,21 @@ export class MathWidget extends WidgetType {
       e.preventDefault();
       e.stopPropagation();
 
-      const latexSource = this.isBlock ? `$$${this.latex}$$` : `$${this.latex}$`;
+      const copyAsLatex = e.shiftKey || e.altKey;
+      const latexSource = copyAsLatex
+        ? this.latex
+        : this.isBlock
+          ? `$$${this.latex}$$`
+          : `$${this.latex}$`;
 
       try {
         await navigator.clipboard.writeText(latexSource);
 
         // 视觉反馈
         const originalTitle = container.title;
-        container.title = '✓ LaTeX copied to clipboard!';
+        container.title = copyAsLatex
+          ? '✓ LaTeX copied to clipboard!'
+          : '✓ Markdown formula copied!';
         container.style.backgroundColor = 'rgba(34, 197, 94, 0.1)'; // 绿色提示
 
         setTimeout(() => {
@@ -1055,7 +1062,7 @@ export class MathWidget extends WidgetType {
         console.error('Failed to copy LaTeX:', err);
         container.title = '✗ Failed to copy';
         setTimeout(() => {
-          container.title = `${this.isBlock ? 'Block' : 'Inline'} formula: Click to edit, Right-click to copy LaTeX`;
+          container.title = `${this.isBlock ? 'Block' : 'Inline'} formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX`;
         }, 1500);
       }
     });

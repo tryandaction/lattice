@@ -13,6 +13,7 @@
  */
 
 import katex from 'katex';
+import { getKaTeXOptions } from '@/lib/katex-config';
 
 // ============================================================================
 // SECTION 1: HTML TO MARKDOWN CONVERSION
@@ -783,21 +784,6 @@ export {
 // KATEX RENDERING WITH FALLBACK
 // ============================================================================
 
-const KATEX_OPTIONS = {
-  throwOnError: false,
-  strict: false,
-  trust: true,
-  output: 'html' as const,
-  macros: {
-    "\\R": "\\mathbb{R}",
-    "\\N": "\\mathbb{N}",
-    "\\Z": "\\mathbb{Z}",
-    "\\Q": "\\mathbb{Q}",
-    "\\C": "\\mathbb{C}",
-    "\\eps": "\\varepsilon",
-  },
-};
-
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -817,8 +803,8 @@ export function renderLatex(latex: string, displayMode: boolean): string {
     processedLatex = processedLatex.replace(/(?<!\\)#(?!\d)/g, '\\#');
 
     return katex.renderToString(processedLatex, {
-      ...KATEX_OPTIONS,
-      displayMode,
+      ...getKaTeXOptions(displayMode),
+      output: 'html',
     });
   } catch (error) {
     console.warn('KaTeX render failed:', latex, error);

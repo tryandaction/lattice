@@ -903,6 +903,93 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
 }
 
 /**
+ * 诊断用途：从纯文本解析文档元素（不依赖 EditorView）
+ * - 不做光标 reveal 判断
+ * - 解析完整文档
+ */
+export function parseDocumentFromText(text: string): ParsedElement[] {
+  const elements: ParsedElement[] = [];
+  const lines = text.split('\n');
+  const doc = Text.of(lines);
+  const state = EditorState.create({ doc });
+
+  const codeBlocks = parseCodeBlocks(lines, doc.length);
+  const mathBlocks = parseMathBlocks(lines, doc.length);
+  const tables = parseTables(lines, doc.length);
+
+  const occupiedLines = new Set<number>();
+
+  for (const block of codeBlocks) {
+    elements.push({
+      type: ElementType.CODE_BLOCK,
+      from: block.from,
+      to: block.to,
+      lineNumber: block.startLine,
+      language: block.language,
+      content: block.code,
+      startLine: block.startLine,
+      endLine: block.endLine,
+      decorationData: {
+        isMultiLine: block.startLine !== block.endLine,
+        showLineNumbers: true,
+      },
+    });
+    for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
+      occupiedLines.add(lineNum);
+    }
+  }
+
+  for (const block of mathBlocks) {
+    elements.push({
+      type: ElementType.MATH_BLOCK,
+      from: block.from,
+      to: block.to,
+      lineNumber: block.startLine,
+      latex: block.latex,
+      isBlock: true,
+      startLine: block.startLine,
+      endLine: block.endLine,
+      decorationData: {
+        isMultiLine: block.startLine !== block.endLine,
+      },
+    });
+    for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
+      occupiedLines.add(lineNum);
+    }
+  }
+
+  for (const table of tables) {
+    elements.push({
+      type: ElementType.TABLE,
+      from: table.from,
+      to: table.to,
+      lineNumber: table.startLine,
+      startLine: table.startLine,
+      endLine: table.endLine,
+      decorationData: {
+        rows: table.rows,
+        hasHeader: table.hasHeader,
+        alignments: table.alignments,
+        isMultiLine: table.startLine !== table.endLine,
+      },
+    });
+    for (let lineNum = table.startLine; lineNum <= table.endLine; lineNum++) {
+      occupiedLines.add(lineNum);
+    }
+  }
+
+  for (let lineNum = 1; lineNum <= doc.lines; lineNum++) {
+    if (occupiedLines.has(lineNum)) continue;
+    const line = doc.line(lineNum);
+    const lineText = line.text;
+    const lineElements = parseLineElements(state, line, lineNum, lineText);
+    elements.push(...lineElements);
+  }
+
+  return elements;
+}
+
+/**
  * 解析单行元素
  *
  * 按优先级检测:
@@ -1993,8 +2080,10 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
           class: `cm-heading cm-heading-${data.level}`,
         });
       } else if (data?.isMarkerHide) {
-        // Replace decoration to hide # markers (Obsidian-style)
-        return Decoration.replace({});
+        // Hide heading markers via CSS (more robust than replace for start-of-line)
+        return Decoration.mark({
+          class: 'cm-hidden-syntax',
+        });
       }
       return null;
 
@@ -2042,11 +2131,6 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
       // 代码块在buildDecorationsFromElements中特殊处理
       // 这里不应该被调用
       return null;
-
-    case ElementType.MATH_BLOCK:
-      return Decoration.line({
-        class: 'cm-math-block-line',
-      });
 
     // ========================================================================
     // 行内元素 - 使用Widget替换
