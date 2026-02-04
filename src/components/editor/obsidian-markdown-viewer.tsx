@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
 import type { ViewMode, OutlineItem } from "./codemirror/live-preview/types";
 import type { LivePreviewEditorRef } from "./codemirror/live-preview/live-preview-editor";
+import { useContentCacheStore } from "@/stores/content-cache-store";
 
 // Lazy load components
 const LivePreviewEditor = dynamic(
@@ -152,6 +153,8 @@ export function ObsidianMarkdownViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<LivePreviewEditorRef>(null);
   const prevFileIdRef = useRef(fileId);
+  const saveEditorState = useContentCacheStore((state) => state.saveEditorState);
+  const getEditorState = useContentCacheStore((state) => state.getEditorState);
 
   // CRITICAL: Force content update when file changes
   // Use fileId instead of fileName for more reliable detection
@@ -162,6 +165,14 @@ export function ObsidianMarkdownViewer({
     console.log('[FileSwitch] Content length:', content.length, 'LocalContent length:', localContent.length, 'isDirty:', isDirty);
     
     if (currentFileId !== prevFileIdRef.current) {
+      const previousFileId = prevFileIdRef.current;
+      if (previousFileId) {
+        const editorState = editorRef.current?.getEditorState();
+        if (editorState) {
+          saveEditorState(previousFileId, editorState);
+        }
+      }
+
       // File changed - force update with loading state
       console.log('[FileSwitch] ===== FILE CHANGED =====');
       console.log('[FileSwitch] From:', prevFileIdRef.current, 'To:', currentFileId);
@@ -174,6 +185,11 @@ export function ObsidianMarkdownViewer({
       setSaveStatus('idle'); // Reset save status on file switch
       setOutline([]); // Clear outline
       setActiveHeading(undefined); // Clear active heading
+
+      const cachedState = getEditorState(currentFileId);
+      if (cachedState) {
+        editorRef.current?.restoreEditorState(cachedState);
+      }
       
       console.log('[FileSwitch] State reset complete - all cleared');
     } else if (content !== localContent && !isDirty) {
@@ -182,6 +198,17 @@ export function ObsidianMarkdownViewer({
       setLocalContent(content);
     }
   }, [content, fileName, fileId, localContent, isDirty]);
+
+  // Persist editor state on unmount
+  useEffect(() => {
+    return () => {
+      const currentFileId = fileId || fileName;
+      const editorState = editorRef.current?.getEditorState();
+      if (editorState) {
+        saveEditorState(currentFileId, editorState);
+      }
+    };
+  }, [fileId, fileName, saveEditorState]);
 
   // Handle content changes from editor
   const handleContentChange = useCallback((newContent: string) => {

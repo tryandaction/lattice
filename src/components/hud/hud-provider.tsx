@@ -15,6 +15,7 @@ import { useDoubleTap } from '../../hooks/use-double-tap';
 import { useHUDStore } from '../../stores/hud-store';
 import type { MathfieldElement } from 'mathlive';
 import type { Editor } from '@tiptap/react';
+import { insertLatexAtCursor, setActiveInputTargetFromElement } from '@/lib/unified-input-handler';
 
 export interface HUDProviderProps {
   children: React.ReactNode;
@@ -43,6 +44,9 @@ export function getActiveMathField(): MathfieldElement | null {
 
 export function setActiveMathField(mf: MathfieldElement | null): void {
   globalActiveMathField = mf;
+  if (mf) {
+    setActiveInputTargetFromElement(mf as unknown as HTMLElement);
+  }
   console.log('[HUD] 设置活动 math-field:', mf ? 'yes' : 'null');
 }
 
@@ -326,6 +330,11 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
 
   // 符号插入处理 - 支持 MathLive、Tiptap 和 CodeMirror
   const handleInsertSymbol = useCallback((latex: string) => {
+    // Unified input handling (CodeMirror / MathLive / textarea)
+    if (insertLatexAtCursor(latex)) {
+      return;
+    }
+
     // Priority 1: Active MathLive math-field
     const mf = getActiveMathField();
 

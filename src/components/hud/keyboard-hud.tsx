@@ -24,10 +24,18 @@ import {
   KEY_LABELS,
 } from '../../config/quantum-keymap';
 import { GripHorizontal, RotateCcw } from 'lucide-react';
+import { getActiveInputTarget, getLastActiveInputTarget, wrapSelectionWith } from '@/lib/unified-input-handler';
 
 export interface KeyboardHUDProps {
   onInsertSymbol: (latex: string) => void;
 }
+
+const MARKDOWN_SHORTCUTS: Record<string, { before: string; after: string }> = {
+  KeyB: { before: '**', after: '**' },
+  KeyI: { before: '*', after: '*' },
+  KeyK: { before: '[', after: '](url)' },
+  KeyE: { before: '`', after: '`' },
+};
 
 /**
  * Find and return the bounding rect of the current input target
@@ -526,6 +534,17 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
         closeSymbolSelector();
       } else {
         closeSymbolSelector();
+        return;
+      }
+    }
+
+    // Markdown shortcuts when editing non-math inputs
+    const activeTarget = getActiveInputTarget() || getLastActiveInputTarget();
+    if (activeTarget && activeTarget.type !== 'mathlive') {
+      const shortcut = MARKDOWN_SHORTCUTS[keyCode];
+      if (shortcut) {
+        event.preventDefault();
+        wrapSelectionWith(shortcut.before, shortcut.after);
         return;
       }
     }

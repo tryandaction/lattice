@@ -86,18 +86,53 @@ export class FormattedTextWidget extends WidgetType {
     span.dataset.elementFrom = String(this.elementFrom);
     span.dataset.elementTo = String(this.elementTo);
 
-    // Check if content contains inline math formulas
-    const mathRegex = /\$([^$\n]+)\$/g;
-    if (mathRegex.test(this.content)) {
-      // Content has math - render with KaTeX
-      this.renderContentWithMath(span, this.content);
-    } else {
-      // Plain text
+    // Render nested inline markdown for Obsidian-like nested formatting
+    // Inline code should stay literal (no nested parsing)
+    if (this.className.includes('cm-inline-code')) {
       span.textContent = this.content;
+    } else {
+      span.innerHTML = parseInlineMarkdown(this.content);
     }
 
-    // 处理点击 - 精确光标定位
+    // 处理点击 - 精确光标定位 + 内嵌链接行为
+    let lastClickTime = 0;
+    const DOUBLE_CLICK_THRESHOLD = 300;
+
     span.addEventListener('mousedown', (e) => {
+      const target = e.target as HTMLElement | null;
+      if (target && target.tagName === 'A') {
+        const isWikiLink = target.classList.contains('cm-wiki-link-table');
+        const isExternalLink = target.classList.contains('cm-link-table');
+        if (isWikiLink || isExternalLink) {
+          e.preventDefault();
+          e.stopPropagation();
+
+          const now = Date.now();
+          const isDoubleClick = now - lastClickTime < DOUBLE_CLICK_THRESHOLD;
+          lastClickTime = now;
+
+          if (e.ctrlKey || e.metaKey || isDoubleClick) {
+            if (isWikiLink) {
+              const linkTarget = target.dataset.target;
+              if (linkTarget) {
+                span.dispatchEvent(
+                  new CustomEvent('wiki-link-click', {
+                    detail: { target: linkTarget },
+                    bubbles: true,
+                  })
+                );
+              }
+            } else {
+              const href = target.getAttribute('href');
+              if (href) {
+                window.open(href, '_blank', 'noopener,noreferrer');
+              }
+            }
+            return;
+          }
+        }
+      }
+
       handleWidgetClick(view, span, e, this.contentFrom, this.contentTo);
     });
 
@@ -1257,6 +1292,15 @@ export class CodeBlockWidget extends WidgetType {
 function parseInlineMarkdown(text: string): string {
   let result = text;
 
+  // Protect escaped markdown symbols so they won't be parsed
+  const escapeMap = new Map<string, string>();
+  let escapeIndex = 0;
+  result = result.replace(/\\([\\`*_[\]{}()#+\-.!|$])/g, (_, ch: string) => {
+    const token = `@@ESC_${escapeIndex++}@@`;
+    escapeMap.set(token, ch);
+    return token;
+  });
+
   // 先转义HTML
   result = result
     .replace(/&/g, '&amp;')
@@ -1303,6 +1347,13 @@ function parseInlineMarkdown(text: string): string {
   // 普通链接: [text](url)
   result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a class="cm-link-table" href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 
+  // Restore escaped symbols
+  if (escapeMap.size > 0) {
+    for (const [token, value] of escapeMap) {
+      result = result.replace(new RegExp(token, 'g'), value);
+    }
+  }
+
   return result;
 }
 
@@ -1320,6 +1371,7 @@ export class TableWidget extends WidgetType {
   constructor(
     private rows: string[][],
     private hasHeader: boolean,
+    private alignments: Array<'left' | 'center' | 'right' | null> = [],
     private from: number = 0,
     private to: number = 0
   ) {
@@ -1383,10 +1435,14 @@ export class TableWidget extends WidgetType {
 
       const tr = document.createElement('tr');
 
-      row.forEach((cell) => {
+      row.forEach((cell, colIndex) => {
         const cellEl = document.createElement(
           this.hasHeader && rowIndex === 0 ? 'th' : 'td'
         );
+        const alignment = this.alignments[colIndex];
+        if (alignment) {
+          cellEl.style.textAlign = alignment;
+        }
         // 解析并渲染单元格中的行内Markdown
         const cellContent = cell.trim();
         cellEl.innerHTML = parseInlineMarkdown(cellContent);

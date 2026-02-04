@@ -374,6 +374,31 @@ export function setActiveInputTarget(target: UnifiedInputTarget | null): void {
 }
 
 /**
+ * Set active input target from a specific element
+ * Useful when focus is managed externally (e.g., HUD input focus)
+ */
+export function setActiveInputTargetFromElement(element: HTMLElement): UnifiedInputTarget | null {
+  if (!element) return null;
+
+  const type = detectInputType(element);
+  if (!type) {
+    const mathField = element.closest('math-field') as HTMLElement | null;
+    if (mathField) {
+      return setActiveInputTargetFromElement(mathField);
+    }
+    const cmEditor = element.closest('.cm-editor') as HTMLElement | null;
+    if (cmEditor) {
+      return setActiveInputTargetFromElement(cmEditor);
+    }
+    return null;
+  }
+
+  const target = createInputTarget(element, type);
+  setActiveInputTarget(target);
+  return target;
+}
+
+/**
  * Insert text at the current cursor position in the active input
  */
 export function insertTextAtCursor(text: string): boolean {

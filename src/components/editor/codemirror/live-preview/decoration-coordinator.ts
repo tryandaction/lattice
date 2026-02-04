@@ -35,7 +35,7 @@
  */
 
 import { EditorView, ViewUpdate, ViewPlugin, DecorationSet, Decoration } from '@codemirror/view';
-import { EditorState, RangeSet, StateField, StateEffect } from '@codemirror/state';
+import { EditorState, RangeSet, StateField, StateEffect, Text } from '@codemirror/state';
 import { shouldRevealLine, shouldRevealAt } from './cursor-context-plugin';
 import {
   FormattedTextWidget,
@@ -159,6 +159,7 @@ interface TableMatch {
   to: number;
   rows: string[][];
   hasHeader: boolean;
+  alignments?: Array<'left' | 'center' | 'right' | null>;
   startLine: number;
   endLine: number;
 }
@@ -224,6 +225,20 @@ class LRUCache<K, V> {
 
 // 全局缓存实例
 const lineElementCache = new LRUCache<string, ParsedElement[]>(2000);
+
+// ============================================================================
+// Performance thresholds & cached parsing
+// ============================================================================
+
+const LARGE_DOC_LINE_THRESHOLD = 800;
+const VIEWPORT_LINE_BUFFER = 120;
+
+let cachedDoc: Text | null = null;
+let cachedText: string = '';
+let cachedLines: string[] = [];
+let cachedCodeBlocks: CodeBlockMatch[] = [];
+let cachedMathBlocks: MathBlockMatch[] = [];
+let cachedTables: TableMatch[] = [];
 
 // ============================================================================
 // StateField - 存储解析后的元素供其他插件使用
@@ -494,6 +509,7 @@ function parseTables(lines: string[], docLength?: number): TableMatch[] {
   let tableStart = -1;
   let tableRows: string[][] = [];
   let hasHeader = false;
+  let tableAlignments: Array<'left' | 'center' | 'right' | null> | null = null;
   let tableStartLine = 0;
 
   for (let i = 0; i < lines.length; i++) {
@@ -520,9 +536,18 @@ function parseTables(lines: string[], docLength?: number): TableMatch[] {
 
       tableRows.push(cells);
 
-      // 检查表头分隔符
+      // 检查表头分隔符 + 对齐符号
       if (isSeparator && tableRows.length === 2) {
         hasHeader = true;
+        tableAlignments = cells.map(cell => {
+          const trimmed = cell.trim();
+          const startsWithColon = trimmed.startsWith(':');
+          const endsWithColon = trimmed.endsWith(':');
+          if (startsWithColon && endsWithColon) return 'center';
+          if (startsWithColon) return 'left';
+          if (endsWithColon) return 'right';
+          return null;
+        });
       }
     } else if (tableStart !== -1) {
       // 表格结束
@@ -534,6 +559,7 @@ function parseTables(lines: string[], docLength?: number): TableMatch[] {
           to: tableTo,
           rows: tableRows,
           hasHeader,
+          alignments: tableAlignments ?? undefined,
           startLine: tableStartLine,
           endLine: i, // 当前行号（表格结束的下一行）
         });
@@ -541,6 +567,7 @@ function parseTables(lines: string[], docLength?: number): TableMatch[] {
       tableStart = -1;
       tableRows = [];
       hasHeader = false;
+      tableAlignments = null;
     }
 
     offset = lineEnd + 1; // +1 for newline
@@ -557,12 +584,50 @@ function parseTables(lines: string[], docLength?: number): TableMatch[] {
       to: tableTo,
       rows: tableRows,
       hasHeader,
+      alignments: tableAlignments ?? undefined,
       startLine: tableStartLine,
       endLine: lines.length,
     });
   }
 
   return tables;
+}
+
+function shouldUseViewport(view: EditorView): boolean {
+  return view.state.doc.lines > LARGE_DOC_LINE_THRESHOLD;
+}
+
+function ensureCachedDocument(doc: Text): {
+  text: string;
+  lines: string[];
+  codeBlocks: CodeBlockMatch[];
+  mathBlocks: MathBlockMatch[];
+  tables: TableMatch[];
+} {
+  if (cachedDoc === doc) {
+    return {
+      text: cachedText,
+      lines: cachedLines,
+      codeBlocks: cachedCodeBlocks,
+      mathBlocks: cachedMathBlocks,
+      tables: cachedTables,
+    };
+  }
+
+  cachedDoc = doc;
+  cachedText = doc.toString();
+  cachedLines = cachedText.split('\n');
+  cachedCodeBlocks = parseCodeBlocks(cachedLines, doc.length);
+  cachedMathBlocks = parseMathBlocks(cachedLines, doc.length);
+  cachedTables = parseTables(cachedLines, doc.length);
+
+  return {
+    text: cachedText,
+    lines: cachedLines,
+    codeBlocks: cachedCodeBlocks,
+    mathBlocks: cachedMathBlocks,
+    tables: cachedTables,
+  };
 }
 
 /**
@@ -587,17 +652,20 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   debugLog('[parseDocument] ViewportOnly:', viewportOnly);
   debugLog('[parseDocument] VisibleRanges:', visibleRanges.map(r => ({ from: r.from, to: r.to })));
 
-  // 性能优化：只调用一次 toString() 和 split()
-  const text = doc.toString();
-  const lines = text.split('\n');
-  
+  // 性能优化：缓存全文解析结果（仅在 docChanged 时更新）
+  const cached = ensureCachedDocument(doc);
+  const text = cached.text;
+  const lines = cached.lines;
+  const codeBlocks = cached.codeBlocks;
+  const mathBlocks = cached.mathBlocks;
+  const tables = cached.tables;
+
   debugLog('[parseDocument] Text length:', text.length, 'Lines array length:', lines.length);
 
   // 用于标记已被块级元素占用的行
   const occupiedLines = new Set<number>();
 
   // 1. 先解析所有代码块（多行块级元素）
-  const codeBlocks = parseCodeBlocks(lines, doc.length);
   debugLog('[parseDocument] Found', codeBlocks.length, 'code blocks');
 
   for (const block of codeBlocks) {
@@ -649,7 +717,6 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   }
 
   // 2. 解析所有数学公式块（多行块级元素）
-  const mathBlocks = parseMathBlocks(lines, doc.length);
   debugLog('[parseDocument] Found', mathBlocks.length, 'math blocks');
 
   for (const block of mathBlocks) {
@@ -700,7 +767,6 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   }
 
   // 3. 解析所有表格（多行块级元素）
-  const tables = parseTables(lines, doc.length);
   debugLog('[parseDocument] Found', tables.length, 'tables');
 
   for (const table of tables) {
@@ -724,6 +790,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
         decorationData: {
           rows: table.rows,
           hasHeader: table.hasHeader,
+          alignments: table.alignments,
           isMultiLine: table.startLine !== table.endLine,
         },
       });
@@ -753,7 +820,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   // 3. 逐行解析其他元素（跳过已占用的行）
   // CRITICAL FIX: Ensure we parse the entire document
   // Always parse full document to avoid truncation issues
-  const ranges = viewportOnly
+  const ranges = viewportOnly && visibleRanges.length > 0
     ? visibleRanges
     : [{ from: 0, to: doc.length }];
 
@@ -762,6 +829,8 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   debugLog('[parseDocument] Ranges:', ranges.map(r => ({ from: r.from, to: r.to })));
   debugLog('[parseDocument] Using viewportOnly:', viewportOnly);
   debugLog('[parseDocument] Document length:', doc.length, 'Last line:', doc.lines);
+
+  const processedLines = new Set<number>();
 
   for (const range of ranges) {
     // CRITICAL FIX: Ensure range.to doesn't exceed document length
@@ -776,10 +845,19 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
     const startLine = doc.lineAt(range.from);
     const endLine = doc.lineAt(safeTo);
 
-    debugLog('[parseDocument] Processing range - startLine:', startLine.number, 'endLine:', endLine.number, 'total lines to process:', endLine.number - startLine.number + 1);
+    const bufferedStart = viewportOnly
+      ? Math.max(1, startLine.number - VIEWPORT_LINE_BUFFER)
+      : startLine.number;
+    const bufferedEnd = viewportOnly
+      ? Math.min(doc.lines, endLine.number + VIEWPORT_LINE_BUFFER)
+      : endLine.number;
+
+    debugLog('[parseDocument] Processing range - startLine:', bufferedStart, 'endLine:', bufferedEnd, 'total lines to process:', bufferedEnd - bufferedStart + 1);
 
     // CRITICAL FIX: Ensure we process ALL lines including the last one
-    for (let lineNum = startLine.number; lineNum <= endLine.number; lineNum++) {
+    for (let lineNum = bufferedStart; lineNum <= bufferedEnd; lineNum++) {
+      if (processedLines.has(lineNum)) continue;
+      processedLines.add(lineNum);
       // 跳过已被块级元素占用的行
       if (occupiedLines.has(lineNum)) {
         if (DEBUG_MODE) {
@@ -993,8 +1071,26 @@ function parseInlineElements(
   // 重置所有正则表达式的lastIndex
   resetRegexPatterns();
 
+  const isEscaped = (text: string, index: number): boolean => {
+    let backslashes = 0;
+    for (let i = index - 1; i >= 0 && text[i] === '\\'; i--) {
+      backslashes++;
+    }
+    return backslashes % 2 === 1;
+  };
+
+  const shouldSkipMatch = (startIndex: number, endMarkerIndex?: number): boolean => {
+    if (isEscaped(lineText, startIndex)) return true;
+    if (endMarkerIndex !== undefined && isEscaped(lineText, endMarkerIndex)) return true;
+    return false;
+  };
+
   // 1. 行内公式: $...$
   while ((match = REGEX_PATTERNS.inlineMath.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    const endMarkerIndex = match.index + match[0].length - 1;
+    if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
+
     const latex = match[1];
     if (latex.includes('\n')) continue;
     
@@ -1022,6 +1118,10 @@ function parseInlineElements(
 
   // 2. 粗体+斜体: ***...***
   while ((match = REGEX_PATTERNS.boldItalic.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    const endMarkerIndex = match.index + match[0].length - 3;
+    if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
+
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -1040,6 +1140,10 @@ function parseInlineElements(
 
   // 3. 粗体: **...**
   while ((match = REGEX_PATTERNS.bold.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    const endMarkerIndex = match.index + match[0].length - 2;
+    if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
+
     // CRITICAL: Ensure we capture the entire **text** including markers
     const fullMatch = match[0]; // e.g., "**bold**"
     const content = match[1];   // e.g., "bold"
@@ -1071,6 +1175,10 @@ function parseInlineElements(
 
   // 4. 斜体: *...* 或 _..._
   while ((match = REGEX_PATTERNS.italic.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    const endMarkerIndex = match.index + match[0].length - 1;
+    if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
+
     const content = match[1] || match[2];
     const fullMatch = match[0]; // e.g., "*italic*" or "_italic_"
     
@@ -1101,6 +1209,10 @@ function parseInlineElements(
 
   // 5. 删除线: ~~...~~
   while ((match = REGEX_PATTERNS.strikethrough.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    const endMarkerIndex = match.index + match[0].length - 2;
+    if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
+
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -1119,6 +1231,10 @@ function parseInlineElements(
 
   // 6. 高亮: ==...==
   while ((match = REGEX_PATTERNS.highlight.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    const endMarkerIndex = match.index + match[0].length - 2;
+    if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
+
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -1137,6 +1253,10 @@ function parseInlineElements(
 
   // 7. 行内代码: `...`
   while ((match = REGEX_PATTERNS.inlineCode.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    const endMarkerIndex = match.index + match[0].length - 1;
+    if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
+
     const fullMatch = match[0]; // e.g., "`code`"
     const content = match[1];   // e.g., "code"
     
@@ -1167,6 +1287,8 @@ function parseInlineElements(
 
   // 8. 批注链接: [[file.pdf#ann-uuid]]
   while ((match = REGEX_PATTERNS.annotationLink.exec(lineText)) !== null) {
+    if (shouldSkipMatch(match.index)) continue;
+
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -1188,6 +1310,8 @@ function parseInlineElements(
 
   // 9. Wiki链接: [[page]] or [[page|display]]
   while ((match = REGEX_PATTERNS.wikiLink.exec(lineText)) !== null) {
+    if (shouldSkipMatch(match.index)) continue;
+
     const target = match[1];
     const displayText = match[2] || match[1];
     
@@ -1220,6 +1344,8 @@ function parseInlineElements(
 
   // 10. Markdown链接: [text](url)
   while ((match = REGEX_PATTERNS.link.exec(lineText)) !== null) {
+    if (shouldSkipMatch(match.index)) continue;
+
     // PHASE 3 FIX: Validate range to prevent text duplication
     const from = lineFrom + match.index;
     const to = lineFrom + match.index + match[0].length;
@@ -1249,6 +1375,8 @@ function parseInlineElements(
 
   // 11. 嵌入: ![[file]]
   while ((match = REGEX_PATTERNS.embed.exec(lineText)) !== null) {
+    if (shouldSkipMatch(match.index)) continue;
+
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -1269,6 +1397,8 @@ function parseInlineElements(
 
   // 12. 图片: ![alt](url) or ![alt|width](url)
   while ((match = REGEX_PATTERNS.image.exec(lineText)) !== null) {
+    if (shouldSkipMatch(match.index)) continue;
+
     // PHASE 3 FIX: Validate range to prevent text duplication
     const from = lineFrom + match.index;
     const to = lineFrom + match.index + match[0].length;
@@ -1299,6 +1429,10 @@ function parseInlineElements(
 
   // 13. 上标: ^text^
   while ((match = REGEX_PATTERNS.superscript.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    const endMarkerIndex = match.index + match[0].length - 1;
+    if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
+
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -1317,6 +1451,10 @@ function parseInlineElements(
 
   // 14. 下标: ~text~
   while ((match = REGEX_PATTERNS.subscript.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    const endMarkerIndex = match.index + match[0].length - 1;
+    if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
+
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -1335,6 +1473,8 @@ function parseInlineElements(
 
   // 15. 键盘按键: <kbd>text</kbd>
   while ((match = REGEX_PATTERNS.kbd.exec(lineText)) !== null) {
+    if (shouldSkipMatch(match.index)) continue;
+
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -1353,6 +1493,8 @@ function parseInlineElements(
 
   // 16. 脚注引用: [^1]
   while ((match = REGEX_PATTERNS.footnote.exec(lineText)) !== null) {
+    if (shouldSkipMatch(match.index)) continue;
+
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
@@ -1372,6 +1514,8 @@ function parseInlineElements(
 
   // 17. 标签: #tag
   while ((match = REGEX_PATTERNS.tag.exec(lineText)) !== null) {
+    if (shouldSkipMatch(match.index)) continue;
+
     elements.push({
       type: ElementType.INLINE_TAG,
       from: lineFrom + match.index,
@@ -1405,6 +1549,11 @@ function parseInlineElements(
  */
 export function resolveConflicts(elements: ParsedElement[]): ParsedElement[] {
   if (elements.length === 0) return elements;
+
+  const NO_NESTING_TYPES = new Set<ElementType>([
+    ElementType.INLINE_CODE,
+    ElementType.MATH_INLINE,
+  ]);
 
   // 按优先级排序 (低到高，这样后面的会覆盖前面的)
   const sorted = [...elements].sort((a, b) => {
@@ -1445,6 +1594,15 @@ export function resolveConflicts(elements: ParsedElement[]): ParsedElement[] {
         );
 
         if (isParentChild) {
+          // Inline code / inline math should not contain nested elements
+          if (other.from <= current.from && other.to >= current.to && NO_NESTING_TYPES.has(other.type)) {
+            shouldKeep = false;
+            covered[i] = true;
+            break;
+          }
+          if (current.from <= other.from && current.to >= other.to && NO_NESTING_TYPES.has(current.type)) {
+            covered[j] = true;
+          }
           // Keep both - this is nesting (e.g., **$E=mc^2$**)
           continue;
         }
@@ -1525,8 +1683,13 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
     }
 
     // Element-level reveal check: Skip decoration if cursor is in this element
-    // This enables Obsidian-style granular reveal (e.g., only reveal the bold text, not the whole line)
-    if (shouldRevealAt(view.state, element.from, element.to, element.type)) {
+    // Keep line/editing styles even when revealing syntax markers
+    const reveal = shouldRevealAt(view.state, element.from, element.to, element.type);
+    const data = element.decorationData as any;
+    const isLineStyle = data?.isLineStyle === true;
+    const isEditingStyle = data?.isEditingStyle === true;
+
+    if (reveal && !isLineStyle && !isEditingStyle) {
       skippedCount++;
       continue; // Skip this element - show raw markdown instead
     }
@@ -1709,6 +1872,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
             widget: new TableWidget(
               data.rows || [],
               data.hasHeader !== false,
+              data.alignments || [],
               element.from,
               element.to
             ),
@@ -1738,6 +1902,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
             widget: new TableWidget(
               data.rows || [],
               data.hasHeader !== false,
+              data.alignments || [],
               element.from,
               element.to
             ),
@@ -2182,12 +2347,16 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
       // CRITICAL PERFORMANCE FIX:
       // Only rebuild decorations when:
       // 1. Document content changed (docChanged)
-      // 2. Selection moved to a different line (affects reveal state)
+      // 2. Viewport changed for large documents (viewportChanged)
+      // 3. Selection moved to a different line (affects reveal state)
 
       if (update.docChanged) {
         // Document changed - must rebuild
         this.decorations = this.buildDecorations(update.view);
         this.lastSelectionLine = update.view.state.doc.lineAt(update.view.state.selection.main.head).number;
+      } else if (update.viewportChanged && shouldUseViewport(update.view)) {
+        // Large document viewport changed - rebuild visible decorations
+        this.decorations = this.buildDecorations(update.view);
       } else if (update.selectionSet) {
         // Selection changed - only rebuild if it moved to a different line
         const currentLine = update.view.state.doc.lineAt(update.view.state.selection.main.head).number;
@@ -2196,13 +2365,12 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
           this.lastSelectionLine = currentLine;
         }
       }
-      // Note: Removed viewportChanged rebuild - viewport optimization in parseDocument handles this
     }
 
     private buildDecorations(view: EditorView): DecorationSet {
       // 1. 解析文档 (解析全文档以确保完整渲染)
-      // CRITICAL FIX: Always pass false to ensure full document parsing
-      const elements = parseDocument(view, false);
+      // For large documents, only parse viewport + buffer for inline elements
+      const elements = parseDocument(view, shouldUseViewport(view));
 
       // DEBUG: Log document info
       debugLog('[Decoration] ===== BUILD DECORATIONS =====');
@@ -2236,6 +2404,12 @@ export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
 export function clearDecorationCache(): void {
   debugLog('[Cache] Clearing decoration cache');
   lineElementCache.clear();
+  cachedDoc = null;
+  cachedText = '';
+  cachedLines = [];
+  cachedCodeBlocks = [];
+  cachedMathBlocks = [];
+  cachedTables = [];
 }
 
 /**

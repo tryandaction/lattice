@@ -264,6 +264,33 @@ export function shouldRevealAt(
 
     const selection = state.selection.main;
 
+    // Line-level reveal for block markers (heading/blockquote/list/hr/callout/details)
+    // Allows showing syntax markers when cursor is anywhere on the same line.
+    if (elementType !== undefined) {
+      const revealByLine =
+        elementType === ElementType.HEADING ||
+        elementType === ElementType.BLOCKQUOTE ||
+        elementType === ElementType.LIST_ITEM ||
+        elementType === ElementType.HORIZONTAL_RULE ||
+        elementType === ElementType.CALLOUT ||
+        elementType === ElementType.DETAILS;
+
+      if (revealByLine) {
+        const elementLine = state.doc.lineAt(from).number;
+        const cursorLine = state.doc.lineAt(selection.head).number;
+        if (cursorLine === elementLine) {
+          return true;
+        }
+        if (!selection.empty) {
+          const fromLine = state.doc.lineAt(selection.from).number;
+          const toLine = state.doc.lineAt(selection.to).number;
+          if (elementLine >= fromLine && elementLine <= toLine) {
+            return true;
+          }
+        }
+      }
+    }
+
     // Check if cursor is inside the range
     if (selection.head >= from && selection.head <= to) {
       return true;

@@ -17,6 +17,7 @@ import { defaultKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching } from "@codemirror/language";
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { academicThemeExtension } from "./academic-theme";
+import { registerCodeMirrorView, unregisterCodeMirrorView, setActiveInputTargetFromElement } from "@/lib/unified-input-handler";
 
 /**
  * Supported programming languages
@@ -303,6 +304,12 @@ function CodeEditorComponent({
         });
         
         viewRef.current = view;
+
+        // Register unified input target for CodeMirror integration
+        registerCodeMirrorView(view.dom, view);
+        const focusHandler = () => setActiveInputTargetFromElement(view.dom);
+        view.dom.addEventListener('focusin', focusHandler);
+        (view as any)._unifiedInputFocusHandler = focusHandler;
         setIsLoading(false);
         
       } catch (err) {
@@ -318,7 +325,13 @@ function CodeEditorComponent({
     return () => {
       mounted = false;
       if (viewRef.current) {
-        viewRef.current.destroy();
+        const existingView = viewRef.current;
+        const existingHandler = (existingView as any)._unifiedInputFocusHandler as (() => void) | undefined;
+        if (existingHandler) {
+          existingView.dom.removeEventListener('focusin', existingHandler);
+        }
+        unregisterCodeMirrorView(existingView.dom);
+        existingView.destroy();
         viewRef.current = null;
       }
     };

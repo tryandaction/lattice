@@ -29,6 +29,7 @@ import { createAccessibilityExtension, addEditorDescription, announceChange } fr
 import type { ViewMode, OutlineItem } from './types';
 import { parseHeadings, buildOutlineTree } from './markdown-parser';
 import { MathEditor } from '../../math-editor';
+import { registerCodeMirrorView, unregisterCodeMirrorView, setActiveInputTargetFromElement } from '@/lib/unified-input-handler';
 
 export interface LivePreviewEditorProps {
   /** Initial content */
@@ -66,11 +67,21 @@ export interface LivePreviewEditorProps {
 }
 
 /** Ref handle for LivePreviewEditor */
+export interface EditorStateSnapshot {
+  cursorPosition: number;
+  scrollTop: number;
+  selection?: { from: number; to: number };
+}
+
 export interface LivePreviewEditorRef {
   /** Scroll to a specific line number */
   scrollToLine: (lineNumber: number) => void;
   /** Focus the editor */
   focus: () => void;
+  /** Get current editor state for restoration */
+  getEditorState: () => EditorStateSnapshot | null;
+  /** Restore editor state (cursor/selection/scroll) */
+  restoreEditorState: (state: EditorStateSnapshot) => void;
 }
 
 /**
@@ -221,6 +232,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
   }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const pendingEditorStateRef = useRef<EditorStateSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [librariesLoaded, setLibrariesLoaded] = useState(false);
@@ -247,6 +259,37 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     onSaveRef.current = onSave;
     contentRef.current = content;
   }, [onChange, onOutlineChange, onSave, content]);
+
+  const applyEditorState = useCallback((state: EditorStateSnapshot) => {
+    const view = viewRef.current;
+    if (!view) {
+      pendingEditorStateRef.current = state;
+      return;
+    }
+
+    const selection = state.selection ?? {
+      from: state.cursorPosition,
+      to: state.cursorPosition,
+    };
+
+    view.dispatch({
+      selection: { anchor: selection.from, head: selection.to },
+      scrollIntoView: false,
+    });
+
+    view.scrollDOM.scrollTop = state.scrollTop ?? 0;
+  }, []);
+
+  const getEditorState = useCallback((): EditorStateSnapshot | null => {
+    const view = viewRef.current;
+    if (!view) return null;
+    const selection = view.state.selection.main;
+    return {
+      cursorPosition: selection.head,
+      scrollTop: view.scrollDOM.scrollTop,
+      selection: { from: selection.from, to: selection.to },
+    };
+  }, []);
 
   // Pre-load libraries before editor initialization
   useEffect(() => {
@@ -286,7 +329,13 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         // Destroy existing view
         if (viewRef.current) {
           console.log('[EditorInit] Destroying existing view');
-          viewRef.current.destroy();
+          const existingView = viewRef.current;
+          const existingHandler = (existingView as any)._unifiedInputFocusHandler as (() => void) | undefined;
+          if (existingHandler) {
+            existingView.dom.removeEventListener('focusin', existingHandler);
+          }
+          unregisterCodeMirrorView(existingView.dom);
+          existingView.destroy();
           viewRef.current = null;
         }
         
@@ -330,6 +379,12 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
 
         viewRef.current = view;
 
+        // Register unified input target for CodeMirror integration
+        registerCodeMirrorView(view.dom, view);
+        const focusHandler = () => setActiveInputTargetFromElement(view.dom);
+        view.dom.addEventListener('focusin', focusHandler);
+        (view as any)._unifiedInputFocusHandler = focusHandler;
+
         // CRITICAL: Ensure cursor is at position 0 after view creation
         // This prevents any browser-induced select-all behavior
         requestAnimationFrame(() => {
@@ -340,6 +395,13 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
             });
           }
         });
+
+        // Restore pending editor state if available
+        if (pendingEditorStateRef.current) {
+          const pending = pendingEditorStateRef.current;
+          pendingEditorStateRef.current = null;
+          requestAnimationFrame(() => applyEditorState(pending));
+        }
 
         console.log('[EditorInit] View created successfully');
 
@@ -370,7 +432,13 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
       mounted = false;
       if (viewRef.current) {
         console.log('[EditorInit] Cleanup: destroying view');
-        viewRef.current.destroy();
+        const existingView = viewRef.current;
+        const existingHandler = (existingView as any)._unifiedInputFocusHandler as (() => void) | undefined;
+        if (existingHandler) {
+          existingView.dom.removeEventListener('focusin', existingHandler);
+        }
+        unregisterCodeMirrorView(existingView.dom);
+        existingView.destroy();
         viewRef.current = null;
       }
     };
@@ -521,7 +589,9 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
   useImperativeHandle(ref, () => ({
     scrollToLine,
     focus,
-  }), [scrollToLine, focus]);
+    getEditorState,
+    restoreEditorState: applyEditorState,
+  }), [scrollToLine, focus, getEditorState, applyEditorState]);
 
   if (!librariesLoaded) {
     return (
