@@ -95,10 +95,21 @@ interface SplitRendererProps {
  * Split Renderer - renders ResizablePanelGroup with children
  */
 function SplitRenderer({ split, activePaneId }: SplitRendererProps) {
+  const resizePanes = useWorkspaceStore((state) => state.resizePanes);
+
+  const handleResize = useCallback(
+    (sizes: number[]) => {
+      resizePanes(split.id, sizes);
+    },
+    [resizePanes, split.id]
+  );
+
   return (
     <ResizablePanelGroup
       direction={split.direction}
       className="h-full w-full"
+      sizes={split.sizes}
+      onSizesChange={handleResize}
     >
       {split.children.map((child, index) => (
         <SplitChild
@@ -107,6 +118,7 @@ function SplitRenderer({ split, activePaneId }: SplitRendererProps) {
           size={split.sizes[index]}
           activePaneId={activePaneId}
           isLast={index === split.children.length - 1}
+          index={index}
         />
       ))}
     </ResizablePanelGroup>
@@ -118,12 +130,13 @@ interface SplitChildProps {
   size: number;
   activePaneId: PaneId;
   isLast: boolean;
+  index: number;
 }
 
 /**
  * Split Child - renders a single child in a split with handle
  */
-function SplitChild({ child, size, activePaneId, isLast }: SplitChildProps) {
+function SplitChild({ child, size, activePaneId, isLast, index }: SplitChildProps) {
   return (
     <>
       <ResizablePanel
@@ -133,7 +146,7 @@ function SplitChild({ child, size, activePaneId, isLast }: SplitChildProps) {
       >
         <LayoutRenderer node={child} activePaneId={activePaneId} />
       </ResizablePanel>
-      {!isLast && <ResizableHandle withHandle />}
+      {!isLast && <ResizableHandle withHandle index={index} />}
     </>
   );
 }

@@ -18,6 +18,8 @@ import { useQuantumCustomStore, getAllSymbolsForKey } from './quantum-custom-sto
 
 export type HUDMode = 'closed' | 'standard' | 'symbol-selector';
 export type HUDPosition = 'top' | 'bottom' | 'auto';
+export type InsertMode = 'inline' | 'block';
+export type InsertFormat = 'markdown' | 'latex';
 
 export interface HUDCoordinates {
   x: number;
@@ -41,6 +43,8 @@ export interface HUDState {
   activeMathFieldId: string | null;
   flashingKey: string | null;
   isEditMode: boolean;
+  insertMode: InsertMode;
+  insertFormat: InsertFormat;
   
   // Position state
   position: HUDPosition;
@@ -62,6 +66,10 @@ export interface HUDState {
   clearFlash: () => void;
   setEditMode: (editMode: boolean) => void;
   toggleEditMode: () => void;
+  setInsertMode: (mode: InsertMode) => void;
+  toggleInsertMode: () => void;
+  setInsertFormat: (format: InsertFormat) => void;
+  toggleInsertFormat: () => void;
   
   // Position actions
   setPosition: (position: HUDPosition) => void;
@@ -157,6 +165,8 @@ export const useHUDStore = create<HUDState>((set, get) => ({
   activeMathFieldId: null,
   flashingKey: null,
   isEditMode: false,
+  insertMode: 'inline',
+  insertFormat: 'markdown',
   
   // Position state
   position: 'auto',
@@ -267,6 +277,22 @@ export const useHUDStore = create<HUDState>((set, get) => ({
   
   toggleEditMode: () => {
     set((state) => ({ isEditMode: !state.isEditMode }));
+  },
+
+  setInsertMode: (mode) => {
+    set({ insertMode: mode });
+  },
+
+  toggleInsertMode: () => {
+    set((state) => ({ insertMode: state.insertMode === 'inline' ? 'block' : 'inline' }));
+  },
+
+  setInsertFormat: (format) => {
+    set({ insertFormat: format });
+  },
+
+  toggleInsertFormat: () => {
+    set((state) => ({ insertFormat: state.insertFormat === 'markdown' ? 'latex' : 'markdown' }));
   },
   
   // Position actions

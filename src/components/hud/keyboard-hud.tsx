@@ -81,6 +81,8 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const highlightedIndex = useHUDStore((state) => state.highlightedIndex);
   const flashingKey = useHUDStore((state) => state.flashingKey);
   const isEditMode = useHUDStore((state) => state.isEditMode);
+  const insertMode = useHUDStore((state) => state.insertMode);
+  const insertFormat = useHUDStore((state) => state.insertFormat);
   const customOffset = useHUDStore((state) => state.customOffset);
   const isDragging = useHUDStore((state) => state.isDragging);
   // Note: cursorPosition is managed in store, we use computeOptimalPosition instead
@@ -93,6 +95,8 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const selectSymbol = useHUDStore((state) => state.selectSymbol);
   const flashKey = useHUDStore((state) => state.flashKey);
   const toggleEditMode = useHUDStore((state) => state.toggleEditMode);
+  const setInsertMode = useHUDStore((state) => state.setInsertMode);
+  const setInsertFormat = useHUDStore((state) => state.setInsertFormat);
   const setCustomOffset = useHUDStore((state) => state.setCustomOffset);
   const setIsDragging = useHUDStore((state) => state.setIsDragging);
   const updateCursorPosition = useHUDStore((state) => state.updateCursorPosition);
@@ -731,6 +735,40 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
 
             {/* Content */}
             <div className="quantum-content">
+              <div className="quantum-controls">
+                <div className="quantum-toggle-group">
+                  <button
+                    type="button"
+                    className={`quantum-toggle ${insertMode === 'inline' ? 'active' : ''}`}
+                    onClick={() => setInsertMode('inline')}
+                  >
+                    行内
+                  </button>
+                  <button
+                    type="button"
+                    className={`quantum-toggle ${insertMode === 'block' ? 'active' : ''}`}
+                    onClick={() => setInsertMode('block')}
+                  >
+                    块级
+                  </button>
+                </div>
+                <div className="quantum-toggle-group">
+                  <button
+                    type="button"
+                    className={`quantum-toggle ${insertFormat === 'markdown' ? 'active' : ''}`}
+                    onClick={() => setInsertFormat('markdown')}
+                  >
+                    Markdown
+                  </button>
+                  <button
+                    type="button"
+                    className={`quantum-toggle ${insertFormat === 'latex' ? 'active' : ''}`}
+                    onClick={() => setInsertFormat('latex')}
+                  >
+                    LaTeX
+                  </button>
+                </div>
+              </div>
               <div className="quantum-mode-indicator">
                 {mode === 'symbol-selector' ? `◆ ${activeKeyLabel} 符号` : '∑ 量子键盘'}
               </div>

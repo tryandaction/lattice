@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 export interface TabProps {
   tab: TabState;
   isActive: boolean;
+  isPaneActive: boolean;
   index: number;
   paneId: PaneId;
   onClick: () => void;
@@ -27,6 +28,7 @@ export interface TabProps {
 export function Tab({
   tab,
   isActive,
+  isPaneActive,
   index,
   paneId,
   onClick,
@@ -86,7 +88,9 @@ export function Tab({
         "group flex h-8 min-w-0 max-w-[180px] cursor-pointer items-center gap-1.5 border-r border-border px-2",
         "transition-colors duration-100",
         isActive
-          ? "bg-background border-t-2 border-t-blue-500"
+          ? (isPaneActive
+            ? "bg-background border-t-2 border-t-blue-500"
+            : "bg-muted/40 border-t-2 border-t-blue-500/40")
           : "bg-muted/50 hover:bg-muted border-t-2 border-t-transparent",
         isDragging && "opacity-50 shadow-lg z-50"
       )}
@@ -100,7 +104,9 @@ export function Tab({
       {/* File Name */}
       <span className={cn(
         "truncate text-xs",
-        isActive ? "text-foreground" : "text-muted-foreground"
+        isActive
+          ? (isPaneActive ? "text-foreground" : "text-foreground/70")
+          : "text-muted-foreground"
       )}>
         {tab.fileName}
       </span>

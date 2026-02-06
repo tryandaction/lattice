@@ -20,6 +20,7 @@ import { MathSymbolPalette } from './math-symbol-palette';
 import { getTemplateByPrefix, insertTemplate, searchTemplates, type MathTemplate } from '@/lib/math-templates';
 import { copyToClipboard } from '@/lib/export-utils';
 import { formatFormulaForClipboard, normalizeFormulaInput } from '@/lib/formula-utils';
+import { setActiveInputTargetFromElement } from '@/lib/unified-input-handler';
 
 export interface MathEditorProps {
   /** Initial LaTeX content */
@@ -146,6 +147,12 @@ export function MathEditor({
       if (containerRef.current) {
         containerRef.current.appendChild(mf);
       }
+
+      // Ensure Quantum Keyboard targets this MathLive instance
+      setActiveInputTargetFromElement(mf as unknown as HTMLElement);
+      mf.addEventListener('focusin', () => {
+        setActiveInputTargetFromElement(mf as unknown as HTMLElement);
+      });
 
       // Focus after a brief delay to ensure rendering
       setTimeout(() => {

@@ -46,6 +46,7 @@ import {
   SubscriptWidget,
   KbdWidget,
   FootnoteRefWidget,
+  FootnoteDefWidget,
   EmbedWidget,
   BlockquoteContentWidget,
   ListBulletWidget,
@@ -53,6 +54,8 @@ import {
   MathWidget,
   CodeBlockWidget,
   TableWidget,
+  CalloutWidget,
+  DetailsWidget,
 } from './widgets';
 import { parseListItem, parseBlockquote } from './markdown-parser';
 
@@ -99,6 +102,8 @@ export enum ElementType {
   INLINE_IMAGE = 15,   // 图片
   INLINE_TAG = 16,     // 标签 (#tag)
   INLINE_OTHER = 17,   // 其他行内元素
+  FOOTNOTE_DEF = 18,   // 脚注定义块
+  REFERENCE_DEF = 19,  // 引用式链接定义
 }
 
 /**
@@ -151,6 +156,11 @@ interface MathBlockMatch {
   endLine: number;
 }
 
+type BlockContext = {
+  blockquoteDepth: number;
+  listIndent: number;
+};
+
 /**
  * 表格匹配结果
  */
@@ -160,6 +170,60 @@ interface TableMatch {
   rows: string[][];
   hasHeader: boolean;
   alignments?: Array<'left' | 'center' | 'right' | null>;
+  startLine: number;
+  endLine: number;
+}
+
+/**
+ * Callout 匹配结果
+ */
+interface CalloutMatch {
+  from: number;
+  to: number;
+  type: string;
+  title: string;
+  contentLines: string[];
+  startLine: number;
+  endLine: number;
+  isFolded: boolean;
+}
+
+/**
+ * Details 匹配结果
+ */
+interface DetailsMatch {
+  from: number;
+  to: number;
+  summary: string;
+  contentLines: string[];
+  startLine: number;
+  endLine: number;
+  isOpen: boolean;
+}
+
+/**
+ * 脚注定义匹配结果
+ */
+interface FootnoteDefMatch {
+  from: number;
+  to: number;
+  identifier: string;
+  contentLines: string[];
+  startLine: number;
+  endLine: number;
+}
+
+interface ReferenceDefinition {
+  url: string;
+  title?: string;
+}
+
+interface ReferenceDefMatch {
+  from: number;
+  to: number;
+  label: string;
+  url: string;
+  title?: string;
   startLine: number;
   endLine: number;
 }
@@ -239,6 +303,11 @@ let cachedLines: string[] = [];
 let cachedCodeBlocks: CodeBlockMatch[] = [];
 let cachedMathBlocks: MathBlockMatch[] = [];
 let cachedTables: TableMatch[] = [];
+let cachedCallouts: CalloutMatch[] = [];
+let cachedDetails: DetailsMatch[] = [];
+let cachedFootnoteDefs: FootnoteDefMatch[] = [];
+let cachedReferenceDefs: Map<string, ReferenceDefinition> = new Map();
+let cachedReferenceDefMatches: ReferenceDefMatch[] = [];
 
 // ============================================================================
 // StateField - 存储解析后的元素供其他插件使用
@@ -288,6 +357,8 @@ export const parsedElementsField = StateField.define<ParsedElement[]>({
 const REGEX_PATTERNS = {
   // Inline math: $...$ (not $$)
   inlineMath: /(?<!\$)\$(?!\$)(.+?)\$(?!\$)/g,
+  // Inline math: \( ... \)
+  inlineMathParen: /\\\((.+?)\\\)/g,
 
   // Bold+Italic: ***text*** - allows nested content
   boldItalic: /\*\*\*(.+?)\*\*\*/g,
@@ -304,17 +375,32 @@ const REGEX_PATTERNS = {
   // Highlight: ==text==
   highlight: /==(.+?)==/g,
 
+  // Inline code: ``text`` (allows single backticks inside)
+  inlineCodeDouble: /``([^`]+?)``/g,
+
   // Inline code: `text` - no nesting allowed
   inlineCode: /`([^`]+?)`/g,
 
   // Annotation link: [[file.pdf#ann-uuid]]
   annotationLink: /\[\[([^\]]+?\.pdf)#(ann-[^\]]+?)\]\]/gi,
 
-  // Wiki link: [[page]] or [[page|display]]
-  wikiLink: /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g,
+  // Wiki link: [[page]], [[page|display]], [[page#heading|alias]]
+  wikiLink: /\[\[([^\]|#]+?)(?:#([^\]|]+?))?(?:\|([^\]]+?))?\]\]/g,
 
   // Markdown link: [text](url)
   link: /\[([^\]]+?)\]\(([^)]+?)\)/g,
+
+  // Reference link: [text][label] or [text][]
+  referenceLink: /\[([^\]]+?)\]\s*\[([^\]]*)\]/g,
+
+  // Reference image: ![alt][label] or ![alt][]
+  referenceImage: /!\[([^\]]*?)\]\s*\[([^\]]*)\]/g,
+
+  // Reference link shortcut: [label]
+  referenceLinkShortcut: /\[([^\]\[]+?)\]/g,
+
+  // Reference image shortcut: ![alt]
+  referenceImageShortcut: /!\[([^\]]+?)\]/g,
 
   // Embed: ![[file]]
   embed: /!\[\[([^\]]+?)\]\]/g,
@@ -336,6 +422,12 @@ const REGEX_PATTERNS = {
 
   // Tag: #tag
   tag: /#([a-zA-Z][a-zA-Z0-9_/-]*)/g,
+
+  // Autolink: <https://example.com> or <mailto:...>
+  autoLink: /<((https?:\/\/|mailto:)[^>]+)>/g,
+
+  // Bare URL (GFM autolink literal)
+  bareUrl: /(?<!\()https?:\/\/[^\s<]+/g,
 };
 
 /**
@@ -369,38 +461,84 @@ function parseCodeBlocks(lines: string[], docLength?: number): CodeBlockMatch[] 
   const blocks: CodeBlockMatch[] = [];
   let offset = 0;
   let inBlock = false;
+  let fenceChar = '';
+  let fenceLength = 0;
   let blockStart = 0;
   let blockLang = '';
   let blockCode: string[] = [];
   let blockStartLine = 0;
+  let blockquotePrefixLength = 0;
+  let listIndentToStrip = 0;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const lineStart = offset;
     const lineEnd = offset + line.length;
+    const { stripped, prefix } = stripMathLinePrefix(line);
+    const trimmed = stripped.trim();
 
-    if (!inBlock && line.match(/^```(\w*)$/)) {
-      // 代码块开始
-      inBlock = true;
-      blockStart = lineStart;
-      blockLang = line.slice(3);
-      blockCode = [];
-      blockStartLine = i + 1; // 行号从1开始
-    } else if (inBlock && line === '```') {
-      // 代码块结束
-      // CRITICAL FIX: Ensure 'to' doesn't exceed document length
-      const blockTo = docLength !== undefined ? Math.min(lineEnd, docLength) : lineEnd;
-      blocks.push({
-        from: blockStart,
-        to: blockTo,
-        language: blockLang,
-        code: blockCode.join('\n'),
-        startLine: blockStartLine,
-        endLine: i + 1,
-      });
-      inBlock = false;
-    } else if (inBlock) {
-      blockCode.push(line);
+    if (!inBlock) {
+      const openMatch = trimmed.match(/^(`{3,}|~{3,})(.*)$/);
+      if (openMatch) {
+        inBlock = true;
+        fenceChar = openMatch[1][0];
+        fenceLength = openMatch[1].length;
+        const info = openMatch[2]?.trim() || '';
+        blockLang = info.split(/\s+/)[0] || '';
+        blockStart = lineStart;
+        blockCode = [];
+        blockStartLine = i + 1; // 行号从1开始
+        const blockquotePrefixMatch = prefix.match(/^(\s*>[ \t]?)+/);
+        const blockquotePrefix = blockquotePrefixMatch?.[0] ?? '';
+        blockquotePrefixLength = blockquotePrefix.length;
+        listIndentToStrip = Math.max(0, prefix.length - blockquotePrefixLength);
+      }
+    } else {
+      const closeRegex = new RegExp(`^${fenceChar}{${fenceLength},}\\s*$`);
+      if (closeRegex.test(trimmed)) {
+        const blockTo = docLength !== undefined ? Math.min(lineEnd, docLength) : lineEnd;
+        blocks.push({
+          from: blockStart,
+          to: blockTo,
+          language: blockLang,
+          code: blockCode.join('\n'),
+          startLine: blockStartLine,
+          endLine: i + 1,
+        });
+        inBlock = false;
+        fenceChar = '';
+        fenceLength = 0;
+        blockLang = '';
+        blockquotePrefixLength = 0;
+        listIndentToStrip = 0;
+      } else {
+        let contentLine = line;
+
+        // Remove blockquote prefixes first (preserve nested quote depth)
+        if (blockquotePrefixLength > 0) {
+          let removed = 0;
+          while (removed < blockquotePrefixLength) {
+            const match = contentLine.match(/^(\s*>[ \t]?)/);
+            if (!match) break;
+            removed += match[1].length;
+            contentLine = contentLine.slice(match[1].length);
+          }
+        }
+
+        // Then remove list indentation (whitespace only)
+        if (listIndentToStrip > 0) {
+          let removedSpaces = 0;
+          while (
+            removedSpaces < listIndentToStrip &&
+            (contentLine.startsWith(' ') || contentLine.startsWith('\t'))
+          ) {
+            contentLine = contentLine.slice(1);
+            removedSpaces += 1;
+          }
+        }
+
+        blockCode.push(contentLine);
+      }
     }
 
     offset = lineEnd + 1; // +1 for newline
@@ -422,21 +560,93 @@ function parseCodeBlocks(lines: string[], docLength?: number): CodeBlockMatch[] 
  * @param lines - 文档按行分割的数组
  * @param docLength - 文档总长度，用于边界检查
  */
-function parseMathBlocks(lines: string[], docLength?: number): MathBlockMatch[] {
+function stripMathLinePrefix(
+  line: string,
+  options?: { stripList?: boolean }
+): { stripped: string; prefix: string } {
+  let working = line;
+  let prefix = '';
+  const stripList = options?.stripList !== false;
+
+  // Blockquote prefix: support nested levels like ">>" or "> >"
+  while (true) {
+    const blockquoteMatch = working.match(/^(\s*>[ \t]?)/);
+    if (!blockquoteMatch) break;
+    prefix += blockquoteMatch[1];
+    working = working.slice(blockquoteMatch[1].length);
+  }
+
+  // List prefix: -, *, +, or 1. / 1) with optional task checkbox
+  if (stripList) {
+    const listMatch = working.match(/^(\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)/);
+    if (listMatch) {
+      prefix += listMatch[1];
+      working = working.slice(listMatch[1].length);
+    }
+  }
+
+  return { stripped: working, prefix };
+}
+
+function getBlockContext(lineText: string): BlockContext | null {
+  let working = lineText;
+  let blockquoteDepth = 0;
+
+  while (true) {
+    const blockquoteMatch = working.match(/^(\s*>[ \t]?)/);
+    if (!blockquoteMatch) break;
+    blockquoteDepth += 1;
+    working = working.slice(blockquoteMatch[1].length);
+  }
+
+  const listMatch = working.match(/^(\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)/);
+  const listIndent = listMatch ? listMatch[0].length : 0;
+
+  if (blockquoteDepth === 0 && listIndent === 0) return null;
+  return { blockquoteDepth, listIndent };
+}
+
+function parseMathBlocks(
+  lines: string[],
+  docLength?: number,
+  ignoreLines?: Set<number>
+): MathBlockMatch[] {
   const blocks: MathBlockMatch[] = [];
   let offset = 0;
   let inBlock = false;
+  let blockType: 'dollar' | 'single' | 'bracket' | 'env' | null = null;
+  let envName = '';
   let blockStart = 0;
   let blockLatex: string[] = [];
   let blockStartLine = 0;
+  const envNames = '(equation|align|gather|multline|cases|matrix|pmatrix|bmatrix|aligned|split|eqnarray)';
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const lineStart = offset;
     const lineEnd = offset + line.length;
+    const lineNumber = i + 1;
+    const isIgnored = ignoreLines?.has(lineNumber) ?? false;
+    const { stripped } = stripMathLinePrefix(line);
+    const trimmed = stripped.trim();
+
+    if (isIgnored && !inBlock) {
+      offset = lineEnd + 1;
+      continue;
+    }
+
+    if (isIgnored && inBlock) {
+      blockLatex.push(stripped);
+      offset = lineEnd + 1;
+      continue;
+    }
 
     // TASK 5.2: Support inline block math $$...$$ on single line
-    const inlineBlockMatch = line.match(/^\s*\$\$(.+?)\$\$\s*$/);
+    const inlineBlockMatch = stripped.match(/^\s*\$\$(.+?)\$\$\s*$/);
+    const inlineBracketMatch = stripped.match(/^\s*\\\[(.+?)\\\]\s*$/);
+    const inlineEnvMatch = stripped.match(
+      new RegExp(`^\\s*(\\\\begin\\{${envNames}\\*?\\}[\\s\\S]+?\\\\end\\{\\2\\*?\\})\\s*$`)
+    );
     if (inlineBlockMatch && !inBlock) {
       const latex = inlineBlockMatch[1].trim();
       if (latex && latex !== 'undefined') {
@@ -455,14 +665,73 @@ function parseMathBlocks(lines: string[], docLength?: number): MathBlockMatch[] 
       offset = lineEnd + 1;
       continue;
     }
+    if (inlineBracketMatch && !inBlock) {
+      const latex = inlineBracketMatch[1].trim();
+      if (latex && latex !== 'undefined') {
+        const blockTo = docLength !== undefined ? Math.min(lineEnd, docLength) : lineEnd;
+        blocks.push({
+          from: lineStart,
+          to: blockTo,
+          latex: latex,
+          startLine: i + 1,
+          endLine: i + 1,
+        });
+      } else {
+        console.warn('[parseMathBlocks] Empty inline bracket math at line', i + 1);
+      }
+      offset = lineEnd + 1;
+      continue;
+    }
+    if (inlineEnvMatch && !inBlock) {
+      const latex = inlineEnvMatch[1].trim();
+      if (latex && latex !== 'undefined') {
+        const blockTo = docLength !== undefined ? Math.min(lineEnd, docLength) : lineEnd;
+        blocks.push({
+          from: lineStart,
+          to: blockTo,
+          latex: latex,
+          startLine: i + 1,
+          endLine: i + 1,
+        });
+      } else {
+        console.warn('[parseMathBlocks] Empty inline env math at line', i + 1);
+      }
+      offset = lineEnd + 1;
+      continue;
+    }
 
-    if (!inBlock && line.trim() === '$$') {
+    if (!inBlock && trimmed === '$$') {
       // 公式块开始
       inBlock = true;
+      blockType = 'dollar';
       blockStart = lineStart;
       blockLatex = [];
       blockStartLine = i + 1; // 行号从1开始
-    } else if (inBlock && line.trim() === '$$') {
+    } else if (!inBlock && trimmed === '$') {
+      // 容错：单 $ 包裹的块级公式
+      inBlock = true;
+      blockType = 'single';
+      blockStart = lineStart;
+      blockLatex = [];
+      blockStartLine = i + 1;
+    } else if (!inBlock && trimmed === '\\[') {
+      // \[ ... \] 公式块开始
+      inBlock = true;
+      blockType = 'bracket';
+      blockStart = lineStart;
+      blockLatex = [];
+      blockStartLine = i + 1;
+    } else if (!inBlock) {
+      const envStartMatch = trimmed.match(new RegExp(`^\\\\begin\\{${envNames}\\*?\\}\\s*$`));
+      if (envStartMatch) {
+        inBlock = true;
+        blockType = 'env';
+        envName = envStartMatch[1];
+        blockStart = lineStart;
+        blockLatex = [stripped];
+        blockStartLine = i + 1;
+      }
+    } else if (inBlock && blockType === 'dollar' && trimmed === '$$') {
       // 公式块结束
       // PHASE 4 FIX: Validate latex content
       const latex = blockLatex.join('\n');
@@ -480,8 +749,62 @@ function parseMathBlocks(lines: string[], docLength?: number): MathBlockMatch[] 
         console.warn('[parseMathBlocks] Empty math block at lines', blockStartLine, '-', i + 1);
       }
       inBlock = false;
+      blockType = null;
+      envName = '';
+    } else if (inBlock && blockType === 'single' && trimmed === '$') {
+      const latex = blockLatex.join('\n');
+      if (latex.trim() !== '' && latex.trim() !== 'undefined') {
+        const blockTo = docLength !== undefined ? Math.min(lineEnd, docLength) : lineEnd;
+        blocks.push({
+          from: blockStart,
+          to: blockTo,
+          latex: latex,
+          startLine: blockStartLine,
+          endLine: i + 1,
+        });
+      } else {
+        console.warn('[parseMathBlocks] Empty single-dollar math block at lines', blockStartLine, '-', i + 1);
+      }
+      inBlock = false;
+      blockType = null;
+      envName = '';
+    } else if (inBlock && blockType === 'bracket' && trimmed === '\\]') {
+      const latex = blockLatex.join('\n');
+      if (latex.trim() !== '' && latex.trim() !== 'undefined') {
+        const blockTo = docLength !== undefined ? Math.min(lineEnd, docLength) : lineEnd;
+        blocks.push({
+          from: blockStart,
+          to: blockTo,
+          latex: latex,
+          startLine: blockStartLine,
+          endLine: i + 1,
+        });
+      } else {
+        console.warn('[parseMathBlocks] Empty bracket math block at lines', blockStartLine, '-', i + 1);
+      }
+      inBlock = false;
+      blockType = null;
+      envName = '';
+    } else if (inBlock && blockType === 'env' && trimmed.match(new RegExp(`^\\\\end\\{${envName}\\*?\\}\\s*$`))) {
+      blockLatex.push(stripped);
+      const latex = blockLatex.join('\n');
+      if (latex.trim() !== '' && latex.trim() !== 'undefined') {
+        const blockTo = docLength !== undefined ? Math.min(lineEnd, docLength) : lineEnd;
+        blocks.push({
+          from: blockStart,
+          to: blockTo,
+          latex: latex,
+          startLine: blockStartLine,
+          endLine: i + 1,
+        });
+      } else {
+        console.warn('[parseMathBlocks] Empty env math block at lines', blockStartLine, '-', i + 1);
+      }
+      inBlock = false;
+      blockType = null;
+      envName = '';
     } else if (inBlock) {
-      blockLatex.push(line);
+      blockLatex.push(stripped);
     }
 
     offset = lineEnd + 1; // +1 for newline
@@ -503,7 +826,11 @@ function parseMathBlocks(lines: string[], docLength?: number): MathBlockMatch[] 
  * @param lines - 文档按行分割的数组
  * @param docLength - 文档总长度，用于边界检查
  */
-function parseTables(lines: string[], docLength?: number): TableMatch[] {
+function parseTables(
+  lines: string[],
+  docLength?: number,
+  ignoreLines?: Set<number>
+): TableMatch[] {
   const tables: TableMatch[] = [];
   let offset = 0;
   let tableStart = -1;
@@ -512,73 +839,99 @@ function parseTables(lines: string[], docLength?: number): TableMatch[] {
   let tableAlignments: Array<'left' | 'center' | 'right' | null> | null = null;
   let tableStartLine = 0;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const lineStart = offset;
-    const lineEnd = offset + line.length;
+  const splitTableRow = (text: string): string[] | null => {
+    if (!text || !text.includes('|')) return null;
+    const trimmed = text.trim();
+    if (!trimmed) return null;
 
-    // 检查是否为表格行
-    const isTableRow = line.trim().startsWith('|') && line.trim().endsWith('|');
-    const isSeparator = /^\|[-:| ]+\|$/.test(line.trim());
-
-    if (isTableRow) {
-      if (tableStart === -1) {
-        tableStart = lineStart;
-        tableRows = [];
-        tableStartLine = i + 1; // 行号从1开始
+    const isEscaped = (source: string, index: number): boolean => {
+      let backslashes = 0;
+      for (let i = index - 1; i >= 0 && source[i] === '\\'; i--) {
+        backslashes++;
       }
+      return backslashes % 2 === 1;
+    };
 
-      // 解析单元格
-      const cells = line
-        .split('|')
-        .slice(1, -1) // 移除首尾空元素
-        .map(c => c.trim());
-
-      tableRows.push(cells);
-
-      // 检查表头分隔符 + 对齐符号
-      if (isSeparator && tableRows.length === 2) {
-        hasHeader = true;
-        tableAlignments = cells.map(cell => {
-          const trimmed = cell.trim();
-          const startsWithColon = trimmed.startsWith(':');
-          const endsWithColon = trimmed.endsWith(':');
-          if (startsWithColon && endsWithColon) return 'center';
-          if (startsWithColon) return 'left';
-          if (endsWithColon) return 'right';
-          return null;
-        });
-      }
-    } else if (tableStart !== -1) {
-      // 表格结束
-      if (tableRows.length >= 2) {
-        // CRITICAL FIX: Ensure 'to' doesn't exceed document length
-        const tableTo = docLength !== undefined ? Math.min(offset - 1, docLength) : offset - 1;
-        tables.push({
-          from: tableStart,
-          to: tableTo,
-          rows: tableRows,
-          hasHeader,
-          alignments: tableAlignments ?? undefined,
-          startLine: tableStartLine,
-          endLine: i, // 当前行号（表格结束的下一行）
-        });
-      }
-      tableStart = -1;
-      tableRows = [];
-      hasHeader = false;
-      tableAlignments = null;
+    let working = trimmed;
+    if (working.startsWith('|')) {
+      working = working.slice(1);
+    }
+    if (working.endsWith('|') && !isEscaped(working, working.length - 1)) {
+      working = working.slice(0, -1);
     }
 
-    offset = lineEnd + 1; // +1 for newline
-  }
+    const cells: string[] = [];
+    let current = '';
+    let inCode = false;
+    let codeFence = '';
+    let i = 0;
 
-  // 处理文档末尾的表格
-  if (tableStart !== -1 && tableRows.length >= 2) {
-    // CRITICAL FIX: For tables at document end, calculate correct 'to' position
-    // offset - 1 might exceed document length if document doesn't end with newline
-    const lastLineEnd = offset - 1;
-    const tableTo = docLength !== undefined ? Math.min(lastLineEnd, docLength) : lastLineEnd;
+    while (i < working.length) {
+      const ch = working[i];
+
+      if (ch === '\\' && i + 1 < working.length && working[i + 1] === '|') {
+        current += '|';
+        i += 2;
+        continue;
+      }
+
+      if (ch === '`') {
+        let j = i;
+        while (j < working.length && working[j] === '`') j++;
+        const fence = working.slice(i, j);
+        if (!inCode) {
+          inCode = true;
+          codeFence = fence;
+        } else if (fence === codeFence) {
+          inCode = false;
+          codeFence = '';
+        }
+        current += fence;
+        i = j;
+        continue;
+      }
+
+      if (ch === '|' && !inCode) {
+        cells.push(current.trim());
+        current = '';
+        i += 1;
+        continue;
+      }
+
+      current += ch;
+      i += 1;
+    }
+
+    cells.push(current.trim());
+    if (cells.length === 0) return null;
+    return cells;
+  };
+
+  const parseSeparatorRow = (
+    text: string
+  ): { cells: string[]; alignments: Array<'left' | 'center' | 'right' | null> } | null => {
+    const cells = splitTableRow(text);
+    if (!cells) return null;
+    const isSeparator = cells.every(cell => /^:?-{3,}:?$/.test(cell.trim()));
+    if (!isSeparator) return null;
+
+    const alignments = cells.map(cell => {
+      const trimmed = cell.trim();
+      const startsWithColon = trimmed.startsWith(':');
+      const endsWithColon = trimmed.endsWith(':');
+      if (startsWithColon && endsWithColon) return 'center';
+      if (startsWithColon) return 'left';
+      if (endsWithColon) return 'right';
+      return null;
+    });
+
+    return { cells, alignments };
+  };
+
+  const finalizeTable = (tableEndOffset: number, endLine: number) => {
+    if (tableStart === -1 || tableRows.length < 2 || !hasHeader) return;
+    const safeEndOffset = Math.max(tableStart, tableEndOffset);
+    const tableTo = docLength !== undefined ? Math.min(safeEndOffset, docLength) : safeEndOffset;
     tables.push({
       from: tableStart,
       to: tableTo,
@@ -586,11 +939,395 @@ function parseTables(lines: string[], docLength?: number): TableMatch[] {
       hasHeader,
       alignments: tableAlignments ?? undefined,
       startLine: tableStartLine,
-      endLine: lines.length,
+      endLine,
     });
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineStart = offset;
+    const lineEnd = offset + line.length;
+    const lineNumber = i + 1;
+
+    if (ignoreLines?.has(lineNumber)) {
+      if (tableStart !== -1) {
+        finalizeTable(lineStart - 1, i);
+        tableStart = -1;
+        tableRows = [];
+        hasHeader = false;
+        tableAlignments = null;
+      }
+      offset = lineEnd + 1;
+      continue;
+    }
+
+    const { stripped } = stripMathLinePrefix(line);
+    const normalized = stripped.trim();
+
+    if (tableStart === -1) {
+      const headerCells = splitTableRow(normalized);
+      if (headerCells) {
+        const nextLine = lines[i + 1];
+        if (nextLine !== undefined) {
+          const nextNormalized = stripMathLinePrefix(nextLine).stripped.trim();
+          const separator = parseSeparatorRow(nextNormalized);
+          if (separator) {
+            tableStart = lineStart;
+            tableRows = [headerCells, separator.cells];
+            hasHeader = true;
+            tableAlignments = separator.alignments;
+            tableStartLine = i + 1; // 行号从1开始
+
+            // 跳过已消费的分隔行
+            offset = lineEnd + 1;
+            const nextLineStart = offset;
+            const nextLineEnd = nextLineStart + nextLine.length;
+            offset = nextLineEnd + 1;
+            i += 1;
+            continue;
+          }
+        }
+      }
+    } else {
+      const rowCells = splitTableRow(normalized);
+      if (rowCells) {
+        tableRows.push(rowCells);
+      } else {
+        finalizeTable(lineStart - 1, i);
+        tableStart = -1;
+        tableRows = [];
+        hasHeader = false;
+        tableAlignments = null;
+      }
+    }
+
+    offset = lineEnd + 1; // +1 for newline
+  }
+
+  // 处理文档末尾的表格
+  if (tableStart !== -1) {
+    const lastLineEnd = offset - 1;
+    finalizeTable(lastLineEnd, lines.length);
   }
 
   return tables;
+}
+
+function buildLineOffsets(lines: string[]): number[] {
+  const offsets: number[] = new Array(lines.length);
+  let offset = 0;
+  for (let i = 0; i < lines.length; i++) {
+    offsets[i] = offset;
+    offset += lines[i].length + 1;
+  }
+  return offsets;
+}
+
+/**
+ * 解析 Obsidian Callout 块
+ *
+ * 语法示例:
+ * > [!NOTE] Title
+ * > content...
+ * > more...
+ */
+function parseCallouts(lines: string[], docLength?: number): CalloutMatch[] {
+  const callouts: CalloutMatch[] = [];
+  const offsets = buildLineOffsets(lines);
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const match = line.match(/^>\s*\[!([A-Za-z0-9_-]+)([+-])?\]\s*(.*)$/);
+    if (!match) continue;
+
+    const type = match[1].toLowerCase();
+    const foldFlag = match[2] || '';
+    const isFolded = foldFlag === '-';
+    const rawTitle = match[3] ?? '';
+    const title = rawTitle.trim() || type.toUpperCase();
+
+    const contentLines: string[] = [];
+    let endLine = i;
+
+    for (let j = i + 1; j < lines.length; j++) {
+      if (!lines[j].match(/^>\s?/)) break;
+      contentLines.push(lines[j].replace(/^>\s?/, ''));
+      endLine = j;
+    }
+
+    const from = offsets[i];
+    const lastLineEnd = offsets[endLine] + lines[endLine].length;
+    const to = docLength !== undefined ? Math.min(lastLineEnd, docLength) : lastLineEnd;
+
+    callouts.push({
+      from,
+      to,
+      type,
+      title,
+      contentLines,
+      startLine: i + 1,
+      endLine: endLine + 1,
+      isFolded,
+    });
+
+    i = endLine;
+  }
+
+  return callouts;
+}
+
+/**
+ * 解析 HTML Details 块
+ *
+ * 语法示例:
+ * <details open>
+ * <summary>Title</summary>
+ * content...
+ * </details>
+ */
+function parseDetailsBlocks(lines: string[], docLength?: number): DetailsMatch[] {
+  const details: DetailsMatch[] = [];
+  const offsets = buildLineOffsets(lines);
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const startMatch = line.match(/^\s*<details([^>]*)>\s*$/i);
+    if (!startMatch) continue;
+
+    const attr = startMatch[1] ?? '';
+    const isOpen = /\bopen\b/i.test(attr);
+
+    let endLine = -1;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (lines[j].match(/^\s*<\/details>\s*$/i)) {
+        endLine = j;
+        break;
+      }
+    }
+    if (endLine === -1) continue;
+
+    let summary = '';
+    const contentLines: string[] = [];
+    let inSummary = false;
+
+    for (let j = i + 1; j < endLine; j++) {
+      const current = lines[j];
+
+      if (!summary) {
+        const inlineSummary = current.match(/<summary>([\s\S]*?)<\/summary>/i);
+        if (inlineSummary) {
+          summary = inlineSummary[1].trim();
+          const remainder = current.replace(/<summary>[\s\S]*?<\/summary>/i, '').trim();
+          if (remainder) contentLines.push(remainder);
+          continue;
+        }
+
+        const startSummary = current.match(/<summary>([\s\S]*)/i);
+        if (startSummary) {
+          inSummary = true;
+          summary = startSummary[1].trim();
+          continue;
+        }
+      }
+
+      if (inSummary) {
+        const endSummary = current.match(/([\s\S]*?)<\/summary>/i);
+        if (endSummary) {
+          summary = `${summary}\n${endSummary[1].trim()}`.trim();
+          inSummary = false;
+          continue;
+        }
+        summary = `${summary}\n${current}`.trim();
+        continue;
+      }
+
+      contentLines.push(current);
+    }
+
+    const from = offsets[i];
+    const lastLineEnd = offsets[endLine] + lines[endLine].length;
+    const to = docLength !== undefined ? Math.min(lastLineEnd, docLength) : lastLineEnd;
+
+    details.push({
+      from,
+      to,
+      summary: summary || 'Details',
+      contentLines,
+      startLine: i + 1,
+      endLine: endLine + 1,
+      isOpen,
+    });
+
+    i = endLine;
+  }
+
+  return details;
+}
+
+/**
+ * 解析脚注定义块
+ *
+ * 语法示例:
+ * [^1]: Footnote text
+ *     continued line
+ */
+function parseFootnoteDefinitions(lines: string[], docLength?: number): FootnoteDefMatch[] {
+  const footnotes: FootnoteDefMatch[] = [];
+  const offsets = buildLineOffsets(lines);
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const match = line.match(/^\[\^([^\]]+)\]:\s*(.*)$/);
+    if (!match) continue;
+
+    const identifier = match[1];
+    const contentLines: string[] = [];
+    const firstContent = match[2]?.trim();
+    if (firstContent) contentLines.push(firstContent);
+
+    let endLine = i;
+    for (let j = i + 1; j < lines.length; j++) {
+      const nextLine = lines[j];
+      if (nextLine.trim() === '') break;
+      if (!/^\s{2,}|\t/.test(nextLine)) break;
+      contentLines.push(nextLine.trim());
+      endLine = j;
+    }
+
+    const from = offsets[i];
+    const lastLineEnd = offsets[endLine] + lines[endLine].length;
+    const to = docLength !== undefined ? Math.min(lastLineEnd, docLength) : lastLineEnd;
+
+    footnotes.push({
+      from,
+      to,
+      identifier,
+      contentLines,
+      startLine: i + 1,
+      endLine: endLine + 1,
+    });
+
+    i = endLine;
+  }
+
+  return footnotes;
+}
+
+function normalizeReferenceLabel(label: string): string {
+  return label.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function parseReferenceDestination(input: string): { url: string; title?: string } {
+  let rest = input.trim();
+  if (!rest) return { url: '' };
+
+  let url = '';
+
+  if (rest.startsWith('<')) {
+    const end = rest.indexOf('>');
+    if (end > 0) {
+      url = rest.slice(1, end);
+      rest = rest.slice(end + 1).trim();
+    }
+  }
+
+  if (!url) {
+    const urlMatch = rest.match(/^[^\s]+/);
+    if (urlMatch) {
+      url = urlMatch[0];
+      rest = rest.slice(url.length).trim();
+    }
+  }
+
+  if (!url) return { url: '' };
+
+  let title: string | undefined;
+  const titleMatch = rest.match(/^(?:"([^"]+)"|'([^']+)'|\(([^)]+)\))/);
+  if (titleMatch) {
+    title = titleMatch[1] ?? titleMatch[2] ?? titleMatch[3];
+  }
+
+  return { url, title };
+}
+
+function parseReferenceDefinitions(
+  lines: string[],
+  docLength?: number,
+  codeBlocks: CodeBlockMatch[] = []
+): { defs: Map<string, ReferenceDefinition>; matches: ReferenceDefMatch[] } {
+  const defs = new Map<string, ReferenceDefinition>();
+  const matches: ReferenceDefMatch[] = [];
+  const offsets = buildLineOffsets(lines);
+
+  const occupiedLines = new Set<number>();
+  for (const block of codeBlocks) {
+    for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
+      occupiedLines.add(lineNum);
+    }
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const lineNumber = i + 1;
+    if (occupiedLines.has(lineNumber)) continue;
+
+    const line = lines[i];
+    const match = line.match(/^\s*\[([^\]]+)\]:\s*(.*)$/);
+    if (!match) continue;
+
+    const rawLabel = match[1];
+    let rest = (match[2] || '').trim();
+
+    let endLine = i;
+    const continuation: string[] = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      const nextLine = lines[j];
+      if (nextLine.trim() === '') break;
+      if (!/^\s{2,}|\t/.test(nextLine)) break;
+      continuation.push(nextLine.trim());
+      endLine = j;
+    }
+
+    if (continuation.length > 0) {
+      rest = `${rest} ${continuation.join(' ')}`.trim();
+    }
+
+    const { url, title } = parseReferenceDestination(rest);
+    if (!url) {
+      i = endLine;
+      continue;
+    }
+
+    const label = normalizeReferenceLabel(rawLabel);
+    if (!defs.has(label)) {
+      defs.set(label, { url, title });
+    }
+
+    const from = offsets[i];
+    const lastLineEnd = offsets[endLine] + lines[endLine].length;
+    const to = docLength !== undefined ? Math.min(lastLineEnd, docLength) : lastLineEnd;
+
+    matches.push({
+      from,
+      to,
+      label,
+      url,
+      title,
+      startLine: i + 1,
+      endLine: endLine + 1,
+    });
+
+    i = endLine;
+  }
+
+  return { defs, matches };
+}
+
+function buildReferenceSignature(defs: Map<string, ReferenceDefinition>): string {
+  if (!defs || defs.size === 0) return '';
+  const entries = Array.from(defs.entries()).sort(([a], [b]) => a.localeCompare(b));
+  return entries
+    .map(([label, def]) => `${label}:${def.url}:${def.title ?? ''}`)
+    .join('|');
 }
 
 function shouldUseViewport(view: EditorView): boolean {
@@ -603,6 +1340,11 @@ function ensureCachedDocument(doc: Text): {
   codeBlocks: CodeBlockMatch[];
   mathBlocks: MathBlockMatch[];
   tables: TableMatch[];
+  callouts: CalloutMatch[];
+  details: DetailsMatch[];
+  footnoteDefs: FootnoteDefMatch[];
+  referenceDefs: Map<string, ReferenceDefinition>;
+  referenceDefMatches: ReferenceDefMatch[];
 } {
   if (cachedDoc === doc) {
     return {
@@ -611,6 +1353,11 @@ function ensureCachedDocument(doc: Text): {
       codeBlocks: cachedCodeBlocks,
       mathBlocks: cachedMathBlocks,
       tables: cachedTables,
+      callouts: cachedCallouts,
+      details: cachedDetails,
+      footnoteDefs: cachedFootnoteDefs,
+      referenceDefs: cachedReferenceDefs,
+      referenceDefMatches: cachedReferenceDefMatches,
     };
   }
 
@@ -618,8 +1365,20 @@ function ensureCachedDocument(doc: Text): {
   cachedText = doc.toString();
   cachedLines = cachedText.split('\n');
   cachedCodeBlocks = parseCodeBlocks(cachedLines, doc.length);
-  cachedMathBlocks = parseMathBlocks(cachedLines, doc.length);
-  cachedTables = parseTables(cachedLines, doc.length);
+  const ignoredLines = new Set<number>();
+  for (const block of cachedCodeBlocks) {
+    for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
+      ignoredLines.add(lineNum);
+    }
+  }
+  cachedMathBlocks = parseMathBlocks(cachedLines, doc.length, ignoredLines);
+  cachedTables = parseTables(cachedLines, doc.length, ignoredLines);
+  cachedCallouts = parseCallouts(cachedLines, doc.length);
+  cachedDetails = parseDetailsBlocks(cachedLines, doc.length);
+  cachedFootnoteDefs = parseFootnoteDefinitions(cachedLines, doc.length);
+  const referenceData = parseReferenceDefinitions(cachedLines, doc.length, cachedCodeBlocks);
+  cachedReferenceDefs = referenceData.defs;
+  cachedReferenceDefMatches = referenceData.matches;
 
   return {
     text: cachedText,
@@ -627,6 +1386,11 @@ function ensureCachedDocument(doc: Text): {
     codeBlocks: cachedCodeBlocks,
     mathBlocks: cachedMathBlocks,
     tables: cachedTables,
+    callouts: cachedCallouts,
+    details: cachedDetails,
+    footnoteDefs: cachedFootnoteDefs,
+    referenceDefs: cachedReferenceDefs,
+    referenceDefMatches: cachedReferenceDefMatches,
   };
 }
 
@@ -659,6 +1423,12 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   const codeBlocks = cached.codeBlocks;
   const mathBlocks = cached.mathBlocks;
   const tables = cached.tables;
+  const callouts = cached.callouts;
+  const detailsBlocks = cached.details;
+  const footnoteDefs = cached.footnoteDefs;
+  const referenceDefs = cached.referenceDefs;
+  const referenceDefMatches = cached.referenceDefMatches;
+  const referenceSignature = buildReferenceSignature(referenceDefs);
 
   debugLog('[parseDocument] Text length:', text.length, 'Lines array length:', lines.length);
 
@@ -817,7 +1587,195 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
     }
   }
 
-  // 3. 逐行解析其他元素（跳过已占用的行）
+  // 4. 解析所有 Callout（Obsidian）
+  debugLog('[parseDocument] Found', callouts.length, 'callouts');
+
+  for (const callout of callouts) {
+    const shouldReveal = shouldRevealAt(
+      view.state,
+      callout.from,
+      callout.to,
+      ElementType.CALLOUT
+    );
+
+    if (!shouldReveal) {
+      elements.push({
+        type: ElementType.CALLOUT,
+        from: callout.from,
+        to: callout.to,
+        lineNumber: callout.startLine,
+        startLine: callout.startLine,
+        endLine: callout.endLine,
+        decorationData: {
+          type: callout.type,
+          title: callout.title,
+          contentLines: callout.contentLines,
+          isMultiLine: callout.startLine !== callout.endLine,
+          isFolded: callout.isFolded,
+        },
+      });
+
+      for (let lineNum = callout.startLine; lineNum <= callout.endLine; lineNum++) {
+        occupiedLines.add(lineNum);
+      }
+    } else {
+      for (let lineNum = callout.startLine; lineNum <= callout.endLine; lineNum++) {
+        occupiedLines.add(lineNum);
+        const line = doc.line(lineNum);
+        elements.push({
+          type: ElementType.CALLOUT,
+          from: line.from,
+          to: line.from,
+          lineNumber: lineNum,
+          decorationData: {
+            isEditingStyle: true,
+          },
+        });
+      }
+    }
+  }
+
+  // 5. 解析所有 Details（HTML <details>）
+  debugLog('[parseDocument] Found', detailsBlocks.length, 'details blocks');
+
+  for (const details of detailsBlocks) {
+    const shouldReveal = shouldRevealAt(
+      view.state,
+      details.from,
+      details.to,
+      ElementType.DETAILS
+    );
+
+    if (!shouldReveal) {
+      elements.push({
+        type: ElementType.DETAILS,
+        from: details.from,
+        to: details.to,
+        lineNumber: details.startLine,
+        startLine: details.startLine,
+        endLine: details.endLine,
+        decorationData: {
+          summary: details.summary,
+          contentLines: details.contentLines,
+          isMultiLine: details.startLine !== details.endLine,
+          isOpen: details.isOpen,
+        },
+      });
+
+      for (let lineNum = details.startLine; lineNum <= details.endLine; lineNum++) {
+        occupiedLines.add(lineNum);
+      }
+    } else {
+      for (let lineNum = details.startLine; lineNum <= details.endLine; lineNum++) {
+        occupiedLines.add(lineNum);
+        const line = doc.line(lineNum);
+        elements.push({
+          type: ElementType.DETAILS,
+          from: line.from,
+          to: line.from,
+          lineNumber: lineNum,
+          decorationData: {
+            isEditingStyle: true,
+          },
+        });
+      }
+    }
+  }
+
+  // 6. 解析脚注定义（[^id]:）
+  debugLog('[parseDocument] Found', footnoteDefs.length, 'footnote definitions');
+
+  for (const footnote of footnoteDefs) {
+    const shouldReveal = shouldRevealAt(
+      view.state,
+      footnote.from,
+      footnote.to,
+      ElementType.FOOTNOTE_DEF
+    );
+
+    if (!shouldReveal) {
+      elements.push({
+        type: ElementType.FOOTNOTE_DEF,
+        from: footnote.from,
+        to: footnote.to,
+        lineNumber: footnote.startLine,
+        startLine: footnote.startLine,
+        endLine: footnote.endLine,
+        decorationData: {
+          identifier: footnote.identifier,
+          contentLines: footnote.contentLines,
+          isMultiLine: footnote.startLine !== footnote.endLine,
+        },
+      });
+
+      for (let lineNum = footnote.startLine; lineNum <= footnote.endLine; lineNum++) {
+        occupiedLines.add(lineNum);
+      }
+    } else {
+      for (let lineNum = footnote.startLine; lineNum <= footnote.endLine; lineNum++) {
+        occupiedLines.add(lineNum);
+        const line = doc.line(lineNum);
+        elements.push({
+          type: ElementType.FOOTNOTE_DEF,
+          from: line.from,
+          to: line.from,
+          lineNumber: lineNum,
+          decorationData: {
+            isEditingStyle: true,
+          },
+        });
+      }
+    }
+  }
+
+  // 7. 解析引用式链接定义（[label]: url）
+  debugLog('[parseDocument] Found', referenceDefMatches.length, 'reference definitions');
+
+  for (const referenceDef of referenceDefMatches) {
+    const shouldReveal = shouldRevealAt(
+      view.state,
+      referenceDef.from,
+      referenceDef.to,
+      ElementType.REFERENCE_DEF
+    );
+
+    if (!shouldReveal) {
+      elements.push({
+        type: ElementType.REFERENCE_DEF,
+        from: referenceDef.from,
+        to: referenceDef.to,
+        lineNumber: referenceDef.startLine,
+        startLine: referenceDef.startLine,
+        endLine: referenceDef.endLine,
+        decorationData: {
+          label: referenceDef.label,
+          url: referenceDef.url,
+          title: referenceDef.title,
+          isMultiLine: referenceDef.startLine !== referenceDef.endLine,
+        },
+      });
+
+      for (let lineNum = referenceDef.startLine; lineNum <= referenceDef.endLine; lineNum++) {
+        occupiedLines.add(lineNum);
+      }
+    } else {
+      for (let lineNum = referenceDef.startLine; lineNum <= referenceDef.endLine; lineNum++) {
+        occupiedLines.add(lineNum);
+        const line = doc.line(lineNum);
+        elements.push({
+          type: ElementType.REFERENCE_DEF,
+          from: line.from,
+          to: line.from,
+          lineNumber: lineNum,
+          decorationData: {
+            isEditingStyle: true,
+          },
+        });
+      }
+    }
+  }
+
+  // 8. 逐行解析其他元素（跳过已占用的行）
   // CRITICAL FIX: Ensure we parse the entire document
   // Always parse full document to avoid truncation issues
   const ranges = viewportOnly && visibleRanges.length > 0
@@ -870,7 +1828,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
       const lineText = line.text;
 
       // 尝试从缓存获取
-      const cacheKey = `${lineNum}:${lineText}`;
+      const cacheKey = `${lineNum}:${lineText}:${referenceSignature}`;
       const cached = lineElementCache.get(cacheKey);
 
       if (cached) {
@@ -879,7 +1837,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
       }
 
       // 解析这一行
-      const lineElements = parseLineElements(view.state, line, lineNum, lineText);
+      const lineElements = parseLineElements(view.state, line, lineNum, lineText, referenceDefs);
 
       // 存入缓存
       if (lineElements.length > 0) {
@@ -914,8 +1872,20 @@ export function parseDocumentFromText(text: string): ParsedElement[] {
   const state = EditorState.create({ doc });
 
   const codeBlocks = parseCodeBlocks(lines, doc.length);
-  const mathBlocks = parseMathBlocks(lines, doc.length);
-  const tables = parseTables(lines, doc.length);
+  const ignoredLines = new Set<number>();
+  for (const block of codeBlocks) {
+    for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
+      ignoredLines.add(lineNum);
+    }
+  }
+  const mathBlocks = parseMathBlocks(lines, doc.length, ignoredLines);
+  const tables = parseTables(lines, doc.length, ignoredLines);
+  const callouts = parseCallouts(lines, doc.length);
+  const detailsBlocks = parseDetailsBlocks(lines, doc.length);
+  const footnoteDefs = parseFootnoteDefinitions(lines, doc.length);
+  const referenceData = parseReferenceDefinitions(lines, doc.length, codeBlocks);
+  const referenceDefs = referenceData.defs;
+  const referenceDefMatches = referenceData.matches;
 
   const occupiedLines = new Set<number>();
 
@@ -978,11 +1948,92 @@ export function parseDocumentFromText(text: string): ParsedElement[] {
     }
   }
 
+  for (const callout of callouts) {
+    elements.push({
+      type: ElementType.CALLOUT,
+      from: callout.from,
+      to: callout.to,
+      lineNumber: callout.startLine,
+      startLine: callout.startLine,
+      endLine: callout.endLine,
+      decorationData: {
+        type: callout.type,
+        title: callout.title,
+        contentLines: callout.contentLines,
+        isMultiLine: callout.startLine !== callout.endLine,
+        isFolded: callout.isFolded,
+      },
+    });
+    for (let lineNum = callout.startLine; lineNum <= callout.endLine; lineNum++) {
+      occupiedLines.add(lineNum);
+    }
+  }
+
+  for (const details of detailsBlocks) {
+    elements.push({
+      type: ElementType.DETAILS,
+      from: details.from,
+      to: details.to,
+      lineNumber: details.startLine,
+      startLine: details.startLine,
+      endLine: details.endLine,
+      decorationData: {
+        summary: details.summary,
+        contentLines: details.contentLines,
+        isMultiLine: details.startLine !== details.endLine,
+        isOpen: details.isOpen,
+      },
+    });
+    for (let lineNum = details.startLine; lineNum <= details.endLine; lineNum++) {
+      occupiedLines.add(lineNum);
+    }
+  }
+
+  for (const footnote of footnoteDefs) {
+    elements.push({
+      type: ElementType.FOOTNOTE_DEF,
+      from: footnote.from,
+      to: footnote.to,
+      lineNumber: footnote.startLine,
+      startLine: footnote.startLine,
+      endLine: footnote.endLine,
+      decorationData: {
+        identifier: footnote.identifier,
+        contentLines: footnote.contentLines,
+        isMultiLine: footnote.startLine !== footnote.endLine,
+      },
+    });
+    for (let lineNum = footnote.startLine; lineNum <= footnote.endLine; lineNum++) {
+      occupiedLines.add(lineNum);
+    }
+  }
+
+  for (const referenceDef of referenceDefMatches) {
+    elements.push({
+      type: ElementType.REFERENCE_DEF,
+      from: referenceDef.from,
+      to: referenceDef.to,
+      lineNumber: referenceDef.startLine,
+      startLine: referenceDef.startLine,
+      endLine: referenceDef.endLine,
+      decorationData: {
+        label: referenceDef.label,
+        url: referenceDef.url,
+        title: referenceDef.title,
+        isMultiLine: referenceDef.startLine !== referenceDef.endLine,
+      },
+    });
+
+    for (let lineNum = referenceDef.startLine; lineNum <= referenceDef.endLine; lineNum++) {
+      occupiedLines.add(lineNum);
+    }
+  }
+
   for (let lineNum = 1; lineNum <= doc.lines; lineNum++) {
     if (occupiedLines.has(lineNum)) continue;
     const line = doc.line(lineNum);
     const lineText = line.text;
-    const lineElements = parseLineElements(state, line, lineNum, lineText);
+    const lineElements = parseLineElements(state, line, lineNum, lineText, referenceDefs);
     elements.push(...lineElements);
   }
 
@@ -1006,7 +2057,8 @@ function parseLineElements(
   state: EditorState,
   line: { from: number; to: number; text: string },
   lineNum: number,
-  lineText: string
+  lineText: string,
+  referenceDefs: Map<string, ReferenceDefinition>
 ): ParsedElement[] {
   const elements: ParsedElement[] = [];
 
@@ -1084,7 +2136,12 @@ function parseLineElements(
   }
 
   // 检测列表（使用parseListItem）
-  const listItem = parseListItem(lineText, line.from);
+  let listItem = parseListItem(lineText, line.from);
+  if (!listItem && blockquote) {
+    const contentStart = blockquote.markerTo - line.from;
+    const contentText = lineText.slice(contentStart);
+    listItem = parseListItem(contentText, line.from + contentStart);
+  }
   if (listItem) {
     // 1. 行装饰器
     elements.push({
@@ -1119,23 +2176,28 @@ function parseLineElements(
     });
   }
 
-  // 检测横线
-  if (/^([-*_])\1{2,}\s*$/.test(lineText)) {
+  // 检测横线（支持引用/列表前缀）
+  const hrPattern = /^([-*_])(?:\s*\1){2,}\s*$/;
+  const hrCandidate = stripMathLinePrefix(lineText, { stripList: false }).stripped.trim();
+  const listHrCandidate = stripMathLinePrefix(lineText).stripped.trim();
+  if (hrPattern.test(hrCandidate) || hrPattern.test(listHrCandidate)) {
+    // line.to is already the end of line (newline excluded)
+    const lineEnd = line.to;
     elements.push({
       type: ElementType.HORIZONTAL_RULE,
       from: line.from,
-      to: Math.max(line.from, line.to - 1), // Exclude newline character
+      to: lineEnd,
       lineNumber: lineNum,
       decorationData: {
         originalFrom: line.from,
-        originalTo: Math.max(line.from, line.to - 1), // Exclude newline character
+        originalTo: lineEnd,
       },
     });
     return elements;
   }
 
   // 解析行内元素 (公式、粗体、链接等)
-  const inlineElements = parseInlineElements(lineText, line.from, lineNum);
+  const inlineElements = parseInlineElements(lineText, line.from, lineNum, referenceDefs);
   elements.push(...inlineElements);
 
   return elements;
@@ -1150,7 +2212,8 @@ function parseLineElements(
 function parseInlineElements(
   lineText: string,
   lineFrom: number,
-  lineNum: number
+  lineNum: number,
+  referenceDefs: Map<string, ReferenceDefinition>
 ): ParsedElement[] {
   const elements: ParsedElement[] = [];
   let match: RegExpExecArray | null;
@@ -1172,7 +2235,52 @@ function parseInlineElements(
     return false;
   };
 
-  // 1. 行内公式: $...$
+  const isInsideMarkdownLink = (index: number): boolean => {
+    const linkStart = lineText.lastIndexOf('](', index);
+    if (linkStart === -1) return false;
+    const linkEnd = lineText.indexOf(')', linkStart + 2);
+    return linkEnd !== -1 && index < linkEnd;
+  };
+
+  const resolveReference = (labelRaw: string): ReferenceDefinition | null => {
+    const key = normalizeReferenceLabel(labelRaw);
+    if (!key) return null;
+    return referenceDefs.get(key) ?? null;
+  };
+
+  const hasReferenceDefs = referenceDefs.size > 0;
+
+  // 1. 行内公式: \( ... \)
+  while ((match = REGEX_PATTERNS.inlineMathParen.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    const endMarkerIndex = match.index + match[0].length - 2; // backslash before )
+    if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
+
+    const latex = match[1];
+    if (latex.includes('\n')) continue;
+
+    if (!latex || latex.trim() === '') {
+      console.warn('[parseInlineElements] Empty latex for inline math (paren) at', lineFrom + match.index);
+      continue;
+    }
+
+    elements.push({
+      type: ElementType.MATH_INLINE,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      latex: latex,
+      isBlock: false,
+      decorationData: {
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 2,
+        contentTo: lineFrom + match.index + match[0].length - 2,
+      },
+    });
+  }
+
+  // 2. 行内公式: $...$
   while ((match = REGEX_PATTERNS.inlineMath.exec(lineText)) !== null) {
     const startIndex = match.index;
     const endMarkerIndex = match.index + match[0].length - 1;
@@ -1203,7 +2311,7 @@ function parseInlineElements(
     });
   }
 
-  // 2. 粗体+斜体: ***...***
+  // 3. 粗体+斜体: ***...***
   while ((match = REGEX_PATTERNS.boldItalic.exec(lineText)) !== null) {
     const startIndex = match.index;
     const endMarkerIndex = match.index + match[0].length - 3;
@@ -1338,7 +2446,40 @@ function parseInlineElements(
     });
   }
 
-  // 7. 行内代码: `...`
+  // 7. 行内代码: ``...`` (允许单个反引号)
+  while ((match = REGEX_PATTERNS.inlineCodeDouble.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    const endMarkerIndex = match.index + match[0].length - 2;
+    if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
+
+    const fullMatch = match[0]; // e.g., "``code``"
+    const content = match[1];   // e.g., "code"
+
+    const from = lineFrom + match.index;
+    const to = lineFrom + match.index + fullMatch.length;
+
+    if (from >= to) {
+      console.warn('[parseInlineElements] Invalid inline code (double) range:', from, to, 'content:', content);
+      continue;
+    }
+
+    elements.push({
+      type: ElementType.INLINE_CODE,
+      from: from,
+      to: to,
+      lineNumber: lineNum,
+      content: content,
+      decorationData: {
+        className: 'cm-inline-code',
+        syntaxFrom: from,
+        syntaxTo: to,
+        contentFrom: from + 2,
+        contentTo: to - 2,
+      },
+    });
+  }
+
+  // 8. 行内代码: `...`
   while ((match = REGEX_PATTERNS.inlineCode.exec(lineText)) !== null) {
     const startIndex = match.index;
     const endMarkerIndex = match.index + match[0].length - 1;
@@ -1346,16 +2487,16 @@ function parseInlineElements(
 
     const fullMatch = match[0]; // e.g., "`code`"
     const content = match[1];   // e.g., "code"
-    
+
     // PHASE 3 FIX: Validate range to prevent text duplication
     const from = lineFrom + match.index;
     const to = lineFrom + match.index + fullMatch.length;
-    
+
     if (from >= to) {
       console.warn('[parseInlineElements] Invalid inline code range:', from, to, 'content:', content);
       continue;
     }
-    
+
     elements.push({
       type: ElementType.INLINE_CODE,
       from: from,
@@ -1372,7 +2513,7 @@ function parseInlineElements(
     });
   }
 
-  // 8. 批注链接: [[file.pdf#ann-uuid]]
+  // 9. 批注链接: [[file.pdf#ann-uuid]]
   while ((match = REGEX_PATTERNS.annotationLink.exec(lineText)) !== null) {
     if (shouldSkipMatch(match.index)) continue;
 
@@ -1395,12 +2536,15 @@ function parseInlineElements(
     });
   }
 
-  // 9. Wiki链接: [[page]] or [[page|display]]
+  // 10. Wiki链接: [[page]] / [[page|display]] / [[page#heading|alias]]
   while ((match = REGEX_PATTERNS.wikiLink.exec(lineText)) !== null) {
     if (shouldSkipMatch(match.index)) continue;
 
     const target = match[1];
-    const displayText = match[2] || match[1];
+    const heading = match[2];
+    const alias = match[3];
+    const fullTarget = heading ? `${target}#${heading}` : target;
+    const displayText = alias || fullTarget;
     
     // PHASE 3 FIX: Validate range to prevent text duplication
     const from = lineFrom + match.index;
@@ -1419,7 +2563,7 @@ function parseInlineElements(
       content: displayText,
       decorationData: {
         type: 'wiki-link',
-        url: target,
+        url: fullTarget,
         isWikiLink: true,
         syntaxFrom: from,
         syntaxTo: to,
@@ -1458,6 +2602,166 @@ function parseInlineElements(
         contentTo: lineFrom + match.index + 1 + match[1].length,
       },
     });
+  }
+
+  if (hasReferenceDefs) {
+    // 10b. 引用式图片: ![alt][label] / ![alt][]
+    while ((match = REGEX_PATTERNS.referenceImage.exec(lineText)) !== null) {
+      if (shouldSkipMatch(match.index)) continue;
+
+      const altText = match[1] || '';
+      const label = match[2] && match[2].trim().length > 0 ? match[2] : altText;
+      const def = resolveReference(label);
+      if (!def) continue;
+
+      const from = lineFrom + match.index;
+      const to = lineFrom + match.index + match[0].length;
+      if (from >= to) {
+        console.warn('[parseInlineElements] Invalid reference image range:', from, to, 'alt:', altText);
+        continue;
+      }
+
+      elements.push({
+        type: ElementType.INLINE_IMAGE,
+        from: from,
+        to: to,
+        lineNumber: lineNum,
+        content: altText,
+        decorationData: {
+          type: 'image',
+          url: def.url,
+          alt: altText,
+          title: def.title,
+          isReference: true,
+          syntaxFrom: from,
+          syntaxTo: to,
+          contentFrom: from + 2,
+          contentTo: from + 2 + altText.length,
+        },
+      });
+    }
+
+    // 10c. 引用式链接: [text][label] / [text][]
+    while ((match = REGEX_PATTERNS.referenceLink.exec(lineText)) !== null) {
+      if (shouldSkipMatch(match.index)) continue;
+      if (match.index > 0 && lineText[match.index - 1] === '!') continue;
+
+      const text = match[1];
+      const label = match[2] && match[2].trim().length > 0 ? match[2] : text;
+      const def = resolveReference(label);
+      if (!def) continue;
+
+      const from = lineFrom + match.index;
+      const to = lineFrom + match.index + match[0].length;
+      if (from >= to) {
+        console.warn('[parseInlineElements] Invalid reference link range:', from, to, 'text:', text);
+        continue;
+      }
+
+      elements.push({
+        type: ElementType.INLINE_LINK,
+        from: from,
+        to: to,
+        lineNumber: lineNum,
+        content: text,
+        decorationData: {
+          type: 'reference-link',
+          url: def.url,
+          title: def.title,
+          isWikiLink: false,
+          syntaxFrom: from,
+          syntaxTo: to,
+          contentFrom: from + 1,
+          contentTo: from + 1 + text.length,
+        },
+      });
+    }
+
+    // 10d. 快捷引用式链接: [label]
+    while ((match = REGEX_PATTERNS.referenceLinkShortcut.exec(lineText)) !== null) {
+      const startIndex = match.index;
+      const endIndex = match.index + match[0].length - 1;
+      if (shouldSkipMatch(startIndex, endIndex)) continue;
+      if (lineText[startIndex + 1] === '^') continue; // footnote
+      if (startIndex > 0 && lineText[startIndex - 1] === '!') continue; // image
+      if (lineText[startIndex + 1] === '[') continue; // wiki link [[...]]
+      if (startIndex > 0 && lineText[startIndex - 1] === ']') continue; // part of [text][label]
+
+      const nextChar = lineText[endIndex + 1];
+      if (nextChar === '(' || nextChar === '[') continue;
+
+      if (isInsideMarkdownLink(startIndex)) continue;
+
+      const labelText = match[1];
+      const def = resolveReference(labelText);
+      if (!def) continue;
+
+      const from = lineFrom + startIndex;
+      const to = lineFrom + match.index + match[0].length;
+      if (from >= to) {
+        console.warn('[parseInlineElements] Invalid reference shortcut range:', from, to, 'label:', labelText);
+        continue;
+      }
+
+      elements.push({
+        type: ElementType.INLINE_LINK,
+        from: from,
+        to: to,
+        lineNumber: lineNum,
+        content: labelText,
+        decorationData: {
+          type: 'reference-link',
+          url: def.url,
+          title: def.title,
+          isWikiLink: false,
+          syntaxFrom: from,
+          syntaxTo: to,
+          contentFrom: from + 1,
+          contentTo: from + 1 + labelText.length,
+        },
+      });
+    }
+
+    // 10e. 快捷引用式图片: ![alt]
+    while ((match = REGEX_PATTERNS.referenceImageShortcut.exec(lineText)) !== null) {
+      const startIndex = match.index;
+      const endIndex = match.index + match[0].length - 1;
+      if (shouldSkipMatch(startIndex, endIndex)) continue;
+
+      if (lineText[startIndex + 2] === '[') continue; // embed ![[...]]
+      const nextChar = lineText[endIndex + 1];
+      if (nextChar === '(' || nextChar === '[') continue;
+
+      const altText = match[1] || '';
+      const def = resolveReference(altText);
+      if (!def) continue;
+
+      const from = lineFrom + startIndex;
+      const to = lineFrom + match.index + match[0].length;
+      if (from >= to) {
+        console.warn('[parseInlineElements] Invalid reference image shortcut range:', from, to, 'alt:', altText);
+        continue;
+      }
+
+      elements.push({
+        type: ElementType.INLINE_IMAGE,
+        from: from,
+        to: to,
+        lineNumber: lineNum,
+        content: altText,
+        decorationData: {
+          type: 'image',
+          url: def.url,
+          alt: altText,
+          title: def.title,
+          isReference: true,
+          syntaxFrom: from,
+          syntaxTo: to,
+          contentFrom: from + 2,
+          contentTo: from + 2 + altText.length,
+        },
+      });
+    }
   }
 
   // 11. 嵌入: ![[file]]
@@ -1619,6 +2923,57 @@ function parseInlineElements(
     });
   }
 
+  // 18. Autolink: <https://...> / <mailto:...>
+  while ((match = REGEX_PATTERNS.autoLink.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    const endMarkerIndex = match.index + match[0].length - 1;
+    if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
+
+    const url = match[1];
+    elements.push({
+      type: ElementType.INLINE_LINK,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      content: url,
+      decorationData: {
+        url,
+        isWikiLink: false,
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 1,
+        contentTo: lineFrom + match.index + match[0].length - 1,
+      },
+    });
+  }
+
+  // 19. Bare URL (GFM autolink literal)
+  while ((match = REGEX_PATTERNS.bareUrl.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    if (shouldSkipMatch(startIndex)) continue;
+    const url = match[0];
+
+    // Skip URLs that are already part of markdown links or autolinks
+    if (isInsideMarkdownLink(startIndex)) continue;
+    if (lineText[startIndex - 1] === '<' && lineText[startIndex + url.length] === '>') continue;
+
+    elements.push({
+      type: ElementType.INLINE_LINK,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + url.length,
+      lineNumber: lineNum,
+      content: url,
+      decorationData: {
+        url,
+        isWikiLink: false,
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + url.length,
+        contentFrom: lineFrom + match.index,
+        contentTo: lineFrom + match.index + url.length,
+      },
+    });
+  }
+
   return elements;
 }
 
@@ -1641,6 +2996,20 @@ export function resolveConflicts(elements: ParsedElement[]): ParsedElement[] {
     ElementType.INLINE_CODE,
     ElementType.MATH_INLINE,
   ]);
+
+  const INLINE_CONTAINER_TYPES = new Set<ElementType>([
+    ElementType.INLINE_BOLD,
+    ElementType.INLINE_ITALIC,
+    ElementType.INLINE_CODE,
+    ElementType.INLINE_LINK,
+    ElementType.INLINE_IMAGE,
+    ElementType.INLINE_OTHER,
+    ElementType.MATH_INLINE,
+  ]);
+
+  const isInlineContainer = (element: ParsedElement): boolean => {
+    return INLINE_CONTAINER_TYPES.has(element.type);
+  };
 
   // 按优先级排序 (低到高，这样后面的会覆盖前面的)
   const sorted = [...elements].sort((a, b) => {
@@ -1681,6 +3050,21 @@ export function resolveConflicts(elements: ParsedElement[]): ParsedElement[] {
         );
 
         if (isParentChild) {
+          // Inline replacement containers already render nested content
+          // Avoid overlapping replace decorations that can duplicate text.
+          if (other.from <= current.from && other.to >= current.to) {
+            if (isInlineContainer(other) && isInlineContainer(current)) {
+              shouldKeep = false;
+              covered[i] = true;
+              break;
+            }
+          }
+          if (current.from <= other.from && current.to >= other.to) {
+            if (isInlineContainer(current) && isInlineContainer(other)) {
+              covered[j] = true;
+            }
+          }
+
           // Inline code / inline math should not contain nested elements
           if (other.from <= current.from && other.to >= current.to && NO_NESTING_TYPES.has(other.type)) {
             shouldKeep = false;
@@ -1733,6 +3117,9 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
   debugLog('[buildDecorations] Doc lines:', view.state.doc.lines, 'Doc length:', view.state.doc.length);
 
   const docLength = view.state.doc.length;
+  const cached = ensureCachedDocument(view.state.doc);
+  const referenceDefs = cached.referenceDefs;
+  const referenceSignature = buildReferenceSignature(referenceDefs);
 
   for (const element of elements) {
     // CRITICAL FIX: Validate element range to prevent truncation and errors
@@ -1771,10 +3158,15 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
 
     // Element-level reveal check: Skip decoration if cursor is in this element
     // Keep line/editing styles even when revealing syntax markers
-    const reveal = shouldRevealAt(view.state, element.from, element.to, element.type);
+    let reveal = shouldRevealAt(view.state, element.from, element.to, element.type);
     const data = element.decorationData as any;
     const isLineStyle = data?.isLineStyle === true;
     const isEditingStyle = data?.isEditingStyle === true;
+
+    // Heading marker hide should only reveal when cursor is within the marker itself
+    if (element.type === ElementType.HEADING && data?.isMarkerHide) {
+      reveal = shouldRevealAt(view.state, element.from, element.to, undefined);
+    }
 
     if (reveal && !isLineStyle && !isEditingStyle) {
       skippedCount++;
@@ -1802,6 +3194,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
         // 多行代码块：widget + 隐藏行
         const doc = view.state.doc;
         const firstLine = doc.line(element.startLine);
+        const context = getBlockContext(firstLine.text);
 
         // 1. 在第一行添加widget
         entries.push({
@@ -1813,7 +3206,8 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
               element.language || '',
               data.showLineNumbers === true, // Default: false (cleaner like Obsidian)
               element.from,
-              element.to
+              element.to,
+              context ?? undefined
             ),
             side: -1,
           }),
@@ -1834,6 +3228,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
         }
       } else {
         // 单行代码块
+        const lineContext = getBlockContext(view.state.doc.lineAt(element.from).text);
         entries.push({
           from: element.from,
           to: element.to,
@@ -1843,7 +3238,8 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
               element.language || '',
               data.showLineNumbers === true, // Default: false (cleaner like Obsidian)
               element.from,
-              element.to
+              element.to,
+              lineContext ?? undefined
             ),
           }),
           priority: element.type,
@@ -1878,6 +3274,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
 
         const doc = view.state.doc;
         const firstLine = doc.line(element.startLine);
+        const context = getBlockContext(firstLine.text);
 
         // 1. 在第一行添加widget
         entries.push({
@@ -1888,7 +3285,8 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
               element.latex,
               true, // isBlock
               element.from,
-              element.to
+              element.to,
+              context ?? undefined
             ),
             side: -1,
           }),
@@ -1913,6 +3311,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
           console.warn('[buildDecorations] Empty latex for single-line MATH_BLOCK at', element.from, element.to);
           continue;
         }
+        const lineContext = getBlockContext(view.state.doc.lineAt(element.from).text);
         entries.push({
           from: element.from,
           to: element.to,
@@ -1921,7 +3320,8 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
               element.latex,
               true, // isBlock
               element.from,
-              element.to
+              element.to,
+              lineContext ?? undefined
             ),
           }),
           priority: element.type,
@@ -1950,6 +3350,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
         // 多行表格：widget + 隐藏行
         const doc = view.state.doc;
         const firstLine = doc.line(element.startLine);
+        const context = getBlockContext(firstLine.text);
 
         // 1. 在第一行添加widget
         entries.push({
@@ -1961,7 +3362,10 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
               data.hasHeader !== false,
               data.alignments || [],
               element.from,
-              element.to
+              element.to,
+              referenceDefs,
+              referenceSignature,
+              context ?? undefined
             ),
             side: -1,
           }),
@@ -1982,6 +3386,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
         }
       } else {
         // 单行表格（罕见）
+        const lineContext = getBlockContext(view.state.doc.lineAt(element.from).text);
         entries.push({
           from: element.from,
           to: element.to,
@@ -1991,7 +3396,10 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
               data.hasHeader !== false,
               data.alignments || [],
               element.from,
-              element.to
+              element.to,
+              referenceDefs,
+              referenceSignature,
+              lineContext ?? undefined
             ),
           }),
           priority: element.type,
@@ -2001,8 +3409,245 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
       continue;
     }
 
+    // Callout 块需要特殊处理
+    if (element.type === ElementType.CALLOUT && element.decorationData) {
+      const data = element.decorationData as any;
+
+      if (data.isEditingStyle) {
+        entries.push({
+          from: element.from,
+          to: element.to,
+          decoration: Decoration.line({ class: 'cm-callout-source' }),
+          priority: element.type,
+          isLine: true,
+        });
+      } else if (data.isMultiLine && element.startLine && element.endLine) {
+        const doc = view.state.doc;
+        const firstLine = doc.line(element.startLine);
+
+        entries.push({
+          from: firstLine.from,
+          to: firstLine.from,
+          decoration: Decoration.widget({
+            widget: new CalloutWidget(
+              data.type || 'note',
+              data.title || '',
+              data.contentLines || [],
+              element.from,
+              element.to,
+              data.isFolded === true,
+              referenceDefs,
+              referenceSignature
+            ),
+            side: -1,
+          }),
+          priority: element.type,
+          isLine: true,
+        });
+
+        for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
+          const line = doc.line(lineNum);
+          entries.push({
+            from: line.from,
+            to: line.from,
+            decoration: Decoration.line({ class: 'cm-advanced-block-hidden' }),
+            priority: element.type,
+            isLine: true,
+          });
+        }
+      } else {
+        entries.push({
+          from: element.from,
+          to: element.to,
+          decoration: Decoration.replace({
+            widget: new CalloutWidget(
+              data.type || 'note',
+              data.title || '',
+              data.contentLines || [],
+              element.from,
+              element.to,
+              data.isFolded === true,
+              referenceDefs,
+              referenceSignature
+            ),
+          }),
+          priority: element.type,
+          isLine: false,
+        });
+      }
+      continue;
+    }
+
+    // Details 块需要特殊处理
+    if (element.type === ElementType.DETAILS && element.decorationData) {
+      const data = element.decorationData as any;
+
+      if (data.isEditingStyle) {
+        entries.push({
+          from: element.from,
+          to: element.to,
+          decoration: Decoration.line({ class: 'cm-details-source' }),
+          priority: element.type,
+          isLine: true,
+        });
+      } else if (data.isMultiLine && element.startLine && element.endLine) {
+        const doc = view.state.doc;
+        const firstLine = doc.line(element.startLine);
+
+        entries.push({
+          from: firstLine.from,
+          to: firstLine.from,
+          decoration: Decoration.widget({
+            widget: new DetailsWidget(
+              data.summary || 'Details',
+              data.contentLines || [],
+              element.from,
+              element.to,
+              data.isOpen === true,
+              referenceDefs,
+              referenceSignature
+            ),
+            side: -1,
+          }),
+          priority: element.type,
+          isLine: true,
+        });
+
+        for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
+          const line = doc.line(lineNum);
+          entries.push({
+            from: line.from,
+            to: line.from,
+            decoration: Decoration.line({ class: 'cm-advanced-block-hidden' }),
+            priority: element.type,
+            isLine: true,
+          });
+        }
+      } else {
+        entries.push({
+          from: element.from,
+          to: element.to,
+          decoration: Decoration.replace({
+            widget: new DetailsWidget(
+              data.summary || 'Details',
+              data.contentLines || [],
+              element.from,
+              element.to,
+              data.isOpen === true,
+              referenceDefs,
+              referenceSignature
+            ),
+          }),
+          priority: element.type,
+          isLine: false,
+        });
+      }
+      continue;
+    }
+
+    // 脚注定义块
+    if (element.type === ElementType.FOOTNOTE_DEF && element.decorationData) {
+      const data = element.decorationData as any;
+
+      if (data.isEditingStyle) {
+        entries.push({
+          from: element.from,
+          to: element.to,
+          decoration: Decoration.line({ class: 'cm-footnoteref-source' }),
+          priority: element.type,
+          isLine: true,
+        });
+      } else if (data.isMultiLine && element.startLine && element.endLine) {
+        const doc = view.state.doc;
+        const firstLine = doc.line(element.startLine);
+
+        entries.push({
+          from: firstLine.from,
+          to: firstLine.from,
+          decoration: Decoration.widget({
+            widget: new FootnoteDefWidget(
+              data.identifier || '',
+              data.contentLines || [],
+              element.from,
+              element.to,
+              referenceDefs,
+              referenceSignature
+            ),
+            side: -1,
+          }),
+          priority: element.type,
+          isLine: true,
+        });
+
+        for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
+          const line = doc.line(lineNum);
+          entries.push({
+            from: line.from,
+            to: line.from,
+            decoration: Decoration.line({ class: 'cm-advanced-block-hidden' }),
+            priority: element.type,
+            isLine: true,
+          });
+        }
+      } else {
+        entries.push({
+          from: element.from,
+          to: element.to,
+          decoration: Decoration.replace({
+            widget: new FootnoteDefWidget(
+              data.identifier || '',
+              data.contentLines || [],
+              element.from,
+              element.to,
+              referenceDefs,
+              referenceSignature
+            ),
+          }),
+          priority: element.type,
+          isLine: false,
+        });
+      }
+      continue;
+    }
+
+    // 引用式链接定义
+    if (element.type === ElementType.REFERENCE_DEF && element.decorationData) {
+      const data = element.decorationData as any;
+
+      if (data.isEditingStyle) {
+        entries.push({
+          from: element.from,
+          to: element.to,
+          decoration: Decoration.line({ class: 'cm-footnoteref-source' }),
+          priority: element.type,
+          isLine: true,
+        });
+      } else if (data.isMultiLine && element.startLine && element.endLine) {
+        const doc = view.state.doc;
+        for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
+          const line = doc.line(lineNum);
+          entries.push({
+            from: line.from,
+            to: line.from,
+            decoration: Decoration.line({ class: 'cm-advanced-block-hidden' }),
+            priority: element.type,
+            isLine: true,
+          });
+        }
+      } else {
+        entries.push({
+          from: element.from,
+          to: element.to,
+          decoration: Decoration.replace({}),
+          priority: element.type,
+          isLine: false,
+        });
+      }
+      continue;
+    }
+
     // 其他元素使用通用创建函数
-    const decoration = createDecorationForElement(element);
+    const decoration = createDecorationForElement(element, referenceDefs, referenceSignature);
     if (decoration) {
       entries.push({
         from: element.from,
@@ -2065,7 +3710,11 @@ function isLineDecoration(element: ParsedElement): boolean {
  *
  * 根据元素类型使用相应的Widget或Mark装饰器
  */
-function createDecorationForElement(element: ParsedElement): Decoration | null {
+function createDecorationForElement(
+  element: ParsedElement,
+  referenceDefs: Map<string, ReferenceDefinition>,
+  referenceSignature: string
+): Decoration | null {
   const data = element.decorationData as any;
 
   switch (element.type) {
@@ -2080,9 +3729,9 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
           class: `cm-heading cm-heading-${data.level}`,
         });
       } else if (data?.isMarkerHide) {
-        // Hide heading markers via CSS (more robust than replace for start-of-line)
+        // Hide heading markers (Obsidian-style)
         return Decoration.mark({
-          class: 'cm-hidden-syntax',
+          class: 'cm-hidden-syntax cm-heading-marker',
         });
       }
       return null;
@@ -2123,6 +3772,8 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
       if (data?.originalFrom !== undefined && data?.originalTo !== undefined) {
         return Decoration.replace({
           widget: new HorizontalRuleWidget(data.originalFrom, data.originalTo),
+          // Block replacement so the HR can span full line width
+          block: true,
         });
       }
       return null;
@@ -2162,7 +3813,9 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
           data?.contentFrom || element.from,
           data?.contentTo || element.to,
           data?.syntaxFrom || element.from,
-          data?.syntaxTo || element.to
+          data?.syntaxTo || element.to,
+          referenceDefs,
+          referenceSignature
         ),
       });
 
@@ -2179,7 +3832,9 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
           data?.contentFrom || element.from,
           data?.contentTo || element.to,
           data?.syntaxFrom || element.from,
-          data?.syntaxTo || element.to
+          data?.syntaxTo || element.to,
+          referenceDefs,
+          referenceSignature
         ),
       });
 
@@ -2191,7 +3846,9 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
           data?.contentFrom || element.from,
           data?.contentTo || element.to,
           data?.syntaxFrom || element.from,
-          data?.syntaxTo || element.to
+          data?.syntaxTo || element.to,
+          referenceDefs,
+          referenceSignature
         ),
       });
 
@@ -2260,7 +3917,9 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
             data?.contentFrom || element.from,
             data?.contentTo || element.to,
             data?.syntaxFrom || element.from,
-            data?.syntaxTo || element.to
+            data?.syntaxTo || element.to,
+            referenceDefs,
+            referenceSignature
           ),
         });
       }
@@ -2344,13 +4003,15 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
               data.contentFrom || element.from,
               data.contentTo || element.to,
               data.syntaxFrom || element.from,
-              data.syntaxTo || element.to
+              data.syntaxTo || element.to,
+              referenceDefs,
+              referenceSignature
             ),
           });
       }
 
     // ========================================================================
-    // 数学公式 - TODO: 需要集成KaTeX
+    // 数学公式 - KaTeX 已集成
     // ========================================================================
 
     case ElementType.MATH_INLINE:
@@ -2374,7 +4035,8 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
           element.latex,
           false, // isBlock
           element.from,
-          element.to
+          element.to,
+          undefined
         ),
       });
 
@@ -2399,7 +4061,8 @@ function createDecorationForElement(element: ParsedElement): Decoration | null {
           element.latex,
           true, // isBlock
           element.from,
-          element.to
+          element.to,
+          undefined
         ),
       });
 
@@ -2494,6 +4157,11 @@ export function clearDecorationCache(): void {
   cachedCodeBlocks = [];
   cachedMathBlocks = [];
   cachedTables = [];
+  cachedCallouts = [];
+  cachedDetails = [];
+  cachedFootnoteDefs = [];
+  cachedReferenceDefs = new Map();
+  cachedReferenceDefMatches = [];
 }
 
 /**

@@ -37,13 +37,15 @@ interface FileNodeProps {
   depth: number;
 }
 
+let pendingOpenTimeout: NodeJS.Timeout | null = null;
+
 /**
  * File node component
  * Displays file with appropriate icon and handles click to open file
  */
 function FileNodeComponent({ node, depth }: FileNodeProps) {
   const Icon = getFileIcon(node.extension);
-  const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
+  const openFileInPane = useWorkspaceStore((state) => state.openFileInPane);
   const closeTabsByPath = useWorkspaceStore((state) => state.closeTabsByPath);
   const updateTabPath = useWorkspaceStore((state) => state.updateTabPath);
   const layout = useWorkspaceStore((state) => state.layout);
@@ -58,13 +60,17 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   const [renameValue, setRenameValue] = useState(node.name);
   const [renameError, setRenameError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const clickTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Check if this file is open in any pane
-  const { isOpenInActivePane, openCount } = useMemo(() => {
+  const { openCount, isActiveFile } = useMemo(() => {
     const paneIds = getAllPaneIds(layout.root);
     let count = 0;
-    let inActive = false;
+    let activeFilePath: string | null = null;
+
+    const activePane = findPane(layout.root, layout.activePaneId);
+    if (activePane && activePane.activeTabIndex >= 0 && activePane.activeTabIndex < activePane.tabs.length) {
+      activeFilePath = activePane.tabs[activePane.activeTabIndex]?.filePath ?? null;
+    }
 
     for (const paneId of paneIds) {
       const pane = findPane(layout.root, paneId);
@@ -72,14 +78,14 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
         const isOpen = pane.tabs.some(tab => tab.filePath === node.path);
         if (isOpen) {
           count++;
-          if (paneId === layout.activePaneId) {
-            inActive = true;
-          }
         }
       }
     }
 
-    return { isOpenInActivePane: inActive, openCount: count };
+    return {
+      openCount: count,
+      isActiveFile: activeFilePath === node.path,
+    };
   }, [layout.root, layout.activePaneId, node.path]);
 
   // Focus input when entering rename mode
@@ -99,23 +105,22 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   const handleClick = () => {
     if (isRenaming) return;
     
-    // Clear any pending double-click timeout
-    if (clickTimeoutRef.current) {
-      clearTimeout(clickTimeoutRef.current);
-      clickTimeoutRef.current = null;
-    }
-    
     // Delay single click action to allow double-click detection
-    clickTimeoutRef.current = setTimeout(() => {
-      openFileInActivePane(node.handle, node.path);
+    if (pendingOpenTimeout) {
+      clearTimeout(pendingOpenTimeout);
+      pendingOpenTimeout = null;
+    }
+    const targetPaneId = layout.activePaneId;
+    pendingOpenTimeout = setTimeout(() => {
+      openFileInPane(targetPaneId, node.handle, node.path);
+      pendingOpenTimeout = null;
     }, 200);
   };
 
   const handleDoubleClick = () => {
-    // Clear single click timeout
-    if (clickTimeoutRef.current) {
-      clearTimeout(clickTimeoutRef.current);
-      clickTimeoutRef.current = null;
+    if (pendingOpenTimeout) {
+      clearTimeout(pendingOpenTimeout);
+      pendingOpenTimeout = null;
     }
     
     // Enter rename mode
@@ -194,8 +199,9 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
-      if (clickTimeoutRef.current) {
-        clearTimeout(clickTimeoutRef.current);
+      if (pendingOpenTimeout) {
+        clearTimeout(pendingOpenTimeout);
+        pendingOpenTimeout = null;
       }
     };
   }, []);
@@ -239,8 +245,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
             "flex w-full items-center gap-2 px-2 py-1 text-left text-sm",
             "hover:bg-accent/50 transition-colors",
             "focus:outline-none focus:bg-accent",
-            isOpenInActivePane && "bg-accent",
-            !isOpenInActivePane && openCount > 0 && "bg-accent/30"
+            isActiveFile && "bg-accent"
           )}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >

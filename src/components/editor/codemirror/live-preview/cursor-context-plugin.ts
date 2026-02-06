@@ -272,6 +272,8 @@ export function shouldRevealAt(
         elementType === ElementType.BLOCKQUOTE ||
         elementType === ElementType.LIST_ITEM ||
         elementType === ElementType.HORIZONTAL_RULE ||
+        elementType === ElementType.FOOTNOTE_DEF ||
+        elementType === ElementType.REFERENCE_DEF ||
         elementType === ElementType.CALLOUT ||
         elementType === ElementType.DETAILS;
 

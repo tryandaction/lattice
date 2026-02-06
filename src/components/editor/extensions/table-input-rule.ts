@@ -106,19 +106,23 @@ export const TableInputRule = Extension.create({
                     // Create table with headers
                     const numCols = headers.length;
                     
+                    // Ensure table commands are available
+                    const canInsertTable = typeof (editor.commands as any).insertTable === "function";
+                    if (!canInsertTable) {
+                      return false;
+                    }
+
                     // Use setTimeout to avoid state conflicts
                     setTimeout(() => {
-                      // Delete the header and separator lines
-                      editor
-                        .chain()
+                      // Delete the header and separator lines, then insert table
+                      (editor.chain() as any)
                         .focus()
                         .deleteRange({ from: headerStart, to: separatorEnd })
-                        // TODO: Fix table insertion command type
-                        // .insertTable({
-                        //   rows: 2,
-                        //   cols: numCols,
-                        //   withHeaderRow: true
-                        // })
+                        .insertTable({
+                          rows: 2,
+                          cols: numCols,
+                          withHeaderRow: true,
+                        })
                         .run();
 
                       // Fill in the header cells

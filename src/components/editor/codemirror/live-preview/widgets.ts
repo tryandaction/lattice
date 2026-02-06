@@ -29,9 +29,32 @@
  */
 
 import { EditorView, WidgetType } from '@codemirror/view';
-import { handleWidgetClick } from './cursor-positioning';
+import { handleWidgetClick, setCursorPosition } from './cursor-positioning';
 import { loadKaTeX } from './katex-loader';
 import { getKaTeXOptions } from './katex-config';
+import { wrapLatexForMarkdown } from '@/lib/formula-utils';
+
+type BlockContext = {
+  blockquoteDepth?: number;
+  listIndent?: number;
+};
+
+function applyBlockContext(container: HTMLElement, context?: BlockContext) {
+  if (!context) return;
+  const blockquoteDepth = context.blockquoteDepth ?? 0;
+  const listIndent = context.listIndent ?? 0;
+
+  if (blockquoteDepth <= 0 && listIndent <= 0) return;
+
+  container.classList.add('cm-block-context');
+  if (blockquoteDepth > 0) {
+    container.classList.add('cm-block-context-quote');
+    container.style.setProperty('--cm-blockquote-depth', String(blockquoteDepth));
+  }
+  if (listIndent > 0) {
+    container.style.setProperty('--cm-list-indent', String(listIndent));
+  }
+}
 
 // ============================================================================
 // KaTeX动态加载 (使用共享加载器)
@@ -63,7 +86,9 @@ export class FormattedTextWidget extends WidgetType {
     private contentFrom: number,
     private contentTo: number,
     private elementFrom: number,
-    private elementTo: number
+    private elementTo: number,
+    private referenceDefs?: Map<string, ReferenceDefinition>,
+    private referenceSignature: string = ''
   ) {
     super();
   }
@@ -72,7 +97,8 @@ export class FormattedTextWidget extends WidgetType {
     return (
       other.content === this.content &&
       other.className === this.className &&
-      other.contentFrom === this.contentFrom
+      other.contentFrom === this.contentFrom &&
+      other.referenceSignature === this.referenceSignature
     );
   }
 
@@ -91,7 +117,7 @@ export class FormattedTextWidget extends WidgetType {
     if (this.className.includes('cm-inline-code')) {
       span.textContent = this.content;
     } else {
-      span.innerHTML = parseInlineMarkdown(this.content);
+      span.innerHTML = parseInlineMarkdown(this.content, this.referenceDefs);
     }
 
     // 处理点击 - 精确光标定位 + 内嵌链接行为
@@ -254,7 +280,10 @@ export class LinkWidget extends WidgetType {
     link.className = `${
       this.isWikiLink ? 'cm-wiki-link' : 'cm-link'
     } cm-formatted-widget cm-syntax-transition`;
-    link.textContent = this.text;
+    link.innerHTML = parseInlineMarkdown(this.text, undefined, {
+      disableLinks: true,
+      disableImages: true,
+    });
     link.href = this.isWikiLink ? '#' : this.url;
     link.title = this.isWikiLink
       ? `${this.url} (Ctrl+Click or double-click to open)`
@@ -646,7 +675,78 @@ export class FootnoteRefWidget extends WidgetType {
 }
 
 // ============================================================================
-// 9. EmbedWidget - 嵌入内容
+// 9. FootnoteDefWidget - 脚注定义
+// ============================================================================
+
+export class FootnoteDefWidget extends WidgetType {
+  constructor(
+    private identifier: string,
+    private contentLines: string[],
+    private from: number,
+    private to: number,
+    private referenceDefs?: Map<string, ReferenceDefinition>,
+    private referenceSignature: string = ''
+  ) {
+    super();
+  }
+
+  eq(other: FootnoteDefWidget) {
+    return (
+      other.identifier === this.identifier &&
+      JSON.stringify(other.contentLines) === JSON.stringify(this.contentLines) &&
+      other.referenceSignature === this.referenceSignature
+    );
+  }
+
+  toDOM(view: EditorView) {
+    const container = document.createElement('div');
+    container.className = 'cm-footnote-def cm-formatted-widget cm-syntax-transition';
+    container.dataset.from = String(this.from);
+    container.dataset.to = String(this.to);
+
+    const label = document.createElement('span');
+    label.className = 'cm-footnote-def-label';
+    label.textContent = `[^${this.identifier}]`;
+
+    const content = document.createElement('span');
+    content.className = 'cm-footnote-def-content';
+    const joined = this.contentLines.join(' ');
+    content.innerHTML = parseInlineMarkdown(joined, this.referenceDefs);
+
+    const backlink = document.createElement('a');
+    backlink.className = 'cm-footnote-backlink';
+    backlink.href = '#';
+    backlink.textContent = '↩';
+    backlink.title = 'Back to reference';
+    backlink.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dom.dispatchEvent(
+        new CustomEvent('footnote-def-click', {
+          detail: { identifier: this.identifier },
+          bubbles: true,
+        })
+      );
+    });
+
+    container.appendChild(label);
+    container.appendChild(content);
+    container.appendChild(backlink);
+
+    container.addEventListener('mousedown', (e) => {
+      handleWidgetClick(view, container, e, this.from, this.to);
+    });
+
+    return container;
+  }
+
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
+  }
+}
+
+// ============================================================================
+// 10. EmbedWidget - 嵌入内容
 // ============================================================================
 
 export class EmbedWidget extends WidgetType {
@@ -705,7 +805,175 @@ export class EmbedWidget extends WidgetType {
 }
 
 // ============================================================================
-// 10. HeadingContentWidget - 标题内容
+// 11. CalloutWidget - Obsidian Callout
+// ============================================================================
+
+const CALLOUT_ICONS: Record<string, string> = {
+  note: '📝',
+  tip: '💡',
+  info: 'ℹ️',
+  warning: '⚠️',
+  danger: '⛔',
+  success: '✅',
+  question: '❓',
+  bug: '🐛',
+  example: '📌',
+  quote: '❝',
+  abstract: '🧾',
+};
+
+export class CalloutWidget extends WidgetType {
+  constructor(
+    private calloutType: string,
+    private title: string,
+    private contentLines: string[],
+    private from: number,
+    private to: number,
+    private isFolded: boolean,
+    private referenceDefs?: Map<string, ReferenceDefinition>,
+    private referenceSignature: string = ''
+  ) {
+    super();
+  }
+
+  eq(other: CalloutWidget) {
+    return (
+      other.calloutType === this.calloutType &&
+      other.title === this.title &&
+      JSON.stringify(other.contentLines) === JSON.stringify(this.contentLines) &&
+      other.isFolded === this.isFolded &&
+      other.referenceSignature === this.referenceSignature
+    );
+  }
+
+  toDOM(view: EditorView) {
+    const container = document.createElement('div');
+    container.className = `cm-callout cm-callout-${this.calloutType}`;
+    container.dataset.from = String(this.from);
+    container.dataset.to = String(this.to);
+
+    const header = document.createElement('div');
+    header.className = 'cm-callout-header';
+
+    const icon = document.createElement('span');
+    icon.className = 'cm-callout-icon';
+    icon.textContent = CALLOUT_ICONS[this.calloutType] || 'ℹ️';
+
+    const title = document.createElement('span');
+    title.className = 'cm-callout-title';
+    title.innerHTML = parseInlineMarkdown(this.title || this.calloutType.toUpperCase(), this.referenceDefs);
+
+    const fold = document.createElement('span');
+    fold.className = 'cm-callout-fold';
+    fold.textContent = this.isFolded ? '▶' : '▼';
+    fold.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.isFolded = !this.isFolded;
+      fold.textContent = this.isFolded ? '▶' : '▼';
+      content.style.display = this.isFolded ? 'none' : '';
+    });
+
+    header.appendChild(icon);
+    header.appendChild(title);
+    header.appendChild(fold);
+
+    const content = document.createElement('div');
+    content.className = 'cm-callout-content';
+    if (this.contentLines.length === 0) {
+      content.textContent = '';
+    } else {
+      this.contentLines.forEach((line) => {
+        const lineEl = document.createElement('div');
+        lineEl.innerHTML = parseInlineMarkdown(line, this.referenceDefs);
+        content.appendChild(lineEl);
+      });
+    }
+    if (this.isFolded) {
+      content.style.display = 'none';
+    }
+
+    container.appendChild(header);
+    container.appendChild(content);
+
+    container.addEventListener('mousedown', (e) => {
+      handleWidgetClick(view, container, e, this.from, this.to);
+    });
+
+    return container;
+  }
+
+  ignoreEvent(e: Event) {
+    return e.type !== 'mousedown';
+  }
+}
+
+// ============================================================================
+// 12. DetailsWidget - HTML <details>
+// ============================================================================
+
+export class DetailsWidget extends WidgetType {
+  constructor(
+    private summary: string,
+    private contentLines: string[],
+    private from: number,
+    private to: number,
+    private isOpen: boolean,
+    private referenceDefs?: Map<string, ReferenceDefinition>,
+    private referenceSignature: string = ''
+  ) {
+    super();
+  }
+
+  eq(other: DetailsWidget) {
+    return (
+      other.summary === this.summary &&
+      JSON.stringify(other.contentLines) === JSON.stringify(this.contentLines) &&
+      other.isOpen === this.isOpen &&
+      other.referenceSignature === this.referenceSignature
+    );
+  }
+
+  toDOM(view: EditorView) {
+    const details = document.createElement('details');
+    details.className = 'cm-details-widget';
+    details.open = this.isOpen;
+    details.dataset.from = String(this.from);
+    details.dataset.to = String(this.to);
+
+    const summary = document.createElement('summary');
+    summary.className = 'cm-details-summary';
+    summary.innerHTML = parseInlineMarkdown(this.summary || 'Details', this.referenceDefs);
+
+    const content = document.createElement('div');
+    content.className = 'cm-details-content';
+    if (this.contentLines.length === 0) {
+      content.textContent = '';
+    } else {
+      this.contentLines.forEach((line) => {
+        const lineEl = document.createElement('div');
+        lineEl.innerHTML = parseInlineMarkdown(line, this.referenceDefs);
+        content.appendChild(lineEl);
+      });
+    }
+
+    content.addEventListener('mousedown', (e) => {
+      handleWidgetClick(view, content, e, this.from, this.to);
+    });
+
+    details.appendChild(summary);
+    details.appendChild(content);
+
+    return details;
+  }
+
+  ignoreEvent() {
+    return true;
+  }
+}
+
+// ============================================================================
+// 13. HeadingContentWidget - 标题内容
 // ============================================================================
 
 // KaTeX for inline math in headings (使用共享加载器)
@@ -764,12 +1032,7 @@ export class HeadingContentWidget extends WidgetType {
 
         if (katexForHeading) {
           try {
-            katexForHeading.render(latex, mathSpan, {
-              displayMode: false,
-              throwOnError: false,
-              errorColor: '#ef4444',
-              trust: true,
-            });
+            katexForHeading.render(latex, mathSpan, getKaTeXOptions(false));
           } catch {
             mathSpan.textContent = part;
           }
@@ -976,7 +1239,8 @@ export class MathWidget extends WidgetType {
     private latex: string,
     private isBlock: boolean,
     private from: number,
-    private to: number
+    private to: number,
+    private context?: BlockContext
   ) {
     super();
   }
@@ -992,6 +1256,9 @@ export class MathWidget extends WidgetType {
     container.dataset.to = String(this.to);
     container.dataset.latex = this.latex; // 存储LaTeX用于复制功能
     container.title = `${this.isBlock ? 'Block' : 'Inline'} formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX`;
+    if (this.isBlock) {
+      applyBlockContext(container, this.context);
+    }
 
     // CRITICAL: Validate latex to prevent "undefined" rendering
     if (!this.latex || this.latex === 'undefined') {
@@ -1003,7 +1270,11 @@ export class MathWidget extends WidgetType {
 
     // 单击: 定位光标到公式开始位置（触发显示源码）
     container.addEventListener('mousedown', (e) => {
-      handleWidgetClick(view, container, e as MouseEvent, this.from, this.to);
+      e.preventDefault();
+      e.stopPropagation();
+      // Avoid coordinate-based cursor drift for math widgets
+      setCursorPosition(view, this.from);
+      view.focus();
     });
 
     // 双击: 打开MathLive可视化编辑器
@@ -1033,16 +1304,16 @@ export class MathWidget extends WidgetType {
     });
 
     // 右键: 复制LaTeX源码
-    container.addEventListener('contextmenu', async (e) => {
+    container.addEventListener('contextmenu', async (event) => {
+      const e = event as MouseEvent;
       e.preventDefault();
       e.stopPropagation();
 
       const copyAsLatex = e.shiftKey || e.altKey;
-      const latexSource = copyAsLatex
-        ? this.latex
-        : this.isBlock
-          ? `$$${this.latex}$$`
-          : `$${this.latex}$`;
+      const markdownSource =
+        wrapLatexForMarkdown(this.latex, this.isBlock) ||
+        (this.isBlock ? `$$${this.latex}$$` : `$${this.latex}$`);
+      const latexSource = copyAsLatex ? this.latex : markdownSource;
 
       try {
         await navigator.clipboard.writeText(latexSource);
@@ -1166,7 +1437,8 @@ export class CodeBlockWidget extends WidgetType {
     private language: string,
     private showLineNumbers: boolean = false, // Default: no line numbers (cleaner like Obsidian)
     private from: number = 0,
-    private to: number = 0
+    private to: number = 0,
+    private context?: BlockContext
   ) {
     super();
   }
@@ -1184,6 +1456,7 @@ export class CodeBlockWidget extends WidgetType {
     container.className = 'cm-code-block-widget';
     container.dataset.from = String(this.from);
     container.dataset.to = String(this.to);
+    applyBlockContext(container, this.context);
 
     // Let CodeMirror handle cursor positioning naturally - no custom mousedown handlers
 
@@ -1296,7 +1569,35 @@ export class CodeBlockWidget extends WidgetType {
  * 解析行内Markdown格式
  * 返回带有渲染格式的HTML字符串
  */
-function parseInlineMarkdown(text: string): string {
+type ReferenceDefinition = {
+  url: string;
+  title?: string;
+};
+
+function normalizeReferenceLabel(label: string): string {
+  return label.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function resolveReferenceDefinition(
+  label: string,
+  referenceDefs?: Map<string, ReferenceDefinition>
+): ReferenceDefinition | null {
+  if (!referenceDefs || referenceDefs.size === 0) return null;
+  const key = normalizeReferenceLabel(label);
+  if (!key) return null;
+  return referenceDefs.get(key) ?? null;
+}
+
+type InlineParseOptions = {
+  disableLinks?: boolean;
+  disableImages?: boolean;
+};
+
+function parseInlineMarkdown(
+  text: string,
+  referenceDefs?: Map<string, ReferenceDefinition>,
+  options?: InlineParseOptions
+): string {
   let result = text;
 
   // Protect escaped markdown symbols so they won't be parsed
@@ -1307,6 +1608,25 @@ function parseInlineMarkdown(text: string): string {
     escapeMap.set(token, ch);
     return token;
   });
+
+  // Protect inline code spans so they won't be parsed by other rules
+  const codeSpans: string[] = [];
+  const escapeHtml = (value: string) =>
+    value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+
+  const storeCodeSpan = (code: string) => {
+    const token = `@@CODE_${codeSpans.length}@@`;
+    codeSpans.push(escapeHtml(code));
+    return token;
+  };
+
+  result = result.replace(/``([^`]+?)``/g, (_, code: string) => storeCodeSpan(code));
+  result = result.replace(/(?<!`)`(?!`)([^`]+)`(?!`)/g, (_, code: string) => storeCodeSpan(code));
 
   // 先转义HTML
   result = result
@@ -1329,14 +1649,11 @@ function parseInlineMarkdown(text: string): string {
   // 高亮: ==text==
   result = result.replace(/==(.+?)==/g, '<mark>$1</mark>');
 
-  // 行内代码: `code`
-  result = result.replace(/(?<!`)`(?!`)([^`]+)`(?!`)/g, '<code>$1</code>');
-
   // 行内公式: $formula$ (如果KaTeX可用则渲染)
   result = result.replace(/\$([^$\n]+)\$/g, (match, formula) => {
     try {
       if (katex) {
-        return katex.renderToString(formula, { throwOnError: false, displayMode: false });
+        return katex.renderToString(formula, getKaTeXOptions(false));
       }
       // 回退：显示公式在样式化的span中
       return `<span class="cm-math-inline-table">$${formula}$</span>`;
@@ -1345,14 +1662,110 @@ function parseInlineMarkdown(text: string): string {
     }
   });
 
-  // Wiki链接: [[target]] 或 [[target|alias]]
-  result = result.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (match, target, alias) => {
-    const displayText = alias || target;
-    return `<a class="cm-wiki-link-table" href="#" data-target="${target}">${displayText}</a>`;
+  // 行内公式: \(formula\)
+  result = result.replace(/\\\((.+?)\\\)/g, (match, formula) => {
+    try {
+      if (katex) {
+        return katex.renderToString(formula, getKaTeXOptions(false));
+      }
+      return `<span class="cm-math-inline-table">\\(${formula}\\)</span>`;
+    } catch {
+      return `<span class="cm-math-inline-table">\\(${formula}\\)</span>`;
+    }
   });
 
-  // 普通链接: [text](url)
-  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a class="cm-link-table" href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  if (!options?.disableLinks) {
+    // Wiki链接: [[target]] 或 [[target#heading|alias]]
+    result = result.replace(/\[\[([^\]|#]+)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/g, (match, target, heading, alias) => {
+      const fullTarget = heading ? `${target}#${heading}` : target;
+      const displayText = alias || fullTarget;
+      return `<a class="cm-wiki-link-table" href="#" data-target="${fullTarget}">${displayText}</a>`;
+    });
+
+    // 普通链接: [text](url)
+    result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a class="cm-link-table" href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  }
+
+  // 引用式链接与图片: [text][label] / [text][] / [label]
+  if (referenceDefs && referenceDefs.size > 0) {
+    if (!options?.disableImages) {
+      // 引用式图片: ![alt][label] / ![alt][]
+      result = result.replace(/!\[([^\]]*?)\]\s*\[([^\]]*)\]/g, (match, alt, label, offset, str) => {
+        const resolvedLabel = label && String(label).trim().length > 0 ? label : alt;
+        const def = resolveReferenceDefinition(resolvedLabel, referenceDefs);
+        if (!def) return match;
+        const titleAttr = def.title ? ` title="${def.title}"` : '';
+        return `<img class="cm-inline-image" alt="${alt}" src="${def.url}"${titleAttr} />`;
+      });
+    }
+
+    if (!options?.disableLinks) {
+      // 引用式链接: [text][label] / [text][]
+      result = result.replace(/\[([^\]]+?)\]\s*\[([^\]]*)\]/g, (match, text, label, offset, str) => {
+        if (offset > 0 && str[offset - 1] === '!') return match;
+        const resolvedLabel = label && String(label).trim().length > 0 ? label : text;
+        const def = resolveReferenceDefinition(resolvedLabel, referenceDefs);
+        if (!def) return match;
+        const titleAttr = def.title ? ` title="${def.title}"` : '';
+        return `<a class="cm-link-table" href="${def.url}" target="_blank" rel="noopener noreferrer"${titleAttr}>${text}</a>`;
+      });
+    }
+
+    if (!options?.disableImages) {
+      // 快捷引用式图片: ![alt]
+      result = result.replace(/!\[([^\]]+?)\]/g, (match, alt, offset, str) => {
+        const nextChar = str[offset + match.length];
+        if (nextChar === '(' || nextChar === '[') return match;
+        if (str[offset + 2] === '[') return match;
+        const def = resolveReferenceDefinition(alt, referenceDefs);
+        if (!def) return match;
+        const titleAttr = def.title ? ` title="${def.title}"` : '';
+        return `<img class="cm-inline-image" alt="${alt}" src="${def.url}"${titleAttr} />`;
+      });
+    }
+
+    if (!options?.disableLinks) {
+      // 快捷引用式链接: [label]
+      result = result.replace(/\[([^\]\[]+?)\]/g, (match, label, offset, str) => {
+        if (label && String(label).startsWith('^')) return match; // footnote
+        if (offset > 0 && str[offset - 1] === '!') return match;
+        if (offset > 0 && str[offset - 1] === ']') return match;
+        if (str[offset + 1] === '[') return match; // wiki link [[...]]
+        const nextChar = str[offset + match.length];
+        if (nextChar === '(' || nextChar === '[') return match;
+        const def = resolveReferenceDefinition(label, referenceDefs);
+        if (!def) return match;
+        const titleAttr = def.title ? ` title="${def.title}"` : '';
+        return `<a class="cm-link-table" href="${def.url}" target="_blank" rel="noopener noreferrer"${titleAttr}>${label}</a>`;
+      });
+    }
+  }
+
+  if (!options?.disableLinks) {
+    // Autolink: <https://...> / <mailto:...>
+    result = result.replace(/<((https?:\/\/|mailto:)[^>]+)>/g, '<a class="cm-link-table" href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+  }
+
+  if (!options?.disableImages) {
+    // 图片: ![alt](url)
+    result = result.replace(/!\[([^\]]*?)\]\(([^)]+)\)/g, '<img class="cm-inline-image" alt="$1" src="$2" />');
+  }
+
+  // 标签: #tag
+  result = result.replace(/(^|\s)#([a-zA-Z][a-zA-Z0-9_/-]*)/g, '$1<span class="cm-tag">#$2</span>');
+
+  // 脚注引用: [^1]
+  result = result.replace(/\[\^([^\]]+)\]/g, '<sup class="cm-footnote-ref"><a class="cm-footnote-ref-link" href="#">$1</a></sup>');
+
+  // 嵌入: ![[file]]
+  result = result.replace(/!\[\[([^\]]+?)\]\]/g, '<span class="cm-embed-title">📎 $1</span>');
+
+  // Restore inline code spans
+  if (codeSpans.length > 0) {
+    codeSpans.forEach((code, index) => {
+      result = result.replace(new RegExp(`@@CODE_${index}@@`, 'g'), `<code>${code}</code>`);
+    });
+  }
 
   // Restore escaped symbols
   if (escapeMap.size > 0) {
@@ -1380,33 +1793,71 @@ export class TableWidget extends WidgetType {
     private hasHeader: boolean,
     private alignments: Array<'left' | 'center' | 'right' | null> = [],
     private from: number = 0,
-    private to: number = 0
+    private to: number = 0,
+    private referenceDefs?: Map<string, ReferenceDefinition>,
+    private referenceSignature: string = '',
+    private context?: BlockContext
   ) {
     super();
   }
 
   eq(other: TableWidget) {
-    return JSON.stringify(other.rows) === JSON.stringify(this.rows);
+    return (
+      JSON.stringify(other.rows) === JSON.stringify(this.rows) &&
+      other.referenceSignature === this.referenceSignature
+    );
   }
 
   toDOM(view: EditorView) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'cm-table-widget-wrapper';
+    wrapper.dataset.from = String(this.from);
+    wrapper.dataset.to = String(this.to);
+    applyBlockContext(wrapper, this.context);
+
     const table = document.createElement('table');
     table.className = 'cm-table-widget';
     table.dataset.from = String(this.from);
     table.dataset.to = String(this.to);
 
     // 点击定位光标到表格开始
-    table.addEventListener('mousedown', (e) => {
+    wrapper.addEventListener('mousedown', (e) => {
       // 不拦截wiki链接和普通链接点击
       if ((e.target as HTMLElement).classList.contains('cm-wiki-link-table')) return;
       if ((e.target as HTMLElement).classList.contains('cm-link-table')) return;
 
-      handleWidgetClick(view, table, e, this.from, this.to);
+      handleWidgetClick(view, wrapper, e, this.from, this.to);
     });
 
     // 计算列宽（基于内容）
-    const colCount = Math.max(...this.rows.map(r => r.length));
+    const colCount = Math.max(1, ...this.rows.map(r => r.length));
     const colWidths: number[] = new Array(colCount).fill(0);
+
+    const getDisplayTextForWidth = (cell: string) => {
+      let text = cell;
+
+      // Links & images
+      text = text.replace(/!\[([^\]]*?)\]\([^)]+\)/g, '$1');
+      text = text.replace(/\[([^\]]+?)\]\([^)]+\)/g, '$1');
+      text = text.replace(/\[([^\]]+?)\]\s*\[[^\]]*\]/g, '$1');
+      text = text.replace(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_match, target, alias) => alias || target);
+
+      // Inline code
+      text = text.replace(/``([^`]+?)``/g, '$1');
+      text = text.replace(/`([^`]+?)`/g, '$1');
+
+      // Inline math delimiters
+      text = text.replace(/\$([^$\n]+)\$/g, '$1');
+      text = text.replace(/\\\((.+?)\\\)/g, '$1');
+
+      // Formatting markers
+      text = text.replace(/(\*\*|__|~~|==|\*|_)/g, '');
+
+      // Escaped pipes
+      text = text.replace(/\\\|/g, '|');
+
+      return text.trim();
+    };
 
     // 测量每列的最大内容宽度
     this.rows.forEach((row, rowIndex) => {
@@ -1416,7 +1867,7 @@ export class TableWidget extends WidgetType {
       }
       row.forEach((cell, colIndex) => {
         // 使用纯文本长度计算宽度
-        const plainText = cell.trim().replace(/\*\*|__|~~|==|`|\[\[|\]\]|\[|\]|\(|\)/g, '');
+        const plainText = getDisplayTextForWidth(cell);
         const cellLen = plainText.length;
         colWidths[colIndex] = Math.max(colWidths[colIndex], cellLen);
       });
@@ -1425,10 +1876,13 @@ export class TableWidget extends WidgetType {
     // 创建colgroup设置列宽
     const colgroup = document.createElement('colgroup');
     const totalWidth = colWidths.reduce((a, b) => a + b, 0);
+    const minPercentage = Math.min(10, 100 / colCount);
     colWidths.forEach(width => {
       const col = document.createElement('col');
       // 设置比例宽度（最小10%）
-      const percentage = Math.max(10, (width / totalWidth) * 100);
+      const percentage = totalWidth > 0
+        ? Math.max(minPercentage, (width / totalWidth) * 100)
+        : 100 / colCount;
       col.style.width = `${percentage}%`;
       colgroup.appendChild(col);
     });
@@ -1442,7 +1896,8 @@ export class TableWidget extends WidgetType {
 
       const tr = document.createElement('tr');
 
-      row.forEach((cell, colIndex) => {
+      for (let colIndex = 0; colIndex < colCount; colIndex++) {
+        const cell = row[colIndex] ?? '';
         const cellEl = document.createElement(
           this.hasHeader && rowIndex === 0 ? 'th' : 'td'
         );
@@ -1452,9 +1907,9 @@ export class TableWidget extends WidgetType {
         }
         // 解析并渲染单元格中的行内Markdown
         const cellContent = cell.trim();
-        cellEl.innerHTML = parseInlineMarkdown(cellContent);
+        cellEl.innerHTML = parseInlineMarkdown(cellContent, this.referenceDefs);
         tr.appendChild(cellEl);
-      });
+      }
 
       table.appendChild(tr);
     });
@@ -1476,7 +1931,8 @@ export class TableWidget extends WidgetType {
       }
     });
 
-    return table;
+    wrapper.appendChild(table);
+    return wrapper;
   }
 
   ignoreEvent(e: Event) {

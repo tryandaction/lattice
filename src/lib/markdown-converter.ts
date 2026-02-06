@@ -241,6 +241,69 @@ export function autoConvertToMarkdown(content: string): string {
   return content;
 }
 
+/**
+ * Convert common inline HTML fragments inside Markdown to Markdown equivalents.
+ * This avoids rendering raw HTML tags in Live Preview while keeping non-HTML text intact.
+ * Code fences are preserved and skipped from conversion.
+ */
+export function convertInlineHtmlFragments(content: string): string {
+  if (!content || typeof content !== 'string') return content || '';
+
+  if (!/<[a-z][\s\S]*?>/i.test(content)) {
+    return content;
+  }
+
+  const fences: string[] = [];
+  const fenced = content.replace(/```[\s\S]*?```/g, (match) => {
+    const token = `@@CODE_FENCE_${fences.length}@@`;
+    fences.push(match);
+    return token;
+  });
+
+  let result = fenced;
+
+  // Paragraphs / line breaks
+  result = result.replace(/<p[^>]*>/gi, '\n');
+  result = result.replace(/<\/p>/gi, '\n');
+  result = result.replace(/<br\s*\/?>/gi, '  \n');
+
+  // Text formatting
+  result = result.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '**$1**');
+  result = result.replace(/<b[^>]*>([\s\S]*?)<\/b>/gi, '**$1**');
+  result = result.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '*$1*');
+  result = result.replace(/<i[^>]*>([\s\S]*?)<\/i>/gi, '*$1*');
+  result = result.replace(/<del[^>]*>([\s\S]*?)<\/del>/gi, '~~$1~~');
+  result = result.replace(/<s[^>]*>([\s\S]*?)<\/s>/gi, '~~$1~~');
+  result = result.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`');
+  result = result.replace(/<mark[^>]*>([\s\S]*?)<\/mark>/gi, '==$1==');
+
+  // Links / images
+  result = result.replace(
+    /<a[^>]*href=['"]([^'"]+)['"][^>]*>([\s\S]*?)<\/a>/gi,
+    '[$2]($1)'
+  );
+  result = result.replace(
+    /<img[^>]*src=['"]([^'"]+)['"][^>]*alt=['"]([^'"]*)['"][^>]*\/?>/gi,
+    '![$2]($1)'
+  );
+  result = result.replace(
+    /<img[^>]*alt=['"]([^'"]*)['"][^>]*src=['"]([^'"]+)['"][^>]*\/?>/gi,
+    '![$1]($2)'
+  );
+  result = result.replace(
+    /<img[^>]*src=['"]([^'"]+)['"][^>]*\/?>/gi,
+    '![]($1)'
+  );
+
+  // Block containers (best-effort)
+  result = result.replace(/<\/?div[^>]*>/gi, '\n');
+
+  // Restore code fences
+  result = result.replace(/@@CODE_FENCE_(\d+)@@/g, (_, index) => fences[Number(index)] ?? '');
+
+  return result;
+}
+
 // ============================================================================
 // SECTION 2: FORMULA CONVERSION (OMML/MathML → LaTeX)
 // ============================================================================
@@ -675,6 +738,79 @@ function normalizeMathDelimiters(content: string): string {
 function normalizeTableWhitespace(content: string): string {
   if (!content || typeof content !== 'string') return content || '';
 
+  const splitTableRow = (line: string): string[] | null => {
+    if (!line || !line.includes('|')) return null;
+    const trimmed = line.trim();
+    if (!trimmed) return null;
+
+    const isEscaped = (source: string, index: number): boolean => {
+      let backslashes = 0;
+      for (let i = index - 1; i >= 0 && source[i] === '\\'; i--) {
+        backslashes++;
+      }
+      return backslashes % 2 === 1;
+    };
+
+    let working = trimmed;
+    if (working.startsWith('|')) {
+      working = working.slice(1);
+    }
+    if (working.endsWith('|') && !isEscaped(working, working.length - 1)) {
+      working = working.slice(0, -1);
+    }
+
+    const cells: string[] = [];
+    let current = '';
+    let inCode = false;
+    let codeFence = '';
+    let i = 0;
+
+    while (i < working.length) {
+      const ch = working[i];
+
+      if (ch === '\\' && i + 1 < working.length && working[i + 1] === '|') {
+        current += '|';
+        i += 2;
+        continue;
+      }
+
+      if (ch === '`') {
+        let j = i;
+        while (j < working.length && working[j] === '`') j++;
+        const fence = working.slice(i, j);
+        if (!inCode) {
+          inCode = true;
+          codeFence = fence;
+        } else if (fence === codeFence) {
+          inCode = false;
+          codeFence = '';
+        }
+        current += fence;
+        i = j;
+        continue;
+      }
+
+      if (ch === '|' && !inCode) {
+        cells.push(current.trim());
+        current = '';
+        i += 1;
+        continue;
+      }
+
+      current += ch;
+      i += 1;
+    }
+
+    cells.push(current.trim());
+    return cells.length > 0 ? cells : null;
+  };
+
+  const isSeparatorRow = (line: string): boolean => {
+    const cells = splitTableRow(line);
+    if (!cells) return false;
+    return cells.every(cell => /^:?-{3,}:?$/.test(cell.trim()));
+  };
+
   const lines = content.split('\n');
   const result: string[] = [];
   let inTable = false;
@@ -682,12 +818,11 @@ function normalizeTableWhitespace(content: string): string {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmedLine = line.trim();
+    const rowCells = splitTableRow(trimmedLine);
+    const startsTable = !inTable && rowCells && lines[i + 1] && isSeparatorRow(lines[i + 1].trim());
+    const isTableLine = inTable ? !!rowCells : startsTable;
 
-    const isTableRow = trimmedLine.startsWith('|') && trimmedLine.includes('|');
-    const isSeparatorRow = /^\|[\s\-:|]+\|/.test(trimmedLine);
-    const isTableLine = isTableRow || isSeparatorRow;
-
-    if (isTableLine && !inTable) {
+    if (startsTable) {
       inTable = true;
       if (result.length > 0 && result[result.length - 1].trim() !== '') {
         result.push('');
@@ -764,6 +899,9 @@ export function normalizeScientificText(rawContent: string): string {
 
   // Step 0: Auto-convert HTML to Markdown (for legacy files)
   result = autoConvertToMarkdown(result);
+
+  // Step 0.5: Convert inline HTML fragments inside Markdown (best-effort)
+  result = convertInlineHtmlFragments(result);
 
   // Step 1: Normalize math delimiters (convert \(...\) to $...$, etc.)
   result = normalizeMathDelimiters(result);

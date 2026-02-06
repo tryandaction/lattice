@@ -16,6 +16,8 @@ const FIXTURES = [
   "public/test-syntax-hiding.md",
   "public/test-nested-formatting.md",
   "public/test-10000-lines.md",
+  "public/test-markdown-coverage.md",
+  "public/test-math-block-prefix.md",
 ];
 
 const INLINE_TYPES = new Set<ElementType>([

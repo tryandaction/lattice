@@ -1749,6 +1749,40 @@ math-field.quantum-keyboard-active {
   letter-spacing: 0.5px;
 }
 
+.quantum-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.quantum-toggle-group {
+  display: inline-flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.quantum-toggle {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.quantum-toggle.active {
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(99, 102, 241, 0.35);
+  box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.5) inset;
+}
+
 /* Hint Text */
 .quantum-hint {
   text-align: center;
@@ -3148,6 +3182,11 @@ math-field.quantum-keyboard-active {
 }
 
 /* Table widget */
+.live-preview-editor .cm-table-widget-wrapper {
+  width: 100%;
+  overflow-x: auto;
+}
+
 .live-preview-editor .cm-table-widget {
   @apply w-full border-collapse my-4 text-sm;
 }
@@ -3222,6 +3261,18 @@ math-field.quantum-keyboard-active {
   background-color: hsl(var(--accent, 262 83% 58%) / 0.1);
   padding: 0 4px;
   border-radius: 4px;
+}
+
+/* Block context for widgets inside blockquotes/lists */
+.live-preview-editor .cm-block-context {
+  box-sizing: border-box;
+  margin-left: calc(var(--cm-list-indent, 0) * 0.6ch);
+  max-width: 100%;
+}
+
+.live-preview-editor .cm-block-context-quote {
+  border-left: 4px solid hsl(var(--primary));
+  padding-left: calc(var(--cm-blockquote-depth, 1) * 1em);
 }
 
 .live-preview-editor .cm-table-line {

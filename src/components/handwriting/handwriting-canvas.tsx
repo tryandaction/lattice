@@ -177,6 +177,9 @@ export function HandwritingCanvas({
   const [selectionBounds, setSelectionBounds] = useState<SelectionBounds | null>(null);
   const [isDraggingSelection, setIsDraggingSelection] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+  const dragOriginRef = useRef<{ x: number; y: number } | null>(null);
+  const dragBoundsRef = useRef<SelectionBounds | null>(null);
+  const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   
   const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
 
@@ -185,7 +188,7 @@ export function HandwritingCanvas({
     eraserMode, eraserWidth, viewport, background, layers,
     activePoints, selectedStrokeIds,
     startStroke, addPoint, endStroke, cancelStroke,
-    removeStroke, removeStrokes, setViewport, selectStrokes, clearSelection,
+    removeStroke, removeStrokes, updateStroke, setViewport, selectStrokes, clearSelection,
     getAllStrokes,
   } = useHandwritingStore();
 
@@ -379,6 +382,9 @@ export function HandwritingCanvas({
           y >= selectionBounds.y && y <= selectionBounds.y + selectionBounds.height) {
         setIsDraggingSelection(true);
         setDragStart({ x, y });
+        dragOriginRef.current = { x, y };
+        dragBoundsRef.current = selectionBounds;
+        dragOffsetRef.current = { x: 0, y: 0 };
       } else {
         // 开始新的套索选择
         clearSelection();
@@ -436,19 +442,19 @@ export function HandwritingCanvas({
       });
     }
     // 拖动选择
-    else if (activeTool === 'select' && isDraggingSelection && dragStart && selectedStrokes.length > 0) {
-      const dx = x - dragStart.x;
-      const dy = y - dragStart.y;
+    else if (activeTool === 'select' && isDraggingSelection && dragOriginRef.current && selectedStrokes.length > 0) {
+      const dx = x - dragOriginRef.current.x;
+      const dy = y - dragOriginRef.current.y;
+      dragOffsetRef.current = { x: dx, y: dy };
       
       // 更新选择边界预览
-      if (selectionBounds) {
+      if (dragBoundsRef.current) {
         setSelectionBounds({
-          ...selectionBounds,
-          x: selectionBounds.x + dx,
-          y: selectionBounds.y + dy,
+          ...dragBoundsRef.current,
+          x: dragBoundsRef.current.x + dx,
+          y: dragBoundsRef.current.y + dy,
         });
       }
-      setDragStart({ x, y });
     }
     // 平移
     else if (activeTool === 'pan' && e.buttons > 0) {
@@ -458,7 +464,7 @@ export function HandwritingCanvas({
         y: viewport.y + e.movementY,
       });
     }
-  }, [activeTool, activePoints, eraserMode, eraserWidth, isLassoDrawing, lassoPath, isDraggingSelection, dragStart, selectedStrokes, selectionBounds, viewport, screenToCanvas, addPoint, getAllStrokes, removeStroke, setViewport]);
+  }, [activeTool, activePoints, eraserMode, eraserWidth, isLassoDrawing, lassoPath, isDraggingSelection, selectedStrokes, viewport, screenToCanvas, addPoint, getAllStrokes, removeStroke, setViewport]);
 
   // 处理指针抬起
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
@@ -492,11 +498,35 @@ export function HandwritingCanvas({
     else if (activeTool === 'select' && isDraggingSelection) {
       setIsDraggingSelection(false);
       setDragStart(null);
-      // TODO: 实际移动笔画数据
+      const dx = dragOffsetRef.current.x;
+      const dy = dragOffsetRef.current.y;
+
+      if (selectedStrokes.length > 0 && (dx !== 0 || dy !== 0)) {
+        selectedStrokes.forEach((stroke) => {
+          const movedPoints = stroke.points.map((point) => ({
+            ...point,
+            x: point.x + dx,
+            y: point.y + dy,
+          }));
+          updateStroke(stroke.id, { points: movedPoints });
+        });
+      }
+
+      if (dragBoundsRef.current) {
+        setSelectionBounds({
+          ...dragBoundsRef.current,
+          x: dragBoundsRef.current.x + dx,
+          y: dragBoundsRef.current.y + dy,
+        });
+      }
+
+      dragOriginRef.current = null;
+      dragBoundsRef.current = null;
+      dragOffsetRef.current = { x: 0, y: 0 };
     }
 
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-  }, [activeTool, activePoints, isLassoDrawing, lassoPath, isDraggingSelection, endStroke, getAllStrokes, selectStrokes]);
+  }, [activeTool, activePoints, isLassoDrawing, lassoPath, isDraggingSelection, endStroke, getAllStrokes, selectStrokes, selectedStrokes, updateStroke]);
 
   // 处理指针取消
   const handlePointerCancel = useCallback((e: React.PointerEvent) => {
@@ -506,6 +536,9 @@ export function HandwritingCanvas({
     setLassoPath(null);
     setIsDraggingSelection(false);
     setDragStart(null);
+    dragOriginRef.current = null;
+    dragBoundsRef.current = null;
+    dragOffsetRef.current = { x: 0, y: 0 };
   }, [cancelStroke]);
 
 

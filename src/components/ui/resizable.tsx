@@ -8,6 +8,8 @@ interface ResizablePanelGroupProps {
   direction: "horizontal" | "vertical";
   className?: string;
   children: React.ReactNode;
+  sizes?: number[];
+  onSizesChange?: (sizes: number[]) => void;
 }
 
 interface ResizablePanelProps {
@@ -21,37 +23,97 @@ interface ResizablePanelProps {
 interface ResizableHandleProps {
   withHandle?: boolean;
   className?: string;
+  index?: number;
 }
 
 interface PanelContextValue {
   direction: "horizontal" | "vertical";
   sizes: number[];
-  setSizes: React.Dispatch<React.SetStateAction<number[]>>;
+  setSizes: (updater: (prev: number[]) => number[]) => void;
   getPanelIndex: () => number;
+  registerPanel: (index: number, minSize: number, maxSize: number, defaultSize: number) => void;
+  getConstraints: (index: number) => { minSize: number; maxSize: number };
 }
 
 const PanelContext = React.createContext<PanelContextValue | null>(null);
+
+function normalizeSizes(input: number[]): number[] {
+  if (input.length === 0) return input;
+  const sum = input.reduce((acc, value) => acc + value, 0);
+  if (sum === 0) return input;
+  const scale = 100 / sum;
+  return input.map((value) => value * scale);
+}
 
 export function ResizablePanelGroup({
   direction,
   className,
   children,
+  sizes,
+  onSizesChange,
 }: ResizablePanelGroupProps) {
-  const [sizes, setSizes] = useState<number[]>([]);
+  const [internalSizes, setInternalSizes] = useState<number[]>(sizes ?? []);
   const panelIndexRef = useRef(0);
+  const minSizesRef = useRef<number[]>([]);
+  const maxSizesRef = useRef<number[]>([]);
 
   // Reset panel index on each render cycle start
   useEffect(() => {
     panelIndexRef.current = 0;
   });
 
+  useEffect(() => {
+    if (sizes && sizes.length > 0) {
+      setInternalSizes(normalizeSizes([...sizes]));
+    }
+  }, [sizes]);
+
   const getPanelIndex = useCallback(() => {
     return panelIndexRef.current++;
   }, []);
 
+  const registerPanel = useCallback(
+    (index: number, minSize: number, maxSize: number, defaultSize: number) => {
+      minSizesRef.current[index] = minSize;
+      maxSizesRef.current[index] = maxSize;
+      setInternalSizes((prev) => {
+        if (prev[index] !== undefined) return prev;
+        const next = [...prev];
+        next[index] = defaultSize;
+        return normalizeSizes(next);
+      });
+    },
+    []
+  );
+
+  const getConstraints = useCallback((index: number) => {
+    return {
+      minSize: minSizesRef.current[index] ?? 5,
+      maxSize: maxSizesRef.current[index] ?? 95,
+    };
+  }, []);
+
+  const setSizes = useCallback(
+    (updater: (prev: number[]) => number[]) => {
+      setInternalSizes((prev) => {
+        const next = normalizeSizes(updater(prev));
+        onSizesChange?.(next);
+        return next;
+      });
+    },
+    [onSizesChange]
+  );
+
   const contextValue = useMemo(
-    () => ({ direction, sizes, setSizes, getPanelIndex }),
-    [direction, sizes, getPanelIndex]
+    () => ({
+      direction,
+      sizes: internalSizes,
+      setSizes,
+      getPanelIndex,
+      registerPanel,
+      getConstraints,
+    }),
+    [direction, internalSizes, setSizes, getPanelIndex, registerPanel, getConstraints]
   );
 
   return (
@@ -79,21 +141,11 @@ export function ResizablePanel({
 }: ResizablePanelProps) {
   const context = React.useContext(PanelContext);
   const [index] = useState(() => context?.getPanelIndex() ?? 0);
-  const initializedRef = useRef(false);
 
-  // Initialize size only once
   useEffect(() => {
-    if (!initializedRef.current && context) {
-      initializedRef.current = true;
-      context.setSizes((prev) => {
-        const newSizes = [...prev];
-        if (newSizes[index] === undefined) {
-          newSizes[index] = defaultSize;
-        }
-        return newSizes;
-      });
-    }
-  }, [context, index, defaultSize]);
+    if (!context) return;
+    context.registerPanel(index, minSize, maxSize, defaultSize);
+  }, [context, index, minSize, maxSize, defaultSize]);
 
   const size = context?.sizes[index] ?? defaultSize;
   const isHorizontal = context?.direction === "horizontal";
@@ -115,6 +167,7 @@ export function ResizablePanel({
 export function ResizableHandle({
   withHandle,
   className,
+  index = 0,
 }: ResizableHandleProps) {
   const context = React.useContext(PanelContext);
   const handleRef = useRef<HTMLDivElement>(null);
@@ -148,14 +201,33 @@ export function ResizableHandle({
 
         context?.setSizes(() => {
           const newSizes = [...startSizesRef.current];
-          if (newSizes.length >= 2) {
-            const newFirst = Math.max(10, Math.min(90, newSizes[0] + delta));
-            const newSecond = 100 - newFirst;
-            if (newSecond >= 10 && newSecond <= 90) {
-              newSizes[0] = newFirst;
-              newSizes[1] = newSecond;
-            }
-          }
+          const leftIndex = index;
+          const rightIndex = index + 1;
+          if (newSizes.length <= rightIndex) return newSizes;
+
+          const left = newSizes[leftIndex] ?? 0;
+          const right = newSizes[rightIndex] ?? 0;
+          const total = left + right;
+          if (total <= 0) return newSizes;
+
+          const leftConstraints = context?.getConstraints(leftIndex);
+          const rightConstraints = context?.getConstraints(rightIndex);
+          const minLeft = leftConstraints?.minSize ?? 5;
+          const maxLeft = leftConstraints?.maxSize ?? 95;
+          const minRight = rightConstraints?.minSize ?? 5;
+          const maxRight = rightConstraints?.maxSize ?? 95;
+
+          let nextLeft = left + delta;
+          nextLeft = Math.max(minLeft, Math.min(maxLeft, nextLeft));
+          nextLeft = Math.min(nextLeft, total - minRight);
+
+          let nextRight = total - nextLeft;
+          nextRight = Math.max(minRight, Math.min(maxRight, nextRight));
+          nextLeft = total - nextRight;
+
+          newSizes[leftIndex] = nextLeft;
+          newSizes[rightIndex] = nextRight;
+
           return newSizes;
         });
       };

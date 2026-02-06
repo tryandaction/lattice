@@ -174,6 +174,7 @@ export function DndProvider({ children }: DndProviderProps) {
             <Tab
               tab={dragState.activeTab.tab}
               isActive={true}
+              isPaneActive={true}
               index={dragState.activeTab.tabIndex}
               paneId={dragState.activeTab.paneId}
               onClick={() => {}}

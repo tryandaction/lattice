@@ -19,7 +19,11 @@ import { isTauri } from "@/lib/storage-adapter";
 import { setLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { TOUCH_TARGET_MIN } from "@/lib/responsive";
-import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft } from "lucide-react";
+import { syncPlugins } from "@/lib/plugins/runtime";
+import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot } from "lucide-react";
+
+const DESKTOP_SIDEBAR_DEFAULT =20;
+const TABLET_SIDEBAR_DEFAULT = 28;
 
 const ExplorerSidebar = dynamic(
   () => import("@/components/explorer/explorer-sidebar").then((mod) => mod.ExplorerSidebar),
@@ -43,6 +47,16 @@ const MobileSidebarTrigger = dynamic(
 
 const DownloadAppDialog = dynamic(
   () => import("@/components/ui/download-app-dialog").then((mod) => mod.DownloadAppDialog),
+  { ssr: false }
+);
+
+const AiContextDialog = dynamic(
+  () => import("@/components/ui/ai-context-dialog").then((mod) => mod.AiContextDialog),
+  { ssr: false }
+);
+
+const PluginCommandDialog = dynamic(
+  () => import("@/components/ui/plugin-command-dialog").then((mod) => mod.PluginCommandDialog),
   { ssr: false }
 );
 
@@ -80,8 +94,18 @@ function AppLayoutContent() {
   const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
   const setSidebarCollapsed = useWorkspaceStore((state) => state.setSidebarCollapsed);
   const [showSettings, setShowSettings] = useState(false);
+  const [showCommands, setShowCommands] = useState(false);
+  const [showAiContext, setShowAiContext] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [desktopSizes, setDesktopSizes] = useState(() => [
+    DESKTOP_SIDEBAR_DEFAULT,
+    100 - DESKTOP_SIDEBAR_DEFAULT,
+  ]);
+  const [tabletSizes, setTabletSizes] = useState(() => [
+    TABLET_SIDEBAR_DEFAULT,
+    100 - TABLET_SIDEBAR_DEFAULT,
+  ]);
 
   const loadSettings = useSettingsStore((state) => state.loadSettings);
   const settings = useSettingsStore((state) => state.settings);
@@ -107,6 +131,16 @@ function AppLayoutContent() {
   }, [isInitialized, settings.language]);
 
   useEffect(() => {
+    if (!isInitialized) return;
+    const trusted = new Set(settings.trustedPlugins);
+    const enabled = settings.enabledPlugins.filter((id) => trusted.has(id));
+    void syncPlugins({
+      pluginsEnabled: settings.pluginsEnabled,
+      enabledPluginIds: enabled,
+    });
+  }, [isInitialized, settings.pluginsEnabled, settings.enabledPlugins, settings.trustedPlugins]);
+
+  useEffect(() => {
     if (isMobile) {
       setSidebarCollapsed(true);
     }
@@ -121,6 +155,10 @@ function AppLayoutContent() {
       if ((e.ctrlKey || e.metaKey) && e.key === "b") {
         e.preventDefault();
         toggleSidebar();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowCommands(true);
       }
       if ((e.ctrlKey || e.metaKey) && e.key === ",") {
         e.preventDefault();
@@ -155,6 +193,30 @@ function AppLayoutContent() {
         >
           <Settings className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
           <span>{t("settings.title")}</span>
+        </button>
+        <button
+          onClick={() => setShowCommands(true)}
+          className={cn(
+            "p-1.5 rounded-md",
+            "text-muted-foreground",
+            "hover:bg-muted hover:text-foreground transition-colors"
+          )}
+          style={(isMobile || isTablet) ? { minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN } : undefined}
+          title={t("commands.open")}
+        >
+          <Command className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
+        </button>
+        <button
+          onClick={() => setShowAiContext(true)}
+          className={cn(
+            "p-1.5 rounded-md",
+            "text-muted-foreground",
+            "hover:bg-muted hover:text-foreground transition-colors"
+          )}
+          style={(isMobile || isTablet) ? { minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN } : undefined}
+          title={t("ai.context.open")}
+        >
+          <Bot className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         </button>
         <button
           onClick={() => window.open("https://github.com/your-repo/lattice", "_blank")}
@@ -208,7 +270,14 @@ function AppLayoutContent() {
         <MobileSidebar isOpen={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)}>
           {SidebarContent}
         </MobileSidebar>
-        <Dialogs showSettings={showSettings} setShowSettings={setShowSettings} />
+        <Dialogs
+          showSettings={showSettings}
+          setShowSettings={setShowSettings}
+          showCommands={showCommands}
+          setShowCommands={setShowCommands}
+          showAiContext={showAiContext}
+          setShowAiContext={setShowAiContext}
+        />
       </div>
     );
   }
@@ -216,13 +285,25 @@ function AppLayoutContent() {
   // Tablet Layout
   if (isTablet) {
     const showSidebar = isLandscape && !sidebarCollapsed;
+    const tabletMainDefault = 100 - TABLET_SIDEBAR_DEFAULT;
+    const tabletGroupSizes = showSidebar ? tabletSizes : [100];
 
     return (
       <div className="h-screen w-screen overflow-hidden bg-background">
-        <ResizablePanelGroup direction="horizontal" className="h-full">
+        <ResizablePanelGroup
+          direction="horizontal"
+          className="h-full"
+          sizes={tabletGroupSizes}
+          onSizesChange={showSidebar ? setTabletSizes : undefined}
+        >
           {showSidebar && (
             <>
-              <ResizablePanel defaultSize={30} minSize={20} maxSize={45} className="bg-card flex flex-col">
+              <ResizablePanel
+                defaultSize={TABLET_SIDEBAR_DEFAULT}
+                minSize={12}
+                maxSize={80}
+                className="bg-card flex flex-col"
+              >
                 <div className="flex items-center justify-end p-2 border-b border-border">
                   <button
                     onClick={toggleSidebar}
@@ -239,10 +320,14 @@ function AppLayoutContent() {
                 </div>
                 {SidebarContent}
               </ResizablePanel>
-              <ResizableHandle withHandle className="w-2 touch-none" />
+              <ResizableHandle withHandle className="w-2 touch-none" index={0} />
             </>
           )}
-          <ResizablePanel defaultSize={showSidebar ? 70 : 100} minSize={40} className="flex flex-col">
+          <ResizablePanel
+            defaultSize={showSidebar ? tabletMainDefault : 100}
+            minSize={40}
+            className="flex flex-col"
+          >
             {!showSidebar && (
               <header className="flex items-center gap-2 px-2 py-2 border-b border-border bg-card shrink-0">
                 <button
@@ -281,7 +366,14 @@ function AppLayoutContent() {
             {SidebarContent}
           </MobileSidebar>
         )}
-        <Dialogs showSettings={showSettings} setShowSettings={setShowSettings} />
+        <Dialogs
+          showSettings={showSettings}
+          setShowSettings={setShowSettings}
+          showCommands={showCommands}
+          setShowCommands={setShowCommands}
+          showAiContext={showAiContext}
+          setShowAiContext={setShowAiContext}
+        />
       </div>
     );
   }
@@ -289,16 +381,29 @@ function AppLayoutContent() {
   // Desktop Layout
   return (
     <div className="h-screen w-screen overflow-hidden bg-background">
-      <ResizablePanelGroup direction="horizontal" className="h-full">
+      <ResizablePanelGroup
+        direction="horizontal"
+        className="h-full"
+        sizes={sidebarCollapsed ? [100] : desktopSizes}
+        onSizesChange={!sidebarCollapsed ? setDesktopSizes : undefined}
+      >
         {!sidebarCollapsed && (
           <>
-            <ResizablePanel defaultSize={20} minSize={15} maxSize={40} className="bg-card flex flex-col">
+            <ResizablePanel
+              defaultSize={DESKTOP_SIDEBAR_DEFAULT}
+              minSize={8}
+              maxSize={80}
+              className="bg-card flex flex-col"
+            >
               {SidebarContent}
             </ResizablePanel>
-            <ResizableHandle withHandle />
+            <ResizableHandle withHandle index={0} />
           </>
         )}
-        <ResizablePanel defaultSize={sidebarCollapsed ? 100 : 80} minSize={40}>
+        <ResizablePanel
+          defaultSize={sidebarCollapsed ? 100 : 100 - DESKTOP_SIDEBAR_DEFAULT}
+          minSize={40}
+        >
           <MainArea />
         </ResizablePanel>
       </ResizablePanelGroup>
@@ -321,6 +426,28 @@ function AppLayoutContent() {
           </button>
           <div className="border-t border-border p-2 w-full flex flex-col items-center gap-1">
             <button
+              onClick={() => setShowCommands(true)}
+              className={cn(
+                "p-2 rounded-md",
+                "text-muted-foreground",
+                "hover:bg-muted hover:text-foreground transition-colors"
+              )}
+              title={t("commands.open")}
+            >
+              <Command className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setShowAiContext(true)}
+              className={cn(
+                "p-2 rounded-md",
+                "text-muted-foreground",
+                "hover:bg-muted hover:text-foreground transition-colors"
+              )}
+              title={t("ai.context.open")}
+            >
+              <Bot className="h-4 w-4" />
+            </button>
+            <button
               onClick={() => setShowSettings(true)}
               className={cn(
                 "p-2 rounded-md",
@@ -334,15 +461,38 @@ function AppLayoutContent() {
           </div>
         </div>
       )}
-      <Dialogs showSettings={showSettings} setShowSettings={setShowSettings} />
+      <Dialogs
+        showSettings={showSettings}
+        setShowSettings={setShowSettings}
+        showCommands={showCommands}
+        setShowCommands={setShowCommands}
+        showAiContext={showAiContext}
+        setShowAiContext={setShowAiContext}
+      />
     </div>
   );
 }
 
-function Dialogs({ showSettings, setShowSettings }: { showSettings: boolean; setShowSettings: (show: boolean) => void }) {
+function Dialogs({
+  showSettings,
+  setShowSettings,
+  showCommands,
+  setShowCommands,
+  showAiContext,
+  setShowAiContext,
+}: {
+  showSettings: boolean;
+  setShowSettings: (show: boolean) => void;
+  showCommands: boolean;
+  setShowCommands: (show: boolean) => void;
+  showAiContext: boolean;
+  setShowAiContext: (show: boolean) => void;
+}) {
   return (
     <>
       {!isTauri() && <DownloadAppDialog />}
+      <PluginCommandDialog isOpen={showCommands} onClose={() => setShowCommands(false)} />
+      <AiContextDialog isOpen={showAiContext} onClose={() => setShowAiContext(false)} />
       <SettingsDialog isOpen={showSettings} onClose={() => setShowSettings(false)} />
       <OnboardingWizard />
       <ExportToastContainer />

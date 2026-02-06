@@ -14,6 +14,7 @@ export interface TabBarProps {
   paneId: PaneId;
   tabs: TabState[];
   activeTabIndex: number;
+  isPaneActive: boolean;
   onTabClick: (index: number) => void;
   onTabClose: (index: number) => void;
 }
@@ -28,10 +29,13 @@ export function TabBar({
   paneId,
   tabs,
   activeTabIndex,
+  isPaneActive,
   onTabClick,
   onTabClose,
 }: TabBarProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const safeActiveIndex =
+    activeTabIndex >= 0 && activeTabIndex < tabs.length ? activeTabIndex : -1;
 
   // Set up droppable for receiving tabs from other panes
   const { setNodeRef, isOver } = useDroppable({
@@ -45,14 +49,14 @@ export function TabBar({
 
   // Scroll active tab into view when it changes
   useEffect(() => {
-    if (scrollContainerRef.current && activeTabIndex >= 0) {
+    if (scrollContainerRef.current && safeActiveIndex >= 0) {
       const container = scrollContainerRef.current;
-      const activeTab = container.children[activeTabIndex] as HTMLElement;
+      const activeTab = container.children[safeActiveIndex] as HTMLElement;
       if (activeTab) {
         activeTab.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
       }
     }
-  }, [activeTabIndex]);
+  }, [safeActiveIndex]);
 
   if (tabs.length === 0) {
     return (
@@ -94,7 +98,8 @@ export function TabBar({
           <Tab
             key={tab.id}
             tab={tab}
-            isActive={index === activeTabIndex}
+            isActive={index === safeActiveIndex}
+            isPaneActive={isPaneActive}
             index={index}
             paneId={paneId}
             onClick={() => onTabClick(index)}

@@ -31,6 +31,7 @@ import type { ViewMode, OutlineItem } from './types';
 import { parseHeadings, buildOutlineTree } from './markdown-parser';
 import { MathEditor } from '../../math-editor';
 import { registerCodeMirrorView, unregisterCodeMirrorView, setActiveInputTargetFromElement } from '@/lib/unified-input-handler';
+import { normalizeFormulaInput, wrapLatexForMarkdown } from '@/lib/formula-utils';
 
 export interface LivePreviewEditorProps {
   /** Initial content */
@@ -520,8 +521,13 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
   const handleMathSave = useCallback((latex: string) => {
     if (!mathEditor || !viewRef.current) return;
 
-    // Update document with new LaTeX
-    const newContent = mathEditor.isBlock ? `$$${latex}$$` : `$${latex}$`;
+    const normalized = normalizeFormulaInput(latex, { preferDisplay: mathEditor.isBlock });
+    const displayMode = mathEditor.isBlock || normalized.displayMode;
+    const newContent = wrapLatexForMarkdown(normalized.latex, displayMode);
+    if (!newContent) {
+      setMathEditor(null);
+      return;
+    }
 
     viewRef.current.dispatch({
       changes: {

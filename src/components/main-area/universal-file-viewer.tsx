@@ -148,6 +148,7 @@ function FileViewer({
   fileId?: string;
 }) {
   const extension = getFileExtension(fileName);
+  const viewerKey = fileId || fileName;
   
   switch (rendererType) {
     case "markdown": {
@@ -204,7 +205,7 @@ function FileViewer({
         );
       }
       // Fallback to read-only renderer if no onChange handler
-      return <MarkdownRenderer key={fileName} content={normalizedContent} fileName={fileName} />;
+      return <MarkdownRenderer key={viewerKey} content={normalizedContent} fileName={fileName} />;
     }
     case "pdf":
       // Use PDFHighlighterAdapter if we have file handles for annotation support

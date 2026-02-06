@@ -10,6 +10,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import type { Components } from "react-markdown";
 import { Check, Copy } from "lucide-react";
+import { KATEX_MACROS } from "@/lib/katex-config";
 
 interface MarkdownRendererProps {
   content: string;
@@ -54,8 +55,8 @@ function CopyButton({ text }: { text: string }) {
 const components: Components = {
   // Code blocks with syntax highlighting and copy button
   code({ node, inline, className, children, ...props }: any) {
-    const match = /language-(\w+)/.exec(className || "");
-    const language = match ? match[1] : "";
+    const match = /language-([^\s]+)/.exec(className || "");
+    const language = match ? match[1].toLowerCase() : "";
     const codeString = String(children).replace(/\n$/, "");
 
     if (!inline && language) {
@@ -295,6 +296,13 @@ const components: Components = {
   },
 };
 
+const katexOptions = {
+  macros: KATEX_MACROS,
+  throwOnError: false,
+  strict: false,
+  trust: true,
+};
+
 /**
  * High-quality Markdown renderer with:
  * - GitHub Flavored Markdown (tables, strikethrough, etc.)
@@ -313,7 +321,7 @@ export function MarkdownRenderer({ content, fileName, className = "" }: Markdown
     <div className={`prose prose-lattice dark:prose-invert max-w-none ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeRaw, rehypeKatex]}
+        rehypePlugins={[rehypeRaw, [rehypeKatex, katexOptions]]}
         components={components}
       >
         {content}

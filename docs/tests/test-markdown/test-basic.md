@@ -17,6 +17,17 @@ You can combine **bold *and italic* together** or use ***triple stars***.
 >
 > > This is a nested blockquote.
 
+## Fenced Code in Quotes and Lists
+
+> ```js
+> console.log("code in blockquote");
+> ```
+
+- Code block inside a list:
+  ```js
+  console.log("code in list");
+  ```
+
 ## Lists
 
 ### Bullet Lists

@@ -137,6 +137,8 @@ export function PaneWrapper({
       loadingTabIdRef.current = null;
       setContent(cached.content);
       originalContentRef.current = cached.originalContent;
+      // Keep tab dirty state in sync with cache
+      setTabDirty(paneId, activeTabIndex, cached.isDirty);
       setIsLoading(false);
       setError(null);
       return;
@@ -191,6 +193,8 @@ export function PaneWrapper({
             originalContentRef.current = fileContent;
             // Initialize cache with original content
             setContentToCache(loadingForTabId, fileContent, fileContent);
+            // Loaded from disk, so not dirty
+            setTabDirty(paneId, activeTabIndex, false);
           }
           setIsLoading(false);
         } else {
@@ -307,26 +311,35 @@ export function PaneWrapper({
   // Ref to track current content for comparison (avoids stale closure issues)
   const contentRef = useRef<string | ArrayBuffer | null>(content);
   contentRef.current = content;
+  const activeTabIdRef = useRef<string | null>(activeTab?.id ?? null);
+  activeTabIdRef.current = activeTab?.id ?? null;
 
   // Handle content change (for editable files)
-  const handleContentChange = useCallback((newContent: string) => {
-    // Don't update if content is the same (use ref to avoid stale closure)
-    if (newContent === contentRef.current) return;
-    
-    setContent(newContent);
-    
-    // Update cache with new content
-    if (activeTab) {
-      const originalContent = originalContentRef.current ?? newContent;
-      setContentToCache(activeTab.id, newContent, originalContent);
-      
-      // Mark as dirty ONLY if content actually differs from original
-      const isDirty = newContent !== originalContent;
-      if (isDirty) {
-        setTabDirty(paneId, activeTabIndex, true);
+  const handleContentChange = useCallback((tabId: string) => {
+    return (newContent: string) => {
+      // Ignore late updates from inactive tabs
+      if (activeTabIdRef.current !== tabId) {
+        return;
       }
-    }
-  }, [paneId, activeTabIndex, setTabDirty, activeTab, setContentToCache]);
+
+      // Don't update if content is the same (use ref to avoid stale closure)
+      if (newContent === contentRef.current) return;
+
+      setContent(newContent);
+
+      const originalContent = originalContentRef.current ?? newContent;
+      setContentToCache(tabId, newContent, originalContent);
+
+      // Mark dirty when differs, clear when equals
+      const isDirty = newContent !== originalContent;
+      const { layout } = useWorkspaceStore.getState();
+      const pane = findPane(layout.root, paneId);
+      const currentIndex = pane?.tabs.findIndex((tab) => tab.id === tabId) ?? -1;
+      if (currentIndex >= 0) {
+        setTabDirty(paneId, currentIndex, isDirty);
+      }
+    };
+  }, [paneId, setTabDirty, setContentToCache]);
 
   // Handle file save - optimized with fast save
   const handleSave = useCallback(async () => {
@@ -360,6 +373,12 @@ export function PaneWrapper({
     ? isEditableFile(getFileExtension(activeTab.fileName)) 
     : false;
 
+  // Ensure we never render stale content for a different tab
+  const isContentForActiveTab = activeTab ? loadedTabIdRef.current === activeTab.id : false;
+  const displayContent = isContentForActiveTab ? content : null;
+  const displayError = isContentForActiveTab ? error : null;
+  const displayLoading = isLoading || (!!activeTab && !isContentForActiveTab && !displayError);
+
   // Track if dragging is happening (for showing drop zones)
   const [isDragging, setIsDragging] = useState(false);
 
@@ -377,6 +396,7 @@ export function PaneWrapper({
           ? "border-blue-500/50 ring-2 ring-blue-500/30"
           : "border-border"
       )}
+      onMouseDownCapture={handlePaneClick}
       onClick={handlePaneClick}
     >
       {/* Save Reminder Dialog */}
@@ -396,6 +416,7 @@ export function PaneWrapper({
             paneId={paneId}
             tabs={tabs}
             activeTabIndex={activeTabIndex}
+            isPaneActive={isActive}
             onTabClick={handleTabClick}
             onTabClose={handleTabClose}
           />
@@ -434,13 +455,14 @@ export function PaneWrapper({
         
         {activeTab ? (
           <UniversalFileViewer
+            key={activeTab.id}
             paneId={paneId}
             handle={activeTab.fileHandle}
             rootHandle={rootHandle}
-            content={content}
-            isLoading={isLoading}
-            error={error}
-            onContentChange={isEditable ? handleContentChange : undefined}
+            content={displayContent}
+            isLoading={displayLoading}
+            error={displayError}
+            onContentChange={isEditable ? handleContentChange(activeTab.id) : undefined}
             onSave={isEditable ? handleSave : undefined}
             fileId={activeTab.id} // CRITICAL: Pass tab ID as fileId for proper re-mounting
           />

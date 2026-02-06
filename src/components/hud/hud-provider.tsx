@@ -16,6 +16,7 @@ import { useHUDStore } from '../../stores/hud-store';
 import type { MathfieldElement } from 'mathlive';
 import type { Editor } from '@tiptap/react';
 import { insertLatexAtCursor, setActiveInputTargetFromElement } from '@/lib/unified-input-handler';
+import { wrapLatexForMarkdown, normalizeFormulaInput } from '@/lib/formula-utils';
 
 export interface HUDProviderProps {
   children: React.ReactNode;
@@ -185,6 +186,8 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
   const closeHUD = useHUDStore((state) => state.closeHUD);
   const isOpen = useHUDStore((state) => state.isOpen);
   const updateCursorPosition = useHUDStore((state) => state.updateCursorPosition);
+  const insertMode = useHUDStore((state) => state.insertMode);
+  const insertFormat = useHUDStore((state) => state.insertFormat);
 
   // Track registered math-fields to avoid duplicate listeners
   const registeredMathFieldsRef = useRef<WeakSet<Element>>(new WeakSet());
@@ -330,8 +333,9 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
 
   // 符号插入处理 - 支持 MathLive、Tiptap 和 CodeMirror
   const handleInsertSymbol = useCallback((latex: string) => {
+    const displayMode = insertMode === 'block';
     // Unified input handling (CodeMirror / MathLive / textarea)
-    if (insertLatexAtCursor(latex, { format: 'markdown' })) {
+    if (insertLatexAtCursor(latex, { format: insertFormat, displayMode })) {
       return;
     }
 
@@ -361,8 +365,11 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
         if (view) {
           try {
             const { from, to } = view.state.selection.main;
-            // Insert LaTeX wrapped in $ delimiters for inline math
-            const wrappedLatex = `$${latex}$`;
+            const normalized = normalizeFormulaInput(latex, { preferDisplay: displayMode });
+            const wrappedLatex =
+              insertFormat === 'markdown'
+                ? wrapLatexForMarkdown(normalized.latex, displayMode)
+                : normalized.latex;
             view.dispatch({
               changes: { from, to, insert: wrappedLatex },
               selection: { anchor: from + wrappedLatex.length },
@@ -386,7 +393,11 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
         if (view) {
           try {
             const { from, to } = view.state.selection.main;
-            const wrappedLatex = `$${latex}$`;
+            const normalized = normalizeFormulaInput(latex, { preferDisplay: displayMode });
+            const wrappedLatex =
+              insertFormat === 'markdown'
+                ? wrapLatexForMarkdown(normalized.latex, displayMode)
+                : normalized.latex;
             view.dispatch({
               changes: { from, to, insert: wrappedLatex },
               selection: { anchor: from + wrappedLatex.length },
@@ -416,7 +427,7 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
         }
       });
     }
-  }, [updateCursorPosition]);
+  }, [insertMode, insertFormat, updateCursorPosition]);
 
   // HUD 关闭时，聚焦到 math-field
   useEffect(() => {

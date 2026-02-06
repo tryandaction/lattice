@@ -31,6 +31,14 @@ export interface AppSettings {
   
   // Window (desktop only)
   windowState?: WindowState;
+
+  // Plugins
+  pluginsEnabled: boolean;
+  enabledPlugins: string[];
+  trustedPlugins: string[];
+
+  // AI
+  aiEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -41,6 +49,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   rememberWindowState: true,
   onboardingCompleted: false,
   windowState: undefined,
+  pluginsEnabled: false,
+  enabledPlugins: [],
+  trustedPlugins: [],
+  aiEnabled: false,
 };
 
 export const SETTINGS_STORAGE_KEY = 'lattice-settings';
