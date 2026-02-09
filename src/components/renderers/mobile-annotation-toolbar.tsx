@@ -10,8 +10,7 @@ import {
   MessageSquare,
   X,
   ChevronUp,
-  ChevronDown,
-  Palette
+  ChevronDown
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { TOUCH_TARGET_MIN } from '@/lib/responsive';
@@ -105,7 +104,6 @@ export function MobileAnnotationToolbar({
     const toolbar = toolbarRef.current;
     const rect = toolbar.getBoundingClientRect();
     const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
     const padding = 8;
 
     let newX = position.x;

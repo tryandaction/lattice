@@ -7,7 +7,7 @@
  * 2. |---|---| separator row triggers table creation from previous header row
  */
 
-import { Extension } from "@tiptap/core";
+import { Extension, type Editor } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 
 /**
@@ -44,6 +44,12 @@ export const TableInputRule = Extension.create({
 
   addProseMirrorPlugins() {
     const editor = this.editor;
+    type TableCommands = Editor["commands"] & {
+      insertTable?: (options: { rows: number; cols: number; withHeaderRow: boolean }) => boolean;
+    };
+    type TableChain = ReturnType<Editor["chain"]> & {
+      insertTable: (options: { rows: number; cols: number; withHeaderRow: boolean }) => ReturnType<Editor["chain"]>;
+    };
 
     return [
       new Plugin({
@@ -107,7 +113,8 @@ export const TableInputRule = Extension.create({
                     const numCols = headers.length;
                     
                     // Ensure table commands are available
-                    const canInsertTable = typeof (editor.commands as any).insertTable === "function";
+                    const commands = editor.commands as TableCommands;
+                    const canInsertTable = typeof commands.insertTable === "function";
                     if (!canInsertTable) {
                       return false;
                     }
@@ -115,7 +122,7 @@ export const TableInputRule = Extension.create({
                     // Use setTimeout to avoid state conflicts
                     setTimeout(() => {
                       // Delete the header and separator lines, then insert table
-                      (editor.chain() as any)
+                      (editor.chain() as TableChain)
                         .focus()
                         .deleteRange({ from: headerStart, to: separatorEnd })
                         .insertTable({

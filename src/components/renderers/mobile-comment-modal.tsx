@@ -144,7 +144,6 @@ export function MobileCommentModal({
     }
   }, [handleSave, onClose]);
 
-  const hasChanges = comment.trim() !== initialComment.trim();
   const canSave = comment.trim().length > 0 || isEditing;
 
   return (
@@ -211,7 +210,7 @@ export function MobileCommentModal({
           {contentPreview && (
             <div className="px-4 py-3 bg-muted/50 border-b border-border">
               <p className="text-sm text-muted-foreground mb-1">选中内容:</p>
-              <p className="text-sm line-clamp-3 italic">"{contentPreview}"</p>
+              <p className="text-sm line-clamp-3 italic">&quot;{contentPreview}&quot;</p>
             </div>
           )}
 

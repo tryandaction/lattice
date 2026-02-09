@@ -3,7 +3,7 @@
  * 支持自由绘制选区和框选
  */
 
-import type { Stroke, StrokePoint } from './types';
+import type { Stroke } from './types';
 
 export interface SelectionBounds {
   x: number;

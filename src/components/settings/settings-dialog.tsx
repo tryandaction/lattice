@@ -1,16 +1,28 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Settings, Palette, FolderOpen, Info, Keyboard, RotateCcw, Plug, Bot } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useSettingsStore } from '@/stores/settings-store';
+import { usePluginStore } from '@/stores/plugin-store';
 import { LanguageSelector } from './language-selector';
 import { ThemeSelector } from './theme-selector';
 import { FolderSelector } from './folder-selector';
 import { isTauri } from '@/lib/storage-adapter';
 import { getAvailablePlugins } from '@/lib/plugins/registry';
-import { getRegisteredCommands } from '@/lib/plugins/runtime';
-import type { PluginCommand } from '@/lib/plugins/types';
+import {
+  getRegisteredCommands,
+  subscribePluginRegistry,
+  getPluginHealthSnapshot,
+  subscribePluginHealth,
+  getPluginAuditLog,
+  subscribePluginAudit,
+  clearPluginAuditLog,
+} from '@/lib/plugins/runtime';
+import { cn } from '@/lib/utils';
+import type { TranslationKey } from '@/lib/i18n';
+import type { PluginCommand, PluginManifest, PluginPermission } from '@/lib/plugins/types';
+import type { PluginHealth, PluginAuditEvent } from '@/lib/plugins/runtime';
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -29,16 +41,183 @@ const tabs: { id: SettingsTab; icon: typeof Settings; labelKey: 'settings.genera
   { id: 'about', icon: Info, labelKey: 'settings.about' },
 ];
 
+const PERMISSION_META: Record<PluginPermission, { titleKey: TranslationKey; descKey: TranslationKey }> = {
+  'file:read': {
+    titleKey: 'settings.plugins.permission.fileRead.title',
+    descKey: 'settings.plugins.permission.fileRead.desc',
+  },
+  'file:write': {
+    titleKey: 'settings.plugins.permission.fileWrite.title',
+    descKey: 'settings.plugins.permission.fileWrite.desc',
+  },
+  'annotations:read': {
+    titleKey: 'settings.plugins.permission.annotationsRead.title',
+    descKey: 'settings.plugins.permission.annotationsRead.desc',
+  },
+  'annotations:write': {
+    titleKey: 'settings.plugins.permission.annotationsWrite.title',
+    descKey: 'settings.plugins.permission.annotationsWrite.desc',
+  },
+  network: {
+    titleKey: 'settings.plugins.permission.network.title',
+    descKey: 'settings.plugins.permission.network.desc',
+  },
+  'ui:commands': {
+    titleKey: 'settings.plugins.permission.uiCommands.title',
+    descKey: 'settings.plugins.permission.uiCommands.desc',
+  },
+  'ui:panels': {
+    titleKey: 'settings.plugins.permission.uiPanels.title',
+    descKey: 'settings.plugins.permission.uiPanels.desc',
+  },
+  storage: {
+    titleKey: 'settings.plugins.permission.storage.title',
+    descKey: 'settings.plugins.permission.storage.desc',
+  },
+};
+
+const compareSemver = (left: string, right: string) => {
+  const parse = (value: string) => {
+    const cleaned = value.split('+')[0];
+    const [core, prereleaseRaw] = cleaned.split('-');
+    const coreParts = core.split('.').map((part) => {
+      const parsed = Number(part);
+      return Number.isFinite(parsed) ? parsed : 0;
+    });
+    const prerelease = prereleaseRaw ? prereleaseRaw.split('.') : [];
+    return { coreParts, prerelease };
+  };
+
+  const compareIdentifiers = (a: string, b: string) => {
+    const aNum = Number(a);
+    const bNum = Number(b);
+    const aIsNum = Number.isFinite(aNum) && String(aNum) === a;
+    const bIsNum = Number.isFinite(bNum) && String(bNum) === b;
+    if (aIsNum && bIsNum) return aNum - bNum;
+    if (aIsNum && !bIsNum) return -1;
+    if (!aIsNum && bIsNum) return 1;
+    if (a === b) return 0;
+    return a < b ? -1 : 1;
+  };
+
+  const a = parse(left);
+  const b = parse(right);
+  const length = Math.max(a.coreParts.length, b.coreParts.length);
+  for (let i = 0; i < length; i += 1) {
+    const diff = (a.coreParts[i] ?? 0) - (b.coreParts[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+
+  const aPre = a.prerelease;
+  const bPre = b.prerelease;
+  if (aPre.length === 0 && bPre.length === 0) return 0;
+  if (aPre.length === 0) return 1;
+  if (bPre.length === 0) return -1;
+
+  const preLength = Math.max(aPre.length, bPre.length);
+  for (let i = 0; i < preLength; i += 1) {
+    const aId = aPre[i];
+    const bId = bPre[i];
+    if (aId === undefined) return -1;
+    if (bId === undefined) return 1;
+    const diff = compareIdentifiers(aId, bId);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+};
+
 export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const updateSetting = useSettingsStore((state) => state.updateSetting);
   const updateSettings = useSettingsStore((state) => state.updateSettings);
   const settings = useSettingsStore((state) => state.settings);
-  const availablePlugins = getAvailablePlugins();
+  const installedPlugins = usePluginStore((state) => state.plugins);
+  const loadPlugins = usePluginStore((state) => state.loadPlugins);
+  const installFromZip = usePluginStore((state) => state.installFromZip);
+  const installFromDirectory = usePluginStore((state) => state.installFromDirectory);
+  const removePlugin = usePluginStore((state) => state.removePlugin);
+  const pluginError = usePluginStore((state) => state.error);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [registeredCommands, setRegisteredCommands] = useState<PluginCommand[]>([]);
+  const [trustDialogPlugin, setTrustDialogPlugin] = useState<PluginManifest | null>(null);
+  const [networkInput, setNetworkInput] = useState('');
+  const [pluginQuery, setPluginQuery] = useState('');
+  const [pluginHealthMap, setPluginHealthMap] = useState<Record<string, PluginHealth>>({});
+  const [pluginAuditLog, setPluginAuditLog] = useState<PluginAuditEvent[]>([]);
+  const supportsDirectoryInstall =
+    typeof window !== 'undefined' && 'showDirectoryPicker' in window;
 
-  if (!isOpen) return null;
+  const builtInPlugins = useMemo(() => getAvailablePlugins(), []);
+  const builtInById = useMemo(() => {
+    return new Map(builtInPlugins.map((plugin) => [plugin.id, plugin]));
+  }, [builtInPlugins]);
+  const installedPluginIds = useMemo(
+    () => new Set(installedPlugins.map((plugin) => plugin.manifest.id)),
+    [installedPlugins]
+  );
+  const installedMetaById = useMemo(() => {
+    return new Map(
+      installedPlugins.map((plugin) => [
+        plugin.manifest.id,
+        { installedAt: plugin.installedAt, updatedAt: plugin.updatedAt },
+      ])
+    );
+  }, [installedPlugins]);
+  const availablePlugins = useMemo(() => {
+    const combined = new Map<string, (typeof installedPlugins)[number]['manifest']>();
+    for (const plugin of builtInPlugins) {
+      combined.set(plugin.id, plugin);
+    }
+    for (const plugin of installedPlugins) {
+      combined.set(plugin.manifest.id, plugin.manifest);
+    }
+    return Array.from(combined.values());
+  }, [builtInPlugins, installedPlugins]);
+
+  const normalizedPluginQuery = pluginQuery.trim().toLowerCase();
+  const filteredPlugins = useMemo(() => {
+    if (!normalizedPluginQuery) return availablePlugins;
+    return availablePlugins.filter((plugin) => {
+      const haystack = [plugin.name, plugin.id, plugin.description]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(normalizedPluginQuery);
+    });
+  }, [availablePlugins, normalizedPluginQuery]);
+
+  const pluginNameById = useMemo(
+    () => new Map(availablePlugins.map((plugin) => [plugin.id, plugin.name])),
+    [availablePlugins]
+  );
+
+  const networkAllowlist = useMemo(
+    () => (Array.isArray(settings.pluginNetworkAllowlist) ? settings.pluginNetworkAllowlist : []),
+    [settings.pluginNetworkAllowlist]
+  );
+
+  const updateCount = useMemo(() => {
+    let count = 0;
+    for (const plugin of availablePlugins) {
+      const builtIn = builtInById.get(plugin.id);
+      const isInstalled = installedPluginIds.has(plugin.id);
+      if (!builtIn || !isInstalled) continue;
+      if (compareSemver(builtIn.version, plugin.version) > 0) {
+        count += 1;
+      }
+    }
+    return count;
+  }, [availablePlugins, builtInById, installedPluginIds]);
+
+  const formatTimestamp = (value?: number) => {
+    if (!value) return '';
+    try {
+      return new Date(value).toLocaleString();
+    } catch {
+      return String(value);
+    }
+  };
 
   const handleRestartOnboarding = async () => {
     await updateSetting('onboardingCompleted', false);
@@ -47,13 +226,74 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
     window.location.reload();
   };
 
+  const handleConfirmTrust = async () => {
+    if (!trustDialogPlugin) return;
+    const nextTrusted = Array.from(new Set([...settings.trustedPlugins, trustDialogPlugin.id]));
+    await updateSettings({ trustedPlugins: nextTrusted });
+    setTrustDialogPlugin(null);
+  };
+
+  const handleCancelTrust = () => {
+    setTrustDialogPlugin(null);
+  };
+
+  const handleAddNetworkAllowlist = async () => {
+    const normalized = normalizeAllowlistEntry(networkInput);
+    if (!normalized) return;
+    const next = Array.from(new Set([...networkAllowlist, normalized]));
+    await updateSetting('pluginNetworkAllowlist', next);
+    setNetworkInput('');
+  };
+
+  const handleRemoveNetworkAllowlist = async (entry: string) => {
+    const next = networkAllowlist.filter((item) => item !== entry);
+    await updateSetting('pluginNetworkAllowlist', next);
+  };
+
+  const handleInstallFromFolder = async () => {
+    const picker = (window as Window & { showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle> })
+      .showDirectoryPicker;
+    if (!picker) return;
+    try {
+      const handle = await picker();
+      await installFromDirectory(handle);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      console.error('Failed to install plugin from folder:', error);
+    }
+  };
+
   useEffect(() => {
     if (!isOpen || activeTab !== 'extensions') return;
-    const timeout = setTimeout(() => {
+    const updateCommands = () => {
       setRegisteredCommands(getRegisteredCommands());
-    }, 50);
-    return () => clearTimeout(timeout);
-  }, [isOpen, activeTab, settings.pluginsEnabled, settings.enabledPlugins]);
+    };
+    updateCommands();
+    const unsubscribe = subscribePluginRegistry(updateCommands);
+    return () => unsubscribe();
+  }, [isOpen, activeTab]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const updateHealth = () => {
+      setPluginHealthMap(getPluginHealthSnapshot());
+    };
+    updateHealth();
+    const unsubscribe = subscribePluginHealth(updateHealth);
+    return () => unsubscribe();
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const updateAudit = () => {
+      setPluginAuditLog(getPluginAuditLog());
+    };
+    updateAudit();
+    const unsubscribe = subscribePluginAudit(updateAudit);
+    return () => unsubscribe();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -144,6 +384,10 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     shortcut="Ctrl+K"
                   />
                   <ShortcutItem
+                    label={t('settings.shortcuts.openPanels')}
+                    shortcut="Ctrl+Shift+P"
+                  />
+                  <ShortcutItem
                     label={t('settings.shortcuts.toggleTheme')}
                     shortcut="Ctrl+Shift+T"
                   />
@@ -153,6 +397,81 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
 
             {activeTab === 'extensions' && (
               <div className="space-y-6">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-medium text-muted-foreground">
+                    {t('settings.plugins.available')}
+                    {updateCount > 0 && (
+                      <span className="ml-2 text-xs text-amber-600">
+                        {t('settings.plugins.update.availableCount', { count: updateCount })}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void loadPlugins()}
+                      className="px-3 py-1 text-xs rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    >
+                      {t('settings.plugins.update.check')}
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".zip"
+                      className="hidden"
+                      onChange={async (event) => {
+                        const file = event.target.files?.[0];
+                        if (!file) return;
+                        try {
+                          await installFromZip(file);
+                        } catch (error) {
+                          console.error('Failed to install plugin:', error);
+                        }
+                        event.currentTarget.value = '';
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-3 py-1 text-xs rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    >
+                      {t('settings.plugins.install')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleInstallFromFolder()}
+                      className="px-3 py-1 text-xs rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={!supportsDirectoryInstall}
+                      title={
+                        supportsDirectoryInstall
+                          ? undefined
+                          : t('settings.plugins.installFolder.unsupported')
+                      }
+                    >
+                      {t('settings.plugins.installFolder')}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={pluginQuery}
+                    onChange={(event) => setPluginQuery(event.target.value)}
+                    placeholder={t('settings.plugins.search.placeholder')}
+                    className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-xs"
+                  />
+                  {pluginQuery.trim().length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPluginQuery('')}
+                      className="px-3 py-2 text-xs rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    >
+                      {t('common.clear')}
+                    </button>
+                  )}
+                </div>
+
                 <div className="flex items-start justify-between gap-4 rounded-lg border border-border bg-muted/30 p-3">
                   <div>
                     <div className="text-sm font-medium">{t('settings.plugins.enable')}</div>
@@ -166,17 +485,94 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                   />
                 </div>
 
-                <div>
-                  <div className="text-sm font-medium text-muted-foreground mb-2">
-                    {t('settings.plugins.available')}
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <div className="text-sm font-medium">{t('settings.plugins.networkAllowlist')}</div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {t('settings.plugins.networkAllowlist.description')}
+                  </p>
+                  <div className="mt-3 flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={networkInput}
+                      onChange={(event) => setNetworkInput(event.target.value)}
+                      placeholder={t('settings.plugins.networkAllowlist.placeholder')}
+                      className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-xs"
+                      disabled={!settings.pluginsEnabled}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          void handleAddNetworkAllowlist();
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleAddNetworkAllowlist()}
+                      className="px-3 py-2 text-xs rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                      disabled={!settings.pluginsEnabled}
+                    >
+                      {t('settings.plugins.networkAllowlist.add')}
+                    </button>
                   </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {networkAllowlist.length === 0 ? (
+                      <div className="text-xs text-muted-foreground">
+                        {t('settings.plugins.networkAllowlist.empty')}
+                      </div>
+                    ) : (
+                      networkAllowlist.map((entry) => (
+                        <div
+                          key={entry}
+                          className="flex items-center gap-1 rounded-full border border-border bg-background px-2 py-1 text-xs"
+                        >
+                          <span>{entry}</span>
+                          <button
+                            type="button"
+                            onClick={() => void handleRemoveNetworkAllowlist(entry)}
+                            className="text-muted-foreground hover:text-foreground"
+                            aria-label={t('settings.plugins.networkAllowlist.remove')}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div>
                   {availablePlugins.length === 0 ? (
                     <div className="text-xs text-muted-foreground">{t('settings.plugins.none')}</div>
+                  ) : filteredPlugins.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">{t('settings.plugins.search.empty')}</div>
                   ) : (
                     <div className="space-y-2">
-                      {availablePlugins.map((plugin) => {
+                      {filteredPlugins.map((plugin) => {
                         const isEnabled = settings.enabledPlugins.includes(plugin.id);
                         const isTrusted = settings.trustedPlugins.includes(plugin.id);
+                        const builtIn = builtInById.get(plugin.id);
+                        const isBuiltIn = Boolean(builtIn);
+                        const isInstalled = installedPluginIds.has(plugin.id);
+                        const meta = installedMetaById.get(plugin.id);
+                        const updateAvailable =
+                          isInstalled &&
+                          isBuiltIn &&
+                          builtIn?.version &&
+                          compareSemver(builtIn.version, plugin.version) > 0;
+                        const sourceLabelKey = isInstalled && isBuiltIn
+                          ? 'settings.plugins.source.override'
+                          : isInstalled
+                            ? 'settings.plugins.source.installed'
+                            : 'settings.plugins.source.builtIn';
+                        const health = pluginHealthMap[plugin.id];
+                        const isActive = settings.pluginsEnabled && isEnabled;
+                        const status = !isActive ? 'inactive' : health?.status ?? 'active';
+                        const statusLabelKey =
+                          status === 'error'
+                            ? 'settings.plugins.status.error'
+                            : status === 'active'
+                              ? 'settings.plugins.status.active'
+                              : 'settings.plugins.status.inactive';
                         const checkboxId = `settings-plugin-${plugin.id}`;
                         const trustId = `settings-plugin-trust-${plugin.id}`;
                         const permissions = plugin.permissions ?? [];
@@ -204,7 +600,24 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                                 }}
                               />
                               <label htmlFor={checkboxId} className="flex-1 cursor-pointer">
-                                <div className="text-sm font-medium text-foreground">{plugin.name}</div>
+                                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                                  <span>{plugin.name}</span>
+                                  <span
+                                    className={cn(
+                                      "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide",
+                                      status === 'error'
+                                        ? "border-destructive/40 text-destructive"
+                                        : status === 'active'
+                                          ? "border-primary/30 text-primary"
+                                          : "border-border text-muted-foreground"
+                                    )}
+                                  >
+                                    {t(statusLabelKey as TranslationKey)}
+                                  </span>
+                                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                    {t(sourceLabelKey as TranslationKey)}
+                                  </span>
+                                </div>
                                 {plugin.description && (
                                   <div className="text-xs text-muted-foreground mt-1">
                                     {plugin.description}
@@ -214,12 +627,38 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                                   v{plugin.version}
                                   {plugin.author ? ` · ${plugin.author}` : ''}
                                 </div>
+                                {isInstalled && meta && (
+                                  <div className="text-xs text-muted-foreground mt-1">
+                                    {t('settings.plugins.installedAt')}: {formatTimestamp(meta.installedAt)}
+                                    {meta.updatedAt
+                                      ? ` · ${t('settings.plugins.updatedAt')}: ${formatTimestamp(meta.updatedAt)}`
+                                      : ''}
+                                  </div>
+                                )}
+                                {updateAvailable && (
+                                  <div className="text-xs text-amber-600 mt-1">
+                                    {t('settings.plugins.update.available')}
+                                    {builtIn?.version
+                                      ? ` · ${t('settings.plugins.update.builtInVersion')}: v${builtIn.version}`
+                                      : ''}
+                                  </div>
+                                )}
                                 <div className="text-xs text-muted-foreground mt-1">
                                   {t('settings.plugins.id')}: {plugin.id}
                                 </div>
                                 <div className="text-xs text-muted-foreground mt-1">
                                   {t('settings.plugins.permissions')}: {permissions.length > 0 ? permissions.join(', ') : t('settings.plugins.permissions.none')}
                                 </div>
+                                {status === 'error' && health?.lastError && (
+                                  <div className="mt-2 text-xs text-destructive">
+                                    {t('settings.plugins.status.errorDetail')}: {health.lastError}
+                                  </div>
+                                )}
+                                {status === 'error' && health?.lastErrorAt && (
+                                  <div className="text-xs text-muted-foreground mt-1">
+                                    {t('settings.plugins.status.errorAt')}: {formatTimestamp(health.lastErrorAt)}
+                                  </div>
+                                )}
                                 {!isTrusted && settings.pluginsEnabled && (
                                   <div className="text-xs text-muted-foreground mt-1">
                                     {t('settings.plugins.trust.required')}
@@ -234,25 +673,112 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                                 className="h-4 w-4 rounded border-border text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                 checked={isTrusted}
                                 onChange={(event) => {
-                                  const nextTrusted = event.target.checked
-                                    ? Array.from(new Set([...settings.trustedPlugins, plugin.id]))
-                                    : settings.trustedPlugins.filter((id) => id !== plugin.id);
-                                  const nextEnabled = event.target.checked
-                                    ? settings.enabledPlugins
-                                    : settings.enabledPlugins.filter((id) => id !== plugin.id);
-                                  updateSettings({
-                                    trustedPlugins: nextTrusted,
-                                    enabledPlugins: nextEnabled,
-                                  });
+                                  if (event.target.checked) {
+                                    setTrustDialogPlugin(plugin);
+                                    return;
+                                  }
+                                  const nextTrusted = settings.trustedPlugins.filter((id) => id !== plugin.id);
+                                  const nextEnabled = settings.enabledPlugins.filter((id) => id !== plugin.id);
+                                  updateSettings({ trustedPlugins: nextTrusted, enabledPlugins: nextEnabled });
                                 }}
                               />
                               {t('settings.plugins.trust')}
                             </label>
+                            {isInstalled && (
+                              <button
+                                type="button"
+                                onClick={() => void removePlugin(plugin.id)}
+                                className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+                              >
+                                {t('settings.plugins.uninstall')}
+                              </button>
+                            )}
+                            {updateAvailable && (
+                              <button
+                                type="button"
+                                onClick={() => void removePlugin(plugin.id)}
+                                className="text-xs text-amber-600 hover:text-amber-700 transition-colors"
+                              >
+                                {t('settings.plugins.update.useBuiltIn')}
+                              </button>
+                            )}
                           </div>
                         );
                       })}
                     </div>
                   )}
+                </div>
+
+                {pluginError && (
+                  <div className="text-xs text-destructive">
+                    {pluginError}
+                  </div>
+                )}
+
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-medium text-muted-foreground">
+                      {t('settings.plugins.audit.title')}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearPluginAuditLog();
+                        setPluginAuditLog([]);
+                      }}
+                      className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {t('settings.plugins.audit.clear')}
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {t('settings.plugins.audit.description')}
+                  </p>
+                  <div className="mt-3 max-h-56 overflow-y-auto space-y-2">
+                    {pluginAuditLog.length === 0 ? (
+                      <div className="text-xs text-muted-foreground">
+                        {t('settings.plugins.audit.empty')}
+                      </div>
+                    ) : (
+                      pluginAuditLog.map((event) => {
+                        const label = pluginNameById.get(event.pluginId) ?? event.pluginId;
+                        const timeLabel = new Date(event.timestamp).toLocaleTimeString();
+                        return (
+                          <div
+                            key={event.id}
+                            className="rounded-md border border-border bg-background px-3 py-2 text-xs"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-foreground">{label}</span>
+                                <span
+                                  className={cn(
+                                    "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide",
+                                    event.level === 'error'
+                                      ? "border-destructive/40 text-destructive"
+                                      : event.level === 'warn'
+                                        ? "border-amber-400/40 text-amber-600"
+                                        : "border-border text-muted-foreground"
+                                  )}
+                                >
+                                  {event.level}
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-muted-foreground">{timeLabel}</span>
+                            </div>
+                            <div className="mt-1 text-muted-foreground">
+                              {event.message}
+                            </div>
+                            {event.data && (
+                              <div className="mt-1 text-[10px] text-muted-foreground/80">
+                                {JSON.stringify(event.data)}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
 
                 <div>
@@ -364,6 +890,14 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
           </div>
         </div>
       </div>
+      {trustDialogPlugin && (
+        <PluginTrustDialog
+          plugin={trustDialogPlugin}
+          onConfirm={handleConfirmTrust}
+          onCancel={handleCancelTrust}
+          t={t}
+        />
+      )}
     </div>
   );
 }
@@ -384,6 +918,127 @@ function StatusItem({ label, value }: { label: string; value: string }) {
     <div className="flex items-center gap-2">
       <span className="text-muted-foreground/80">{label}</span>
       <span className="text-foreground">{value}</span>
+    </div>
+  );
+}
+
+function normalizeAllowlistEntry(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return null;
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      const url = new URL(trimmed);
+      return url.hostname.toLowerCase();
+    } catch {
+      return null;
+    }
+  }
+
+  const withoutPath = trimmed.split('/')[0];
+  if (!withoutPath) return null;
+  if (withoutPath.startsWith('*.')) {
+    return withoutPath;
+  }
+  return withoutPath.split(':')[0] || null;
+}
+
+function PluginTrustDialog({
+  plugin,
+  onConfirm,
+  onCancel,
+  t,
+}: {
+  plugin: PluginManifest;
+  onConfirm: () => void;
+  onCancel: () => void;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+}) {
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onCancel();
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [onCancel]);
+
+  const permissions = Array.from(new Set(plugin.permissions ?? []));
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
+      <div
+        className="w-full max-w-lg rounded-xl border border-border bg-background p-6 shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+      >
+        <h3 className="text-lg font-semibold">{t('settings.plugins.trust.dialog.title')}</h3>
+        <p className="mt-2 text-xs text-muted-foreground">
+          {t('settings.plugins.trust.dialog.description')}
+        </p>
+
+        <div className="mt-4 rounded-lg border border-border bg-muted/30 p-3 text-xs">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm font-medium text-foreground">{plugin.name}</div>
+            <div className="text-muted-foreground">v{plugin.version}</div>
+          </div>
+          <div className="mt-2 text-muted-foreground">
+            {t('settings.plugins.id')}: {plugin.id}
+          </div>
+          {plugin.author && (
+            <div className="mt-1 text-muted-foreground">
+              {plugin.author}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-4 space-y-2">
+          <div className="text-xs font-medium text-muted-foreground">
+            {t('settings.plugins.trust.dialog.permissions')}
+          </div>
+          {permissions.length === 0 ? (
+            <div className="text-xs text-muted-foreground">
+              {t('settings.plugins.trust.dialog.none')}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {permissions.map((permission) => {
+                const meta = PERMISSION_META[permission];
+                const title = meta ? t(meta.titleKey) : permission;
+                const description = meta ? t(meta.descKey) : permission;
+                return (
+                  <div
+                    key={permission}
+                    className="rounded-lg border border-border bg-background p-3"
+                  >
+                    <div className="text-sm font-medium text-foreground">{title}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{description}</div>
+                    <div className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                      {permission}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-muted transition-colors"
+          >
+            {t('common.cancel')}
+          </button>
+          <button
+            onClick={onConfirm}
+            className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            {t('settings.plugins.trust.dialog.confirm')}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

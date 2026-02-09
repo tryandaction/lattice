@@ -5,7 +5,7 @@
  * 图层面板 - 管理手写笔记图层
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Layers,
@@ -103,7 +103,7 @@ export function LayerPanel({
 
             {/* 图层列表 */}
             <div className="flex-1 overflow-y-auto p-2">
-              {layers.map((layer, index) => (
+              {layers.map((layer) => (
                 <div
                   key={layer.id}
                   className={cn(

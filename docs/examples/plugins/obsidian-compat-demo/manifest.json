@@ -1,0 +1,23 @@
+{
+  "id": "obsidian.compat.demo",
+  "name": "Obsidian Compat Demo",
+  "version": "1.0.0",
+  "description": "Demo plugin using ctx.obsidian compatibility shim",
+  "author": "Lattice",
+  "permissions": ["file:read", "ui:commands", "ui:panels"],
+  "main": "main.js",
+  "ui": {
+    "panels": [
+      {
+        "id": "obsidian.compat.panel",
+        "title": "Obsidian Compat",
+        "schema": {
+          "type": "markdown",
+          "props": {
+            "content": "# Obsidian Compat Demo\nThis demo uses ctx.obsidian.app.vault/workspace.\n\nCommands:\n- Obsidian Compat: List Markdown Files\n- Obsidian Compat: Active File"
+          }
+        }
+      }
+    ]
+  }
+}

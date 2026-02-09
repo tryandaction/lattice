@@ -27,6 +27,26 @@ const MATHLIVE_CONFIG = {
 // Flag to track if global MathLive config has been applied
 let mathLiveGlobalConfigApplied = false;
 
+type MathfieldElementWithSounds = MathfieldElement & {
+  keypressSound?: string | null;
+  plonkSound?: string | null;
+  soundsDirectory?: string | null;
+};
+
+type MathfieldElementConstructor = {
+  new (): MathfieldElement;
+  soundsDirectory?: string | null;
+};
+
+declare module "@tiptap/core" {
+  interface Commands<ReturnType> {
+    mathLive: {
+      insertInlineMathLive: (latex?: string) => ReturnType;
+      insertBlockMathLive: (latex?: string) => ReturnType;
+    };
+  }
+}
+
 /**
  * Apply global MathLive configuration to disable sounds
  * This is called once when the first MathLive element is created
@@ -38,12 +58,12 @@ async function applyGlobalMathLiveConfig() {
     const mathlive = await import("mathlive");
     // Use MathfieldElement.soundsDirectory to disable sounds globally
     // Setting to empty string or null disables sound loading
-    if (mathlive.MathfieldElement) {
-      // soundsDirectory is a static property that may not be in types
-      (mathlive.MathfieldElement as any).soundsDirectory = null;
+    const MathfieldCtor = mathlive.MathfieldElement as MathfieldElementConstructor | undefined;
+    if (MathfieldCtor && "soundsDirectory" in MathfieldCtor) {
+      MathfieldCtor.soundsDirectory = null;
     }
     mathLiveGlobalConfigApplied = true;
-  } catch (e) {
+  } catch (_error) {
     // Ignore errors during global config
   }
 }
@@ -67,10 +87,24 @@ function LatticeMathNode({
   const mathfieldRef = useRef<MathfieldElement | null>(null);
   const containerRef = useRef<HTMLSpanElement>(null);
   const [isLoaded, setIsLoaded] = useState(false);
+  const onLatexChangeRef = useRef(onLatexChange);
+  const initialLatexRef = useRef(latex);
+
+  useEffect(() => {
+    onLatexChangeRef.current = onLatexChange;
+  }, [onLatexChange]);
+
+  useEffect(() => {
+    initialLatexRef.current = latex;
+  }, [latex]);
 
   // Initialize MathLive (lazy load)
   useEffect(() => {
     let mounted = true;
+    let containerEl: HTMLSpanElement | null = null;
+    let mathfieldEl: MathfieldElementWithSounds | null = null;
+    let handleInput: (() => void) | null = null;
+    let handleBlur: (() => void) | null = null;
 
     const initMathLive = async () => {
       // Apply global config first (only runs once)
@@ -79,10 +113,15 @@ function LatticeMathNode({
       // Dynamically import MathLive to avoid SSR issues
       const mathlive = await import("mathlive");
       
-      if (!mounted || !containerRef.current) return;
+      if (!mounted) return;
+      const container = containerRef.current;
+      if (!container) return;
+      containerEl = container;
 
       // Create mathfield element
-      const mf = new mathlive.MathfieldElement();
+      const MathfieldCtor = mathlive.MathfieldElement as MathfieldElementConstructor;
+      const mf = new MathfieldCtor() as MathfieldElementWithSounds;
+      mathfieldEl = mf;
       
       // Apply configuration
       mf.smartMode = MATHLIVE_CONFIG.smartMode;
@@ -92,20 +131,20 @@ function LatticeMathNode({
       
       // Disable all sounds to prevent 404 errors
       // Sound properties may not be in types
-      (mf as any).keypressSound = null;
-      (mf as any).plonkSound = null;
+      mf.keypressSound = null;
+      mf.plonkSound = null;
       
       // Also try setting sounds directory to empty
       try {
-        if ((mf as any).soundsDirectory !== undefined) {
-          (mf as any).soundsDirectory = null;
+        if (mf.soundsDirectory !== undefined) {
+          mf.soundsDirectory = null;
         }
-      } catch (e) {
+      } catch (_error) {
         // Ignore
       }
       
       // Set initial value
-      mf.value = latex;
+      mf.value = initialLatexRef.current;
       
       // Style based on display mode
       if (displayMode === "block") {
@@ -129,27 +168,41 @@ function LatticeMathNode({
       mf.style.color = "inherit";
       
       // Append to container
-      containerRef.current.appendChild(mf);
+      container.appendChild(mf);
       mathfieldRef.current = mf;
-      setIsLoaded(true);
+      if (mounted) {
+        setIsLoaded(true);
+      }
 
       // Handle input changes
-      mf.addEventListener("input", () => {
-        onLatexChange(mf.value);
-      });
+      handleInput = () => {
+        onLatexChangeRef.current(mf.value);
+      };
+      mf.addEventListener("input", handleInput);
 
       // Handle blur
-      mf.addEventListener("blur", () => {
-        onLatexChange(mf.value);
-      });
+      handleBlur = () => {
+        onLatexChangeRef.current(mf.value);
+      };
+      mf.addEventListener("blur", handleBlur);
     };
 
     initMathLive();
 
     return () => {
       mounted = false;
-      if (mathfieldRef.current && containerRef.current) {
-        containerRef.current.removeChild(mathfieldRef.current);
+      if (mathfieldEl) {
+        if (handleInput) {
+          mathfieldEl.removeEventListener("input", handleInput);
+        }
+        if (handleBlur) {
+          mathfieldEl.removeEventListener("blur", handleBlur);
+        }
+        if (containerEl && containerEl.contains(mathfieldEl)) {
+          containerEl.removeChild(mathfieldEl);
+        }
+      }
+      if (mathfieldRef.current === mathfieldEl) {
         mathfieldRef.current = null;
       }
     };
@@ -265,7 +318,7 @@ function InlineMathLiveView({ node, updateAttributes, selected, editor, getPos }
         try {
           editor.commands.setTextSelection(targetPos);
           editor.commands.focus();
-        } catch (e) {
+        } catch (_error) {
           // Ignore selection errors
         }
       }
@@ -308,7 +361,7 @@ function BlockMathLiveView({ node, updateAttributes, selected, editor, getPos }:
         try {
           editor.commands.setTextSelection(targetPos);
           editor.commands.focus();
-        } catch (e) {
+        } catch (_error) {
           // Ignore selection errors
         }
       }
@@ -385,12 +438,12 @@ export const InlineMathLive = Node.create({
 
   addCommands() {
     return {
-      insertInlineMathLive: (latex: string = "") => ({ chain }: { chain: any }) => {
-        return chain()
-          .insertContent({ type: "inlineMathLive", attrs: { latex } })
-          .run();
-      },
-    } as any;
+      insertInlineMathLive:
+        (latex: string = "") =>
+        ({ commands }) => {
+          return commands.insertContent({ type: "inlineMathLive", attrs: { latex } });
+        },
+    };
   },
 });
 
@@ -444,12 +497,12 @@ export const BlockMathLive = Node.create({
 
   addCommands() {
     return {
-      insertBlockMathLive: (latex: string = "") => ({ chain }: { chain: any }) => {
-        return chain()
-          .insertContent({ type: "blockMathLive", attrs: { latex } })
-          .run();
-      },
-    } as any;
+      insertBlockMathLive:
+        (latex: string = "") =>
+        ({ commands }) => {
+          return commands.insertContent({ type: "blockMathLive", attrs: { latex } });
+        },
+    };
   },
 });
 

@@ -90,7 +90,7 @@ export function CodeEditorViewer({
   const hasChangedRef = useRef(false);
   
   // Highlighted line state for annotation navigation
-  const [highlightedLine, setHighlightedLine] = useState<number | null>(null);
+  const [, setHighlightedLine] = useState<number | null>(null);
   
   // Universal annotation navigation support
   useAnnotationNavigation({

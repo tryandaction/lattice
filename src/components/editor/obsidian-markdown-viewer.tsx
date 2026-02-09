@@ -12,9 +12,8 @@
  * - Keyboard shortcuts (Ctrl+E to cycle modes, Ctrl+S to save)
  */
 
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { 
-  Edit3, 
   Eye, 
   Save, 
   Loader2, 
@@ -43,6 +42,42 @@ const OutlinePanel = dynamic(
 );
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
+
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeHeading(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^\p{L}\p{N}-]/gu, "");
+}
+
+function stripExtension(value: string): string {
+  return value.replace(/\.[^/.]+$/, "");
+}
+
+function findHeadingLine(items: OutlineItem[], target: string): number | undefined {
+  const normalizedTarget = normalizeHeading(target);
+  const stack = [...items];
+  while (stack.length > 0) {
+    const current = stack.shift();
+    if (!current) continue;
+    if (normalizeHeading(current.text) === normalizedTarget) {
+      return current.line;
+    }
+    if (current.children?.length) {
+      stack.push(...current.children);
+    }
+  }
+  return undefined;
+}
 
 interface ObsidianMarkdownViewerProps {
   content: string;
@@ -197,13 +232,14 @@ export function ObsidianMarkdownViewer({
       console.log('[ContentSync] External content update, length:', content.length);
       setLocalContent(content);
     }
-  }, [content, fileName, fileId, localContent, isDirty]);
+  }, [content, fileName, fileId, localContent, isDirty, getEditorState, saveEditorState]);
 
   // Persist editor state on unmount
   useEffect(() => {
+    const editorInstance = editorRef.current;
     return () => {
       const currentFileId = fileId || fileName;
-      const editorState = editorRef.current?.getEditorState();
+      const editorState = editorInstance?.getEditorState();
       if (editorState) {
         saveEditorState(currentFileId, editorState);
       }
@@ -252,8 +288,29 @@ export function ObsidianMarkdownViewer({
 
   // Handle wiki link click
   const handleWikiLinkClick = useCallback((target: string) => {
-    onNavigateToFile?.(target);
-  }, [onNavigateToFile]);
+    const decodedTarget = safeDecode(target);
+    const [pathPart, headingPart] = decodedTarget.split('#');
+    const heading = headingPart ?? (decodedTarget.startsWith('#') ? decodedTarget.slice(1) : undefined);
+
+    if (heading) {
+      const pathFileName = (pathPart || "").split('/').pop() || '';
+      const sameFile =
+        !pathPart ||
+        pathFileName === fileName ||
+        stripExtension(pathFileName) === stripExtension(fileName);
+
+      if (sameFile) {
+        const line = findHeadingLine(outline, heading);
+        if (line) {
+          setActiveHeading(line);
+          editorRef.current?.scrollToLine(line);
+          return;
+        }
+      }
+    }
+
+    onNavigateToFile?.(decodedTarget);
+  }, [onNavigateToFile, fileName, outline]);
 
   return (
     <div ref={containerRef} className="h-full flex flex-col bg-background">

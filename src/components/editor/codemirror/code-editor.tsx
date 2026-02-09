@@ -19,6 +19,10 @@ import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { academicThemeExtension } from "./academic-theme";
 import { registerCodeMirrorView, unregisterCodeMirrorView, setActiveInputTargetFromElement } from "@/lib/unified-input-handler";
 
+type CodeMirrorViewWithHandler = EditorView & {
+  _unifiedInputFocusHandler?: () => void;
+};
+
 /**
  * Supported programming languages
  */
@@ -309,7 +313,7 @@ function CodeEditorComponent({
         registerCodeMirrorView(view.dom, view);
         const focusHandler = () => setActiveInputTargetFromElement(view.dom);
         view.dom.addEventListener('focusin', focusHandler);
-        (view as any)._unifiedInputFocusHandler = focusHandler;
+        (view as CodeMirrorViewWithHandler)._unifiedInputFocusHandler = focusHandler;
         setIsLoading(false);
         
       } catch (err) {
@@ -325,8 +329,8 @@ function CodeEditorComponent({
     return () => {
       mounted = false;
       if (viewRef.current) {
-        const existingView = viewRef.current;
-        const existingHandler = (existingView as any)._unifiedInputFocusHandler as (() => void) | undefined;
+        const existingView = viewRef.current as CodeMirrorViewWithHandler;
+        const existingHandler = existingView._unifiedInputFocusHandler;
         if (existingHandler) {
           existingView.dom.removeEventListener('focusin', existingHandler);
         }

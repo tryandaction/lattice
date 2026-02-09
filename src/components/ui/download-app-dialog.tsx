@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Download, Check, Zap, FolderOpen, Gauge } from "lucide-react";
+import { X, Download, Zap, FolderOpen, Gauge } from "lucide-react";
 import { isTauri } from "@/hooks/use-tauri-settings";
 
 export function DownloadAppDialog() {

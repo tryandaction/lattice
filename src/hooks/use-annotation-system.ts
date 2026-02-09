@@ -19,7 +19,6 @@ import {
   createUniversalAnnotationFile,
   saveWithRetry,
   ensureAnnotationsDirectory,
-  serializeAnnotationFile,
   deserializeAnnotationFile,
 } from '../lib/universal-annotation-storage';
 import {
@@ -139,7 +138,7 @@ export function useAnnotationSystem({
   rootHandle,
   fileType: fileTypeOverride,
   saveDelay = 1000,
-  author = 'user',
+  author: _author = 'user',
 }: UseAnnotationSystemOptions): UseAnnotationSystemReturn {
   // State
   const [annotations, setAnnotations] = useState<AnnotationItem[]>([]);
@@ -147,15 +146,12 @@ export function useAnnotationSystem({
   const [error, setError] = useState<string | null>(null);
   const [pendingSave, setPendingSave] = useState(false);
   const [fileId, setFileId] = useState<string | null>(null);
-  const [detectedFileType, setDetectedFileType] = useState<AnnotationFileType>('unknown');
+  const [_detectedFileType, setDetectedFileType] = useState<AnnotationFileType>('unknown');
   
   // Refs for debounced save
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const annotationFileRef = useRef<UniversalAnnotationFile | null>(null);
   
-  // Determine file type
-  const effectiveFileType = fileTypeOverride || detectedFileType;
-
   // Load annotations on mount
   useEffect(() => {
     let cancelled = false;
@@ -211,7 +207,7 @@ export function useAnnotationSystem({
               setAnnotations([]);
             }
           }
-        } catch (err) {
+        } catch (_error) {
           // File doesn't exist or is corrupted - start fresh
           if (!cancelled) {
             const newFile = createUniversalAnnotationFile(derivedFileId, fileTypeOverride || detected);

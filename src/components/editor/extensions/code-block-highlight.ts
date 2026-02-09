@@ -11,6 +11,7 @@
 
 import { Node, mergeAttributes } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import hljs from "highlight.js/lib/core";
 
@@ -100,35 +101,6 @@ export const SUPPORTED_LANGUAGES = [
 ];
 
 /**
- * Highlight code using highlight.js
- */
-function highlightCode(code: string, language: string | null): string {
-  if (!language || language === "plaintext") {
-    return escapeHtml(code);
-  }
-
-  try {
-    const result = hljs.highlight(code, { language, ignoreIllegals: true });
-    return result.value;
-  } catch {
-    // Fallback to plain text if language not supported
-    return escapeHtml(code);
-  }
-}
-
-/**
- * Escape HTML special characters
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-/**
  * Code Block with Syntax Highlighting
  */
 export const CodeBlockHighlight = Node.create({
@@ -171,9 +143,6 @@ export const CodeBlockHighlight = Node.create({
 
   renderHTML({ node, HTMLAttributes }) {
     const language = node.attrs.language || "plaintext";
-    const code = node.textContent;
-    const highlighted = highlightCode(code, language);
-
     return [
       "div",
       { class: "code-block-wrapper", "data-language": language },
@@ -334,10 +303,10 @@ export const CodeBlockHighlight = Node.create({
 /**
  * Generate decorations for syntax highlighting
  */
-function getDecorations(doc: any): DecorationSet {
+function getDecorations(doc: ProseMirrorNode): DecorationSet {
   const decorations: Decoration[] = [];
 
-  doc.descendants((node: any, pos: number) => {
+  doc.descendants((node: ProseMirrorNode, pos: number) => {
     if (node.type.name === "codeBlock") {
       const language = node.attrs.language || "plaintext";
       const code = node.textContent;

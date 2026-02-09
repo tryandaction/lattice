@@ -1,0 +1,3 @@
+[  345857ms] [WARNING] [plugins] Failed to load plugin from OPFS, falling back NotFoundError: A requested file or directory could not be found at the time an operation was processed. @ http://localhost:3000/_next/static/chunks/e5c4dad60cd9ce23.js:0
+[  366237ms] [WARNING] [plugins] Failed to load plugin from OPFS, falling back NotFoundError: A requested file or directory could not be found at the time an operation was processed. @ http://localhost:3000/_next/static/chunks/e5c4dad60cd9ce23.js:0
+[  366239ms] [WARNING] [plugins] Failed to load plugin from OPFS, falling back NotFoundError: A requested file or directory could not be found at the time an operation was processed. @ http://localhost:3000/_next/static/chunks/e5c4dad60cd9ce23.js:0

@@ -7,8 +7,8 @@
  * Requirements: 6.6, 6.7, 18.4
  */
 
-import { memo, useCallback, useEffect, useState } from 'react';
-import { ChevronRight, ChevronDown, FileText } from 'lucide-react';
+import { memo, useEffect, useState } from 'react';
+import { ChevronDown, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { OutlineItem } from './types';
 
@@ -120,7 +120,6 @@ function OutlinePanelComponent({
       const scroller = editor.querySelector('.cm-scroller') as HTMLElement;
       if (!scroller) return;
       
-      const scrollTop = scroller.scrollTop;
       const containerRect = scroller.getBoundingClientRect();
       
       // Find all heading elements and determine which is visible

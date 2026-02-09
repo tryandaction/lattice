@@ -59,9 +59,9 @@ export function TextAnnotationEditor({
   onClose,
 }: TextAnnotationEditorProps) {
   // Extract current values from annotation
-  const currentText = (annotation.content as any)?.displayText || annotation.content?.text || "";
-  const currentBackgroundColor = (annotation.content as any)?.backgroundColor || 'transparent';
-  const currentTextStyle: TextAnnotationStyle = (annotation.content as any)?.textStyle || {
+  const currentText = annotation.content.displayText || annotation.content.text || "";
+  const currentBackgroundColor = annotation.content.backgroundColor || 'transparent';
+  const currentTextStyle: TextAnnotationStyle = annotation.content.textStyle || {
     textColor: '#000000',
     fontSize: 14,
   };

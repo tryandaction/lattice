@@ -30,7 +30,7 @@ export interface ShadowKeyboardProps {
 }
 
 export function ShadowKeyboard({
-  isShiftHeld,
+  isShiftHeld: _isShiftHeld,
   flashingKey,
   onKeySelect,
   onShiftKeySelect,

@@ -233,7 +233,7 @@ export function MainSlideArea({
    * 
    * @returns The number of text elements that were enhanced
    */
-  function enhanceFormulaTextInSlide(slideElement: HTMLElement): number {
+  function _enhanceFormulaTextInSlide(slideElement: HTMLElement): number {
     let enhancedCount = 0;
     
     // Patterns that indicate formula-like text (must match at least one)
@@ -346,7 +346,7 @@ export function MainSlideArea({
    * Enhance formula-like elements (spans, divs) that contain mathematical content
    * This is a more aggressive approach that looks at element-level content
    */
-  function enhanceFormulaElements(slideElement: HTMLElement): number {
+  function _enhanceFormulaElements(slideElement: HTMLElement): number {
     let enhancedCount = 0;
     
     // Find all span and div elements that might contain formulas
@@ -600,7 +600,7 @@ export function MainSlideArea({
     // Process texts
     for (let i = 0; i < texts.length; i++) {
       const para = texts[i];
-      let text = para.text.trim();
+      const text = para.text.trim();
       
       // Skip empty texts
       if (!text) continue;
@@ -726,7 +726,7 @@ export function MainSlideArea({
    * 
    * @returns true if any formulas were replaced
    */
-  function replaceTextFormulasWithKatex(
+  function _replaceTextFormulasWithKatex(
     slideElement: HTMLElement,
     formulas: Array<{ latex: string; html: string }>
   ): boolean {
@@ -913,7 +913,7 @@ export function MainSlideArea({
    * 1. First try to find empty blocks that might be formula placeholders
    * 2. If that fails, create an inline formula display that doesn't cover content
    */
-  function injectFormulasIntoSlide(
+  function _injectFormulasIntoSlide(
     slideElement: HTMLElement,
     formulas: Array<{ latex: string; html: string }>,
     _existingTextLength: number

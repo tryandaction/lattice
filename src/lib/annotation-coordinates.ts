@@ -34,18 +34,21 @@ export function normalizeRect(
     throw new Error('Page dimensions must be positive');
   }
 
-  const x1 = Math.max(0, Math.min(1, rect.x / pageWidth));
-  const y1 = Math.max(0, Math.min(1, rect.y / pageHeight));
-  const x2 = Math.max(0, Math.min(1, (rect.x + rect.width) / pageWidth));
-  const y2 = Math.max(0, Math.min(1, (rect.y + rect.height) / pageHeight));
+  const baseWidth = Math.max(pageWidth, rect.x + rect.width);
+  const baseHeight = Math.max(pageHeight, rect.y + rect.height);
+
+  const x1 = Math.max(0, Math.min(1, rect.x / baseWidth));
+  const y1 = Math.max(0, Math.min(1, rect.y / baseHeight));
+  const x2 = Math.max(0, Math.min(1, (rect.x + rect.width) / baseWidth));
+  const y2 = Math.max(0, Math.min(1, (rect.y + rect.height) / baseHeight));
 
   return {
     x1,
     y1,
     x2,
     y2,
-    width: pageWidth,
-    height: pageHeight,
+    width: baseWidth,
+    height: baseHeight,
   };
 }
 

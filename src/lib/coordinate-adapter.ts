@@ -172,7 +172,6 @@ export function getTooltipPosition(
   tooltipSize: PopupSize,
   placement: 'top' | 'bottom' | 'left' | 'right' = 'top'
 ): PopupPosition {
-  const bounds = getWindowBounds();
   const gap = 8;
   
   let x: number;

@@ -30,9 +30,9 @@ This is a [[wiki link|with display text]] in a sentence.
 
 ## Test 5: Images
 
-![Alt text](https://via.placeholder.com/150)
+![Alt text](/icons/icon-192x192.png)
 
-![Alt text|200](https://via.placeholder.com/200)
+![Alt text|200](/icons/icon-384x384.png)
 
 ## Test 6: Combined Formatting
 

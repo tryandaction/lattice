@@ -224,7 +224,6 @@ export const useInkAnnotationStore = create<InkAnnotationStore>()(
         const { maxUndoSize } = get();
         let removed = false;
         let removedStroke: InkStroke | null = null;
-        let annotationId: string | null = null;
 
         set(state => {
           const newAnnotations = new Map(state.annotations);
@@ -238,8 +237,6 @@ export const useInkAnnotationStore = create<InkAnnotationStore>()(
           if (strokeIndex === -1) return state;
           
           removedStroke = annotation.strokes[strokeIndex];
-          annotationId = annotation.id;
-          
           const updatedAnnotation: InkAnnotation = {
             ...annotation,
             strokes: annotation.strokes.filter(s => s.id !== strokeId),

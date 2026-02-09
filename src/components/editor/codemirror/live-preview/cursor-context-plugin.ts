@@ -10,6 +10,10 @@ import { StateField, StateEffect, EditorState } from '@codemirror/state';
 import { parsedElementsField, ElementType } from './decoration-coordinator';
 import type { ParsedElement } from './decoration-coordinator';
 
+type ParsedElementsCarrier = {
+  _parsedElements?: ParsedElement[];
+};
+
 /**
  * State effect to update cursor context
  */
@@ -39,23 +43,6 @@ export interface CursorContext {
   revealElements: Set<string>;
   /** Current element under cursor (null if not in any element) */
   cursorElement: ParsedElement | null;
-}
-
-/**
- * Create initial cursor context
- */
-function createInitialContext(): CursorContext {
-  return {
-    cursorPos: 0,
-    cursorLine: 1,
-    selectionFrom: 0,
-    selectionTo: 0,
-    hasSelection: false,
-    revealRanges: new Set(),
-    revealLines: new Set(),
-    revealElements: new Set(),
-    cursorElement: null,
-  };
 }
 
 /**
@@ -123,7 +110,7 @@ function computeCursorContext(state: EditorState): CursorContext {
   let parsedElements: ParsedElement[] = [];
   try {
     // Try to get from stored elements first (set by decoration coordinator)
-    parsedElements = (state as any)._parsedElements || [];
+    parsedElements = (state as ParsedElementsCarrier)._parsedElements || [];
     if (parsedElements.length === 0) {
       // Fallback to state field if available
       parsedElements = state.field(parsedElementsField, false) || [];
@@ -357,9 +344,9 @@ export const cursorContextPlugin = ViewPlugin.fromClass(
       // CRITICAL FIX: Sync parsedElements from view to state
       // The decoration coordinator stores elements on view._parsedElements
       // but computeCursorContext needs them on state._parsedElements
-      const viewElements = (update.view as any)._parsedElements;
+      const viewElements = (update.view as EditorView & ParsedElementsCarrier)._parsedElements;
       if (viewElements && viewElements.length > 0) {
-        (update.state as any)._parsedElements = viewElements;
+        (update.state as ParsedElementsCarrier)._parsedElements = viewElements;
       }
 
       // Check if cursor context changed

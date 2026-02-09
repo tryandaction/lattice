@@ -49,9 +49,9 @@ export const Keycap = forwardRef<HTMLButtonElement, KeycapProps>(function Keycap
     keyCode,
     physicalLabel,
     defaultSymbol,
-    shiftSymbol,
+    shiftSymbol: _shiftSymbol,
     hasVariants,
-    isShiftHeld,
+    isShiftHeld: _isShiftHeld,
     isFlashing,
     isActive,
     onClick,
@@ -136,7 +136,7 @@ export function computeKeycapDisplay(
   defaultSymbol: string,
   shiftSymbol: string | undefined,
   hasVariants: boolean,
-  isShiftHeld: boolean
+  _isShiftHeld: boolean
 ): KeycapDisplayData {
   // Always show default symbol now
   const displaySymbol = defaultSymbol;

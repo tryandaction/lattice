@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties, type JSX } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -14,6 +14,12 @@ interface MarkdownCellProps {
   onChange: (source: string) => void;
   onFocus: () => void;
 }
+
+type MarkdownProps<T extends keyof JSX.IntrinsicElements> = ComponentPropsWithoutRef<T> & {
+  node?: unknown;
+};
+
+type MarkdownCodeProps = MarkdownProps<"code"> & { inline?: boolean };
 
 /**
  * Rendered Markdown view using ReactMarkdown with KaTeX support
@@ -34,14 +40,14 @@ function RenderedMarkdown({ content }: { content: string }) {
         rehypePlugins={[rehypeKatex]}
         components={{
           // Code blocks with syntax highlighting
-          code({ node, inline, className, children, ...props }: any) {
+          code({ inline, className, children, style: _style, node: _node, ...props }: MarkdownCodeProps) {
             const match = /language-(\w+)/.exec(className || "");
             const language = match ? match[1] : "";
             
             if (!inline && language) {
               return (
                 <SyntaxHighlighter
-                  style={oneDark}
+                  style={oneDark as Record<string, CSSProperties>}
                   language={language}
                   PreTag="div"
                   className="rounded-lg my-2 text-sm"
@@ -69,7 +75,7 @@ function RenderedMarkdown({ content }: { content: string }) {
             );
           },
           // Images with error handling and loading state
-          img: ({ src, alt, ...props }) => {
+          img: ({ src, alt, ...props }: MarkdownProps<"img">) => {
             // Handle relative paths and data URLs
             const srcStr = typeof src === 'string' ? src : '';
             const imageSrc = srcStr.startsWith('data:') || srcStr.startsWith('http') || srcStr.startsWith('/')
@@ -78,6 +84,7 @@ function RenderedMarkdown({ content }: { content: string }) {
             
             return (
               <span className="block my-2 pointer-events-auto">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={imageSrc}
                   alt={alt || 'Image'}
@@ -105,10 +112,13 @@ function RenderedMarkdown({ content }: { content: string }) {
           h5: ({ children }) => <h5 className="text-sm font-semibold mt-2 mb-1">{children}</h5>,
           h6: ({ children }) => <h6 className="text-sm font-medium mt-2 mb-1 text-muted-foreground">{children}</h6>,
           // Paragraphs - use div to avoid nesting issues with pre/code blocks
-          p: ({ children, node }) => {
+          p: ({ children, node }: MarkdownProps<"p">) => {
             // Check if children contain block-level elements
-            const hasBlockChild = node?.children?.some((child: any) => 
-              child.type === 'element' && ['pre', 'div', 'table', 'ul', 'ol', 'blockquote', 'img'].includes(child.tagName)
+            const typedNode = node as { children?: Array<{ type?: string; tagName?: string }> } | undefined;
+            const hasBlockChild = typedNode?.children?.some(
+              (child) =>
+                child.type === 'element' &&
+                ['pre', 'div', 'table', 'ul', 'ol', 'blockquote', 'img'].includes(child.tagName ?? '')
             );
             // Use div if contains block elements, otherwise use p
             if (hasBlockChild) {
@@ -155,7 +165,7 @@ function RenderedMarkdown({ content }: { content: string }) {
             </a>
           ),
           // Horizontal rule
-          hr: () => <hr className="my-4 border-border" />,
+          hr: () => <hr className="my-4 border-0 border-t border-border" />,
           // Strong/Bold
           strong: ({ children }) => <strong className="font-bold">{children}</strong>,
           // Emphasis/Italic
@@ -229,13 +239,13 @@ export function MarkdownCell({
   };
 
   // Handle exiting edit mode
-  const exitEditMode = () => {
+  const exitEditMode = useCallback(() => {
     setIsEditing(false);
     // Save changes
     if (editContent !== source) {
       onChange(editContent);
     }
-  };
+  }, [editContent, onChange, source]);
 
   // Handle click outside to exit edit mode
   useEffect(() => {
@@ -256,7 +266,7 @@ export function MarkdownCell({
       clearTimeout(timer);
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [isEditing, editContent, source]);
+  }, [isEditing, exitEditMode]);
 
   // Handle keyboard shortcuts
   const handleKeyDown = (e: React.KeyboardEvent) => {

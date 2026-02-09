@@ -61,7 +61,7 @@ export interface StrokePath {
  * @param t - Parameter (0-1)
  * @param tension - Tension parameter (0.5 = Catmull-Rom)
  */
-function catmullRomPoint(
+function _catmullRomPoint(
   p0: Point2D,
   p1: Point2D,
   p2: Point2D,
@@ -436,7 +436,7 @@ export function generateVariableWidthPath(
   }
 
   // End cap (rounded)
-  const lastLeft = leftPoints[leftPoints.length - 1];
+  const _lastLeft = leftPoints[leftPoints.length - 1];
   const lastRight = rightPoints[rightPoints.length - 1];
   const lastPoint = smoothedPoints[smoothedPoints.length - 1];
   const endRadius = baseWidth * (minWidthRatio + (maxWidthRatio - minWidthRatio) * lastPoint.pressure) / 2;
@@ -449,7 +449,7 @@ export function generateVariableWidthPath(
 
   // Start cap (rounded)
   const firstLeft = leftPoints[0];
-  const firstRight = rightPoints[0];
+  const _firstRight = rightPoints[0];
   const firstPoint = smoothedPoints[0];
   const startRadius = baseWidth * (minWidthRatio + (maxWidthRatio - minWidthRatio) * firstPoint.pressure) / 2;
   path += ` A ${startRadius} ${startRadius} 0 0 1 ${firstLeft.x} ${firstLeft.y}`;

@@ -202,7 +202,6 @@ export function parseCodeBlocks(text: string): CodeBlockInfo[] {
   while ((match = regex.exec(text)) !== null) {
     const fenceStart = match.index;
     const fenceStartEnd = fenceStart + 3 + match[1].length + 1; // ``` + language + newline
-    const codeStart = fenceStartEnd;
     const codeEnd = fenceStart + match[0].length - 4; // Before closing ```
     const fenceEndStart = codeEnd + 1;
     const fenceEndEnd = fenceStart + match[0].length;

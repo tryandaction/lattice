@@ -16,8 +16,18 @@ type DiagnosticResult = {
 };
 
 const FILES = [
+  // Broad coverage first for fastest regression validation.
+  { id: "test-markdown-coverage.md", label: "覆盖用例", url: "/test-markdown-coverage.md" },
+  { id: "test-advanced-markdown.md", label: "高级渲染", url: "/test-advanced-markdown.md" },
+  { id: "test-formula-rendering.md", label: "公式渲染", url: "/test-formula-rendering.md" },
+  { id: "test-cursor-positioning.md", label: "光标定位", url: "/test-cursor-positioning.md" },
+
+  // Focused fixtures.
   { id: "test-syntax-hiding.md", label: "语法隐藏", url: "/test-syntax-hiding.md" },
   { id: "test-nested-formatting.md", label: "嵌套格式", url: "/test-nested-formatting.md" },
+  { id: "test-text-duplication.md", label: "重复文本", url: "/test-text-duplication.md" },
+
+  // Stress test.
   { id: "test-10000-lines.md", label: "超长文档", url: "/test-10000-lines.md" },
 ];
 

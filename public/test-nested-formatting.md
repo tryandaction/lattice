@@ -39,8 +39,8 @@ This file tests nested formatting scenarios to ensure no text duplication occurs
 - [Link with *italic* text](https://example.com)
 
 ### Formatting with Images
-- **Bold ![image](https://via.placeholder.com/50) inside**
-- *Italic ![image](https://via.placeholder.com/50) inside*
+- **Bold ![image](/icons/icon-72x72.png) inside**
+- *Italic ![image](/icons/icon-72x72.png) inside*
 
 ### Formatting with Strikethrough
 - **Bold with ~~strikethrough~~ inside**

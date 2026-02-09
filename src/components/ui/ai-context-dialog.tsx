@@ -110,13 +110,33 @@ export function AiContextDialog({ isOpen, onClose }: AiContextDialogProps) {
       console.warn("Failed to prepare annotations for AI context:", error);
     }
 
-    const context = buildAiContext({
-      filePath: activeTab.filePath || activeTab.fileName,
-      content,
-      annotations: includeAnnotations ? migratedAnnotations : undefined,
-    });
+    let context: ReturnType<typeof buildAiContext>;
+    try {
+      context = buildAiContext({
+        filePath: activeTab.filePath || activeTab.fileName,
+        content,
+        annotations: includeAnnotations ? migratedAnnotations : undefined,
+      });
+    } catch (error) {
+      console.error("Failed to build AI context:", error);
+      setStatus("error");
+      setErrorMessage(t("ai.context.readError"));
+      setContextText("");
+      setContextItems([]);
+      return;
+    }
 
-    const prompt = context.toPrompt();
+    let prompt = "";
+    try {
+      prompt = context.toPrompt();
+    } catch (error) {
+      console.error("Failed to format AI context:", error);
+      setStatus("error");
+      setErrorMessage(t("ai.context.readError"));
+      setContextText("");
+      setContextItems([]);
+      return;
+    }
     setContextText(prompt);
     setContextItems(context.items);
     setMeta({

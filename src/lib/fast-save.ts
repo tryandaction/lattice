@@ -10,13 +10,13 @@
 /**
  * Debounce function for reducing save frequency
  */
-export function debounce<T extends (...args: any[]) => any>(
-  fn: T,
+export function debounce<Args extends unknown[], Result>(
+  fn: (...args: Args) => Result,
   delay: number
-): (...args: Parameters<T>) => void {
+): (...args: Args) => void {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   
-  return (...args: Parameters<T>) => {
+  return (...args: Args) => {
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
@@ -30,14 +30,14 @@ export function debounce<T extends (...args: any[]) => any>(
 /**
  * Throttle function for limiting save frequency
  */
-export function throttle<T extends (...args: any[]) => any>(
-  fn: T,
+export function throttle<Args extends unknown[], Result>(
+  fn: (...args: Args) => Result,
   limit: number
-): (...args: Parameters<T>) => void {
+): (...args: Args) => void {
   let inThrottle = false;
-  let lastArgs: Parameters<T> | null = null;
+  let lastArgs: Args | null = null;
   
-  return (...args: Parameters<T>) => {
+  return (...args: Args) => {
     if (!inThrottle) {
       fn(...args);
       inThrottle = true;
@@ -58,7 +58,7 @@ export function throttle<T extends (...args: any[]) => any>(
  * Fast JSON stringify with minimal formatting
  * Uses a single-pass approach for better performance
  */
-export function fastStringify(obj: any): string {
+export function fastStringify(obj: unknown): string {
   // For small objects, use native JSON.stringify
   // For large objects, use minimal formatting
   return JSON.stringify(obj, null, 1);
@@ -196,7 +196,7 @@ export function serializeNotebookFast(state: {
     cell_type: string;
     source: string;
     metadata: Record<string, unknown>;
-    outputs?: any[];
+    outputs?: unknown[];
     execution_count?: number | null;
   }>;
   metadata: Record<string, unknown>;

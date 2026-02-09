@@ -16,7 +16,7 @@ import { ShadowKeyboard } from './shadow-keyboard';
 import { SymbolSelector } from './symbol-selector';
 import { useHUDStore, computeMode } from '../../stores/hud-store';
 import { useQuantumCustomStore, getAllSymbolsForKey } from '../../stores/quantum-custom-store';
-import { getGlobalTiptapEditor } from './hud-provider';
+import { getActiveMathField, getGlobalTiptapEditor, setActiveMathField } from './hud-provider';
 import {
   quantumKeymap,
   getDisplaySymbol,
@@ -25,6 +25,7 @@ import {
 } from '../../config/quantum-keymap';
 import { GripHorizontal, RotateCcw } from 'lucide-react';
 import { getActiveInputTarget, getLastActiveInputTarget, wrapSelectionWith } from '@/lib/unified-input-handler';
+import type { MathfieldElement } from 'mathlive';
 
 export interface KeyboardHUDProps {
   onInsertSymbol: (latex: string) => void;
@@ -35,6 +36,12 @@ const MARKDOWN_SHORTCUTS: Record<string, { before: string; after: string }> = {
   KeyI: { before: '*', after: '*' },
   KeyK: { before: '[', after: '](url)' },
   KeyE: { before: '`', after: '`' },
+};
+
+type MathfieldWithCommands = MathfieldElement & {
+  executeCommand: (command: string) => unknown;
+  insert: (latex: string, options?: { insertionMode?: string; selectionMode?: string }) => void;
+  getValue?: () => string;
 };
 
 /**
@@ -123,7 +130,6 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
 
   const findCurrentMathField = useCallback((): HTMLElement | null => {
     // 使用全局的活动 math-field
-    const { getActiveMathField } = require('./hud-provider');
     const activeMf = getActiveMathField();
     if (activeMf) {
       activeMathFieldRef.current = activeMf;
@@ -374,7 +380,7 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
     const mathField = findCurrentMathField();
     if (!mathField || !('executeCommand' in mathField)) return false;
     
-    const mf = mathField as any;
+    const mf = mathField as MathfieldWithCommands;
     
     switch (event.code) {
       case 'Backspace':
@@ -430,9 +436,6 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
           return true;
         }
         
-        // 导入 setActiveMathField
-        const { setActiveMathField } = require('./hud-provider');
-        
         setTimeout(() => {
           try {
             editor.chain().focus()
@@ -443,10 +446,10 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
               .run();
             
             setTimeout(() => {
-              const mathFields = document.querySelectorAll('math-field');
-              let newMathField: HTMLElement | null = null;
+              const mathFields = document.querySelectorAll('math-field') as NodeListOf<MathfieldWithCommands>;
+              let newMathField: MathfieldWithCommands | null = null;
               for (let i = mathFields.length - 1; i >= 0; i--) {
-                const field = mathFields[i] as any;
+                const field = mathFields[i];
                 if (field.getValue?.() === '') {
                   newMathField = field;
                   break;

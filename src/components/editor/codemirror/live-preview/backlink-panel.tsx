@@ -8,7 +8,7 @@
  */
 
 import { memo, useMemo } from 'react';
-import { Link2, FileText, ExternalLink } from 'lucide-react';
+import { Link2, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Backlink } from './types';
 
@@ -122,7 +122,7 @@ function BacklinkFileGroup({
  * Backlink Panel
  */
 function BacklinkPanelComponent({
-  currentFile,
+  currentFile: _currentFile,
   backlinks,
   onNavigate,
   className,

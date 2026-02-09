@@ -286,7 +286,10 @@
 }
 
 .prose-lattice hr {
-  @apply my-8 border-border;
+  @apply my-8 border-0 border-t border-border;
+  height: 2px;
+  background-color: hsl(var(--border));
+  opacity: 0.85;
 }
 
 /* Table styles for prose-lattice */
@@ -2941,6 +2944,13 @@ math-field.quantum-keyboard-active {
   @apply h-full w-full;
 }
 
+.live-preview-editor {
+  --cm-content-padding-x: 2rem;
+  --cm-content-padding-y: 1.5rem;
+  --cm-content-padding-x-neg: -2rem;
+  --cm-content-padding-x-double: 4rem;
+}
+
 .live-preview-editor .cm-editor {
   @apply h-full border-none rounded-none;
 }
@@ -2954,7 +2964,7 @@ math-field.quantum-keyboard-active {
 }
 
 .live-preview-editor .cm-content {
-  padding: 1.5rem 2rem;
+  padding: var(--cm-content-padding-y) var(--cm-content-padding-x);
 }
 
 .live-preview-editor .cm-line {
@@ -3091,8 +3101,9 @@ math-field.quantum-keyboard-active {
 /* Horizontal rule */
 .live-preview-editor .cm-horizontal-rule-container {
   display: block;
-  width: 100%;
-  padding: 1em 0;
+  width: calc(100% + var(--cm-content-padding-x-double));
+  margin: 1em var(--cm-content-padding-x-neg);
+  padding: 0;
   cursor: pointer;
 }
 
@@ -3101,6 +3112,9 @@ math-field.quantum-keyboard-active {
   border-top: 2px solid hsl(var(--border));
   margin: 0;
   width: 100%;
+  height: 2px;
+  background-color: hsl(var(--border));
+  opacity: 0.85;
 }
 
 /* Code block widget */
@@ -3442,11 +3456,16 @@ math-field.quantum-keyboard-active {
   background-color: hsl(var(--primary) / 0.1);
 }
 
-/* Better cursor visibility */
-.live-preview-editor .cm-cursor {
-  border-left-width: 2px;
-  border-left-color: hsl(var(--primary));
-}
+  /* Better cursor visibility */
+  .live-preview-editor .cm-cursor {
+    border-left-width: 2px;
+    border-left-color: hsl(var(--primary));
+  }
+
+  /* Hide cursor when editor is not focused */
+  .live-preview-editor .cm-editor:not(.cm-focused) .cm-cursor {
+    display: none;
+  }
 
 /* Selection styling */
 .live-preview-editor .cm-selectionBackground {

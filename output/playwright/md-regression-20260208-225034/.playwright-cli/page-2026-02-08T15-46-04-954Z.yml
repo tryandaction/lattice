@@ -1,0 +1,18 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e6]:
+      - button "Settings" [ref=e7] [cursor=pointer]:
+        - img [ref=e8]
+        - generic [ref=e11]: Settings
+      - button "Open command center" [ref=e12] [cursor=pointer]:
+        - img [ref=e13]
+      - button "Open plugin panels" [ref=e15] [cursor=pointer]:
+        - img [ref=e16]
+      - button "Open AI context preview" [ref=e18] [cursor=pointer]:
+        - img [ref=e19]
+      - button "Help" [ref=e22] [cursor=pointer]:
+        - img [ref=e23]
+    - img [ref=e28]
+  - status [ref=e36]
+  - region "Notifications alt+T"
+  - alert [ref=e37]

@@ -1,0 +1,6 @@
+Total messages: 256 (Errors: 3, Warnings: 0)
+Returning 3 messages for level "warning"
+
+[ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://via.placeholder.com/150:0
+[ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://via.placeholder.com/200:0
+[ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://via.placeholder.com/150:0

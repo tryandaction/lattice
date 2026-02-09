@@ -71,6 +71,7 @@ function CellOutput({ output }: { output: JupyterOutput }) {
     // Image output
     if (data["image/png"]) {
       return (
+        // eslint-disable-next-line @next/next/no-img-element
         <img
           src={`data:image/png;base64,${data["image/png"]}`}
           alt="Output"
@@ -80,6 +81,7 @@ function CellOutput({ output }: { output: JupyterOutput }) {
     }
     if (data["image/jpeg"]) {
       return (
+        // eslint-disable-next-line @next/next/no-img-element
         <img
           src={`data:image/jpeg;base64,${data["image/jpeg"]}`}
           alt="Output"

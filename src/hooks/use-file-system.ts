@@ -19,6 +19,7 @@ import {
   type FileOperationResult,
   type DirectoryOperationResult,
 } from "@/lib/file-operations";
+import { emitVaultChange, emitVaultDelete, emitVaultRename } from "@/lib/plugins/runtime";
 
 /**
  * Return type for the useFileSystem hook
@@ -233,6 +234,9 @@ export function useFileSystem(): UseFileSystemReturn {
     if (result.success) {
       // Refresh the file tree to show the new file
       await refreshDirectory();
+      if (result.path) {
+        emitVaultChange(result.path);
+      }
     }
 
     return result;
@@ -305,6 +309,7 @@ export function useFileSystem(): UseFileSystemReturn {
     if (result.success) {
       // Refresh the file tree to reflect the deletion
       await refreshDirectory();
+      emitVaultDelete(path);
     }
 
     return result;
@@ -348,6 +353,9 @@ export function useFileSystem(): UseFileSystemReturn {
     if (result.success) {
       // Refresh the file tree to reflect the rename
       await refreshDirectory();
+      if (result.path) {
+        emitVaultRename(path, result.path);
+      }
     }
 
     return result;

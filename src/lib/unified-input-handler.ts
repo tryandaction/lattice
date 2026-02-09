@@ -28,6 +28,18 @@ export interface UnifiedInputTarget {
   focus: () => void;
 }
 
+type CodeMirrorContentElement = HTMLElement & {
+  cmView?: { view?: EditorView };
+};
+
+type MathLiveElement = HTMLElement & {
+  executeCommand?: (command: unknown) => void;
+  insert?: (value: string) => void;
+  selection?: { ranges?: Array<[number, number]> };
+  value?: string;
+  focus?: () => void;
+};
+
 // ============================================================================
 // Global State
 // ============================================================================
@@ -116,7 +128,7 @@ function createCodeMirrorTarget(element: HTMLElement): UnifiedInputTarget | null
     // Try to find view from DOM
     const cmContent = editorElement.querySelector('.cm-content');
     if (cmContent) {
-      const viewFromDom = (cmContent as any).cmView?.view as EditorView | undefined;
+      const viewFromDom = (cmContent as CodeMirrorContentElement).cmView?.view;
       if (viewFromDom) {
         return createCodeMirrorTargetFromView(editorElement, viewFromDom);
       }
@@ -173,7 +185,7 @@ function createCodeMirrorTargetFromView(element: HTMLElement, view: EditorView):
 // ============================================================================
 
 function createMathLiveTarget(element: HTMLElement): UnifiedInputTarget {
-  const mathField = element as any; // MathLive math-field element
+  const mathField = element as MathLiveElement; // MathLive math-field element
 
   return {
     type: 'mathlive',

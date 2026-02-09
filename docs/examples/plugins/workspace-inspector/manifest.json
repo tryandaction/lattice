@@ -1,0 +1,23 @@
+{
+  "id": "workspace.inspector",
+  "name": "Workspace Inspector",
+  "version": "1.0.0",
+  "description": "Demo plugin to inspect workspace files and annotations",
+  "author": "Lattice",
+  "permissions": ["file:read", "annotations:read", "ui:commands", "ui:panels"],
+  "main": "main.js",
+  "ui": {
+    "panels": [
+      {
+        "id": "workspace.inspector.panel",
+        "title": "Workspace Inspector",
+        "schema": {
+          "type": "markdown",
+          "props": {
+            "content": "# Workspace Inspector\nUse the commands to list files or inspect annotations.\n\nCommands:\n- Workspace Inspector: List Files\n- Workspace Inspector: List Annotations (first file)"
+          }
+        }
+      }
+    ]
+  }
+}

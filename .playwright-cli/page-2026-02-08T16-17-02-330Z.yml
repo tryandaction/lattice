@@ -1,0 +1,176 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - heading "Live Preview 自检面板" [level=1] [ref=e4]
+      - generic [ref=e5]:
+        - generic [ref=e6]: 文件：
+        - button "覆盖用例" [ref=e7] [cursor=pointer]
+        - button "高级渲染" [ref=e8] [cursor=pointer]
+        - button "公式渲染" [ref=e9] [cursor=pointer]
+        - button "光标定位" [ref=e10] [cursor=pointer]
+        - button "语法隐藏" [ref=e11] [cursor=pointer]
+        - button "嵌套格式" [ref=e12] [cursor=pointer]
+        - button "重复文本" [ref=e13] [cursor=pointer]
+        - button "超长文档" [ref=e14] [cursor=pointer]
+      - button "运行自检" [ref=e16] [cursor=pointer]
+    - main [ref=e17]:
+      - generic [ref=e24]:
+        - generic [ref=e25]:
+          - generic [ref=e27]: test-markdown-coverage.md
+          - generic [ref=e28]:
+            - button "Hide outline" [ref=e29] [cursor=pointer]:
+              - img [ref=e30]
+            - generic [ref=e34]:
+              - button "Live" [ref=e35] [cursor=pointer]:
+                - img [ref=e36]
+                - generic [ref=e38]: Live
+              - button "Source" [ref=e39] [cursor=pointer]:
+                - img [ref=e40]
+                - generic [ref=e44]: Source
+              - button "Read" [ref=e45] [cursor=pointer]:
+                - img [ref=e46]
+                - generic [ref=e49]: Read
+        - generic [ref=e50]:
+          - generic [ref=e52]:
+            - generic [ref=e53]: Outline
+            - navigation [ref=e54]:
+              - generic [ref=e55]:
+                - button "Markdown Coverage Fixture" [ref=e56] [cursor=pointer]:
+                  - img [ref=e57]
+                  - generic [ref=e59]: Markdown Coverage Fixture
+                - generic [ref=e60]:
+                  - button "Inline Formats" [ref=e62] [cursor=pointer]:
+                    - generic [ref=e63]: Inline Formats
+                  - button "Block Formats" [ref=e65] [cursor=pointer]:
+                    - generic [ref=e66]: Block Formats
+                  - button "Horizontal Rules" [ref=e68] [cursor=pointer]:
+                    - generic [ref=e69]: Horizontal Rules
+          - generic [ref=e71]:
+            - generic [ref=e72]: Markdown editor with live preview. Use Ctrl+E to switch modes, Ctrl+F to search, and standard text editing shortcuts.
+            - generic [ref=e74]:
+              - generic [ref=e76]:
+                - generic [ref=e77] [cursor=pointer]: ▼
+                - generic [ref=e78] [cursor=pointer]: ▼
+                - generic [ref=e79] [cursor=pointer]: ▼
+                - generic [ref=e80] [cursor=pointer]: ▼
+                - text: ▼ ▼
+              - textbox "Markdown editor" [ref=e81]:
+                - generic [ref=e82]: "# Markdown Coverage Fixture"
+                - generic [ref=e84]: Inline Formats
+                - generic [ref=e86]: Bold bold , italic italic , bold-italic both , strike strike , highlight mark .
+                - generic [ref=e88]: "Inline code: code and ` code with backticks `."
+                - generic [ref=e90]:
+                  - text: "Inline math:"
+                  - 'generic "Inline formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX" [ref=e91] [cursor=pointer]':
+                    - generic [ref=e92]:
+                      - math [ref=e94]:
+                        - generic [ref=e96]:
+                          - generic [ref=e97]: E
+                          - generic [ref=e98]: =
+                          - generic [ref=e99]: m
+                          - generic [ref=e100]:
+                            - generic [ref=e101]: c
+                            - generic [ref=e102]: "2"
+                      - generic [ref=e103]:
+                        - generic [ref=e104]: E =
+                        - generic [ref=e105]:
+                          - text: m
+                          - generic [ref=e106]:
+                            - text: c
+                            - generic [ref=e111]: "2"
+                  - text: and
+                  - 'generic "Inline formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX" [ref=e112] [cursor=pointer]':
+                    - generic [ref=e113]:
+                      - math [ref=e115]:
+                        - generic [ref=e117]:
+                          - generic [ref=e118]:
+                            - generic [ref=e119]: a
+                            - generic [ref=e120]: "2"
+                          - generic [ref=e121]: +
+                          - generic [ref=e122]:
+                            - generic [ref=e123]: b
+                            - generic [ref=e124]: "2"
+                          - generic [ref=e125]: =
+                          - generic [ref=e126]:
+                            - generic [ref=e127]: c
+                            - generic [ref=e128]: "2"
+                      - generic [ref=e129]:
+                        - generic [ref=e130]:
+                          - generic [ref=e131]:
+                            - text: a
+                            - generic [ref=e136]: "2"
+                          - text: +
+                        - generic [ref=e137]:
+                          - generic [ref=e138]:
+                            - text: b
+                            - generic [ref=e143]: "2"
+                          - text: =
+                        - generic [ref=e145]:
+                          - text: c
+                          - generic [ref=e150]: "2"
+                  - text: .
+                - generic [ref=e152]:
+                  - text: Inline link
+                  - link "text" [ref=e153] [cursor=pointer]:
+                    - /url: https://example.com
+                  - text: and autolink
+                  - link "https://example.com" [ref=e154] [cursor=pointer]:
+                    - /url: https://example.com
+                  - text: and bare
+                  - link "https://example.com/path?x=1." [ref=e155] [cursor=pointer]:
+                    - /url: https://example.com/path?x=1.
+                - generic [ref=e157]:
+                  - text: "Reference links:"
+                  - link "full" [ref=e158] [cursor=pointer]:
+                    - /url: https://example.com/ref
+                  - text: ","
+                  - link "collapsed" [ref=e159] [cursor=pointer]:
+                    - /url: https://example.com/collapsed
+                  - text: ","
+                  - link "shortcut" [ref=e160] [cursor=pointer]:
+                    - /url: https://example.com/shortcut
+                  - text: .
+                - generic [ref=e162]:
+                  - text: "Reference image:"
+                  - generic [ref=e163]: "[Image not found: ref-img]"
+                  - text: and
+                  - generic [ref=e164]: "[Image not found: ref-shortcut]"
+                  - text: .
+                - generic [ref=e166]:
+                  - text: "Wiki links:"
+                  - link "Page" [ref=e167] [cursor=pointer]:
+                    - /url: "#"
+                  - text: ","
+                  - link "Alias" [ref=e168] [cursor=pointer]:
+                    - /url: "#"
+                  - text: ","
+                  - link "Alias" [ref=e169] [cursor=pointer]:
+                    - /url: "#"
+                  - text: .
+                - generic [ref=e171]:
+                  - text: "Image:"
+                  - generic [ref=e172]: "[Image not found: alt]"
+                  - text: "and embed:"
+                  - generic [ref=e173] [cursor=pointer]:
+                    - generic [ref=e174]: "📎 Embedded: file.pdf"
+                    - generic [ref=e175]: "[Loading embedded content...]"
+                  - text: .
+                - generic [ref=e177]:
+                  - text: "Tag #tag and #tag/sub and footnote ref"
+                  - superscript [ref=e178]:
+                    - link "1" [ref=e179] [cursor=pointer]:
+                      - /url: "#"
+                  - text: .
+                - generic [ref=e181]: Block Formats
+                - generic [ref=e183]: Blockquote line
+                - generic [ref=e184]: Second line
+        - generic [ref=e188]: Live Preview • Ctrl+E cycle modes
+      - generic [ref=e20]:
+        - generic [ref=e21]: 诊断结果
+        - generic [ref=e22]:
+          - generic [ref=e189]: 通过：未发现异常
+          - generic [ref=e190]:
+            - generic [ref=e191]: 元素统计
+            - generic [ref=e192]: "{ \"HEADING\": 8, \"INLINE_BOLD\": 1, \"INLINE_ITALIC\": 1, \"INLINE_OTHER\": 5, \"INLINE_CODE\": 3, \"MATH_INLINE\": 2, \"INLINE_LINK\": 9, \"INLINE_IMAGE\": 3, \"INLINE_TAG\": 3, \"BLOCKQUOTE\": 4, \"CALLOUT\": 1, \"DETAILS\": 1, \"LIST_ITEM\": 12, \"TABLE\": 1, \"CODE_BLOCK\": 1, \"HORIZONTAL_RULE\": 3, \"MATH_BLOCK\": 1, \"FOOTNOTE_DEF\": 1, \"REFERENCE_DEF\": 6 }"
+  - region "Notifications alt+T"
+  - alert [ref=e23]

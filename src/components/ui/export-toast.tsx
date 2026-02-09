@@ -17,7 +17,7 @@ export interface ExportToastData {
 }
 
 // Global toast state
-let toastListeners: Set<(toasts: ExportToastData[]) => void> = new Set();
+const toastListeners: Set<(toasts: ExportToastData[]) => void> = new Set();
 let currentToasts: ExportToastData[] = [];
 
 function notifyListeners() {

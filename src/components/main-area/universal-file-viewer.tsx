@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { Loader2, AlertCircle, FileQuestion, Edit3, Eye } from "lucide-react";
+import { Loader2, AlertCircle, FileQuestion } from "lucide-react";
 import { getRendererForExtension, getFileExtension, getImageMimeType, RendererType, isEditableCodeFile } from "@/lib/file-utils";
 import dynamic from "next/dynamic";
 import type { PaneId } from "@/stores/workspace-store";
 import { normalizeScientificText } from "@/lib/markdown-converter";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 
 /**
  * Loading state component
@@ -43,6 +43,77 @@ function EmptyPanePlaceholder() {
       </p>
     </div>
   );
+}
+
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function isExternalUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("//")) return true;
+  return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed);
+}
+
+function normalizePath(value: string): string {
+  return value
+    .replace(/\\/g, "/")
+    .replace(/\/{2,}/g, "/")
+    .replace(/^\.\//, "")
+    .replace(/\/$/, "");
+}
+
+function resolveRelativePath(basePath: string, targetPath: string): string {
+  const baseParts = normalizePath(basePath).split("/").filter(Boolean);
+  baseParts.pop(); // remove filename
+
+  const targetParts = normalizePath(targetPath).split("/").filter(Boolean);
+  const resolvedParts = [...baseParts];
+  for (const part of targetParts) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (resolvedParts.length > 0) resolvedParts.pop();
+      continue;
+    }
+    resolvedParts.push(part);
+  }
+  return resolvedParts.join("/");
+}
+
+function splitLinkTarget(target: string): { path: string; heading?: string } {
+  if (target.startsWith("#")) {
+    return { path: "", heading: target.slice(1) };
+  }
+  const [path, heading] = target.split("#");
+  return { path: path ?? "", heading };
+}
+
+function hasFileExtension(path: string): boolean {
+  return /\.[^/.]+$/.test(path);
+}
+
+async function resolveFileHandle(
+  root: FileSystemDirectoryHandle,
+  filePath: string
+): Promise<FileSystemFileHandle> {
+  const parts = normalizePath(filePath).split("/").filter(Boolean);
+  let current: FileSystemDirectoryHandle | FileSystemFileHandle = root;
+  const startIndex = parts[0] === root.name ? 1 : 0;
+  for (let i = startIndex; i < parts.length; i++) {
+    const part = parts[i];
+    const isLast = i === parts.length - 1;
+    if (isLast) {
+      current = await (current as FileSystemDirectoryHandle).getFileHandle(part);
+    } else {
+      current = await (current as FileSystemDirectoryHandle).getDirectoryHandle(part);
+    }
+  }
+  return current as FileSystemFileHandle;
 }
 
 // Lazy load renderers to minimize bundle size
@@ -137,6 +208,7 @@ function FileViewer({
   onContentChange,
   onSave,
   fileId,
+  onNavigateToFile,
 }: {
   content: string | ArrayBuffer;
   fileName: string;
@@ -146,6 +218,7 @@ function FileViewer({
   onContentChange?: (content: string) => void;
   onSave?: () => Promise<void>;
   fileId?: string;
+  onNavigateToFile?: (target: string) => void;
 }) {
   const extension = getFileExtension(fileName);
   const viewerKey = fileId || fileName;
@@ -201,6 +274,7 @@ function FileViewer({
             fileName={fileName}
             fileId={fileId} // Pass fileId for internal tracking
             onSave={onSave}
+            onNavigateToFile={onNavigateToFile}
           />
         );
       }
@@ -356,6 +430,7 @@ export interface UniversalFileViewerProps {
   onContentChange?: (content: string) => void;
   onSave?: () => Promise<void>;
   fileId?: string; // Unique identifier for the file (e.g., tab.id)
+  filePath?: string; // Full path relative to workspace root
 }
 
 /**
@@ -376,7 +451,54 @@ export function UniversalFileViewer({
   onContentChange,
   onSave,
   fileId, // Unique identifier for the file
+  filePath,
 }: UniversalFileViewerProps) {
+  const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
+
+  const handleNavigateToFile = async (target: string) => {
+    const decodedTarget = safeDecode(target.trim());
+    if (!decodedTarget) return;
+
+    if (isExternalUrl(decodedTarget)) {
+      window.open(decodedTarget, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    const { path, heading } = splitLinkTarget(decodedTarget);
+    if (!path) {
+      // Heading-only navigation is handled by the markdown viewer.
+      if (heading) return;
+      return;
+    }
+
+    if (!rootHandle) return;
+
+    const resolvedPath = path.startsWith("/")
+      ? normalizePath(path.slice(1))
+      : filePath
+        ? resolveRelativePath(filePath, path)
+        : normalizePath(path);
+
+    const candidatePaths: string[] = [];
+    if (resolvedPath) {
+      candidatePaths.push(resolvedPath);
+      if (!hasFileExtension(resolvedPath)) {
+        candidatePaths.push(`${resolvedPath}.md`);
+      }
+    }
+
+    for (const candidate of candidatePaths) {
+      try {
+        const resolvedHandle = await resolveFileHandle(rootHandle, candidate);
+        openFileInActivePane(resolvedHandle, candidate);
+        return;
+      } catch {
+        // try next candidate
+      }
+    }
+
+    console.warn("Failed to resolve link target:", decodedTarget);
+  };
   // No file selected - show empty placeholder
   if (!handle) {
     return <EmptyPanePlaceholder />;
@@ -412,6 +534,7 @@ export function UniversalFileViewer({
         onContentChange={onContentChange}
         onSave={onSave}
         fileId={fileId}
+        onNavigateToFile={handleNavigateToFile}
       />
     </div>
   );

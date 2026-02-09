@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, type ComponentPropsWithoutRef, type CSSProperties, type JSX } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -17,6 +17,12 @@ interface MarkdownRendererProps {
   fileName?: string;
   className?: string;
 }
+
+type MarkdownProps<T extends keyof JSX.IntrinsicElements> = ComponentPropsWithoutRef<T> & {
+  node?: unknown;
+};
+
+type MarkdownCodeProps = MarkdownProps<"code"> & { inline?: boolean };
 
 /**
  * Copy button component for code blocks
@@ -54,7 +60,7 @@ function CopyButton({ text }: { text: string }) {
  */
 const components: Components = {
   // Code blocks with syntax highlighting and copy button
-  code({ node, inline, className, children, ...props }: any) {
+  code({ inline, className, children, style: _style, node: _node, ...props }: MarkdownCodeProps) {
     const match = /language-([^\s]+)/.exec(className || "");
     const language = match ? match[1].toLowerCase() : "";
     const codeString = String(children).replace(/\n$/, "");
@@ -63,7 +69,7 @@ const components: Components = {
       return (
         <div className="relative group my-4">
           <SyntaxHighlighter
-            style={oneDark}
+            style={oneDark as Record<string, CSSProperties>}
             language={language}
             PreTag="div"
             className="rounded-lg text-sm !mt-0 !mb-0"
@@ -97,7 +103,7 @@ const components: Components = {
   },
   
   // Tables
-  table({ children, ...props }: any) {
+  table({ children, ...props }: MarkdownProps<"table">) {
     return (
       <div className="overflow-x-auto my-4">
         <table className="w-full border-collapse text-sm" {...props}>
@@ -107,7 +113,7 @@ const components: Components = {
     );
   },
   
-  thead({ children, ...props }: any) {
+  thead({ children, ...props }: MarkdownProps<"thead">) {
     return (
       <thead className="bg-muted" {...props}>
         {children}
@@ -115,7 +121,7 @@ const components: Components = {
     );
   },
   
-  th({ children, ...props }: any) {
+  th({ children, ...props }: MarkdownProps<"th">) {
     return (
       <th className="border border-border px-3 py-2 text-left font-semibold" {...props}>
         {children}
@@ -123,7 +129,7 @@ const components: Components = {
     );
   },
   
-  td({ children, ...props }: any) {
+  td({ children, ...props }: MarkdownProps<"td">) {
     return (
       <td className="border border-border px-3 py-2" {...props}>
         {children}
@@ -132,7 +138,7 @@ const components: Components = {
   },
   
   // Headings with proper styling
-  h1({ children, ...props }: any) {
+  h1({ children, ...props }: MarkdownProps<"h1">) {
     return (
       <h1 className="text-3xl font-bold mt-8 mb-4 pb-2 border-b border-border" {...props}>
         {children}
@@ -140,7 +146,7 @@ const components: Components = {
     );
   },
   
-  h2({ children, ...props }: any) {
+  h2({ children, ...props }: MarkdownProps<"h2">) {
     return (
       <h2 className="text-2xl font-bold mt-6 mb-3 pb-1 border-b border-border/50" {...props}>
         {children}
@@ -148,7 +154,7 @@ const components: Components = {
     );
   },
   
-  h3({ children, ...props }: any) {
+  h3({ children, ...props }: MarkdownProps<"h3">) {
     return (
       <h3 className="text-xl font-semibold mt-5 mb-2" {...props}>
         {children}
@@ -156,7 +162,7 @@ const components: Components = {
     );
   },
   
-  h4({ children, ...props }: any) {
+  h4({ children, ...props }: MarkdownProps<"h4">) {
     return (
       <h4 className="text-lg font-semibold mt-4 mb-2" {...props}>
         {children}
@@ -164,7 +170,7 @@ const components: Components = {
     );
   },
 
-  h5({ children, ...props }: any) {
+  h5({ children, ...props }: MarkdownProps<"h5">) {
     return (
       <h5 className="text-base font-semibold mt-3 mb-1" {...props}>
         {children}
@@ -172,7 +178,7 @@ const components: Components = {
     );
   },
 
-  h6({ children, ...props }: any) {
+  h6({ children, ...props }: MarkdownProps<"h6">) {
     return (
       <h6 className="text-sm font-semibold mt-3 mb-1 text-muted-foreground" {...props}>
         {children}
@@ -181,7 +187,7 @@ const components: Components = {
   },
   
   // Blockquotes
-  blockquote({ children, ...props }: any) {
+  blockquote({ children, ...props }: MarkdownProps<"blockquote">) {
     return (
       <blockquote 
         className="border-l-4 border-primary/40 pl-4 my-4 italic text-muted-foreground bg-muted/30 py-2 pr-4 rounded-r"
@@ -193,7 +199,7 @@ const components: Components = {
   },
   
   // Lists with better nesting support
-  ul({ children, ...props }: any) {
+  ul({ children, ...props }: MarkdownProps<"ul">) {
     return (
       <ul className="list-disc pl-6 my-3 space-y-1.5 [&_ul]:my-1.5 [&_ul]:space-y-1 [&_ol]:my-1.5 [&_ol]:space-y-1" {...props}>
         {children}
@@ -201,7 +207,7 @@ const components: Components = {
     );
   },
 
-  ol({ children, ...props }: any) {
+  ol({ children, ...props }: MarkdownProps<"ol">) {
     return (
       <ol className="list-decimal pl-6 my-3 space-y-1.5 [&_ul]:my-1.5 [&_ul]:space-y-1 [&_ol]:my-1.5 [&_ol]:space-y-1" {...props}>
         {children}
@@ -209,7 +215,7 @@ const components: Components = {
     );
   },
 
-  li({ children, ...props }: any) {
+  li({ children, ...props }: MarkdownProps<"li">) {
     return (
       <li className="leading-relaxed" {...props}>
         {children}
@@ -218,7 +224,7 @@ const components: Components = {
   },
   
   // Paragraphs
-  p({ children, ...props }: any) {
+  p({ children, ...props }: MarkdownProps<"p">) {
     return (
       <p className="my-3 leading-relaxed" {...props}>
         {children}
@@ -227,7 +233,7 @@ const components: Components = {
   },
   
   // Links
-  a({ children, href, ...props }: any) {
+  a({ children, href, ...props }: MarkdownProps<"a">) {
     return (
       <a 
         href={href}
@@ -242,12 +248,12 @@ const components: Components = {
   },
   
   // Horizontal rule
-  hr({ ...props }: any) {
-    return <hr className="my-8 border-border" {...props} />;
+  hr({ ...props }: MarkdownProps<"hr">) {
+    return <hr className="my-8 border-0 border-t border-border" {...props} />;
   },
   
   // Strong/Bold
-  strong({ children, ...props }: any) {
+  strong({ children, ...props }: MarkdownProps<"strong">) {
     return (
       <strong className="font-bold" {...props}>
         {children}
@@ -256,7 +262,7 @@ const components: Components = {
   },
   
   // Emphasis/Italic
-  em({ children, ...props }: any) {
+  em({ children, ...props }: MarkdownProps<"em">) {
     return (
       <em className="italic" {...props}>
         {children}
@@ -265,7 +271,7 @@ const components: Components = {
   },
 
   // Strikethrough
-  del({ children, ...props }: any) {
+  del({ children, ...props }: MarkdownProps<"del">) {
     return (
       <del className="line-through text-muted-foreground" {...props}>
         {children}
@@ -274,8 +280,9 @@ const components: Components = {
   },
 
   // Images
-  img({ src, alt, ...props }: any) {
+  img({ src, alt, ...props }: MarkdownProps<"img">) {
     return (
+      // eslint-disable-next-line @next/next/no-img-element
       <img 
         src={src}
         alt={alt || ""}
@@ -287,7 +294,7 @@ const components: Components = {
   },
 
   // Pre element (for code blocks without language)
-  pre({ children, ...props }: any) {
+  pre({ children, ...props }: MarkdownProps<"pre">) {
     return (
       <pre className="bg-muted rounded-lg p-4 my-4 overflow-x-auto text-sm" {...props}>
         {children}
@@ -313,7 +320,7 @@ const katexOptions = {
  * Note: HTML content should be converted to Markdown before reaching this component
  * via normalizeScientificText() in universal-file-viewer.tsx
  */
-export function MarkdownRenderer({ content, fileName, className = "" }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, fileName: _fileName, className = "" }: MarkdownRendererProps) {
   // Content should already be normalized to Markdown by upstream (universal-file-viewer)
   // If HTML is still present, it will be handled by rehypeRaw plugin safely
   

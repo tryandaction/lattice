@@ -3,20 +3,29 @@
  * Prevents duplicate KaTeX module loading across plugins
  */
 
-let katex: any = null;
-let loadPromise: Promise<any> | null = null;
+type KaTeXModule = typeof import('katex').default;
+
+let katex: KaTeXModule | null = null;
+let loadPromise: Promise<KaTeXModule> | null = null;
+
+function resolveKaTeX(module: KaTeXModule | { default?: KaTeXModule }): KaTeXModule {
+  if ('default' in module && module.default) {
+    return module.default;
+  }
+  return module as KaTeXModule;
+}
 
 /**
  * Load KaTeX module (singleton pattern)
  * @returns Promise resolving to KaTeX module
  */
-export async function loadKaTeX(): Promise<any> {
+export async function loadKaTeX(): Promise<KaTeXModule> {
   if (katex) return katex;
   if (loadPromise) return loadPromise;
 
   loadPromise = import('katex')
     .then((module) => {
-      katex = module.default || module;
+      katex = resolveKaTeX(module as { default?: KaTeXModule });
       return katex;
     })
     .catch((err) => {
@@ -32,7 +41,7 @@ export async function loadKaTeX(): Promise<any> {
  * Get loaded KaTeX instance (synchronous)
  * @returns KaTeX module or null if not loaded
  */
-export function getKaTeX(): any {
+export function getKaTeX(): KaTeXModule | null {
   return katex;
 }
 

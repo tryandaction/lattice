@@ -5,7 +5,7 @@ import { init } from "pptx-preview";
 import { PowerPointViewerProps, SlideData, LAYOUT_CONSTANTS } from "@/types/ppt-viewer";
 import { calculateViewerLayout, detectSlideAspectRatio } from "@/lib/ppt-viewer-layout";
 import { navigate, getJumpFromKeyboard } from "@/lib/ppt-navigation";
-import { extractFormulasFromPptx, extractTextFromPptx, SlideFormulas, SlideTextContent, SlideTextParagraph } from "@/lib/pptx-formula-extractor";
+import { extractFormulasFromPptx, extractTextFromPptx, SlideFormulas, SlideTextContent } from "@/lib/pptx-formula-extractor";
 import { PPTLoadingIndicator } from "./ppt-loading-indicator";
 import { ThumbnailPanel } from "./ppt-thumbnail-panel";
 import { MainSlideArea } from "./ppt-main-slide-area";
@@ -72,7 +72,8 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
 
   // Load and render PPTX file
   useEffect(() => {
-    if (!content || !pptxContainerRef.current) return;
+    const container = pptxContainerRef.current;
+    if (!content || !container) return;
 
     const loadPPTX = async () => {
       try {
@@ -123,7 +124,7 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
 
         // Initialize pptx-preview with larger dimensions to capture all content
         // Use 2560x1920 to support both 16:9 and 4:3 aspect ratios at high resolution
-        const previewer = init(pptxContainerRef.current!, {
+        const previewer = init(container, {
           width: 2560,
           height: 1920,
         });
@@ -142,10 +143,8 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
         await new Promise(resolve => setTimeout(resolve, 500));
 
         // Extract rendered slides from the container
-        const container = pptxContainerRef.current;
-        
         // Check if container is still available (component might have unmounted)
-        if (!container) {
+        if (!container.isConnected) {
           console.warn('[PPT] Container ref is null after async operation, component may have unmounted');
           return;
         }
@@ -238,7 +237,6 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
 
     return () => {
       // Cleanup - safely clear the container
-      const container = pptxContainerRef.current;
       if (container) {
         container.innerHTML = '';
       }

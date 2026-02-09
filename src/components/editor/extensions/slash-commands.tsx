@@ -6,7 +6,7 @@
  * Provides a floating menu triggered by "/" for quick formatting options.
  */
 
-import { Extension } from "@tiptap/core";
+import { Extension, type Editor, type Range } from "@tiptap/core";
 import { ReactRenderer } from "@tiptap/react";
 import Suggestion, { SuggestionOptions, SuggestionProps } from "@tiptap/suggestion";
 import tippy, { Instance as TippyInstance } from "tippy.js";
@@ -24,7 +24,6 @@ import {
   Code,
   Sigma,
   Table,
-  Image as ImageIcon,
   List,
   ListOrdered,
   Quote,
@@ -39,7 +38,7 @@ export interface SlashCommandItem {
   title: string;
   description: string;
   icon: LucideIcon;
-  command: (props: { editor: any; range: any }) => void;
+  command: (props: { editor: Editor; range: Range }) => void;
 }
 
 /**

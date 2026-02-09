@@ -135,7 +135,6 @@ export function ImageTldrawAdapter({
   rootHandle,
 }: ImageTldrawAdapterProps) {
   const {
-    annotations,
     error: annotationsError,
     addAnnotation,
     updateAnnotation,
@@ -198,7 +197,7 @@ export function ImageTldrawAdapter({
   const imageAnnotation = useMemo(() => {
     const imageAnnotations = getAnnotationsByTarget('image');
     return imageAnnotations.find(a => a.content && a.content.includes('"version":1'));
-  }, [annotations, getAnnotationsByTarget]);
+  }, [getAnnotationsByTarget]);
 
   useEffect(() => {
     currentAnnotationIdRef.current = imageAnnotation?.id || null;

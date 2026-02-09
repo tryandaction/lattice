@@ -1,0 +1,358 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - heading "Live Preview 自检面板" [level=1] [ref=e4]
+      - generic [ref=e5]:
+        - generic [ref=e6]: 文件：
+        - button "覆盖用例" [ref=e7] [cursor=pointer]
+        - button "高级渲染" [ref=e8] [cursor=pointer]
+        - button "公式渲染" [active] [ref=e9] [cursor=pointer]
+        - button "光标定位" [ref=e10] [cursor=pointer]
+        - button "语法隐藏" [ref=e11] [cursor=pointer]
+        - button "嵌套格式" [ref=e12] [cursor=pointer]
+        - button "重复文本" [ref=e13] [cursor=pointer]
+        - button "超长文档" [ref=e14] [cursor=pointer]
+      - button "运行自检" [ref=e16] [cursor=pointer]
+    - main [ref=e17]:
+      - generic [ref=e372]:
+        - generic [ref=e373]:
+          - generic [ref=e375]: test-formula-rendering.md
+          - generic [ref=e376]:
+            - button "Hide outline" [ref=e377] [cursor=pointer]:
+              - img [ref=e378]
+            - generic [ref=e382]:
+              - button "Live" [ref=e383] [cursor=pointer]:
+                - img [ref=e384]
+                - generic [ref=e386]: Live
+              - button "Source" [ref=e387] [cursor=pointer]:
+                - img [ref=e388]
+                - generic [ref=e392]: Source
+              - button "Read" [ref=e393] [cursor=pointer]:
+                - img [ref=e394]
+                - generic [ref=e397]: Read
+        - generic [ref=e398]:
+          - generic [ref=e400]:
+            - generic [ref=e401]: Outline
+            - navigation [ref=e402]:
+              - generic [ref=e403]:
+                - button "Formula Rendering Test File" [ref=e404] [cursor=pointer]:
+                  - img [ref=e405]
+                  - generic [ref=e407]: Formula Rendering Test File
+                - generic [ref=e408]:
+                  - 'button "Test 1: Basic Inline Math" [ref=e410] [cursor=pointer]':
+                    - generic [ref=e411]: "Test 1: Basic Inline Math"
+                  - generic [ref=e412]:
+                    - 'button "Test 2: Inline Math in Different Contexts" [ref=e413] [cursor=pointer]':
+                      - img [ref=e414]
+                      - generic [ref=e416]: "Test 2: Inline Math in Different Contexts"
+                    - button "In Headings" [ref=e419] [cursor=pointer]:
+                      - generic [ref=e420]: In Headings
+              - generic [ref=e421]:
+                - button "Heading with $E=mc^2$ formula" [ref=e422] [cursor=pointer]:
+                  - img [ref=e423]
+                  - generic [ref=e425]: Heading with $E=mc^2$ formula
+                - generic [ref=e426]:
+                  - generic [ref=e427]:
+                    - button "Heading with $\\alpha + \\beta$ formula" [ref=e428] [cursor=pointer]:
+                      - img [ref=e429]
+                      - generic [ref=e431]: Heading with $\alpha + \beta$ formula
+                    - generic [ref=e432]:
+                      - 'button "Heading with $\\sum_{i=1}^{n} i$ formula" [ref=e434] [cursor=pointer]':
+                        - generic [ref=e435]: "Heading with $\\sum_{i=1}^{n} i$ formula"
+                      - button "In Lists" [ref=e437] [cursor=pointer]:
+                        - generic [ref=e438]: In Lists
+                      - button "In Blockquotes" [ref=e440] [cursor=pointer]:
+                        - generic [ref=e441]: In Blockquotes
+                      - button "In Bold/Italic" [ref=e443] [cursor=pointer]:
+                        - generic [ref=e444]: In Bold/Italic
+                  - generic [ref=e445]:
+                    - 'button "Test 3: Block Math - All Syntaxes" [ref=e446] [cursor=pointer]':
+                      - img [ref=e447]
+                      - generic [ref=e449]: "Test 3: Block Math - All Syntaxes"
+                    - generic [ref=e450]:
+                      - 'button "Syntax 1: Single $ on separate lines" [ref=e452] [cursor=pointer]':
+                        - generic [ref=e453]: "Syntax 1: Single $ on separate lines"
+                      - 'button "Syntax 2: Double $$ on separate lines" [ref=e455] [cursor=pointer]':
+                        - generic [ref=e456]: "Syntax 2: Double $$ on separate lines"
+                      - 'button "Syntax 3: Inline block math $$...$$ on single line" [ref=e458] [cursor=pointer]':
+                        - generic [ref=e459]: "Syntax 3: Inline block math $$...$$ on single line"
+                  - 'button "Test 4: Complex Formulas" [ref=e461] [cursor=pointer]':
+                    - generic [ref=e462]: "Test 4: Complex Formulas"
+                  - 'button "Test 5: Edge Cases" [ref=e464] [cursor=pointer]':
+                    - generic [ref=e465]: "Test 5: Edge Cases"
+                  - 'button "Test 6: Greek Letters" [ref=e467] [cursor=pointer]':
+                    - generic [ref=e468]: "Test 6: Greek Letters"
+                  - 'button "Test 7: Fractions and Roots" [ref=e470] [cursor=pointer]':
+                    - generic [ref=e471]: "Test 7: Fractions and Roots"
+                  - 'button "Test 8: Subscripts and Superscripts" [ref=e473] [cursor=pointer]':
+                    - generic [ref=e474]: "Test 8: Subscripts and Superscripts"
+                  - 'button "Test 9: Summation and Integration" [ref=e476] [cursor=pointer]':
+                    - generic [ref=e477]: "Test 9: Summation and Integration"
+                  - 'button "Test 10: Matrices" [ref=e479] [cursor=pointer]':
+                    - generic [ref=e480]: "Test 10: Matrices"
+                  - 'button "Test 11: All Block Math Syntaxes Side by Side" [ref=e482] [cursor=pointer]':
+                    - generic [ref=e483]: "Test 11: All Block Math Syntaxes Side by Side"
+                  - button "Expected Behavior" [ref=e485] [cursor=pointer]:
+                    - generic [ref=e486]: Expected Behavior
+                  - button "Common Issues to Check" [ref=e488] [cursor=pointer]:
+                    - generic [ref=e489]: Common Issues to Check
+                  - button "How to Test" [ref=e491] [cursor=pointer]:
+                    - generic [ref=e492]: How to Test
+          - generic [ref=e494]:
+            - generic [ref=e495]: Markdown editor with live preview. Use Ctrl+E to switch modes, Ctrl+F to search, and standard text editing shortcuts.
+            - generic [ref=e497]:
+              - generic [ref=e499]:
+                - generic [ref=e500] [cursor=pointer]: ▼
+                - generic [ref=e501] [cursor=pointer]: ▼
+                - generic [ref=e502] [cursor=pointer]: ▼
+                - generic [ref=e503] [cursor=pointer]: ▼
+                - generic [ref=e504] [cursor=pointer]: ▼
+                - generic [ref=e505] [cursor=pointer]: ▼
+                - generic [ref=e506] [cursor=pointer]: ▼
+                - generic [ref=e507] [cursor=pointer]: ▼
+                - generic [ref=e508] [cursor=pointer]: ▼
+                - generic [ref=e509] [cursor=pointer]: ▼
+                - generic [ref=e510] [cursor=pointer]: ▼
+                - generic [ref=e511] [cursor=pointer]: ▼
+                - generic [ref=e512] [cursor=pointer]: ▼
+                - text: ▼
+                - generic [ref=e513] [cursor=pointer]: ▼
+                - text: ▼
+              - textbox "Markdown editor" [ref=e514]:
+                - generic [ref=e515]: "# Formula Rendering Test File"
+                - generic [ref=e517]: This file tests for formula rendering issues in the Live Preview editor.
+                - generic [ref=e519]: "Test 1: Basic Inline Math"
+                - generic [ref=e521]:
+                  - text: "Simple inline formula:"
+                  - 'generic "Inline formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX" [ref=e522] [cursor=pointer]':
+                    - generic [ref=e523]:
+                      - math [ref=e525]:
+                        - generic [ref=e527]:
+                          - generic [ref=e528]: E
+                          - generic [ref=e529]: =
+                          - generic [ref=e530]: m
+                          - generic [ref=e531]:
+                            - generic [ref=e532]: c
+                            - generic [ref=e533]: "2"
+                      - generic [ref=e534]:
+                        - generic [ref=e535]: E =
+                        - generic [ref=e536]:
+                          - text: m
+                          - generic [ref=e537]:
+                            - text: c
+                            - generic [ref=e542]: "2"
+                - generic [ref=e544]:
+                  - text: "Another formula:"
+                  - 'generic "Inline formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX" [ref=e545] [cursor=pointer]':
+                    - generic [ref=e546]:
+                      - math [ref=e548]:
+                        - generic [ref=e550]:
+                          - generic [ref=e551]:
+                            - generic [ref=e552]: a
+                            - generic [ref=e553]: "2"
+                          - generic [ref=e554]: +
+                          - generic [ref=e555]:
+                            - generic [ref=e556]: b
+                            - generic [ref=e557]: "2"
+                          - generic [ref=e558]: =
+                          - generic [ref=e559]:
+                            - generic [ref=e560]: c
+                            - generic [ref=e561]: "2"
+                      - generic [ref=e562]:
+                        - generic [ref=e563]:
+                          - generic [ref=e564]:
+                            - text: a
+                            - generic [ref=e569]: "2"
+                          - text: +
+                        - generic [ref=e570]:
+                          - generic [ref=e571]:
+                            - text: b
+                            - generic [ref=e576]: "2"
+                          - text: =
+                        - generic [ref=e578]:
+                          - text: c
+                          - generic [ref=e583]: "2"
+                - generic [ref=e585]: "Test 2: Inline Math in Different Contexts"
+                - generic [ref=e587]: In Headings
+                - generic [ref=e588]:
+                  - text: Heading with
+                  - 'generic "Inline formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX" [ref=e589] [cursor=pointer]':
+                    - generic [ref=e590]:
+                      - math [ref=e592]:
+                        - generic [ref=e594]:
+                          - generic [ref=e595]: E
+                          - generic [ref=e596]: =
+                          - generic [ref=e597]: m
+                          - generic [ref=e598]:
+                            - generic [ref=e599]: c
+                            - generic [ref=e600]: "2"
+                      - generic [ref=e601]:
+                        - generic [ref=e602]: E =
+                        - generic [ref=e603]:
+                          - text: m
+                          - generic [ref=e604]:
+                            - text: c
+                            - generic [ref=e609]: "2"
+                  - text: formula
+                - generic [ref=e610]:
+                  - text: Heading with
+                  - 'generic "Inline formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX" [ref=e611] [cursor=pointer]':
+                    - generic [ref=e612]:
+                      - math [ref=e614]:
+                        - generic [ref=e616]:
+                          - generic [ref=e617]: α
+                          - generic [ref=e618]: +
+                          - generic [ref=e619]: β
+                      - generic [ref=e620]:
+                        - generic [ref=e621]: α +
+                        - generic [ref=e622]: β
+                  - text: formula
+                - generic [ref=e623]:
+                  - text: Heading with
+                  - 'generic "Inline formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX" [ref=e624] [cursor=pointer]':
+                    - generic [ref=e625]:
+                      - math [ref=e627]:
+                        - generic [ref=e629]:
+                          - generic [ref=e630]:
+                            - generic [ref=e631]: ∑
+                            - generic [ref=e632]:
+                              - generic [ref=e633]: i
+                              - generic [ref=e634]: =
+                              - generic [ref=e635]: "1"
+                            - generic [ref=e636]: "n"
+                          - generic [ref=e637]: i
+                      - generic [ref=e639]:
+                        - generic [ref=e640]:
+                          - text: ∑
+                          - generic [ref=e644]:
+                            - generic [ref=e646]: i=1
+                            - generic [ref=e648]: "n"
+                        - text: i
+                  - text: formula
+                - generic [ref=e653]: In Lists
+                - generic [ref=e654]:
+                  - text: • List item with
+                  - 'generic "Inline formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX" [ref=e655] [cursor=pointer]':
+                    - generic [ref=e656]:
+                      - math [ref=e658]:
+                        - generic [ref=e660]:
+                          - generic [ref=e661]: E
+                          - generic [ref=e662]: =
+                          - generic [ref=e663]: m
+                          - generic [ref=e664]:
+                            - generic [ref=e665]: c
+                            - generic [ref=e666]: "2"
+                      - generic [ref=e667]:
+                        - generic [ref=e668]: E =
+                        - generic [ref=e669]:
+                          - text: m
+                          - generic [ref=e670]:
+                            - text: c
+                            - generic [ref=e675]: "2"
+                  - text: formula
+                - generic [ref=e676]:
+                  - text: • List item with
+                  - 'generic "Inline formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX" [ref=e677] [cursor=pointer]':
+                    - generic [ref=e678]:
+                      - math [ref=e680]:
+                        - generic [ref=e682]:
+                          - generic [ref=e683]:
+                            - generic [ref=e684]: ∫
+                            - generic [ref=e685]: "0"
+                            - generic [ref=e686]: "1"
+                          - generic [ref=e687]: x
+                          - generic [ref=e688]: d
+                          - generic [ref=e689]: x
+                      - generic [ref=e691]:
+                        - generic [ref=e692]:
+                          - text: ∫
+                          - generic [ref=e696]:
+                            - generic [ref=e697]: "0"
+                            - generic [ref=e698]: "1"
+                        - text: xdx
+                  - text: formula
+                - generic [ref=e702]:
+                  - text: • List item with
+                  - 'generic "Inline formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX" [ref=e703] [cursor=pointer]':
+                    - generic [ref=e704]:
+                      - math [ref=e706]:
+                        - generic [ref=e709]:
+                          - generic [ref=e710]: a
+                          - generic [ref=e711]: b
+                      - generic [ref=e718]:
+                        - generic [ref=e720]: b
+                        - generic [ref=e723]: a
+                  - text: formula
+                - generic [ref=e728]: In Blockquotes
+                - generic [ref=e729]:
+                  - text: Quote with
+                  - 'generic "Inline formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX" [ref=e730] [cursor=pointer]':
+                    - generic [ref=e731]:
+                      - math [ref=e733]:
+                        - generic [ref=e735]:
+                          - generic [ref=e736]: E
+                          - generic [ref=e737]: =
+                          - generic [ref=e738]: m
+                          - generic [ref=e739]:
+                            - generic [ref=e740]: c
+                            - generic [ref=e741]: "2"
+                      - generic [ref=e742]:
+                        - generic [ref=e743]: E =
+                        - generic [ref=e744]:
+                          - text: m
+                          - generic [ref=e745]:
+                            - text: c
+                            - generic [ref=e750]: "2"
+                  - text: formula
+                - generic [ref=e751]:
+                  - text: Quote with
+                  - 'generic "Inline formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX" [ref=e752] [cursor=pointer]':
+                    - generic [ref=e753]:
+                      - math [ref=e755]:
+                        - generic [ref=e759]: "2"
+                      - generic [ref=e765]:
+                        - generic [ref=e766]: "2"
+                        - img [ref=e768]
+                  - text: formula
+                - generic [ref=e774]: In Bold/Italic
+                - generic [ref=e775]:
+                  - text: This is
+                  - generic [ref=e776]:
+                    - text: bold with
+                    - generic [ref=e777]:
+                      - math [ref=e779]:
+                        - generic [ref=e781]:
+                          - generic [ref=e782]: E
+                          - generic [ref=e783]: =
+                          - generic [ref=e784]: m
+                          - generic [ref=e785]:
+                            - generic [ref=e786]: c
+                            - generic [ref=e787]: "2"
+                      - generic [ref=e788]:
+                        - generic [ref=e789]: E =
+                        - generic [ref=e790]:
+                          - text: m
+                          - generic [ref=e791]:
+                            - text: c
+                            - generic [ref=e796]: "2"
+                    - text: formula
+                  - text: inside.
+                - generic [ref=e798]:
+                  - text: This is
+                  - generic [ref=e799]:
+                    - text: italic with
+                    - generic [ref=e800]:
+                      - math [ref=e802]:
+                        - generic [ref=e805]: α
+                      - generic [ref=e807]: α
+                    - text: formula
+                  - text: inside.
+                - generic [ref=e809]: "Test 3: Block Math - All Syntaxes"
+                - generic [ref=e811]: "Syntax 1: Single $ on separate lines"
+                - generic [ref=e814]: "Syntax 2: Double $$ on separate lines"
+        - generic [ref=e817]: Live Preview • Ctrl+E cycle modes
+      - generic [ref=e20]:
+        - generic [ref=e21]: 诊断结果
+        - generic [ref=e22]: 点击“运行自检”开始检测。
+  - region "Notifications alt+T"
+  - alert [ref=e188]

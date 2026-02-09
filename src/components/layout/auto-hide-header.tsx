@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { motion, useMotionValue, useTransform, useSpring } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 
 interface AutoHideHeaderProps {
@@ -56,7 +56,6 @@ export function AutoHideHeader({
   const handleScroll = useCallback(() => {
     if (!enabled) return;
 
-    const scrollContainer = scrollContainerRef?.current || window;
     const currentScrollY = scrollContainerRef?.current
       ? scrollContainerRef.current.scrollTop
       : window.scrollY;

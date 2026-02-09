@@ -1,0 +1,120 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - heading "Live Preview 自检面板" [level=1] [ref=e4]
+      - generic [ref=e5]:
+        - generic [ref=e6]: 文件：
+        - button "覆盖用例" [ref=e7] [cursor=pointer]
+        - button "高级渲染" [ref=e8] [cursor=pointer]
+        - button "公式渲染" [ref=e9] [cursor=pointer]
+        - button "光标定位" [active] [ref=e10] [cursor=pointer]
+        - button "语法隐藏" [ref=e11] [cursor=pointer]
+        - button "嵌套格式" [ref=e12] [cursor=pointer]
+        - button "重复文本" [ref=e13] [cursor=pointer]
+        - button "超长文档" [ref=e14] [cursor=pointer]
+      - button "运行自检" [ref=e16] [cursor=pointer]
+    - main [ref=e17]:
+      - generic [ref=e822]:
+        - generic [ref=e823]:
+          - generic [ref=e825]: test-cursor-positioning.md
+          - generic [ref=e826]:
+            - button "Hide outline" [ref=e827] [cursor=pointer]:
+              - img [ref=e828]
+            - generic [ref=e832]:
+              - button "Live" [ref=e833] [cursor=pointer]:
+                - img [ref=e834]
+                - generic [ref=e836]: Live
+              - button "Source" [ref=e837] [cursor=pointer]:
+                - img [ref=e838]
+                - generic [ref=e842]: Source
+              - button "Read" [ref=e843] [cursor=pointer]:
+                - img [ref=e844]
+                - generic [ref=e847]: Read
+        - generic [ref=e848]:
+          - generic [ref=e850]:
+            - generic [ref=e851]: Outline
+            - navigation [ref=e852]:
+              - generic [ref=e853]:
+                - button "Cursor Positioning Test" [ref=e854] [cursor=pointer]:
+                  - img [ref=e855]
+                  - generic [ref=e857]: Cursor Positioning Test
+                - generic [ref=e858]:
+                  - 'button "Test 1: Bold Text Widget" [ref=e860] [cursor=pointer]':
+                    - generic [ref=e861]: "Test 1: Bold Text Widget"
+                  - 'button "Test 2: Italic Text Widget" [ref=e863] [cursor=pointer]':
+                    - generic [ref=e864]: "Test 2: Italic Text Widget"
+                  - 'button "Test 3: Code Widget" [ref=e866] [cursor=pointer]':
+                    - generic [ref=e867]: "Test 3: Code Widget"
+                  - 'button "Test 4: Link Widget" [ref=e869] [cursor=pointer]':
+                    - generic [ref=e870]: "Test 4: Link Widget"
+                  - 'button "Test 5: Math Widget" [ref=e872] [cursor=pointer]':
+                    - generic [ref=e873]: "Test 5: Math Widget"
+                  - 'button "Test 6: Long Text Widget" [ref=e875] [cursor=pointer]':
+                    - generic [ref=e876]: "Test 6: Long Text Widget"
+                  - 'button "Test 7: Multiple Widgets on Same Line" [ref=e878] [cursor=pointer]':
+                    - generic [ref=e879]: "Test 7: Multiple Widgets on Same Line"
+                  - 'button "Test 8: Nested Widgets" [ref=e881] [cursor=pointer]':
+                    - generic [ref=e882]: "Test 8: Nested Widgets"
+                  - 'button "Test 9: Adjacent Widgets" [ref=e884] [cursor=pointer]':
+                    - generic [ref=e885]: "Test 9: Adjacent Widgets"
+                  - 'button "Test 10: Widget at Line Start" [ref=e887] [cursor=pointer]':
+                    - generic [ref=e888]: "Test 10: Widget at Line Start"
+                  - 'button "Test 11: Widget at Line End" [ref=e890] [cursor=pointer]':
+                    - generic [ref=e891]: "Test 11: Widget at Line End"
+                  - 'button "Test 12: Empty Content Edge Case" [ref=e893] [cursor=pointer]':
+                    - generic [ref=e894]: "Test 12: Empty Content Edge Case"
+                  - button "Expected Behavior" [ref=e896] [cursor=pointer]:
+                    - generic [ref=e897]: Expected Behavior
+                  - button "How to Test" [ref=e899] [cursor=pointer]:
+                    - generic [ref=e900]: How to Test
+                  - button "Known Limitations" [ref=e902] [cursor=pointer]:
+                    - generic [ref=e903]: Known Limitations
+          - generic [ref=e905]:
+            - generic [ref=e906]: Markdown editor with live preview. Use Ctrl+E to switch modes, Ctrl+F to search, and standard text editing shortcuts.
+            - generic [ref=e908]:
+              - generic [ref=e910]:
+                - generic [ref=e911] [cursor=pointer]: ▼
+                - generic [ref=e912] [cursor=pointer]: ▼
+                - generic [ref=e913] [cursor=pointer]: ▼
+                - generic [ref=e914] [cursor=pointer]: ▼
+                - generic [ref=e915] [cursor=pointer]: ▼
+                - generic [ref=e916] [cursor=pointer]: ▼
+              - textbox "Markdown editor" [ref=e917]:
+                - generic [ref=e918]: "# Cursor Positioning Test"
+                - generic [ref=e920]: This file tests cursor positioning accuracy in various widgets.
+                - generic [ref=e922]: "Test 1: Bold Text Widget"
+                - generic [ref=e924]: Click at different positions in this bold text to test cursor positioning.
+                - generic [ref=e926]: "Try clicking:"
+                - generic [ref=e927]: "• At the start: |bold"
+                - generic [ref=e928]: "• In the middle: bo|ld"
+                - generic [ref=e929]: "• At the end: bold|"
+                - generic [ref=e931]: "Test 2: Italic Text Widget"
+                - generic [ref=e933]: Click at different positions in this italic text to test cursor positioning.
+                - generic [ref=e935]: "Try clicking:"
+                - generic [ref=e936]: "• At the start: |italic"
+                - generic [ref=e937]: "• In the middle: ita|lic"
+                - generic [ref=e938]: "• At the end: italic|"
+                - generic [ref=e940]: "Test 3: Code Widget"
+                - generic [ref=e942]: Click at different positions in this code text to test cursor positioning.
+                - generic [ref=e944]: "Try clicking:"
+                - generic [ref=e945]: "• At the start: |code"
+                - generic [ref=e946]: "• In the middle: co|de"
+                - generic [ref=e947]: "• At the end: code|"
+                - generic [ref=e949]: "Test 4: Link Widget"
+                - generic [ref=e951]:
+                  - text: Click at different positions in
+                  - link "this link text" [ref=e952] [cursor=pointer]:
+                    - /url: https://example.com
+                  - text: to test cursor positioning.
+                - generic [ref=e954]: "Try clicking:"
+                - generic [ref=e955]: "• At the start: [|link]"
+                - generic [ref=e956]: "• In the middle: [li|nk]"
+                - generic [ref=e957]: "• At the end: [link|]"
+                - generic [ref=e958]: • Ctrl+Click to open link
+                - generic [ref=e960]: "Test 5: Math Widget"
+        - generic [ref=e962]: Live Preview • Ctrl+E cycle modes
+      - generic [ref=e20]:
+        - generic [ref=e21]: 诊断结果
+        - generic [ref=e22]: 点击“运行自检”开始检测。
+  - region "Notifications alt+T"
+  - alert [ref=e188]

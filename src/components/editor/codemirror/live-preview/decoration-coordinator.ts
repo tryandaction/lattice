@@ -34,9 +34,9 @@
  * 6. 行内元素 (粗体、链接等) - 最低优先级
  */
 
-import { EditorView, ViewUpdate, ViewPlugin, DecorationSet, Decoration } from '@codemirror/view';
-import { EditorState, RangeSet, StateField, StateEffect, Text } from '@codemirror/state';
-import { shouldRevealLine, shouldRevealAt } from './cursor-context-plugin';
+import { EditorView, DecorationSet, Decoration } from '@codemirror/view';
+import { EditorState, StateField, StateEffect, Text } from '@codemirror/state';
+import { shouldRevealAt } from './cursor-context-plugin';
 import {
   FormattedTextWidget,
   LinkWidget,
@@ -48,7 +48,6 @@ import {
   FootnoteRefWidget,
   FootnoteDefWidget,
   EmbedWidget,
-  BlockquoteContentWidget,
   ListBulletWidget,
   HorizontalRuleWidget,
   MathWidget,
@@ -71,7 +70,7 @@ const DEBUG_MODE = process.env.NODE_ENV === 'development';
 /**
  * Conditional debug log
  */
-function debugLog(prefix: string, ...args: any[]) {
+function debugLog(prefix: string, ...args: unknown[]) {
   if (DEBUG_MODE) {
     console.log(prefix, ...args);
   }
@@ -132,6 +131,58 @@ export interface ParsedElement {
   // 用于装饰器创建
   decorationData?: unknown;
 }
+
+type ParsedElementsCarrier = {
+  _parsedElements?: ParsedElement[];
+};
+
+type DecorationData = Partial<{
+  // Common flags
+  isLineStyle: boolean;
+  isEditingStyle: boolean;
+  isMarkerHide: boolean;
+  isWidget: boolean;
+  isMultiLine: boolean;
+  // Ranges and styling
+  className: string;
+  level: number;
+  contentFrom: number;
+  contentTo: number;
+  syntaxFrom: number;
+  syntaxTo: number;
+  // Code/Math/Table
+  showLineNumbers: boolean;
+  rows: string[][];
+  hasHeader: boolean;
+  alignments: string[];
+  // Callout/Details/Footnotes
+  type: string;
+  title: string;
+  summary: string;
+  contentLines: string[];
+  isFolded: boolean;
+  isOpen: boolean;
+  identifier: string;
+  // Links / images / tags
+  url: string;
+  isWikiLink: boolean;
+  alt: string;
+  width: number;
+  tag: string;
+  // List markers
+  indent: number;
+  marker: string;
+  checked: boolean;
+  lineFrom: number;
+  // HR
+  originalFrom: number;
+  originalTo: number;
+  // Annotation link / embeds
+  displayText: string;
+  filePath: string;
+  annotationId: string;
+  target: string;
+}>;
 
 /**
  * 代码块匹配结果
@@ -285,6 +336,10 @@ class LRUCache<K, V> {
   clear(): void {
     this.cache.clear();
   }
+
+  size(): number {
+    return this.cache.size;
+  }
 }
 
 // 全局缓存实例
@@ -294,7 +349,6 @@ const lineElementCache = new LRUCache<string, ParsedElement[]>(2000);
 // Performance thresholds & cached parsing
 // ============================================================================
 
-const LARGE_DOC_LINE_THRESHOLD = 800;
 const VIEWPORT_LINE_BUFFER = 120;
 
 let cachedDoc: Text | null = null;
@@ -1330,10 +1384,6 @@ function buildReferenceSignature(defs: Map<string, ReferenceDefinition>): string
     .join('|');
 }
 
-function shouldUseViewport(view: EditorView): boolean {
-  return view.state.doc.lines > LARGE_DOC_LINE_THRESHOLD;
-}
-
 function ensureCachedDocument(doc: Text): {
   text: string;
   lines: string[];
@@ -1405,10 +1455,13 @@ function ensureCachedDocument(doc: Text): {
  *
  * 新增: 先解析代码块和表格，然后逐行解析其他元素
  */
-function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedElement[] {
+function parseDocument(
+  state: EditorState,
+  viewportOnly: boolean = false,
+  visibleRanges: readonly { from: number; to: number }[] = []
+): ParsedElement[] {
   const elements: ParsedElement[] = [];
-  const doc = view.state.doc;
-  const visibleRanges = view.visibleRanges;
+  const doc = state.doc;
 
   // DEBUG: Enhanced logging for long file truncation diagnosis
   debugLog('[parseDocument] ===== START PARSING =====');
@@ -1441,7 +1494,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   for (const block of codeBlocks) {
     // 检查代码块是否应该被reveal (element-level check)
     const shouldReveal = shouldRevealAt(
-      view.state,
+      state,
       block.from,
       block.to,
       ElementType.CODE_BLOCK
@@ -1492,7 +1545,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   for (const block of mathBlocks) {
     // 检查公式块是否应该被reveal (element-level check)
     const shouldReveal = shouldRevealAt(
-      view.state,
+      state,
       block.from,
       block.to,
       ElementType.MATH_BLOCK
@@ -1542,7 +1595,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
   for (const table of tables) {
     // 检查表格是否应该被reveal (element-level check)
     const shouldReveal = shouldRevealAt(
-      view.state,
+      state,
       table.from,
       table.to,
       ElementType.TABLE
@@ -1592,7 +1645,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
 
   for (const callout of callouts) {
     const shouldReveal = shouldRevealAt(
-      view.state,
+      state,
       callout.from,
       callout.to,
       ElementType.CALLOUT
@@ -1640,7 +1693,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
 
   for (const details of detailsBlocks) {
     const shouldReveal = shouldRevealAt(
-      view.state,
+      state,
       details.from,
       details.to,
       ElementType.DETAILS
@@ -1687,7 +1740,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
 
   for (const footnote of footnoteDefs) {
     const shouldReveal = shouldRevealAt(
-      view.state,
+      state,
       footnote.from,
       footnote.to,
       ElementType.FOOTNOTE_DEF
@@ -1733,7 +1786,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
 
   for (const referenceDef of referenceDefMatches) {
     const shouldReveal = shouldRevealAt(
-      view.state,
+      state,
       referenceDef.from,
       referenceDef.to,
       ElementType.REFERENCE_DEF
@@ -1837,7 +1890,7 @@ function parseDocument(view: EditorView, viewportOnly: boolean = false): ParsedE
       }
 
       // 解析这一行
-      const lineElements = parseLineElements(view.state, line, lineNum, lineText, referenceDefs);
+      const lineElements = parseLineElements(state, line, lineNum, lineText, referenceDefs);
 
       // 存入缓存
       if (lineElements.length > 0) {
@@ -3107,17 +3160,17 @@ export function resolveConflicts(elements: ParsedElement[]): ParsedElement[] {
 /**
  * 从解析元素构建装饰器集合
  */
-function buildDecorationsFromElements(elements: ParsedElement[], view: EditorView): DecorationSet {
+function buildDecorationsFromElements(elements: ParsedElement[], state: EditorState): DecorationSet {
   const entries: DecorationEntry[] = [];
   let skippedCount = 0;
   let processedCount = 0;
 
   debugLog('[buildDecorations] ===== START BUILDING =====');
   debugLog('[buildDecorations] Input elements:', elements.length);
-  debugLog('[buildDecorations] Doc lines:', view.state.doc.lines, 'Doc length:', view.state.doc.length);
+  debugLog('[buildDecorations] Doc lines:', state.doc.lines, 'Doc length:', state.doc.length);
 
-  const docLength = view.state.doc.length;
-  const cached = ensureCachedDocument(view.state.doc);
+  const docLength = state.doc.length;
+  const cached = ensureCachedDocument(state.doc);
   const referenceDefs = cached.referenceDefs;
   const referenceSignature = buildReferenceSignature(referenceDefs);
 
@@ -3158,14 +3211,14 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
 
     // Element-level reveal check: Skip decoration if cursor is in this element
     // Keep line/editing styles even when revealing syntax markers
-    let reveal = shouldRevealAt(view.state, element.from, element.to, element.type);
-    const data = element.decorationData as any;
+    let reveal = shouldRevealAt(state, element.from, element.to, element.type);
+    const data = element.decorationData as DecorationData | undefined;
     const isLineStyle = data?.isLineStyle === true;
     const isEditingStyle = data?.isEditingStyle === true;
 
     // Heading marker hide should only reveal when cursor is within the marker itself
     if (element.type === ElementType.HEADING && data?.isMarkerHide) {
-      reveal = shouldRevealAt(view.state, element.from, element.to, undefined);
+      reveal = shouldRevealAt(state, element.from, element.to, undefined);
     }
 
     if (reveal && !isLineStyle && !isEditingStyle) {
@@ -3177,9 +3230,9 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
 
     // 多行代码块需要特殊处理
     if (element.type === ElementType.CODE_BLOCK && element.decorationData) {
-      const data = element.decorationData as any;
+      const data = element.decorationData as DecorationData;
 
-      if (data.isEditingStyle) {
+      if (data?.isEditingStyle) {
         // 编辑模式：每行添加样式
         entries.push({
           from: element.from,
@@ -3190,9 +3243,9 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
           priority: element.type,
           isLine: true,
         });
-      } else if (data.isMultiLine && element.startLine && element.endLine) {
+      } else if (data?.isMultiLine && element.startLine && element.endLine) {
         // 多行代码块：widget + 隐藏行
-        const doc = view.state.doc;
+        const doc = state.doc;
         const firstLine = doc.line(element.startLine);
         const context = getBlockContext(firstLine.text);
 
@@ -3228,7 +3281,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
         }
       } else {
         // 单行代码块
-        const lineContext = getBlockContext(view.state.doc.lineAt(element.from).text);
+        const lineContext = getBlockContext(state.doc.lineAt(element.from).text);
         entries.push({
           from: element.from,
           to: element.to,
@@ -3251,9 +3304,9 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
 
     // 多行数学公式块需要特殊处理
     if (element.type === ElementType.MATH_BLOCK && element.decorationData) {
-      const data = element.decorationData as any;
+      const data = element.decorationData as DecorationData;
 
-      if (data.isEditingStyle) {
+      if (data?.isEditingStyle) {
         // 编辑模式：每行添加样式
         entries.push({
           from: element.from,
@@ -3264,7 +3317,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
           priority: element.type,
           isLine: true,
         });
-      } else if (data.isMultiLine && element.startLine && element.endLine) {
+      } else if (data?.isMultiLine && element.startLine && element.endLine) {
         // 多行公式块：widget + 隐藏行
         // CRITICAL: Validate latex parameter
         if (!element.latex || element.latex.trim() === '') {
@@ -3272,7 +3325,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
           continue;
         }
 
-        const doc = view.state.doc;
+        const doc = state.doc;
         const firstLine = doc.line(element.startLine);
         const context = getBlockContext(firstLine.text);
 
@@ -3311,7 +3364,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
           console.warn('[buildDecorations] Empty latex for single-line MATH_BLOCK at', element.from, element.to);
           continue;
         }
-        const lineContext = getBlockContext(view.state.doc.lineAt(element.from).text);
+        const lineContext = getBlockContext(state.doc.lineAt(element.from).text);
         entries.push({
           from: element.from,
           to: element.to,
@@ -3333,7 +3386,13 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
 
     // 多行表格需要特殊处理
     if (element.type === ElementType.TABLE && element.decorationData) {
-      const data = element.decorationData as any;
+      const data = element.decorationData as DecorationData;
+      const alignments = (data.alignments || []).map((alignment) => {
+        if (alignment === 'left' || alignment === 'center' || alignment === 'right') {
+          return alignment;
+        }
+        return null;
+      });
 
       if (data.isEditingStyle) {
         // 编辑模式：每行添加样式
@@ -3348,7 +3407,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
         });
       } else if (data.isMultiLine && element.startLine && element.endLine) {
         // 多行表格：widget + 隐藏行
-        const doc = view.state.doc;
+        const doc = state.doc;
         const firstLine = doc.line(element.startLine);
         const context = getBlockContext(firstLine.text);
 
@@ -3360,7 +3419,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
             widget: new TableWidget(
               data.rows || [],
               data.hasHeader !== false,
-              data.alignments || [],
+              alignments,
               element.from,
               element.to,
               referenceDefs,
@@ -3386,7 +3445,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
         }
       } else {
         // 单行表格（罕见）
-        const lineContext = getBlockContext(view.state.doc.lineAt(element.from).text);
+        const lineContext = getBlockContext(state.doc.lineAt(element.from).text);
         entries.push({
           from: element.from,
           to: element.to,
@@ -3394,7 +3453,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
             widget: new TableWidget(
               data.rows || [],
               data.hasHeader !== false,
-              data.alignments || [],
+              alignments,
               element.from,
               element.to,
               referenceDefs,
@@ -3411,7 +3470,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
 
     // Callout 块需要特殊处理
     if (element.type === ElementType.CALLOUT && element.decorationData) {
-      const data = element.decorationData as any;
+      const data = element.decorationData as DecorationData;
 
       if (data.isEditingStyle) {
         entries.push({
@@ -3422,7 +3481,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
           isLine: true,
         });
       } else if (data.isMultiLine && element.startLine && element.endLine) {
-        const doc = view.state.doc;
+        const doc = state.doc;
         const firstLine = doc.line(element.startLine);
 
         entries.push({
@@ -3480,7 +3539,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
 
     // Details 块需要特殊处理
     if (element.type === ElementType.DETAILS && element.decorationData) {
-      const data = element.decorationData as any;
+      const data = element.decorationData as DecorationData;
 
       if (data.isEditingStyle) {
         entries.push({
@@ -3491,7 +3550,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
           isLine: true,
         });
       } else if (data.isMultiLine && element.startLine && element.endLine) {
-        const doc = view.state.doc;
+        const doc = state.doc;
         const firstLine = doc.line(element.startLine);
 
         entries.push({
@@ -3547,7 +3606,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
 
     // 脚注定义块
     if (element.type === ElementType.FOOTNOTE_DEF && element.decorationData) {
-      const data = element.decorationData as any;
+      const data = element.decorationData as DecorationData;
 
       if (data.isEditingStyle) {
         entries.push({
@@ -3558,7 +3617,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
           isLine: true,
         });
       } else if (data.isMultiLine && element.startLine && element.endLine) {
-        const doc = view.state.doc;
+        const doc = state.doc;
         const firstLine = doc.line(element.startLine);
 
         entries.push({
@@ -3612,9 +3671,9 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
 
     // 引用式链接定义
     if (element.type === ElementType.REFERENCE_DEF && element.decorationData) {
-      const data = element.decorationData as any;
+      const data = element.decorationData as DecorationData | undefined;
 
-      if (data.isEditingStyle) {
+      if (data?.isEditingStyle) {
         entries.push({
           from: element.from,
           to: element.to,
@@ -3622,8 +3681,8 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
           priority: element.type,
           isLine: true,
         });
-      } else if (data.isMultiLine && element.startLine && element.endLine) {
-        const doc = view.state.doc;
+      } else if (data?.isMultiLine && element.startLine && element.endLine) {
+        const doc = state.doc;
         for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
           const line = doc.line(lineNum);
           entries.push({
@@ -3691,7 +3750,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], view: EditorVie
  * 判断元素是否需要行装饰器（点装饰）
  */
 function isLineDecoration(element: ParsedElement): boolean {
-  const data = element.decorationData as any;
+  const data = element.decorationData as DecorationData | undefined;
 
   // 检查isLineStyle标志
   if (data?.isLineStyle) {
@@ -3715,7 +3774,7 @@ function createDecorationForElement(
   referenceDefs: Map<string, ReferenceDefinition>,
   referenceSignature: string
 ): Decoration | null {
-  const data = element.decorationData as any;
+  const data = element.decorationData as DecorationData | undefined;
 
   switch (element.type) {
     // ========================================================================
@@ -3748,18 +3807,22 @@ function createDecorationForElement(
       }
       return null;
 
-    case ElementType.LIST_ITEM:
+    case ElementType.LIST_ITEM: {
+      const listType =
+        data?.type === 'numbered' || data?.type === 'task' || data?.type === 'bullet'
+          ? data.type
+          : 'bullet';
       if (data?.isLineStyle) {
         // 行装饰器
         return Decoration.line({
-          class: `cm-list-item cm-list-${data.type || 'bullet'}`,
+          class: `cm-list-item cm-list-${listType}`,
           attributes: { 'data-indent': String(data.indent || 0) },
         });
-      } else if (data?.isWidget && data?.type && data?.marker) {
+      } else if (data?.isWidget && data?.marker) {
         // Widget替换标记
         return Decoration.replace({
           widget: new ListBulletWidget(
-            data.type,
+            listType,
             data.marker,
             data.checked,
             data.lineFrom
@@ -3767,6 +3830,7 @@ function createDecorationForElement(
         });
       }
       return null;
+    }
 
     case ElementType.HORIZONTAL_RULE:
       if (data?.originalFrom !== undefined && data?.originalTo !== undefined) {
@@ -4072,73 +4136,31 @@ function createDecorationForElement(
 }
 
 // ============================================================================
-// ViewPlugin - 统一装饰器管理
+// StateField - 统一装饰器管理（避免 ViewPlugin block decoration 限制）
 // ============================================================================
 
-/**
- * 装饰协调器 ViewPlugin
- *
- * 替代所有现有的独立装饰器插件
- */
-export const decorationCoordinatorPlugin = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    private lastSelectionLine: number = -1;
-
-    constructor(view: EditorView) {
-      this.decorations = this.buildDecorations(view);
-      this.lastSelectionLine = view.state.doc.lineAt(view.state.selection.main.head).number;
-    }
-
-    update(update: ViewUpdate) {
-      // CRITICAL PERFORMANCE FIX:
-      // Only rebuild decorations when:
-      // 1. Document content changed (docChanged)
-      // 2. Viewport changed for large documents (viewportChanged)
-      // 3. Selection moved to a different line (affects reveal state)
-
-      if (update.docChanged) {
-        // Document changed - must rebuild
-        this.decorations = this.buildDecorations(update.view);
-        this.lastSelectionLine = update.view.state.doc.lineAt(update.view.state.selection.main.head).number;
-      } else if (update.viewportChanged && shouldUseViewport(update.view)) {
-        // Large document viewport changed - rebuild visible decorations
-        this.decorations = this.buildDecorations(update.view);
-      } else if (update.selectionSet) {
-        // Selection changed - only rebuild if it moved to a different line
-        const currentLine = update.view.state.doc.lineAt(update.view.state.selection.main.head).number;
-        if (currentLine !== this.lastSelectionLine) {
-          this.decorations = this.buildDecorations(update.view);
-          this.lastSelectionLine = currentLine;
-        }
-      }
-    }
-
-    private buildDecorations(view: EditorView): DecorationSet {
-      // 1. 解析文档 (解析全文档以确保完整渲染)
-      // For large documents, only parse viewport + buffer for inline elements
-      const elements = parseDocument(view, shouldUseViewport(view));
-
-      // DEBUG: Log document info
-      debugLog('[Decoration] ===== BUILD DECORATIONS =====');
-      debugLog('[Decoration] Doc lines:', view.state.doc.lines, 'Elements:', elements.length);
-
-      // 2. Store elements for cursor context plugin
-      // Note: We cannot dispatch during decoration building
-      // The parsedElementsField will be updated through the normal update cycle
-      (view as any)._parsedElements = elements;
-
-      // 3. 解决冲突
-      const resolved = resolveConflicts(elements);
-
-      // 4. 构建装饰器
-      return buildDecorationsFromElements(resolved, view);
-    }
+export const decorationCoordinatorField = StateField.define<DecorationSet>({
+  create(state) {
+    const elements = parseDocument(state, false);
+    (state as ParsedElementsCarrier)._parsedElements = elements;
+    const resolved = resolveConflicts(elements);
+    return buildDecorationsFromElements(resolved, state);
   },
-  {
-    decorations: v => v.decorations,
-  }
-);
+  update(value, tr) {
+    if (tr.docChanged || tr.selection) {
+      const elements = parseDocument(tr.state, false);
+      (tr.state as ParsedElementsCarrier)._parsedElements = elements;
+      const resolved = resolveConflicts(elements);
+      return buildDecorationsFromElements(resolved, tr.state);
+    }
+    return value;
+  },
+});
+
+export const decorationCoordinatorExtension = [
+  decorationCoordinatorField,
+  EditorView.decorations.from(decorationCoordinatorField),
+];
 
 // ============================================================================
 // 导出工具函数
@@ -4169,7 +4191,8 @@ export function clearDecorationCache(): void {
  */
 export function getCacheStats(): { size: number; maxSize: number } {
   return {
-    size: (lineElementCache as any).cache.size,
+    size: lineElementCache.size(),
     maxSize: 2000,
   };
 }
+

@@ -175,7 +175,7 @@ export const autoFormattingPlugin = ViewPlugin.fromClass(
   class {
     constructor(readonly view: EditorView) {}
     
-    update(update: ViewUpdate) {
+    update(_update: ViewUpdate) {
       // Plugin doesn't need to track state
     }
   }

@@ -427,7 +427,7 @@ export function convertTextToLatex(text: string): string {
 export function convertOmmlToLatex(ommlXml: string): string {
   try {
     // Normalize namespace prefixes for easier parsing
-    let cleanedXml = ommlXml
+    const cleanedXml = ommlXml
       .replace(/xmlns:[a-zA-Z0-9]+="[^"]*"/g, '')
       .replace(/xmlns="[^"]*"/g, '')
       // Remove namespace prefixes from attributes first
@@ -449,7 +449,7 @@ export function convertOmmlToLatex(ommlXml: string): string {
       return parseOmmlManually(ommlXml);
     }
 
-    let mathElement = doc.querySelector('oMath') || doc.querySelector('oMathPara');
+    const mathElement = doc.querySelector('oMath') || doc.querySelector('oMathPara');
     if (!mathElement) {
       return parseOmmlManually(ommlXml);
     }
@@ -568,6 +568,12 @@ function processOmmlElement(element: Element): string {
       return processFraction(element);
     case 'rad':
       return processRadical(element);
+    case 'sSub':
+      return processSubscript(element);
+    case 'sSup':
+      return processSuperscript(element);
+    case 'sSubSup':
+      return processSubSup(element);
     case 't':
       return convertTextToLatex(element.textContent || '');
     default:
@@ -637,6 +643,37 @@ function processRadical(element: Element): string {
   return `\\sqrt{${eLatex}}`;
 }
 
+function processSubscript(element: Element): string {
+  const base = findChild(element, 'e');
+  const sub = findChild(element, 'sub');
+  const baseLatex = base ? processChildren(base) : '';
+  const subLatex = sub ? processChildren(sub) : '';
+  if (!subLatex) return baseLatex;
+  return `{${baseLatex}}_{${subLatex}}`;
+}
+
+function processSuperscript(element: Element): string {
+  const base = findChild(element, 'e');
+  const sup = findChild(element, 'sup');
+  const baseLatex = base ? processChildren(base) : '';
+  const supLatex = sup ? processChildren(sup) : '';
+  if (!supLatex) return baseLatex;
+  return `{${baseLatex}}^{${supLatex}}`;
+}
+
+function processSubSup(element: Element): string {
+  const base = findChild(element, 'e');
+  const sub = findChild(element, 'sub');
+  const sup = findChild(element, 'sup');
+  const baseLatex = base ? processChildren(base) : '';
+  const subLatex = sub ? processChildren(sub) : '';
+  const supLatex = sup ? processChildren(sup) : '';
+  if (!subLatex && !supLatex) return baseLatex;
+  if (!supLatex) return `{${baseLatex}}_{${subLatex}}`;
+  if (!subLatex) return `{${baseLatex}}^{${supLatex}}`;
+  return `{${baseLatex}}_{${subLatex}}^{${supLatex}}`;
+}
+
 /**
  * Convert MathML to LaTeX (simplified converter)
  */
@@ -674,6 +711,18 @@ function processMathmlElement(element: Element): string {
       return `\\frac{${processMathmlElement(num)}}{${processMathmlElement(den)}}`;
     case 'msqrt':
       return `\\sqrt{${processMathmlChildren(element)}}`;
+    case 'msub': {
+      const [base, sub] = Array.from(element.children);
+      return `{${processMathmlElement(base)}}_{${processMathmlElement(sub)}}`;
+    }
+    case 'msup': {
+      const [base, sup] = Array.from(element.children);
+      return `{${processMathmlElement(base)}}^{${processMathmlElement(sup)}}`;
+    }
+    case 'msubsup': {
+      const [base, sub, sup] = Array.from(element.children);
+      return `{${processMathmlElement(base)}}_{${processMathmlElement(sub)}}^{${processMathmlElement(sup)}}`;
+    }
     default:
       return processMathmlChildren(element);
   }

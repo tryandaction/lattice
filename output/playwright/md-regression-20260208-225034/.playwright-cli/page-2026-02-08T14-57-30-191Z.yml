@@ -1,0 +1,303 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - heading "Live Preview 自检面板" [level=1] [ref=e4]
+      - generic [ref=e5]:
+        - generic [ref=e6]: 文件：
+        - button "覆盖用例" [ref=e7] [cursor=pointer]
+        - button "高级渲染" [ref=e8] [cursor=pointer]
+        - button "公式渲染" [ref=e9] [cursor=pointer]
+        - button "光标定位" [ref=e10] [cursor=pointer]
+        - button "语法隐藏" [ref=e11] [cursor=pointer]
+        - button "嵌套格式" [ref=e12] [cursor=pointer]
+        - button "重复文本" [ref=e13] [cursor=pointer]
+        - button "超长文档" [ref=e14] [cursor=pointer]
+      - button "运行自检" [ref=e16] [cursor=pointer]
+    - main [ref=e17]:
+      - generic [ref=e1078]:
+        - generic [ref=e1079]:
+          - generic [ref=e1081]: test-nested-formatting.md
+          - generic [ref=e1082]:
+            - button "Hide outline" [ref=e1083] [cursor=pointer]:
+              - img [ref=e1084]
+            - generic [ref=e1088]:
+              - button "Live" [ref=e1089] [cursor=pointer]:
+                - img [ref=e1090]
+                - generic [ref=e1092]: Live
+              - button "Source" [ref=e1093] [cursor=pointer]:
+                - img [ref=e1094]
+                - generic [ref=e1098]: Source
+              - button "Read" [ref=e1099] [cursor=pointer]:
+                - img [ref=e1100]
+                - generic [ref=e1103]: Read
+        - generic [ref=e1104]:
+          - generic [ref=e1106]:
+            - generic [ref=e1107]: Outline
+            - navigation [ref=e1108]:
+              - generic [ref=e1109]:
+                - button "Nested Formatting Test" [ref=e1110] [cursor=pointer]:
+                  - img [ref=e1111]
+                  - generic [ref=e1113]: Nested Formatting Test
+                - generic [ref=e1114]:
+                  - generic [ref=e1115]:
+                    - button "Basic Nested Formatting" [ref=e1116] [cursor=pointer]:
+                      - img [ref=e1117]
+                      - generic [ref=e1119]: Basic Nested Formatting
+                    - generic [ref=e1120]:
+                      - button "Bold with Italic" [ref=e1122] [cursor=pointer]:
+                        - generic [ref=e1123]: Bold with Italic
+                      - button "Bold with Code" [ref=e1125] [cursor=pointer]:
+                        - generic [ref=e1126]: Bold with Code
+                      - button "Bold with Math" [ref=e1128] [cursor=pointer]:
+                        - generic [ref=e1129]: Bold with Math
+                      - button "Italic with Code" [ref=e1131] [cursor=pointer]:
+                        - generic [ref=e1132]: Italic with Code
+                      - button "Italic with Math" [ref=e1134] [cursor=pointer]:
+                        - generic [ref=e1135]: Italic with Math
+                  - generic [ref=e1136]:
+                    - button "Complex Nested Formatting" [ref=e1137] [cursor=pointer]:
+                      - img [ref=e1138]
+                      - generic [ref=e1140]: Complex Nested Formatting
+                    - generic [ref=e1141]:
+                      - button "Triple Nesting" [ref=e1143] [cursor=pointer]:
+                        - generic [ref=e1144]: Triple Nesting
+                      - button "Formatting with Links" [ref=e1146] [cursor=pointer]:
+                        - generic [ref=e1147]: Formatting with Links
+                      - button "Formatting with Images" [ref=e1149] [cursor=pointer]:
+                        - generic [ref=e1150]: Formatting with Images
+                      - button "Formatting with Strikethrough" [ref=e1152] [cursor=pointer]:
+                        - generic [ref=e1153]: Formatting with Strikethrough
+                      - button "Formatting with Highlight" [ref=e1155] [cursor=pointer]:
+                        - generic [ref=e1156]: Formatting with Highlight
+                  - generic [ref=e1157]:
+                    - button "Edge Cases" [ref=e1158] [cursor=pointer]:
+                      - img [ref=e1159]
+                      - generic [ref=e1161]: Edge Cases
+                    - generic [ref=e1162]:
+                      - button "Adjacent Formatting" [ref=e1164] [cursor=pointer]:
+                        - generic [ref=e1165]: Adjacent Formatting
+                      - button "Overlapping Markers (Invalid Markdown)" [ref=e1167] [cursor=pointer]:
+                        - generic [ref=e1168]: Overlapping Markers (Invalid Markdown)
+                      - button "Multiple Formulas" [ref=e1170] [cursor=pointer]:
+                        - generic [ref=e1171]: Multiple Formulas
+                      - button "Formatting in Headings" [ref=e1173] [cursor=pointer]:
+                        - generic [ref=e1174]: Formatting in Headings
+              - generic [ref=e1175]:
+                - button "Heading with **bold**" [ref=e1176] [cursor=pointer]:
+                  - img [ref=e1177]
+                  - generic [ref=e1179]: Heading with **bold**
+                - generic [ref=e1180]:
+                  - generic [ref=e1181]:
+                    - button "Heading with *italic*" [ref=e1182] [cursor=pointer]:
+                      - img [ref=e1183]
+                      - generic [ref=e1185]: Heading with *italic*
+                    - generic [ref=e1186]:
+                      - generic [ref=e1187]:
+                        - 'button "Heading with `code`" [ref=e1188] [cursor=pointer]':
+                          - img [ref=e1189]
+                          - generic [ref=e1191]: "Heading with `code`"
+                        - generic [ref=e1193]:
+                          - button "Heading with $x^2$ formula" [ref=e1194] [cursor=pointer]:
+                            - img [ref=e1195]
+                            - generic [ref=e1197]: Heading with $x^2$ formula
+                          - button "Heading with **bold *and* italic**" [ref=e1200] [cursor=pointer]:
+                            - generic [ref=e1201]: Heading with **bold *and* italic**
+                      - button "Formatting in Lists" [ref=e1203] [cursor=pointer]:
+                        - generic [ref=e1204]: Formatting in Lists
+                      - button "Formatting in Blockquotes" [ref=e1206] [cursor=pointer]:
+                        - generic [ref=e1207]: Formatting in Blockquotes
+                      - button "Formatting in Tables" [ref=e1209] [cursor=pointer]:
+                        - generic [ref=e1210]: Formatting in Tables
+                  - button "Expected Behavior" [ref=e1212] [cursor=pointer]:
+                    - generic [ref=e1213]: Expected Behavior
+          - generic [ref=e1215]:
+            - generic [ref=e1216]: Markdown editor with live preview. Use Ctrl+E to switch modes, Ctrl+F to search, and standard text editing shortcuts.
+            - generic [ref=e1218]:
+              - generic [ref=e1220]:
+                - generic [ref=e1221] [cursor=pointer]: ▼
+                - generic [ref=e1222] [cursor=pointer]: ▼
+                - generic [ref=e1223] [cursor=pointer]: ▼
+                - generic [ref=e1224] [cursor=pointer]: ▼
+                - generic [ref=e1225] [cursor=pointer]: ▼
+                - generic [ref=e1226] [cursor=pointer]: ▼
+                - generic [ref=e1227] [cursor=pointer]: ▼
+                - generic [ref=e1228] [cursor=pointer]: ▼
+                - generic [ref=e1229] [cursor=pointer]: ▼
+                - generic [ref=e1230] [cursor=pointer]: ▼
+                - generic [ref=e1231] [cursor=pointer]: ▼
+                - generic [ref=e1232] [cursor=pointer]: ▼
+              - textbox "Markdown editor" [ref=e1233]:
+                - generic [ref=e1234]: "# Nested Formatting Test"
+                - generic [ref=e1236]: This file tests nested formatting scenarios to ensure no text duplication occurs.
+                - generic [ref=e1238]: Basic Nested Formatting
+                - generic [ref=e1240]: Bold with Italic
+                - generic [ref=e1241]:
+                  - text: •
+                  - generic [ref=e1242]:
+                    - text: Bold with
+                    - emphasis [ref=e1243]: italic
+                    - text: inside
+                - generic [ref=e1244]: • Bold and italic together
+                - generic [ref=e1245]:
+                  - text: •
+                  - generic [ref=e1246]:
+                    - text: Italic with
+                    - strong [ref=e1247]: bold
+                    - text: inside
+                - generic [ref=e1249]: Bold with Code
+                - generic [ref=e1250]:
+                  - text: •
+                  - generic [ref=e1251]:
+                    - text: Bold with
+                    - code [ref=e1252]: code
+                    - text: inside
+                - generic [ref=e1253]: • Code with **bold** inside (should not render bold)
+                - generic [ref=e1255]: Bold with Math
+                - generic [ref=e1256]:
+                  - text: •
+                  - generic [ref=e1257]:
+                    - text: Bold with
+                    - generic [ref=e1258]:
+                      - math [ref=e1260]:
+                        - generic [ref=e1263]:
+                          - generic [ref=e1264]: x
+                          - generic [ref=e1265]: "2"
+                      - generic [ref=e1268]:
+                        - text: x
+                        - generic [ref=e1273]: "2"
+                    - text: formula
+                - generic [ref=e1274]:
+                  - text: •
+                  - 'generic "Inline formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX" [ref=e1275] [cursor=pointer]':
+                    - generic [ref=e1276]:
+                      - math [ref=e1278]:
+                        - generic [ref=e1281]:
+                          - generic [ref=e1282]: x
+                          - generic [ref=e1283]: "2"
+                      - generic [ref=e1286]:
+                        - text: x
+                        - generic [ref=e1291]: "2"
+                  - text: with bold nearby
+                - generic [ref=e1293]: Italic with Code
+                - generic [ref=e1294]:
+                  - text: •
+                  - generic [ref=e1295]:
+                    - text: Italic with
+                    - code [ref=e1296]: code
+                    - text: inside
+                - generic [ref=e1297]: • Code with *italic* inside (should not render italic)
+                - generic [ref=e1299]: Italic with Math
+                - generic [ref=e1300]:
+                  - text: •
+                  - generic [ref=e1301]:
+                    - text: Italic with
+                    - generic [ref=e1302]:
+                      - math [ref=e1304]:
+                        - generic [ref=e1306]:
+                          - generic [ref=e1307]: "y"
+                          - generic [ref=e1308]: =
+                          - generic [ref=e1309]: m
+                          - generic [ref=e1310]: x
+                          - generic [ref=e1311]: +
+                          - generic [ref=e1312]: b
+                      - generic [ref=e1313]:
+                        - generic [ref=e1314]: y =
+                        - generic [ref=e1315]: mx +
+                        - generic [ref=e1316]: b
+                    - text: formula
+                - generic [ref=e1317]:
+                  - text: •
+                  - 'generic "Inline formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX" [ref=e1318] [cursor=pointer]':
+                    - generic [ref=e1319]:
+                      - math [ref=e1321]:
+                        - generic [ref=e1323]:
+                          - generic [ref=e1324]: "y"
+                          - generic [ref=e1325]: =
+                          - generic [ref=e1326]: m
+                          - generic [ref=e1327]: x
+                          - generic [ref=e1328]: +
+                          - generic [ref=e1329]: b
+                      - generic [ref=e1330]:
+                        - generic [ref=e1331]: y =
+                        - generic [ref=e1332]: mx +
+                        - generic [ref=e1333]: b
+                  - text: with italic nearby
+                - generic [ref=e1335]: Complex Nested Formatting
+                - generic [ref=e1337]: Triple Nesting
+                - generic [ref=e1338]:
+                  - text: •
+                  - generic [ref=e1339]:
+                    - text: Bold with
+                    - emphasis [ref=e1340]:
+                      - text: italic and
+                      - code [ref=e1341]: code
+                    - text: inside
+                - generic [ref=e1342]:
+                  - text: •
+                  - generic [ref=e1343]:
+                    - text: Italic with
+                    - strong [ref=e1344]:
+                      - text: bold and
+                      - code [ref=e1345]: code
+                    - text: inside
+                - generic [ref=e1346]:
+                  - text: •
+                  - generic [ref=e1347]:
+                    - text: Bold italic with
+                    - code [ref=e1348]: code
+                    - text: inside
+                - generic [ref=e1350]: Formatting with Links
+                - generic [ref=e1351]:
+                  - text: •
+                  - generic [ref=e1352]:
+                    - text: Bold
+                    - link "link" [ref=e1353] [cursor=pointer]:
+                      - /url: https://example.com
+                    - text: inside
+                - generic [ref=e1354]:
+                  - text: •
+                  - generic [ref=e1355]:
+                    - text: Italic
+                    - link "link" [ref=e1356] [cursor=pointer]:
+                      - /url: https://example.com
+                    - text: inside
+                - generic [ref=e1357]:
+                  - text: •
+                  - link "Link with bold text" [ref=e1358] [cursor=pointer]:
+                    - /url: https://example.com
+                    - text: Link with
+                    - strong [ref=e1359]: bold
+                    - text: text
+                - generic [ref=e1360]:
+                  - text: •
+                  - link "Link with italic text" [ref=e1361] [cursor=pointer]:
+                    - /url: https://example.com
+                    - text: Link with
+                    - emphasis [ref=e1362]: italic
+                    - text: text
+                - generic [ref=e1364]: Formatting with Images
+                - generic [ref=e1365]:
+                  - text: •
+                  - generic [ref=e1366]:
+                    - text: Bold !
+                    - link "image" [ref=e1367] [cursor=pointer]:
+                      - /url: https://via.placeholder.com/50
+                    - text: inside
+                - generic [ref=e1368]:
+                  - text: •
+                  - generic [ref=e1369]:
+                    - text: Italic !
+                    - link "image" [ref=e1370] [cursor=pointer]:
+                      - /url: https://via.placeholder.com/50
+                    - text: inside
+                - generic [ref=e1372]: Formatting with Strikethrough
+        - generic [ref=e1374]: Live Preview • Ctrl+E cycle modes
+      - generic [ref=e19]:
+        - generic [ref=e20]: 诊断结果
+        - generic [ref=e21]:
+          - generic [ref=e1375]: 通过：未发现异常
+          - generic [ref=e1376]:
+            - generic [ref=e1377]: 元素统计
+            - generic [ref=e1378]: "{ \"LIST_ITEM\": 90, \"INLINE_BOLD\": 21, \"INLINE_OTHER\": 6, \"INLINE_ITALIC\": 14, \"INLINE_CODE\": 7, \"MATH_INLINE\": 7, \"INLINE_LINK\": 2, \"BLOCKQUOTE\": 10, \"TABLE\": 1 }"
+  - region "Notifications alt+T"
+  - alert [ref=e22]

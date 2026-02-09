@@ -7,8 +7,8 @@
  * system to existing viewers (PDF, Image, Code).
  */
 
-import { useCallback, useEffect, useState, createContext, useContext, type ReactNode } from 'react';
-import type { AnnotationItem, AnnotationTarget, AnnotationFileType } from '../../types/universal-annotation';
+import { useCallback, useState, createContext, useContext, type ReactNode } from 'react';
+import type { AnnotationItem, AnnotationFileType } from '../../types/universal-annotation';
 import { useAnnotationNavigation, triggerAnnotationNavigation } from '../../hooks/use-annotation-navigation';
 import { UniversalAnnotationSidebar } from './universal-annotation-sidebar';
 

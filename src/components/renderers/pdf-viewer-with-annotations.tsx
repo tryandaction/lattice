@@ -133,7 +133,6 @@ export function PDFViewerWithAnnotations({
     isAreaSelecting,
     clearTextSelection,
     createTextHighlight,
-    createAreaHighlight,
     createTextNote,
     handleAreaMouseDown,
     handleAreaMouseMove,
@@ -331,7 +330,7 @@ export function PDFViewerWithAnnotations({
   }, []);
 
   // Handle text selection on page
-  const handlePageMouseUp = useCallback((pageNum: number, e: React.MouseEvent) => {
+  const handlePageMouseUp = useCallback((pageNum: number, _event: React.MouseEvent) => {
     // Only handle text selection in highlight mode
     if (annotationMode !== 'highlight') return;
     

@@ -9,7 +9,7 @@
  */
 
 import { Node, mergeAttributes } from "@tiptap/core";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey, NodeSelection } from "@tiptap/pm/state";
 
 export interface EnhancedImageOptions {
   /** Allow inline images */
@@ -250,7 +250,6 @@ export const EnhancedImage = Node.create<EnhancedImageOptions>({
               }
               
               // Use NodeSelection for selecting the image
-              const { NodeSelection } = require("@tiptap/pm/state");
               const tr = state.tr.setSelection(
                 NodeSelection.create(state.doc, imagePos)
               );

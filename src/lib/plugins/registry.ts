@@ -1,8 +1,10 @@
 import type { PluginManifest, PluginModule } from './types';
 import { helloPlugin } from '@/plugins/core/hello-plugin';
+import { panelDemoPlugin } from '@/plugins/core/panel-demo';
 
 const registry = new Map<string, PluginModule>([
   [helloPlugin.manifest.id, helloPlugin],
+  [panelDemoPlugin.manifest.id, panelDemoPlugin],
 ]);
 
 export function getAvailablePlugins(): PluginManifest[] {

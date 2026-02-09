@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { FileText, Code, Sparkles, Image } from "lucide-react";
+import { FileText, Code, Sparkles, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
@@ -38,7 +38,7 @@ function WelcomePlaceholder() {
           </div>
 
           <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border p-4">
-            <Image className="h-6 w-6 text-muted-foreground" />
+            <ImageIcon className="h-6 w-6 text-muted-foreground" />
             <span className="font-scientific text-muted-foreground">Image Viewer</span>
             <span className="text-xs text-muted-foreground/60">Ready</span>
           </div>

@@ -10,6 +10,7 @@
    - 侧边栏按钮：命令图标
    - 快捷键：`Ctrl/Cmd + K`
 5. 搜索 `hello` 并运行 `Say Hello`，控制台应输出 `hello from plugin`。
+6. 打开插件面板（侧边栏「插件面板」图标），应出现 `Panel Demo` 面板且页面不报错。
 
 ## 2) 启用 AI 上下文预览
 1. 打开「设置」→「AI」并启用 AI。
@@ -29,3 +30,33 @@
 - 出错页面截图
 - 复现步骤（按上文步骤写）
 - 控制台日志（如有）
+
+## 5) Markdown 渲染/编辑回归测试（诊断页 + 自动化）
+
+### A. 构建并启动静态站点（推荐）
+1. 构建静态导出（产物在 `out/`）：
+   - `npm run build`
+2. 启动静态服务（二选一）：
+   - Python：`python -m http.server 3000 --directory out`
+   - Node：`npx --yes serve out -l 3000`
+3. 打开诊断页：
+   - `http://localhost:3000/diagnostics/`
+
+### B. 诊断页回归用例（手动）
+1. 依次点击：覆盖用例 / 高级渲染 / 公式渲染 / 光标定位 / 语法隐藏 / 嵌套格式 / 重复文本 / 超长文档
+2. 每个用例都点击「运行自检」，应显示：`通过：未发现异常`
+3. 建议重点复测：
+   - HR：`---`、`- - -`、`* * *`
+   - 表格：无首尾 `|`、对齐分隔行、表格内 `**`/`$...$`/`` `code` ``
+   - 代码块：```/~~~、语言标识（如 `c++`）
+   - 公式：行内 `$...$`、块级 `$$...$$`、标题内/表格内公式
+   - 光标：在粗体/斜体/代码/链接/公式内点击，光标落点不应“跳行/错位”
+
+### C. Playwright 自动化（我已用此方式回归）
+在仓库根目录执行（示例）：
+```powershell
+cd "c:/universe/software development/Lattice/output/playwright"
+npx --yes --package @playwright/cli playwright-cli -s=md open "http://localhost:3000/diagnostics/" --headed
+npx --yes --package @playwright/cli playwright-cli -s=md snapshot
+```
+自动化工件会落在当前目录的 `.playwright-cli/`（截图/快照/console log）。

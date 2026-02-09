@@ -1,0 +1,128 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - heading "Live Preview 自检面板" [level=1] [ref=e4]
+      - generic [ref=e5]:
+        - generic [ref=e6]: 文件：
+        - button "覆盖用例" [ref=e7] [cursor=pointer]
+        - button "高级渲染" [ref=e8] [cursor=pointer]
+        - button "公式渲染" [ref=e9] [cursor=pointer]
+        - button "光标定位" [ref=e10] [cursor=pointer]
+        - button "语法隐藏" [ref=e11] [cursor=pointer]
+        - button "嵌套格式" [ref=e12] [cursor=pointer]
+        - button "重复文本" [ref=e13] [cursor=pointer]
+        - button "超长文档" [ref=e14] [cursor=pointer]
+      - button "运行自检" [ref=e16] [cursor=pointer]
+    - main [ref=e17]:
+      - generic [ref=e23]:
+        - generic [ref=e24]:
+          - generic [ref=e26]: test-advanced-markdown.md
+          - generic [ref=e27]:
+            - button "Hide outline" [ref=e28] [cursor=pointer]:
+              - img [ref=e29]
+            - generic [ref=e33]:
+              - button "Live" [ref=e34] [cursor=pointer]:
+                - img [ref=e35]
+                - generic [ref=e37]: Live
+              - button "Source" [ref=e38] [cursor=pointer]:
+                - img [ref=e39]
+                - generic [ref=e43]: Source
+              - button "Read" [active] [ref=e44] [cursor=pointer]:
+                - img [ref=e45]
+                - generic [ref=e48]: Read
+        - generic [ref=e49]:
+          - generic [ref=e51]:
+            - img [ref=e247]
+            - paragraph [ref=e250]: No headings found
+            - paragraph [ref=e251]: "Add headings with # to see outline"
+          - generic [ref=e106]:
+            - generic [ref=e252]: Markdown editor with live preview. Use Ctrl+E to switch modes, Ctrl+F to search, and standard text editing shortcuts.
+            - textbox "Markdown editor" [ref=e255]:
+              - generic [ref=e256]: Advanced Markdown Features Test
+              - generic [ref=e258]: This file demonstrates all the advanced markdown rendering features.
+              - generic [ref=e260]: 1. Superscript and Subscript
+              - generic [ref=e262]:
+                - text: "• Water formula: H"
+                - subscript [ref=e263]: "2"
+                - text: O
+              - generic [ref=e264]:
+                - text: "• Einstein's equation: E = mc"
+                - superscript [ref=e265]: "2"
+              - generic [ref=e266]:
+                - text: "• Chemical formula: CO"
+                - subscript [ref=e267]: "2"
+                - text: + H
+                - subscript [ref=e268]: "2"
+                - text: O → H
+                - subscript [ref=e269]: "2"
+                - text: CO
+                - subscript [ref=e270]: "3"
+              - generic [ref=e271]:
+                - text: "• Math notation: x"
+                - superscript [ref=e272]: "2"
+                - text: + y
+                - superscript [ref=e273]: "2"
+                - text: = r
+                - superscript [ref=e274]: "2"
+              - generic [ref=e276]: 2. Keyboard Keys
+              - generic [ref=e278]:
+                - text: Press
+                - generic [ref=e279]: Ctrl
+                - text: +
+                - generic [ref=e280]: C
+                - text: to copy.
+              - generic [ref=e282]: "Common shortcuts:"
+              - generic [ref=e283]:
+                - text: •
+                - generic [ref=e284]: Ctrl
+                - text: +
+                - generic [ref=e285]: S
+                - text: "- Save"
+              - generic [ref=e286]:
+                - text: •
+                - generic [ref=e287]: Ctrl
+                - text: +
+                - generic [ref=e288]: Z
+                - text: "- Undo"
+              - generic [ref=e289]:
+                - text: •
+                - generic [ref=e290]: Alt
+                - text: +
+                - generic [ref=e291]: Tab
+                - text: "- Switch windows"
+              - generic [ref=e292]:
+                - text: •
+                - generic [ref=e293]: Cmd
+                - text: +
+                - generic [ref=e294]: Shift
+                - text: +
+                - generic [ref=e295]: P
+                - text: "- Command palette"
+              - generic [ref=e297]: 3. Footnotes
+              - generic [ref=e299]:
+                - text: Here is a sentence with a footnote
+                - superscript [ref=e300]:
+                  - link "1" [ref=e301] [cursor=pointer]:
+                    - /url: "#"
+                - text: .
+              - generic [ref=e303]:
+                - text: Another reference to a different footnote
+                - superscript [ref=e304]:
+                  - link "note" [ref=e305] [cursor=pointer]:
+                    - /url: "#"
+                - text: .
+              - generic [ref=e307]:
+                - text: And one more
+                - superscript [ref=e308]:
+                  - link "long" [ref=e309] [cursor=pointer]:
+                    - /url: "#"
+                - text: .
+              - generic [ref=e312]:
+                - text: "[^note]This is a named footnote with more details."
+                - link "↩" [ref=e313] [cursor=pointer]:
+                  - /url: "#"
+      - generic [ref=e20]:
+        - generic [ref=e21]: 诊断结果
+        - generic [ref=e22]: 点击“运行自检”开始检测。
+  - region "Notifications alt+T"
+  - alert [ref=e199]

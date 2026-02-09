@@ -55,7 +55,7 @@ function renderLatex(latex: string): string {
 }
 
 export function SymbolSelector({
-  keyCode,
+  keyCode: _keyCode,
   keyLabel,
   symbols,
   highlightedIndex,
@@ -65,8 +65,8 @@ export function SymbolSelector({
   onAddSymbol,
   onRemoveSymbol,
   onToggleEditMode,
-  onClose,
-  onNavigate,
+  onClose: _onClose,
+  onNavigate: _onNavigate,
   isVisible,
 }: SymbolSelectorProps) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -76,7 +76,6 @@ export function SymbolSelector({
   const [newSymbolPreview, setNewSymbolPreview] = useState('');
 
   // Total items: symbols + add button + edit button
-  const totalItems = symbols.length + 2;
   const addButtonIndex = symbols.length;
   const editButtonIndex = symbols.length + 1;
 

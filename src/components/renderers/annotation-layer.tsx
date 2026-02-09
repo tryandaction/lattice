@@ -279,21 +279,21 @@ function TextAnnotationHighlight({
   );
 
   // Get text style from annotation content
-  const textStyle: TextAnnotationStyle = (annotation.content as any)?.textStyle || {
+  const textStyle: TextAnnotationStyle = annotation.content.textStyle || {
     textColor: '#000000',
     fontSize: 14,
   };
   
   // Get background color - check both new format and legacy format
-  const backgroundColor = (annotation.content as any)?.backgroundColor || 
+  const backgroundColor = annotation.content.backgroundColor || 
     (annotation.color !== 'yellow' && annotation.color !== 'red' && 
      annotation.color !== 'green' && annotation.color !== 'blue' 
       ? annotation.color 
       : 'transparent');
   
   // Get the display text
-  const displayText = (annotation.content as any)?.displayText || 
-    annotation.content?.text || '';
+  const displayText = annotation.content.displayText || 
+    annotation.content.text || '';
 
   const hasComment = annotation.comment.length > 0;
   

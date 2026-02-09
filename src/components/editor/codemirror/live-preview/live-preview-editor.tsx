@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState, useCallback, memo, forwardRef, useImperativeHandle } from 'react';
 import { Loader2 } from 'lucide-react';
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
-import { EditorState, Extension } from '@codemirror/state';
+import { EditorState, Extension, Transaction } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { bracketMatching } from '@codemirror/language';
@@ -18,7 +18,7 @@ import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 
 import { cursorContextExtension } from './cursor-context-plugin';
-import { decorationCoordinatorPlugin, parsedElementsField, clearDecorationCache } from './decoration-coordinator';
+import { decorationCoordinatorExtension, parsedElementsField, clearDecorationCache } from './decoration-coordinator';
 import { foldingExtension } from './folding-plugin';
 import { markdownKeymap } from './keyboard-shortcuts';
 import { autoFormattingExtension } from './auto-formatting';
@@ -32,6 +32,11 @@ import { parseHeadings, buildOutlineTree } from './markdown-parser';
 import { MathEditor } from '../../math-editor';
 import { registerCodeMirrorView, unregisterCodeMirrorView, setActiveInputTargetFromElement } from '@/lib/unified-input-handler';
 import { normalizeFormulaInput, wrapLatexForMarkdown } from '@/lib/formula-utils';
+
+type LivePreviewViewWithHandlers = EditorView & {
+  _outlineTimeout?: ReturnType<typeof setTimeout>;
+  _unifiedInputFocusHandler?: () => void;
+};
 
 export interface LivePreviewEditorProps {
   /** Initial content */
@@ -137,16 +142,23 @@ function buildExtensions(
     EditorView.updateListener.of((update) => {
       if (update.docChanged) {
         const content = update.state.doc.toString();
-        onChange(content);
+        const isExternalUpdate = update.transactions.some(
+          (tr) => tr.annotation(Transaction.userEvent) === 'external'
+        );
+
+        if (!isExternalUpdate) {
+          onChange(content);
+        }
 
         // Debounced outline update (300ms delay)
         if (onOutlineChange) {
           // Clear existing timeout
-          if ((update.view as any)._outlineTimeout) {
-            clearTimeout((update.view as any)._outlineTimeout);
+          const viewWithHandlers = update.view as LivePreviewViewWithHandlers;
+          if (viewWithHandlers._outlineTimeout) {
+            clearTimeout(viewWithHandlers._outlineTimeout);
           }
           // Set new timeout
-          (update.view as any)._outlineTimeout = setTimeout(() => {
+          viewWithHandlers._outlineTimeout = setTimeout(() => {
             const headings = parseHeadings(content);
             const outline = buildOutlineTree(headings);
             onOutlineChange(outline);
@@ -176,7 +188,7 @@ function buildExtensions(
       parsedElementsField,      // StateField for sharing parsed elements
       cursorContextExtension,
       // Unified decoration coordinator handles all rendering
-      decorationCoordinatorPlugin,
+      decorationCoordinatorExtension,
       markdownKeymap,
       autoFormattingExtension,
       closeBrackets(),
@@ -197,7 +209,7 @@ function buildExtensions(
       EditorState.readOnly.of(true),
       parsedElementsField,
       // Unified decoration coordinator handles all rendering
-      decorationCoordinatorPlugin
+      decorationCoordinatorExtension
     );
   }
   
@@ -334,7 +346,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         if (viewRef.current) {
           console.log('[EditorInit] Destroying existing view');
           const existingView = viewRef.current;
-          const existingHandler = (existingView as any)._unifiedInputFocusHandler as (() => void) | undefined;
+          const existingHandler = (existingView as LivePreviewViewWithHandlers)._unifiedInputFocusHandler;
           if (existingHandler) {
             existingView.dom.removeEventListener('focusin', existingHandler);
           }
@@ -387,7 +399,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         registerCodeMirrorView(view.dom, view);
         const focusHandler = () => setActiveInputTargetFromElement(view.dom);
         view.dom.addEventListener('focusin', focusHandler);
-        (view as any)._unifiedInputFocusHandler = focusHandler;
+        (view as LivePreviewViewWithHandlers)._unifiedInputFocusHandler = focusHandler;
 
         // CRITICAL: Ensure cursor is at position 0 after view creation
         // This prevents any browser-induced select-all behavior
@@ -437,7 +449,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
       if (viewRef.current) {
         console.log('[EditorInit] Cleanup: destroying view');
         const existingView = viewRef.current;
-        const existingHandler = (existingView as any)._unifiedInputFocusHandler as (() => void) | undefined;
+        const existingHandler = (existingView as LivePreviewViewWithHandlers)._unifiedInputFocusHandler;
         if (existingHandler) {
           existingView.dom.removeEventListener('focusin', existingHandler);
         }
@@ -446,7 +458,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         viewRef.current = null;
       }
     };
-  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, fileId, onImageUpload, useWikiImageStyle, highContrast]); // fileId triggers re-init on file switch, content is handled by separate useEffect
+  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, fileId, onImageUpload, useWikiImageStyle, highContrast, applyEditorState]); // fileId triggers re-init on file switch, content is handled by separate useEffect
 
   // Update content when it changes externally (but fileId change triggers re-init above)
   useEffect(() => {
@@ -466,6 +478,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           to: currentContent.length,
           insert: content,
         },
+        annotations: Transaction.userEvent.of('external'),
         scrollIntoView: false,
       });
       

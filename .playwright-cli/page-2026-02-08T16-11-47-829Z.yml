@@ -1,0 +1,150 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e38]:
+          - generic [ref=e39]:
+            - generic [ref=e40]: Explorer
+            - button "Collapse sidebar (Ctrl+B)" [ref=e42] [cursor=pointer]:
+              - img [ref=e43]
+          - generic [ref=e47]:
+            - button "Open Local Folder Select a research folder to begin" [ref=e48] [cursor=pointer]:
+              - img [ref=e49]
+              - generic [ref=e51]:
+                - paragraph [ref=e52]: Open Local Folder
+                - paragraph [ref=e53]: Select a research folder to begin
+            - paragraph [ref=e55]: "Supported: PDF, MD, TXT, PY, IPYNB, PPT, PNG, JPG"
+        - generic [ref=e6]:
+          - button "Settings" [ref=e7] [cursor=pointer]:
+            - img [ref=e8]
+            - generic [ref=e11]: Settings
+          - button "Open command center" [ref=e12] [cursor=pointer]:
+            - img [ref=e13]
+          - button "Open plugin panels" [ref=e15] [cursor=pointer]:
+            - img [ref=e16]
+          - button "Open AI context preview" [ref=e18] [cursor=pointer]:
+            - img [ref=e19]
+          - button "Help" [ref=e22] [cursor=pointer]:
+            - img [ref=e23]
+      - img [ref=e28]
+      - generic [ref=e57]:
+        - heading "Lattice 格致" [level=1] [ref=e58]
+        - paragraph [ref=e59]: The Local-First, AI-Native Scientific Workbench
+        - generic [ref=e60]:
+          - generic [ref=e61]:
+            - img [ref=e62]
+            - generic [ref=e65]: PDF Viewer
+            - generic [ref=e66]: Ready
+          - generic [ref=e67]:
+            - img [ref=e68]
+            - generic [ref=e71]: Code Reader
+            - generic [ref=e72]: Ready
+          - generic [ref=e73]:
+            - img [ref=e74]
+            - generic [ref=e78]: Image Viewer
+            - generic [ref=e79]: Ready
+          - generic [ref=e80]:
+            - img [ref=e81]
+            - generic [ref=e83]: AI Assistant
+            - generic [ref=e84]: Coming Soon
+        - paragraph [ref=e85]: Open a local folder from the sidebar and click a file to view it.
+    - generic [ref=e159]:
+      - generic [ref=e160]:
+        - heading "Settings" [level=2] [ref=e161]
+        - button "Close" [ref=e162] [cursor=pointer]:
+          - img [ref=e163]
+      - generic [ref=e166]:
+        - generic [ref=e167]:
+          - button "General" [ref=e168] [cursor=pointer]:
+            - img [ref=e169]
+            - text: General
+          - button "Appearance" [ref=e172] [cursor=pointer]:
+            - img [ref=e173]
+            - text: Appearance
+          - button "Files" [ref=e179] [cursor=pointer]:
+            - img [ref=e180]
+            - text: Files
+          - button "Extensions" [ref=e182] [cursor=pointer]:
+            - img [ref=e183]
+            - text: Extensions
+          - button "AI" [ref=e185] [cursor=pointer]:
+            - img [ref=e186]
+            - text: AI
+          - button "Keyboard Shortcuts" [ref=e189] [cursor=pointer]:
+            - img [ref=e190]
+            - text: Keyboard Shortcuts
+          - button "About" [ref=e192] [cursor=pointer]:
+            - img [ref=e193]
+            - text: About
+        - generic [ref=e216]:
+          - generic [ref=e217]:
+            - generic [ref=e218]: Available plugins
+            - generic [ref=e219]:
+              - button "Check updates" [ref=e220] [cursor=pointer]
+              - button "Install plugin" [ref=e221] [cursor=pointer]
+              - button "Install from folder" [ref=e222] [cursor=pointer]
+          - textbox "Search plugins (name or ID)" [ref=e224]
+          - generic [ref=e225]:
+            - generic [ref=e227]: Enable plugin system
+            - checkbox [checked] [active] [ref=e228]
+          - generic [ref=e229]:
+            - generic [ref=e230]: Network allowlist
+            - paragraph [ref=e231]: Allow plugins to access only the domains below (empty means no restriction)
+            - generic [ref=e232]:
+              - textbox "example.com or *.example.com" [ref=e233]
+              - button "Add" [ref=e234] [cursor=pointer]
+            - generic [ref=e236]: No allowlist rules yet
+          - generic [ref=e238]:
+            - generic [ref=e239]:
+              - generic [ref=e240]:
+                - 'checkbox "Hello Plugin Inactive Built-in Baseline example plugin for command registration. v0.1.0 · Lattice Plugin ID: core.hello Permissions: ui:commands Trust the plugin before enabling" [disabled] [ref=e286]'
+                - generic [ref=e242] [cursor=pointer]:
+                  - generic [ref=e243]:
+                    - generic [ref=e244]: Hello Plugin
+                    - generic [ref=e245]: Inactive
+                    - generic [ref=e246]: Built-in
+                  - generic [ref=e247]: Baseline example plugin for command registration.
+                  - generic [ref=e248]: v0.1.0 · Lattice
+                  - generic [ref=e249]: "Plugin ID: core.hello"
+                  - generic [ref=e250]: "Permissions: ui:commands"
+                  - generic [ref=e287]: Trust the plugin before enabling
+              - generic [ref=e251]:
+                - checkbox "Trust" [ref=e252]
+                - text: Trust
+            - generic [ref=e253]:
+              - generic [ref=e254]:
+                - 'checkbox "Panel Demo Inactive Built-in Demonstrates plugin panels with schema rendering. v0.1.0 · Lattice Plugin ID: core.panel-demo Permissions: ui:commands, ui:panels Trust the plugin before enabling" [disabled] [ref=e288]'
+                - generic [ref=e256] [cursor=pointer]:
+                  - generic [ref=e257]:
+                    - generic [ref=e258]: Panel Demo
+                    - generic [ref=e259]: Inactive
+                    - generic [ref=e260]: Built-in
+                  - generic [ref=e261]: Demonstrates plugin panels with schema rendering.
+                  - generic [ref=e262]: v0.1.0 · Lattice
+                  - generic [ref=e263]: "Plugin ID: core.panel-demo"
+                  - generic [ref=e264]: "Permissions: ui:commands, ui:panels"
+                  - generic [ref=e289]: Trust the plugin before enabling
+              - generic [ref=e265]:
+                - checkbox "Trust" [ref=e266]
+                - text: Trust
+          - generic [ref=e267]:
+            - generic [ref=e268]:
+              - generic [ref=e269]: Plugin audit log
+              - button "Clear log" [ref=e270] [cursor=pointer]
+            - paragraph [ref=e271]: Tracks key plugin events and errors for troubleshooting
+            - generic [ref=e273]:
+              - generic [ref=e274]:
+                - generic [ref=e275]:
+                  - generic [ref=e276]: system
+                  - generic [ref=e277]: info
+                - generic [ref=e278]: 12:09:12 AM
+              - generic [ref=e279]: Plugin network allowlist updated
+              - generic [ref=e280]: "{\"count\":0}"
+          - generic [ref=e281]:
+            - generic [ref=e282]:
+              - generic [ref=e283]: Plugin commands
+              - button "Refresh" [ref=e284] [cursor=pointer]
+            - generic [ref=e285]: No commands registered
+  - status [ref=e36]
+  - region "Notifications alt+T"
+  - alert [ref=e37]

@@ -106,6 +106,7 @@ function ImageOutput({ src }: { src: string }) {
   
   return (
     <div className="rounded-md overflow-hidden bg-white dark:bg-gray-900 p-2">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img 
         src={src} 
         alt="Plot output" 

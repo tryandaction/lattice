@@ -1,0 +1,23 @@
+{
+  "id": "obsidian.compat.extended",
+  "name": "Obsidian Compat Extended",
+  "version": "1.0.0",
+  "description": "Demo plugin for Obsidian compat create/rename/delete + active file events",
+  "author": "Lattice",
+  "permissions": ["file:read", "file:write", "ui:commands", "ui:panels"],
+  "main": "main.js",
+  "ui": {
+    "panels": [
+      {
+        "id": "obsidian.compat.extended.panel",
+        "title": "Obsidian Compat Extended",
+        "schema": {
+          "type": "markdown",
+          "props": {
+            "content": "# Obsidian Compat Extended\nCommands:\n- Create Demo File\n- Rename Demo File\n- Delete Demo File\n- Watch Active File (logs)"
+          }
+        }
+      }
+    ]
+  }
+}

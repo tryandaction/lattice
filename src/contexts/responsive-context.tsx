@@ -31,7 +31,6 @@ interface ResponsiveProviderProps {
 export function ResponsiveProvider({ children }: ResponsiveProviderProps) {
   // Initialize with SSR-safe default state
   const [state, setState] = useState<ResponsiveState>(() => getResponsiveState());
-  const [isHydrated, setIsHydrated] = useState(false);
 
   // Update state from window dimensions
   const updateState = useCallback(() => {
@@ -42,7 +41,6 @@ export function ResponsiveProvider({ children }: ResponsiveProviderProps) {
   useEffect(() => {
     // Update state after hydration to get accurate client values
     updateState();
-    setIsHydrated(true);
   }, [updateState]);
 
   // Handle window resize with debouncing

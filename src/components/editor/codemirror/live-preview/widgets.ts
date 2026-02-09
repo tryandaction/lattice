@@ -34,10 +34,39 @@ import { loadKaTeX } from './katex-loader';
 import { getKaTeXOptions } from './katex-config';
 import { wrapLatexForMarkdown } from '@/lib/formula-utils';
 
+type KaTeXModule = typeof import('katex').default;
+type HighlightModule = typeof import('highlight.js').default;
+
 type BlockContext = {
   blockquoteDepth?: number;
   listIndent?: number;
 };
+
+const DOUBLE_CLICK_DELAY = 260;
+
+function isExternalUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith('//')) return true;
+  return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed);
+}
+
+function decodeLinkTarget(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function dispatchWikiLinkClick(element: HTMLElement, target: string): void {
+  element.dispatchEvent(
+    new CustomEvent('wiki-link-click', {
+      detail: { target },
+      bubbles: true,
+    })
+  );
+}
 
 function applyBlockContext(container: HTMLElement, context?: BlockContext) {
   if (!context) return;
@@ -60,7 +89,7 @@ function applyBlockContext(container: HTMLElement, context?: BlockContext) {
 // KaTeX动态加载 (使用共享加载器)
 // ============================================================================
 
-let katex: any = null;
+let katex: KaTeXModule | null = null;
 
 // 预加载KaTeX
 if (typeof window !== 'undefined') {
@@ -121,9 +150,6 @@ export class FormattedTextWidget extends WidgetType {
     }
 
     // 处理点击 - 精确光标定位 + 内嵌链接行为
-    let lastClickTime = 0;
-    const DOUBLE_CLICK_THRESHOLD = 300;
-
     span.addEventListener('mousedown', (e) => {
       const target = e.target as HTMLElement | null;
       if (target && target.tagName === 'A') {
@@ -133,49 +159,68 @@ export class FormattedTextWidget extends WidgetType {
           e.preventDefault();
           e.stopPropagation();
 
-          const now = Date.now();
-          const isDoubleClick = now - lastClickTime < DOUBLE_CLICK_THRESHOLD;
-          lastClickTime = now;
+          const rawTarget = isWikiLink ? target.dataset.target : target.getAttribute('href');
+          const linkTarget = rawTarget ? decodeLinkTarget(rawTarget) : '';
+          if (!linkTarget) return;
 
-          if (e.ctrlKey || e.metaKey || isDoubleClick) {
-            if (isWikiLink) {
-              const linkTarget = target.dataset.target;
-              if (linkTarget) {
-                span.dispatchEvent(
-                  new CustomEvent('wiki-link-click', {
-                    detail: { target: linkTarget },
-                    bubbles: true,
-                  })
-                );
-              }
+          if (e.button !== 0) return;
+
+          if ((span as unknown as { _linkClickTimer?: number })._linkClickTimer) {
+            window.clearTimeout((span as unknown as { _linkClickTimer?: number })._linkClickTimer);
+            (span as unknown as { _linkClickTimer?: number })._linkClickTimer = undefined;
+            handleWidgetClick(view, span, e, this.contentFrom, this.contentTo, (visibleOffset, widget) => {
+              const visibleText = widget.textContent ?? '';
+              return this.mapVisibleOffsetToSourceOffset(visibleText, visibleOffset);
+            });
+            return;
+          }
+
+          if (e.ctrlKey || e.metaKey) {
+            if (isWikiLink || !isExternalUrl(linkTarget)) {
+              dispatchWikiLinkClick(span, linkTarget);
             } else {
-              const href = target.getAttribute('href');
-              if (href) {
-                window.open(href, '_blank', 'noopener,noreferrer');
-              }
+              window.open(linkTarget, '_blank', 'noopener,noreferrer');
             }
             return;
           }
+
+          (span as unknown as { _linkClickTimer?: number })._linkClickTimer = window.setTimeout(() => {
+            (span as unknown as { _linkClickTimer?: number })._linkClickTimer = undefined;
+            if (isWikiLink || !isExternalUrl(linkTarget)) {
+              dispatchWikiLinkClick(span, linkTarget);
+            } else {
+              window.open(linkTarget, '_blank', 'noopener,noreferrer');
+            }
+          }, DOUBLE_CLICK_DELAY);
+
+          return;
         }
       }
 
-      handleWidgetClick(view, span, e, this.contentFrom, this.contentTo);
+      handleWidgetClick(view, span, e, this.contentFrom, this.contentTo, (visibleOffset, widget) => {
+        const visibleText = widget.textContent ?? '';
+        return this.mapVisibleOffsetToSourceOffset(visibleText, visibleOffset);
+      });
     });
 
     return span;
   }
 
-  coordsAt(dom: HTMLElement, pos: number, side: number) {
+  coordsAt(dom: HTMLElement, pos: number, _side: number) {
     // Enable precise cursor positioning within the widget
-    const textNode = this.findTextNode(dom);
-    if (!textNode) return null;
+    const safeOffset = Math.max(
+      0,
+      Math.min(pos - this.contentFrom, this.content.length)
+    );
+    const visibleText = dom.textContent ?? '';
+    const visibleOffset = this.mapSourceOffsetToVisibleOffset(visibleText, safeOffset);
+    const target = this.findTextNodeAtOffset(dom, visibleOffset);
+    if (!target) return null;
 
     const range = document.createRange();
-    const offset = Math.min(pos - this.contentFrom, this.content.length);
-
     try {
-      range.setStart(textNode, Math.max(0, offset));
-      range.setEnd(textNode, Math.max(0, offset));
+      range.setStart(target.node, target.offset);
+      range.setEnd(target.node, target.offset);
       const rect = range.getBoundingClientRect();
       return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
     } catch {
@@ -183,17 +228,58 @@ export class FormattedTextWidget extends WidgetType {
     }
   }
 
-  private findTextNode(element: HTMLElement): Text | null {
-    for (let child of element.childNodes) {
-      if (child.nodeType === Node.TEXT_NODE) {
-        return child as Text;
+  private findTextNodeAtOffset(
+    element: HTMLElement,
+    offset: number
+  ): { node: Text; offset: number } | null {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let current = walker.nextNode() as Text | null;
+    let remaining = offset;
+    let lastText: Text | null = null;
+
+    while (current) {
+      const length = current.nodeValue?.length ?? 0;
+      lastText = current;
+      if (remaining <= length) {
+        return { node: current, offset: remaining };
       }
-      if (child.nodeType === Node.ELEMENT_NODE) {
-        const found = this.findTextNode(child as HTMLElement);
-        if (found) return found;
-      }
+      remaining -= length;
+      current = walker.nextNode() as Text | null;
     }
+
+    if (lastText) {
+      return { node: lastText, offset: lastText.nodeValue?.length ?? 0 };
+    }
+
     return null;
+  }
+
+  private mapVisibleOffsetToSourceOffset(visibleText: string, visibleOffset: number): number {
+    if (!visibleText) return 0;
+    const maxVisible = Math.min(visibleOffset, visibleText.length);
+    let sourceIndex = 0;
+    let visibleIndex = 0;
+    while (sourceIndex < this.content.length && visibleIndex < maxVisible) {
+      if (this.content[sourceIndex] === visibleText[visibleIndex]) {
+        visibleIndex += 1;
+      }
+      sourceIndex += 1;
+    }
+    return Math.min(sourceIndex, this.content.length);
+  }
+
+  private mapSourceOffsetToVisibleOffset(visibleText: string, sourceOffset: number): number {
+    if (!visibleText) return 0;
+    const maxSource = Math.min(sourceOffset, this.content.length);
+    let sourceIndex = 0;
+    let visibleIndex = 0;
+    while (sourceIndex < maxSource && visibleIndex < visibleText.length) {
+      if (this.content[sourceIndex] === visibleText[visibleIndex]) {
+        visibleIndex += 1;
+      }
+      sourceIndex += 1;
+    }
+    return visibleIndex;
   }
 
   private renderContentWithMath(container: HTMLElement, text: string) {
@@ -236,7 +322,7 @@ export class FormattedTextWidget extends WidgetType {
     });
   }
 
-  ignoreEvent(e: Event) {
+  ignoreEvent(_event: Event) {
     // Allow CodeMirror to handle cursor positioning
     return false;
   }
@@ -250,9 +336,9 @@ export class FormattedTextWidget extends WidgetType {
  * 链接Widget - 支持Markdown链接和Wiki链接
  *
  * 交互:
- * - 单击: 定位光标到链接文本
- * - Ctrl+Click: 在新标签页打开链接
- * - 双击: 打开链接（兼容性）
+ * - 单击: 打开链接
+ * - 双击: 进入编辑（定位光标）
+ * - Ctrl/Cmd+Click: 立即打开
  */
 export class LinkWidget extends WidgetType {
   constructor(
@@ -286,8 +372,8 @@ export class LinkWidget extends WidgetType {
     });
     link.href = this.isWikiLink ? '#' : this.url;
     link.title = this.isWikiLink
-      ? `${this.url} (Ctrl+Click or double-click to open)`
-      : `${this.url} (Ctrl+Click to open)`;
+      ? `${this.url} (Click to open, double-click to edit)`
+      : `${this.url} (Click to open, double-click to edit)`;
 
     // 存储位置
     link.dataset.contentFrom = String(this.contentFrom);
@@ -295,22 +381,14 @@ export class LinkWidget extends WidgetType {
     link.dataset.elementFrom = String(this.elementFrom);
     link.dataset.elementTo = String(this.elementTo);
 
-    // 双击检测
-    let lastClickTime = 0;
-    const DOUBLE_CLICK_THRESHOLD = 300;
-
     // 导航到链接
     const navigateToLink = () => {
-      if (this.isWikiLink) {
-        view.dom.dispatchEvent(
-          new CustomEvent('wiki-link-click', {
-            detail: { target: this.url },
-            bubbles: true,
-          })
-        );
-      } else {
-        window.open(this.url, '_blank', 'noopener,noreferrer');
+      const target = decodeLinkTarget(this.url);
+      if (this.isWikiLink || !isExternalUrl(target)) {
+        dispatchWikiLinkClick(view.dom, target);
+        return;
       }
+      window.open(target, '_blank', 'noopener,noreferrer');
     };
 
     // 定位光标
@@ -323,29 +401,31 @@ export class LinkWidget extends WidgetType {
       e.preventDefault();
       e.stopPropagation();
 
-      const now = Date.now();
-      const isDoubleClick = now - lastClickTime < DOUBLE_CLICK_THRESHOLD;
-      lastClickTime = now;
+      if (e.button !== 0) return;
 
-      if (e.ctrlKey || e.metaKey || isDoubleClick) {
-        navigateToLink();
-      } else {
+      if ((link as unknown as { _linkClickTimer?: number })._linkClickTimer) {
+        window.clearTimeout((link as unknown as { _linkClickTimer?: number })._linkClickTimer);
+        (link as unknown as { _linkClickTimer?: number })._linkClickTimer = undefined;
         positionCursor(e);
+        return;
       }
-    });
 
-    // 双击事件（兼容）
-    link.addEventListener('dblclick', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      navigateToLink();
+      if (e.ctrlKey || e.metaKey) {
+        navigateToLink();
+        return;
+      }
+
+      (link as unknown as { _linkClickTimer?: number })._linkClickTimer = window.setTimeout(() => {
+        (link as unknown as { _linkClickTimer?: number })._linkClickTimer = undefined;
+        navigateToLink();
+      }, DOUBLE_CLICK_DELAY);
     });
 
     return link;
   }
 
   ignoreEvent(e: Event) {
-    return e.type !== 'mousedown' && e.type !== 'dblclick';
+    return e.type !== 'mousedown';
   }
 }
 
@@ -381,7 +461,7 @@ export class AnnotationLinkWidget extends WidgetType {
     const link = document.createElement('a');
     link.className = 'cm-annotation-link cm-formatted-widget cm-syntax-transition';
     link.href = '#';
-    link.title = `批注: ${this.filePath}#${this.annotationId}`;
+    link.title = `批注: ${this.filePath}#${this.annotationId} (Click to open, double-click to edit)`;
 
     // 图标
     const icon = document.createElement('span');
@@ -407,9 +487,19 @@ export class AnnotationLinkWidget extends WidgetType {
 
     // 处理点击
     link.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.button !== 0) return;
+
+      if ((link as unknown as { _linkClickTimer?: number })._linkClickTimer) {
+        window.clearTimeout((link as unknown as { _linkClickTimer?: number })._linkClickTimer);
+        (link as unknown as { _linkClickTimer?: number })._linkClickTimer = undefined;
+        handleWidgetClick(view, link, e, this.contentFrom, this.contentTo);
+        return;
+      }
+
       if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        e.stopPropagation();
         view.dom.dispatchEvent(
           new CustomEvent('annotation-link-click', {
             detail: {
@@ -419,9 +509,21 @@ export class AnnotationLinkWidget extends WidgetType {
             bubbles: true,
           })
         );
-      } else {
-        handleWidgetClick(view, link, e, this.contentFrom, this.contentTo);
+        return;
       }
+
+      (link as unknown as { _linkClickTimer?: number })._linkClickTimer = window.setTimeout(() => {
+        (link as unknown as { _linkClickTimer?: number })._linkClickTimer = undefined;
+        view.dom.dispatchEvent(
+          new CustomEvent('annotation-link-click', {
+            detail: {
+              filePath: this.filePath,
+              annotationId: this.annotationId,
+            },
+            bubbles: true,
+          })
+        );
+      }, DOUBLE_CLICK_DELAY);
     });
 
     return link;
@@ -977,7 +1079,7 @@ export class DetailsWidget extends WidgetType {
 // ============================================================================
 
 // KaTeX for inline math in headings (使用共享加载器)
-let katexForHeading: any = null;
+let katexForHeading: KaTeXModule | null = null;
 loadKaTeX()
   .then((k) => {
     katexForHeading = k;
@@ -1002,7 +1104,7 @@ export class HeadingContentWidget extends WidgetType {
     return other.content === this.content && other.level === this.level;
   }
 
-  toDOM(view: EditorView) {
+  toDOM(_view: EditorView) {
     const span = document.createElement('span');
     span.className = `cm-heading-content cm-heading-${this.level}-content`;
     span.dataset.from = String(this.originalFrom);
@@ -1059,7 +1161,7 @@ export class HeadingContentWidget extends WidgetType {
     }
   }
 
-  ignoreEvent(e: Event) {
+  ignoreEvent(_event: Event) {
     // Don't intercept any events - let CodeMirror handle everything
     return false;
   }
@@ -1085,7 +1187,7 @@ export class BlockquoteContentWidget extends WidgetType {
     return other.content === this.content;
   }
 
-  toDOM(view: EditorView) {
+  toDOM(_view: EditorView) {
     const span = document.createElement('span');
     span.className = 'cm-blockquote-content';
     span.textContent = this.content;
@@ -1097,7 +1199,7 @@ export class BlockquoteContentWidget extends WidgetType {
     return span;
   }
 
-  ignoreEvent(e: Event) {
+  ignoreEvent(_event: Event) {
     // Don't intercept any events - let CodeMirror handle everything
     return false;
   }
@@ -1183,19 +1285,11 @@ export class HorizontalRuleWidget extends WidgetType {
   }
 
   toDOM(view: EditorView) {
-    // 容器确保全宽
     const container = document.createElement('div');
     container.className = 'cm-horizontal-rule-container';
-    container.style.width = '100%';
-    container.style.padding = '1em 0';
-    container.style.cursor = 'pointer';
 
     const hr = document.createElement('hr');
     hr.className = 'cm-horizontal-rule';
-    hr.style.border = 'none';
-    hr.style.borderTop = '2px solid var(--border, #e5e7eb)';
-    hr.style.margin = '0';
-    hr.style.width = '100%';
 
     container.appendChild(hr);
 
@@ -1396,16 +1490,25 @@ export class MathWidget extends WidgetType {
 // ============================================================================
 
 // Highlight.js动态加载
-let hljs: any = null;
-let hljsLoadPromise: Promise<any> | null = null;
+type HighlightLoaderModule = HighlightModule | { default?: HighlightModule };
 
-async function loadHighlightJS(): Promise<any> {
+let hljs: HighlightModule | null = null;
+let hljsLoadPromise: Promise<HighlightModule> | null = null;
+
+function resolveHighlightModule(module: HighlightLoaderModule): HighlightModule {
+  if ('default' in module && module.default) {
+    return module.default;
+  }
+  return module as HighlightModule;
+}
+
+async function loadHighlightJS(): Promise<HighlightModule> {
   if (hljs) return hljs;
   if (hljsLoadPromise) return hljsLoadPromise;
 
   hljsLoadPromise = import('highlight.js')
     .then((module) => {
-      hljs = module.default;
+      hljs = resolveHighlightModule(module as HighlightLoaderModule);
       return hljs;
     })
     .catch((err) => {
@@ -1451,7 +1554,7 @@ export class CodeBlockWidget extends WidgetType {
     );
   }
 
-  toDOM(view: EditorView) {
+  toDOM(_view: EditorView) {
     const container = document.createElement('div');
     container.className = 'cm-code-block-widget';
     container.dataset.from = String(this.from);
@@ -1519,17 +1622,18 @@ export class CodeBlockWidget extends WidgetType {
     code.textContent = this.code;
 
     // 延迟应用语法高亮（不阻塞主线程）
-    if (hljs && this.language) {
+    const highlight = hljs;
+    if (highlight && this.language) {
       // 使用 setTimeout 延迟渲染，让主线程先完成其他工作
       setTimeout(() => {
         try {
-          const result = hljs.highlight(this.code, { language: this.language });
+          const result = highlight.highlight(this.code, { language: this.language });
           code.innerHTML = result.value;
         } catch {
           // 语言不支持，保持纯文本
         }
       }, 0);
-    } else if (!hljs) {
+    } else if (!highlight) {
       // 等待加载后高亮
       loadHighlightJS()
         .then((h) => {
@@ -1554,7 +1658,7 @@ export class CodeBlockWidget extends WidgetType {
     return container;
   }
 
-  ignoreEvent(e: Event) {
+  ignoreEvent(_event: Event) {
     // Don't intercept events - let CodeMirror handle cursor positioning
     // (Copy button still works through normal event propagation)
     return false;
@@ -1690,7 +1794,7 @@ function parseInlineMarkdown(
   if (referenceDefs && referenceDefs.size > 0) {
     if (!options?.disableImages) {
       // 引用式图片: ![alt][label] / ![alt][]
-      result = result.replace(/!\[([^\]]*?)\]\s*\[([^\]]*)\]/g, (match, alt, label, offset, str) => {
+      result = result.replace(/!\[([^\]]*?)\]\s*\[([^\]]*)\]/g, (match, alt, label, _offset, _str) => {
         const resolvedLabel = label && String(label).trim().length > 0 ? label : alt;
         const def = resolveReferenceDefinition(resolvedLabel, referenceDefs);
         if (!def) return match;

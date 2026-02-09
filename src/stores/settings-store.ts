@@ -43,11 +43,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       
       if (saved) {
         // Merge with defaults to handle new settings
-        set({ 
-          settings: { ...DEFAULT_SETTINGS, ...saved },
+        const normalized = normalizeSettings(saved);
+        const merged = { ...DEFAULT_SETTINGS, ...normalized };
+        set({
+          settings: merged,
           isLoading: false,
           isInitialized: true,
         });
+        await storage.set(SETTINGS_STORAGE_KEY, merged);
       } else {
         // Detect system language for first launch
         const systemLang = detectSystemLanguage();
@@ -137,4 +140,29 @@ function detectSystemLanguage(): Locale {
     return 'zh-CN';
   }
   return 'en-US';
+}
+
+function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
+  const normalized: Partial<AppSettings> = {};
+  const stringOrNull = (value: unknown) => (typeof value === 'string' ? value : value === null ? null : undefined);
+  const stringArray = (value: unknown) =>
+    Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : undefined;
+
+  if (raw.language === 'zh-CN' || raw.language === 'en-US') normalized.language = raw.language;
+  if (raw.theme === 'light' || raw.theme === 'dark' || raw.theme === 'system') normalized.theme = raw.theme;
+  normalized.defaultFolder = stringOrNull(raw.defaultFolder);
+  normalized.lastOpenedFolder = stringOrNull(raw.lastOpenedFolder);
+  if (typeof raw.rememberWindowState === 'boolean') normalized.rememberWindowState = raw.rememberWindowState;
+  if (typeof raw.onboardingCompleted === 'boolean') normalized.onboardingCompleted = raw.onboardingCompleted;
+  if (raw.windowState && typeof raw.windowState === 'object') normalized.windowState = raw.windowState;
+  if (typeof raw.pluginsEnabled === 'boolean') normalized.pluginsEnabled = raw.pluginsEnabled;
+  normalized.enabledPlugins = stringArray(raw.enabledPlugins);
+  normalized.trustedPlugins = stringArray(raw.trustedPlugins);
+  normalized.pluginNetworkAllowlist = stringArray(raw.pluginNetworkAllowlist);
+  if (typeof raw.pluginPanelDockSize === 'number') normalized.pluginPanelDockSize = raw.pluginPanelDockSize;
+  if (typeof raw.pluginPanelDockOpen === 'boolean') normalized.pluginPanelDockOpen = raw.pluginPanelDockOpen;
+  normalized.pluginPanelLastActiveId = stringOrNull(raw.pluginPanelLastActiveId);
+  normalized.pluginPanelRecentIds = stringArray(raw.pluginPanelRecentIds);
+  if (typeof raw.aiEnabled === 'boolean') normalized.aiEnabled = raw.aiEnabled;
+  return normalized;
 }

@@ -1,0 +1,23 @@
+{
+  "id": "hello.demo",
+  "name": "Hello Demo",
+  "version": "1.0.0",
+  "description": "Demo plugin for Lattice (commands + panels)",
+  "author": "Lattice",
+  "permissions": ["ui:commands", "ui:panels"],
+  "main": "main.js",
+  "ui": {
+    "panels": [
+      {
+        "id": "hello.panel",
+        "title": "Hello Panel",
+        "schema": {
+          "type": "markdown",
+          "props": {
+            "content": "# Hello Panel\nThis is a demo panel from hello.demo."
+          }
+        }
+      }
+    ]
+  }
+}

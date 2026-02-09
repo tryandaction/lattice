@@ -21,7 +21,7 @@ const colors = {
   primaryLight: 'var(--primary-light, #dbeafe)',
   accent: 'var(--accent, #8b5cf6)',
   destructive: 'var(--destructive, #ef4444)',
-  border: 'var(--border, #e5e7eb)',
+  border: 'hsl(var(--border, 240 5.9% 90%))',
   selection: '#bfdbfe',
   cursor: '#374151',
   highlight: '#fef08a',
@@ -43,7 +43,7 @@ export const livePreviewTheme = EditorView.theme({
   // Content
   '.cm-content': {
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-    padding: '1rem 0',
+    padding: 'var(--cm-content-padding-y, 1rem) var(--cm-content-padding-x, 0px)',
     caretColor: colors.cursor,
   },
   
@@ -348,8 +348,9 @@ export const livePreviewTheme = EditorView.theme({
   
   '.cm-horizontal-rule-container': {
     display: 'block',
-    width: '100%',
-    padding: '1em 0',
+    width: 'calc(100% + var(--cm-content-padding-x-double, 0px))',
+    margin: '1em var(--cm-content-padding-x-neg, 0px)',
+    padding: '0',
     cursor: 'pointer',
   },
   
@@ -358,6 +359,9 @@ export const livePreviewTheme = EditorView.theme({
     borderTop: `2px solid ${colors.border}`,
     margin: '0',
     width: '100%',
+    height: '2px',
+    backgroundColor: colors.border,
+    opacity: 0.85,
   },
   
   // === Code Blocks ===

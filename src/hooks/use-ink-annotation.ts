@@ -5,7 +5,7 @@
  * Strokes within a time/distance threshold are merged into a single annotation.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 
 // ============================================================================
 // Types
@@ -176,10 +176,10 @@ function createMergedAnnotation(buffer: StrokeBuffer): MergedInkAnnotation {
 export function useInkAnnotation(options: UseInkAnnotationOptions): UseInkAnnotationReturn {
   const { onCreateAnnotation, mergeCriteria } = options;
   
-  const criteria: MergeCriteria = {
+  const criteria = useMemo<MergeCriteria>(() => ({
     ...DEFAULT_CRITERIA,
     ...mergeCriteria,
-  };
+  }), [mergeCriteria]);
   
   const [buffer, setBuffer] = useState<StrokeBuffer | null>(null);
   const finalizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);

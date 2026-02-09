@@ -1,0 +1,16 @@
+
+> lattice@0.3.0 dev
+> next dev
+
+▲ Next.js 16.1.1 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.1.101:3000
+
+✓ Starting...
+✓ Ready in 1651ms
+○ Compiling /diagnostics ...
+ GET /diagnostics 200 in 10.3s (compile: 9.6s, render: 733ms)
+✓ Finished writing to filesystem cache in 3.3min
+✓ Finished writing to filesystem cache in 11.8s
+ GET /diagnostics 500 in 6.1s (compile: 5.6s, render: 480ms)
+[?25h

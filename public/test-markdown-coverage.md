@@ -48,6 +48,14 @@ Details content line 2 with `code`.
 const a = 1; // code block should not parse **bold** or $math$
 ```
 
+## Horizontal Rules
+
+---
+
+- - -
+
+* * *
+
 $$
 \begin{equation}
 E=mc^2

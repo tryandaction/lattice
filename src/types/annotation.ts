@@ -101,7 +101,7 @@ export const ANNOTATION_TYPES: readonly AnnotationType[] = ['text', 'area', 'tex
 export function isAnnotationColor(value: unknown): value is AnnotationColor {
   // Accept standard colors or any hex color string
   if (typeof value !== 'string') return false;
-  if (ANNOTATION_COLORS.includes(value as any)) return true;
+  if ((ANNOTATION_COLORS as readonly string[]).includes(value)) return true;
   // Accept hex colors and 'transparent'
   return value === 'transparent' || /^#[0-9A-Fa-f]{6}$/.test(value);
 }

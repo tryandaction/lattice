@@ -1,0 +1,82 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e38]:
+        - generic [ref=e39]:
+          - generic [ref=e40]: Explorer
+          - button "Collapse sidebar (Ctrl+B)" [ref=e42] [cursor=pointer]:
+            - img [ref=e43]
+        - generic [ref=e47]:
+          - button "Open Local Folder Select a research folder to begin" [ref=e48] [cursor=pointer]:
+            - img [ref=e49]
+            - generic [ref=e51]:
+              - paragraph [ref=e52]: Open Local Folder
+              - paragraph [ref=e53]: Select a research folder to begin
+          - paragraph [ref=e55]: "Supported: PDF, MD, TXT, PY, IPYNB, PPT, PNG, JPG"
+      - generic [ref=e6]:
+        - button "设置" [ref=e7] [cursor=pointer]:
+          - img [ref=e8]
+          - generic [ref=e11]: 设置
+        - button "打开命令中心" [ref=e12] [cursor=pointer]:
+          - img [ref=e13]
+        - button "打开插件面板" [active] [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+        - button "打开 AI 上下文预览" [ref=e18] [cursor=pointer]:
+          - img [ref=e19]
+        - button "Help" [ref=e22] [cursor=pointer]:
+          - img [ref=e23]
+    - img [ref=e28]
+    - generic [ref=e57]:
+      - heading "Lattice 格致" [level=1] [ref=e58]
+      - paragraph [ref=e59]: The Local-First, AI-Native Scientific Workbench
+      - generic [ref=e60]:
+        - generic [ref=e61]:
+          - img [ref=e62]
+          - generic [ref=e65]: PDF Viewer
+          - generic [ref=e66]: Ready
+        - generic [ref=e67]:
+          - img [ref=e68]
+          - generic [ref=e71]: Code Reader
+          - generic [ref=e72]: Ready
+        - generic [ref=e73]:
+          - img [ref=e74]
+          - generic [ref=e78]: Image Viewer
+          - generic [ref=e79]: Ready
+        - generic [ref=e80]:
+          - img [ref=e81]
+          - generic [ref=e83]: AI Assistant
+          - generic [ref=e84]: Coming Soon
+      - paragraph [ref=e85]: Open a local folder from the sidebar and click a file to view it.
+    - img [ref=e88]
+    - generic [ref=e96]:
+      - generic [ref=e97]:
+        - generic [ref=e98]:
+          - img [ref=e99]
+          - heading "插件面板" [level=2] [ref=e101]
+        - button "关闭" [ref=e102] [cursor=pointer]:
+          - img [ref=e103]
+      - generic [ref=e106]:
+        - generic [ref=e107]:
+          - textbox "搜索面板" [ref=e109]
+          - generic [ref=e110]:
+            - generic [ref=e111]: 最近面板
+            - button "Panel Overview core.panel-demo.overview" [ref=e112] [cursor=pointer]:
+              - generic [ref=e113]: Panel Overview
+              - generic [ref=e114]: core.panel-demo.overview
+        - generic [ref=e116]:
+          - generic [ref=e117]:
+            - generic [ref=e118]: Panel Overview
+            - generic [ref=e119]: Rendered from manifest schema
+          - generic [ref=e120]:
+            - paragraph [ref=e121]:
+              - text: This is a
+              - strong [ref=e122]: plugin panel
+              - text: rendered by Lattice.
+            - list [ref=e123]:
+              - listitem [ref=e124]: Manifest-defined panel
+              - listitem [ref=e125]: Safe schema rendering
+              - listitem [ref=e126]: Action buttons via commands
+          - button "Say Hello" [ref=e128] [cursor=pointer]
+  - status [ref=e36]
+  - region "Notifications alt+T"
+  - alert [ref=e37]

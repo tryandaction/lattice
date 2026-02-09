@@ -100,7 +100,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
         inputRef.current.select();
       }
     }
-  }, [isRenaming]);
+  }, [isRenaming, renameValue]);
 
   const handleClick = () => {
     if (isRenaming) return;

@@ -6,6 +6,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { createSafeJSONStorage } from '@/lib/persist-storage';
 
 // ============================================================================
 // Types
@@ -132,6 +133,7 @@ export const useQuantumCustomStore = create<QuantumCustomState>()(
     }),
     {
       name: 'quantum-keyboard-custom',
+      storage: createSafeJSONStorage<QuantumCustomState>(),
     }
   )
 );

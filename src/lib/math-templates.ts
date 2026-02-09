@@ -9,6 +9,8 @@
  * - Templates use standard LaTeX syntax
  */
 
+import type { MathfieldElement } from "mathlive";
+
 export interface MathTemplate {
   /** LaTeX template with #? placeholders */
   latex: string;
@@ -374,7 +376,7 @@ export function searchTemplates(query: string): Array<{ key: string; template: M
  * Replaces #? placeholders with MathLive placeholders
  * and moves cursor to first placeholder.
  */
-export function insertTemplate(mathfield: any, template: string): void {
+export function insertTemplate(mathfield: MathfieldElement, template: string): void {
   // Convert #? to MathLive placeholder syntax
   const mathLiveTemplate = template.replace(/#\?/g, '\\placeholder{}');
 

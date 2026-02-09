@@ -1,6 +1,6 @@
 /**
  * Advanced Markdown Parser
- * 
+ *
  * A comprehensive markdown parser that handles:
  * - Headings (# to ######)
  * - Bold, italic, strikethrough, inline code
@@ -11,17 +11,13 @@
  * - Blockquotes (nested)
  * - Horizontal rules
  * - Links and images
- * 
+ *
  * Designed to handle complex scientific documents like Obsidian.
  */
 
-export interface ContentNode {
-  type: string;
-  attrs?: Record<string, any>;
-  content?: ContentNode[];
-  text?: string;
-  marks?: Array<{ type: string; attrs?: Record<string, any> }>;
-}
+import type { JSONContent } from "@tiptap/core";
+
+export type ContentNode = JSONContent;
 
 /**
  * Check if text looks like markdown

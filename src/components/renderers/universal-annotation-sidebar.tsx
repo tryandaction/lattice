@@ -14,7 +14,7 @@ import {
   MessageSquare, 
   FileText, 
   Square,
-  Image,
+  Image as ImageIcon,
   Code,
   Link,
   File
@@ -180,7 +180,7 @@ function TargetIcon({ target, className = "h-3 w-3" }: TargetIconProps) {
     case 'code_line':
       return <Code className={`${className} text-muted-foreground`} />;
     case 'image':
-      return <Image className={`${className} text-muted-foreground`} />;
+      return <ImageIcon className={`${className} text-muted-foreground`} />;
     case 'text_anchor':
       return <Link className={`${className} text-muted-foreground`} />;
     default:

@@ -6,7 +6,7 @@
  */
 
 import { EditorView } from '@codemirror/view';
-import { Extension, Compartment } from '@codemirror/state';
+import { Extension } from '@codemirror/state';
 
 /**
  * Screen reader announcement helper
@@ -93,8 +93,6 @@ export const editorAriaAttributes = EditorView.contentAttributes.of({
 /**
  * High contrast mode support
  */
-const highContrastCompartment = new Compartment();
-
 export function createHighContrastExtension(enabled: boolean): Extension {
   if (!enabled) return [];
   

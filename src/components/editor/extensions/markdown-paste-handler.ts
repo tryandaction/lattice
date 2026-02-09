@@ -37,7 +37,7 @@ export const MarkdownPasteHandler = Extension.create({
               
               // Insert all parsed nodes
               nodes.forEach((node) => {
-                editor.chain().focus().insertContent(node as any).run();
+                editor.chain().focus().insertContent(node).run();
               });
             } catch (error) {
               console.error("Failed to parse markdown:", error);

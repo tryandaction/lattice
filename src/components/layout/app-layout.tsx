@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   ResizablePanelGroup,
@@ -19,11 +19,26 @@ import { isTauri } from "@/lib/storage-adapter";
 import { setLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { TOUCH_TARGET_MIN } from "@/lib/responsive";
-import { syncPlugins } from "@/lib/plugins/runtime";
+import { syncPlugins, updatePluginNetworkAllowlist } from "@/lib/plugins/runtime";
 import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot } from "lucide-react";
+import { AiContextDialog } from "@/components/ui/ai-context-dialog";
+import { PluginCommandDialog } from "@/components/ui/plugin-command-dialog";
+import { PluginPanelDialog } from "@/components/ui/plugin-panel-dialog";
+import { PluginPanelDock } from "@/components/ui/plugin-panel-dock";
+import { SettingsDialog } from "@/components/settings/settings-dialog";
+import { DownloadAppDialog } from "@/components/ui/download-app-dialog";
+import { OnboardingWizard } from "@/components/onboarding/onboarding-wizard";
+import { ExportToastContainer } from "@/components/ui/export-toast";
+import { usePluginStore } from "@/stores/plugin-store";
 
-const DESKTOP_SIDEBAR_DEFAULT =20;
+const DESKTOP_SIDEBAR_DEFAULT = 20;
+const DESKTOP_PANEL_DEFAULT = 22;
+const DESKTOP_PANEL_MIN = 16;
+const DESKTOP_PANEL_MAX = 45;
 const TABLET_SIDEBAR_DEFAULT = 28;
+
+const clampPanelSize = (value: number) =>
+  Math.min(DESKTOP_PANEL_MAX, Math.max(DESKTOP_PANEL_MIN, value));
 
 const ExplorerSidebar = dynamic(
   () => import("@/components/explorer/explorer-sidebar").then((mod) => mod.ExplorerSidebar),
@@ -45,35 +60,7 @@ const MobileSidebarTrigger = dynamic(
   { ssr: false }
 );
 
-const DownloadAppDialog = dynamic(
-  () => import("@/components/ui/download-app-dialog").then((mod) => mod.DownloadAppDialog),
-  { ssr: false }
-);
-
-const AiContextDialog = dynamic(
-  () => import("@/components/ui/ai-context-dialog").then((mod) => mod.AiContextDialog),
-  { ssr: false }
-);
-
-const PluginCommandDialog = dynamic(
-  () => import("@/components/ui/plugin-command-dialog").then((mod) => mod.PluginCommandDialog),
-  { ssr: false }
-);
-
-const SettingsDialog = dynamic(
-  () => import("@/components/settings/settings-dialog").then((mod) => mod.SettingsDialog),
-  { ssr: false }
-);
-
-const OnboardingWizard = dynamic(
-  () => import("@/components/onboarding/onboarding-wizard").then((mod) => mod.OnboardingWizard),
-  { ssr: false }
-);
-
-const ExportToastContainer = dynamic(
-  () => import("@/components/ui/export-toast").then((mod) => mod.ExportToastContainer),
-  { ssr: false }
-);
+// Dialogs are kept as static imports to avoid runtime chunk-loading failures
 
 /**
  * Main application layout with responsive support
@@ -89,29 +76,35 @@ export function AppLayout() {
 }
 
 function AppLayoutContent() {
-  const { isMobile, isTablet, isDesktop, isLandscape } = useResponsive();
+  const { isMobile, isTablet, isLandscape } = useResponsive();
   const sidebarCollapsed = useWorkspaceStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
   const setSidebarCollapsed = useWorkspaceStore((state) => state.setSidebarCollapsed);
   const [showSettings, setShowSettings] = useState(false);
   const [showCommands, setShowCommands] = useState(false);
   const [showAiContext, setShowAiContext] = useState(false);
+  const [showPluginPanels, setShowPluginPanels] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [desktopSizes, setDesktopSizes] = useState(() => [
-    DESKTOP_SIDEBAR_DEFAULT,
-    100 - DESKTOP_SIDEBAR_DEFAULT,
-  ]);
+  const [desktopSidebarSize, setDesktopSidebarSize] = useState(DESKTOP_SIDEBAR_DEFAULT);
+  const [desktopPanelSize, setDesktopPanelSize] = useState(DESKTOP_PANEL_DEFAULT);
+  const [panelOpenInitialized, setPanelOpenInitialized] = useState(false);
   const [tabletSizes, setTabletSizes] = useState(() => [
     TABLET_SIDEBAR_DEFAULT,
     100 - TABLET_SIDEBAR_DEFAULT,
   ]);
+  const [panelSizeInitialized, setPanelSizeInitialized] = useState(false);
+  const panelSizePendingRef = useRef<number | null>(null);
+  const panelSizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadSettings = useSettingsStore((state) => state.loadSettings);
+  const updateSetting = useSettingsStore((state) => state.updateSetting);
   const settings = useSettingsStore((state) => state.settings);
   const isInitialized = useSettingsStore((state) => state.isInitialized);
+  const loadPlugins = usePluginStore((state) => state.loadPlugins);
   const { toggleTheme } = useTheme();
   const { t } = useI18n();
+  const isDesktopLayout = !isMobile && !isTablet;
 
   useAutoOpenFolder();
 
@@ -125,20 +118,60 @@ function AppLayoutContent() {
   }, [loadSettings]);
 
   useEffect(() => {
+    loadPlugins();
+  }, [loadPlugins]);
+
+  useEffect(() => {
     if (isInitialized) {
       setLocale(settings.language);
     }
   }, [isInitialized, settings.language]);
 
   useEffect(() => {
+    if (!isInitialized || panelSizeInitialized) return;
+    const initialSize =
+      typeof settings.pluginPanelDockSize === "number"
+        ? settings.pluginPanelDockSize
+        : DESKTOP_PANEL_DEFAULT;
+    setDesktopPanelSize(clampPanelSize(initialSize));
+    setPanelSizeInitialized(true);
+  }, [isInitialized, panelSizeInitialized, settings.pluginPanelDockSize]);
+
+  useEffect(() => {
+    if (!isInitialized || panelOpenInitialized) return;
+    if (!isDesktopLayout) {
+      setShowPluginPanels(false);
+      setPanelOpenInitialized(true);
+      return;
+    }
+    setShowPluginPanels(Boolean(settings.pluginPanelDockOpen));
+    setPanelOpenInitialized(true);
+  }, [isInitialized, panelOpenInitialized, settings.pluginPanelDockOpen, isDesktopLayout]);
+
+  useEffect(() => {
+    if (isDesktopLayout) return;
+    setShowPluginPanels(false);
+  }, [isDesktopLayout]);
+
+  useEffect(() => {
     if (!isInitialized) return;
-    const trusted = new Set(settings.trustedPlugins);
-    const enabled = settings.enabledPlugins.filter((id) => trusted.has(id));
+    const trustedList = Array.isArray(settings.trustedPlugins) ? settings.trustedPlugins : [];
+    const enabledList = Array.isArray(settings.enabledPlugins) ? settings.enabledPlugins : [];
+    const trusted = new Set(trustedList);
+    const enabled = enabledList.filter((id) => trusted.has(id));
     void syncPlugins({
       pluginsEnabled: settings.pluginsEnabled,
       enabledPluginIds: enabled,
     });
   }, [isInitialized, settings.pluginsEnabled, settings.enabledPlugins, settings.trustedPlugins]);
+
+  useEffect(() => {
+    if (!isInitialized) return;
+    const allowlist = Array.isArray(settings.pluginNetworkAllowlist)
+      ? settings.pluginNetworkAllowlist
+      : [];
+    updatePluginNetworkAllowlist(allowlist);
+  }, [isInitialized, settings.pluginNetworkAllowlist]);
 
   useEffect(() => {
     if (isMobile) {
@@ -147,6 +180,44 @@ function AppLayoutContent() {
   }, [isMobile, setSidebarCollapsed]);
 
   useUnsavedWarning();
+
+  const persistPanelSize = useCallback(
+    (size: number) => {
+      if (!isInitialized) return;
+      panelSizePendingRef.current = clampPanelSize(size);
+      if (panelSizeTimerRef.current) {
+        clearTimeout(panelSizeTimerRef.current);
+      }
+      panelSizeTimerRef.current = setTimeout(() => {
+        const next = panelSizePendingRef.current;
+        if (typeof next === "number") {
+          void updateSetting("pluginPanelDockSize", next);
+        }
+      }, 200);
+    },
+    [isInitialized, updateSetting]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (panelSizeTimerRef.current) {
+        clearTimeout(panelSizeTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isInitialized || !panelOpenInitialized || !isDesktopLayout) return;
+    if (settings.pluginPanelDockOpen === showPluginPanels) return;
+    void updateSetting("pluginPanelDockOpen", showPluginPanels);
+  }, [
+    isInitialized,
+    panelOpenInitialized,
+    isDesktopLayout,
+    settings.pluginPanelDockOpen,
+    showPluginPanels,
+    updateSetting,
+  ]);
 
   useEffect(() => {
     if (isMobile) return;
@@ -159,6 +230,10 @@ function AppLayoutContent() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setShowCommands(true);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        setShowPluginPanels((prev) => !prev);
       }
       if ((e.ctrlKey || e.metaKey) && e.key === ",") {
         e.preventDefault();
@@ -173,6 +248,19 @@ function AppLayoutContent() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isMobile, toggleSidebar, toggleTheme]);
+
+  const desktopGroupSizes = useMemo(() => {
+    if (sidebarCollapsed) {
+      return showPluginPanels
+        ? [100 - desktopPanelSize, desktopPanelSize]
+        : [100];
+    }
+    if (showPluginPanels) {
+      const main = Math.max(20, 100 - desktopSidebarSize - desktopPanelSize);
+      return [desktopSidebarSize, main, desktopPanelSize];
+    }
+    return [desktopSidebarSize, 100 - desktopSidebarSize];
+  }, [sidebarCollapsed, showPluginPanels, desktopSidebarSize, desktopPanelSize]);
 
   const SidebarContent = (
     <>
@@ -205,6 +293,18 @@ function AppLayoutContent() {
           title={t("commands.open")}
         >
           <Command className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
+        </button>
+        <button
+          onClick={() => setShowPluginPanels(true)}
+          className={cn(
+            "p-1.5 rounded-md",
+            "text-muted-foreground",
+            "hover:bg-muted hover:text-foreground transition-colors"
+          )}
+          style={(isMobile || isTablet) ? { minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN } : undefined}
+          title={t("panels.open")}
+        >
+          <PanelLeft className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         </button>
         <button
           onClick={() => setShowAiContext(true)}
@@ -252,17 +352,32 @@ function AppLayoutContent() {
             <Menu className="h-5 w-5" />
           </MobileSidebarTrigger>
           <h1 className="text-sm font-medium">Lattice 格致</h1>
-          <button
-            onClick={() => setShowSettings(true)}
-            className={cn(
-              "flex items-center justify-center rounded-md",
-              "text-muted-foreground hover:text-foreground",
-              "hover:bg-muted transition-colors"
-            )}
-            style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
-          >
-            <Settings className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowPluginPanels(true)}
+              className={cn(
+                "flex items-center justify-center rounded-md",
+                "text-muted-foreground hover:text-foreground",
+                "hover:bg-muted transition-colors"
+              )}
+              style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
+              title={t("panels.open")}
+            >
+              <PanelLeft className="h-5 w-5" />
+            </button>
+            <button
+              onClick={() => setShowSettings(true)}
+              className={cn(
+                "flex items-center justify-center rounded-md",
+                "text-muted-foreground hover:text-foreground",
+                "hover:bg-muted transition-colors"
+              )}
+              style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
+              title={t("settings.title")}
+            >
+              <Settings className="h-5 w-5" />
+            </button>
+          </div>
         </header>
         <main className="flex-1 overflow-hidden">
           <MainArea />
@@ -277,6 +392,8 @@ function AppLayoutContent() {
           setShowCommands={setShowCommands}
           showAiContext={showAiContext}
           setShowAiContext={setShowAiContext}
+          showPluginPanels={showPluginPanels}
+          setShowPluginPanels={setShowPluginPanels}
         />
       </div>
     );
@@ -344,6 +461,18 @@ function AppLayoutContent() {
                 </button>
                 <h1 className="text-sm font-medium flex-1">Lattice 格致</h1>
                 <button
+                  onClick={() => setShowPluginPanels(true)}
+                  className={cn(
+                    "flex items-center justify-center rounded-md",
+                    "text-muted-foreground hover:text-foreground",
+                    "hover:bg-muted transition-colors"
+                  )}
+                  style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
+                  title={t("panels.open")}
+                >
+                  <PanelLeft className="h-5 w-5" />
+                </button>
+                <button
                   onClick={() => setShowSettings(true)}
                   className={cn(
                     "flex items-center justify-center rounded-md",
@@ -373,6 +502,8 @@ function AppLayoutContent() {
           setShowCommands={setShowCommands}
           showAiContext={showAiContext}
           setShowAiContext={setShowAiContext}
+          showPluginPanels={showPluginPanels}
+          setShowPluginPanels={setShowPluginPanels}
         />
       </div>
     );
@@ -384,8 +515,27 @@ function AppLayoutContent() {
       <ResizablePanelGroup
         direction="horizontal"
         className="h-full"
-        sizes={sidebarCollapsed ? [100] : desktopSizes}
-        onSizesChange={!sidebarCollapsed ? setDesktopSizes : undefined}
+        sizes={desktopGroupSizes}
+        onSizesChange={(sizes) => {
+            if (sidebarCollapsed) {
+              if (showPluginPanels && sizes[1]) {
+                const next = clampPanelSize(sizes[1]);
+                setDesktopPanelSize(next);
+                persistPanelSize(next);
+              }
+              return;
+            }
+            if (showPluginPanels && sizes.length >= 3) {
+              setDesktopSidebarSize(sizes[0]);
+              const next = clampPanelSize(sizes[2]);
+              setDesktopPanelSize(next);
+              persistPanelSize(next);
+              return;
+            }
+          if (sizes.length >= 2) {
+            setDesktopSidebarSize(sizes[0]);
+          }
+        }}
       >
         {!sidebarCollapsed && (
           <>
@@ -406,6 +556,18 @@ function AppLayoutContent() {
         >
           <MainArea />
         </ResizablePanel>
+        {showPluginPanels && (
+          <>
+            <ResizableHandle withHandle index={sidebarCollapsed ? 0 : 1} />
+            <ResizablePanel
+              defaultSize={desktopPanelSize}
+              minSize={DESKTOP_PANEL_MIN}
+              maxSize={DESKTOP_PANEL_MAX}
+            >
+              <PluginPanelDock onClose={() => setShowPluginPanels(false)} />
+            </ResizablePanel>
+          </>
+        )}
       </ResizablePanelGroup>
       {sidebarCollapsed && (
         <div className={cn(
@@ -435,6 +597,17 @@ function AppLayoutContent() {
               title={t("commands.open")}
             >
               <Command className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setShowPluginPanels(true)}
+              className={cn(
+                "p-2 rounded-md",
+                "text-muted-foreground",
+                "hover:bg-muted hover:text-foreground transition-colors"
+              )}
+              title={t("panels.open")}
+            >
+              <PanelLeft className="h-4 w-4" />
             </button>
             <button
               onClick={() => setShowAiContext(true)}
@@ -468,6 +641,8 @@ function AppLayoutContent() {
         setShowCommands={setShowCommands}
         showAiContext={showAiContext}
         setShowAiContext={setShowAiContext}
+        showPluginPanels={isMobile ? showPluginPanels : false}
+        setShowPluginPanels={setShowPluginPanels}
       />
     </div>
   );
@@ -480,6 +655,8 @@ function Dialogs({
   setShowCommands,
   showAiContext,
   setShowAiContext,
+  showPluginPanels,
+  setShowPluginPanels,
 }: {
   showSettings: boolean;
   setShowSettings: (show: boolean) => void;
@@ -487,11 +664,14 @@ function Dialogs({
   setShowCommands: (show: boolean) => void;
   showAiContext: boolean;
   setShowAiContext: (show: boolean) => void;
+  showPluginPanels: boolean;
+  setShowPluginPanels: (show: boolean) => void;
 }) {
   return (
     <>
       {!isTauri() && <DownloadAppDialog />}
       <PluginCommandDialog isOpen={showCommands} onClose={() => setShowCommands(false)} />
+      <PluginPanelDialog isOpen={showPluginPanels} onClose={() => setShowPluginPanels(false)} />
       <AiContextDialog isOpen={showAiContext} onClose={() => setShowAiContext(false)} />
       <SettingsDialog isOpen={showSettings} onClose={() => setShowSettings(false)} />
       <OnboardingWizard />

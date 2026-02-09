@@ -8,7 +8,7 @@
  * Supports both KaTeX (inlineMath/blockMath) and MathLive (inlineMathLive/blockMathLive) nodes.
  */
 
-import { Extension, Editor } from "@tiptap/core";
+import { Extension, Editor, type JSONContent } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { detectLatexPatterns } from "@/lib/markdown-converter";
 
@@ -119,12 +119,7 @@ function looksLikeMarkdown(text: string): boolean {
   return markdownPatterns.some(pattern => pattern.test(text));
 }
 
-interface ParsedNode {
-  type: string;
-  attrs?: Record<string, any>;
-  content?: ParsedNode[] | string;
-  text?: string;
-}
+type ParsedNode = JSONContent;
 
 interface MathTypes {
   inline: string;
@@ -316,7 +311,7 @@ function parseInlineContent(text: string, mathTypes: MathTypes): ParsedNode[] {
         type: "text",
         text: matched.slice(2, -2),
         marks: [{ type: "bold" }],
-      } as any);
+      });
     }
     // Italic *...*
     else if (matched.startsWith("*") && matched.endsWith("*")) {
@@ -324,7 +319,7 @@ function parseInlineContent(text: string, mathTypes: MathTypes): ParsedNode[] {
         type: "text",
         text: matched.slice(1, -1),
         marks: [{ type: "italic" }],
-      } as any);
+      });
     }
     // Inline code `...`
     else if (matched.startsWith("`") && matched.endsWith("`")) {
@@ -332,7 +327,7 @@ function parseInlineContent(text: string, mathTypes: MathTypes): ParsedNode[] {
         type: "text",
         text: matched.slice(1, -1),
         marks: [{ type: "code" }],
-      } as any);
+      });
     }
     // Links [text](url)
     else if (matched.startsWith("[")) {
@@ -342,7 +337,7 @@ function parseInlineContent(text: string, mathTypes: MathTypes): ParsedNode[] {
           type: "text",
           text: linkMatch[1],
           marks: [{ type: "link", attrs: { href: linkMatch[2] } }],
-        } as any);
+        });
       }
     }
     
@@ -397,7 +392,7 @@ export const LatexPasteHandler = Extension.create({
               // Insert parsed content with error handling
               nodes.forEach((node) => {
                 try {
-                  editor.chain().focus().insertContent(node as any).run();
+                  editor.chain().focus().insertContent(node).run();
                 } catch (error) {
                   console.warn("[LatexPasteHandler] Failed to insert node:", node.type, error);
                 }

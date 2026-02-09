@@ -1,0 +1,18 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e6]:
+      - button "设置" [ref=e7] [cursor=pointer]:
+        - img [ref=e8]
+        - generic [ref=e11]: 设置
+      - button "打开命令中心" [ref=e12] [cursor=pointer]:
+        - img [ref=e13]
+      - button "打开插件面板" [ref=e15] [cursor=pointer]:
+        - img [ref=e16]
+      - button "打开 AI 上下文预览" [ref=e18] [cursor=pointer]:
+        - img [ref=e19]
+      - button "Help" [ref=e22] [cursor=pointer]:
+        - img [ref=e23]
+    - img [ref=e28]
+  - status [ref=e36]
+  - region "Notifications alt+T"
+  - alert [ref=e37]

@@ -36,6 +36,11 @@ export interface AppSettings {
   pluginsEnabled: boolean;
   enabledPlugins: string[];
   trustedPlugins: string[];
+  pluginNetworkAllowlist: string[];
+  pluginPanelDockSize: number;
+  pluginPanelDockOpen: boolean;
+  pluginPanelLastActiveId: string | null;
+  pluginPanelRecentIds: string[];
 
   // AI
   aiEnabled: boolean;
@@ -52,6 +57,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   pluginsEnabled: false,
   enabledPlugins: [],
   trustedPlugins: [],
+  pluginNetworkAllowlist: [],
+  pluginPanelDockSize: 22,
+  pluginPanelDockOpen: false,
+  pluginPanelLastActiveId: null,
+  pluginPanelRecentIds: [],
   aiEnabled: false,
 };
 

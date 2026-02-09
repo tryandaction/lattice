@@ -13,11 +13,6 @@ import type { Backlink, WikiLink } from './types';
 const WIKI_LINK_PATTERN = /\[\[([^\]|#]+)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/g;
 
 /**
- * Markdown link pattern: [text](url)
- */
-const MD_LINK_PATTERN = /\[([^\]]+)\]\(([^)]+)\)/g;
-
-/**
  * Extract wiki links from content
  */
 export function extractWikiLinks(content: string): WikiLink[] {

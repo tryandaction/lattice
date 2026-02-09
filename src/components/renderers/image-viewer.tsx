@@ -41,7 +41,7 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
   // Universal annotation navigation support
   useAnnotationNavigation({
     handlers: {
-      onImageNavigate: (x, y, width, height, annotationId) => {
+      onImageNavigate: (x, y, width, height, _annotationId) => {
         // Highlight the region and pan to center it
         setHighlightedRegion({ x, y, width, height });
         
@@ -347,6 +347,7 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
             transition: isPanning ? "none" : "transform 0.1s ease-out",
           }}
         >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             ref={imageRef}
             src={imageUrl}

@@ -57,10 +57,8 @@ export function ResizablePanelGroup({
   const minSizesRef = useRef<number[]>([]);
   const maxSizesRef = useRef<number[]>([]);
 
-  // Reset panel index on each render cycle start
-  useEffect(() => {
-    panelIndexRef.current = 0;
-  });
+  // Reset panel index for the current render pass
+  panelIndexRef.current = 0;
 
   useEffect(() => {
     if (sizes && sizes.length > 0) {
@@ -140,12 +138,31 @@ export function ResizablePanel({
   children,
 }: ResizablePanelProps) {
   const context = React.useContext(PanelContext);
-  const [index] = useState(() => context?.getPanelIndex() ?? 0);
+  const registerPanel = context?.registerPanel;
+  const getPanelIndex = context?.getPanelIndex;
+  const index = getPanelIndex ? getPanelIndex() : 0;
+  const registeredRef = useRef<{
+    index: number;
+    minSize: number;
+    maxSize: number;
+    defaultSize: number;
+  } | null>(null);
 
   useEffect(() => {
-    if (!context) return;
-    context.registerPanel(index, minSize, maxSize, defaultSize);
-  }, [context, index, minSize, maxSize, defaultSize]);
+    if (!registerPanel) return;
+    const prev = registeredRef.current;
+    if (
+      prev &&
+      prev.index === index &&
+      prev.minSize === minSize &&
+      prev.maxSize === maxSize &&
+      prev.defaultSize === defaultSize
+    ) {
+      return;
+    }
+    registerPanel(index, minSize, maxSize, defaultSize);
+    registeredRef.current = { index, minSize, maxSize, defaultSize };
+  }, [registerPanel, index, minSize, maxSize, defaultSize]);
 
   const size = context?.sizes[index] ?? defaultSize;
   const isHorizontal = context?.direction === "horizontal";
@@ -241,7 +258,7 @@ export function ResizableHandle({
       document.addEventListener("mousemove", handleMouseMove);
       document.addEventListener("mouseup", handleMouseUp);
     },
-    [context]
+    [context, index]
   );
 
   const isHorizontal = context?.direction === "horizontal";

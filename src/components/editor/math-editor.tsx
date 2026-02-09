@@ -17,7 +17,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MathfieldElement } from 'mathlive';
 import { MathSymbolPalette } from './math-symbol-palette';
-import { getTemplateByPrefix, insertTemplate, searchTemplates, type MathTemplate } from '@/lib/math-templates';
+import { getTemplateByPrefix, insertTemplate, type MathTemplate } from '@/lib/math-templates';
 import { copyToClipboard } from '@/lib/export-utils';
 import { formatFormulaForClipboard, normalizeFormulaInput } from '@/lib/formula-utils';
 import { setActiveInputTargetFromElement } from '@/lib/unified-input-handler';
@@ -64,6 +64,11 @@ export function MathEditor({
     key: string;
     template: MathTemplate;
   } | null>(null);
+  const templateSuggestionRef = useRef<typeof templateSuggestion>(null);
+
+  useEffect(() => {
+    templateSuggestionRef.current = templateSuggestion;
+  }, [templateSuggestion]);
 
   useEffect(() => {
     let mounted = true;
@@ -95,7 +100,7 @@ export function MathEditor({
           // Ctrl+Shift+M: Toggle symbol palette
           e.preventDefault();
           setShowSymbolPalette((prev) => !prev);
-        } else if (e.key === 'Tab' && templateSuggestion) {
+        } else if (e.key === 'Tab' && templateSuggestionRef.current) {
           // Tab: Insert template
           e.preventDefault();
 
@@ -112,7 +117,7 @@ export function MathEditor({
             mf.value = beforeSlash + afterPrefix;
 
             // Insert template
-            insertTemplate(mf, templateSuggestion.template.latex);
+            insertTemplate(mf, templateSuggestionRef.current.template.latex);
           }
 
           setTemplateSuggestion(null);

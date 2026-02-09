@@ -11,80 +11,12 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 import { isTauri } from '@/lib/storage-adapter';
-import type { TreeNode, DirectoryNode } from '@/types/file-system';
-import { isAllowedExtension, isIgnoredDirectory, getExtension } from '@/lib/constants';
-
-/**
- * Build file tree from directory handle
- */
-async function buildFileTree(handle: FileSystemDirectoryHandle): Promise<{ root: DirectoryNode }> {
-  async function readDirectoryRecursive(
-    dirHandle: FileSystemDirectoryHandle,
-    parentPath: string = ""
-  ): Promise<TreeNode[]> {
-    const children: TreeNode[] = [];
-    const currentPath = parentPath ? `${parentPath}/${dirHandle.name}` : dirHandle.name;
-
-    for await (const entry of dirHandle.values()) {
-      if (entry.kind === "directory") {
-        if (isIgnoredDirectory(entry.name)) continue;
-
-        const childHandle = entry as FileSystemDirectoryHandle;
-        const dirChildren = await readDirectoryRecursive(childHandle, currentPath);
-
-        if (dirChildren.length > 0) {
-          children.push({
-            name: entry.name,
-            kind: "directory",
-            handle: childHandle,
-            children: dirChildren,
-            path: `${currentPath}/${entry.name}`,
-            isExpanded: false,
-          });
-        }
-      } else {
-        const extension = getExtension(entry.name);
-        if (isAllowedExtension(extension)) {
-          children.push({
-            name: entry.name,
-            kind: "file",
-            handle: entry as FileSystemFileHandle,
-            extension,
-            path: `${currentPath}/${entry.name}`,
-          });
-        }
-      }
-    }
-
-    return children.sort((a, b) => {
-      if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-  }
-
-  const children = await readDirectoryRecursive(handle);
-  return {
-    root: {
-      name: handle.name,
-      kind: "directory",
-      handle,
-      children,
-      path: handle.name,
-      isExpanded: true,
-    },
-  };
-}
 
 export function useAutoOpenFolder() {
   const isInitialized = useSettingsStore((state) => state.isInitialized);
   const settings = useSettingsStore((state) => state.settings);
-  const setDefaultFolder = useSettingsStore((state) => state.setDefaultFolder);
   
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
-  const setRootHandle = useWorkspaceStore((state) => state.setRootHandle);
-  const setFileTree = useWorkspaceStore((state) => state.setFileTree);
-  const setLoading = useWorkspaceStore((state) => state.setLoading);
-  const setError = useWorkspaceStore((state) => state.setError);
   
   const hasAttemptedAutoOpen = useRef(false);
 

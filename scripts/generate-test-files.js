@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 // Generate test files for long file truncation bug testing
 const fs = require('fs');
 

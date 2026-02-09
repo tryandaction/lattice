@@ -6,7 +6,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import type { LatticeAnnotation, AnnotationColor, AnnotationType, TextNoteStyle } from '../types/annotation';
+import type { LatticeAnnotation, AnnotationColor, TextNoteStyle } from '../types/annotation';
 import { createAnnotation } from '../lib/annotation-utils';
 import {
   normalizePosition,

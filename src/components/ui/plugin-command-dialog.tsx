@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Command, RefreshCcw, X } from "lucide-react";
 import { useI18n } from "@/hooks/use-i18n";
 import { useSettingsStore } from "@/stores/settings-store";
-import { getRegisteredCommands } from "@/lib/plugins/runtime";
+import { getRegisteredCommands, subscribePluginRegistry } from "@/lib/plugins/runtime";
 import type { PluginCommand } from "@/lib/plugins/types";
 import { cn } from "@/lib/utils";
 
@@ -27,7 +27,10 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
 
   useEffect(() => {
     if (!isOpen) return;
-    setCommands(getRegisteredCommands());
+    const updateCommands = () => {
+      setCommands(getRegisteredCommands());
+    };
+    updateCommands();
     setActiveIndex(0);
     try {
       const raw = localStorage.getItem(RECENT_COMMANDS_KEY);
@@ -41,10 +44,12 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
       console.warn("Failed to read recent commands:", error);
     }
     const timer = setTimeout(() => inputRef.current?.focus(), 0);
-    return () => clearTimeout(timer);
+    const unsubscribe = subscribePluginRegistry(updateCommands);
+    return () => {
+      clearTimeout(timer);
+      unsubscribe();
+    };
   }, [isOpen, settings.pluginsEnabled, settings.enabledPlugins]);
-
-  if (!isOpen) return null;
 
   const handleRefresh = () => {
     setCommands(getRegisteredCommands());
@@ -74,6 +79,8 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
     }
     setActiveIndex((prev) => Math.min(prev, filteredCommands.length - 1));
   }, [filteredCommands.length]);
+
+  if (!isOpen) return null;
 
   return (
     <div
@@ -206,8 +213,6 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
                     "flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2",
                     index === activeIndex && "border-primary/60 bg-primary/5"
                   )}
-                  role="button"
-                  aria-selected={index === activeIndex}
                 >
                   <div>
                     <div className="text-sm font-medium text-foreground">{command.title}</div>

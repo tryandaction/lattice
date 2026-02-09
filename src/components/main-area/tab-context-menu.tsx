@@ -21,9 +21,9 @@ interface TabContextMenuProps {
  * Context menu for tab operations
  */
 export function TabContextMenu({
-  paneId,
-  tabIndex,
-  tab,
+  paneId: _paneId,
+  tabIndex: _tabIndex,
+  tab: _tab,
   position,
   onClose,
   onCloseTab,

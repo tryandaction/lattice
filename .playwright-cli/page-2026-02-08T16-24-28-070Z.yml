@@ -1,0 +1,11 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e39]:
+    - heading "应用加载失败" [level=1] [ref=e40]
+    - paragraph [ref=e41]: 检测到客户端运行时异常。请先尝试刷新或清空本地缓存。
+    - generic [ref=e42]:
+      - button "重新加载" [ref=e43] [cursor=pointer]
+      - button "清空本地缓存并重载" [ref=e44] [cursor=pointer]
+    - group [ref=e45]:
+      - generic "技术详情" [ref=e46] [cursor=pointer]
+  - region "Notifications alt+T"
+  - alert [ref=e37]

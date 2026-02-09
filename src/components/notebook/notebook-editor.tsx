@@ -146,8 +146,6 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
   const currentContentRef = useRef(content);
   // Track the last serialized content to avoid unnecessary updates
   const lastSerializedRef = useRef<string | null>(content);
-  // Track if initial load is complete
-  const hasInitializedRef = useRef(true); // Start as true since we have initial content
 
   // Debounced content change notification for better performance
   const debouncedNotifyChange = useMemo(
@@ -202,7 +200,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
       
       // Auto-hide success indicator
       setTimeout(() => setSaveStatus("idle"), 2000);
-    } catch (error) {
+    } catch (_error) {
       setSaveStatus("error");
       setTimeout(() => setSaveStatus("idle"), 3000);
     }

@@ -12,8 +12,11 @@ import { useWorkspaceStore, type PaneId } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { findPane } from "@/lib/layout-utils";
 import { getFileExtension, isBinaryFile, isEditableFile } from "@/lib/file-utils";
-import { fastSaveFile, debounce } from "@/lib/fast-save";
+import { fastSaveFile } from "@/lib/fast-save";
+import { emitVaultChange } from "@/lib/plugins/runtime";
 import type { TabState } from "@/types/layout";
+
+const EMPTY_TABS: TabState[] = [];
 
 export interface PaneWrapperProps {
   paneId: PaneId;
@@ -50,7 +53,7 @@ export function PaneWrapper({
 
   // Get pane data from layout
   const pane = findPane(layout.root, paneId);
-  const tabs = pane?.tabs ?? [];
+  const tabs = useMemo(() => pane?.tabs ?? EMPTY_TABS, [pane?.tabs]);
   const activeTabIndex = pane?.activeTabIndex ?? -1;
   const activeTab = activeTabIndex >= 0 && activeTabIndex < tabs.length 
     ? tabs[activeTabIndex] 
@@ -215,13 +218,16 @@ export function PaneWrapper({
 
     loadFile();
   }, [
+    activeTab,
     activeTab?.id,
     activeTab?.fileHandle,
+    activeTabIndex,
     paneId, // CRITICAL: Add paneId to detect pane changes
     content,
     error,
     getContentFromCache,
     setContentToCache,
+    setTabDirty,
   ]);
 
   // Handle tab click
@@ -269,6 +275,7 @@ export function PaneWrapper({
       const writable = await tab.fileHandle.createWritable();
       await writable.write(cached.content);
       await writable.close();
+      emitVaultChange(tab.filePath);
 
       // Close dialog and tab
       setSaveDialogOpen(false);
@@ -348,6 +355,7 @@ export function PaneWrapper({
     try {
       // Use optimized save function
       await fastSaveFile(activeTab.fileHandle, content);
+      emitVaultChange(activeTab.filePath);
       
       // Update cache - mark as saved with new original content
       markAsSaved(activeTab.id, content);
@@ -465,6 +473,7 @@ export function PaneWrapper({
             onContentChange={isEditable ? handleContentChange(activeTab.id) : undefined}
             onSave={isEditable ? handleSave : undefined}
             fileId={activeTab.id} // CRITICAL: Pass tab ID as fileId for proper re-mounting
+            filePath={activeTab.filePath}
           />
         ) : (
           <EmptyPaneState />

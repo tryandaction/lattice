@@ -1,0 +1,138 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - heading "Live Preview 自检面板" [level=1] [ref=e4]
+      - generic [ref=e5]:
+        - generic [ref=e6]: 文件：
+        - button "覆盖用例" [ref=e7] [cursor=pointer]
+        - button "高级渲染" [ref=e8] [cursor=pointer]
+        - button "公式渲染" [ref=e9] [cursor=pointer]
+        - button "光标定位" [ref=e10] [cursor=pointer]
+        - button "语法隐藏" [ref=e11] [cursor=pointer]
+        - button "嵌套格式" [ref=e12] [cursor=pointer]
+        - button "重复文本" [ref=e13] [cursor=pointer]
+        - button "超长文档" [ref=e14] [cursor=pointer]
+      - button "运行自检" [ref=e16] [cursor=pointer]
+    - main [ref=e17]:
+      - generic [ref=e967]:
+        - generic [ref=e968]:
+          - generic [ref=e970]: test-syntax-hiding.md
+          - generic [ref=e971]:
+            - button "Hide outline" [ref=e972] [cursor=pointer]:
+              - img [ref=e973]
+            - generic [ref=e977]:
+              - button "Live" [ref=e978] [cursor=pointer]:
+                - img [ref=e979]
+                - generic [ref=e981]: Live
+              - button "Source" [ref=e982] [cursor=pointer]:
+                - img [ref=e983]
+                - generic [ref=e987]: Source
+              - button "Read" [ref=e988] [cursor=pointer]:
+                - img [ref=e989]
+                - generic [ref=e992]: Read
+        - generic [ref=e993]:
+          - generic [ref=e995]:
+            - generic [ref=e996]: Outline
+            - navigation [ref=e997]:
+              - generic [ref=e998]:
+                - button "Syntax Marker Hiding Test" [ref=e999] [cursor=pointer]:
+                  - img [ref=e1000]
+                  - generic [ref=e1002]: Syntax Marker Hiding Test
+                - 'button "Test 1: Heading Markers (#)" [ref=e1005] [cursor=pointer]':
+                  - generic [ref=e1006]: "Test 1: Heading Markers (#)"
+              - generic [ref=e1007]:
+                - 'button "Heading 1 - Move cursor here to see # marker" [ref=e1008] [cursor=pointer]':
+                  - img [ref=e1009]
+                  - generic [ref=e1011]: "Heading 1 - Move cursor here to see # marker"
+                - generic [ref=e1012]:
+                  - generic [ref=e1013]:
+                    - 'button "Heading 2 - Move cursor here to see ## markers" [ref=e1014] [cursor=pointer]':
+                      - img [ref=e1015]
+                      - generic [ref=e1017]: "Heading 2 - Move cursor here to see ## markers"
+                    - generic [ref=e1019]:
+                      - 'button "Heading 3 - Move cursor here to see ### markers" [ref=e1020] [cursor=pointer]':
+                        - img [ref=e1021]
+                        - generic [ref=e1023]: "Heading 3 - Move cursor here to see ### markers"
+                      - generic [ref=e1025]:
+                        - 'button "Heading 4 - Move cursor here to see #### markers" [ref=e1026] [cursor=pointer]':
+                          - img [ref=e1027]
+                          - generic [ref=e1029]: "Heading 4 - Move cursor here to see #### markers"
+                        - generic [ref=e1031]:
+                          - 'button "Heading 5 - Move cursor here to see ##### markers" [ref=e1032] [cursor=pointer]':
+                            - img [ref=e1033]
+                            - generic [ref=e1035]: "Heading 5 - Move cursor here to see ##### markers"
+                          - 'button "Heading 6 - Move cursor here to see ###### markers" [ref=e1038] [cursor=pointer]':
+                            - generic [ref=e1039]: "Heading 6 - Move cursor here to see ###### markers"
+                  - 'button "Test 2: Bold Markers (**)" [ref=e1041] [cursor=pointer]':
+                    - generic [ref=e1042]: "Test 2: Bold Markers (**)"
+                  - 'button "Test 3: Italic Markers (*, _)" [ref=e1044] [cursor=pointer]':
+                    - generic [ref=e1045]: "Test 3: Italic Markers (*, _)"
+                  - 'button "Test 4: Code Markers (`)" [ref=e1047] [cursor=pointer]':
+                    - generic [ref=e1048]: "Test 4: Code Markers (`)"
+                  - 'button "Test 5: Link Markers ([]())" [ref=e1050] [cursor=pointer]':
+                    - generic [ref=e1051]: "Test 5: Link Markers ([]())"
+                  - 'button "Test 6: Blockquote Markers (>)" [ref=e1053] [cursor=pointer]':
+                    - generic [ref=e1054]: "Test 6: Blockquote Markers (>)"
+                  - 'button "Test 7: List Markers (-, *, +)" [ref=e1056] [cursor=pointer]':
+                    - generic [ref=e1057]: "Test 7: List Markers (-, *, +)"
+                  - 'button "Test 8: Strikethrough Markers (~~)" [ref=e1059] [cursor=pointer]':
+                    - generic [ref=e1060]: "Test 8: Strikethrough Markers (~~)"
+                  - 'button "Test 9: Highlight Markers (==)" [ref=e1062] [cursor=pointer]':
+                    - generic [ref=e1063]: "Test 9: Highlight Markers (==)"
+                  - 'button "Test 10: Math Markers ($)" [ref=e1065] [cursor=pointer]':
+                    - generic [ref=e1066]: "Test 10: Math Markers ($)"
+                  - 'button "Test 11: Nested Formatting" [ref=e1068] [cursor=pointer]':
+                    - generic [ref=e1069]: "Test 11: Nested Formatting"
+                  - 'button "Test 12: Complex Line" [ref=e1071] [cursor=pointer]':
+                    - generic [ref=e1072]: "Test 12: Complex Line"
+                  - button "How to Test" [ref=e1074] [cursor=pointer]:
+                    - generic [ref=e1075]: How to Test
+                  - button "Expected Behavior Summary" [ref=e1077] [cursor=pointer]:
+                    - generic [ref=e1078]: Expected Behavior Summary
+          - generic [ref=e1080]:
+            - generic [ref=e1081]: Markdown editor with live preview. Use Ctrl+E to switch modes, Ctrl+F to search, and standard text editing shortcuts.
+            - generic [ref=e1083]:
+              - generic [ref=e1085]:
+                - generic [ref=e1086] [cursor=pointer]: ▼
+                - generic [ref=e1087] [cursor=pointer]: ▼
+                - generic [ref=e1088] [cursor=pointer]: ▼
+                - generic [ref=e1089] [cursor=pointer]: ▼
+                - generic [ref=e1090] [cursor=pointer]: ▼
+                - generic [ref=e1091] [cursor=pointer]: ▼
+                - generic [ref=e1092] [cursor=pointer]: ▼
+                - generic [ref=e1093] [cursor=pointer]: ▼
+                - generic [ref=e1094] [cursor=pointer]: ▼
+                - generic [ref=e1095] [cursor=pointer]: ▼
+                - generic [ref=e1096] [cursor=pointer]: ▼
+              - textbox "Markdown editor" [ref=e1097]:
+                - generic [ref=e1098]: "# Syntax Marker Hiding Test"
+                - generic [ref=e1100]: This file tests that syntax markers hide when cursor is away and reveal when cursor is on the element.
+                - generic [ref=e1102]: "Test 1: Heading Markers (#)"
+                - generic [ref=e1104]: "Heading 1 - Move cursor here to see # marker"
+                - generic [ref=e1105]: "Heading 2 - Move cursor here to see ## markers"
+                - generic [ref=e1106]: "Heading 3 - Move cursor here to see ### markers"
+                - generic [ref=e1107]: "Heading 4 - Move cursor here to see #### markers"
+                - generic [ref=e1108]: "Heading 5 - Move cursor here to see ##### markers"
+                - generic [ref=e1109]: "Heading 6 - Move cursor here to see ###### markers"
+                - generic [ref=e1111]: "Expected : # markers should be hidden when cursor is away, visible when cursor is on the heading."
+                - generic [ref=e1113]: "Test 2: Bold Markers (**)"
+                - generic [ref=e1115]: This is bold text that should hide ** markers.
+                - generic [ref=e1117]: Multiple bold words in one line .
+                - generic [ref=e1119]: "Expected : ** markers should be hidden when cursor is away, visible when cursor is on the bold text."
+                - generic [ref=e1121]: "Test 3: Italic Markers (*, _)"
+                - generic [ref=e1123]: This is italic text with asterisks.
+                - generic [ref=e1125]: This is italic text with underscores.
+                - generic [ref=e1127]: Multiple italic words in one line .
+                - generic [ref=e1129]: "Expected : * and _ markers should be hidden when cursor is away, visible when cursor is on the italic text."
+                - generic [ref=e1131]: "Test 4: Code Markers (`)"
+                - generic [ref=e1133]: This is inline code with backticks.
+        - generic [ref=e1136]: Live Preview • Ctrl+E cycle modes
+      - generic [ref=e20]:
+        - generic [ref=e21]: 诊断结果
+        - generic [ref=e22]:
+          - generic [ref=e1137]: 通过：未发现异常
+          - generic [ref=e1138]:
+            - generic [ref=e1139]: 元素统计
+            - generic [ref=e1140]: "{ \"INLINE_BOLD\": 28, \"INLINE_ITALIC\": 7, \"INLINE_CODE\": 5, \"INLINE_LINK\": 4, \"BLOCKQUOTE\": 6, \"LIST_ITEM\": 66, \"INLINE_OTHER\": 6, \"MATH_INLINE\": 4, \"MATH_BLOCK\": 1 }"
+  - region "Notifications alt+T"
+  - alert [ref=e188]

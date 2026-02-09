@@ -1,0 +1,87 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e38]:
+          - generic [ref=e39]:
+            - generic [ref=e40]: Explorer
+            - button "Collapse sidebar (Ctrl+B)" [ref=e42] [cursor=pointer]:
+              - img [ref=e43]
+          - generic [ref=e47]:
+            - button "Open Local Folder Select a research folder to begin" [ref=e48] [cursor=pointer]:
+              - img [ref=e49]
+              - generic [ref=e51]:
+                - paragraph [ref=e52]: Open Local Folder
+                - paragraph [ref=e53]: Select a research folder to begin
+            - paragraph [ref=e55]: "Supported: PDF, MD, TXT, PY, IPYNB, PPT, PNG, JPG"
+        - generic [ref=e6]:
+          - button "设置" [ref=e7] [cursor=pointer]:
+            - img [ref=e8]
+            - generic [ref=e11]: 设置
+          - button "打开命令中心" [ref=e12] [cursor=pointer]:
+            - img [ref=e13]
+          - button "打开插件面板" [ref=e15] [cursor=pointer]:
+            - img [ref=e16]
+          - button "打开 AI 上下文预览" [ref=e18] [cursor=pointer]:
+            - img [ref=e19]
+          - button "Help" [ref=e22] [cursor=pointer]:
+            - img [ref=e23]
+      - img [ref=e28]
+      - generic [ref=e57]:
+        - heading "Lattice 格致" [level=1] [ref=e58]
+        - paragraph [ref=e59]: The Local-First, AI-Native Scientific Workbench
+        - generic [ref=e60]:
+          - generic [ref=e61]:
+            - img [ref=e62]
+            - generic [ref=e65]: PDF Viewer
+            - generic [ref=e66]: Ready
+          - generic [ref=e67]:
+            - img [ref=e68]
+            - generic [ref=e71]: Code Reader
+            - generic [ref=e72]: Ready
+          - generic [ref=e73]:
+            - img [ref=e74]
+            - generic [ref=e78]: Image Viewer
+            - generic [ref=e79]: Ready
+          - generic [ref=e80]:
+            - img [ref=e81]
+            - generic [ref=e83]: AI Assistant
+            - generic [ref=e84]: Coming Soon
+        - paragraph [ref=e85]: Open a local folder from the sidebar and click a file to view it.
+    - generic [ref=e87]:
+      - button "关闭" [ref=e88] [cursor=pointer]:
+        - img [ref=e89]
+      - generic [ref=e92]:
+        - generic [ref=e93]:
+          - img [ref=e95]
+          - generic [ref=e98]:
+            - heading "下载桌面应用" [level=2] [ref=e99]
+            - paragraph [ref=e100]: 获得更好的使用体验
+        - generic [ref=e101]:
+          - generic [ref=e102]:
+            - img [ref=e104]
+            - generic [ref=e106]:
+              - heading "启动更快，体积更小" [level=3] [ref=e107]
+              - paragraph [ref=e108]: 仅 6MB，启动速度提升 3 倍，内存占用降低 50%
+          - generic [ref=e109]:
+            - img [ref=e111]
+            - generic [ref=e113]:
+              - heading "记住工作目录" [level=3] [ref=e114]
+              - paragraph [ref=e115]: 自动记住上次打开的文件夹，设置默认工作目录
+          - generic [ref=e116]:
+            - img [ref=e118]
+            - generic [ref=e121]:
+              - heading "原生窗口体验" [level=3] [ref=e122]
+              - paragraph [ref=e123]: 无需浏览器，双击即用，更好的文件系统访问权限
+        - generic [ref=e124]:
+          - link "前往下载页面" [ref=e125] [cursor=pointer]:
+            - /url: https://github.com/tryandaction/lattice/releases/latest
+            - img [ref=e126]
+            - text: 前往下载页面
+          - button "继续使用网页版" [ref=e129] [cursor=pointer]
+        - generic [ref=e131] [cursor=pointer]:
+          - checkbox "不再显示此提示" [ref=e132]
+          - generic [ref=e133]: 不再显示此提示
+  - status [ref=e36]
+  - region "Notifications alt+T"
+  - alert [ref=e37]

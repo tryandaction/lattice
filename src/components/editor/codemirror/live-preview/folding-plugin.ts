@@ -6,14 +6,14 @@
  */
 
 import { foldGutter, foldService, foldEffect, unfoldEffect } from '@codemirror/language';
-import { EditorState, StateField, StateEffect, RangeSet } from '@codemirror/state';
-import { keymap, EditorView, Decoration, DecorationSet, ViewPlugin, ViewUpdate } from '@codemirror/view';
+import { StateField, StateEffect } from '@codemirror/state';
+import { keymap, EditorView } from '@codemirror/view';
 
 /**
  * Custom fold service for markdown
  * Folds headings to next heading of same or higher level
  */
-export const markdownFoldService = foldService.of((state, lineStart, lineEnd) => {
+export const markdownFoldService = foldService.of((state, lineStart, _lineEnd) => {
   const line = state.doc.lineAt(lineStart);
   const text = line.text;
   
@@ -184,7 +184,6 @@ function foldAtLine(view: EditorView, lineNumber: number): boolean {
  * Unfold at a specific line
  */
 function unfoldAtLine(view: EditorView, lineNumber: number): boolean {
-  const line = view.state.doc.line(lineNumber);
   const ranges = view.state.field(foldedRangesField, false) || [];
   
   // Find fold starting at this line

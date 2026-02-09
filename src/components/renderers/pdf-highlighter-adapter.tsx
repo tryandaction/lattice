@@ -1114,7 +1114,7 @@ function InkAnnotationOverlay({ annotation, scale }: InkAnnotationOverlayProps) 
         })}
       </svg>
     );
-  } catch (e) {
+  } catch {
     return null;
   }
 }
@@ -1299,7 +1299,7 @@ export function PDFHighlighterAdapter({
   
   const [textAnnotationPosition, setTextAnnotationPosition] = useState<{ x: number; y: number; page: number } | null>(null);
   const [editingTextAnnotation, setEditingTextAnnotation] = useState<{ annotation: AnnotationItem; position: { x: number; y: number } } | null>(null);
-  const [pdfPageDimensions, setPdfPageDimensions] = useState<Map<number, { width: number; height: number }>>(new Map());
+  const [pdfPageDimensions, _setPdfPageDimensions] = useState<Map<number, { width: number; height: number }>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -1684,7 +1684,7 @@ export function PDFHighlighterAdapter({
       } as PdfTarget,
       style: {
         color: bgColor,
-        type: 'text' as any, // Use 'text' type for text annotations
+        type: 'text', // Use 'text' type for text annotations
         textStyle: {
           textColor,
           fontSize,
@@ -1706,7 +1706,7 @@ export function PDFHighlighterAdapter({
       content: text,
       style: {
         color: bgColor,
-        type: 'text' as any,
+        type: 'text',
         textStyle: {
           textColor,
           fontSize,
@@ -2152,7 +2152,7 @@ export function PDFHighlighterAdapter({
                 position,
                 content,
                 hideTipAndSelection,
-                transformSelection
+                _transformSelection
               ) => {
                 // Check if this is an area selection (has image but no text)
                 const isAreaSelection = content.image && !content.text;

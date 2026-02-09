@@ -17,14 +17,11 @@ import {
   type StrokePoint,
   type Viewport,
   type BackgroundType,
-  type Stroke,
 } from '@/lib/handwriting';
-import { predictNextPoint, generatePredictedPoints } from '@/lib/handwriting/stroke-predictor';
+import { generatePredictedPoints } from '@/lib/handwriting/stroke-predictor';
 import {
   isStrokeInSelection,
   getSelectionBounds,
-  transformStrokes,
-  duplicateStrokes,
   type SelectionBounds,
   type LassoPath,
 } from '@/lib/handwriting/lasso-selection';
@@ -176,7 +173,6 @@ export function HandwritingCanvas({
   const [isLassoDrawing, setIsLassoDrawing] = useState(false);
   const [selectionBounds, setSelectionBounds] = useState<SelectionBounds | null>(null);
   const [isDraggingSelection, setIsDraggingSelection] = useState(false);
-  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const dragOriginRef = useRef<{ x: number; y: number } | null>(null);
   const dragBoundsRef = useRef<SelectionBounds | null>(null);
   const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -381,7 +377,6 @@ export function HandwritingCanvas({
           x >= selectionBounds.x && x <= selectionBounds.x + selectionBounds.width &&
           y >= selectionBounds.y && y <= selectionBounds.y + selectionBounds.height) {
         setIsDraggingSelection(true);
-        setDragStart({ x, y });
         dragOriginRef.current = { x, y };
         dragBoundsRef.current = selectionBounds;
         dragOffsetRef.current = { x: 0, y: 0 };
@@ -497,7 +492,6 @@ export function HandwritingCanvas({
     // 完成拖动
     else if (activeTool === 'select' && isDraggingSelection) {
       setIsDraggingSelection(false);
-      setDragStart(null);
       const dx = dragOffsetRef.current.x;
       const dy = dragOffsetRef.current.y;
 
@@ -535,7 +529,6 @@ export function HandwritingCanvas({
     setIsLassoDrawing(false);
     setLassoPath(null);
     setIsDraggingSelection(false);
-    setDragStart(null);
     dragOriginRef.current = null;
     dragBoundsRef.current = null;
     dragOffsetRef.current = { x: 0, y: 0 };

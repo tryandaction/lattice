@@ -6,7 +6,7 @@
  */
 
 import { EditorView, ViewPlugin, ViewUpdate } from '@codemirror/view';
-import { Extension, StateField, StateEffect } from '@codemirror/state';
+import { Extension } from '@codemirror/state';
 
 /**
  * Simple LRU cache for decoration results

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Type } from "lucide-react";
+import { Type } from "lucide-react";
 import type { AnnotationColor } from "../../types/annotation";
 import { ANNOTATION_COLORS } from "../../types/annotation";
 
@@ -35,6 +35,9 @@ const COLOR_OPTIONS = [
   { value: '#FF9800', label: '橙色', hex: '#FF9800' },
   { value: '#9E9E9E', label: '灰色', hex: '#9E9E9E' },
 ] as const;
+
+const isAnnotationColor = (value: string): value is AnnotationColor =>
+  (ANNOTATION_COLORS as readonly string[]).includes(value);
 
 const COLOR_CONFIG: Record<AnnotationColor, { bg: string; hover: string; label: string }> = {
   yellow: {
@@ -168,7 +171,7 @@ export function AnnotationColorPicker({
         {showExtended && (
           <div className="border-t border-border pt-2 mt-1">
             <div className="grid grid-cols-4 gap-1.5">
-              {COLOR_OPTIONS.filter(c => !ANNOTATION_COLORS.includes(c.value as any)).map((color) => (
+              {COLOR_OPTIONS.filter((c) => !isAnnotationColor(c.value)).map((color) => (
                 <button
                   key={color.value}
                   onClick={() => handleColorClick(color.value as AnnotationColor)}

@@ -10,6 +10,7 @@
  */
 
 import React, { useCallback, useEffect, useRef } from 'react';
+import { EditorView } from '@codemirror/view';
 import { KeyboardHUD } from './keyboard-hud';
 import { useDoubleTap } from '../../hooks/use-double-tap';
 import { useHUDStore } from '../../stores/hud-store';
@@ -22,6 +23,18 @@ export interface HUDProviderProps {
   children: React.ReactNode;
   enabled?: boolean;
 }
+
+type CodeMirrorContentElement = HTMLElement & {
+  cmView?: {
+    view?: {
+      state: { selection: { main: { from: number; to: number } } };
+      dispatch: (spec: {
+        changes: { from: number; to: number; insert: string };
+        selection: { anchor: number };
+      }) => void;
+    };
+  };
+};
 
 // ============================================================================
 // 全局状态
@@ -60,7 +73,7 @@ export function registerTiptapEditor(editor: Editor | null) {
     try {
       globalTiptapEditor.off('selectionUpdate', handleSelectionUpdate);
       globalTiptapEditor.view.dom.removeEventListener('mouseup', handleEditorMouseUp);
-    } catch (e) {}
+    } catch {}
   }
   
   globalTiptapEditor = editor;
@@ -118,6 +131,22 @@ function getAndClearSavedPosition(): number {
   const pos = positionSavedOnFirstTab ?? currentInsertPosition;
   positionSavedOnFirstTab = null;
   return pos;
+}
+
+function getActiveCodeMirrorView(): EditorView | null {
+  const activeElement = document.activeElement as HTMLElement | null;
+  const cmEditor =
+    activeElement?.closest('.cm-editor') ||
+    document.querySelector('.cm-editor.cm-focused') ||
+    document.querySelector('.cm-editor');
+
+  if (!cmEditor || !(cmEditor instanceof HTMLElement)) return null;
+
+  try {
+    return EditorView.findFromDOM(cmEditor);
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================================
@@ -284,7 +313,7 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
     return () => {
       try {
         editorDom.removeEventListener('mouseup', handleEditorClick);
-      } catch (e) {}
+      } catch {}
     };
   }, [isOpen, updateCursorPosition]);
 
@@ -301,6 +330,24 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
       setActiveMathField(active as MathfieldElement);
       updateCursorPosition((active as HTMLElement).getBoundingClientRect());
       openHUD('existing');
+      return;
+    }
+
+    // CodeMirror: 直接打开 HUD，并以当前光标位置定位
+    const cmView = getActiveCodeMirrorView();
+    if (cmView) {
+      const pos = cmView.state.selection.main.head;
+      const coords = cmView.coordsAtPos(pos);
+      if (coords) {
+        const rect = new DOMRect(
+          coords.left,
+          coords.top,
+          Math.max(0, coords.right - coords.left),
+          Math.max(0, coords.bottom - coords.top)
+        );
+        updateCursorPosition(rect);
+      }
+      openHUD('codemirror');
       return;
     }
     
@@ -361,7 +408,7 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
     if (cmEditor) {
       const cmContent = cmEditor.querySelector('.cm-content');
       if (cmContent) {
-        const view = (cmContent as any).cmView?.view;
+        const view = (cmContent as CodeMirrorContentElement).cmView?.view;
         if (view) {
           try {
             const { from, to } = view.state.selection.main;
@@ -389,7 +436,7 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
       const cmEditorEl = activeElement.closest('.cm-editor') as HTMLElement;
       const cmContent = cmEditorEl?.querySelector('.cm-content');
       if (cmContent) {
-        const view = (cmContent as any).cmView?.view;
+        const view = (cmContent as CodeMirrorContentElement).cmView?.view;
         if (view) {
           try {
             const { from, to } = view.state.selection.main;

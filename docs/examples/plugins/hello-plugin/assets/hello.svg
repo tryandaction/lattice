@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80" viewBox="0 0 240 80" role="img" aria-label="Hello">
+  <rect width="240" height="80" rx="12" fill="#101828"/>
+  <circle cx="40" cy="40" r="20" fill="#7F56D9"/>
+  <path d="M34 40h12" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+  <path d="M40 34v12" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+  <text x="80" y="50" font-family="Arial, sans-serif" font-size="26" fill="#FFFFFF">Hello Lattice</text>
+</svg>

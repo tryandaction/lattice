@@ -14,6 +14,7 @@ import type {
   BoundingBox,
   AnnotationStyleType
 } from '../types/universal-annotation';
+import { validateUniversalAnnotationFile } from '../types/universal-annotation';
 
 // ============================================================================
 // Legacy Format Detection
@@ -184,6 +185,7 @@ export function loadAnnotationWithMigration(
   json: string,
   defaultFileId: string
 ): LoadAnnotationResult {
+  void defaultFileId;
   try {
     const parsed = JSON.parse(json);
     
@@ -199,8 +201,6 @@ export function loadAnnotationWithMigration(
     
     // Check if it's already a universal file
     if (typeof parsed === 'object' && parsed !== null && parsed.version === 2) {
-      // Import validation function
-      const { validateUniversalAnnotationFile } = require('../types/universal-annotation');
       const validation = validateUniversalAnnotationFile(parsed);
       
       if (validation.valid) {

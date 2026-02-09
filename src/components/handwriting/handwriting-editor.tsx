@@ -37,7 +37,7 @@ export function HandwritingEditor({
   readOnly = false,
   className,
   toolbarPosition = 'bottom',
-  compactToolbar = false,
+  compactToolbar: _compactToolbar = false,
   hideToolbar = false,
   enablePrediction = true,
 }: HandwritingEditorProps) {
@@ -73,7 +73,7 @@ export function HandwritingEditor({
     if (initialLayers) {
       loadDocument(initialLayers, initialBackground);
     }
-  }, []);
+  }, [initialLayers, initialBackground, loadDocument]);
 
   // 监听变化
   useEffect(() => {

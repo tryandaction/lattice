@@ -5,7 +5,7 @@
  * for storing annotations in sidecar JSON files.
  */
 
-import type { AnnotationFile, LatticeAnnotation } from '../types/annotation';
+import type { AnnotationFile } from '../types/annotation';
 import { isAnnotationFile } from '../types/annotation';
 import { createAnnotationFile, validateAnnotationFile } from './annotation-utils';
 
@@ -50,7 +50,7 @@ export function deriveFileId(filePath: string): string {
   }
 
   // Normalize path separators
-  let fileId = filePath
+  const fileId = filePath
     .replace(/\\/g, '/') // Convert Windows backslashes
     .replace(/^\/+/, '') // Remove leading slashes
     .replace(/\/+/g, '-') // Replace path separators with dashes

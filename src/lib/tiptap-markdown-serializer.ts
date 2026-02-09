@@ -4,6 +4,7 @@
  */
 
 import type { Editor } from '@tiptap/react';
+import type { JSONContent } from '@tiptap/core';
 
 /**
  * Serialize Tiptap JSON to Markdown
@@ -16,7 +17,7 @@ export function serializeToMarkdown(editor: Editor): string {
 /**
  * Convert Tiptap JSON node to Markdown
  */
-function jsonToMarkdown(node: any): string {
+function jsonToMarkdown(node: JSONContent | null | undefined): string {
   if (!node) return '';
 
   const { type, content, attrs, marks } = node;
@@ -24,41 +25,41 @@ function jsonToMarkdown(node: any): string {
   // Handle different node types
   switch (type) {
     case 'doc':
-      return content?.map((child: any) => jsonToMarkdown(child)).join('\n') || '';
+      return content?.map((child) => jsonToMarkdown(child)).join('\n') || '';
 
     case 'paragraph':
-      const paraContent = content?.map((child: any) => jsonToMarkdown(child)).join('') || '';
+      const paraContent = content?.map((child) => jsonToMarkdown(child)).join('') || '';
       return paraContent ? paraContent + '\n' : '\n';
 
     case 'heading':
       const level = attrs?.level || 1;
-      const headingContent = content?.map((child: any) => jsonToMarkdown(child)).join('') || '';
+      const headingContent = content?.map((child) => jsonToMarkdown(child)).join('') || '';
       return '#'.repeat(level) + ' ' + headingContent + '\n';
 
     case 'bulletList':
-      return content?.map((item: any) => jsonToMarkdown(item)).join('') || '';
+      return content?.map((item) => jsonToMarkdown(item)).join('') || '';
 
     case 'orderedList':
       const start = attrs?.start || 1;
-      return content?.map((item: any, index: number) => {
-        const itemContent = item.content?.map((child: any) => jsonToMarkdown(child)).join('') || '';
+      return content?.map((item, index: number) => {
+        const itemContent = item.content?.map((child) => jsonToMarkdown(child)).join('') || '';
         return `${start + index}. ${itemContent}`;
       }).join('') || '';
 
     case 'listItem':
       const isTaskList = content?.[0]?.type === 'taskList';
       if (isTaskList) {
-        return content?.map((child: any) => jsonToMarkdown(child)).join('') || '';
+        return content?.map((child) => jsonToMarkdown(child)).join('') || '';
       }
-      const itemText = content?.map((child: any) => jsonToMarkdown(child)).join('') || '';
+      const itemText = content?.map((child) => jsonToMarkdown(child)).join('') || '';
       return '- ' + itemText;
 
     case 'taskList':
-      return content?.map((child: any) => jsonToMarkdown(child)).join('') || '';
+      return content?.map((child) => jsonToMarkdown(child)).join('') || '';
 
     case 'taskItem':
       const checked = attrs?.checked || false;
-      const taskContent = content?.map((child: any) => jsonToMarkdown(child)).join('') || '';
+      const taskContent = content?.map((child) => jsonToMarkdown(child)).join('') || '';
       return `- [${checked ? 'x' : ' '}] ${taskContent}`;
 
     case 'codeBlock':
@@ -67,7 +68,7 @@ function jsonToMarkdown(node: any): string {
       return '```' + language + '\n' + code + '\n```\n';
 
     case 'blockquote':
-      const quoteContent = content?.map((child: any) => jsonToMarkdown(child)).join('') || '';
+      const quoteContent = content?.map((child) => jsonToMarkdown(child)).join('') || '';
       return quoteContent.split('\n').map((line: string) => '> ' + line).join('\n') + '\n';
 
     case 'horizontalRule':
@@ -77,7 +78,7 @@ function jsonToMarkdown(node: any): string {
       return '  \n';
 
     case 'table':
-      return serializeTable(content);
+      return serializeTable(content ?? []);
 
     case 'tableRow':
     case 'tableHeader':
@@ -135,7 +136,7 @@ function jsonToMarkdown(node: any): string {
     default:
       // Unknown node type - try to process children
       if (content) {
-        return content.map((child: any) => jsonToMarkdown(child)).join('');
+        return content.map((child) => jsonToMarkdown(child)).join('');
       }
       return '';
   }
@@ -144,7 +145,7 @@ function jsonToMarkdown(node: any): string {
 /**
  * Serialize table to Markdown
  */
-function serializeTable(rows: any[]): string {
+function serializeTable(rows: JSONContent[]): string {
   if (!rows || rows.length === 0) return '';
 
   const tableData: string[][] = [];
@@ -156,7 +157,7 @@ function serializeTable(rows: any[]): string {
     const rowData: string[] = [];
     for (const cell of row.content || []) {
       if (cell.type === 'tableCell' || cell.type === 'tableHeader') {
-        const cellContent = cell.content?.map((child: any) => jsonToMarkdown(child)).join('').trim() || '';
+        const cellContent = cell.content?.map((child) => jsonToMarkdown(child)).join('').trim() || '';
         rowData.push(cellContent);
       }
     }

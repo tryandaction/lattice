@@ -1,0 +1,23 @@
+- generic [active] [ref=e1]:
+  - heading "Directory listing for /diagnostics/" [level=1] [ref=e2]
+  - separator [ref=e3]
+  - list [ref=e4]:
+    - listitem [ref=e5]:
+      - link "__next._full.txt" [ref=e6] [cursor=pointer]:
+        - /url: __next._full.txt
+    - listitem [ref=e7]:
+      - link "__next._head.txt" [ref=e8] [cursor=pointer]:
+        - /url: __next._head.txt
+    - listitem [ref=e9]:
+      - link "__next._index.txt" [ref=e10] [cursor=pointer]:
+        - /url: __next._index.txt
+    - listitem [ref=e11]:
+      - link "__next._tree.txt" [ref=e12] [cursor=pointer]:
+        - /url: __next._tree.txt
+    - listitem [ref=e13]:
+      - link "__next.diagnostics/" [ref=e14] [cursor=pointer]:
+        - /url: __next.diagnostics/
+    - listitem [ref=e15]:
+      - link "__next.diagnostics.txt" [ref=e16] [cursor=pointer]:
+        - /url: __next.diagnostics.txt
+  - separator [ref=e17]

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useCallback, useEffect, useState } from 'react';
+import { useRef, useCallback, useEffect, useState, useMemo } from 'react';
 
 /**
  * Stylus point with pressure and tilt data
@@ -149,7 +149,7 @@ function isPalmTouch(event: PointerEvent, maxTouchArea: number): boolean {
 export function useStylusInput<T extends HTMLElement>(
   config: StylusInputConfig = {}
 ) {
-  const opts = { ...DEFAULT_CONFIG, ...config };
+  const opts = useMemo(() => ({ ...DEFAULT_CONFIG, ...config }), [config]);
   const elementRef = useRef<T>(null);
   
   const [state, setState] = useState<StylusInputState>({

@@ -1,0 +1,175 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - heading "Live Preview 自检面板" [level=1] [ref=e4]
+      - generic [ref=e5]:
+        - generic [ref=e6]: 文件：
+        - button "覆盖用例" [ref=e7] [cursor=pointer]
+        - button "高级渲染" [ref=e8] [cursor=pointer]
+        - button "公式渲染" [ref=e9] [cursor=pointer]
+        - button "光标定位" [ref=e10] [cursor=pointer]
+        - button "语法隐藏" [ref=e11] [cursor=pointer]
+        - button "嵌套格式" [ref=e12] [cursor=pointer]
+        - button "重复文本" [ref=e13] [cursor=pointer]
+        - button "超长文档" [ref=e14] [cursor=pointer]
+      - button "运行自检" [ref=e16] [cursor=pointer]
+    - main [ref=e17]:
+      - generic [ref=e189]:
+        - generic [ref=e190]:
+          - generic [ref=e192]: test-advanced-markdown.md
+          - generic [ref=e193]:
+            - button "Hide outline" [ref=e194] [cursor=pointer]:
+              - img [ref=e195]
+            - generic [ref=e199]:
+              - button "Live" [ref=e200] [cursor=pointer]:
+                - img [ref=e201]
+                - generic [ref=e203]: Live
+              - button "Source" [ref=e204] [cursor=pointer]:
+                - img [ref=e205]
+                - generic [ref=e209]: Source
+              - button "Read" [ref=e210] [cursor=pointer]:
+                - img [ref=e211]
+                - generic [ref=e214]: Read
+        - generic [ref=e215]:
+          - generic [ref=e217]:
+            - generic [ref=e218]: Outline
+            - navigation [ref=e219]:
+              - generic [ref=e220]:
+                - button "Advanced Markdown Features Test" [ref=e221] [cursor=pointer]:
+                  - img [ref=e222]
+                  - generic [ref=e224]: Advanced Markdown Features Test
+                - generic [ref=e225]:
+                  - button "1. Superscript and Subscript" [ref=e227] [cursor=pointer]:
+                    - generic [ref=e228]: 1. Superscript and Subscript
+                  - button "2. Keyboard Keys" [ref=e230] [cursor=pointer]:
+                    - generic [ref=e231]: 2. Keyboard Keys
+                  - button "3. Footnotes" [ref=e233] [cursor=pointer]:
+                    - generic [ref=e234]: 3. Footnotes
+                  - button "4. Embeds" [ref=e236] [cursor=pointer]:
+                    - generic [ref=e237]: 4. Embeds
+                  - button "5. Collapsible Content (Details/Summary)" [ref=e239] [cursor=pointer]:
+                    - generic [ref=e240]: 5. Collapsible Content (Details/Summary)
+                  - generic [ref=e241]:
+                    - button "6. Callouts / Admonitions" [ref=e242] [cursor=pointer]:
+                      - img [ref=e243]
+                      - generic [ref=e245]: 6. Callouts / Admonitions
+                    - button "Foldable Callouts" [ref=e248] [cursor=pointer]:
+                      - generic [ref=e249]: Foldable Callouts
+                  - button "7. Combined Features" [ref=e251] [cursor=pointer]:
+                    - generic [ref=e252]: 7. Combined Features
+                  - generic [ref=e253]:
+                    - button "8. Existing Features (Still Working)" [ref=e254] [cursor=pointer]:
+                      - img [ref=e255]
+                      - generic [ref=e257]: 8. Existing Features (Still Working)
+                    - generic [ref=e258]:
+                      - button "Inline Formatting" [ref=e260] [cursor=pointer]:
+                        - generic [ref=e261]: Inline Formatting
+                      - button "Links" [ref=e263] [cursor=pointer]:
+                        - generic [ref=e264]: Links
+                      - button "Math" [ref=e266] [cursor=pointer]:
+                        - generic [ref=e267]: Math
+                      - button "Tables" [ref=e269] [cursor=pointer]:
+                        - generic [ref=e270]: Tables
+          - generic [ref=e272]:
+            - generic [ref=e273]: Markdown editor with live preview. Use Ctrl+E to switch modes, Ctrl+F to search, and standard text editing shortcuts.
+            - generic [ref=e275]:
+              - generic [ref=e277]:
+                - generic [ref=e278] [cursor=pointer]: ▼
+                - generic [ref=e279] [cursor=pointer]: ▼
+                - generic [ref=e280] [cursor=pointer]: ▼
+                - generic [ref=e281] [cursor=pointer]: ▼
+                - text: ▼
+              - textbox "Markdown editor" [ref=e282]:
+                - generic [ref=e283]: "# Advanced Markdown Features Test"
+                - generic [ref=e285]: This file demonstrates all the advanced markdown rendering features.
+                - generic [ref=e287]: 1. Superscript and Subscript
+                - generic [ref=e289]:
+                  - text: "• Water formula: H"
+                  - subscript [ref=e290]: "2"
+                  - text: O
+                - generic [ref=e291]:
+                  - text: "• Einstein's equation: E = mc"
+                  - superscript [ref=e292]: "2"
+                - generic [ref=e293]:
+                  - text: "• Chemical formula: CO"
+                  - subscript [ref=e294]: "2"
+                  - text: + H
+                  - subscript [ref=e295]: "2"
+                  - text: O → H
+                  - subscript [ref=e296]: "2"
+                  - text: CO
+                  - subscript [ref=e297]: "3"
+                - generic [ref=e298]:
+                  - text: "• Math notation: x"
+                  - superscript [ref=e299]: "2"
+                  - text: + y
+                  - superscript [ref=e300]: "2"
+                  - text: = r
+                  - superscript [ref=e301]: "2"
+                - generic [ref=e303]: 2. Keyboard Keys
+                - generic [ref=e305]:
+                  - text: Press
+                  - generic [ref=e306]: Ctrl
+                  - text: +
+                  - generic [ref=e307]: C
+                  - text: to copy.
+                - generic [ref=e309]: "Common shortcuts:"
+                - generic [ref=e310]:
+                  - text: •
+                  - generic [ref=e311]: Ctrl
+                  - text: +
+                  - generic [ref=e312]: S
+                  - text: "- Save"
+                - generic [ref=e313]:
+                  - text: •
+                  - generic [ref=e314]: Ctrl
+                  - text: +
+                  - generic [ref=e315]: Z
+                  - text: "- Undo"
+                - generic [ref=e316]:
+                  - text: •
+                  - generic [ref=e317]: Alt
+                  - text: +
+                  - generic [ref=e318]: Tab
+                  - text: "- Switch windows"
+                - generic [ref=e319]:
+                  - text: •
+                  - generic [ref=e320]: Cmd
+                  - text: +
+                  - generic [ref=e321]: Shift
+                  - text: +
+                  - generic [ref=e322]: P
+                  - text: "- Command palette"
+                - generic [ref=e324]: 3. Footnotes
+                - generic [ref=e326]:
+                  - text: Here is a sentence with a footnote
+                  - superscript [ref=e327]:
+                    - link "1" [ref=e328] [cursor=pointer]:
+                      - /url: "#"
+                  - text: .
+                - generic [ref=e330]:
+                  - text: Another reference to a different footnote
+                  - superscript [ref=e331]:
+                    - link "note" [ref=e332] [cursor=pointer]:
+                      - /url: "#"
+                  - text: .
+                - generic [ref=e334]:
+                  - text: And one more
+                  - superscript [ref=e335]:
+                    - link "long" [ref=e336] [cursor=pointer]:
+                      - /url: "#"
+                  - text: .
+                - generic [ref=e339]:
+                  - text: "[^note]This is a named footnote with more details."
+                  - link "↩" [ref=e340] [cursor=pointer]:
+                    - /url: "#"
+        - generic [ref=e342]: Live Preview • Ctrl+E cycle modes
+      - generic [ref=e19]:
+        - generic [ref=e20]: 诊断结果
+        - generic [ref=e21]:
+          - generic [ref=e343]: 通过：未发现异常
+          - generic [ref=e344]:
+            - generic [ref=e345]: 元素统计
+            - generic [ref=e346]: "{ \"LIST_ITEM\": 34, \"INLINE_OTHER\": 39, \"INLINE_BOLD\": 2, \"INLINE_ITALIC\": 2, \"INLINE_TAG\": 1, \"DETAILS\": 3, \"CALLOUT\": 11, \"BLOCKQUOTE\": 28, \"INLINE_CODE\": 1, \"INLINE_LINK\": 3, \"MATH_INLINE\": 1, \"MATH_BLOCK\": 1, \"TABLE\": 1, \"HORIZONTAL_RULE\": 1 }"
+  - region "Notifications alt+T"
+  - alert [ref=e22]

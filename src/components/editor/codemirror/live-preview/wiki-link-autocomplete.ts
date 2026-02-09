@@ -45,23 +45,6 @@ function getFileName(path: string): string {
 }
 
 /**
- * Extract headings from file content (if available)
- */
-function extractHeadings(content: string): string[] {
-  const headings: string[] = [];
-  const lines = content.split('\n');
-  
-  for (const line of lines) {
-    const match = /^#{1,6}\s+(.+)$/.exec(line);
-    if (match) {
-      headings.push(match[1].trim());
-    }
-  }
-  
-  return headings;
-}
-
-/**
  * Wiki link completion source
  */
 function wikiLinkCompletions(context: CompletionContext): CompletionResult | null {

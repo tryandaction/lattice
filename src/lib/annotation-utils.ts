@@ -6,13 +6,11 @@
 
 import type {
   LatticeAnnotation,
-  BoundingRect,
   AnnotationPosition,
   AnnotationContent,
   AnnotationColor,
   AnnotationType,
   AnnotationFile,
-  TextNoteStyle,
 } from '../types/annotation';
 import {
   isBoundingRect,

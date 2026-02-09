@@ -86,7 +86,7 @@ def fibonacci(n):
 
 ### Image
 
-![Sample Image](https://via.placeholder.com/300x200)
+![Sample Image](/icons/icon-512x512.png)
 
 ## Keyboard Shortcuts
 

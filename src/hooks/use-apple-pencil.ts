@@ -17,7 +17,7 @@ interface ApplePencilOptions {
  */
 export function useApplePencil({
   onDoubleTap,
-  onSqueeze,
+  onSqueeze: _onSqueeze,
   enabled = true,
 }: ApplePencilOptions) {
   const lastPenDownRef = useRef<number>(0);
@@ -33,7 +33,6 @@ export function useApplePencil({
     if (!enabled) return;
 
     // 方法1: 监听 preferredStylusAction (Safari/WebKit)
-    // @ts-ignore - 实验性 API
     if ('preferredStylusAction' in navigator) {
       // Safari 可能支持这个 API
     }

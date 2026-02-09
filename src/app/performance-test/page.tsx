@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { EditorView } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { markdown } from '@codemirror/lang-markdown';
-import { decorationCoordinatorPlugin } from '@/components/editor/codemirror/live-preview/decoration-coordinator';
+import { decorationCoordinatorExtension } from '@/components/editor/codemirror/live-preview/decoration-coordinator';
 import { cursorContextPlugin } from '@/components/editor/codemirror/live-preview/cursor-context-plugin';
 
 interface PerformanceResult {
@@ -42,7 +42,7 @@ export default function PerformanceTestPage() {
         extensions: [
           markdown(),
           cursorContextPlugin,
-          decorationCoordinatorPlugin,
+          decorationCoordinatorExtension,
         ],
       });
 

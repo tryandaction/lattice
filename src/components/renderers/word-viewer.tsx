@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback } from "react";
 import mammoth from "mammoth";
-import { Loader2, AlertTriangle, FileText, Download } from "lucide-react";
+import { Loader2, AlertTriangle, FileText } from "lucide-react";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { emitVaultChange } from "@/lib/plugins/runtime";
 
 interface WordViewerProps {
   content: ArrayBuffer;
@@ -117,6 +118,7 @@ export function WordViewer({ content, fileName }: WordViewerProps) {
         const writable = await result.handle.createWritable();
         await writable.write(`# ${baseName}\n\n${markdown}`);
         await writable.close();
+        emitVaultChange(result.path);
         
         // Open the new file
         openFileInActivePane(result.handle, result.path);
