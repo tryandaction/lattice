@@ -26,6 +26,8 @@ const eslintConfig = [
       "@typescript-eslint/no-require-imports": "warn",
       // Prefer const is just a warning
       "prefer-const": "warn",
+      // Discourage console statements (use logger instead)
+      "no-console": "warn",
     },
   },
   {

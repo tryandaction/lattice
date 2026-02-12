@@ -16,6 +16,8 @@ import {
   saveWithRetry,
   createDebouncedSave,
 } from '../lib/annotation-storage';
+import { logger } from '../lib/logger';
+import { emitFileSave } from '../lib/plugins/runtime';
 
 // ============================================================================
 // Types
@@ -57,6 +59,7 @@ export interface AnnotationStoreActions {
   // Utility
   clearError: () => void;
   forceSave: () => Promise<boolean>;
+  flushPendingSaves: () => Promise<void>;
 }
 
 export type AnnotationStore = AnnotationStoreState & AnnotationStoreActions;
@@ -133,7 +136,7 @@ export const useAnnotationStore = create<AnnotationStore>((set, get) => ({
   addAnnotation: (annotation) => {
     const validation = validateAnnotation(annotation);
     if (!validation.valid) {
-      console.error('Invalid annotation:', validation.errors);
+      logger.error('Invalid annotation:', validation.errors);
       set({ error: `Invalid annotation: ${validation.errors.join(', ')}` });
       return;
     }
@@ -159,10 +162,11 @@ export const useAnnotationStore = create<AnnotationStore>((set, get) => ({
       );
       
       debouncedSave(annotationFile, state.rootHandle)
-        .then(() => set({ pendingSave: false }))
+        .then(() => { set({ pendingSave: false }); emitFileSave(annotation.fileId); })
         .catch((error) => {
-          console.error('Failed to save annotation:', error);
-          set({ error: 'Failed to save annotation' });
+          const message = error instanceof Error ? error.message : 'Unknown save error';
+          logger.error(`Failed to save annotation for file ${state.activeFileId}:`, error);
+          set({ error: `Annotation save failed: ${message}`, pendingSave: false });
         });
     }
   },
@@ -189,13 +193,13 @@ export const useAnnotationStore = create<AnnotationStore>((set, get) => ({
     }
 
     if (!targetFileId || !updatedAnnotation) {
-      console.warn(`Annotation with id ${id} not found`);
+      logger.warn(`Annotation with id ${id} not found`);
       return;
     }
 
     const validation = validateAnnotation(updatedAnnotation);
     if (!validation.valid) {
-      console.error('Invalid annotation update:', validation.errors);
+      logger.error('Invalid annotation update:', validation.errors);
       set({ error: `Invalid annotation update: ${validation.errors.join(', ')}` });
       return;
     }
@@ -221,10 +225,11 @@ export const useAnnotationStore = create<AnnotationStore>((set, get) => ({
       const annotationFile = createAnnotationFileFromState(targetFileId, fileAnnotations);
       
       debouncedSave(annotationFile, state.rootHandle)
-        .then(() => set({ pendingSave: false }))
+        .then(() => { set({ pendingSave: false }); emitFileSave(targetFileId!); })
         .catch((error) => {
-          console.error('Failed to save annotation:', error);
-          set({ error: 'Failed to save annotation' });
+          const message = error instanceof Error ? error.message : 'Unknown save error';
+          logger.error(`Failed to save annotation for file ${state.activeFileId}:`, error);
+          set({ error: `Annotation save failed: ${message}`, pendingSave: false });
         });
     }
   },
@@ -243,7 +248,7 @@ export const useAnnotationStore = create<AnnotationStore>((set, get) => ({
     }
 
     if (!targetFileId) {
-      console.warn(`Annotation with id ${id} not found`);
+      logger.warn(`Annotation with id ${id} not found`);
       return;
     }
 
@@ -266,10 +271,11 @@ export const useAnnotationStore = create<AnnotationStore>((set, get) => ({
       const annotationFile = createAnnotationFileFromState(targetFileId, fileAnnotations);
       
       debouncedSave(annotationFile, state.rootHandle)
-        .then(() => set({ pendingSave: false }))
+        .then(() => { set({ pendingSave: false }); emitFileSave(targetFileId!); })
         .catch((error) => {
-          console.error('Failed to save annotation:', error);
-          set({ error: 'Failed to save annotation' });
+          const message = error instanceof Error ? error.message : 'Unknown save error';
+          logger.error(`Failed to save annotation for file ${state.activeFileId}:`, error);
+          set({ error: `Annotation save failed: ${message}`, pendingSave: false });
         });
     }
   },
@@ -349,6 +355,12 @@ export const useAnnotationStore = create<AnnotationStore>((set, get) => ({
     }
 
     return success;
+  },
+
+  // Flush all pending debounced saves immediately
+  flushPendingSaves: async () => {
+    await debouncedSave.flush();
+    set({ pendingSave: false });
   },
 }));
 

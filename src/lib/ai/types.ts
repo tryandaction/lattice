@@ -1,4 +1,8 @@
-export type AiContextItemType = 'system' | 'file' | 'annotations';
+// ============================================================================
+// Context Types (preserved from v0.3)
+// ============================================================================
+
+export type AiContextItemType = 'system' | 'file' | 'annotations' | 'selection';
 
 export interface AiContextItem {
   type: AiContextItemType;
@@ -10,10 +14,61 @@ export interface AiContextItem {
 export interface AiContext {
   items: AiContextItem[];
   toPrompt: () => string;
+  toMessages: () => AiMessage[];
+}
+
+// ============================================================================
+// Provider Types
+// ============================================================================
+
+export type AiProviderId = 'openai' | 'anthropic' | 'google' | 'ollama' | 'custom';
+
+export interface AiModel {
+  id: string;
+  name: string;
+  provider: AiProviderId;
+  contextWindow: number;
+  supportsStreaming: boolean;
+}
+
+export interface AiMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface AiStreamChunk {
+  type: 'text' | 'done' | 'error';
+  text?: string;
+  error?: string;
+}
+
+export interface AiUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface AiGenerateResult {
+  text: string;
+  model: string;
+  usage?: AiUsage;
+}
+
+export interface AiGenerateOptions {
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  systemPrompt?: string;
+  signal?: AbortSignal;
 }
 
 export interface AiProvider {
-  id: string;
+  id: AiProviderId;
   name: string;
-  generate: (prompt: string) => Promise<{ text: string }>;
+  isConfigured: () => boolean;
+  testConnection: () => Promise<boolean>;
+  getAvailableModels: () => Promise<AiModel[]>;
+  generate: (messages: AiMessage[], options?: AiGenerateOptions) => Promise<AiGenerateResult>;
+  stream: (messages: AiMessage[], options?: AiGenerateOptions) => AsyncIterable<AiStreamChunk>;
+  estimateTokens: (text: string) => number;
 }

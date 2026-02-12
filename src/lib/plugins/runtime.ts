@@ -36,6 +36,24 @@ const vaultChangeListeners = new Set<(path: string) => void>();
 const vaultRenameListeners = new Set<(oldPath: string, newPath: string) => void>();
 const vaultDeleteListeners = new Set<(path: string) => void>();
 
+// Workspace event listeners (new extension points)
+const fileOpenListeners = new Set<(path: string) => void>();
+const fileSaveListeners = new Set<(path: string) => void>();
+const fileCloseListeners = new Set<(path: string) => void>();
+const workspaceOpenListeners = new Set<(rootPath: string) => void>();
+const activeFileChangeListeners = new Set<(path: string | null) => void>();
+
+// UI extension registries
+const sidebarItems = new Map<string, import('./types').PluginSidebarItem>();
+const toolbarItems = new Map<string, import('./types').PluginToolbarItem>();
+const statusBarItems = new Map<string, import('./types').PluginStatusBarItem>();
+const sidebarChangeListeners = new Set<() => void>();
+const toolbarChangeListeners = new Set<() => void>();
+const statusBarChangeListeners = new Set<() => void>();
+
+// Plugin settings change listeners
+const settingsChangeListeners = new Map<string, Set<(value: unknown) => void>>();
+
 export type PluginHealth = {
   status: 'inactive' | 'active' | 'error';
   lastError?: string;
@@ -255,6 +273,71 @@ export function emitVaultDelete(path: string) {
   }
 }
 
+// ============================================================================
+// Workspace Event Emitters (new)
+// ============================================================================
+
+export function emitFileOpen(path: string) {
+  for (const listener of fileOpenListeners) {
+    try { listener(path); } catch { /* ignore */ }
+  }
+}
+
+export function emitFileSave(path: string) {
+  for (const listener of fileSaveListeners) {
+    try { listener(path); } catch { /* ignore */ }
+  }
+}
+
+export function emitFileClose(path: string) {
+  for (const listener of fileCloseListeners) {
+    try { listener(path); } catch { /* ignore */ }
+  }
+}
+
+export function emitWorkspaceOpen(rootPath: string) {
+  for (const listener of workspaceOpenListeners) {
+    try { listener(rootPath); } catch { /* ignore */ }
+  }
+}
+
+export function emitActiveFileChange(path: string | null) {
+  for (const listener of activeFileChangeListeners) {
+    try { listener(path); } catch { /* ignore */ }
+  }
+}
+
+// ============================================================================
+// UI Extension Getters (for slot components)
+// ============================================================================
+
+export function getSidebarItems(): import('./types').PluginSidebarItem[] {
+  return Array.from(sidebarItems.values());
+}
+
+export function getToolbarItems(): import('./types').PluginToolbarItem[] {
+  return Array.from(toolbarItems.values());
+}
+
+export function getStatusBarItems(): import('./types').PluginStatusBarItem[] {
+  return Array.from(statusBarItems.values());
+}
+
+export function onSidebarChange(listener: () => void): () => void {
+  sidebarChangeListeners.add(listener);
+  return () => sidebarChangeListeners.delete(listener);
+}
+
+export function onToolbarChange(listener: () => void): () => void {
+  toolbarChangeListeners.add(listener);
+  return () => toolbarChangeListeners.delete(listener);
+}
+
+export function onStatusBarChange(listener: () => void): () => void {
+  statusBarChangeListeners.add(listener);
+  return () => statusBarChangeListeners.delete(listener);
+}
+
 function registerCommand(
   pluginId: string,
   command: PluginCommand,
@@ -302,6 +385,29 @@ function unregisterPanelsFor(pluginId: string) {
   }
   if (changed) {
     emitRegistryChange();
+  }
+}
+
+function unregisterUIItemsFor(pluginId: string) {
+  const prefix = `${pluginId}:`;
+  let sidebarChanged = false;
+  let toolbarChanged = false;
+  let statusBarChanged = false;
+  for (const key of sidebarItems.keys()) {
+    if (key.startsWith(prefix)) { sidebarItems.delete(key); sidebarChanged = true; }
+  }
+  for (const key of toolbarItems.keys()) {
+    if (key.startsWith(prefix)) { toolbarItems.delete(key); toolbarChanged = true; }
+  }
+  for (const key of statusBarItems.keys()) {
+    if (key.startsWith(prefix)) { statusBarItems.delete(key); statusBarChanged = true; }
+  }
+  if (sidebarChanged) for (const l of sidebarChangeListeners) { try { l(); } catch { /* */ } }
+  if (toolbarChanged) for (const l of toolbarChangeListeners) { try { l(); } catch { /* */ } }
+  if (statusBarChanged) for (const l of statusBarChangeListeners) { try { l(); } catch { /* */ } }
+  // Clean up settings change listeners for this plugin
+  for (const key of settingsChangeListeners.keys()) {
+    if (key.startsWith(prefix)) settingsChangeListeners.delete(key);
   }
 }
 
@@ -399,6 +505,71 @@ function createContext(manifest: PluginManifest): PluginContext {
       register: (panel) => {
         if (!canRegisterPanels) return;
         registerPanel(pluginId, panel);
+      },
+    },
+    sidebar: {
+      register: (item) => {
+        if (!permissions.includes('ui:sidebar')) return;
+        sidebarItems.set(`${pluginId}:${item.id}`, item);
+        for (const l of sidebarChangeListeners) { try { l(); } catch { /* */ } }
+      },
+    },
+    toolbar: {
+      register: (item) => {
+        if (!permissions.includes('ui:toolbar')) return;
+        toolbarItems.set(`${pluginId}:${item.id}`, item);
+        for (const l of toolbarChangeListeners) { try { l(); } catch { /* */ } }
+      },
+    },
+    statusBar: {
+      register: (item) => {
+        if (!permissions.includes('ui:statusbar')) return;
+        statusBarItems.set(`${pluginId}:${item.id}`, item);
+        for (const l of statusBarChangeListeners) { try { l(); } catch { /* */ } }
+      },
+    },
+    events: {
+      onFileOpen: (cb) => {
+        fileOpenListeners.add(cb);
+        return () => fileOpenListeners.delete(cb);
+      },
+      onFileSave: (cb) => {
+        fileSaveListeners.add(cb);
+        return () => fileSaveListeners.delete(cb);
+      },
+      onFileClose: (cb) => {
+        fileCloseListeners.add(cb);
+        return () => fileCloseListeners.delete(cb);
+      },
+      onWorkspaceOpen: (cb) => {
+        workspaceOpenListeners.add(cb);
+        return () => workspaceOpenListeners.delete(cb);
+      },
+      onActiveFileChange: (cb) => {
+        activeFileChangeListeners.add(cb);
+        return () => activeFileChangeListeners.delete(cb);
+      },
+    },
+    settings: {
+      get: (key) => {
+        const raw = localStorage.getItem(`lattice-plugin-kv:${pluginId}:setting:${key}`);
+        if (raw === null) return undefined;
+        try { return JSON.parse(raw); } catch { return raw; }
+      },
+      set: async (key, value) => {
+        localStorage.setItem(`lattice-plugin-kv:${pluginId}:setting:${key}`, JSON.stringify(value));
+        const listeners = settingsChangeListeners.get(`${pluginId}:${key}`);
+        if (listeners) {
+          for (const l of listeners) { try { l(value); } catch { /* */ } }
+        }
+      },
+      onChange: (key, cb) => {
+        const fullKey = `${pluginId}:${key}`;
+        if (!settingsChangeListeners.has(fullKey)) {
+          settingsChangeListeners.set(fullKey, new Set());
+        }
+        settingsChangeListeners.get(fullKey)!.add(cb);
+        return () => settingsChangeListeners.get(fullKey)?.delete(cb);
       },
     },
     assets: {
@@ -538,6 +709,7 @@ async function deactivatePlugin(plugin: PluginModule): Promise<void> {
   activePlugins.delete(plugin.manifest.id);
   unregisterCommandsFor(plugin.manifest.id);
   unregisterPanelsFor(plugin.manifest.id);
+  unregisterUIItemsFor(plugin.manifest.id);
   setPluginHealth(plugin.manifest.id, { status: 'inactive' });
   recordPluginAudit({
     pluginId: plugin.manifest.id,
@@ -948,6 +1120,7 @@ async function deactivateWorkerPlugin(pluginId: string): Promise<void> {
   activeWorkers.delete(pluginId);
   unregisterCommandsFor(pluginId);
   unregisterPanelsFor(pluginId);
+  unregisterUIItemsFor(pluginId);
   setPluginHealth(pluginId, { status: 'inactive' });
   recordPluginAudit({
     pluginId,
@@ -955,6 +1128,42 @@ async function deactivateWorkerPlugin(pluginId: string): Promise<void> {
     action: 'deactivate',
     message: 'Plugin deactivated',
   });
+}
+
+/**
+ * Topological sort for plugin dependency resolution.
+ * Returns plugin IDs in activation order, or throws on circular dependencies.
+ */
+export function resolveDependencyOrder(
+  manifests: Map<string, PluginManifest>
+): string[] {
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+  const order: string[] = [];
+
+  function visit(id: string) {
+    if (visited.has(id)) return;
+    if (visiting.has(id)) {
+      throw new Error(`Circular plugin dependency detected: ${id}`);
+    }
+    visiting.add(id);
+    const manifest = manifests.get(id);
+    if (manifest?.dependencies) {
+      for (const depId of Object.keys(manifest.dependencies)) {
+        if (manifests.has(depId)) {
+          visit(depId);
+        }
+      }
+    }
+    visiting.delete(id);
+    visited.add(id);
+    order.push(id);
+  }
+
+  for (const id of manifests.keys()) {
+    visit(id);
+  }
+  return order;
 }
 
 export async function syncPlugins(options: {
@@ -1006,7 +1215,24 @@ export async function syncPlugins(options: {
     }
   }
 
+  // Resolve activation order via dependency graph
+  const manifestMap = new Map<string, PluginManifest>();
   for (const [id, entry] of desiredModes.entries()) {
+    const manifest = entry.mode === 'worker' ? entry.stored.manifest : entry.plugin.manifest;
+    manifestMap.set(id, manifest);
+  }
+
+  let activationOrder: string[];
+  try {
+    activationOrder = resolveDependencyOrder(manifestMap);
+  } catch (error) {
+    console.error('Plugin dependency resolution failed:', error);
+    activationOrder = Array.from(desiredModes.keys());
+  }
+
+  for (const id of activationOrder) {
+    const entry = desiredModes.get(id);
+    if (!entry) continue;
     if (entry.mode === 'worker') {
       if (!activeWorkers.has(id)) {
         await activateWorkerPlugin(entry.stored.manifest, entry.stored.main);

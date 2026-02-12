@@ -27,6 +27,7 @@ import {
   getFirstPaneId,
   generatePaneId,
 } from "@/lib/layout-utils";
+import { emitFileOpen, emitFileClose, emitWorkspaceOpen, emitActiveFileChange } from "@/lib/plugins/runtime";
 
 /**
  * Create initial layout with a single empty pane
@@ -143,7 +144,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   sidebarCollapsed: false,
 
   // File system actions
-  setRootHandle: (handle) => set({ rootHandle: handle }),
+  setRootHandle: (handle) => {
+    set({ rootHandle: handle });
+    if (handle) {
+      emitWorkspaceOpen(handle.name);
+    }
+  },
   setFileTree: (tree) => set({ fileTree: tree }),
   setLoading: (loading) => set({ isLoading: loading }),
   setError: (error) => set({ error }),
@@ -228,7 +234,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     })),
 
   // Tab actions
-  openFileInPane: (paneId, handle, path) =>
+  openFileInPane: (paneId, handle, path) => {
     set((state) => {
       const tab = createTab(handle, path);
       const newRoot = addTabToPane(state.layout.root, paneId, tab);
@@ -238,20 +244,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           root: newRoot,
         },
       };
-    }),
+    });
+    emitFileOpen(path);
+  },
 
   openFileInActivePane: (handle, path) => {
     const { layout, openFileInPane } = get();
     openFileInPane(layout.activePaneId, handle, path);
   },
 
-  closeTab: (paneId, tabIndex) =>
+  closeTab: (paneId, tabIndex) => {
+    const state = get();
+    const pane = findPane(state.layout.root, paneId);
+    const closedPath = pane?.tabs[tabIndex]?.filePath;
     set((state) => ({
       layout: {
         ...state.layout,
         root: removeTabFromPane(state.layout.root, paneId, tabIndex),
       },
-    })),
+    }));
+    if (closedPath) {
+      emitFileClose(closedPath);
+    }
+  },
 
   closeTabsByPath: (path) =>
     set((state) => ({
@@ -269,13 +284,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       },
     })),
 
-  setActiveTab: (paneId, tabIndex) =>
+  setActiveTab: (paneId, tabIndex) => {
     set((state) => ({
       layout: {
         ...state.layout,
         root: setActiveTabInPane(state.layout.root, paneId, tabIndex),
       },
-    })),
+    }));
+    const pane = findPane(get().layout.root, paneId);
+    const path = pane?.tabs[tabIndex]?.filePath ?? null;
+    emitActiveFileChange(path);
+  },
 
   reorderTabs: (paneId, fromIndex, toIndex) =>
     set((state) => ({

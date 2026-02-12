@@ -33,6 +33,8 @@ import { handleWidgetClick, setCursorPosition } from './cursor-positioning';
 import { loadKaTeX } from './katex-loader';
 import { getKaTeXOptions } from './katex-config';
 import { wrapLatexForMarkdown } from '@/lib/formula-utils';
+import { sanitizeInlineHtml } from '@/lib/sanitize';
+import { logger } from '@/lib/logger';
 
 type KaTeXModule = typeof import('katex').default;
 type HighlightModule = typeof import('highlight.js').default;
@@ -146,7 +148,7 @@ export class FormattedTextWidget extends WidgetType {
     if (this.className.includes('cm-inline-code')) {
       span.textContent = this.content;
     } else {
-      span.innerHTML = parseInlineMarkdown(this.content, this.referenceDefs);
+      span.innerHTML = sanitizeInlineHtml(parseInlineMarkdown(this.content, this.referenceDefs));
     }
 
     // 处理点击 - 精确光标定位 + 内嵌链接行为
@@ -366,10 +368,10 @@ export class LinkWidget extends WidgetType {
     link.className = `${
       this.isWikiLink ? 'cm-wiki-link' : 'cm-link'
     } cm-formatted-widget cm-syntax-transition`;
-    link.innerHTML = parseInlineMarkdown(this.text, undefined, {
+    link.innerHTML = sanitizeInlineHtml(parseInlineMarkdown(this.text, undefined, {
       disableLinks: true,
       disableImages: true,
-    });
+    }));
     link.href = this.isWikiLink ? '#' : this.url;
     link.title = this.isWikiLink
       ? `${this.url} (Click to open, double-click to edit)`
@@ -813,7 +815,7 @@ export class FootnoteDefWidget extends WidgetType {
     const content = document.createElement('span');
     content.className = 'cm-footnote-def-content';
     const joined = this.contentLines.join(' ');
-    content.innerHTML = parseInlineMarkdown(joined, this.referenceDefs);
+    content.innerHTML = sanitizeInlineHtml(parseInlineMarkdown(joined, this.referenceDefs));
 
     const backlink = document.createElement('a');
     backlink.className = 'cm-footnote-backlink';
@@ -963,7 +965,7 @@ export class CalloutWidget extends WidgetType {
 
     const title = document.createElement('span');
     title.className = 'cm-callout-title';
-    title.innerHTML = parseInlineMarkdown(this.title || this.calloutType.toUpperCase(), this.referenceDefs);
+    title.innerHTML = sanitizeInlineHtml(parseInlineMarkdown(this.title || this.calloutType.toUpperCase(), this.referenceDefs));
 
     const fold = document.createElement('span');
     fold.className = 'cm-callout-fold';
@@ -987,7 +989,7 @@ export class CalloutWidget extends WidgetType {
     } else {
       this.contentLines.forEach((line) => {
         const lineEl = document.createElement('div');
-        lineEl.innerHTML = parseInlineMarkdown(line, this.referenceDefs);
+        lineEl.innerHTML = sanitizeInlineHtml(parseInlineMarkdown(line, this.referenceDefs));
         content.appendChild(lineEl);
       });
     }
@@ -1045,7 +1047,7 @@ export class DetailsWidget extends WidgetType {
 
     const summary = document.createElement('summary');
     summary.className = 'cm-details-summary';
-    summary.innerHTML = parseInlineMarkdown(this.summary || 'Details', this.referenceDefs);
+    summary.innerHTML = sanitizeInlineHtml(parseInlineMarkdown(this.summary || 'Details', this.referenceDefs));
 
     const content = document.createElement('div');
     content.className = 'cm-details-content';
@@ -1054,7 +1056,7 @@ export class DetailsWidget extends WidgetType {
     } else {
       this.contentLines.forEach((line) => {
         const lineEl = document.createElement('div');
-        lineEl.innerHTML = parseInlineMarkdown(line, this.referenceDefs);
+        lineEl.innerHTML = sanitizeInlineHtml(parseInlineMarkdown(line, this.referenceDefs));
         content.appendChild(lineEl);
       });
     }
@@ -1472,7 +1474,8 @@ export class MathWidget extends WidgetType {
             container.classList.add('cm-math-error');
           }
         })
-        .catch(() => {
+        .catch((err) => {
+          logger.warn('[KaTeX] Failed to load or render:', err);
           container.classList.add('cm-math-error');
         });
     }
@@ -1628,7 +1631,7 @@ export class CodeBlockWidget extends WidgetType {
       setTimeout(() => {
         try {
           const result = highlight.highlight(this.code, { language: this.language });
-          code.innerHTML = result.value;
+          code.innerHTML = sanitizeInlineHtml(result.value);
         } catch {
           // 语言不支持，保持纯文本
         }
@@ -1640,7 +1643,7 @@ export class CodeBlockWidget extends WidgetType {
           if (this.language) {
             try {
               const result = h.highlight(this.code, { language: this.language });
-              code.innerHTML = result.value;
+              code.innerHTML = sanitizeInlineHtml(result.value);
             } catch {
               // 语言不支持
             }
@@ -2011,7 +2014,7 @@ export class TableWidget extends WidgetType {
         }
         // 解析并渲染单元格中的行内Markdown
         const cellContent = cell.trim();
-        cellEl.innerHTML = parseInlineMarkdown(cellContent, this.referenceDefs);
+        cellEl.innerHTML = sanitizeInlineHtml(parseInlineMarkdown(cellContent, this.referenceDefs));
         tr.appendChild(cellEl);
       }
 

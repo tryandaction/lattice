@@ -25,6 +25,7 @@ import {
   isLegacyAnnotationFile,
   migrateLegacyAnnotationFile,
 } from '../lib/annotation-migration';
+import { logger } from '../lib/logger';
 
 // ============================================================================
 // Types
@@ -178,10 +179,19 @@ export function useAnnotationSystem({
           const annotationFileHandle = await annotationsDir.getFileHandle(annotationFileName);
           const file = await annotationFileHandle.getFile();
           const content = await file.text();
-          
+
           // Try to parse the content
-          const parsed = JSON.parse(content);
-          
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(content);
+          } catch (parseErr) {
+            logger.error(`[Annotations] Failed to parse annotation file ${annotationFileName}:`, parseErr);
+            if (!cancelled) {
+              setAnnotations([]);
+            }
+            return;
+          }
+
           // Check for legacy format and migrate
           if (isLegacyAnnotationFile(parsed)) {
             const migrated = migrateLegacyAnnotationFile(parsed);

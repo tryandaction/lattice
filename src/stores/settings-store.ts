@@ -164,5 +164,12 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   normalized.pluginPanelLastActiveId = stringOrNull(raw.pluginPanelLastActiveId);
   normalized.pluginPanelRecentIds = stringArray(raw.pluginPanelRecentIds);
   if (typeof raw.aiEnabled === 'boolean') normalized.aiEnabled = raw.aiEnabled;
+  normalized.aiProvider = stringOrNull(raw.aiProvider);
+  normalized.aiModel = stringOrNull(raw.aiModel);
+  if (typeof raw.aiOllamaUrl === 'string') normalized.aiOllamaUrl = raw.aiOllamaUrl;
+  normalized.aiCustomEndpoint = stringOrNull(raw.aiCustomEndpoint);
+  if (typeof raw.aiTemperature === 'number') normalized.aiTemperature = raw.aiTemperature;
+  if (typeof raw.aiMaxTokens === 'number') normalized.aiMaxTokens = raw.aiMaxTokens;
+  if (typeof raw.aiStreamingEnabled === 'boolean') normalized.aiStreamingEnabled = raw.aiStreamingEnabled;
   return normalized;
 }

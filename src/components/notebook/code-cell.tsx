@@ -22,6 +22,7 @@ import { AnsiText } from "./ansi-text";
 import { usePythonRunner } from "@/hooks/use-python-runner";
 import { OutputArea } from "./output-area";
 import { KernelStatus } from "./kernel-status";
+import { NotebookAiAssist } from "@/components/ai/notebook-ai-assist";
 
 interface CodeCellProps {
   source: string;
@@ -303,6 +304,27 @@ export const CodeCell = memo(function CodeCell({
           ))}
         </div>
       )}
+
+      {/* AI Assist */}
+      <NotebookAiAssist
+        cellSource={contentRef.current}
+        cellOutput={
+          hasExecutionOutputs
+            ? executionOutputs.map(o => typeof o === 'string' ? o : JSON.stringify(o)).join("\n")
+            : hasFileOutputs
+              ? outputs!.filter(o => o.output_type !== 'error').map(o => normalizeText(o.text) || normalizeText(o.data?.["text/plain"])).join("\n")
+              : undefined
+        }
+        cellError={
+          kernelError
+            ?? outputs?.find(o => o.output_type === 'error')?.evalue
+            ?? undefined
+        }
+        onInsertCode={(code) => {
+          contentRef.current = code;
+          onChange(code);
+        }}
+      />
     </div>
   );
 });

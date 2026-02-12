@@ -11,6 +11,11 @@ const KNOWN_PERMISSIONS: PluginPermission[] = [
   'network',
   'ui:commands',
   'ui:panels',
+  'ui:sidebar',
+  'ui:toolbar',
+  'ui:statusbar',
+  'editor:extensions',
+  'themes',
   'storage',
 ];
 

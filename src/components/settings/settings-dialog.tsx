@@ -21,7 +21,7 @@ import {
 } from '@/lib/plugins/runtime';
 import { cn } from '@/lib/utils';
 import type { TranslationKey } from '@/lib/i18n';
-import type { PluginCommand, PluginManifest, PluginPermission } from '@/lib/plugins/types';
+import type { PluginCommand, PluginManifest, PluginPermission, PluginSettingField } from '@/lib/plugins/types';
 import type { PluginHealth, PluginAuditEvent } from '@/lib/plugins/runtime';
 
 interface SettingsDialogProps {
@@ -69,6 +69,26 @@ const PERMISSION_META: Record<PluginPermission, { titleKey: TranslationKey; desc
   'ui:panels': {
     titleKey: 'settings.plugins.permission.uiPanels.title',
     descKey: 'settings.plugins.permission.uiPanels.desc',
+  },
+  'ui:sidebar': {
+    titleKey: 'settings.plugins.permission.uiSidebar.title' as TranslationKey,
+    descKey: 'settings.plugins.permission.uiSidebar.desc' as TranslationKey,
+  },
+  'ui:toolbar': {
+    titleKey: 'settings.plugins.permission.uiToolbar.title' as TranslationKey,
+    descKey: 'settings.plugins.permission.uiToolbar.desc' as TranslationKey,
+  },
+  'ui:statusbar': {
+    titleKey: 'settings.plugins.permission.uiStatusbar.title' as TranslationKey,
+    descKey: 'settings.plugins.permission.uiStatusbar.desc' as TranslationKey,
+  },
+  'editor:extensions': {
+    titleKey: 'settings.plugins.permission.editorExtensions.title' as TranslationKey,
+    descKey: 'settings.plugins.permission.editorExtensions.desc' as TranslationKey,
+  },
+  themes: {
+    titleKey: 'settings.plugins.permission.themes.title' as TranslationKey,
+    descKey: 'settings.plugins.permission.themes.desc' as TranslationKey,
   },
   storage: {
     titleKey: 'settings.plugins.permission.storage.title',
@@ -649,6 +669,9 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                                 <div className="text-xs text-muted-foreground mt-1">
                                   {t('settings.plugins.permissions')}: {permissions.length > 0 ? permissions.join(', ') : t('settings.plugins.permissions.none')}
                                 </div>
+                                {plugin.settings && plugin.settings.length > 0 && isEnabled && settings.pluginsEnabled && (
+                                  <PluginSettingsFields pluginId={plugin.id} fields={plugin.settings} />
+                                )}
                                 {status === 'error' && health?.lastError && (
                                   <div className="mt-2 text-xs text-destructive">
                                     {t('settings.plugins.status.errorDetail')}: {health.lastError}
@@ -831,6 +854,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
 
             {activeTab === 'ai' && (
               <div className="space-y-6">
+                {/* AI Enable Toggle */}
                 <div className="flex items-start justify-between gap-4 rounded-lg border border-border bg-muted/30 p-3">
                   <div>
                     <div className="text-sm font-medium">{t('settings.ai.enable')}</div>
@@ -846,6 +870,99 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     onChange={(event) => updateSetting('aiEnabled', event.target.checked)}
                   />
                 </div>
+
+                {settings.aiEnabled && (
+                  <>
+                    {/* Provider Selection */}
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">AI Provider</label>
+                      <select
+                        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                        value={settings.aiProvider ?? ''}
+                        onChange={(e) => updateSetting('aiProvider', e.target.value || null)}
+                      >
+                        <option value="">Select a provider...</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                        <option value="google">Google Gemini</option>
+                        <option value="ollama">Ollama (Local)</option>
+                      </select>
+                    </div>
+
+                    {/* API Key Input */}
+                    {settings.aiProvider && settings.aiProvider !== 'ollama' && (
+                      <AiApiKeyInput provider={settings.aiProvider} />
+                    )}
+
+                    {/* Ollama URL */}
+                    {settings.aiProvider === 'ollama' && (
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Ollama URL</label>
+                        <input
+                          type="text"
+                          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                          value={settings.aiOllamaUrl}
+                          onChange={(e) => updateSetting('aiOllamaUrl', e.target.value)}
+                          placeholder="http://localhost:11434"
+                        />
+                      </div>
+                    )}
+
+                    {/* Model Selection */}
+                    {settings.aiProvider && (
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Model</label>
+                        <AiModelSelector provider={settings.aiProvider} currentModel={settings.aiModel} onSelect={(m) => updateSetting('aiModel', m)} />
+                      </div>
+                    )}
+
+                    {/* Temperature */}
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Temperature: {settings.aiTemperature.toFixed(1)}</label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="2"
+                        step="0.1"
+                        className="w-full"
+                        value={settings.aiTemperature}
+                        onChange={(e) => updateSetting('aiTemperature', parseFloat(e.target.value))}
+                      />
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>Precise</span>
+                        <span>Creative</span>
+                      </div>
+                    </div>
+
+                    {/* Max Tokens */}
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Max Tokens</label>
+                      <input
+                        type="number"
+                        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                        value={settings.aiMaxTokens}
+                        onChange={(e) => updateSetting('aiMaxTokens', parseInt(e.target.value) || 4096)}
+                        min={256}
+                        max={128000}
+                        step={256}
+                      />
+                    </div>
+
+                    {/* Streaming Toggle */}
+                    <div className="flex items-center justify-between rounded-lg border border-border bg-muted/30 p-3">
+                      <div>
+                        <div className="text-sm font-medium">Streaming</div>
+                        <p className="text-xs text-muted-foreground mt-1">Stream responses token by token</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-border text-primary"
+                        checked={settings.aiStreamingEnabled}
+                        onChange={(e) => updateSetting('aiStreamingEnabled', e.target.checked)}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -1040,5 +1157,173 @@ function PluginTrustDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+function PluginSettingsFields({ pluginId, fields }: { pluginId: string; fields: PluginSettingField[] }) {
+  const [values, setValues] = useState<Record<string, unknown>>(() => {
+    const initial: Record<string, unknown> = {};
+    for (const field of fields) {
+      const raw = localStorage.getItem(`lattice-plugin-kv:${pluginId}:setting:${field.id}`);
+      initial[field.id] = raw !== null ? (() => { try { return JSON.parse(raw); } catch { return raw; } })() : field.default;
+    }
+    return initial;
+  });
+
+  const handleChange = (fieldId: string, value: unknown) => {
+    setValues((prev) => ({ ...prev, [fieldId]: value }));
+    localStorage.setItem(`lattice-plugin-kv:${pluginId}:setting:${fieldId}`, JSON.stringify(value));
+  };
+
+  return (
+    <div className="mt-2 space-y-2 border-t border-border pt-2">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Settings</div>
+      {fields.map((field) => (
+        <div key={field.id} className="flex items-center justify-between gap-2">
+          <div>
+            <div className="text-xs text-foreground">{field.label}</div>
+            {field.description && <div className="text-[10px] text-muted-foreground">{field.description}</div>}
+          </div>
+          {field.type === 'boolean' && (
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 rounded border-border"
+              checked={Boolean(values[field.id])}
+              onChange={(e) => handleChange(field.id, e.target.checked)}
+            />
+          )}
+          {field.type === 'string' && (
+            <input
+              type="text"
+              className="w-32 rounded border border-border bg-background px-2 py-1 text-xs"
+              value={String(values[field.id] ?? '')}
+              onChange={(e) => handleChange(field.id, e.target.value)}
+            />
+          )}
+          {field.type === 'number' && (
+            <input
+              type="number"
+              className="w-20 rounded border border-border bg-background px-2 py-1 text-xs"
+              value={Number(values[field.id] ?? 0)}
+              onChange={(e) => handleChange(field.id, Number(e.target.value))}
+            />
+          )}
+          {field.type === 'select' && (
+            <select
+              className="w-32 rounded border border-border bg-background px-2 py-1 text-xs"
+              value={String(values[field.id] ?? '')}
+              onChange={(e) => handleChange(field.id, e.target.value)}
+            >
+              {field.options?.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AiApiKeyInput({ provider }: { provider: string }) {
+  const storageKey = `lattice-ai-key:${provider}`;
+  const [key, setKey] = useState(() => localStorage.getItem(storageKey) ?? '');
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<'success' | 'fail' | null>(null);
+
+  const save = (value: string) => {
+    setKey(value);
+    if (value) {
+      localStorage.setItem(storageKey, value);
+    } else {
+      localStorage.removeItem(storageKey);
+    }
+    setTestResult(null);
+  };
+
+  const test = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const { getProvider } = await import('@/lib/ai/providers');
+      const p = getProvider(provider as import('@/lib/ai/types').AiProviderId);
+      if (p) {
+        const ok = await p.testConnection();
+        setTestResult(ok ? 'success' : 'fail');
+      } else {
+        setTestResult('fail');
+      }
+    } catch {
+      setTestResult('fail');
+    }
+    setTesting(false);
+  };
+
+  const providerNames: Record<string, string> = {
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
+    google: 'Google',
+  };
+
+  return (
+    <div className="space-y-2">
+      <label className="text-sm font-medium">{providerNames[provider] ?? provider} API Key</label>
+      <div className="flex gap-2">
+        <input
+          type="password"
+          className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
+          value={key}
+          onChange={(e) => save(e.target.value)}
+          placeholder="sk-..."
+        />
+        <button
+          onClick={test}
+          disabled={!key || testing}
+          className="rounded-md border border-border px-3 py-2 text-xs hover:bg-accent disabled:opacity-50 transition-colors"
+        >
+          {testing ? 'Testing...' : 'Test'}
+        </button>
+      </div>
+      {testResult === 'success' && <p className="text-xs text-green-600">Connection successful</p>}
+      {testResult === 'fail' && <p className="text-xs text-destructive">Connection failed — check your key</p>}
+    </div>
+  );
+}
+
+function AiModelSelector({ provider, currentModel, onSelect }: { provider: string; currentModel: string | null; onSelect: (model: string) => void }) {
+  const [models, setModels] = useState<Array<{ id: string; name: string }>>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    import('@/lib/ai/providers').then(async ({ getProvider }) => {
+      const p = getProvider(provider as import('@/lib/ai/types').AiProviderId);
+      if (p && !cancelled) {
+        try {
+          const available = await p.getAvailableModels();
+          if (!cancelled) setModels(available.map((m) => ({ id: m.id, name: m.name })));
+        } catch {
+          if (!cancelled) setModels([]);
+        }
+      }
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [provider]);
+
+  if (loading) return <p className="text-xs text-muted-foreground">Loading models...</p>;
+
+  return (
+    <select
+      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+      value={currentModel ?? ''}
+      onChange={(e) => onSelect(e.target.value)}
+    >
+      <option value="">Auto (default)</option>
+      {models.map((m) => (
+        <option key={m.id} value={m.id}>{m.name}</option>
+      ))}
+    </select>
   );
 }

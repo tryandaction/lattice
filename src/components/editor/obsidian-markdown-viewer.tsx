@@ -13,17 +13,19 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { 
-  Eye, 
-  Save, 
-  Loader2, 
-  Check, 
-  AlertCircle, 
+import {
+  Eye,
+  Save,
+  Loader2,
+  Check,
+  AlertCircle,
   Code2,
   PanelLeftClose,
   PanelLeft,
   Sparkles,
 } from "lucide-react";
+import { useTextSelection } from "@/hooks/use-text-selection";
+import { AiInlineMenu } from "@/components/ai/ai-inline-menu";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
 import type { ViewMode, OutlineItem } from "./codemirror/live-preview/types";
@@ -188,6 +190,7 @@ export function ObsidianMarkdownViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<LivePreviewEditorRef>(null);
   const prevFileIdRef = useRef(fileId);
+  const { selection: aiSelection, dismiss: dismissAiMenu } = useTextSelection(containerRef);
   const saveEditorState = useContentCacheStore((state) => state.saveEditorState);
   const getEditorState = useContentCacheStore((state) => state.getEditorState);
 
@@ -285,6 +288,22 @@ export function ObsidianMarkdownViewer({
   const handleOutlineChange = useCallback((newOutline: OutlineItem[]) => {
     setOutline(newOutline);
   }, []);
+
+  // Handle AI inline insert (append after selection)
+  const handleAiInsert = useCallback((text: string) => {
+    const newContent = localContent + "\n\n" + text;
+    handleContentChange(newContent);
+  }, [localContent, handleContentChange]);
+
+  // Handle AI inline replace (replace selected text)
+  const handleAiReplace = useCallback((text: string) => {
+    const sel = window.getSelection();
+    const selectedText = sel?.toString() ?? "";
+    if (selectedText && localContent.includes(selectedText)) {
+      const newContent = localContent.replace(selectedText, text);
+      handleContentChange(newContent);
+    }
+  }, [localContent, handleContentChange]);
 
   // Handle wiki link click
   const handleWikiLinkClick = useCallback((target: string) => {
@@ -422,6 +441,17 @@ export function ObsidianMarkdownViewer({
           />
         </div>
       </div>
+
+      {/* AI Inline Menu */}
+      {aiSelection && (
+        <AiInlineMenu
+          selectedText={aiSelection.text}
+          position={aiSelection.position}
+          onInsert={handleAiInsert}
+          onReplace={handleAiReplace}
+          onClose={dismissAiMenu}
+        />
+      )}
 
       {/* Mode hint */}
       {mode === "live" && (

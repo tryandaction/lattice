@@ -282,11 +282,17 @@ export function createDebouncedSave(delay: number = 500) {
   let pendingPromise: Promise<void> | null = null;
   let pendingResolve: (() => void) | null = null;
   let pendingReject: ((error: Error) => void) | null = null;
+  let lastAnnotationFile: AnnotationFile | null = null;
+  let lastRootHandle: FileSystemDirectoryHandle | null = null;
 
-  return async function debouncedSave(
+  async function debouncedSave(
     annotationFile: AnnotationFile,
     rootHandle: FileSystemDirectoryHandle
   ): Promise<void> {
+    // Track latest args for flush
+    lastAnnotationFile = annotationFile;
+    lastRootHandle = rootHandle;
+
     // Clear existing timeout
     if (timeoutId) {
       clearTimeout(timeoutId);
@@ -312,11 +318,37 @@ export function createDebouncedSave(delay: number = 500) {
         pendingResolve = null;
         pendingReject = null;
         timeoutId = null;
+        lastAnnotationFile = null;
+        lastRootHandle = null;
       }
     }, delay);
 
     return pendingPromise;
+  }
+
+  /** Flush: cancel debounce timer and save immediately */
+  debouncedSave.flush = async function flush(): Promise<void> {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    if (lastAnnotationFile && lastRootHandle) {
+      try {
+        await saveAnnotationsToDisk(lastAnnotationFile, lastRootHandle);
+        pendingResolve?.();
+      } catch (error) {
+        pendingReject?.(error instanceof Error ? error : new Error('Flush save failed'));
+      } finally {
+        pendingPromise = null;
+        pendingResolve = null;
+        pendingReject = null;
+        lastAnnotationFile = null;
+        lastRootHandle = null;
+      }
+    }
   };
+
+  return debouncedSave;
 }
 
 /**

@@ -18,6 +18,8 @@ import { useAnnotationNavigation } from "../../hooks/use-annotation-navigation";
 import { usePythonRunner } from "@/hooks/use-python-runner";
 import { OutputArea } from "@/components/notebook/output-area";
 import { KernelStatus } from "@/components/notebook/kernel-status";
+import { useTextSelection } from "@/hooks/use-text-selection";
+import { AiInlineMenu } from "@/components/ai/ai-inline-menu";
 
 interface CodeEditorViewerProps {
   /** File content as string */
@@ -82,6 +84,10 @@ export function CodeEditorViewer({
   
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  // AI inline menu
+  const editorContainerRef = useRef<HTMLDivElement>(null);
+  const { selection: aiSelection, dismiss: dismissAiMenu } = useTextSelection(editorContainerRef);
   
   // Debounce timer ref
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -202,6 +208,21 @@ export function CodeEditorViewer({
       return () => document.removeEventListener('click', handleClick);
     }
   }, [contextMenu]);
+
+  // AI inline insert/replace handlers
+  const handleAiInsert = useCallback((text: string) => {
+    const current = currentContentRef.current;
+    handleChange(current + "\n\n" + text);
+  }, [handleChange]);
+
+  const handleAiReplace = useCallback((text: string) => {
+    const sel = window.getSelection();
+    const selectedText = sel?.toString() ?? "";
+    const current = currentContentRef.current;
+    if (selectedText && current.includes(selectedText)) {
+      handleChange(current.replace(selectedText, text));
+    }
+  }, [handleChange]);
   
   /**
    * Handle keyboard shortcut for running code
@@ -215,7 +236,18 @@ export function CodeEditorViewer({
   }, [isPythonFile, handleRun]);
 
   return (
-    <div className="h-full flex flex-col overflow-hidden" onKeyDown={handleKeyDown}>
+    <div ref={editorContainerRef} className="h-full flex flex-col overflow-hidden" onKeyDown={handleKeyDown}>
+      {/* AI Inline Menu */}
+      {aiSelection && (
+        <AiInlineMenu
+          selectedText={aiSelection.text}
+          position={aiSelection.position}
+          onInsert={handleAiInsert}
+          onReplace={handleAiReplace}
+          onClose={dismissAiMenu}
+        />
+      )}
+
       {/* Context menu for running selection */}
       {contextMenu && isPythonFile && (
         <div

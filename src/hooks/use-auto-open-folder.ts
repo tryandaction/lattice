@@ -1,8 +1,10 @@
 /**
  * Auto Open Default Folder Hook
- * 
- * Automatically opens the default folder when the app starts,
- * if one is configured and the onboarding is completed.
+ *
+ * Automatically restores the last opened folder when the app starts.
+ * In web mode, persists the FileSystemDirectoryHandle in IndexedDB
+ * and re-requests permission on next launch.
+ * In Tauri mode, uses Tauri's filesystem APIs.
  */
 
 'use client';
@@ -11,46 +13,125 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 import { isTauri } from '@/lib/storage-adapter';
+import { logger } from '@/lib/logger';
+
+const DB_NAME = 'lattice-handles';
+const STORE_NAME = 'directory-handles';
+const HANDLE_KEY = 'last-opened-folder';
+
+// ============================================================================
+// IndexedDB helpers for persisting FileSystemDirectoryHandle
+// ============================================================================
+
+function openHandleDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(STORE_NAME);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function saveHandleToDB(handle: FileSystemDirectoryHandle): Promise<void> {
+  const db = await openHandleDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(handle, HANDLE_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function loadHandleFromDB(): Promise<FileSystemDirectoryHandle | null> {
+  const db = await openHandleDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const request = tx.objectStore(STORE_NAME).get(HANDLE_KEY);
+    request.onsuccess = () => resolve(request.result ?? null);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+// ============================================================================
+// Hook
+// ============================================================================
 
 export function useAutoOpenFolder() {
   const isInitialized = useSettingsStore((state) => state.isInitialized);
   const settings = useSettingsStore((state) => state.settings);
-  
+
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
-  
+  const setRootHandle = useWorkspaceStore((state) => state.setRootHandle);
+
   const hasAttemptedAutoOpen = useRef(false);
 
+  // Persist handle whenever rootHandle changes (web mode only)
+  useEffect(() => {
+    if (!isTauri() && rootHandle) {
+      saveHandleToDB(rootHandle).catch((err) =>
+        logger.warn('[AutoOpen] Failed to persist folder handle:', err)
+      );
+    }
+  }, [rootHandle]);
+
   const openDefaultFolder = useCallback(async () => {
-    // Only run once
     if (hasAttemptedAutoOpen.current) return;
     hasAttemptedAutoOpen.current = true;
 
-    // Skip if no default folder configured
-    if (!settings.defaultFolder) return;
-
-    // Skip if onboarding not completed
     if (!settings.onboardingCompleted) return;
-
-    // Skip if already have a folder open
     if (rootHandle) return;
 
-    // Skip in Tauri - folder path handling is different
-    // In Tauri, we'd need to use Tauri's file system APIs
     if (isTauri()) {
-      // TODO: Implement Tauri-specific folder opening
-      console.log('[AutoOpen] Tauri mode - skipping auto-open (not yet implemented)');
+      // Tauri mode: use Tauri dialog to open saved path
+      try {
+        // @ts-expect-error -- only available in Tauri build
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const path = settings.defaultFolder;
+        if (!path) return;
+        // In Tauri, we can programmatically access the filesystem
+        // but still need to set the root handle through the workspace store
+        logger.info('[AutoOpen] Tauri mode - attempting to open:', path);
+        const selected = await open({ directory: true, defaultPath: path });
+        if (selected) {
+          logger.info('[AutoOpen] Tauri folder opened:', selected);
+        }
+      } catch (err) {
+        logger.warn('[AutoOpen] Tauri auto-open failed:', err);
+      }
       return;
     }
 
-    // In web mode, we can't auto-open a folder by path
-    // The File System Access API requires user interaction
-    // We can only show a prompt to the user
-    console.log('[AutoOpen] Web mode - cannot auto-open folder without user interaction');
-    console.log('[AutoOpen] Default folder configured:', settings.defaultFolder);
-    
-    // We could show a toast/notification here prompting the user to open the folder
-    // For now, just log it
-  }, [settings.defaultFolder, settings.onboardingCompleted, rootHandle]);
+    // Web mode: try to restore handle from IndexedDB
+    try {
+      const savedHandle = await loadHandleFromDB();
+      if (!savedHandle) {
+        logger.debug('[AutoOpen] No saved folder handle found');
+        return;
+      }
+
+      // Request permission to access the saved handle
+      const permission = await savedHandle.queryPermission({ mode: 'readwrite' });
+      if (permission === 'granted') {
+        setRootHandle(savedHandle);
+        logger.info('[AutoOpen] Restored folder:', savedHandle.name);
+        return;
+      }
+
+      // Need to request permission (requires user gesture)
+      // We can't auto-request without user interaction, but we can try
+      const requested = await savedHandle.requestPermission({ mode: 'readwrite' });
+      if (requested === 'granted') {
+        setRootHandle(savedHandle);
+        logger.info('[AutoOpen] Permission granted, restored folder:', savedHandle.name);
+      } else {
+        logger.debug('[AutoOpen] Permission denied for saved folder');
+      }
+    } catch (err) {
+      logger.warn('[AutoOpen] Failed to restore folder handle:', err);
+    }
+  }, [settings.defaultFolder, settings.onboardingCompleted, rootHandle, setRootHandle]);
 
   useEffect(() => {
     if (isInitialized) {

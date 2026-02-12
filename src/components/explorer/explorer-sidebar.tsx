@@ -7,6 +7,7 @@ import { EmptyState } from "./empty-state";
 import { TreeView } from "./tree-view";
 import { NewFileButtons } from "./new-file-buttons";
 import { Loader2, AlertCircle, PanelLeftClose, PanelLeft } from "lucide-react";
+import { PluginSidebarSlot } from "@/components/ui/plugin-sidebar-slot";
 
 /**
  * Explorer Sidebar component
@@ -118,6 +119,7 @@ export function ExplorerSidebar() {
           <TreeView root={fileTree.root} />
         )}
       </div>
+      <PluginSidebarSlot />
     </div>
   );
 }

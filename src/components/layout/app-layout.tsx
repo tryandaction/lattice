@@ -30,6 +30,11 @@ import { DownloadAppDialog } from "@/components/ui/download-app-dialog";
 import { OnboardingWizard } from "@/components/onboarding/onboarding-wizard";
 import { ExportToastContainer } from "@/components/ui/export-toast";
 import { usePluginStore } from "@/stores/plugin-store";
+import { useAnnotationStore } from "@/stores/annotation-store";
+import { PluginStatusBarSlot } from "@/components/ui/plugin-statusbar-slot";
+import { PluginToolbarSlot } from "@/components/ui/plugin-toolbar-slot";
+import { AiChatPanel } from "@/components/ai/ai-chat-panel";
+import { useAiChatStore } from "@/stores/ai-chat-store";
 
 const DESKTOP_SIDEBAR_DEFAULT = 20;
 const DESKTOP_PANEL_DEFAULT = 22;
@@ -107,6 +112,15 @@ function AppLayoutContent() {
   const isDesktopLayout = !isMobile && !isTablet;
 
   useAutoOpenFolder();
+
+  // Flush pending annotation saves before page unload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      useAnnotationStore.getState().flushPendingSaves();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   // Fix hydration mismatch
   useEffect(() => {
@@ -330,6 +344,7 @@ function AppLayoutContent() {
         >
           <HelpCircle className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         </button>
+        <PluginToolbarSlot />
       </div>
     </>
   );
@@ -382,6 +397,7 @@ function AppLayoutContent() {
         <main className="flex-1 overflow-hidden">
           <MainArea />
         </main>
+        <PluginStatusBarSlot />
         <MobileSidebar isOpen={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)}>
           {SidebarContent}
         </MobileSidebar>
@@ -511,10 +527,10 @@ function AppLayoutContent() {
 
   // Desktop Layout
   return (
-    <div className="h-screen w-screen overflow-hidden bg-background">
+    <div className="h-screen w-screen overflow-hidden bg-background flex flex-col">
       <ResizablePanelGroup
         direction="horizontal"
-        className="h-full"
+        className="flex-1"
         sizes={desktopGroupSizes}
         onSizesChange={(sizes) => {
             if (sidebarCollapsed) {
@@ -569,6 +585,7 @@ function AppLayoutContent() {
           </>
         )}
       </ResizablePanelGroup>
+      <AiChatPanel />
       {sidebarCollapsed && (
         <div className={cn(
           "fixed left-0 top-0 z-50 h-full w-12",
@@ -610,13 +627,13 @@ function AppLayoutContent() {
               <PanelLeft className="h-4 w-4" />
             </button>
             <button
-              onClick={() => setShowAiContext(true)}
+              onClick={() => useAiChatStore.getState().toggleOpen()}
               className={cn(
                 "p-2 rounded-md",
                 "text-muted-foreground",
                 "hover:bg-muted hover:text-foreground transition-colors"
               )}
-              title={t("ai.context.open")}
+              title="AI Chat"
             >
               <Bot className="h-4 w-4" />
             </button>
@@ -634,6 +651,7 @@ function AppLayoutContent() {
           </div>
         </div>
       )}
+      <PluginStatusBarSlot />
       <Dialogs
         showSettings={showSettings}
         setShowSettings={setShowSettings}

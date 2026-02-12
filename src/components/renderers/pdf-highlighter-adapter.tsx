@@ -18,10 +18,10 @@ import type {
   IHighlight, 
   NewHighlight, 
 } from "react-pdf-highlighter";
-import { 
-  ZoomIn, 
-  ZoomOut, 
-  Loader2, 
+import {
+  ZoomIn,
+  ZoomOut,
+  Loader2,
   StickyNote,
   MessageSquare,
   X,
@@ -34,6 +34,7 @@ import {
   ChevronDown,
   PanelRightOpen,
   PanelRightClose,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAnnotationSystem } from "@/hooks/use-annotation-system";
@@ -47,6 +48,7 @@ import { InkColorPicker, InkWidthPicker } from "./ink-color-picker";
 import { adjustPopupPosition, type PopupSize } from "@/lib/coordinate-adapter";
 import type { AnnotationItem, PdfTarget, BoundingBox } from "@/types/universal-annotation";
 import { useInkAnnotationStore } from "@/stores/ink-annotation-store";
+import { PdfAiPanel } from "@/components/ai/pdf-ai-panel";
 
 import "react-pdf-highlighter/dist/style.css";
 
@@ -1300,6 +1302,8 @@ export function PDFHighlighterAdapter({
   const [textAnnotationPosition, setTextAnnotationPosition] = useState<{ x: number; y: number; page: number } | null>(null);
   const [editingTextAnnotation, setEditingTextAnnotation] = useState<{ annotation: AnnotationItem; position: { x: number; y: number } } | null>(null);
   const [pdfPageDimensions, _setPdfPageDimensions] = useState<Map<number, { width: number; height: number }>>(new Map());
+  const [showAiPanel, setShowAiPanel] = useState(false);
+  const [pdfTextContent, setPdfTextContent] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -1512,6 +1516,27 @@ export function PDFHighlighterAdapter({
       URL.revokeObjectURL(pdfUrl);
     };
   }, [pdfUrl]);
+
+  // Extract text content from PDF for AI features
+  useEffect(() => {
+    if (!showAiPanel || pdfTextContent) return;
+    (async () => {
+      try {
+        const pdfjsLib = await import("pdfjs-dist");
+        const doc = await pdfjsLib.getDocument({ data: content.slice(0) }).promise;
+        const pages: string[] = [];
+        for (let i = 1; i <= Math.min(doc.numPages, 50); i++) {
+          const page = await doc.getPage(i);
+          const tc = await page.getTextContent();
+          const text = tc.items.map((item) => ('str' in item ? (item as { str: string }).str : "")).join(" ");
+          pages.push(text);
+        }
+        setPdfTextContent(pages.join("\n\n"));
+      } catch {
+        setPdfTextContent("[Failed to extract text from PDF]");
+      }
+    })();
+  }, [showAiPanel, pdfTextContent, content]);
 
   // Convert annotations to highlights
   const highlights = useMemo(() => {
@@ -2035,6 +2060,16 @@ export function PDFHighlighterAdapter({
             annotations={annotations}
             fileName={fileName}
           />
+
+          <Button
+            variant={showAiPanel ? "secondary" : "ghost"}
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setShowAiPanel(!showAiPanel)}
+            title="AI Assistant"
+          >
+            <Sparkles className="h-4 w-4" />
+          </Button>
         </div>
       </div>
 
@@ -2421,6 +2456,15 @@ export function PDFHighlighterAdapter({
             onCancel={cancelInkDrawing}
           />
         </div>
+
+        {/* AI Panel - Right side */}
+        {showAiPanel && (
+          <PdfAiPanel
+            pdfText={pdfTextContent}
+            fileName={fileName}
+            onClose={() => setShowAiPanel(false)}
+          />
+        )}
       </div>
 
       {pendingPin && (

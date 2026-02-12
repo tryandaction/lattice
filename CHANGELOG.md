@@ -7,73 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed - Critical Bugs (2026-01-22)
+## [1.0.0] - 2026-02-12
 
-#### 🐛 Bug #1: Long File Truncation
-- Fixed files >100 lines being truncated and not fully visible
-- Changed CSS from `display: none` to `visibility: hidden` for hidden lines to maintain document flow
-- Added edge case handling for empty documents
-- Created comprehensive test files: 100, 500, 1000, 10000 lines
+### Phase 1: 代码质量与稳定性 (v0.4.0)
 
-#### 🐛 Bug #2: File Switching Content Error
-- Fixed incorrect content display when switching between files
-- Clear decoration cache on file switch to prevent stale data
-- Reset save status on file change
-- Added comprehensive file switching debug logs with `[FileSwitch]` prefix
+#### 安全
+- **XSS防护**: 新增 `src/lib/sanitize.ts`，所有 `innerHTML` 赋值通过 DOMPurify 消毒
+- **JSON.parse验证**: 注解解析增加 try-catch + 结构验证，解析失败不崩溃
 
-#### 🐛 Bug #3: Text Duplication
-- Fixed markdown elements showing both decoration and original text
-- Explicit range calculation for all inline elements (bold, italic, code, links)
-- Added range validation to prevent invalid decorations
-- Ensured `from` and `to` positions cover entire syntax including markers
+#### 修复
+- **KaTeX错误处理**: 替换静默 `.catch(() => {})` 为带日志的错误处理，加载失败显示 fallback
+- **注解存储错误信息**: 错误消息包含实际错误信息和文件ID
+- **Auto-open-folder**: Web模式通过 IndexedDB 持久化 FileSystemDirectoryHandle；Tauri模式使用 plugin-dialog
+- **防抖保存**: 添加 `flushPendingSaves()` 方法，`beforeunload` 时确保注解已保存
 
-#### 🐛 Bug #4: Formula Rendering
-- Fixed formulas displaying as "undefined" or blank
-- Added latex parameter validation before creating MathWidget
-- Added validation in MathWidget.toDOM() to catch edge cases
-- Improved error messages for debugging formula issues
+#### 改进
+- **生产日志策略**: 新增 `src/lib/logger.ts`，按环境过滤日志级别，迁移294条 console 语句
+- **Tiptap死代码清理**: 删除8个未使用的 Tiptap 扩展文件，移除12个 `@tiptap/*` 依赖
 
-#### 🐛 Bug #5: Markdown Syntax Markers
-- Verified existing implementation using `Decoration.replace({})`
-- Markers (# ** * > -) are hidden when not editing
-- Markers appear when cursor moves to element (Obsidian-style)
+### Phase 2: 插件系统扩展 (v0.5.0)
 
-### Added
-- 🔍 Debug mode controlled by NODE_ENV (development vs production)
-- 📊 Comprehensive debug logging with prefixes: `[parseDocument]`, `[FileSwitch]`, `[EditorInit]`, `[ContentUpdate]`, `[Cache]`
-- 🧪 Test files for all bug scenarios: `test-all-bugs.md`, `test-100-lines.md`, etc.
-- 📝 Documentation: `CRITICAL_BUGS_FIXED.md`, `QUICK_TEST_GUIDE.md`, `docs/fixes/critical-bugs-fix-summary.md`
-- 🛠️ Script: `scripts/generate-test-files.js` for creating test files
+#### 新增
+- **扩展点**: 新增 `ui:sidebar`、`ui:toolbar`、`ui:statusbar`、`editor:extensions`、`themes` 权限
+- **工作区事件钩子**: `onFileOpen`、`onFileSave`、`onFileClose`、`onWorkspaceOpen`
+- **UI插槽组件**: `PluginSidebarSlot`、`PluginToolbarSlot`、`PluginStatusBarSlot`
+- **插件设置UI**: 设置对话框中新增"扩展"标签页，支持插件配置 schema
+- **依赖解析**: 拓扑排序 + 循环依赖检测
+- **6个内置插件**: word-count、table-of-contents、markdown-linter、code-formatter、template-library、citation-manager
 
-### Changed
-- 💡 Improved code quality with explicit variable names (`fullMatch` instead of `match[0]`)
-- 📖 Enhanced comments explaining critical sections
-- ⚠️ Better error messages throughout the codebase
-- 🎯 More precise range calculations for inline elements
+### Phase 3: AI集成 (v0.6.0)
 
-### Performance
-- ⚡ Zero performance impact in production (debug logs disabled via `DEBUG_MODE`)
-- 🚀 Optimized decoration cache management with proper clearing on file switch
-- 📦 Conditional logging based on environment
-
-### Technical Details
-
-#### Modified Files
-- `src/components/editor/codemirror/live-preview/decoration-coordinator.ts` - Core parsing and decoration logic
-- `src/components/editor/codemirror/live-preview/live-preview-theme.ts` - CSS fixes for hidden lines
-- `src/components/editor/codemirror/live-preview/live-preview-editor.tsx` - Editor initialization and cache clearing
-- `src/components/editor/obsidian-markdown-viewer.tsx` - File switching logic
-- `src/components/editor/codemirror/live-preview/widgets.ts` - MathWidget validation
-
-#### New Files
-- `public/test-100-lines.md` - 100 line test file
-- `public/test-500-lines.md` - 500 line test file
-- `public/test-1000-lines.md` - 1000 line test file
-- `public/test-10000-lines.md` - 10000 line test file
-- `public/test-all-bugs.md` - Comprehensive test for all 5 bugs
-- `scripts/generate-test-files.js` - Test file generator
-- `CRITICAL_BUGS_FIXED.md` - Summary of all fixes
-- `QUICK_TEST_GUIDE.md` - Quick testing guide
+#### 新增
+- **AI Provider接口**: 完整的 `AiProvider` 接口，支持流式生成、模型列表、token估算
+- **4个AI Provider**: OpenAI、Anthropic、Google Gemini、Ollama（本地），全部使用原生 fetch + SSE
+- **AI设置面板**: 设置对话框中新增"AI"标签页，API密钥管理、模型选择、温度调节
+- **AI Chat侧边栏**: 可切换的右侧聊天面板，流式响应，对话历史，自动包含文件上下文
+- **内联AI功能**: 选中文本后浮现菜单，支持摘要、翻译、解释公式、改写、续写、生成大纲
+- **PDF AI面板**: 论文摘要、关键发现提取、论文问答
+- **Notebook AI辅助**: 代码生成、错误解释、输出解读，集成到代码单元格
+- **Context Builder增强**: 支持 selection 参数、多文件上下文、基于模型窗口的自动截断
 
 ---
 
@@ -311,15 +283,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Planned Features
 
-- 🔮 系统托盘图标支持
-- 🔮 自动更新功能
-- 🔮 窗口状态保存/恢复
-- 🔮 设置导出/导入
-- 🔮 自定义快捷键
-- 🔮 插件系统
+- 系统托盘图标支持
+- 自动更新功能
+- 窗口状态保存/恢复
+- 设置导出/导入
 
 ---
 
+[1.0.0]: https://github.com/tryandaction/lattice/releases/tag/v1.0.0
 [0.3.0]: https://github.com/tryandaction/lattice/releases/tag/v0.3.0
 [0.2.0]: https://github.com/tryandaction/lattice/releases/tag/v0.2.0
 [0.1.0]: https://github.com/tryandaction/lattice/releases/tag/v0.1.0

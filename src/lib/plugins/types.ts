@@ -1,5 +1,9 @@
 import type { LatticeAnnotation } from '@/types/annotation';
 
+// ============================================================================
+// Permissions
+// ============================================================================
+
 export type PluginPermission =
   | 'file:read'
   | 'file:write'
@@ -8,7 +12,16 @@ export type PluginPermission =
   | 'network'
   | 'ui:commands'
   | 'ui:panels'
+  | 'ui:sidebar'
+  | 'ui:toolbar'
+  | 'ui:statusbar'
+  | 'editor:extensions'
+  | 'themes'
   | 'storage';
+
+// ============================================================================
+// Engine & Panel Schema
+// ============================================================================
 
 export interface PluginEngineInfo {
   lattice?: string;
@@ -34,10 +47,85 @@ export interface PluginPanel {
   }>;
 }
 
+// ============================================================================
+// UI Extension Points
+// ============================================================================
+
+export interface PluginSidebarItem {
+  id: string;
+  title: string;
+  icon: string;
+  position?: 'top' | 'bottom';
+  render: () => { type: string; props: Record<string, unknown> };
+}
+
+export interface PluginToolbarItem {
+  id: string;
+  title: string;
+  icon: string;
+  group?: string;
+  run: () => void | Promise<void>;
+}
+
+export interface PluginStatusBarItem {
+  id: string;
+  text: string;
+  tooltip?: string;
+  position?: 'left' | 'right';
+  onClick?: () => void;
+}
+
+// ============================================================================
+// Workspace Events
+// ============================================================================
+
+export interface PluginWorkspaceEvents {
+  onFileOpen: (callback: (filePath: string) => void) => () => void;
+  onFileSave: (callback: (filePath: string) => void) => () => void;
+  onFileClose: (callback: (filePath: string) => void) => () => void;
+  onWorkspaceOpen: (callback: (rootPath: string) => void) => () => void;
+  onActiveFileChange: (callback: (filePath: string | null) => void) => () => void;
+}
+
+// ============================================================================
+// Plugin Settings
+// ============================================================================
+
+export interface PluginSettingField {
+  id: string;
+  type: 'string' | 'number' | 'boolean' | 'select';
+  label: string;
+  description?: string;
+  default?: unknown;
+  options?: Array<{ label: string; value: string }>;
+}
+
+export interface PluginSettingsAPI {
+  get: (key: string) => unknown;
+  set: (key: string, value: unknown) => Promise<void>;
+  onChange: (key: string, callback: (value: unknown) => void) => () => void;
+}
+
+// TYPES_CONTINUE_1
+
+// ============================================================================
+// Assets & Storage
+// ============================================================================
+
 export interface PluginAssetsAPI {
   getUrl: (path: string) => Promise<string>;
   readText: (path: string) => Promise<string>;
 }
+
+export interface PluginStorage {
+  get: (key: string) => Promise<string | null>;
+  set: (key: string, value: string) => Promise<void>;
+  remove: (key: string) => Promise<void>;
+}
+
+// ============================================================================
+// Manifest
+// ============================================================================
 
 export interface PluginManifest {
   id: string;
@@ -49,10 +137,16 @@ export interface PluginManifest {
   engines?: PluginEngineInfo;
   permissions?: PluginPermission[];
   main?: string;
+  settings?: PluginSettingField[];
+  dependencies?: Record<string, string>;
   ui?: {
     panels?: PluginPanel[];
   };
 }
+
+// ============================================================================
+// Commands
+// ============================================================================
 
 export interface PluginCommand {
   id: string;
@@ -61,11 +155,11 @@ export interface PluginCommand {
   run: (payload?: unknown) => void | Promise<void>;
 }
 
-export interface PluginStorage {
-  get: (key: string) => Promise<string | null>;
-  set: (key: string, value: string) => Promise<void>;
-  remove: (key: string) => Promise<void>;
-}
+// TYPES_CONTINUE_2
+
+// ============================================================================
+// Workspace & Obsidian Compat
+// ============================================================================
 
 export interface PluginWorkspaceAPI {
   listFiles: () => Promise<string[]>;
@@ -109,6 +203,12 @@ export interface PluginAnnotationsAPI {
   remove: (id: string) => Promise<void>;
 }
 
+// TYPES_CONTINUE_3
+
+// ============================================================================
+// Plugin Context (extended)
+// ============================================================================
+
 export interface PluginContext {
   app: {
     platform: 'web' | 'desktop';
@@ -122,11 +222,26 @@ export interface PluginContext {
   panels: {
     register: (panel: PluginPanel) => void;
   };
+  sidebar: {
+    register: (item: PluginSidebarItem) => void;
+  };
+  toolbar: {
+    register: (item: PluginToolbarItem) => void;
+  };
+  statusBar: {
+    register: (item: PluginStatusBarItem) => void;
+  };
+  events: PluginWorkspaceEvents;
+  settings: PluginSettingsAPI;
   assets: PluginAssetsAPI;
   storage: PluginStorage;
   workspace: PluginWorkspaceAPI;
   annotations: PluginAnnotationsAPI;
 }
+
+// ============================================================================
+// Plugin Module
+// ============================================================================
 
 export interface PluginModule {
   manifest: PluginManifest;
