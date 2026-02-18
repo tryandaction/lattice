@@ -1,12 +1,16 @@
 /**
  * Shared KaTeX Loader
  * Prevents duplicate KaTeX module loading across plugins
+ * Includes retry with exponential backoff
  */
 
 type KaTeXModule = typeof import('katex').default;
 
 let katex: KaTeXModule | null = null;
 let loadPromise: Promise<KaTeXModule> | null = null;
+let retryCount = 0;
+const MAX_RETRIES = 3;
+const RETRY_DELAYS = [1000, 2000, 4000]; // exponential backoff
 
 function resolveKaTeX(module: KaTeXModule | { default?: KaTeXModule }): KaTeXModule {
   if ('default' in module && module.default) {
@@ -16,25 +20,37 @@ function resolveKaTeX(module: KaTeXModule | { default?: KaTeXModule }): KaTeXMod
 }
 
 /**
- * Load KaTeX module (singleton pattern)
+ * Load KaTeX module with retry logic (singleton pattern)
  * @returns Promise resolving to KaTeX module
  */
 export async function loadKaTeX(): Promise<KaTeXModule> {
   if (katex) return katex;
   if (loadPromise) return loadPromise;
 
-  loadPromise = import('katex')
-    .then((module) => {
-      katex = resolveKaTeX(module as { default?: KaTeXModule });
-      return katex;
-    })
-    .catch((err) => {
-      console.error('Failed to load KaTeX:', err);
-      loadPromise = null; // Reset on error to allow retry
-      throw err;
-    });
-
+  loadPromise = attemptLoad();
   return loadPromise;
+}
+
+async function attemptLoad(): Promise<KaTeXModule> {
+  try {
+    const module = await import('katex');
+    katex = resolveKaTeX(module as { default?: KaTeXModule });
+    retryCount = 0;
+    return katex;
+  } catch (err) {
+    loadPromise = null;
+    if (retryCount < MAX_RETRIES) {
+      const delay = RETRY_DELAYS[retryCount] ?? 4000;
+      retryCount++;
+      console.warn(`[KaTeX] Load failed (attempt ${retryCount}/${MAX_RETRIES}), retrying in ${delay}ms...`, err);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      loadPromise = attemptLoad();
+      return loadPromise;
+    }
+    console.error(`[KaTeX] Failed to load after ${MAX_RETRIES} retries:`, err);
+    retryCount = 0;
+    throw err;
+  }
 }
 
 /**

@@ -1,7 +1,8 @@
 import type { AiProvider, AiModel, AiMessage, AiGenerateOptions, AiGenerateResult, AiStreamChunk } from '../types';
+import { getBaseUrl as getUrl } from '../key-storage';
 
 function getBaseUrl(): string {
-  return localStorage.getItem('lattice-ai-ollama-url') || 'http://localhost:11434';
+  return getUrl('ollama') || 'http://localhost:11434';
 }
 
 export const ollamaProvider: AiProvider = {

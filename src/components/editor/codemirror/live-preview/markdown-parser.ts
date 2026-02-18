@@ -17,8 +17,8 @@ import type {
 export function parseInlineElements(text: string, offset: number = 0): MarkdownElement[] {
   const elements: MarkdownElement[] = [];
   
-  // Bold: **text** or __text__
-  const boldRegex = /(\*\*|__)(?!\s)([^*_]+?)(?<!\s)\1/g;
+  // Bold: **text** or __text__ (supports nested formatting)
+  const boldRegex = /(\*\*|__)(?!\s)([\s\S]+?)(?<!\s)\1/g;
   let match;
   while ((match = boldRegex.exec(text)) !== null) {
     elements.push({
@@ -32,9 +32,9 @@ export function parseInlineElements(text: string, offset: number = 0): MarkdownE
       content: match[2],
     });
   }
-  
-  // Italic: *text* or _text_ (not inside bold)
-  const italicRegex = /(?<!\*|_)(\*|_)(?!\s)([^*_]+?)(?<!\s)\1(?!\*|_)/g;
+
+  // Italic: *text* or _text_ (not inside bold, supports nested)
+  const italicRegex = /(?<!\*|_)(\*|_)(?!\s)([\s\S]+?)(?<!\s)\1(?!\*|_)/g;
   while ((match = italicRegex.exec(text)) !== null) {
     elements.push({
       type: 'italic',
@@ -93,8 +93,8 @@ export function parseInlineElements(text: string, offset: number = 0): MarkdownE
     });
   }
   
-  // Links: [text](url)
-  const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+  // Links: [text](url) — supports URLs with balanced parentheses
+  const linkRegex = /\[([^\]]+)\]\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g;
   while ((match = linkRegex.exec(text)) !== null) {
     elements.push({
       type: 'link',
@@ -128,8 +128,8 @@ export function parseInlineElements(text: string, offset: number = 0): MarkdownE
     });
   }
   
-  // Inline math: $...$
-  const mathRegex = /\$([^$\n]+)\$/g;
+  // Inline math: $...$ (not escaped \$)
+  const mathRegex = /(?<!\\)\$([^$\n]+?)(?<!\\)\$/g;
   while ((match = mathRegex.exec(text)) !== null) {
     elements.push({
       type: 'math',

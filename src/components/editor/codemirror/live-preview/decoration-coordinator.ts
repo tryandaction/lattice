@@ -343,7 +343,7 @@ class LRUCache<K, V> {
 }
 
 // 全局缓存实例
-const lineElementCache = new LRUCache<string, ParsedElement[]>(2000);
+const lineElementCache = new LRUCache<string, ParsedElement[]>(10000);
 
 // ============================================================================
 // Performance thresholds & cached parsing
@@ -3788,10 +3788,8 @@ function createDecorationForElement(
           class: `cm-heading cm-heading-${data.level}`,
         });
       } else if (data?.isMarkerHide) {
-        // Hide heading markers (Obsidian-style)
-        return Decoration.mark({
-          class: 'cm-hidden-syntax cm-heading-marker',
-        });
+        // Hide heading markers (Obsidian-style) — use replace to fully remove from rendering
+        return Decoration.replace({});
       }
       return null;
 
@@ -4141,17 +4139,47 @@ function createDecorationForElement(
 
 export const decorationCoordinatorField = StateField.define<DecorationSet>({
   create(state) {
-    const elements = parseDocument(state, false);
-    (state as ParsedElementsCarrier)._parsedElements = elements;
-    const resolved = resolveConflicts(elements);
-    return buildDecorationsFromElements(resolved, state);
+    try {
+      const elements = parseDocument(state, false);
+      (state as ParsedElementsCarrier)._parsedElements = elements;
+      const resolved = resolveConflicts(elements);
+      return buildDecorationsFromElements(resolved, state);
+    } catch (err) {
+      console.error('[DecorationCoordinator] Failed to build decorations on create:', err);
+      return Decoration.none;
+    }
   },
   update(value, tr) {
-    if (tr.docChanged || tr.selection) {
-      const elements = parseDocument(tr.state, false);
-      (tr.state as ParsedElementsCarrier)._parsedElements = elements;
-      const resolved = resolveConflicts(elements);
-      return buildDecorationsFromElements(resolved, tr.state);
+    if (tr.docChanged) {
+      // Document changed — full re-parse required
+      try {
+        const elements = parseDocument(tr.state, false);
+        (tr.state as ParsedElementsCarrier)._parsedElements = elements;
+        const resolved = resolveConflicts(elements);
+        return buildDecorationsFromElements(resolved, tr.state);
+      } catch (err) {
+        console.error('[DecorationCoordinator] Failed to build decorations on update:', err);
+        return Decoration.none;
+      }
+    } else if (tr.selection) {
+      // Selection only changed — reuse parsed elements, rebuild decorations for reveal state
+      try {
+        const prevState = tr.startState as ParsedElementsCarrier;
+        const elements = prevState._parsedElements;
+        if (elements && elements.length > 0) {
+          (tr.state as ParsedElementsCarrier)._parsedElements = elements;
+          const resolved = resolveConflicts(elements);
+          return buildDecorationsFromElements(resolved, tr.state);
+        }
+        // Fallback: full re-parse if no cached elements
+        const freshElements = parseDocument(tr.state, false);
+        (tr.state as ParsedElementsCarrier)._parsedElements = freshElements;
+        const resolved = resolveConflicts(freshElements);
+        return buildDecorationsFromElements(resolved, tr.state);
+      } catch (err) {
+        console.error('[DecorationCoordinator] Failed to rebuild decorations on selection:', err);
+        return Decoration.none;
+      }
     }
     return value;
   },
@@ -4192,7 +4220,7 @@ export function clearDecorationCache(): void {
 export function getCacheStats(): { size: number; maxSize: number } {
   return {
     size: lineElementCache.size(),
-    maxSize: 2000,
+    maxSize: 10000,
   };
 }
 

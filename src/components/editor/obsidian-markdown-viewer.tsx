@@ -31,6 +31,8 @@ import dynamic from "next/dynamic";
 import type { ViewMode, OutlineItem } from "./codemirror/live-preview/types";
 import type { LivePreviewEditorRef } from "./codemirror/live-preview/live-preview-editor";
 import { useContentCacheStore } from "@/stores/content-cache-store";
+import { clearDecorationCache } from "./codemirror/live-preview/decoration-coordinator";
+import { emitFileSave } from "@/lib/plugins/runtime";
 
 // Lazy load components
 const LivePreviewEditor = dynamic(
@@ -190,6 +192,7 @@ export function ObsidianMarkdownViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<LivePreviewEditorRef>(null);
   const prevFileIdRef = useRef(fileId);
+  const fileChangeCounterRef = useRef(0);
   const { selection: aiSelection, dismiss: dismissAiMenu } = useTextSelection(containerRef);
   const saveEditorState = useContentCacheStore((state) => state.saveEditorState);
   const getEditorState = useContentCacheStore((state) => state.getEditorState);
@@ -198,10 +201,7 @@ export function ObsidianMarkdownViewer({
   // Use fileId instead of fileName for more reliable detection
   useEffect(() => {
     const currentFileId = fileId || fileName; // Fallback to fileName if no fileId
-    console.log('[FileSwitch] useEffect triggered - fileId:', currentFileId, 'prevFileId:', prevFileIdRef.current);
-    console.log('[FileSwitch] fileName:', fileName);
-    console.log('[FileSwitch] Content length:', content.length, 'LocalContent length:', localContent.length, 'isDirty:', isDirty);
-    
+
     if (currentFileId !== prevFileIdRef.current) {
       const previousFileId = prevFileIdRef.current;
       if (previousFileId) {
@@ -211,31 +211,30 @@ export function ObsidianMarkdownViewer({
         }
       }
 
-      // File changed - force update with loading state
-      console.log('[FileSwitch] ===== FILE CHANGED =====');
-      console.log('[FileSwitch] From:', prevFileIdRef.current, 'To:', currentFileId);
-      console.log('[FileSwitch] New content length:', content.length);
-      console.log('[FileSwitch] First 100 chars:', content.substring(0, 100));
-      
+      // File changed - force update
       prevFileIdRef.current = currentFileId;
+      fileChangeCounterRef.current += 1;
+      const changeId = fileChangeCounterRef.current;
+
+      // Clear stale decoration cache from previous file
+      clearDecorationCache();
+
       setLocalContent(content);
       setIsDirty(false);
-      setSaveStatus('idle'); // Reset save status on file switch
-      setOutline([]); // Clear outline
-      setActiveHeading(undefined); // Clear active heading
+      setSaveStatus('idle');
+      setOutline([]);
+      setActiveHeading(undefined);
 
+      // Restore editor state if cached (with race condition guard)
       const cachedState = getEditorState(currentFileId);
-      if (cachedState) {
+      if (cachedState && fileChangeCounterRef.current === changeId) {
         editorRef.current?.restoreEditorState(cachedState);
       }
-      
-      console.log('[FileSwitch] State reset complete - all cleared');
     } else if (content !== localContent && !isDirty) {
       // Content changed externally (not by user editing)
-      console.log('[ContentSync] External content update, length:', content.length);
       setLocalContent(content);
     }
-  }, [content, fileName, fileId, localContent, isDirty, getEditorState, saveEditorState]);
+  }, [content, fileName, fileId, getEditorState, saveEditorState]);
 
   // Persist editor state on unmount
   useEffect(() => {
@@ -265,6 +264,8 @@ export function ObsidianMarkdownViewer({
       await onSave();
       setIsDirty(false);
       setSaveStatus("saved");
+      // Notify plugins that file was saved
+      emitFileSave(fileId || fileName);
       setTimeout(() => setSaveStatus("idle"), 2000);
     } catch {
       setSaveStatus("error");
@@ -425,6 +426,7 @@ export function ObsidianMarkdownViewer({
         {/* Editor */}
         <div className="flex-1 overflow-auto">
           <LivePreviewEditor
+            key={fileId || fileName}
             ref={editorRef}
             content={localContent}
             onChange={handleContentChange}

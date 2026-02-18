@@ -1,17 +1,19 @@
 import type { AiProvider, AiModel, AiMessage, AiGenerateOptions, AiGenerateResult, AiStreamChunk } from '../types';
+import { getApiKey as getKey, getBaseUrl as getUrl } from '../key-storage';
 
 const MODELS: AiModel[] = [
   { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', provider: 'anthropic', contextWindow: 200000, supportsStreaming: true },
   { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'anthropic', contextWindow: 200000, supportsStreaming: true },
   { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', provider: 'anthropic', contextWindow: 200000, supportsStreaming: true },
+  { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'anthropic', contextWindow: 200000, supportsStreaming: true },
 ];
 
 function getApiKey(): string {
-  return localStorage.getItem('lattice-ai-key:anthropic') ?? '';
+  return getKey('anthropic');
 }
 
 function getBaseUrl(): string {
-  return localStorage.getItem('lattice-ai-baseurl:anthropic') || 'https://api.anthropic.com';
+  return getUrl('anthropic') || 'https://api.anthropic.com';
 }
 
 function buildAnthropicBody(messages: AiMessage[], options?: AiGenerateOptions, stream = false) {
@@ -113,48 +115,64 @@ export const anthropicProvider: AiProvider = {
   getAvailableModels: async () => MODELS,
 
   generate: async (messages: AiMessage[], options?: AiGenerateOptions): Promise<AiGenerateResult> => {
-    const res = await fetch(`${getBaseUrl()}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': getApiKey(),
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify(buildAnthropicBody(messages, options)),
-      signal: options?.signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${getBaseUrl()}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': getApiKey(),
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify(buildAnthropicBody(messages, options)),
+        signal: options?.signal,
+      });
+    } catch (err) {
+      throw new Error(`Network error connecting to Anthropic API: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     if (!res.ok) {
       const err = await res.text();
       throw new Error(`Anthropic API error ${res.status}: ${err}`);
     }
 
-    const data = await res.json();
-    const text = data.content?.map((b: { text?: string }) => b.text ?? '').join('') ?? '';
+    let data: Record<string, unknown>;
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error('Failed to parse Anthropic API response');
+    }
+    const text = (data.content as Array<{ text?: string }>)?.map((b) => b.text ?? '').join('') ?? '';
     return {
       text,
-      model: data.model ?? options?.model ?? 'claude-sonnet-4-5-20250929',
+      model: (data.model as string) ?? options?.model ?? 'claude-sonnet-4-5-20250929',
       usage: data.usage ? {
-        promptTokens: data.usage.input_tokens ?? 0,
-        completionTokens: data.usage.output_tokens ?? 0,
-        totalTokens: (data.usage.input_tokens ?? 0) + (data.usage.output_tokens ?? 0),
+        promptTokens: (data.usage as Record<string, number>).input_tokens ?? 0,
+        completionTokens: (data.usage as Record<string, number>).output_tokens ?? 0,
+        totalTokens: ((data.usage as Record<string, number>).input_tokens ?? 0) + ((data.usage as Record<string, number>).output_tokens ?? 0),
       } : undefined,
     };
   },
 
   stream: async function* (messages: AiMessage[], options?: AiGenerateOptions): AsyncIterable<AiStreamChunk> {
-    const res = await fetch(`${getBaseUrl()}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': getApiKey(),
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify(buildAnthropicBody(messages, options, true)),
-      signal: options?.signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${getBaseUrl()}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': getApiKey(),
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify(buildAnthropicBody(messages, options, true)),
+        signal: options?.signal,
+      });
+    } catch (err) {
+      yield { type: 'error', error: `Network error connecting to Anthropic API: ${err instanceof Error ? err.message : String(err)}` };
+      return;
+    }
 
     if (!res.ok) {
       const err = await res.text();

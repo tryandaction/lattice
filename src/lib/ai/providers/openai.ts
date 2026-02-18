@@ -1,18 +1,24 @@
 import type { AiProvider, AiProviderId, AiModel, AiMessage, AiGenerateOptions, AiGenerateResult, AiStreamChunk } from '../types';
+import { getApiKey as getKey, getBaseUrl as getUrl } from '../key-storage';
 
 const MODELS: AiModel[] = [
   { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', contextWindow: 128000, supportsStreaming: true },
   { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai', contextWindow: 128000, supportsStreaming: true },
   { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: 'openai', contextWindow: 128000, supportsStreaming: true },
   { id: 'o3-mini', name: 'o3-mini', provider: 'openai', contextWindow: 200000, supportsStreaming: true },
+  { id: 'gpt-4.1', name: 'GPT-4.1', provider: 'openai', contextWindow: 1047576, supportsStreaming: true },
+  { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', provider: 'openai', contextWindow: 1047576, supportsStreaming: true },
+  { id: 'gpt-4.1-nano', name: 'GPT-4.1 Nano', provider: 'openai', contextWindow: 1047576, supportsStreaming: true },
+  { id: 'o3', name: 'o3', provider: 'openai', contextWindow: 200000, supportsStreaming: true },
+  { id: 'o4-mini', name: 'o4-mini', provider: 'openai', contextWindow: 200000, supportsStreaming: true },
 ];
 
 function getApiKey(): string {
-  return localStorage.getItem('lattice-ai-key:openai') ?? '';
+  return getKey('openai');
 }
 
 function getBaseUrl(): string {
-  return localStorage.getItem('lattice-ai-baseurl:openai') || 'https://api.openai.com/v1';
+  return getUrl('openai') || 'https://api.openai.com/v1';
 }
 
 async function* parseSSE(response: Response): AsyncIterable<Record<string, unknown>> {
@@ -64,27 +70,32 @@ export const openaiProvider: AiProvider = {
   getAvailableModels: async () => MODELS,
 
   generate: async (messages: AiMessage[], options?: AiGenerateOptions): Promise<AiGenerateResult> => {
-    const res = await fetch(`${getBaseUrl()}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${getApiKey()}`,
-      },
-      body: JSON.stringify({
-        model: options?.model ?? 'gpt-4o-mini',
-        messages: formatMessages(messages, options?.systemPrompt),
-        temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.maxTokens,
-      }),
-      signal: options?.signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${getBaseUrl()}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getApiKey()}`,
+        },
+        body: JSON.stringify({
+          model: options?.model ?? 'gpt-4o-mini',
+          messages: formatMessages(messages, options?.systemPrompt),
+          temperature: options?.temperature ?? 0.7,
+          max_tokens: options?.maxTokens,
+        }),
+        signal: options?.signal,
+      });
+    } catch (err) {
+      throw new Error(`Network error connecting to OpenAI API: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     if (!res.ok) {
       const err = await res.text();
       throw new Error(`OpenAI API error ${res.status}: ${err}`);
     }
 
-    const data = await res.json();
+    const data = await res.json().catch(() => { throw new Error('Failed to parse OpenAI API response'); });
     return {
       text: data.choices?.[0]?.message?.content ?? '',
       model: data.model ?? options?.model ?? 'gpt-4o-mini',
@@ -97,21 +108,27 @@ export const openaiProvider: AiProvider = {
   },
 
   stream: async function* (messages: AiMessage[], options?: AiGenerateOptions): AsyncIterable<AiStreamChunk> {
-    const res = await fetch(`${getBaseUrl()}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${getApiKey()}`,
-      },
-      body: JSON.stringify({
-        model: options?.model ?? 'gpt-4o-mini',
-        messages: formatMessages(messages, options?.systemPrompt),
-        temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.maxTokens,
-        stream: true,
-      }),
-      signal: options?.signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${getBaseUrl()}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getApiKey()}`,
+        },
+        body: JSON.stringify({
+          model: options?.model ?? 'gpt-4o-mini',
+          messages: formatMessages(messages, options?.systemPrompt),
+          temperature: options?.temperature ?? 0.7,
+          max_tokens: options?.maxTokens,
+          stream: true,
+        }),
+        signal: options?.signal,
+      });
+    } catch (err) {
+      yield { type: 'error', error: `Network error connecting to OpenAI API: ${err instanceof Error ? err.message : String(err)}` };
+      return;
+    }
 
     if (!res.ok) {
       const err = await res.text();

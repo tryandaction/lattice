@@ -1357,10 +1357,14 @@ export class MathWidget extends WidgetType {
     }
 
     // CRITICAL: Validate latex to prevent "undefined" rendering
-    if (!this.latex || this.latex === 'undefined') {
+    if (!this.latex || this.latex === 'undefined' || this.latex.trim() === '') {
       console.error('[MathWidget] Invalid latex:', this.latex, 'at', this.from, this.to);
-      container.textContent = '[Math Error: Invalid LaTeX]';
+      const errorSpan = document.createElement('span');
+      errorSpan.className = 'cm-math-error-source';
+      errorSpan.textContent = this.isBlock ? '$$...$$' : '$...$';
+      container.appendChild(errorSpan);
       container.classList.add('cm-math-error');
+      container.title = 'Empty or invalid LaTeX formula — click to edit';
       return container;
     }
 
@@ -1459,23 +1463,40 @@ export class MathWidget extends WidgetType {
         container.classList.add('cm-math-error');
       }
     } else {
-      // KaTeX未加载，显示占位符
+      // KaTeX未加载，显示原始LaTeX作为占位符
       container.textContent = this.isBlock ? `$$${this.latex}$$` : `$${this.latex}$`;
       container.classList.add('cm-math-loading');
 
-      // 等待KaTeX加载后渲染
-      loadKaTeX()
+      // 等待KaTeX加载后渲染（带超时保护）
+      const latexStr = this.latex;
+      const isBlock = this.isBlock;
+      const timeoutMs = 8000;
+
+      const loadWithTimeout = Promise.race([
+        loadKaTeX(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('KaTeX load timeout')), timeoutMs)
+        ),
+      ]);
+
+      loadWithTimeout
         .then((k) => {
           try {
             container.innerHTML = '';
-            k.render(this.latex, container, getKaTeXOptions(this.isBlock));
+            k.render(latexStr, container, getKaTeXOptions(isBlock));
             container.classList.remove('cm-math-loading');
           } catch {
+            // Render failed — show raw source
+            container.innerHTML = '';
+            container.textContent = isBlock ? `$$${latexStr}$$` : `$${latexStr}$`;
+            container.classList.remove('cm-math-loading');
             container.classList.add('cm-math-error');
           }
         })
         .catch((err) => {
           logger.warn('[KaTeX] Failed to load or render:', err);
+          // Keep raw LaTeX visible as fallback
+          container.classList.remove('cm-math-loading');
           container.classList.add('cm-math-error');
         });
     }
@@ -1937,7 +1958,7 @@ export class TableWidget extends WidgetType {
     });
 
     // 计算列宽（基于内容）
-    const colCount = Math.max(1, ...this.rows.map(r => r.length));
+    const colCount = this.rows.length > 0 ? Math.max(1, ...this.rows.map(r => r.length)) : 1;
     const colWidths: number[] = new Array(colCount).fill(0);
 
     const getDisplayTextForWidth = (cell: string) => {

@@ -51,6 +51,7 @@ export interface AppSettings {
   aiTemperature: number;
   aiMaxTokens: number;
   aiStreamingEnabled: boolean;
+  aiSystemPrompt: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -77,6 +78,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   aiTemperature: 0.7,
   aiMaxTokens: 4096,
   aiStreamingEnabled: true,
+  aiSystemPrompt: 'You are a helpful research assistant in Lattice, a scientific workbench. Be concise and precise.',
 };
 
 export const SETTINGS_STORAGE_KEY = 'lattice-settings';

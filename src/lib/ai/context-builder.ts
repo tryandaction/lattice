@@ -1,6 +1,7 @@
 import { exportAnnotationsForAI } from '@/lib/annotation-ai-bridge';
 import type { AnnotationItem } from '@/types/universal-annotation';
 import type { AiContext, AiContextItem, AiMessage } from './types';
+import { estimateTokens } from './token-estimator';
 
 export function buildAiContext(params: {
   filePath: string;
@@ -20,10 +21,12 @@ export function buildAiContext(params: {
   // If content is too long, truncate to fit within model context window
   let fileContent = params.content;
   if (params.maxTokens) {
-    const estimatedTokens = Math.ceil(fileContent.length / 4);
+    const estimatedTk = estimateTokens(fileContent);
     const budget = Math.floor(params.maxTokens * 0.6); // 60% for file content
-    if (estimatedTokens > budget) {
-      const charLimit = budget * 4;
+    if (estimatedTk > budget) {
+      // Approximate char limit based on content type ratio
+      const ratio = fileContent.length / Math.max(1, estimatedTk);
+      const charLimit = Math.floor(budget * ratio);
       fileContent = fileContent.slice(0, charLimit) + '\n\n[... truncated]';
     }
   }
