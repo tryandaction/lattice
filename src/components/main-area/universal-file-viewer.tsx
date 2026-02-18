@@ -378,6 +378,7 @@ function FileViewer({
       if (fileHandle && rootHandle) {
         return (
           <ImageTldrawAdapter
+            key={viewerKey}
             content={content as ArrayBuffer}
             fileName={fileName}
             mimeType={getImageMimeType(extension)}
@@ -387,7 +388,7 @@ function FileViewer({
         );
       }
       // Fallback to basic image viewer
-      return <ImageViewer content={content as ArrayBuffer} fileName={fileName} mimeType={getImageMimeType(extension)} />;
+      return <ImageViewer key={viewerKey} content={content as ArrayBuffer} fileName={fileName} mimeType={getImageMimeType(extension)} />;
     case "handwriting": {
       // Ensure content is a string for handwriting editor
       let handwritingContent: string;

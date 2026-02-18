@@ -1,5 +1,14 @@
 import { create } from 'zustand';
 import type { AiMessage } from '@/lib/ai/types';
+import { getStorageAdapter } from '@/lib/storage-adapter';
+
+const AI_CHAT_STORAGE_KEY = 'lattice-ai-chat';
+
+export interface ChatMessageUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
 
 export interface ChatMessage {
   id: string;
@@ -7,6 +16,7 @@ export interface ChatMessage {
   content: string;
   timestamp: number;
   isStreaming?: boolean;
+  usage?: ChatMessageUsage;
 }
 
 export interface ChatConversation {
@@ -39,10 +49,29 @@ interface AiChatActions {
   deleteConversation: (id: string) => void;
   getActiveConversation: () => ChatConversation | null;
   getMessagesForApi: () => AiMessage[];
+  setMessageUsage: (messageId: string, usage: ChatMessageUsage) => void;
+  loadConversations: () => Promise<void>;
 }
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+function debouncedSave(conversations: ChatConversation[]) {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      const storage = getStorageAdapter();
+      const clean = conversations.map((c) => ({
+        ...c,
+        messages: c.messages.filter((m) => !m.isStreaming),
+      }));
+      await storage.set(AI_CHAT_STORAGE_KEY, { conversations: clean });
+    } catch (err) {
+      console.error('Failed to save AI chat conversations:', err);
+    }
+  }, 1000);
 }
 
 export const useAiChatStore = create<AiChatState & AiChatActions>((set, get) => ({
@@ -67,6 +96,7 @@ export const useAiChatStore = create<AiChatState & AiChatActions>((set, get) => 
       conversations: [conv, ...s.conversations],
       activeConversationId: id,
     }));
+    debouncedSave(get().conversations);
     return id;
   },
 
@@ -95,6 +125,7 @@ export const useAiChatStore = create<AiChatState & AiChatActions>((set, get) => 
         return updated;
       }),
     }));
+    debouncedSave(get().conversations);
   },
 
   startAssistantMessage: () => {
@@ -136,6 +167,7 @@ export const useAiChatStore = create<AiChatState & AiChatActions>((set, get) => 
       isGenerating: false,
       abortController: null,
     }));
+    debouncedSave(get().conversations);
   },
 
   setAssistantError: (messageId, error) => {
@@ -170,6 +202,7 @@ export const useAiChatStore = create<AiChatState & AiChatActions>((set, get) => 
           : s.activeConversationId,
       };
     });
+    debouncedSave(get().conversations);
   },
 
   getActiveConversation: () => {
@@ -183,5 +216,32 @@ export const useAiChatStore = create<AiChatState & AiChatActions>((set, get) => 
     return conv.messages
       .filter((m) => !m.isStreaming)
       .map((m) => ({ role: m.role, content: m.content }));
+  },
+
+  setMessageUsage: (messageId, usage) => {
+    set((s) => ({
+      conversations: s.conversations.map((c) => ({
+        ...c,
+        messages: c.messages.map((m) =>
+          m.id === messageId ? { ...m, usage } : m
+        ),
+      })),
+    }));
+    debouncedSave(get().conversations);
+  },
+
+  loadConversations: async () => {
+    try {
+      const storage = getStorageAdapter();
+      const saved = await storage.get<{ conversations: ChatConversation[] }>(AI_CHAT_STORAGE_KEY);
+      if (saved?.conversations?.length) {
+        set({
+          conversations: saved.conversations,
+          activeConversationId: saved.conversations[0]?.id ?? null,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to load AI chat conversations:', err);
+    }
   },
 }));

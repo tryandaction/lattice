@@ -69,7 +69,7 @@ export function PaneWrapper({
   // Track which tab is currently being loaded (for race condition prevention)
   const loadingTabIdRef = useRef<string | null>(null);
   // Track the original content for dirty state comparison
-  const originalContentRef = useRef<string | null>(null);
+  const originalContentRef = useRef<string | ArrayBuffer | null>(null);
 
   // Content cache store - use getState() for non-reactive access in effects
   const setContentToCache = useContentCacheStore((state) => state.setContent);
@@ -87,7 +87,6 @@ export function PaneWrapper({
   useEffect(() => {
     // No active tab - clear everything
     if (!activeTab) {
-      console.log('[PaneWrapper] No active tab, clearing content');
       setContent(null);
       setIsLoading(false);
       setError(null);
@@ -101,16 +100,9 @@ export function PaneWrapper({
     const isLoadingOtherTab =
       loadingTabIdRef.current !== null &&
       loadingTabIdRef.current !== currentTabId;
-    
-    console.log('[PaneWrapper] ===== TAB CHANGE DETECTED =====');
-    console.log('[PaneWrapper] PaneId:', paneId);
-    console.log('[PaneWrapper] Current tab ID:', currentTabId);
-    console.log('[PaneWrapper] Loaded tab ID:', loadedTabIdRef.current);
-    console.log('[PaneWrapper] File name:', activeTab.fileName);
-    
+
     // If another tab is still loading, cancel its updates to prevent stale content
     if (isLoadingOtherTab) {
-      console.log('[PaneWrapper] Cancelling in-flight load for tab:', loadingTabIdRef.current);
       loadingTabIdRef.current = null;
       setIsLoading(false);
     }
@@ -124,17 +116,12 @@ export function PaneWrapper({
       if (error) {
         setError(null);
       }
-      console.log('[PaneWrapper] Same tab already loaded with content, skipping');
       return;
     }
-
-    console.log('[PaneWrapper] Loading new tab content...');
 
     // PRIORITY 1: Check cache first - this preserves unsaved changes
     const cached = getContentFromCache(currentTabId);
     if (cached) {
-      console.log('[PaneWrapper] Found cached content, length:', 
-        typeof cached.content === 'string' ? cached.content.length : 'binary');
       // Immediately update state for cached content
       loadedTabIdRef.current = currentTabId;
       loadingTabIdRef.current = null;
@@ -147,11 +134,8 @@ export function PaneWrapper({
       return;
     }
 
-    console.log('[PaneWrapper] No cache found, loading from file...');
-
     // If we're already loading this tab, avoid duplicate loads
     if (isLoadingCurrent) {
-      console.log('[PaneWrapper] Already loading this tab, skipping duplicate load');
       return;
     }
 
@@ -182,26 +166,20 @@ export function PaneWrapper({
           ? await file.arrayBuffer()
           : await file.text();
 
-        console.log('[PaneWrapper] File loaded, content length:', 
-          typeof fileContent === 'string' ? fileContent.length : 'binary');
-
         // CRITICAL: Only update if this is still the tab we're loading for
         // Check both the loading ref AND the current activeTab
         if (loadingTabIdRef.current === loadingForTabId) {
-          console.log('[PaneWrapper] Setting content for tab:', loadingForTabId);
           loadedTabIdRef.current = loadingForTabId;
           loadingTabIdRef.current = null;
           setContent(fileContent);
           if (typeof fileContent === 'string') {
             originalContentRef.current = fileContent;
-            // Initialize cache with original content
-            setContentToCache(loadingForTabId, fileContent, fileContent);
-            // Loaded from disk, so not dirty
-            setTabDirty(paneId, activeTabIndex, false);
           }
+          // Initialize cache with original content (supports both string and ArrayBuffer)
+          setContentToCache(loadingForTabId, fileContent, fileContent);
+          // Loaded from disk, so not dirty
+          setTabDirty(paneId, activeTabIndex, false);
           setIsLoading(false);
-        } else {
-          console.log('[PaneWrapper] Tab changed during load, discarding result');
         }
         // If tab changed during load, discard this result silently
       } catch (err) {
@@ -222,9 +200,7 @@ export function PaneWrapper({
     activeTab?.id,
     activeTab?.fileHandle,
     activeTabIndex,
-    paneId, // CRITICAL: Add paneId to detect pane changes
-    content,
-    error,
+    paneId,
     getContentFromCache,
     setContentToCache,
     setTabDirty,

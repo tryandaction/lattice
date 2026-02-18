@@ -2,8 +2,12 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
-import { ZoomIn, ZoomOut, Loader2, PanelLeftOpen, PanelLeftClose, Type, Highlighter, Square, Download } from "lucide-react";
+import type { PDFDocumentProxy } from "pdfjs-dist";
+import { ZoomIn, ZoomOut, Loader2, PanelLeftOpen, PanelLeftClose, Type, Highlighter, Square, Download, Search, List, Maximize2, ArrowLeftRight } from "lucide-react";
 import "react-pdf/dist/Page/AnnotationLayer.css";
+
+import { PdfSearchOverlay } from "./pdf-search-overlay";
+import { PdfOutlineSidebar } from "./pdf-outline-sidebar";
 
 import { AnnotationLayer } from "./annotation-layer";
 import { AnnotationColorPicker } from "./annotation-color-picker";
@@ -15,6 +19,7 @@ import { TextAnnotationEditor, type TextAnnotationEditData } from "./text-annota
 import { usePdfAnnotation, type TextNoteData } from "../../hooks/use-pdf-annotation";
 import { useAnnotationStore, deriveFileId } from "../../stores/annotation-store";
 import { useAnnotationNavigation } from "../../hooks/use-annotation-navigation";
+import { useI18n } from "@/hooks/use-i18n";
 import type { LatticeAnnotation, AnnotationColor, AnnotationFile } from "../../types/annotation";
 import { denormalizePosition } from "../../lib/annotation-coordinates";
 
@@ -68,6 +73,7 @@ export function PDFViewerWithAnnotations({
   filePath,
   rootHandle,
 }: PDFViewerWithAnnotationsProps) {
+  const { t } = useI18n();
   // PDF state
   const [numPages, setNumPages] = useState<number>(0);
   const [scale, setScale] = useState<number>(1.2);
@@ -81,11 +87,15 @@ export function PDFViewerWithAnnotations({
   // UI state
   const [showSidebar, setShowSidebar] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [selectedAnnotation, setSelectedAnnotation] = useState<LatticeAnnotation | null>(null);
   const [hoveredAnnotation, setHoveredAnnotation] = useState<LatticeAnnotation | null>(null);
   const [hoverPosition, setHoverPosition] = useState<{ x: number; y: number } | null>(null);
   const [commentPopupPosition, setCommentPopupPosition] = useState<{ x: number; y: number } | null>(null);
   const [annotationMode, setAnnotationMode] = useState<AnnotationMode>('select');
+  const [fitMode, setFitMode] = useState<'manual' | 'width' | 'page'>('manual');
   const [textNotePickerInfo, setTextNotePickerInfo] = useState<{
     position: { x: number; y: number };
     rect: { x: number; y: number; width: number; height: number };
@@ -176,9 +186,10 @@ export function PDFViewerWithAnnotations({
   }, [content]);
 
   // Document load handlers
-  const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
-    setNumPages(numPages);
+  const onDocumentLoadSuccess = useCallback((pdf: { numPages: number }) => {
+    setNumPages(pdf.numPages);
     setError(null);
+    setPdfDoc(pdf as unknown as PDFDocumentProxy);
   }, []);
 
   const onDocumentLoadError = useCallback((err: Error) => {
@@ -190,12 +201,33 @@ export function PDFViewerWithAnnotations({
     setPageDimensions({ width: page.width, height: page.height });
   }, []);
 
+  // Fit mode: recalculate scale when container resizes
+  useEffect(() => {
+    if (fitMode === 'manual' || !containerRef.current || pageDimensions.width === 0) return;
+    const container = containerRef.current;
+    const update = () => {
+      const cw = container.clientWidth - 32;
+      const ch = container.clientHeight - 32;
+      if (fitMode === 'width') {
+        setScale(Math.max(0.5, Math.min(3.0, cw / pageDimensions.width)));
+      } else {
+        setScale(Math.max(0.5, Math.min(3.0, Math.min(cw / pageDimensions.width, ch / pageDimensions.height))));
+      }
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [fitMode, pageDimensions.width, pageDimensions.height]);
+
   // Zoom controls
   const zoomIn = useCallback(() => {
+    setFitMode('manual');
     setScale((prev) => Math.min(prev + 0.25, 3.0));
   }, []);
 
   const zoomOut = useCallback(() => {
+    setFitMode('manual');
     setScale((prev) => Math.max(prev - 0.25, 0.5));
   }, []);
 
@@ -425,6 +457,18 @@ export function PDFViewerWithAnnotations({
     setShowSidebar((prev) => !prev);
   }, []);
 
+  // Ctrl+F to open search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   if (error) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-8">
@@ -446,6 +490,14 @@ export function PDFViewerWithAnnotations({
           />
         </div>
       )}
+
+      {/* Outline sidebar */}
+      <PdfOutlineSidebar
+        pdfDocument={pdfDoc}
+        onNavigateToPage={jumpToPage}
+        isOpen={outlineOpen}
+        onClose={() => setOutlineOpen(false)}
+      />
 
       {/* Main content area */}
       <div className="flex flex-1 flex-col">
@@ -527,7 +579,7 @@ export function PDFViewerWithAnnotations({
                 onClick={zoomOut}
                 disabled={scale <= 0.5}
                 className="rounded p-1 hover:bg-muted disabled:opacity-50"
-                title="Zoom out"
+                title={t('pdf.zoomOut')}
               >
                 <ZoomOut className="h-4 w-4" />
               </button>
@@ -538,9 +590,23 @@ export function PDFViewerWithAnnotations({
                 onClick={zoomIn}
                 disabled={scale >= 3.0}
                 className="rounded p-1 hover:bg-muted disabled:opacity-50"
-                title="Zoom in"
+                title={t('pdf.zoomIn')}
               >
                 <ZoomIn className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setFitMode(fitMode === 'width' ? 'manual' : 'width')}
+                className={`rounded p-1 hover:bg-muted ${fitMode === 'width' ? 'bg-muted' : ''}`}
+                title={t('pdf.fitWidth')}
+              >
+                <ArrowLeftRight className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setFitMode(fitMode === 'page' ? 'manual' : 'page')}
+                className={`rounded p-1 hover:bg-muted ${fitMode === 'page' ? 'bg-muted' : ''}`}
+                title={t('pdf.fitPage')}
+              >
+                <Maximize2 className="h-4 w-4" />
               </button>
             </div>
 
@@ -566,14 +632,39 @@ export function PDFViewerWithAnnotations({
             >
               <Download className="h-4 w-4" />
             </button>
+
+            {/* Search button */}
+            <button
+              onClick={() => setSearchOpen(true)}
+              className="rounded p-1 hover:bg-muted"
+              title={t('pdf.search.open')}
+            >
+              <Search className="h-4 w-4" />
+            </button>
+
+            {/* Outline button */}
+            <button
+              onClick={() => setOutlineOpen((p) => !p)}
+              className={`rounded p-1 hover:bg-muted ${outlineOpen ? 'bg-muted' : ''}`}
+              title={t('pdf.outline.toggle')}
+            >
+              <List className="h-4 w-4" />
+            </button>
           </div>
         </div>
 
         {/* PDF Content */}
-        <div 
+        <div
           ref={containerRef}
-          className="flex-1 overflow-auto bg-gray-100 dark:bg-gray-800 p-4"
+          className="relative flex-1 overflow-auto bg-gray-100 dark:bg-gray-800 p-4"
         >
+          <PdfSearchOverlay
+            pdfDocument={pdfDoc}
+            numPages={numPages}
+            onNavigateToPage={jumpToPage}
+            isOpen={searchOpen}
+            onClose={() => setSearchOpen(false)}
+          />
           <Document
             file={fileData}
             onLoadSuccess={onDocumentLoadSuccess}

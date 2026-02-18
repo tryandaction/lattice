@@ -20,8 +20,8 @@ interface EditorState {
 }
 
 interface CachedContent {
-  content: string;
-  originalContent: string;
+  content: string | ArrayBuffer;
+  originalContent: string | ArrayBuffer;
   isDirty: boolean;
   lastModified: number;
   editorState?: EditorState;
@@ -36,10 +36,10 @@ interface ContentCacheState {
   currentSwitchId: string | null;
 
   // Actions
-  setContent: (tabId: string, content: string, originalContent?: string) => void;
+  setContent: (tabId: string, content: string | ArrayBuffer, originalContent?: string | ArrayBuffer) => void;
   getContent: (tabId: string) => CachedContent | undefined;
   hasUnsavedChanges: (tabId: string) => boolean;
-  markAsSaved: (tabId: string, newOriginalContent: string) => void;
+  markAsSaved: (tabId: string, newOriginalContent: string | ArrayBuffer) => void;
   discardChanges: (tabId: string) => void;
   removeFromCache: (tabId: string) => void;
   clearCache: () => void;
@@ -68,7 +68,8 @@ export const useContentCacheStore = create<ContentCacheState>((set, get) => ({
       const existing = newCache.get(tabId);
 
       const original = originalContent ?? existing?.originalContent ?? content;
-      const isDirty = content !== original;
+      // Binary content (ArrayBuffer) is not editable, so never dirty
+      const isDirty = content instanceof ArrayBuffer ? false : content !== original;
 
       newCache.set(tabId, {
         content,

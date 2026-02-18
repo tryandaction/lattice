@@ -36,10 +36,14 @@ import {
   ArrowRight,
   Eraser,
   Hand,
+  PanelLeftOpen,
+  PanelLeftClose,
+  ImageDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAnnotationSystem } from "@/hooks/use-annotation-system";
 import { useAnnotationNavigation } from "@/hooks/use-annotation-navigation";
+import { useI18n } from "@/hooks/use-i18n";
 import {
   serializeShapes,
   deserializeShapes,
@@ -49,6 +53,7 @@ import {
 } from "@/lib/tldraw-serialization";
 import type { AnnotationItem, ImageTarget } from "@/types/universal-annotation";
 import { ImageViewer } from "./image-viewer";
+import { UniversalAnnotationSidebar } from "./universal-annotation-sidebar";
 
 // ============================================================================
 // Types
@@ -134,7 +139,10 @@ export function ImageTldrawAdapter({
   fileHandle,
   rootHandle,
 }: ImageTldrawAdapterProps) {
+  const { t } = useI18n();
   const {
+    annotations: allAnnotations,
+    isLoading: annotationsLoading,
     error: annotationsError,
     addAnnotation,
     updateAnnotation,
@@ -153,6 +161,7 @@ export function ImageTldrawAdapter({
   const [isReady, setIsReady] = useState(false);
   const [tldrawError, setTldrawError] = useState<Error | null>(null);
   const [currentTool, setCurrentTool] = useState('select');
+  const [showSidebar, setShowSidebar] = useState(false);
   const [highlightedRegion, setHighlightedRegion] = useState<{
     x: number; y: number; width: number; height: number;
   } | null>(null);
@@ -460,6 +469,50 @@ export function ImageTldrawAdapter({
     }
   };
 
+  const handleAnnotationClick = useCallback((annotation: AnnotationItem) => {
+    if (annotation.target.type === 'image' && editor && imageSize.width > 0) {
+      const target = annotation.target as ImageTarget;
+      const centerX = (target.x + target.width / 2) / 100 * imageSize.width;
+      const centerY = (target.y + target.height / 2) / 100 * imageSize.height;
+      editor.centerOnPoint({ x: centerX, y: centerY });
+      setHighlightedRegion({ x: target.x, y: target.y, width: target.width, height: target.height });
+      setTimeout(() => setHighlightedRegion(null), 3000);
+    }
+  }, [editor, imageSize]);
+
+  const handleExportWithAnnotations = useCallback(async () => {
+    if (!editor) return;
+    try {
+      const shapes = editor.getCurrentPageShapes().map(s => s.id);
+      const result = await editor.getSvgElement(shapes);
+      if (!result?.svg) return;
+      const svgStr = new XMLSerializer().serializeToString(result.svg);
+      const canvas = document.createElement('canvas');
+      canvas.width = imageSize.width || 1920;
+      canvas.height = imageSize.height || 1080;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const img = new window.Image();
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          if (!blob) return;
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `annotated-${fileName.replace(/\.[^.]+$/, '')}.png`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 'image/png');
+      };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+    } catch (err) {
+      console.error('Failed to export annotated image:', err);
+    }
+  }, [editor, imageSize, fileName]);
+
   // Error fallback
   if (tldrawError) {
     return (
@@ -495,34 +548,34 @@ export function ImageTldrawAdapter({
 
         {/* Center: Drawing Tools */}
         <div className="flex items-center gap-0.5">
-          <Button variant={currentTool === 'select' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('select')} title="Select (V)">
+          <Button variant={currentTool === 'select' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('select')} title={t('image.tools.select')}>
             <MousePointer2 className="h-4 w-4" />
           </Button>
-          <Button variant={currentTool === 'hand' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('hand')} title="Hand (H)">
+          <Button variant={currentTool === 'hand' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('hand')} title={t('image.tools.hand')}>
             <Hand className="h-4 w-4" />
           </Button>
-          
+
           <div className="mx-1 h-4 w-px bg-border" />
-          
-          <Button variant={currentTool === 'draw' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('draw')} title="Draw (D)">
+
+          <Button variant={currentTool === 'draw' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('draw')} title={t('image.tools.draw')}>
             <Pencil className="h-4 w-4" />
           </Button>
-          <Button variant={currentTool === 'eraser' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('eraser')} title="Eraser (E)">
+          <Button variant={currentTool === 'eraser' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('eraser')} title={t('image.tools.eraser')}>
             <Eraser className="h-4 w-4" />
           </Button>
-          
+
           <div className="mx-1 h-4 w-px bg-border" />
-          
-          <Button variant={currentTool === 'geo' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('geo')} title="Rectangle (R)">
+
+          <Button variant={currentTool === 'geo' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('geo')} title={t('image.tools.rectangle')}>
             <Square className="h-4 w-4" />
           </Button>
-          <Button variant={currentTool === 'line' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('line')} title="Line (L)">
+          <Button variant={currentTool === 'line' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('line')} title={t('image.tools.line')}>
             <Minus className="h-4 w-4" />
           </Button>
-          <Button variant={currentTool === 'arrow' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('arrow')} title="Arrow (A)">
+          <Button variant={currentTool === 'arrow' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('arrow')} title={t('image.tools.arrow')}>
             <ArrowRight className="h-4 w-4" />
           </Button>
-          <Button variant={currentTool === 'text' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('text')} title="Text (T)">
+          <Button variant={currentTool === 'text' ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setTool('text')} title={t('image.tools.text')}>
             <Type className="h-4 w-4" />
           </Button>
         </div>
@@ -536,24 +589,43 @@ export function ImageTldrawAdapter({
             <Redo2 className="h-4 w-4" />
           </Button>
           <div className="mx-1 h-4 w-px bg-border" />
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleZoomOut} title="Zoom out">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleZoomOut} title={t('pdf.zoomOut')}>
             <ZoomOut className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleZoomIn} title="Zoom in">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleZoomIn} title={t('pdf.zoomIn')}>
             <ZoomIn className="h-4 w-4" />
           </Button>
           <div className="mx-1 h-4 w-px bg-border" />
-          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={handleClearAll} title="Clear all">
+          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={handleClearAll} title={t('image.clearAll')}>
             <Trash2 className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleDownload} title="Download">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleDownload} title={t('image.download')}>
             <Download className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleExportWithAnnotations} title={t('image.export.withAnnotations')}>
+            <ImageDown className="h-4 w-4" />
+          </Button>
+          <div className="mx-1 h-4 w-px bg-border" />
+          <Button variant={showSidebar ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setShowSidebar(p => !p)} title={showSidebar ? t('image.annotations.hide') : t('image.annotations.show')}>
+            {showSidebar ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
           </Button>
         </div>
       </div>
 
-      {/* Tldraw Canvas - Hide default UI */}
-      <div className="flex-1 relative">
+      {/* Content area with optional sidebar */}
+      <div className="flex flex-1 overflow-hidden">
+        {showSidebar && (
+          <div className="w-64 border-r border-border bg-background overflow-y-auto">
+            <UniversalAnnotationSidebar
+              annotations={allAnnotations}
+              onAnnotationClick={handleAnnotationClick}
+              isLoading={annotationsLoading}
+            />
+          </div>
+        )}
+
+        {/* Tldraw Canvas - Hide default UI */}
+        <div className="flex-1 relative">
         <Tldraw onMount={handleMount} inferDarkMode hideUi={true} />
         
         {highlightedRegion && isReady && (
@@ -567,6 +639,7 @@ export function ImageTldrawAdapter({
             }}
           />
         )}
+        </div>
       </div>
 
       {annotationsError && (

@@ -168,7 +168,14 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   const supportsDirectoryInstall =
     typeof window !== 'undefined' && 'showDirectoryPicker' in window;
 
-  const builtInPlugins = useMemo(() => getAvailablePlugins(), []);
+  const builtInPlugins = useMemo(() => {
+    try {
+      return getAvailablePlugins();
+    } catch (err) {
+      console.error('Failed to get available plugins:', err);
+      return [];
+    }
+  }, []);
   const builtInById = useMemo(() => {
     return new Map(builtInPlugins.map((plugin) => [plugin.id, plugin]));
   }, [builtInPlugins]);
@@ -286,7 +293,11 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   useEffect(() => {
     if (!isOpen || activeTab !== 'extensions') return;
     const updateCommands = () => {
-      setRegisteredCommands(getRegisteredCommands());
+      try {
+        setRegisteredCommands(getRegisteredCommands());
+      } catch (err) {
+        console.error('Failed to get registered commands:', err);
+      }
     };
     updateCommands();
     const unsubscribe = subscribePluginRegistry(updateCommands);
@@ -296,7 +307,11 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   useEffect(() => {
     if (!isOpen) return;
     const updateHealth = () => {
-      setPluginHealthMap(getPluginHealthSnapshot());
+      try {
+        setPluginHealthMap(getPluginHealthSnapshot());
+      } catch (err) {
+        console.error('Failed to get plugin health:', err);
+      }
     };
     updateHealth();
     const unsubscribe = subscribePluginHealth(updateHealth);
@@ -306,7 +321,11 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   useEffect(() => {
     if (!isOpen) return;
     const updateAudit = () => {
-      setPluginAuditLog(getPluginAuditLog());
+      try {
+        setPluginAuditLog(getPluginAuditLog());
+      } catch (err) {
+        console.error('Failed to get plugin audit log:', err);
+      }
     };
     updateAudit();
     const unsubscribe = subscribePluginAudit(updateAudit);

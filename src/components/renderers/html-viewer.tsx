@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import DOMPurify from "dompurify";
 import { Code, Eye } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -26,10 +26,13 @@ export function HTMLViewer({ content, fileName }: HTMLViewerProps) {
     });
   }, [content]);
 
-  // Create blob URL for iframe
-  const blobUrl = useMemo(() => {
+  // Create blob URL for iframe with proper cleanup
+  const [blobUrl, setBlobUrl] = useState<string>("");
+  useEffect(() => {
     const blob = new Blob([sanitizedHtml], { type: "text/html" });
-    return URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
+    setBlobUrl(url);
+    return () => URL.revokeObjectURL(url);
   }, [sanitizedHtml]);
 
   return (

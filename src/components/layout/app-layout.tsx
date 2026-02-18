@@ -35,6 +35,8 @@ import { PluginStatusBarSlot } from "@/components/ui/plugin-statusbar-slot";
 import { PluginToolbarSlot } from "@/components/ui/plugin-toolbar-slot";
 import { AiChatPanel } from "@/components/ai/ai-chat-panel";
 import { useAiChatStore } from "@/stores/ai-chat-store";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { usePluginShortcuts } from "@/hooks/use-plugin-shortcuts";
 
 const DESKTOP_SIDEBAR_DEFAULT = 20;
 const DESKTOP_PANEL_DEFAULT = 22;
@@ -194,6 +196,7 @@ function AppLayoutContent() {
   }, [isMobile, setSidebarCollapsed]);
 
   useUnsavedWarning();
+  usePluginShortcuts();
 
   const persistPanelSize = useCallback(
     (size: number) => {
@@ -688,10 +691,18 @@ function Dialogs({
   return (
     <>
       {!isTauri() && <DownloadAppDialog />}
-      <PluginCommandDialog isOpen={showCommands} onClose={() => setShowCommands(false)} />
-      <PluginPanelDialog isOpen={showPluginPanels} onClose={() => setShowPluginPanels(false)} />
-      <AiContextDialog isOpen={showAiContext} onClose={() => setShowAiContext(false)} />
-      <SettingsDialog isOpen={showSettings} onClose={() => setShowSettings(false)} />
+      <ErrorBoundary onReset={() => setShowCommands(false)}>
+        <PluginCommandDialog isOpen={showCommands} onClose={() => setShowCommands(false)} />
+      </ErrorBoundary>
+      <ErrorBoundary onReset={() => setShowPluginPanels(false)}>
+        <PluginPanelDialog isOpen={showPluginPanels} onClose={() => setShowPluginPanels(false)} />
+      </ErrorBoundary>
+      <ErrorBoundary onReset={() => setShowAiContext(false)}>
+        <AiContextDialog isOpen={showAiContext} onClose={() => setShowAiContext(false)} />
+      </ErrorBoundary>
+      <ErrorBoundary onReset={() => setShowSettings(false)}>
+        <SettingsDialog isOpen={showSettings} onClose={() => setShowSettings(false)} />
+      </ErrorBoundary>
       <OnboardingWizard />
       <ExportToastContainer />
     </>

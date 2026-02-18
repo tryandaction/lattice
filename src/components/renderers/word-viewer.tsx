@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import mammoth from "mammoth";
+import DOMPurify from "dompurify";
 import { Loader2, AlertTriangle, FileText } from "lucide-react";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -209,7 +210,7 @@ export function WordViewer({ content, fileName }: WordViewerProps) {
       <div className="mx-auto max-w-4xl p-8">
         <article
           className="prose prose-slate dark:prose-invert max-w-none prose-headings:font-serif prose-p:font-sans prose-p:leading-relaxed prose-table:border-collapse prose-td:border prose-td:border-border prose-td:p-2 prose-th:border prose-th:border-border prose-th:bg-muted prose-th:p-2"
-          dangerouslySetInnerHTML={{ __html: htmlContent || "" }}
+          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(htmlContent || "") }}
         />
       </div>
     </div>

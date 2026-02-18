@@ -10,6 +10,7 @@
  */
 
 import type { LatticeAnnotation, AnnotationType } from '../types/annotation';
+import type { AnnotationItem } from '../types/universal-annotation';
 import { HIGHLIGHT_COLORS } from './annotation-colors';
 
 // ============================================================================
@@ -469,4 +470,57 @@ export function downloadExport(
   document.body.removeChild(link);
   
   URL.revokeObjectURL(url);
+}
+
+/**
+ * Export universal annotations (image/code/etc) to Markdown or JSON
+ */
+export function exportUniversalAnnotations(
+  annotations: AnnotationItem[],
+  format: 'markdown' | 'json',
+  fileName?: string
+): ExportResult {
+  if (format === 'json') {
+    const data = {
+      version: 1,
+      exportDate: Date.now(),
+      fileName: fileName || null,
+      annotationCount: annotations.length,
+      annotations: annotations.map(a => ({
+        id: a.id,
+        target: a.target,
+        style: a.style,
+        content: a.content,
+        author: a.author,
+        createdAt: a.createdAt,
+      })),
+    };
+    return { content: JSON.stringify(data, null, 2), format: 'json', annotationCount: annotations.length };
+  }
+
+  const lines: string[] = [];
+  lines.push('# Annotations Export');
+  if (fileName) lines.push(`**File**: ${fileName}`);
+  lines.push(`**Exported**: ${formatTimestamp(Date.now())}`);
+  lines.push(`**Count**: ${annotations.length}`);
+  lines.push('', '---', '');
+
+  for (const a of annotations) {
+    const target = a.target;
+    if (target.type === 'image') {
+      lines.push(`### Image Region (${Math.round(target.x)}%, ${Math.round(target.y)}%) ${Math.round(target.width)}×${Math.round(target.height)}%`);
+    } else if (target.type === 'pdf') {
+      lines.push(`### Page ${target.page}`);
+    } else if (target.type === 'code_line') {
+      lines.push(`### Line ${target.line}`);
+    } else {
+      lines.push(`### Annotation`);
+    }
+    if (a.content) {
+      lines.push('', `> ${a.content.slice(0, 200)}`);
+    }
+    lines.push('', `*${formatTimestamp(a.createdAt)}*`, '', '---', '');
+  }
+
+  return { content: lines.join('\n'), format: 'markdown', annotationCount: annotations.length };
 }

@@ -43,7 +43,21 @@ function SidebarEntry({ item }: { item: PluginSidebarItem }) {
       <div className="flex items-center gap-2 mb-1">
         <span className="text-xs font-medium uppercase tracking-wider">{item.title}</span>
       </div>
-      <div data-type={rendered.type} />
+      <div data-type={rendered.type}>
+        {rendered.type === 'text' && (
+          <p className="text-xs">{rendered.props.content as string}</p>
+        )}
+        {rendered.type === 'list' && (
+          <ul className="text-xs space-y-1">
+            {(rendered.props.items as string[])?.map((text, i) => (
+              <li key={i}>{text}</li>
+            ))}
+          </ul>
+        )}
+        {rendered.type === 'html' && (
+          <div className="text-xs" dangerouslySetInnerHTML={{ __html: String(rendered.props.html ?? '') }} />
+        )}
+      </div>
     </div>
   );
 }

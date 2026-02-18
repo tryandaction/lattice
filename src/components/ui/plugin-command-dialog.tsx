@@ -28,7 +28,11 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
   useEffect(() => {
     if (!isOpen) return;
     const updateCommands = () => {
-      setCommands(getRegisteredCommands());
+      try {
+        setCommands(getRegisteredCommands());
+      } catch (err) {
+        console.error('Failed to get registered commands:', err);
+      }
     };
     updateCommands();
     setActiveIndex(0);

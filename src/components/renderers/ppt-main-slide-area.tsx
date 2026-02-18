@@ -32,27 +32,9 @@ export function MainSlideArea({
       
       // Clone the slide element - DO NOT modify its styles
       const clone = currentSlide.element.cloneNode(true) as HTMLElement;
-      
-      // Debug: Log the clone content
-      console.log('[PPT] Slide index:', currentSlide.index);
-      console.log('[PPT] Clone innerHTML length:', clone.innerHTML.length);
-      console.log('[PPT] Clone children count:', clone.children.length);
-      console.log('[PPT] Extracted formulas count:', extractedFormulas.length);
-      console.log('[PPT] Extracted texts count:', extractedTexts.length);
-      
+
       // Check if the slide has formulas that need to be displayed
       const textContent = clone.textContent?.trim() || '';
-      
-      console.log('[PPT] Text content length:', textContent.length);
-      console.log('[PPT] Text content preview:', textContent.substring(0, 150));
-      
-      // Debug: Log extracted texts
-      if (extractedTexts.length > 0) {
-        console.log('[PPT] Extracted texts:');
-        extractedTexts.forEach((t, i) => {
-          console.log(`  [${i}] ${t.isTitle ? '[TITLE]' : ''} ${t.isMath ? '[MATH]' : ''} ${t.text.substring(0, 60)}...`);
-        });
-      }
       
       // STEP 1: Determine what content is missing
       // Compare extracted text with rendered text to find missing content
@@ -71,18 +53,9 @@ export function MainSlideArea({
       // CRITICAL: If we have formulas or math content, we MUST inject content
       // because pptx-preview cannot render OMML formulas
       const mustInjectContent = hasFormulas || hasMathContent;
-      
-      console.log('[PPT] Extracted body text length:', extractedTextLength);
-      console.log('[PPT] Rendered text length:', renderedTextLength);
-      console.log('[PPT] Body text missing:', bodyTextMissing);
-      console.log('[PPT] Has math content:', hasMathContent);
-      console.log('[PPT] Has formulas:', hasFormulas);
-      console.log('[PPT] Must inject content:', mustInjectContent);
-      
+
       // STEP 2: Inject content if needed
       if (mustInjectContent || bodyTextMissing) {
-        // Inject all extracted content (text + formulas)
-        console.log('[PPT] Injecting content (formulas or missing text)');
         injectTextContent(clone, extractedTexts, extractedFormulas);
       }
       
@@ -116,9 +89,7 @@ export function MainSlideArea({
       // Get declared dimensions from pptx-preview - this is the PRIMARY source of truth
       const declaredWidth = parseFloat(sourceElement.style.width) || sourceElement.offsetWidth || 960;
       const declaredHeight = parseFloat(sourceElement.style.height) || sourceElement.offsetHeight || 540;
-      
-      console.log('[PPT] Declared dimensions:', declaredWidth, 'x', declaredHeight);
-      
+
       // Check for content overflow using scrollWidth/scrollHeight
       // These are reliable even in off-screen containers
       const scrollWidth = sourceElement.scrollWidth;
@@ -170,9 +141,7 @@ export function MainSlideArea({
         contentWidth = Math.max(scrollWidth, maxRight);
         contentHeight = Math.max(scrollHeight, maxBottom);
       }
-      
-      console.log('[PPT] Content bounds:', contentWidth, 'x', contentHeight);
-      
+
       // FINAL DIMENSIONS: Use declared size, but expand if content overflows
       // Add small padding only if we're expanding beyond declared size
       const OVERFLOW_PADDING = 10;
