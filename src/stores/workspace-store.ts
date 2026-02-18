@@ -148,6 +148,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ rootHandle: handle });
     if (handle) {
       emitWorkspaceOpen(handle.name);
+      // Trigger workspace indexing for AI context
+      import('@/lib/ai/workspace-indexer').then(({ indexWorkspace }) => {
+        indexWorkspace(handle).catch(() => {});
+      }).catch(() => {});
     }
   },
   setFileTree: (tree) => set({ fileTree: tree }),

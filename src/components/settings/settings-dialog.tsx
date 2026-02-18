@@ -1258,19 +1258,27 @@ function PluginSettingsFields({ pluginId, fields }: { pluginId: string; fields: 
 }
 
 function AiApiKeyInput({ provider }: { provider: string }) {
-  const storageKey = `lattice-ai-key:${provider}`;
-  const [key, setKey] = useState(() => localStorage.getItem(storageKey) ?? '');
+  const [key, setKey] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'fail' | null>(null);
 
+  // Load key from secure storage on mount
+  useEffect(() => {
+    import('@/lib/ai/key-storage').then(({ getApiKey }) => {
+      setKey(getApiKey(provider as import('@/lib/ai/types').AiProviderId));
+    }).catch(() => {});
+  }, [provider]);
+
   const save = (value: string) => {
     setKey(value);
-    if (value) {
-      localStorage.setItem(storageKey, value);
-    } else {
-      localStorage.removeItem(storageKey);
-    }
     setTestResult(null);
+    import('@/lib/ai/key-storage').then(({ setApiKey, clearApiKey }) => {
+      if (value) {
+        setApiKey(provider as import('@/lib/ai/types').AiProviderId, value);
+      } else {
+        clearApiKey(provider as import('@/lib/ai/types').AiProviderId);
+      }
+    }).catch(() => {});
   };
 
   const test = async () => {
