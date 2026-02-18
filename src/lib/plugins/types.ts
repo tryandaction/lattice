@@ -109,6 +109,79 @@ export interface PluginSettingsAPI {
 // TYPES_CONTINUE_1
 
 // ============================================================================
+// MetadataCache (Obsidian-compatible)
+// ============================================================================
+
+export interface CachedHeading {
+  heading: string;
+  level: number;
+  position: { start: { line: number; col: number }; end: { line: number; col: number } };
+}
+
+export interface CachedLink {
+  link: string;
+  displayText?: string;
+  position: { start: { line: number; col: number }; end: { line: number; col: number } };
+}
+
+export interface CachedTag {
+  tag: string;
+  position: { start: { line: number; col: number }; end: { line: number; col: number } };
+}
+
+export interface CachedFileMetadata {
+  headings?: CachedHeading[];
+  links?: CachedLink[];
+  tags?: CachedTag[];
+  frontmatter?: Record<string, unknown>;
+}
+
+export interface MetadataCacheAPI {
+  getFileCache: (path: string) => Promise<CachedFileMetadata | null>;
+}
+
+// ============================================================================
+// Notice / Modal / Setting APIs (Obsidian-compatible)
+// ============================================================================
+
+export interface NoticeAPI {
+  show: (message: string, duration?: number) => void;
+}
+
+export interface ModalAPI {
+  open: (options: {
+    title: string;
+    content: string | HTMLElement;
+    buttons?: Array<{ label: string; action: () => void; variant?: 'default' | 'destructive' }>;
+  }) => void;
+}
+
+export interface SettingBuilderAPI {
+  addText: (opts: { name: string; desc?: string; value: string; onChange: (v: string) => void }) => SettingBuilderAPI;
+  addToggle: (opts: { name: string; desc?: string; value: boolean; onChange: (v: boolean) => void }) => SettingBuilderAPI;
+  addDropdown: (opts: { name: string; desc?: string; value: string; options: Record<string, string>; onChange: (v: string) => void }) => SettingBuilderAPI;
+}
+
+// ============================================================================
+// Editor Extension API
+// ============================================================================
+
+export interface EditorExtensionAPI {
+  registerExtension: (id: string, extension: unknown) => void;
+  unregisterExtension: (id: string) => void;
+}
+
+// ============================================================================
+// Theme API
+// ============================================================================
+
+export interface ThemeAPI {
+  register: (id: string, css: string) => void;
+  unregister: (id: string) => void;
+  setActive: (id: string | null) => void;
+}
+
+// ============================================================================
 // Assets & Storage
 // ============================================================================
 
@@ -237,6 +310,11 @@ export interface PluginContext {
   storage: PluginStorage;
   workspace: PluginWorkspaceAPI;
   annotations: PluginAnnotationsAPI;
+  metadataCache: MetadataCacheAPI;
+  notice: NoticeAPI;
+  modal: ModalAPI;
+  editor: EditorExtensionAPI;
+  themes: ThemeAPI;
 }
 
 // ============================================================================

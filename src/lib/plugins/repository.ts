@@ -399,3 +399,81 @@ async function loadStoredPluginMeta(pluginId: string): Promise<StoredPluginMeta 
     return null;
   }
 }
+
+// ============================================================================
+// Remote Plugin Registry
+// ============================================================================
+
+export interface RemotePluginEntry {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  author?: string;
+  downloadUrl: string;
+  manifestUrl?: string;
+  tags?: string[];
+  downloads?: number;
+}
+
+const REGISTRY_URL_KEY = 'lattice-plugin-registry-url';
+const DEFAULT_REGISTRY = 'https://plugins.lattice.dev/api/v1';
+
+export function getRegistryUrl(): string {
+  if (typeof localStorage === 'undefined') return DEFAULT_REGISTRY;
+  return localStorage.getItem(REGISTRY_URL_KEY) || DEFAULT_REGISTRY;
+}
+
+export function setRegistryUrl(url: string): void {
+  localStorage.setItem(REGISTRY_URL_KEY, url);
+}
+
+export async function fetchRemotePlugins(query?: string): Promise<RemotePluginEntry[]> {
+  try {
+    const base = getRegistryUrl();
+    const url = query
+      ? `${base}/plugins?q=${encodeURIComponent(query)}`
+      : `${base}/plugins`;
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    return Array.isArray(data?.plugins) ? data.plugins : Array.isArray(data) ? data : [];
+  } catch {
+    console.warn('[plugins] Failed to fetch remote plugin registry');
+    return [];
+  }
+}
+
+export async function installRemotePlugin(entry: RemotePluginEntry): Promise<boolean> {
+  try {
+    // Fetch the plugin bundle (expects { manifest, main, resources? })
+    const response = await fetch(entry.downloadUrl, {
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+    const bundle = await response.json();
+
+    if (!bundle.manifest || !bundle.main) {
+      throw new Error('Invalid plugin bundle: missing manifest or main');
+    }
+
+    const validation = validatePluginManifest(bundle.manifest);
+    if (!validation.valid || !validation.manifest) {
+      throw new Error('Invalid plugin manifest');
+    }
+
+    await storePluginPackage(
+      entry.id,
+      validation.manifest,
+      bundle.main,
+      bundle.resources ?? {}
+    );
+    return true;
+  } catch (err) {
+    console.error('[plugins] Failed to install remote plugin:', err);
+    return false;
+  }
+}
