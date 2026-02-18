@@ -32,8 +32,16 @@ export interface AiModel {
 }
 
 export interface AiMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string | AiContentPart[];
+  toolCallId?: string;
+}
+
+export interface AiContentPart {
+  type: 'text' | 'image';
+  text?: string;
+  data?: string;        // base64 image data
+  mimeType?: string;    // e.g. 'image/png'
 }
 
 export interface AiStreamChunk {
@@ -71,4 +79,46 @@ export interface AiProvider {
   generate: (messages: AiMessage[], options?: AiGenerateOptions) => Promise<AiGenerateResult>;
   stream: (messages: AiMessage[], options?: AiGenerateOptions) => AsyncIterable<AiStreamChunk>;
   estimateTokens: (text: string) => number;
+}
+
+// ============================================================================
+// Function Calling / Tool Use
+// ============================================================================
+
+export interface AiTool {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>; // JSON Schema
+}
+
+export interface AiToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface AiToolResult {
+  toolCallId: string;
+  content: string;
+}
+
+// ============================================================================
+// Agent Types
+// ============================================================================
+
+export interface AgentStep {
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'response';
+  content: string;
+  toolCall?: AiToolCall;
+  toolResult?: AiToolResult;
+  timestamp: number;
+}
+
+export interface AgentTask {
+  id: string;
+  description: string;
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  steps: AgentStep[];
+  result?: string;
+  error?: string;
 }
