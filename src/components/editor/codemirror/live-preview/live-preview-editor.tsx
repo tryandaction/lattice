@@ -29,6 +29,7 @@ import { createMathPasteExtension } from './math-paste-plugin';
 import { createAccessibilityExtension, addEditorDescription, announceChange } from './accessibility';
 import type { ViewMode, OutlineItem } from './types';
 import { parseHeadings, buildOutlineTree } from './markdown-parser';
+import { aiCompletionExtension } from './ai-completion-plugin';
 import { MathEditor } from '../../math-editor';
 import { registerCodeMirrorView, unregisterCodeMirrorView, setActiveInputTargetFromElement } from '@/lib/unified-input-handler';
 import { normalizeFormulaInput, wrapLatexForMarkdown } from '@/lib/formula-utils';
@@ -220,7 +221,12 @@ function buildExtensions(
   
   // Accessibility
   extensions.push(...createAccessibilityExtension({ highContrast }));
-  
+
+  // AI inline completion (ghost text) — only in edit mode, not read-only
+  if (!readOnly) {
+    extensions.push(aiCompletionExtension(true));
+  }
+
   return extensions;
 }
 
@@ -328,11 +334,6 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     // Use contentRef to get current content without adding to dependencies
     const initialContent = contentRef.current;
 
-    console.log('[EditorInit] ===== INITIALIZING EDITOR =====');
-    console.log('[EditorInit] fileId:', fileId);
-    console.log('[EditorInit] content length:', initialContent.length);
-    console.log('[EditorInit] mode:', mode);
-    
     let mounted = true;
     
     async function initEditor() {
@@ -344,7 +345,6 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         
         // Destroy existing view
         if (viewRef.current) {
-          console.log('[EditorInit] Destroying existing view');
           const existingView = viewRef.current;
           const existingHandler = (existingView as LivePreviewViewWithHandlers)._unifiedInputFocusHandler;
           if (existingHandler) {
@@ -357,11 +357,9 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         
         // CRITICAL: Clear decoration cache on file switch to prevent stale data
         clearDecorationCache();
-        console.log('[EditorInit] Decoration cache cleared');
-        
+
         // Clear container
         containerRef.current.innerHTML = '';
-        console.log('[EditorInit] Container cleared');
         
         // Build extensions
         const extensions = buildExtensions(
@@ -376,7 +374,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           useWikiImageStyle,
           highContrast
         );
-        
+
         console.log('[EditorInit] Extensions built, creating state with content length:', initialContent.length);
 
         // Create state with the current content
@@ -419,8 +417,6 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           requestAnimationFrame(() => applyEditorState(pending));
         }
 
-        console.log('[EditorInit] View created successfully');
-
         // Add accessibility description
         if (containerRef.current) {
           addEditorDescription(containerRef.current);
@@ -434,7 +430,6 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         }
         
         setIsLoading(false);
-        console.log('[EditorInit] ===== INITIALIZATION COMPLETE =====');
       } catch (err) {
         console.error('[EditorInit] Failed to initialize Live Preview Editor:', err);
         setError(err instanceof Error ? err : new Error('Failed to initialize editor'));
@@ -447,7 +442,6 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     return () => {
       mounted = false;
       if (viewRef.current) {
-        console.log('[EditorInit] Cleanup: destroying view');
         const existingView = viewRef.current;
         const existingHandler = (existingView as LivePreviewViewWithHandlers)._unifiedInputFocusHandler;
         if (existingHandler) {
@@ -468,10 +462,6 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
 
     // Only update if content differs and fileId hasn't changed (fileId change triggers re-init)
     if (content !== currentContent) {
-      console.log('[ContentUpdate] ===== UPDATING CONTENT =====');
-      console.log('[ContentUpdate] Current length:', currentContent.length, 'New length:', content.length);
-      console.log('[ContentUpdate] First 100 chars of new content:', content.substring(0, 100));
-      
       viewRef.current.dispatch({
         changes: {
           from: 0,
@@ -481,8 +471,6 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         annotations: Transaction.userEvent.of('external'),
         scrollIntoView: false,
       });
-      
-      console.log('[ContentUpdate] Content updated successfully');
     }
   }, [content, isLoading]); // Removed fileId - re-init handles that
 
@@ -629,6 +617,12 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
       <div className={`p-4 text-destructive bg-destructive/10 rounded ${className}`}>
         <p className="font-medium">Failed to load editor</p>
         <pre className="text-xs mt-2 overflow-auto">{error.message}</pre>
+        <button
+          onClick={() => { setError(null); setIsLoading(true); }}
+          className="mt-3 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors"
+        >
+          Retry
+        </button>
       </div>
     );
   }
