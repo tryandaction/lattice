@@ -14,7 +14,8 @@ const keyCache = new Map<string, string>();
 const urlCache = new Map<string, string>();
 
 let isTauri = false;
-let tauriStore: { get: (key: string) => Promise<string | null>; set: (key: string, value: string) => Promise<void>; save: () => Promise<void>; delete: (key: string) => Promise<void> } | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let tauriStore: any = null;
 
 // Simple obfuscation for web mode (NOT cryptographic security)
 function obfuscate(value: string): string {

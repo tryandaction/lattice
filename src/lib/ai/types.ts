@@ -44,6 +44,12 @@ export interface AiContentPart {
   mimeType?: string;    // e.g. 'image/png'
 }
 
+/** Extract plain text from AiMessage content (string or parts array) */
+export function getMessageText(content: string | AiContentPart[]): string {
+  if (typeof content === 'string') return content;
+  return content.filter(p => p.type === 'text').map(p => p.text ?? '').join('');
+}
+
 export interface AiStreamChunk {
   type: 'text' | 'done' | 'error';
   text?: string;

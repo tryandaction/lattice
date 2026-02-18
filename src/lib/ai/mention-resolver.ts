@@ -4,12 +4,19 @@
  */
 
 import { useWorkspaceStore } from '@/stores/workspace-store';
+import type { LayoutNode } from '@/types/layout';
 
 export interface Mention {
   type: 'file' | 'selection';
   raw: string;       // e.g. "@README.md" or "@selection"
   target: string;    // e.g. "README.md" or "selection"
   resolved?: string; // resolved content
+}
+
+/** Collect all tabs from the layout tree */
+function collectAllTabs(node: LayoutNode): Array<{ filePath: string }> {
+  if (node.type === 'pane') return node.tabs;
+  return node.children.flatMap(c => collectAllTabs(c));
 }
 
 /**
@@ -57,11 +64,9 @@ export async function resolveMentions(
         if (options?.readFile) {
           content = await options.readFile(mention.target);
         } else {
-          // Fallback: try workspace store
           const state = useWorkspaceStore.getState();
-          const tab = state.panes
-            .flatMap(p => p.tabs)
-            .find(t => t.filePath.endsWith(mention.target));
+          const allTabs = collectAllTabs(state.layout.root);
+          const tab = allTabs.find(t => t.filePath.endsWith(mention.target));
           content = tab ? `[File: ${tab.filePath}]` : `[File not found: ${mention.target}]`;
         }
         resolved.push({ ...mention, resolved: content });
@@ -75,12 +80,13 @@ export async function resolveMentions(
 }
 
 /**
- * Build enriched context string from resolved mentions
+ * Build enriched context string from a message text (convenience wrapper)
  */
-export function buildMentionContext(mentions: Mention[]): string {
+export async function buildMentionContext(text: string): Promise<string> {
+  const mentions = parseMentions(text);
   if (mentions.length === 0) return '';
-
-  return mentions
+  const resolved = await resolveMentions(mentions);
+  return resolved
     .filter(m => m.resolved)
     .map(m => {
       const header = m.type === 'selection'
@@ -92,7 +98,7 @@ export function buildMentionContext(mentions: Mention[]): string {
 }
 
 /**
- * Strip @mentions from message text (for display after resolution)
+ * Strip @mentions from message text
  */
 export function stripMentions(text: string): string {
   return text.replace(/@(selection|[\w./-]+\.\w+)/g, '').trim();
@@ -104,13 +110,11 @@ export function stripMentions(text: string): string {
 export function getAvailableFiles(): Array<{ path: string; name: string }> {
   try {
     const state = useWorkspaceStore.getState();
-    const files = state.panes
-      .flatMap(p => p.tabs)
-      .map(t => ({
-        path: t.filePath,
-        name: t.filePath.split('/').pop() ?? t.filePath,
-      }));
-    // Deduplicate by path
+    const allTabs = collectAllTabs(state.layout.root);
+    const files = allTabs.map(t => ({
+      path: t.filePath,
+      name: t.filePath.split('/').pop() ?? t.filePath,
+    }));
     const seen = new Set<string>();
     return files.filter(f => {
       if (seen.has(f.path)) return false;

@@ -1,4 +1,5 @@
 import type { AiProvider, AiModel, AiMessage, AiGenerateOptions, AiGenerateResult, AiStreamChunk } from '../types';
+import { getMessageText } from '../types';
 import { getApiKey as getKey, getBaseUrl as getUrl } from '../key-storage';
 
 const MODELS: AiModel[] = [
@@ -23,9 +24,9 @@ function buildAnthropicBody(messages: AiMessage[], options?: AiGenerateOptions, 
 
   for (const m of messages) {
     if (m.role === 'system') {
-      systemPrompt = systemPrompt ? `${systemPrompt}\n\n${m.content}` : m.content;
+      systemPrompt = systemPrompt ? `${systemPrompt}\n\n${getMessageText(m.content)}` : getMessageText(m.content);
     } else {
-      filtered.push({ role: m.role, content: m.content });
+      filtered.push({ role: m.role, content: getMessageText(m.content) });
     }
   }
 

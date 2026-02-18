@@ -3,7 +3,7 @@
  * Handles completion requests with caching and debouncing
  */
 
-import { getActiveProvider } from './inline-actions';
+import { getDefaultProvider } from './providers';
 import type { AiMessage } from './types';
 
 interface CompletionCacheEntry {
@@ -55,7 +55,7 @@ export async function requestCompletion(
     return cached.text;
   }
 
-  const provider = getActiveProvider();
+  const provider = getDefaultProvider();
   if (!provider || !provider.isConfigured()) return null;
 
   const messages: AiMessage[] = [

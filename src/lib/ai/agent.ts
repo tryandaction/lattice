@@ -11,7 +11,7 @@ import type {
   AgentStep,
   AgentTask,
 } from './types';
-import { getActiveProvider } from './inline-actions';
+import { getDefaultProvider } from './providers';
 import { searchIndex, getWorkspaceIndex } from './workspace-indexer';
 
 // --- Built-in Tools ---
@@ -158,7 +158,7 @@ export async function runAgentTask(
   deps: AgentDeps,
   signal?: AbortSignal,
 ): Promise<AgentTask> {
-  const provider = getActiveProvider();
+  const provider = getDefaultProvider();
   if (!provider) throw new Error('No AI provider configured');
 
   const taskId = `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

@@ -1,4 +1,5 @@
 import type { AiProvider, AiModel, AiMessage, AiGenerateOptions, AiGenerateResult, AiStreamChunk } from '../types';
+import { getMessageText } from '../types';
 import { getApiKey as getKey } from '../key-storage';
 
 const MODELS: AiModel[] = [
@@ -24,11 +25,11 @@ function buildGeminiContents(messages: AiMessage[], systemPrompt?: string) {
 
   for (const m of messages) {
     if (m.role === 'system') {
-      pendingSystem += (pendingSystem ? '\n\n' : '') + m.content;
+      pendingSystem += (pendingSystem ? '\n\n' : '') + getMessageText(m.content);
       continue;
     }
     const role = m.role === 'assistant' ? 'model' : 'user';
-    let text = m.content;
+    let text = getMessageText(m.content);
     if (pendingSystem) {
       text = pendingSystem + '\n\n' + text;
       pendingSystem = '';
