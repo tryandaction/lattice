@@ -58,6 +58,41 @@ const statusBarChangeListeners = new Set<() => void>();
 // Plugin settings change listeners
 const settingsChangeListeners = new Map<string, Set<(value: unknown) => void>>();
 
+// Plugin KV storage — Tauri uses plugin-store, web uses localStorage
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let pluginKvStore: any = null;
+let pluginKvStoreLoaded = false;
+
+async function getPluginKvStore() {
+  if (pluginKvStoreLoaded) return pluginKvStore;
+  pluginKvStoreLoaded = true;
+  if (isTauri()) {
+    try {
+      const { Store } = await import('@tauri-apps/plugin-store');
+      pluginKvStore = await Store.load('plugin-settings.json');
+    } catch { /* fallback to localStorage */ }
+  }
+  return pluginKvStore;
+}
+
+function pluginKvGet(key: string): unknown {
+  const raw = localStorage.getItem(key);
+  if (raw === null) return undefined;
+  try { return JSON.parse(raw); } catch { return raw; }
+}
+
+async function pluginKvSet(key: string, value: unknown): Promise<void> {
+  const json = JSON.stringify(value);
+  localStorage.setItem(key, json);
+  const store = await getPluginKvStore();
+  if (store) {
+    try {
+      await store.set(key, json);
+      await store.save();
+    } catch { /* fallback already in localStorage */ }
+  }
+}
+
 // Editor extension registry (for plugins to inject CodeMirror extensions)
 const editorExtensions = new Map<string, unknown>();
 const editorExtensionListeners = new Set<() => void>();
@@ -568,12 +603,10 @@ function createContext(manifest: PluginManifest): PluginContext {
     },
     settings: {
       get: (key) => {
-        const raw = localStorage.getItem(`lattice-plugin-kv:${pluginId}:setting:${key}`);
-        if (raw === null) return undefined;
-        try { return JSON.parse(raw); } catch { return raw; }
+        return pluginKvGet(`lattice-plugin-kv:${pluginId}:setting:${key}`);
       },
       set: async (key, value) => {
-        localStorage.setItem(`lattice-plugin-kv:${pluginId}:setting:${key}`, JSON.stringify(value));
+        await pluginKvSet(`lattice-plugin-kv:${pluginId}:setting:${key}`, value);
         const listeners = settingsChangeListeners.get(`${pluginId}:${key}`);
         if (listeners) {
           for (const l of listeners) { try { l(value); } catch { /* */ } }
@@ -597,20 +630,33 @@ function createContext(manifest: PluginManifest): PluginContext {
         if (!permissions.includes('storage')) {
           throw new Error('Permission denied');
         }
-        const raw = localStorage.getItem(`lattice-plugin-kv:${pluginId}:${key}`);
+        const storeKey = `lattice-plugin-kv:${pluginId}:${key}`;
+        const store = await getPluginKvStore();
+        if (store) {
+          try {
+            const val = await store.get(storeKey);
+            if (val !== undefined && val !== null) return String(val);
+          } catch { /* fallback */ }
+        }
+        const raw = localStorage.getItem(storeKey);
         return raw ?? null;
       },
       set: async (key, value) => {
         if (!permissions.includes('storage')) {
           throw new Error('Permission denied');
         }
-        localStorage.setItem(`lattice-plugin-kv:${pluginId}:${key}`, value);
+        await pluginKvSet(`lattice-plugin-kv:${pluginId}:${key}`, value);
       },
       remove: async (key) => {
         if (!permissions.includes('storage')) {
           throw new Error('Permission denied');
         }
-        localStorage.removeItem(`lattice-plugin-kv:${pluginId}:${key}`);
+        const storeKey = `lattice-plugin-kv:${pluginId}:${key}`;
+        localStorage.removeItem(storeKey);
+        const store = await getPluginKvStore();
+        if (store) {
+          try { await store.delete(storeKey); await store.save(); } catch { /* */ }
+        }
       },
     },
     annotations: {

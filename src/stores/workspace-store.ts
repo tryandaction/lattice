@@ -272,13 +272,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  closeTabsByPath: (path) =>
+  closeTabsByPath: (path) => {
     set((state) => ({
       layout: {
         ...state.layout,
         root: removeTabsByPathUtil(state.layout.root, path),
       },
-    })),
+    }));
+    emitFileClose(path);
+  },
 
   updateTabPath: (oldPath, newPath) =>
     set((state) => ({
