@@ -1,4 +1,5 @@
 import type { AiProvider, AiProviderId, AiModel, AiMessage, AiGenerateOptions, AiGenerateResult, AiStreamChunk } from '../types';
+import { getMessageText } from '../types';
 import { getApiKey as getKey, getBaseUrl as getUrl } from '../key-storage';
 
 const MODELS: AiModel[] = [
@@ -149,7 +150,7 @@ export const openaiProvider: AiProvider = {
 };
 
 function formatMessages(messages: AiMessage[], systemPrompt?: string) {
-  const formatted = messages.map((m) => ({ role: m.role, content: m.content }));
+  const formatted = messages.map((m) => ({ role: m.role, content: getMessageText(m.content) }));
   if (systemPrompt) {
     formatted.unshift({ role: 'system', content: systemPrompt });
   }

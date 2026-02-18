@@ -37,6 +37,7 @@ import { AiChatPanel } from "@/components/ai/ai-chat-panel";
 import { useAiChatStore } from "@/stores/ai-chat-store";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { usePluginShortcuts } from "@/hooks/use-plugin-shortcuts";
+import { initKeyStorage } from "@/lib/ai/key-storage";
 
 const DESKTOP_SIDEBAR_DEFAULT = 20;
 const DESKTOP_PANEL_DEFAULT = 22;
@@ -132,6 +133,12 @@ function AppLayoutContent() {
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
+
+  // Initialize AI key storage and load chat history
+  useEffect(() => {
+    initKeyStorage().catch(() => {});
+    useAiChatStore.getState().loadConversations?.().catch(() => {});
+  }, []);
 
   useEffect(() => {
     loadPlugins();

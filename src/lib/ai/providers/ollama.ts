@@ -1,4 +1,5 @@
 import type { AiProvider, AiModel, AiMessage, AiGenerateOptions, AiGenerateResult, AiStreamChunk } from '../types';
+import { getMessageText } from '../types';
 import { getBaseUrl as getUrl } from '../key-storage';
 
 function getBaseUrl(): string {
@@ -40,7 +41,7 @@ export const ollamaProvider: AiProvider = {
 
   generate: async (messages: AiMessage[], options?: AiGenerateOptions): Promise<AiGenerateResult> => {
     const model = options?.model ?? 'llama3.2';
-    const formatted = messages.map((m) => ({ role: m.role, content: m.content }));
+    const formatted = messages.map((m) => ({ role: m.role, content: getMessageText(m.content) }));
     if (options?.systemPrompt) {
       formatted.unshift({ role: 'system', content: options.systemPrompt });
     }
@@ -79,7 +80,7 @@ export const ollamaProvider: AiProvider = {
 
   stream: async function* (messages: AiMessage[], options?: AiGenerateOptions): AsyncIterable<AiStreamChunk> {
     const model = options?.model ?? 'llama3.2';
-    const formatted = messages.map((m) => ({ role: m.role, content: m.content }));
+    const formatted = messages.map((m) => ({ role: m.role, content: getMessageText(m.content) }));
     if (options?.systemPrompt) {
       formatted.unshift({ role: 'system', content: options.systemPrompt });
     }

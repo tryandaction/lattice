@@ -967,6 +967,19 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                       />
                     </div>
 
+                    {/* System Prompt */}
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">System Prompt</label>
+                      <textarea
+                        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm min-h-[80px] resize-y"
+                        value={settings.aiSystemPrompt ?? ''}
+                        onChange={(e) => updateSetting('aiSystemPrompt', e.target.value)}
+                        placeholder="You are a helpful research assistant..."
+                        rows={3}
+                      />
+                      <p className="text-xs text-muted-foreground">Custom system prompt for AI interactions. Leave empty for default.</p>
+                    </div>
+
                     {/* Streaming Toggle */}
                     <div className="flex items-center justify-between rounded-lg border border-border bg-muted/30 p-3">
                       <div>
