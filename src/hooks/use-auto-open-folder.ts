@@ -86,7 +86,6 @@ export function useAutoOpenFolder() {
     if (isTauri()) {
       // Tauri mode: use Tauri dialog to open saved path
       try {
-        // @ts-expect-error -- only available in Tauri build
         const { open } = await import('@tauri-apps/plugin-dialog');
         const path = settings.defaultFolder;
         if (!path) return;

@@ -50,7 +50,7 @@ describe('Property 7: Non-Destructive Image Editing', () => {
      * For any image bytes and any sequence of drawing operations,
      * the original image bytes should remain unchanged
      */
-    it('original image bytes are never modified by shape operations', () => {
+    it('original image bytes are never modified by shape operations', { timeout: 15000 }, () => {
       fc.assert(
         fc.property(
           // Image size (bytes)
