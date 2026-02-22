@@ -20,8 +20,8 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/no-require-imports": "warn",
       // Prefer const is just a warning
       "prefer-const": "warn",
-      // Discourage console statements (use logger instead)
-      "no-console": "warn",
+      // Allow console statements in dev; prefer logger for production-critical paths
+      "no-console": "off",
       // React Compiler/Hook rules: keep visible but non-blocking
       "react-hooks/set-state-in-effect": "warn",
       "react-hooks/refs": "warn",

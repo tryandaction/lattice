@@ -6,7 +6,7 @@
  */
 
 import React, { useMemo, forwardRef } from 'react';
-import katex from 'katex';
+import { useKaTeXRenderer } from './katex-renderer';
 
 export interface KeycapProps {
   /** Key code (e.g., 'KeyI') */
@@ -29,21 +29,6 @@ export interface KeycapProps {
   onClick: (event: React.MouseEvent) => void;
 }
 
-/**
- * Render LaTeX to HTML using KaTeX
- */
-function renderLatex(latex: string): string {
-  try {
-    return katex.renderToString(latex, {
-      throwOnError: false,
-      displayMode: false,
-      output: 'html',
-    });
-  } catch {
-    return `<span class="text-xs text-gray-400">${latex}</span>`;
-  }
-}
-
 export const Keycap = forwardRef<HTMLButtonElement, KeycapProps>(function Keycap(
   {
     keyCode,
@@ -60,11 +45,12 @@ export const Keycap = forwardRef<HTMLButtonElement, KeycapProps>(function Keycap
 ) {
   // Always display default symbol
   const displaySymbol = defaultSymbol;
+  const renderLatex = useKaTeXRenderer();
 
   // Render the LaTeX symbol
   const renderedSymbol = useMemo(() => {
     return renderLatex(displaySymbol);
-  }, [displaySymbol]);
+  }, [displaySymbol, renderLatex]);
 
   return (
     <button

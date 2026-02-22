@@ -12,7 +12,8 @@
  */
 
 import JSZip from 'jszip';
-import { convertOmmlToLatex, convertMathmlToLatex, renderLatex } from './markdown-converter';
+import { convertOmmlToLatex, convertMathmlToLatex } from './markdown-converter';
+import { renderLatex } from './katex-renderer';
 
 /**
  * Validates if the ArrayBuffer is a valid ZIP file

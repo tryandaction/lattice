@@ -10,8 +10,8 @@
  */
 
 import React, { useCallback, useEffect, useRef } from 'react';
-import { EditorView } from '@codemirror/view';
-import { KeyboardHUD } from './keyboard-hud';
+import dynamic from 'next/dynamic';
+import type { EditorView } from '@codemirror/view';
 import { useDoubleTap } from '../../hooks/use-double-tap';
 import { useHUDStore } from '../../stores/hud-store';
 import type { MathfieldElement } from 'mathlive';
@@ -23,6 +23,11 @@ export interface HUDProviderProps {
   children: React.ReactNode;
   enabled?: boolean;
 }
+
+const KeyboardHUD = dynamic(
+  () => import('./keyboard-hud').then((mod) => mod.KeyboardHUD),
+  { ssr: false, loading: () => null }
+);
 
 type CodeMirrorContentElement = HTMLElement & {
   cmView?: {
@@ -133,7 +138,7 @@ function getAndClearSavedPosition(): number {
   return pos;
 }
 
-function getActiveCodeMirrorView(): EditorView | null {
+async function getActiveCodeMirrorView(): Promise<EditorView | null> {
   const activeElement = document.activeElement as HTMLElement | null;
   const cmEditor =
     activeElement?.closest('.cm-editor') ||
@@ -143,6 +148,7 @@ function getActiveCodeMirrorView(): EditorView | null {
   if (!cmEditor || !(cmEditor instanceof HTMLElement)) return null;
 
   try {
+    const { EditorView } = await import('@codemirror/view');
     return EditorView.findFromDOM(cmEditor);
   } catch {
     return null;
@@ -333,37 +339,37 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
       return;
     }
 
-    // CodeMirror: 直接打开 HUD，并以当前光标位置定位
-    const cmView = getActiveCodeMirrorView();
-    if (cmView) {
-      const pos = cmView.state.selection.main.head;
-      const coords = cmView.coordsAtPos(pos);
-      if (coords) {
-        const rect = new DOMRect(
-          coords.left,
-          coords.top,
-          Math.max(0, coords.right - coords.left),
-          Math.max(0, coords.bottom - coords.top)
-        );
-        updateCursorPosition(rect);
+    void (async () => {
+      // CodeMirror: 直接打开 HUD，并以当前光标位置定位
+      const cmView = await getActiveCodeMirrorView();
+      if (cmView) {
+        const pos = cmView.state.selection.main.head;
+        const coords = cmView.coordsAtPos(pos);
+        if (coords) {
+          const rect = new DOMRect(
+            coords.left,
+            coords.top,
+            Math.max(0, coords.right - coords.left),
+            Math.max(0, coords.bottom - coords.top)
+          );
+          updateCursorPosition(rect);
+        }
+        openHUD('codemirror');
+        return;
       }
-      openHUD('codemirror');
-      return;
-    }
-    
-    // 在当前位置创建新公式
-    if (globalTiptapEditor && !globalTiptapEditor.isDestroyed) {
-      const pos = getAndClearSavedPosition();
-      
-      createMathLiveAtPosition(globalTiptapEditor, pos).then((mf) => {
+
+      // 在当前位置创建新公式
+      if (globalTiptapEditor && !globalTiptapEditor.isDestroyed) {
+        const pos = getAndClearSavedPosition();
+        const mf = await createMathLiveAtPosition(globalTiptapEditor, pos);
         if (mf) {
           updateCursorPosition(mf.getBoundingClientRect());
           openHUD('new');
         } else {
           openHUD('failed');
         }
-      });
-    }
+      }
+    })();
   }, [isOpen, openHUD, closeHUD, updateCursorPosition]);
 
   const handleFirstTap = useCallback(() => {
@@ -491,7 +497,7 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
   return (
     <>
       {children}
-      <KeyboardHUD onInsertSymbol={handleInsertSymbol} />
+      {isOpen && <KeyboardHUD onInsertSymbol={handleInsertSymbol} />}
     </>
   );
 }

@@ -58,16 +58,77 @@ let sidebarItemsSnapshot: import('./types').PluginSidebarItem[] = [];
 let toolbarItemsSnapshot: import('./types').PluginToolbarItem[] = [];
 let statusBarItemsSnapshot: import('./types').PluginStatusBarItem[] = [];
 
+function areSnapshotsEqual<T>(
+  prev: T[],
+  next: T[],
+  isSame: (a: T, b: T) => boolean
+): boolean {
+  if (prev === next) return true;
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i];
+    const b = next[i];
+    if (a === b) continue;
+    if (!isSame(a, b)) return false;
+  }
+  return true;
+}
+
+function isSameSidebarItem(
+  a: import('./types').PluginSidebarItem,
+  b: import('./types').PluginSidebarItem
+): boolean {
+  return (
+    a.id === b.id &&
+    a.title === b.title &&
+    a.icon === b.icon &&
+    a.position === b.position &&
+    a.render === b.render
+  );
+}
+
+function isSameToolbarItem(
+  a: import('./types').PluginToolbarItem,
+  b: import('./types').PluginToolbarItem
+): boolean {
+  return (
+    a.id === b.id &&
+    a.title === b.title &&
+    a.icon === b.icon &&
+    a.group === b.group &&
+    a.run === b.run
+  );
+}
+
+function isSameStatusBarItem(
+  a: import('./types').PluginStatusBarItem,
+  b: import('./types').PluginStatusBarItem
+): boolean {
+  return (
+    a.id === b.id &&
+    a.text === b.text &&
+    a.tooltip === b.tooltip &&
+    a.position === b.position &&
+    a.onClick === b.onClick
+  );
+}
+
 function refreshSidebarSnapshot() {
-  sidebarItemsSnapshot = Array.from(sidebarItems.values());
+  const next = Array.from(sidebarItems.values());
+  if (areSnapshotsEqual(sidebarItemsSnapshot, next, isSameSidebarItem)) return;
+  sidebarItemsSnapshot = next;
 }
 
 function refreshToolbarSnapshot() {
-  toolbarItemsSnapshot = Array.from(toolbarItems.values());
+  const next = Array.from(toolbarItems.values());
+  if (areSnapshotsEqual(toolbarItemsSnapshot, next, isSameToolbarItem)) return;
+  toolbarItemsSnapshot = next;
 }
 
 function refreshStatusBarSnapshot() {
-  statusBarItemsSnapshot = Array.from(statusBarItems.values());
+  const next = Array.from(statusBarItems.values());
+  if (areSnapshotsEqual(statusBarItemsSnapshot, next, isSameStatusBarItem)) return;
+  statusBarItemsSnapshot = next;
 }
 
 // Plugin settings change listeners

@@ -23,12 +23,12 @@ import { ANNOTATION_COLORS, ANNOTATION_TYPES } from '../../types/annotation';
 /**
  * Generator for valid file paths
  */
-const filePathArb = fc.stringOf(
-  fc.constantFrom(
-    ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./'
-  ),
-  { minLength: 1, maxLength: 100 }
-).filter(s => s.trim().length > 0 && !s.match(/^[\/\-_\.]+$/));
+const filePathChars = fc.constantFrom<string>(
+  ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./'
+);
+const filePathArb: fc.Arbitrary<string> = fc
+  .string({ unit: filePathChars, minLength: 1, maxLength: 100 })
+  .filter((s: string) => s.trim().length > 0 && !s.match(/^[\/\-_\.]+$/));
 
 /**
  * Generator for valid normalized coordinates

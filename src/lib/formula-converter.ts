@@ -3,8 +3,8 @@ import {
   convertTextToLatex,
   convertOmmlToLatex,
   convertMathmlToLatex,
-  renderLatex,
 } from './markdown-converter';
+import { renderLatex } from './katex-renderer';
 
 export {
   convertCharToLatex,

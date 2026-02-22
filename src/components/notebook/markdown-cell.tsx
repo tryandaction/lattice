@@ -1,10 +1,10 @@
 "use client";
 
+import "katex/dist/katex.min.css";
 import { useCallback, useEffect, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties, type JSX } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import rehypeKatex from "rehype-katex";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
 
@@ -20,11 +20,28 @@ type MarkdownProps<T extends keyof JSX.IntrinsicElements> = ComponentPropsWithou
 };
 
 type MarkdownCodeProps = MarkdownProps<"code"> & { inline?: boolean };
+type RehypeKatexPlugin = typeof import("rehype-katex").default;
 
 /**
  * Rendered Markdown view using ReactMarkdown with KaTeX support
  */
 function RenderedMarkdown({ content }: { content: string }) {
+  const [rehypeKatex, setRehypeKatex] = useState<RehypeKatexPlugin | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    import("rehype-katex")
+      .then((mod) => {
+        if (!active) return;
+        const plugin = (mod.default ?? mod) as RehypeKatexPlugin;
+        setRehypeKatex(() => plugin);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
   if (!content || content.trim() === "") {
     return (
       <div className="px-4 py-2 min-h-[40px] text-muted-foreground italic pointer-events-none">
@@ -37,7 +54,7 @@ function RenderedMarkdown({ content }: { content: string }) {
     <div className="markdown-cell-content px-4 py-2 pointer-events-none">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        rehypePlugins={rehypeKatex ? [rehypeKatex] : []}
         components={{
           // Code blocks with syntax highlighting
           code({ inline, className, children, style: _style, node: _node, ...props }: MarkdownCodeProps) {

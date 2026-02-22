@@ -68,6 +68,31 @@ interface ImageTldrawAdapterProps {
 }
 
 const SAVE_DEBOUNCE_MS = 500;
+const KNOWN_TLDRAW_SHAPE_TYPES: ReadonlySet<TLShape["type"]> = new Set([
+  "embed",
+  "video",
+  "image",
+  "line",
+  "text",
+  "frame",
+  "highlight",
+  "note",
+  "group",
+  "draw",
+  "arrow",
+  "geo",
+  "bookmark",
+]);
+
+function isKnownTldrawShapeType(value: string): value is TLShape["type"] {
+  return KNOWN_TLDRAW_SHAPE_TYPES.has(value as TLShape["type"]);
+}
+
+type KnownTldrawShape = TldrawShape & { type: TLShape["type"] };
+
+function isKnownTldrawShape(shape: TldrawShape): shape is KnownTldrawShape {
+  return isKnownTldrawShapeType(shape.type);
+}
 
 // ============================================================================
 // Utility Functions
@@ -312,9 +337,11 @@ export function ImageTldrawAdapter({
     
     isRestoringRef.current = true;
     try {
-      const shapes = extractShapesFromAnnotation(imageAnnotation, imageSize.width, imageSize.height);
+      const shapes = extractShapesFromAnnotation(imageAnnotation, imageSize.width, imageSize.height)
+        .filter(isKnownTldrawShape);
       if (shapes.length > 0) {
         shapes.forEach(shape => {
+          if (shape.type === "image") return;
           const existing = editor.getShape(shape.id as TLShapeId);
           if (!existing) {
             editor.createShape({

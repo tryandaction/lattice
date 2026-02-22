@@ -32,12 +32,18 @@ import { ANNOTATION_STYLE_TYPES } from '../../types/universal-annotation';
 /**
  * Generator for valid file paths
  */
-const filePathArb = fc.stringOf(
-  fc.constantFrom(
-    ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./'
-  ),
-  { minLength: 1, maxLength: 100 }
-).filter(s => s.trim().length > 0 && !s.match(/^[\/\-_\.]+$/));
+const filePathChars = fc.constantFrom<string>(
+  ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./'
+);
+const filePathArb: fc.Arbitrary<string> = fc
+  .string({ unit: filePathChars, minLength: 1, maxLength: 100 })
+  .filter((s: string) => s.trim().length > 0 && !s.match(/^[\/\-_\.]+$/));
+
+const hexChars = '0123456789abcdef';
+const hexa = (): fc.Arbitrary<string> =>
+  fc.integer({ min: 0, max: 15 }).map((n) => hexChars[n]);
+const hexaString = (constraints: Omit<fc.StringConstraints, 'unit'> = {}) =>
+  fc.string({ ...constraints, unit: hexa() });
 
 /**
  * Generator for valid BoundingBox
@@ -102,7 +108,7 @@ const annotationTargetArb = fc.oneof(
 const annotationStyleArb = fc.record({
   color: fc.oneof(
     fc.constantFrom('yellow', 'red', 'green', 'blue'),
-    fc.hexaString({ minLength: 6, maxLength: 6 }).map(s => `#${s}`)
+    hexaString({ minLength: 6, maxLength: 6 }).map((s: string) => `#${s}`)
   ),
   type: fc.constantFrom(...ANNOTATION_STYLE_TYPES),
 });

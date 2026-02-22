@@ -7,8 +7,8 @@
 
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import katex from 'katex';
 import { Plus, Pencil, Trash2, X, Check } from 'lucide-react';
+import { useKaTeXRenderer } from './katex-renderer';
 
 export interface SymbolSelectorProps {
   /** Key code this selector is for */
@@ -39,21 +39,6 @@ export interface SymbolSelectorProps {
   isVisible: boolean;
 }
 
-/**
- * Render LaTeX to HTML using KaTeX
- */
-function renderLatex(latex: string): string {
-  try {
-    return katex.renderToString(latex, {
-      throwOnError: false,
-      displayMode: false,
-      output: 'html',
-    });
-  } catch {
-    return `<span class="text-xs text-gray-400">${latex}</span>`;
-  }
-}
-
 export function SymbolSelector({
   keyCode: _keyCode,
   keyLabel,
@@ -73,6 +58,7 @@ export function SymbolSelector({
   const inputRef = useRef<HTMLInputElement>(null);
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [newSymbol, setNewSymbol] = useState('');
+  const renderLatex = useKaTeXRenderer();
 
   // Total items: symbols + add button + edit button
   const addButtonIndex = symbols.length;
@@ -97,7 +83,7 @@ export function SymbolSelector({
   const newSymbolPreview = useMemo(() => {
     if (!newSymbol) return '';
     return renderLatex(newSymbol);
-  }, [newSymbol]);
+  }, [newSymbol, renderLatex]);
 
   // Render symbols with KaTeX
   const renderedSymbols = useMemo(() => {
@@ -105,7 +91,7 @@ export function SymbolSelector({
       latex: symbol,
       html: renderLatex(symbol),
     }));
-  }, [symbols]);
+  }, [symbols, renderLatex]);
 
   // Handle adding new symbol
   const handleAddNew = useCallback(() => {

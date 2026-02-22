@@ -93,13 +93,19 @@ const annotationTargetArb: fc.Arbitrary<AnnotationTarget> = fc.oneof(
   codeLineTargetArb
 );
 
+const hexChars = '0123456789abcdef';
+const hexa = (): fc.Arbitrary<string> =>
+  fc.integer({ min: 0, max: 15 }).map((n) => hexChars[n]);
+const hexaString = (constraints: Omit<fc.StringConstraints, 'unit'> = {}) =>
+  fc.string({ ...constraints, unit: hexa() });
+
 /**
  * Generator for valid AnnotationStyle
  */
 const annotationStyleArb: fc.Arbitrary<AnnotationStyle> = fc.record({
   color: fc.oneof(
     fc.constantFrom('yellow', 'red', 'green', 'blue'),
-    fc.hexaString({ minLength: 6, maxLength: 6 }).map(s => `#${s}`)
+    hexaString({ minLength: 6, maxLength: 6 }).map((s: string) => `#${s}`)
   ),
   type: fc.constantFrom(...ANNOTATION_STYLE_TYPES),
 });

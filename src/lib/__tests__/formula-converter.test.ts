@@ -20,6 +20,11 @@ import {
 } from '../formula-converter';
 
 describe('Formula Converter', () => {
+  const stringFrom = (
+    chars: string[],
+    constraints: Omit<fc.StringConstraints, 'unit'> = {}
+  ) => fc.string({ ...constraints, unit: fc.constantFrom<string>(...chars) });
+
   // ==========================================================================
   // Character Conversion Tests
   // ==========================================================================
@@ -335,8 +340,8 @@ describe('Formula Converter', () => {
     `;
     
     // Arbitrary for simple math identifiers (letters and numbers)
-    const mathIdentifier = fc.stringOf(
-      fc.constantFrom('a', 'b', 'c', 'x', 'y', 'z', 'n', 'm', '1', '2', '3'),
+    const mathIdentifier = stringFrom(
+      ['a', 'b', 'c', 'x', 'y', 'z', 'n', 'm', '1', '2', '3'],
       { minLength: 1, maxLength: 3 }
     );
     
@@ -423,7 +428,7 @@ describe('Formula Converter', () => {
       fc.constant('\\sqrt['),
       fc.constant('$$$'),
       fc.constant('\\undefined'),
-      fc.stringOf(fc.constantFrom('\\', '{', '}', '^', '_'), { minLength: 1, maxLength: 10 }),
+      stringFrom(['\\', '{', '}', '^', '_'], { minLength: 1, maxLength: 10 }),
     );
     
     it('should not throw for any input', () => {
@@ -476,7 +481,7 @@ describe('Formula Converter', () => {
   describe('Property 10: LaTeX Detection and Rendering', () => {
     // Generate text with embedded formulas
     const simpleLatex = fc.constantFrom('x', 'y', 'x^2', 'a+b', '\\alpha', '\\frac{1}{2}');
-    const plainText = fc.stringOf(fc.constantFrom('a', 'b', 'c', ' ', '.', ','), { minLength: 0, maxLength: 20 });
+    const plainText = stringFrom(['a', 'b', 'c', ' ', '.', ','], { minLength: 0, maxLength: 20 });
     
     it('should detect inline formulas with $...$', () => {
       fc.assert(
@@ -534,8 +539,8 @@ describe('Formula Converter', () => {
     it('should return empty array for text without delimiters', () => {
       fc.assert(
         fc.property(
-          fc.stringOf(fc.constantFrom('a', 'b', 'c', '1', '2', ' ', '.'), { minLength: 0, maxLength: 50 }),
-          (text) => {
+          stringFrom(['a', 'b', 'c', '1', '2', ' ', '.'], { minLength: 0, maxLength: 50 }),
+          (text: string) => {
             // Text without $ or \ should have no formulas
             if (!text.includes('$') && !text.includes('\\')) {
               const detected = detectLatexInText(text);

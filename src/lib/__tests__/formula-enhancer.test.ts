@@ -181,6 +181,11 @@ describe('Formula Enhancer', () => {
   // Property-Based Tests
   // ==========================================================================
 
+  const stringFrom = (
+    chars: string[],
+    constraints: Omit<fc.StringConstraints, 'unit'> = {}
+  ) => fc.string({ ...constraints, unit: fc.constantFrom<string>(...chars) });
+
   /**
    * Property 9: Formula Rendering Fallback
    * 
@@ -214,8 +219,8 @@ describe('Formula Enhancer', () => {
       fc.assert(
         fc.property(
           // Generate strings that are likely invalid LaTeX
-          fc.stringOf(fc.constantFrom('\\', '{', '}', '[', ']', '_', '^', '&', '#', '%')),
-          (invalidLatex) => {
+          stringFrom(['\\', '{', '}', '[', ']', '_', '^', '&', '#', '%']),
+          (invalidLatex: string) => {
             const result = renderLatex(invalidLatex);
             
             // Should not throw
@@ -236,8 +241,8 @@ describe('Formula Enhancer', () => {
     it('should handle empty and whitespace strings', () => {
       fc.assert(
         fc.property(
-          fc.stringOf(fc.constantFrom(' ', '\t', '\n', '')),
-          (whitespace) => {
+          stringFrom([' ', '\t', '\n', '']),
+          (whitespace: string) => {
             const result = renderLatex(whitespace);
             expect(result).toBeDefined();
             expect(result.html).toBeDefined();

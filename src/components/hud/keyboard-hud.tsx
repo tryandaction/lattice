@@ -10,6 +10,7 @@
  * - Supports user drag to customize position
  */
 
+import "katex/dist/katex.min.css";
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { motion, AnimatePresence, useDragControls, PanInfo } from 'framer-motion';
 import { ShadowKeyboard } from './shadow-keyboard';

@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useCallback, type ComponentPropsWithoutRef, type CSSProperties, type JSX } from "react";
+import "katex/dist/katex.min.css";
+import { useState, useCallback, useEffect, useMemo, type ComponentPropsWithoutRef, type CSSProperties, type JSX } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import type { Components } from "react-markdown";
+import type { PluggableList } from "unified";
 import { Check, Copy } from "lucide-react";
 import { KATEX_MACROS } from "@/lib/katex-config";
 
@@ -23,6 +24,7 @@ type MarkdownProps<T extends keyof JSX.IntrinsicElements> = ComponentPropsWithou
 };
 
 type MarkdownCodeProps = MarkdownProps<"code"> & { inline?: boolean };
+type RehypeKatexPlugin = typeof import("rehype-katex").default;
 
 /**
  * Copy button component for code blocks
@@ -323,12 +325,35 @@ const katexOptions = {
 export function MarkdownRenderer({ content, fileName: _fileName, className = "" }: MarkdownRendererProps) {
   // Content should already be normalized to Markdown by upstream (universal-file-viewer)
   // If HTML is still present, it will be handled by rehypeRaw plugin safely
+  const [rehypeKatex, setRehypeKatex] = useState<RehypeKatexPlugin | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    import("rehype-katex")
+      .then((mod) => {
+        if (!active) return;
+        const plugin = (mod.default ?? mod) as RehypeKatexPlugin;
+        setRehypeKatex(() => plugin);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const rehypePlugins = useMemo<PluggableList>(() => {
+    const plugins: PluggableList = [rehypeRaw];
+    if (rehypeKatex) {
+      plugins.push([rehypeKatex, katexOptions]);
+    }
+    return plugins;
+  }, [rehypeKatex]);
   
   return (
     <div className={`prose prose-lattice dark:prose-invert max-w-none ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeRaw, [rehypeKatex, katexOptions]]}
+        rehypePlugins={rehypePlugins}
         components={components}
       >
         {content}

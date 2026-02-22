@@ -7,7 +7,7 @@
 
 import { useMemo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import katex from 'katex';
+import { useKaTeXRenderer } from './katex-renderer';
 
 export interface VariantMenuProps {
   /** Key code this menu is for */
@@ -26,21 +26,6 @@ export interface VariantMenuProps {
   isVisible: boolean;
 }
 
-/**
- * Render LaTeX to HTML using KaTeX
- */
-function renderLatex(latex: string): string {
-  try {
-    return katex.renderToString(latex, {
-      throwOnError: false,
-      displayMode: false,
-      output: 'html',
-    });
-  } catch {
-    return `<span class="text-xs text-gray-400">${latex}</span>`;
-  }
-}
-
 export function VariantMenu({
   keyCode,
   variants,
@@ -50,6 +35,7 @@ export function VariantMenu({
   isVisible,
 }: VariantMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const renderLatex = useKaTeXRenderer();
 
   // Scroll highlighted item into view
   useEffect(() => {
@@ -66,7 +52,7 @@ export function VariantMenu({
       latex: variant,
       html: renderLatex(variant),
     }));
-  }, [variants]);
+  }, [variants, renderLatex]);
 
   // Calculate menu position (relative to parent container)
   // Position above the keycap using bottom positioning

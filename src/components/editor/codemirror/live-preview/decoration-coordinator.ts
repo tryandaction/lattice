@@ -63,9 +63,13 @@ import { parseListItem, parseBlockquote } from './markdown-parser';
 // ============================================================================
 
 /**
- * Debug mode - set to false in production to disable verbose logging
+ * Debug mode - opt-in via NEXT_PUBLIC_LIVE_PREVIEW_DEBUG=1 or window.__LATTICE_DEBUG_LIVE_PREVIEW__ = true
+ * to avoid noisy logs on every update.
  */
-const DEBUG_MODE = process.env.NODE_ENV === 'development';
+const DEBUG_MODE =
+  process.env.NEXT_PUBLIC_LIVE_PREVIEW_DEBUG === '1' ||
+  (typeof window !== 'undefined' &&
+    (window as { __LATTICE_DEBUG_LIVE_PREVIEW__?: boolean }).__LATTICE_DEBUG_LIVE_PREVIEW__ === true);
 
 /**
  * Conditional debug log

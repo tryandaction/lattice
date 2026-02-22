@@ -7,6 +7,8 @@
  * Requirements: All from spec
  */
 
+import "katex/dist/katex.min.css";
+import "highlight.js/styles/github-dark.css";
 import { useEffect, useRef, useState, useCallback, memo, forwardRef, useImperativeHandle } from 'react';
 import { Loader2 } from 'lucide-react';
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection } from '@codemirror/view';

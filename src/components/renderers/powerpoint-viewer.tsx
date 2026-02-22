@@ -1,5 +1,6 @@
 "use client";
 
+import "katex/dist/katex.min.css";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { init } from "pptx-preview";
 import { PowerPointViewerProps, SlideData, LAYOUT_CONSTANTS } from "@/types/ppt-viewer";

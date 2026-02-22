@@ -3,7 +3,7 @@
 import { useRef, useEffect, useCallback, useState } from "react";
 import { MainSlideAreaProps } from "@/types/ppt-viewer";
 import { cn } from "@/lib/utils";
-import { renderLatex } from "@/lib/markdown-converter";
+import { renderLatex } from "@/lib/katex-renderer";
 
 /**
  * Main Slide Area Component
