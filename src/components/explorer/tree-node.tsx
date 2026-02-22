@@ -1,10 +1,21 @@
 "use client";
 
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { ChevronRight, ChevronDown, Folder, FolderOpen } from "lucide-react";
+import {
+  ChevronRight,
+  ChevronDown,
+  Folder,
+  FolderOpen,
+  FileText,
+  FileCode,
+  Code,
+  Image as ImageIcon,
+  File,
+  Presentation,
+  BookOpen,
+} from "lucide-react";
 import type { TreeNode, FileNode, DirectoryNode } from "@/types/file-system";
 import { isFileNode, isDirectoryNode } from "@/types/file-system";
-import { getFileIcon } from "@/lib/constants";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { getAllPaneIds, findPane } from "@/lib/layout-utils";
@@ -39,12 +50,41 @@ interface FileNodeProps {
 
 let pendingOpenTimeout: NodeJS.Timeout | null = null;
 
+function FileIcon({
+  extension,
+  className,
+}: {
+  extension: string;
+  className?: string;
+}) {
+  const normalizedExt = extension.toLowerCase();
+
+  if (normalizedExt === "pdf" || normalizedExt === "txt") {
+    return <FileText className={className} />;
+  }
+  if (normalizedExt === "ppt" || normalizedExt === "pptx") {
+    return <Presentation className={className} />;
+  }
+  if (normalizedExt === "md") {
+    return <FileCode className={className} />;
+  }
+  if (normalizedExt === "py") {
+    return <Code className={className} />;
+  }
+  if (normalizedExt === "ipynb") {
+    return <BookOpen className={className} />;
+  }
+  if (normalizedExt === "png" || normalizedExt === "jpg" || normalizedExt === "jpeg") {
+    return <ImageIcon className={className} />;
+  }
+  return <File className={className} />;
+}
+
 /**
  * File node component
  * Displays file with appropriate icon and handles click to open file
  */
 function FileNodeComponent({ node, depth }: FileNodeProps) {
-  const Icon = getFileIcon(node.extension);
   const openFileInPane = useWorkspaceStore((state) => state.openFileInPane);
   const closeTabsByPath = useWorkspaceStore((state) => state.closeTabsByPath);
   const updateTabPath = useWorkspaceStore((state) => state.updateTabPath);
@@ -214,7 +254,10 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
           <div className="flex items-center gap-2">
-            <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <FileIcon
+              extension={node.extension}
+              className="h-4 w-4 shrink-0 text-muted-foreground"
+            />
             <input
               ref={inputRef}
               type="text"
@@ -249,7 +292,10 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
           )}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
-          <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <FileIcon
+            extension={node.extension}
+            className="h-4 w-4 shrink-0 text-muted-foreground"
+          />
           <span className="truncate">{node.name}</span>
           {openCount > 1 && (
             <span className="ml-auto text-xs text-muted-foreground">{openCount}</span>

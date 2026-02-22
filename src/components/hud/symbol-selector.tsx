@@ -73,7 +73,6 @@ export function SymbolSelector({
   const inputRef = useRef<HTMLInputElement>(null);
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [newSymbol, setNewSymbol] = useState('');
-  const [newSymbolPreview, setNewSymbolPreview] = useState('');
 
   // Total items: symbols + add button + edit button
   const addButtonIndex = symbols.length;
@@ -95,13 +94,9 @@ export function SymbolSelector({
     }
   }, [isAddingNew]);
 
-  // Update preview when typing
-  useEffect(() => {
-    if (newSymbol) {
-      setNewSymbolPreview(renderLatex(newSymbol));
-    } else {
-      setNewSymbolPreview('');
-    }
+  const newSymbolPreview = useMemo(() => {
+    if (!newSymbol) return '';
+    return renderLatex(newSymbol);
   }, [newSymbol]);
 
   // Render symbols with KaTeX

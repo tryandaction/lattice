@@ -33,8 +33,8 @@ export async function loadKaTeX(): Promise<KaTeXModule> {
 
 async function attemptLoad(): Promise<KaTeXModule> {
   try {
-    const module = await import('katex');
-    katex = resolveKaTeX(module as { default?: KaTeXModule });
+    const katexModule = await import('katex');
+    katex = resolveKaTeX(katexModule as { default?: KaTeXModule });
     retryCount = 0;
     return katex;
   } catch (err) {

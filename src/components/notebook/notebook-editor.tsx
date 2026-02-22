@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Save, Loader2, Check, AlertCircle, Plus, Code, FileText, Play, Square, RotateCcw, ChevronDown } from "lucide-react";
 import { useNotebookEditor } from "@/hooks/use-notebook-editor";
 import { useNotebookExecutor } from "@/hooks/use-notebook-executor";
@@ -146,17 +146,21 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
   const currentContentRef = useRef(content);
   // Track the last serialized content to avoid unnecessary updates
   const lastSerializedRef = useRef<string | null>(content);
+  const debouncedNotifyChangeRef = useRef<((serialized: string) => void) | null>(null);
 
   // Debounced content change notification for better performance
-  const debouncedNotifyChange = useMemo(
-    () => debounce((serialized: string) => {
-      if (onContentChange && serialized !== lastSerializedRef.current) {
+  useEffect(() => {
+    if (!onContentChange) {
+      debouncedNotifyChangeRef.current = null;
+      return;
+    }
+    debouncedNotifyChangeRef.current = debounce((serialized: string) => {
+      if (serialized !== lastSerializedRef.current) {
         lastSerializedRef.current = serialized;
         onContentChange(serialized);
       }
-    }, 300),
-    [onContentChange]
-  );
+    }, 300);
+  }, [onContentChange]);
 
   // Reset state when file changes OR when content changes from external source (file reload)
   useEffect(() => {
@@ -183,8 +187,8 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
     if (!isDirty) return;
     
     const serialized = serialize();
-    debouncedNotifyChange(serialized);
-  }, [state, serialize, debouncedNotifyChange, isDirty, onContentChange]);
+    debouncedNotifyChangeRef.current?.(serialized);
+  }, [state, serialize, isDirty, onContentChange]);
 
   /**
    * Handle save operation

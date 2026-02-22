@@ -59,6 +59,7 @@ function ThumbnailItem({
     
     if (hasFormulas && !hasVisiblePptxContent) {
       // Slide has formulas but pptx-preview couldn't render content
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setContentStatus('formula');
       setIsRendered(true);
       return;

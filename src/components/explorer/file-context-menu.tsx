@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useRef, useEffect, useLayoutEffect } from "react";
 import { Trash2, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,36 +18,35 @@ interface FileContextMenuProps {
  */
 export function FileContextMenu({ x, y, onRename, onDelete, onClose }: FileContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState({ x, y });
 
   // Adjust position to stay within viewport
-  useEffect(() => {
-    if (menuRef.current) {
-      const menuRect = menuRef.current.getBoundingClientRect();
-      const viewportWidth = window.innerWidth;
-      const viewportHeight = window.innerHeight;
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
 
-      let adjustedX = x;
-      let adjustedY = y;
+    const menuRect = menu.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
 
-      // Prevent going off right edge
-      if (x + menuRect.width > viewportWidth) {
-        adjustedX = viewportWidth - menuRect.width - 8;
-      }
+    let adjustedX = x;
+    let adjustedY = y;
 
-      // Prevent going off bottom edge
-      if (y + menuRect.height > viewportHeight) {
-        adjustedY = viewportHeight - menuRect.height - 8;
-      }
-
-      // Ensure not going off left or top edge
-      adjustedX = Math.max(8, adjustedX);
-      adjustedY = Math.max(8, adjustedY);
-
-      if (adjustedX !== x || adjustedY !== y) {
-        setPosition({ x: adjustedX, y: adjustedY });
-      }
+    // Prevent going off right edge
+    if (x + menuRect.width > viewportWidth) {
+      adjustedX = viewportWidth - menuRect.width - 8;
     }
+
+    // Prevent going off bottom edge
+    if (y + menuRect.height > viewportHeight) {
+      adjustedY = viewportHeight - menuRect.height - 8;
+    }
+
+    // Ensure not going off left or top edge
+    adjustedX = Math.max(8, adjustedX);
+    adjustedY = Math.max(8, adjustedY);
+
+    menu.style.left = `${adjustedX}px`;
+    menu.style.top = `${adjustedY}px`;
   }, [x, y]);
 
   // Close menu when clicking outside
@@ -77,7 +76,7 @@ export function FileContextMenu({ x, y, onRename, onDelete, onClose }: FileConte
     <div
       ref={menuRef}
       className="fixed z-50 min-w-[160px] rounded-md border border-border bg-popover p-1 shadow-md"
-      style={{ left: position.x, top: position.y }}
+      style={{ left: x, top: y }}
     >
       <button
         onClick={() => {

@@ -6,7 +6,6 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { getDefaultProvider, getProvider } from "@/lib/ai/providers";
-import { buildAiContext } from "@/lib/ai/context-builder";
 import { X, Send, Square, Plus, Trash2, MessageSquare, Copy, Check, GitCompareArrows } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MarkdownRenderer } from "@/components/renderers/markdown-renderer";
@@ -40,9 +39,7 @@ export function AiChatPanel() {
 function ChatHeader({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
   const newConversation = useAiChatStore((s) => s.newConversation);
-  const conversations = useAiChatStore((s) => s.conversations);
   const activeId = useAiChatStore((s) => s.activeConversationId);
-  const setActive = useAiChatStore((s) => s.setActiveConversation);
   const deleteConv = useAiChatStore((s) => s.deleteConversation);
 
   return (
@@ -252,7 +249,13 @@ function ChatInput() {
       }
 
       // getMessagesForApi() already includes the user message we just added
-      const apiMessages = getMessagesForApi();
+    const apiMessages = getMessagesForApi();
+    if (mentions.length > 0 && resolvedText !== text) {
+      const last = apiMessages[apiMessages.length - 1];
+      if (last && last.role === "user") {
+        apiMessages[apiMessages.length - 1] = { ...last, content: resolvedText };
+      }
+    }
 
       if (settings.aiStreamingEnabled) {
         for await (const chunk of provider.stream(apiMessages, {

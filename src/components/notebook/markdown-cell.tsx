@@ -215,6 +215,7 @@ export function MarkdownCell({
   // Sync edit content when source changes externally
   useEffect(() => {
     if (!isEditing) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setEditContent(source);
     }
   }, [source, isEditing]);

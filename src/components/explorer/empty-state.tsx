@@ -4,6 +4,8 @@ import { FolderOpen, AlertTriangle } from "lucide-react";
 
 interface EmptyStateProps {
   onOpenFolder: () => void;
+  onOpenQaWorkspace?: () => void;
+  showQaWorkspace?: boolean;
   isSupported: boolean;
   isCheckingSupport?: boolean;
 }
@@ -12,7 +14,13 @@ interface EmptyStateProps {
  * Empty state component shown when no folder is opened
  * Features a scientific minimalist design with dashed border
  */
-export function EmptyState({ onOpenFolder, isSupported, isCheckingSupport }: EmptyStateProps) {
+export function EmptyState({
+  onOpenFolder,
+  onOpenQaWorkspace,
+  showQaWorkspace,
+  isSupported,
+  isCheckingSupport,
+}: EmptyStateProps) {
   // Don't show unsupported message while still checking
   // This prevents the flash of "Browser Not Supported" on initial load
   if (!isSupported && !isCheckingSupport) {
@@ -50,6 +58,16 @@ export function EmptyState({ onOpenFolder, isSupported, isCheckingSupport }: Emp
           </p>
         </div>
       </button>
+
+      {showQaWorkspace && onOpenQaWorkspace && (
+        <button
+          onClick={onOpenQaWorkspace}
+          className="text-xs text-muted-foreground underline decoration-dotted hover:text-primary"
+          type="button"
+        >
+          Open QA Workspace
+        </button>
+      )}
 
       <div className="text-center">
         <p className="font-scientific text-muted-foreground">

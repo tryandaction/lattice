@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useWorkspaceStore, type PaneId } from "@/stores/workspace-store";
 import { findPane } from "@/lib/layout-utils";
 import { getFileExtension, isBinaryFile } from "@/lib/file-utils";
@@ -42,29 +42,32 @@ export function usePaneFileContent(paneId: PaneId) {
  * and manages the content state.
  */
 export function useTabContent(tab: TabState | null) {
-  const contentRef = useRef<string | ArrayBuffer | null>(null);
-  const loadingRef = useRef(false);
-  const errorRef = useRef<string | null>(null);
-  const loadedTabIdRef = useRef<string | null>(null);
+  const [content, setContent] = useState<string | ArrayBuffer | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loadedTabId, setLoadedTabId] = useState<string | null>(null);
 
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    let canceled = false;
+
     if (!tab) {
-      contentRef.current = null;
-      loadingRef.current = false;
-      errorRef.current = null;
-      loadedTabIdRef.current = null;
+      setContent(null);
+      setIsLoading(false);
+      setError(null);
+      setLoadedTabId(null);
       return;
     }
 
     // Skip if already loaded this tab
-    if (loadedTabIdRef.current === tab.id && contentRef.current !== null) {
+    if (loadedTabId === tab.id && (content !== null || isLoading)) {
       return;
     }
 
     const loadFile = async () => {
-      loadingRef.current = true;
-      errorRef.current = null;
-      loadedTabIdRef.current = tab.id;
+      setIsLoading(true);
+      setError(null);
+      setLoadedTabId(tab.id);
 
       try {
         const file = await tab.fileHandle.getFile();
@@ -74,21 +77,27 @@ export function useTabContent(tab: TabState | null) {
           ? await file.arrayBuffer()
           : await file.text();
 
-        contentRef.current = content;
-        loadingRef.current = false;
+        if (canceled) return;
+        setContent(content);
+        setIsLoading(false);
       } catch (err) {
-        errorRef.current = err instanceof Error ? err.message : "Failed to read file";
-        loadingRef.current = false;
+        if (canceled) return;
+        setError(err instanceof Error ? err.message : "Failed to read file");
+        setIsLoading(false);
       }
     };
 
     loadFile();
-  }, [tab]);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    return () => {
+      canceled = true;
+    };
+  }, [tab, content, isLoading, loadedTabId]);
 
   return {
-    content: contentRef.current,
-    isLoading: loadingRef.current,
-    error: errorRef.current,
+    content,
+    isLoading,
+    error,
   };
 }
 

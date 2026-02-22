@@ -6,7 +6,7 @@
  * Lists files from workspace and special mentions like @selection
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { FileText, TextSelect } from "lucide-react";
 import { getAvailableFiles } from "@/lib/ai/mention-resolver";
 import { cn } from "@/lib/utils";
@@ -32,11 +32,10 @@ export function MentionAutocomplete({
   onClose,
   className,
 }: MentionAutocompleteProps) {
-  const [items, setItems] = useState<MentionItem[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  const items = useMemo(() => {
     const files = getAvailableFiles();
     const allItems: MentionItem[] = [
       { type: 'selection', label: 'Current Selection', value: '@selection' },
@@ -53,9 +52,10 @@ export function MentionAutocomplete({
         )
       : allItems;
 
-    setItems(filtered.slice(0, 10));
-    setSelectedIndex(0);
+    return filtered.slice(0, 10);
   }, [query]);
+
+  const activeIndex = Math.min(selectedIndex, Math.max(0, items.length - 1));
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
@@ -66,14 +66,14 @@ export function MentionAutocomplete({
       setSelectedIndex(i => Math.max(i - 1, 0));
     } else if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
-      if (items[selectedIndex]) {
-        onSelect(items[selectedIndex].value);
+      if (items[activeIndex]) {
+        onSelect(items[activeIndex].value);
       }
     } else if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
     }
-  }, [items, selectedIndex, onSelect, onClose]);
+  }, [items, activeIndex, onSelect, onClose]);
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown);
@@ -82,9 +82,9 @@ export function MentionAutocomplete({
 
   // Scroll selected item into view
   useEffect(() => {
-    const el = listRef.current?.children[selectedIndex] as HTMLElement | undefined;
+    const el = listRef.current?.children[activeIndex] as HTMLElement | undefined;
     el?.scrollIntoView({ block: 'nearest' });
-  }, [selectedIndex]);
+  }, [activeIndex]);
 
   if (items.length === 0) return null;
 
@@ -103,7 +103,7 @@ export function MentionAutocomplete({
           type="button"
           className={cn(
             "w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-muted transition-colors",
-            i === selectedIndex && "bg-muted"
+            i === activeIndex && "bg-muted"
           )}
           onClick={() => onSelect(item.value)}
           onMouseEnter={() => setSelectedIndex(i)}

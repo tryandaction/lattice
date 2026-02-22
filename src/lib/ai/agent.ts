@@ -8,7 +8,6 @@ import type {
   AiMessage,
   AiTool,
   AiToolCall,
-  AgentStep,
   AgentTask,
 } from './types';
 import { getDefaultProvider } from './providers';

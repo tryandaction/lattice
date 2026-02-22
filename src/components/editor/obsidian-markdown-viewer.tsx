@@ -191,7 +191,8 @@ export function ObsidianMarkdownViewer({
   const [activeHeading, setActiveHeading] = useState<number | undefined>();
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<LivePreviewEditorRef>(null);
-  const prevFileIdRef = useRef(fileId);
+  const resolvedFileId = fileId || fileName;
+  const prevFileIdRef = useRef(resolvedFileId);
   const fileChangeCounterRef = useRef(0);
   const { selection: aiSelection, dismiss: dismissAiMenu } = useTextSelection(containerRef);
   const saveEditorState = useContentCacheStore((state) => state.saveEditorState);
@@ -200,9 +201,7 @@ export function ObsidianMarkdownViewer({
   // CRITICAL: Force content update when file changes
   // Use fileId instead of fileName for more reliable detection
   useEffect(() => {
-    const currentFileId = fileId || fileName; // Fallback to fileName if no fileId
-
-    if (currentFileId !== prevFileIdRef.current) {
+    if (resolvedFileId !== prevFileIdRef.current) {
       const previousFileId = prevFileIdRef.current;
       if (previousFileId) {
         const editorState = editorRef.current?.getEditorState();
@@ -212,21 +211,23 @@ export function ObsidianMarkdownViewer({
       }
 
       // File changed - force update
-      prevFileIdRef.current = currentFileId;
+      prevFileIdRef.current = resolvedFileId;
       fileChangeCounterRef.current += 1;
       const changeId = fileChangeCounterRef.current;
 
       // Clear stale decoration cache from previous file
       clearDecorationCache();
 
+      /* eslint-disable react-hooks/set-state-in-effect */
       setLocalContent(content);
       setIsDirty(false);
       setSaveStatus('idle');
       setOutline([]);
       setActiveHeading(undefined);
+      /* eslint-enable react-hooks/set-state-in-effect */
 
       // Restore editor state if cached (with race condition guard)
-      const cachedState = getEditorState(currentFileId);
+      const cachedState = getEditorState(resolvedFileId);
       if (cachedState && fileChangeCounterRef.current === changeId) {
         editorRef.current?.restoreEditorState(cachedState);
       }
@@ -234,19 +235,19 @@ export function ObsidianMarkdownViewer({
       // Content changed externally (not by user editing)
       setLocalContent(content);
     }
-  }, [content, fileName, fileId, getEditorState, saveEditorState]);
+  }, [content, resolvedFileId, getEditorState, saveEditorState, isDirty, localContent]);
 
   // Persist editor state on unmount
   useEffect(() => {
     const editorInstance = editorRef.current;
     return () => {
-      const currentFileId = fileId || fileName;
+      const currentFileId = resolvedFileId;
       const editorState = editorInstance?.getEditorState();
       if (editorState) {
         saveEditorState(currentFileId, editorState);
       }
     };
-  }, [fileId, fileName, saveEditorState]);
+  }, [resolvedFileId, saveEditorState]);
 
   // Handle content changes from editor
   const handleContentChange = useCallback((newContent: string) => {
@@ -265,13 +266,13 @@ export function ObsidianMarkdownViewer({
       setIsDirty(false);
       setSaveStatus("saved");
       // Notify plugins that file was saved
-      emitFileSave(fileId || fileName);
+      emitFileSave(resolvedFileId);
       setTimeout(() => setSaveStatus("idle"), 2000);
     } catch {
       setSaveStatus("error");
       setTimeout(() => setSaveStatus("idle"), 3000);
     }
-  }, [onSave]);
+  }, [onSave, resolvedFileId]);
 
   // Handle mode change
   const handleModeChange = useCallback((newMode: ViewMode) => {

@@ -34,6 +34,7 @@ export function useTheme() {
 
   // Apply theme on mount and when theme changes
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     applyTheme(theme);
   }, [theme, applyTheme]);
 

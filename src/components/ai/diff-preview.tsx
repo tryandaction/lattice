@@ -8,7 +8,7 @@
 
 import { useMemo, useCallback } from "react";
 import { Check, X, Copy } from "lucide-react";
-import { computeDiff, applyDiff, type DiffResult } from "@/lib/ai/diff-utils";
+import { computeDiff, applyDiff } from "@/lib/ai/diff-utils";
 import { cn } from "@/lib/utils";
 
 interface DiffPreviewProps {

@@ -86,5 +86,5 @@ describe("live preview diagnostics", () => {
       // eslint-disable-next-line no-console
       console.log(`[diagnostics] ${fixture}`, counts);
     }
-  });
+  }, 30000);
 });

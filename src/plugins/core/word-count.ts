@@ -26,8 +26,6 @@ export const wordCountPlugin: PluginModule = {
 
   activate(ctx: PluginContext) {
     let currentText = '';
-    let disposeFileOpen: (() => void) | null = null;
-    let disposeActiveChange: (() => void) | null = null;
 
     function countWords(text: string): number {
       const trimmed = text.trim();
@@ -76,11 +74,11 @@ export const wordCountPlugin: PluginModule = {
       updateStatusBar();
     }
 
-    disposeActiveChange = ctx.events.onActiveFileChange((path) => {
+    ctx.events.onActiveFileChange((path) => {
       loadFileContent(path);
     });
 
-    disposeFileOpen = ctx.events.onFileSave((path) => {
+    ctx.events.onFileSave((path) => {
       loadFileContent(path);
     });
 

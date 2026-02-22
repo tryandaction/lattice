@@ -48,6 +48,7 @@ export function useSplitView(): SplitViewState {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     updateState();
 
     // 监听窗口大小变化

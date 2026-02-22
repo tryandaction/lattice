@@ -12,15 +12,17 @@ interface BeforeInstallPromptEvent extends Event {
 export function PWAInstallPrompt() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [showPrompt, setShowPrompt] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissed, setDismissed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return Boolean(localStorage.getItem("pwa-install-dismissed"));
+    } catch {
+      return false;
+    }
+  });
 
   useEffect(() => {
-    // 检查是否已经安装或已经dismiss
-    const isDismissed = localStorage.getItem('pwa-install-dismissed');
-    if (isDismissed) {
-      setDismissed(true);
-      return;
-    }
+    if (dismissed) return;
 
     // 检查是否已经是 PWA 模式
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
@@ -35,7 +37,7 @@ export function PWAInstallPrompt() {
 
     window.addEventListener('beforeinstallprompt', handler);
     return () => window.removeEventListener('beforeinstallprompt', handler);
-  }, []);
+  }, [dismissed]);
 
   const handleInstall = async () => {
     if (!deferredPrompt) return;

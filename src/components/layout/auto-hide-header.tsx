@@ -97,6 +97,7 @@ export function AutoHideHeader({
   // Reset visibility when disabled
   useEffect(() => {
     if (!enabled && !isVisible) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsVisible(true);
       onVisibilityChange?.(true);
     }
@@ -176,6 +177,7 @@ export function useAutoHideHeader(
 
   useEffect(() => {
     if (!enabled) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsVisible(true);
     }
   }, [enabled]);

@@ -33,6 +33,8 @@ import { aiCompletionExtension } from './ai-completion-plugin';
 import { MathEditor } from '../../math-editor';
 import { registerCodeMirrorView, unregisterCodeMirrorView, setActiveInputTargetFromElement } from '@/lib/unified-input-handler';
 import { normalizeFormulaInput, wrapLatexForMarkdown } from '@/lib/formula-utils';
+import { useSearchParams } from 'next/navigation';
+import { useSettingsStore } from '@/stores/settings-store';
 
 type LivePreviewViewWithHandlers = EditorView & {
   _outlineTimeout?: ReturnType<typeof setTimeout>;
@@ -100,6 +102,7 @@ function buildExtensions(
   showLineNumbers: boolean,
   showFoldGutter: boolean,
   readOnly: boolean,
+  aiEnabled: boolean,
   onChange: (content: string) => void,
   onOutlineChange?: (outline: OutlineItem[]) => void,
   onSave?: () => void,
@@ -223,7 +226,7 @@ function buildExtensions(
   extensions.push(...createAccessibilityExtension({ highContrast }));
 
   // AI inline completion (ghost text) — only in edit mode, not read-only
-  if (!readOnly) {
+  if (!readOnly && aiEnabled) {
     extensions.push(aiCompletionExtension(true));
   }
 
@@ -258,6 +261,10 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [librariesLoaded, setLibrariesLoaded] = useState(false);
+  const searchParams = useSearchParams();
+  const aiEnabled = useSettingsStore((state) => state.settings.aiEnabled);
+  const isQaMode = process.env.NODE_ENV === "development" && searchParams?.get("qa") === "1";
+  const aiCompletionEnabled = aiEnabled && !isQaMode;
 
   // MathEditor state
   const [mathEditor, setMathEditor] = useState<{
@@ -367,6 +374,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           showLineNumbers,
           showFoldGutter,
           readOnly,
+          aiCompletionEnabled,
           (c) => onChangeRef.current(c),
           onOutlineChangeRef.current,
           () => onSaveRef.current?.(),
@@ -452,7 +460,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         viewRef.current = null;
       }
     };
-  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, fileId, onImageUpload, useWikiImageStyle, highContrast, applyEditorState]); // fileId triggers re-init on file switch, content is handled by separate useEffect
+  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, aiCompletionEnabled, fileId, onImageUpload, useWikiImageStyle, highContrast, applyEditorState]); // fileId triggers re-init on file switch, content is handled by separate useEffect
 
   // Update content when it changes externally (but fileId change triggers re-init above)
   useEffect(() => {

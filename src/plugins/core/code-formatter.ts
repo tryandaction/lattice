@@ -4,7 +4,7 @@ import type { PluginModule, PluginContext } from '@/lib/plugins/types';
  * Simple code formatter for markdown code blocks.
  * Normalizes indentation and trims trailing whitespace.
  */
-function formatCodeBlock(code: string, language: string): string {
+function formatCodeBlock(code: string, _language: string): string {
   const lines = code.split('\n');
 
   // Trim trailing empty lines
@@ -49,7 +49,6 @@ export const codeFormatterPlugin: PluginModule = {
       id: 'core.code-formatter.format',
       title: 'Format Code Blocks',
       run: async () => {
-        const files = await ctx.workspace.listFiles();
         // Find active markdown file by reading all — in practice, we'd use active file
         // For now, provide a command that formats a specific file
         ctx.log('Code formatter: use format-file command with a path');

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { ChevronRight, ChevronDown, List } from "lucide-react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useI18n } from "@/hooks/use-i18n";

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { ZoomIn, ZoomOut, RotateCw, Maximize2, Download, Move, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAnnotationNavigation } from "../../hooks/use-annotation-navigation";
@@ -19,7 +19,10 @@ type FitMode = "fit" | "width" | "height" | "actual";
  * Optimized for large images and long images
  */
 export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const imageUrl = useMemo(() => {
+    const blob = new Blob([content], { type: mimeType });
+    return URL.createObjectURL(blob);
+  }, [content, mimeType]);
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
@@ -68,16 +71,12 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
     },
   });
 
-  // Create object URL from ArrayBuffer
+  // Cleanup object URL on unmount or when content changes
   useEffect(() => {
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    setImageUrl(url);
-
     return () => {
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(imageUrl);
     };
-  }, [content, mimeType]);
+  }, [imageUrl]);
 
   // Calculate fit zoom based on container and image size
   const calculateFitZoom = useCallback(() => {
@@ -115,6 +114,7 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
   // Update zoom when fit mode or natural size changes
   useEffect(() => {
     const newZoom = calculateFitZoom();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setZoom(newZoom);
     setPanOffset({ x: 0, y: 0 });
   }, [calculateFitZoom]);

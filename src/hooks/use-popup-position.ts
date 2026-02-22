@@ -61,6 +61,7 @@ export function usePopupPosition(options: UsePopupPositionOptions = {}): UsePopu
 
   // Recalculate when target position or size changes
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     recalculate();
   }, [recalculate]);
 

@@ -1,10 +1,18 @@
 "use client";
 
-import { X } from "lucide-react";
+import {
+  X,
+  FileText,
+  FileCode,
+  Code,
+  Image as ImageIcon,
+  File,
+  Presentation,
+  BookOpen,
+} from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { TabState, PaneId, TabDragData } from "@/types/layout";
-import { getFileIcon } from "@/lib/constants";
 import { getFileExtension } from "@/lib/file-utils";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +25,36 @@ export interface TabProps {
   onClick: () => void;
   onClose: () => void;
   isDraggable?: boolean;
+}
+
+function FileIcon({
+  extension,
+  className,
+}: {
+  extension: string;
+  className?: string;
+}) {
+  const normalizedExt = extension.toLowerCase();
+
+  if (normalizedExt === "pdf" || normalizedExt === "txt") {
+    return <FileText className={className} />;
+  }
+  if (normalizedExt === "ppt" || normalizedExt === "pptx") {
+    return <Presentation className={className} />;
+  }
+  if (normalizedExt === "md") {
+    return <FileCode className={className} />;
+  }
+  if (normalizedExt === "py") {
+    return <Code className={className} />;
+  }
+  if (normalizedExt === "ipynb") {
+    return <BookOpen className={className} />;
+  }
+  if (normalizedExt === "png" || normalizedExt === "jpg" || normalizedExt === "jpeg") {
+    return <ImageIcon className={className} />;
+  }
+  return <File className={className} />;
 }
 
 /**
@@ -36,7 +74,6 @@ export function Tab({
   isDraggable = true,
 }: TabProps) {
   const extension = getFileExtension(tab.fileName);
-  const Icon = getFileIcon(extension);
 
   // Set up sortable for drag-and-drop
   const {
@@ -99,7 +136,7 @@ export function Tab({
       title={tab.filePath}
     >
       {/* File Icon */}
-      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <FileIcon extension={extension} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
       
       {/* File Name */}
       <span className={cn(

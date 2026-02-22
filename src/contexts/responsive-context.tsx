@@ -40,6 +40,7 @@ export function ResponsiveProvider({ children }: ResponsiveProviderProps) {
   // Handle hydration and initial state
   useEffect(() => {
     // Update state after hydration to get accurate client values
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     updateState();
   }, [updateState]);
 

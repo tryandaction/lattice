@@ -1034,6 +1034,7 @@ function TextAnnotationPortal({ annotation, page, scale, onClick, isHighlighted 
     // Enable pointer events for the text annotation
     overlay.style.pointerEvents = 'auto';
     
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setContainer(overlay);
 
     return () => {
@@ -1061,12 +1062,10 @@ function InkAnnotationOverlay({ annotation, scale }: InkAnnotationOverlayProps) 
     return null;
   }
 
+  let paths: { x: number; y: number }[][] | null = null;
   try {
     const content = JSON.parse(annotation.content || '[]');
-    
-    // Support both old format (single path) and new format (array of paths)
-    let paths: { x: number; y: number }[][];
-    
+
     if (Array.isArray(content) && content.length > 0) {
       // Check if it's the old format (array of points) or new format (array of arrays)
       if (typeof content[0].x === 'number') {
@@ -1075,50 +1074,48 @@ function InkAnnotationOverlay({ annotation, scale }: InkAnnotationOverlayProps) 
       } else if (Array.isArray(content[0])) {
         // New format: array of paths
         paths = content as { x: number; y: number }[][];
-      } else {
-        return null;
       }
-    } else {
-      return null;
     }
-
-    // Filter out paths with less than 2 points
-    const validPaths = paths.filter(path => path.length >= 2);
-    if (validPaths.length === 0) return null;
-
-    return (
-      <svg
-        className="absolute inset-0 pointer-events-none"
-        viewBox="0 0 100 100"
-        preserveAspectRatio="none"
-        style={{ width: '100%', height: '100%' }}
-      >
-        {validPaths.map((path, pathIndex) => {
-          // Create SVG path data from normalized coordinates
-          const pathData = path.map((point, i) => {
-            const cmd = i === 0 ? 'M' : 'L';
-            // Convert normalized (0-1) to percentage for SVG viewBox
-            return `${cmd} ${point.x * 100} ${point.y * 100}`;
-          }).join(' ');
-
-          return (
-            <path
-              key={pathIndex}
-              d={pathData}
-              fill="none"
-              stroke={annotation.style.color}
-              strokeWidth={0.3 / scale}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              vectorEffect="non-scaling-stroke"
-            />
-          );
-        })}
-      </svg>
-    );
   } catch {
     return null;
   }
+
+  if (!paths || paths.length === 0) return null;
+
+  // Filter out paths with less than 2 points
+  const validPaths = paths.filter(path => path.length >= 2);
+  if (validPaths.length === 0) return null;
+
+  return (
+    <svg
+      className="absolute inset-0 pointer-events-none"
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+      style={{ width: '100%', height: '100%' }}
+    >
+      {validPaths.map((path, pathIndex) => {
+        // Create SVG path data from normalized coordinates
+        const pathData = path.map((point, i) => {
+          const cmd = i === 0 ? 'M' : 'L';
+          // Convert normalized (0-1) to percentage for SVG viewBox
+          return `${cmd} ${point.x * 100} ${point.y * 100}`;
+        }).join(' ');
+
+        return (
+          <path
+            key={pathIndex}
+            d={pathData}
+            fill="none"
+            stroke={annotation.style.color}
+            strokeWidth={0.3 / scale}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        );
+      })}
+    </svg>
+  );
 }
 
 /**
@@ -1153,6 +1150,7 @@ function InkAnnotationPortal({ annotation, page, scale }: InkAnnotationPortalPro
       pageElement.appendChild(overlay);
     }
     
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setContainer(overlay);
 
     return () => {
@@ -1239,6 +1237,7 @@ function CurrentInkPathPortal({ path, page, color, scale }: CurrentInkPathPortal
       pageElement.appendChild(overlay);
     }
     
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setContainer(overlay);
 
     return () => {
@@ -1304,6 +1303,7 @@ export function PDFHighlighterAdapter({
   const [pdfPageDimensions, _setPdfPageDimensions] = useState<Map<number, { width: number; height: number }>>(new Map());
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [pdfTextContent, setPdfTextContent] = useState("");
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -1505,17 +1505,15 @@ export function PDFHighlighterAdapter({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [zoomIn, zoomOut, resetZoom]);
 
-  // Create blob URL from ArrayBuffer
-  const pdfUrl = useMemo(() => {
-    const blob = new Blob([content], { type: 'application/pdf' });
-    return URL.createObjectURL(blob);
-  }, [content]);
-
+  // Create blob URL from ArrayBuffer (useEffect to avoid StrictMode revoke issues)
   useEffect(() => {
+    const blob = new Blob([content], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    setPdfUrl(url);
     return () => {
-      URL.revokeObjectURL(pdfUrl);
+      URL.revokeObjectURL(url);
     };
-  }, [pdfUrl]);
+  }, [content]);
 
   // Extract text content from PDF for AI features
   useEffect(() => {
@@ -2169,227 +2167,234 @@ export function PDFHighlighterAdapter({
                     activeTool === 'text' ? 'text' : 'default'
           }}
         >
-        <PdfLoader
-          url={pdfUrl}
-          beforeLoad={
-            <div className="flex items-center justify-center gap-2 py-8">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-sm text-muted-foreground">正在加载PDF...</span>
-            </div>
-          }
-        >
-          {(pdfDocument) => (
-            <PdfHighlighter
-              key={`pdf-scale-${pdfScaleValue}`}
-              pdfDocument={pdfDocument}
-              enableAreaSelection={(event) => event.altKey || activeTool === 'area'}
-              onSelectionFinished={(
-                position,
-                content,
-                hideTipAndSelection,
-                _transformSelection
-              ) => {
-                // Check if this is an area selection (has image but no text)
-                const isAreaSelection = content.image && !content.text;
-                
-                // If area tool is active or this is an area selection
-                if (activeTool === 'area' || isAreaSelection) {
-                  const newHighlight: NewHighlight = {
-                    position,
-                    content,
-                    comment: { text: '', emoji: '' },
-                  };
-                  // Create area annotation with current color
-                  const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user', 'area');
-                  addAnnotation(annotationData);
-                  hideTipAndSelection();
-                  return null;
-                }
-                
-                // If highlight or underline tool is active, use activeColor directly
-                if (activeTool === 'highlight' || activeTool === 'underline') {
-                  const newHighlight: NewHighlight = {
-                    position,
-                    content,
-                    comment: { text: '', emoji: '' },
-                  };
-                  const styleType = activeTool === 'underline' ? 'underline' : 'highlight';
-                  const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user', styleType);
-                  addAnnotation(annotationData);
-                  hideTipAndSelection();
-                  return null;
-                }
-                
-                // Otherwise show color picker for text selection
-                return (
-                  <ColorPicker
-                    selectedText={content.text}
-                    onColorSelect={(color) => {
-                      const newHighlight: NewHighlight = {
-                        position,
-                        content,
-                        comment: { text: '', emoji: '' },
-                      };
-                      const annotationData = highlightToAnnotationData(newHighlight, color, 'user', 'highlight');
-                      addAnnotation(annotationData);
-                      hideTipAndSelection();
-                    }}
-                    onCancel={hideTipAndSelection}
-                  />
-                );
-              }}
-              highlightTransform={(
-                highlight,
-                index,
-                setTip,
-                hideTip,
-                viewportToScaled,
-                screenshot,
-                isScrolledTo
-              ) => {
-                const annotation = annotations.find(a => a.id === highlight.id);
-                const isPin = annotation && isPinAnnotation(annotation);
-                const isHighlighted = highlightedId === highlight.id;
-
-                // Handler for changing color - only pass the color field
-                const handleChangeColor = (color: string) => {
-                  if (annotation) {
-                    updateAnnotation(highlight.id, { style: { color } });
+        {pdfUrl ? (
+          <PdfLoader
+            url={pdfUrl}
+            beforeLoad={
+              <div className="flex items-center justify-center gap-2 py-8">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm text-muted-foreground">正在加载PDF...</span>
+              </div>
+            }
+          >
+            {(pdfDocument) => (
+              <PdfHighlighter
+                key={`pdf-scale-${pdfScaleValue}`}
+                pdfDocument={pdfDocument}
+                enableAreaSelection={(event) => event.altKey || activeTool === 'area'}
+                onSelectionFinished={(
+                  position,
+                  content,
+                  hideTipAndSelection,
+                  _transformSelection
+                ) => {
+                  // Check if this is an area selection (has image but no text)
+                  const isAreaSelection = content.image && !content.text;
+                  
+                  // If area tool is active or this is an area selection
+                  if (activeTool === 'area' || isAreaSelection) {
+                    const newHighlight: NewHighlight = {
+                      position,
+                      content,
+                      comment: { text: '', emoji: '' },
+                    };
+                    // Create area annotation with current color
+                    const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user', 'area');
+                    addAnnotation(annotationData);
+                    hideTipAndSelection();
+                    return null;
                   }
-                  hideTip();
-                };
-
-                // Handler for converting highlight to underline or vice versa
-                const handleConvertStyle = () => {
-                  if (annotation) {
-                    const newType = annotation.style.type === 'highlight' ? 'underline' : 'highlight';
-                    updateAnnotation(highlight.id, { style: { type: newType } });
-                    hideTip();
+                  
+                  // If highlight or underline tool is active, use activeColor directly
+                  if (activeTool === 'highlight' || activeTool === 'underline') {
+                    const newHighlight: NewHighlight = {
+                      position,
+                      content,
+                      comment: { text: '', emoji: '' },
+                    };
+                    const styleType = activeTool === 'underline' ? 'underline' : 'highlight';
+                    const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user', styleType);
+                    addAnnotation(annotationData);
+                    hideTipAndSelection();
+                    return null;
                   }
-                };
-
-                if (isPin) {
-                  const position = highlight.position;
-                  const pinComment = annotation?.comment || highlight.comment?.text;
-                  // Pin position uses viewport coordinates (left, top)
+                  
+                  // Otherwise show color picker for text selection
                   return (
-                    <div
-                      key={highlight.id}
-                      className={`absolute cursor-pointer transition-transform ${
-                        isHighlighted ? 'animate-pulse scale-125' : ''
-                      }`}
-                      style={{
-                        left: position.boundingRect.left,
-                        top: position.boundingRect.top,
-                        // Offset to center the pin icon
-                        transform: 'translate(-50%, -100%)',
+                    <ColorPicker
+                      selectedText={content.text}
+                      onColorSelect={(color) => {
+                        const newHighlight: NewHighlight = {
+                          position,
+                          content,
+                          comment: { text: '', emoji: '' },
+                        };
+                        const annotationData = highlightToAnnotationData(newHighlight, color, 'user', 'highlight');
+                        addAnnotation(annotationData);
+                        hideTipAndSelection();
                       }}
-                      onClick={() => {
-                        setTip(highlight, () => (
-                          <HighlightPopupContent
-                            comment={highlight.comment}
-                            highlightText={highlight.content?.text}
-                            currentColor={annotation?.style.color}
-                            styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
-                            onDelete={() => {
-                              deleteAnnotation(highlight.id);
-                              hideTip();
-                            }}
-                            onAddComment={(comment) => {
-                              updateAnnotation(highlight.id, { comment });
-                              hideTip();
-                            }}
-                            onChangeColor={handleChangeColor}
-                          />
-                        ));
-                      }}
-                    >
-                      <div className="flex flex-col items-center">
-                        <StickyNote
-                          className="h-5 w-5 text-amber-500 drop-shadow-md"
-                          fill="currentColor"
-                        />
-                        {/* Display pin comment text below the icon */}
-                        {pinComment && (
-                          <div 
-                            className="mt-1 px-2 py-1 bg-amber-100 dark:bg-amber-900/80 border border-amber-300 dark:border-amber-700 rounded shadow-sm text-xs text-amber-900 dark:text-amber-100 max-w-[150px] whitespace-pre-wrap break-words"
-                            style={{ transform: 'translateX(50%)' }}
-                          >
-                            {pinComment}
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                      onCancel={hideTipAndSelection}
+                    />
                   );
-                }
+                }}
+                highlightTransform={(
+                  highlight,
+                  index,
+                  setTip,
+                  hideTip,
+                  viewportToScaled,
+                  screenshot,
+                  isScrolledTo
+                ) => {
+                  const annotation = annotations.find(a => a.id === highlight.id);
+                  const isPin = annotation && isPinAnnotation(annotation);
+                  const isHighlighted = highlightedId === highlight.id;
 
-                // Get the style type and color from annotation
-                const highlightColor = annotation?.style.color || '#FFD400';
-                const highlightStyleType = (annotation?.style.type || 'highlight') as 'highlight' | 'underline' | 'area';
-
-                return (
-                  <Popup
-                    popupContent={
-                      <HighlightPopupContent
-                        comment={highlight.comment}
-                        highlightText={highlight.content?.text}
-                        currentColor={annotation?.style.color}
-                        styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
-                        onDelete={() => {
-                          deleteAnnotation(highlight.id);
-                          hideTip();
-                        }}
-                        onAddComment={(comment) => {
-                          updateAnnotation(highlight.id, { comment });
-                          hideTip();
-                        }}
-                        onChangeColor={handleChangeColor}
-                        onConvertToUnderline={handleConvertStyle}
-                      />
+                  // Handler for changing color - only pass the color field
+                  const handleChangeColor = (color: string) => {
+                    if (annotation) {
+                      updateAnnotation(highlight.id, { style: { color } });
                     }
-                    onMouseOver={(popupContent) => setTip(highlight, () => popupContent)}
-                    onMouseOut={hideTip}
-                    key={highlight.id}
-                  >
-                    <div
-                      onClick={() => {
-                        setTip(highlight, () => (
-                          <HighlightPopupContent
-                            comment={highlight.comment}
-                            highlightText={highlight.content?.text}
-                            currentColor={annotation?.style.color}
-                            styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
-                            onDelete={() => {
-                              deleteAnnotation(highlight.id);
-                              hideTip();
-                            }}
-                            onAddComment={(comment) => {
-                              updateAnnotation(highlight.id, { comment });
-                              hideTip();
-                            }}
-                            onChangeColor={handleChangeColor}
-                            onConvertToUnderline={handleConvertStyle}
+                    hideTip();
+                  };
+
+                  // Handler for converting highlight to underline or vice versa
+                  const handleConvertStyle = () => {
+                    if (annotation) {
+                      const newType = annotation.style.type === 'highlight' ? 'underline' : 'highlight';
+                      updateAnnotation(highlight.id, { style: { type: newType } });
+                      hideTip();
+                    }
+                  };
+
+                  if (isPin) {
+                    const position = highlight.position;
+                    const pinComment = annotation?.comment || highlight.comment?.text;
+                    // Pin position uses viewport coordinates (left, top)
+                    return (
+                      <div
+                        key={highlight.id}
+                        className={`absolute cursor-pointer transition-transform ${
+                          isHighlighted ? 'animate-pulse scale-125' : ''
+                        }`}
+                        style={{
+                          left: position.boundingRect.left,
+                          top: position.boundingRect.top,
+                          // Offset to center the pin icon
+                          transform: 'translate(-50%, -100%)',
+                        }}
+                        onClick={() => {
+                          setTip(highlight, () => (
+                            <HighlightPopupContent
+                              comment={highlight.comment}
+                              highlightText={highlight.content?.text}
+                              currentColor={annotation?.style.color}
+                              styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
+                              onDelete={() => {
+                                deleteAnnotation(highlight.id);
+                                hideTip();
+                              }}
+                              onAddComment={(comment) => {
+                                updateAnnotation(highlight.id, { comment });
+                                hideTip();
+                              }}
+                              onChangeColor={handleChangeColor}
+                            />
+                          ));
+                        }}
+                      >
+                        <div className="flex flex-col items-center">
+                          <StickyNote
+                            className="h-5 w-5 text-amber-500 drop-shadow-md"
+                            fill="currentColor"
                           />
-                        ));
-                      }}
+                          {/* Display pin comment text below the icon */}
+                          {pinComment && (
+                            <div 
+                              className="mt-1 px-2 py-1 bg-amber-100 dark:bg-amber-900/80 border border-amber-300 dark:border-amber-700 rounded shadow-sm text-xs text-amber-900 dark:text-amber-100 max-w-[150px] whitespace-pre-wrap break-words"
+                              style={{ transform: 'translateX(50%)' }}
+                            >
+                              {pinComment}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // Get the style type and color from annotation
+                  const highlightColor = annotation?.style.color || '#FFD400';
+                  const highlightStyleType = (annotation?.style.type || 'highlight') as 'highlight' | 'underline' | 'area';
+
+                  return (
+                    <Popup
+                      popupContent={
+                        <HighlightPopupContent
+                          comment={highlight.comment}
+                          highlightText={highlight.content?.text}
+                          currentColor={annotation?.style.color}
+                          styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
+                          onDelete={() => {
+                            deleteAnnotation(highlight.id);
+                            hideTip();
+                          }}
+                          onAddComment={(comment) => {
+                            updateAnnotation(highlight.id, { comment });
+                            hideTip();
+                          }}
+                          onChangeColor={handleChangeColor}
+                          onConvertToUnderline={handleConvertStyle}
+                        />
+                      }
+                      onMouseOver={(popupContent) => setTip(highlight, () => popupContent)}
+                      onMouseOut={hideTip}
+                      key={highlight.id}
                     >
-                      <CustomHighlight
-                        isScrolledTo={isScrolledTo || isHighlighted}
-                        position={highlight.position}
-                        color={highlightColor}
-                        styleType={highlightStyleType}
-                      />
-                    </div>
-                  </Popup>
-                );
-              }}
-              highlights={highlights}
-              pdfScaleValue={pdfScaleValue}
-              onScrollChange={() => {}}
-              scrollRef={() => {}}
-            />
-          )}
-        </PdfLoader>
+                      <div
+                        onClick={() => {
+                          setTip(highlight, () => (
+                            <HighlightPopupContent
+                              comment={highlight.comment}
+                              highlightText={highlight.content?.text}
+                              currentColor={annotation?.style.color}
+                              styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
+                              onDelete={() => {
+                                deleteAnnotation(highlight.id);
+                                hideTip();
+                              }}
+                              onAddComment={(comment) => {
+                                updateAnnotation(highlight.id, { comment });
+                                hideTip();
+                              }}
+                              onChangeColor={handleChangeColor}
+                              onConvertToUnderline={handleConvertStyle}
+                            />
+                          ));
+                        }}
+                      >
+                        <CustomHighlight
+                          isScrolledTo={isScrolledTo || isHighlighted}
+                          position={highlight.position}
+                          color={highlightColor}
+                          styleType={highlightStyleType}
+                        />
+                      </div>
+                    </Popup>
+                  );
+                }}
+                highlights={highlights}
+                pdfScaleValue={pdfScaleValue}
+                onScrollChange={() => {}}
+                scrollRef={() => {}}
+              />
+            )}
+          </PdfLoader>
+        ) : (
+          <div className="flex items-center justify-center gap-2 py-8">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="text-sm text-muted-foreground">正在加载PDF...</span>
+          </div>
+        )}
 
           {/* Ink annotations - rendered using portals to each page */}
           {inkAnnotations.map(ann => {

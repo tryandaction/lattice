@@ -27,13 +27,14 @@ export function HTMLViewer({ content, fileName }: HTMLViewerProps) {
   }, [content]);
 
   // Create blob URL for iframe with proper cleanup
-  const [blobUrl, setBlobUrl] = useState<string>("");
-  useEffect(() => {
+  const blobUrl = useMemo(() => {
     const blob = new Blob([sanitizedHtml], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    setBlobUrl(url);
-    return () => URL.revokeObjectURL(url);
+    return URL.createObjectURL(blob);
   }, [sanitizedHtml]);
+
+  useEffect(() => {
+    return () => URL.revokeObjectURL(blobUrl);
+  }, [blobUrl]);
 
   return (
     <div className="flex h-full flex-col">

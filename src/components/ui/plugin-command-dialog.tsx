@@ -35,6 +35,7 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
       }
     };
     updateCommands();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setActiveIndex(0);
     try {
       const raw = localStorage.getItem(RECENT_COMMANDS_KEY);
@@ -78,6 +79,7 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
 
   useEffect(() => {
     if (filteredCommands.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setActiveIndex(0);
       return;
     }

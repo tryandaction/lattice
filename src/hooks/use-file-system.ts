@@ -33,6 +33,7 @@ interface UseFileSystemReturn {
 
   // Actions
   openDirectory: () => Promise<void>;
+  openQaWorkspace?: () => Promise<void>;
   createFile: (name: string, type: FileType, parentHandle?: FileSystemDirectoryHandle) => Promise<FileOperationResult>;
   createDirectory: (name: string, parentHandle?: FileSystemDirectoryHandle) => Promise<DirectoryOperationResult>;
   deleteFile: (path: string) => Promise<FileOperationResult>;
@@ -42,6 +43,89 @@ interface UseFileSystemReturn {
   // Derived
   fileTree: FileTree;
   rootHandle: FileSystemDirectoryHandle | null;
+}
+
+const QA_WORKSPACE_NAME = "lattice-qa-workspace";
+const QA_PDF_BASE64 =
+  "JVBERi0xLjcKJYGBgYEKCjYgMCBvYmoKPDwKL0ZpbHRlciAvRmxhdGVEZWNvZGUKL0xlbmd0aCAxMDgKPj4Kc3RyZWFtCnicNYexCsJAEAX79xVbC8bd82XvDsRCEVKkEfYHRKIoSaGI3+81MszAvHAIaJfk7/uOzTDN3+nzuF7WWWth0VyqWJG4IVFihIk2TNoZVWLBjke3zEyvvvU+aW+0ViXpe4knYoVT4Iwfv3QYpgplbmRzdHJlYW0KZW5kb2JqCgo3IDAgb2JqCjw8Ci9GaWx0ZXIgL0ZsYXRlRGVjb2RlCi9UeXBlIC9PYmpTdG0KL04gNQovRmlyc3QgMjYKL0xlbmd0aCAzNjEKPj4Kc3RyZWFtCnic1VJNS8NAEL3vr5ijHmQ/8rGplELbJApSlFZQFA9pspRI2ZVkI/XfO5Oklh7Es4TH7sy82X2beRIEKAhDCEAnEEIUKIhASwnTKeOPXx8G+EOxMy3jd3XVwityBKzhjfGl66wHyWYzduIuC1/s3Y4NTSCJfGQ8NK7qStPANM/yXAgthIhDRCyESnFdIiYIhTHWVIJ7hA5HYE4HQgRzrOUDYj30UL3nRmN/hityY+KkAzdMhvjnXrorG85Qf+mZzBhfuSotvIGL9FoJFQulpIyDONIvl/g7GlN4938f1+uvnf31hWdzpvHSkBtDHuinzNemdV1T4tiJlzus0ObW7D+Nr8viSotJgjp1MkGPjcbgz/fbd1P2VAqzg7/ZeNIwJCi3MlVdLNwB3Sfww5cDqiYPzq11nlzZ+9F6VENRPHr0TDIJYnzTbX0fUlIyviha00s96UQRtnRVbXfAn2o7t219TNCJ3yQQxeAKZW5kc3RyZWFtCmVuZG9iagoKOCAwIG9iago8PAovU2l6ZSA5Ci9Sb290IDIgMCBSCi9JbmZvIDMgMCBSCi9GaWx0ZXIgL0ZsYXRlRGVjb2RlCi9UeXBlIC9YUmVmCi9MZW5ndGggNDAKL1cgWyAxIDIgMiBdCi9JbmRleCBbIDAgOSBdCj4+CnN0cmVhbQp4nBXEsREAIAwDsbfDHS3DsxJzJViFgG6zISk5VVrigHg/XxhhhgOkCmVuZHN0cmVhbQplbmRvYmoKCnN0YXJ0eHJlZgo2NjAKJSVFT0Y=";
+
+const QA_TEXT_FIXTURES = [
+  { name: "test-nested-formatting.md", url: "/test-nested-formatting.md" },
+  { name: "test-formula-rendering.md", url: "/test-formula-rendering.md" },
+  { name: "test-syntax-hiding.md", url: "/test-syntax-hiding.md" },
+  { name: "test-headings.md", url: "/test-headings.md" },
+  { name: "test-1000-lines.md", url: "/test-1000-lines.md" },
+  { name: "test-notebook.ipynb", url: "/test-notebook.ipynb" },
+];
+
+const QA_BINARY_FIXTURES = [
+  { name: "qa-image.png", url: "/icons/icon-192x192.png" },
+];
+
+async function getOpfsRoot(): Promise<FileSystemDirectoryHandle | null> {
+  if (typeof window === "undefined") return null;
+  const storage = (navigator as { storage?: { getDirectory?: () => Promise<FileSystemDirectoryHandle> } }).storage;
+  if (!storage?.getDirectory) return null;
+  return storage.getDirectory();
+}
+
+async function fileExists(dir: FileSystemDirectoryHandle, name: string): Promise<boolean> {
+  try {
+    await dir.getFileHandle(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function writeTextFile(
+  dir: FileSystemDirectoryHandle,
+  name: string,
+  content: string
+): Promise<void> {
+  const handle = await dir.getFileHandle(name, { create: true });
+  const writable = await handle.createWritable();
+  await writable.write(content);
+  await writable.close();
+}
+
+async function writeBinaryFile(
+  dir: FileSystemDirectoryHandle,
+  name: string,
+  bytes: Uint8Array
+): Promise<void> {
+  const handle = await dir.getFileHandle(name, { create: true });
+  const writable = await handle.createWritable();
+  const safeBytes = new Uint8Array(bytes);
+  await writable.write(safeBytes);
+  await writable.close();
+}
+
+async function ensureQaFixtures(dir: FileSystemDirectoryHandle): Promise<void> {
+  for (const fixture of QA_TEXT_FIXTURES) {
+    if (await fileExists(dir, fixture.name)) continue;
+    const response = await fetch(fixture.url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${fixture.url}`);
+    }
+    const content = await response.text();
+    await writeTextFile(dir, fixture.name, content);
+  }
+
+  for (const fixture of QA_BINARY_FIXTURES) {
+    if (await fileExists(dir, fixture.name)) continue;
+    const response = await fetch(fixture.url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${fixture.url}`);
+    }
+    const buffer = await response.arrayBuffer();
+    await writeBinaryFile(dir, fixture.name, new Uint8Array(buffer));
+  }
+
+  if (!(await fileExists(dir, "qa-sample.pdf"))) {
+    const bytes = Uint8Array.from(atob(QA_PDF_BASE64), (char) => char.charCodeAt(0));
+    await writeBinaryFile(dir, "qa-sample.pdf", bytes);
+  }
 }
 
 /**
@@ -208,6 +292,44 @@ export function useFileSystem(): UseFileSystemReturn {
   }, [isSupported, setRootHandle, setFileTree, setLoading, setError]);
 
   /**
+   * Open a QA workspace in OPFS (dev-only helper)
+   */
+  const openQaWorkspace = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const opfsRoot = await getOpfsRoot();
+      if (!opfsRoot) {
+        setError("OPFS is not supported in this browser. Please use Chrome or Edge.");
+        return;
+      }
+
+      const workspaceHandle = await opfsRoot.getDirectoryHandle(QA_WORKSPACE_NAME, { create: true });
+      await ensureQaFixtures(workspaceHandle);
+
+      setRootHandle(workspaceHandle);
+
+      const children = await readDirectoryRecursive(workspaceHandle);
+      const rootNode: DirectoryNode = {
+        name: workspaceHandle.name,
+        kind: "directory",
+        handle: workspaceHandle,
+        children,
+        path: workspaceHandle.name,
+        isExpanded: true,
+      };
+
+      setFileTree({ root: rootNode });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to open QA workspace";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  }, [setRootHandle, setFileTree, setLoading, setError]);
+
+  /**
    * Create a new file in the workspace
    * 
    * @param name - Desired filename (without extension)
@@ -367,6 +489,7 @@ export function useFileSystem(): UseFileSystemReturn {
     isLoading,
     error,
     openDirectory,
+    openQaWorkspace,
     createFile,
     createDirectory,
     deleteFile,

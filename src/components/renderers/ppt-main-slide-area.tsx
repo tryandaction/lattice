@@ -56,6 +56,7 @@ export function MainSlideArea({
 
       // STEP 2: Inject content if needed
       if (mustInjectContent || bodyTextMissing) {
+        // eslint-disable-next-line react-hooks/immutability
         injectTextContent(clone, extractedTexts, extractedFormulas);
       }
       

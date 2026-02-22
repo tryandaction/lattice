@@ -9,7 +9,6 @@ import {
   ViewPlugin,
   ViewUpdate,
   Decoration,
-  DecorationSet,
   EditorView,
   WidgetType,
   keymap,

@@ -10,7 +10,7 @@
  * - Supports user drag to customize position
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { motion, AnimatePresence, useDragControls, PanInfo } from 'framer-motion';
 import { ShadowKeyboard } from './shadow-keyboard';
 import { SymbolSelector } from './symbol-selector';
@@ -25,6 +25,7 @@ import {
 } from '../../config/quantum-keymap';
 import { GripHorizontal, RotateCcw } from 'lucide-react';
 import { getActiveInputTarget, getLastActiveInputTarget, wrapSelectionWith } from '@/lib/unified-input-handler';
+import { logger } from '@/lib/logger';
 import type { MathfieldElement } from 'mathlive';
 
 export interface KeyboardHUDProps {
@@ -81,6 +82,7 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const dragControls = useDragControls();
   const activeMathFieldRef = useRef<HTMLElement | null>(null);
   const isProcessingEnterRef = useRef(false);
+  const [selectorAnchor, setSelectorAnchor] = useState({ x: 0, y: 0 });
 
   // Store state
   const isOpen = useHUDStore((state) => state.isOpen);
@@ -110,8 +112,10 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const resetPosition = useHUDStore((state) => state.resetPosition);
   const computeOptimalPosition = useHUDStore((state) => state.computeOptimalPosition);
 
-  // Local state for drag
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const dragOffset = useMemo(
+    () => customOffset ?? { x: 0, y: 0 },
+    [customOffset]
+  );
 
   // Custom store actions
   const addCustomSymbol = useQuantumCustomStore((state) => state.addCustomSymbol);
@@ -243,30 +247,11 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   // Drag Handling
   // ============================================================================
   
-  // Sync drag offset with store's custom offset
-  useEffect(() => {
-    if (isOpen) {
-      if (customOffset) {
-        setDragOffset({ x: customOffset.x, y: customOffset.y });
-      } else {
-        setDragOffset({ x: 0, y: 0 });
-      }
-    }
-  }, [isOpen, customOffset]);
-
-  // Reset drag offset when HUD closes
-  useEffect(() => {
-    if (!isOpen) {
-      setDragOffset({ x: 0, y: 0 });
-    }
-  }, [isOpen]);
-
   const handleDragEnd = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
     const newOffset = {
       x: dragOffset.x + info.offset.x,
       y: dragOffset.y + info.offset.y,
     };
-    setDragOffset(newOffset);
     setCustomOffset(newOffset);
     // Delay setting isDragging to false to prevent immediate position recalculation
     setTimeout(() => setIsDragging(false), 100);
@@ -280,7 +265,6 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
     e.stopPropagation();
     e.preventDefault();
     resetPosition();
-    setDragOffset({ x: 0, y: 0 });
     // Trigger position recalculation after reset
     setTimeout(() => {
       const rect = findInputTargetRect();
@@ -311,20 +295,24 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
     );
   }, [activeSymbolKey, getCustomSymbols, getHiddenSymbols]);
 
-  const selectorPosition = useCallback(() => {
-    if (!activeSymbolKey || !containerRef.current) return { x: 0, y: 0 };
-    
-    const keycapElement = keycapRefs.current.get(activeSymbolKey);
-    if (!keycapElement) return { x: 200, y: -100 };
-    
+  const updateSelectorAnchor = useCallback((keyCode: string) => {
+    if (!containerRef.current) {
+      setSelectorAnchor({ x: 0, y: 0 });
+      return;
+    }
+    const keycapElement = keycapRefs.current.get(keyCode);
+    if (!keycapElement) {
+      setSelectorAnchor({ x: 200, y: -100 });
+      return;
+    }
+
     const containerRect = containerRef.current.getBoundingClientRect();
     const keycapRect = keycapElement.getBoundingClientRect();
-    
-    return {
+    setSelectorAnchor({
       x: keycapRect.left + keycapRect.width / 2 - containerRect.left,
       y: keycapRect.top - containerRect.top - 10,
-    };
-  }, [activeSymbolKey]);
+    });
+  }, []);
 
   const handleKeySelect = useCallback((keyCode: string) => {
     const mapping = quantumKeymap[keyCode];
@@ -340,8 +328,9 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const handleShiftKeySelect = useCallback((keyCode: string) => {
     const mapping = quantumKeymap[keyCode];
     if (!mapping) return;
+    updateSelectorAnchor(keyCode);
     openSymbolSelector(keyCode);
-  }, [openSymbolSelector]);
+  }, [openSymbolSelector, updateSelectorAnchor]);
 
   const handleSymbolSelect = useCallback((symbol: string) => {
     if (activeSymbolKey) {
@@ -468,7 +457,7 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
               isProcessingEnterRef.current = false;
             }, 150);
           } catch (e) {
-            console.error('[HUD] Failed to create new line:', e);
+            logger.error('[HUD] Failed to create new line:', e);
             isProcessingEnterRef.current = false;
           }
         }, 80);
@@ -798,7 +787,7 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
               keyLabel={activeKeyLabel}
               symbols={currentSymbols}
               highlightedIndex={highlightedIndex}
-              anchorPosition={selectorPosition()}
+              anchorPosition={selectorAnchor}
               isEditMode={isEditMode}
               onSelect={handleSymbolSelect}
               onAddSymbol={handleAddSymbol}

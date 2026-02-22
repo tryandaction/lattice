@@ -54,6 +54,21 @@ const statusBarItems = new Map<string, import('./types').PluginStatusBarItem>();
 const sidebarChangeListeners = new Set<() => void>();
 const toolbarChangeListeners = new Set<() => void>();
 const statusBarChangeListeners = new Set<() => void>();
+let sidebarItemsSnapshot: import('./types').PluginSidebarItem[] = [];
+let toolbarItemsSnapshot: import('./types').PluginToolbarItem[] = [];
+let statusBarItemsSnapshot: import('./types').PluginStatusBarItem[] = [];
+
+function refreshSidebarSnapshot() {
+  sidebarItemsSnapshot = Array.from(sidebarItems.values());
+}
+
+function refreshToolbarSnapshot() {
+  toolbarItemsSnapshot = Array.from(toolbarItems.values());
+}
+
+function refreshStatusBarSnapshot() {
+  statusBarItemsSnapshot = Array.from(statusBarItems.values());
+}
 
 // Plugin settings change listeners
 const settingsChangeListeners = new Map<string, Set<(value: unknown) => void>>();
@@ -363,15 +378,15 @@ export function emitActiveFileChange(path: string | null) {
 // ============================================================================
 
 export function getSidebarItems(): import('./types').PluginSidebarItem[] {
-  return Array.from(sidebarItems.values());
+  return sidebarItemsSnapshot;
 }
 
 export function getToolbarItems(): import('./types').PluginToolbarItem[] {
-  return Array.from(toolbarItems.values());
+  return toolbarItemsSnapshot;
 }
 
 export function getStatusBarItems(): import('./types').PluginStatusBarItem[] {
-  return Array.from(statusBarItems.values());
+  return statusBarItemsSnapshot;
 }
 
 export function onSidebarChange(listener: () => void): () => void {
@@ -453,9 +468,18 @@ function unregisterUIItemsFor(pluginId: string) {
   for (const key of statusBarItems.keys()) {
     if (key.startsWith(prefix)) { statusBarItems.delete(key); statusBarChanged = true; }
   }
-  if (sidebarChanged) for (const l of sidebarChangeListeners) { try { l(); } catch { /* */ } }
-  if (toolbarChanged) for (const l of toolbarChangeListeners) { try { l(); } catch { /* */ } }
-  if (statusBarChanged) for (const l of statusBarChangeListeners) { try { l(); } catch { /* */ } }
+  if (sidebarChanged) {
+    refreshSidebarSnapshot();
+    for (const l of sidebarChangeListeners) { try { l(); } catch { /* */ } }
+  }
+  if (toolbarChanged) {
+    refreshToolbarSnapshot();
+    for (const l of toolbarChangeListeners) { try { l(); } catch { /* */ } }
+  }
+  if (statusBarChanged) {
+    refreshStatusBarSnapshot();
+    for (const l of statusBarChangeListeners) { try { l(); } catch { /* */ } }
+  }
   // Clean up settings change listeners for this plugin
   for (const key of settingsChangeListeners.keys()) {
     if (key.startsWith(prefix)) settingsChangeListeners.delete(key);
@@ -562,6 +586,7 @@ function createContext(manifest: PluginManifest): PluginContext {
       register: (item) => {
         if (!permissions.includes('ui:sidebar')) return;
         sidebarItems.set(`${pluginId}:${item.id}`, item);
+        refreshSidebarSnapshot();
         for (const l of sidebarChangeListeners) { try { l(); } catch { /* */ } }
       },
     },
@@ -569,6 +594,7 @@ function createContext(manifest: PluginManifest): PluginContext {
       register: (item) => {
         if (!permissions.includes('ui:toolbar')) return;
         toolbarItems.set(`${pluginId}:${item.id}`, item);
+        refreshToolbarSnapshot();
         for (const l of toolbarChangeListeners) { try { l(); } catch { /* */ } }
       },
     },
@@ -576,6 +602,7 @@ function createContext(manifest: PluginManifest): PluginContext {
       register: (item) => {
         if (!permissions.includes('ui:statusbar')) return;
         statusBarItems.set(`${pluginId}:${item.id}`, item);
+        refreshStatusBarSnapshot();
         for (const l of statusBarChangeListeners) { try { l(); } catch { /* */ } }
       },
     },
@@ -741,12 +768,13 @@ function createContext(manifest: PluginManifest): PluginContext {
     notice: {
       show: (message, duration = 4000) => {
         // Use sonner toast if available, fallback to console
-        try {
-          const { toast } = require('sonner');
-          toast(message, { duration });
-        } catch {
-          console.log(`[Notice] ${message}`);
-        }
+        void import('sonner')
+          .then(({ toast }) => {
+            toast(message, { duration });
+          })
+          .catch(() => {
+            console.log(`[Notice] ${message}`);
+          });
       },
     },
     modal: {

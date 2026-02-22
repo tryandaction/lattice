@@ -67,7 +67,7 @@ export function FloatingToolbar({
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showWidthPicker, setShowWidthPicker] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const [recentColors, setRecentColors] = useState<string[]>([]);
+  const [recentColors, setRecentColors] = useState<string[]>(() => getRecentColors());
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dragControls = useDragControls();
 
@@ -81,11 +81,6 @@ export function FloatingToolbar({
   const canUndo = historyIndex >= 0;
   const canRedo = historyIndex < history.length - 1;
   const isHorizontal = position === 'top' || position === 'bottom';
-
-  // 加载最近使用的颜色
-  useEffect(() => {
-    setRecentColors(getRecentColors());
-  }, []);
 
   // 自动隐藏逻辑
   const resetHideTimer = useCallback(() => {

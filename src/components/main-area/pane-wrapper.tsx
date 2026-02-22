@@ -65,7 +65,7 @@ export function PaneWrapper({
   const [error, setError] = useState<string | null>(null);
   
   // Track which tab's content is currently loaded
-  const loadedTabIdRef = useRef<string | null>(null);
+  const [loadedTabId, setLoadedTabId] = useState<string | null>(null);
   // Track which tab is currently being loaded (for race condition prevention)
   const loadingTabIdRef = useRef<string | null>(null);
   // Track the original content for dirty state comparison
@@ -81,16 +81,18 @@ export function PaneWrapper({
   // Save reminder dialog state
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [pendingCloseTabIndex, setPendingCloseTabIndex] = useState<number | null>(null);
+  const [pendingCloseTabName, setPendingCloseTabName] = useState<string | null>(null);
   const pendingCloseTabRef = useRef<TabState | null>(null);
 
   // Load file content when active tab changes
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
     // No active tab - clear everything
     if (!activeTab) {
       setContent(null);
       setIsLoading(false);
       setError(null);
-      loadedTabIdRef.current = null;
+      setLoadedTabId(null);
       loadingTabIdRef.current = null;
       originalContentRef.current = null;
       return;
@@ -107,7 +109,7 @@ export function PaneWrapper({
       setIsLoading(false);
     }
 
-    const hasLoadedCurrent = loadedTabIdRef.current === currentTabId;
+    const hasLoadedCurrent = loadedTabId === currentTabId;
     const hasContent = content !== null;
     const isLoadingCurrent = loadingTabIdRef.current === currentTabId;
 
@@ -123,7 +125,7 @@ export function PaneWrapper({
     const cached = getContentFromCache(currentTabId);
     if (cached) {
       // Immediately update state for cached content
-      loadedTabIdRef.current = currentTabId;
+      setLoadedTabId(currentTabId);
       loadingTabIdRef.current = null;
       setContent(cached.content);
       originalContentRef.current = cached.originalContent;
@@ -169,8 +171,8 @@ export function PaneWrapper({
         // CRITICAL: Only update if this is still the tab we're loading for
         // Check both the loading ref AND the current activeTab
         if (loadingTabIdRef.current === loadingForTabId) {
-          loadedTabIdRef.current = loadingForTabId;
           loadingTabIdRef.current = null;
+          setLoadedTabId(loadingForTabId);
           setContent(fileContent);
           if (typeof fileContent === 'string') {
             originalContentRef.current = fileContent;
@@ -186,7 +188,7 @@ export function PaneWrapper({
         console.error('[PaneWrapper] Failed to load file:', err);
         // Only update error if this is still the tab we're loading for
         if (loadingTabIdRef.current === loadingForTabId) {
-          loadedTabIdRef.current = null;
+          setLoadedTabId(null);
           loadingTabIdRef.current = null;
           setError(err instanceof Error ? err.message : "Failed to read file");
           setIsLoading(false);
@@ -195,6 +197,7 @@ export function PaneWrapper({
     };
 
     loadFile();
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [
     activeTab,
     activeTab?.id,
@@ -204,6 +207,9 @@ export function PaneWrapper({
     getContentFromCache,
     setContentToCache,
     setTabDirty,
+    content,
+    error,
+    loadedTabId,
   ]);
 
   // Handle tab click
@@ -221,6 +227,7 @@ export function PaneWrapper({
       // Show save reminder dialog
       pendingCloseTabRef.current = tab;
       setPendingCloseTabIndex(index);
+      setPendingCloseTabName(tab.fileName);
       setSaveDialogOpen(true);
     } else {
       // No unsaved changes, close directly
@@ -261,6 +268,7 @@ export function PaneWrapper({
       // Reset pending state
       pendingCloseTabRef.current = null;
       setPendingCloseTabIndex(null);
+      setPendingCloseTabName(null);
     } catch (err) {
       console.error('Failed to save file:', err);
       throw err;
@@ -282,6 +290,7 @@ export function PaneWrapper({
     // Reset pending state
     pendingCloseTabRef.current = null;
     setPendingCloseTabIndex(null);
+    setPendingCloseTabName(null);
   }, [paneId, closeTab, pendingCloseTabIndex, removeFromCache]);
 
   // Handle cancel from dialog
@@ -289,13 +298,20 @@ export function PaneWrapper({
     setSaveDialogOpen(false);
     pendingCloseTabRef.current = null;
     setPendingCloseTabIndex(null);
+    setPendingCloseTabName(null);
   }, []);
 
   // Ref to track current content for comparison (avoids stale closure issues)
   const contentRef = useRef<string | ArrayBuffer | null>(content);
-  contentRef.current = content;
   const activeTabIdRef = useRef<string | null>(activeTab?.id ?? null);
-  activeTabIdRef.current = activeTab?.id ?? null;
+
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
+
+  useEffect(() => {
+    activeTabIdRef.current = activeTab?.id ?? null;
+  }, [activeTab?.id]);
 
   // Handle content change (for editable files)
   const handleContentChange = useCallback((tabId: string) => {
@@ -358,7 +374,7 @@ export function PaneWrapper({
     : false;
 
   // Ensure we never render stale content for a different tab
-  const isContentForActiveTab = activeTab ? loadedTabIdRef.current === activeTab.id : false;
+  const isContentForActiveTab = activeTab ? loadedTabId === activeTab.id : false;
   const displayContent = isContentForActiveTab ? content : null;
   const displayError = isContentForActiveTab ? error : null;
   const displayLoading = isLoading || (!!activeTab && !isContentForActiveTab && !displayError);
@@ -386,7 +402,7 @@ export function PaneWrapper({
       {/* Save Reminder Dialog */}
       <SaveReminderDialog
         isOpen={saveDialogOpen}
-        fileName={pendingCloseTabRef.current?.fileName ?? ""}
+        fileName={pendingCloseTabName ?? ""}
         onSave={handleDialogSave}
         onDontSave={handleDialogDontSave}
         onCancel={handleDialogCancel}

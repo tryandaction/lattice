@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -13,6 +13,7 @@ interface ResizablePanelGroupProps {
 }
 
 interface ResizablePanelProps {
+  index: number;
   defaultSize?: number;
   minSize?: number;
   maxSize?: number;
@@ -30,7 +31,6 @@ interface PanelContextValue {
   direction: "horizontal" | "vertical";
   sizes: number[];
   setSizes: (updater: (prev: number[]) => number[]) => void;
-  getPanelIndex: () => number;
   registerPanel: (index: number, minSize: number, maxSize: number, defaultSize: number) => void;
   getConstraints: (index: number) => { minSize: number; maxSize: number };
 }
@@ -52,23 +52,18 @@ export function ResizablePanelGroup({
   sizes,
   onSizesChange,
 }: ResizablePanelGroupProps) {
-  const [internalSizes, setInternalSizes] = useState<number[]>(sizes ?? []);
-  const panelIndexRef = useRef(0);
+  const [internalSizes, setInternalSizes] = useState<number[]>(
+    () => (sizes && sizes.length > 0 ? normalizeSizes([...sizes]) : [])
+  );
   const minSizesRef = useRef<number[]>([]);
   const maxSizesRef = useRef<number[]>([]);
-
-  // Reset panel index for the current render pass
-  panelIndexRef.current = 0;
-
-  useEffect(() => {
-    if (sizes && sizes.length > 0) {
-      setInternalSizes(normalizeSizes([...sizes]));
+  const isControlled = Boolean(sizes && sizes.length > 0);
+  const resolvedSizes = useMemo(() => {
+    if (isControlled && sizes) {
+      return normalizeSizes([...sizes]);
     }
-  }, [sizes]);
-
-  const getPanelIndex = useCallback(() => {
-    return panelIndexRef.current++;
-  }, []);
+    return internalSizes;
+  }, [internalSizes, isControlled, sizes]);
 
   const registerPanel = useCallback(
     (index: number, minSize: number, maxSize: number, defaultSize: number) => {
@@ -93,25 +88,29 @@ export function ResizablePanelGroup({
 
   const setSizes = useCallback(
     (updater: (prev: number[]) => number[]) => {
+      if (isControlled) {
+        const next = normalizeSizes(updater(resolvedSizes));
+        onSizesChange?.(next);
+        return;
+      }
       setInternalSizes((prev) => {
         const next = normalizeSizes(updater(prev));
         onSizesChange?.(next);
         return next;
       });
     },
-    [onSizesChange]
+    [isControlled, onSizesChange, resolvedSizes]
   );
 
   const contextValue = useMemo(
     () => ({
       direction,
-      sizes: internalSizes,
+      sizes: resolvedSizes,
       setSizes,
-      getPanelIndex,
       registerPanel,
       getConstraints,
     }),
-    [direction, internalSizes, setSizes, getPanelIndex, registerPanel, getConstraints]
+    [direction, resolvedSizes, setSizes, registerPanel, getConstraints]
   );
 
   return (
@@ -131,6 +130,7 @@ export function ResizablePanelGroup({
 }
 
 export function ResizablePanel({
+  index,
   defaultSize = 50,
   minSize = 10,
   maxSize = 90,
@@ -139,8 +139,6 @@ export function ResizablePanel({
 }: ResizablePanelProps) {
   const context = React.useContext(PanelContext);
   const registerPanel = context?.registerPanel;
-  const getPanelIndex = context?.getPanelIndex;
-  const index = getPanelIndex ? getPanelIndex() : 0;
   const registeredRef = useRef<{
     index: number;
     minSize: number;

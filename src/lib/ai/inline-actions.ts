@@ -1,4 +1,4 @@
-import type { AiProvider, AiStreamChunk } from './types';
+import type { AiProvider } from './types';
 import { useSettingsStore } from '@/stores/settings-store';
 
 const DEFAULT_SYSTEM_PROMPT = 'You are a helpful research assistant in Lattice, a scientific workbench. Be concise and precise.';

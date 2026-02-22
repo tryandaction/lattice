@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { EmptyState } from "./empty-state";
@@ -14,7 +15,9 @@ import { PluginSidebarSlot } from "@/components/ui/plugin-sidebar-slot";
  * Shows empty state when no folder is opened, tree view when folder is opened
  */
 export function ExplorerSidebar() {
-  const { fileTree, isLoading, error, openDirectory, isSupported, isCheckingSupport, createFile, createDirectory } = useFileSystem();
+  const { fileTree, isLoading, error, openDirectory, openQaWorkspace, isSupported, isCheckingSupport, createFile, createDirectory } = useFileSystem();
+  const searchParams = useSearchParams();
+  const isQaMode = process.env.NODE_ENV === "development" && searchParams?.get("qa") === "1";
   const sidebarCollapsed = useWorkspaceStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
@@ -109,6 +112,8 @@ export function ExplorerSidebar() {
         {!isLoading && !error && !fileTree.root && (
           <EmptyState 
             onOpenFolder={openDirectory} 
+            onOpenQaWorkspace={openQaWorkspace}
+            showQaWorkspace={isQaMode}
             isSupported={isSupported} 
             isCheckingSupport={isCheckingSupport}
           />

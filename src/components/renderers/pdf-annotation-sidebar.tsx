@@ -466,6 +466,7 @@ function AnnotationContextMenu({
       if (newY < padding) newY = padding;
       
       if (newX !== adjustedPosition.x || newY !== adjustedPosition.y) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setAdjustedPosition({ x: newX, y: newY });
       }
     }

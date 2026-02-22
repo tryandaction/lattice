@@ -171,7 +171,6 @@ export function HandwritingCanvas({
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [lassoPath, setLassoPath] = useState<LassoPath | null>(null);
   const [isLassoDrawing, setIsLassoDrawing] = useState(false);
-  const [selectionBounds, setSelectionBounds] = useState<SelectionBounds | null>(null);
   const [isDraggingSelection, setIsDraggingSelection] = useState(false);
   const dragOriginRef = useRef<{ x: number; y: number } | null>(null);
   const dragBoundsRef = useRef<SelectionBounds | null>(null);
@@ -194,13 +193,15 @@ export function HandwritingCanvas({
     return allStrokes.filter(s => selectedStrokeIds.includes(s.id));
   }, [getAllStrokes, selectedStrokeIds]);
 
-  // 更新选择边界
+  const [selectionBounds, setSelectionBounds] = useState<SelectionBounds | null>(null);
+
   useEffect(() => {
-    if (selectedStrokes.length > 0) {
-      setSelectionBounds(getSelectionBounds(selectedStrokes));
-    } else {
+    if (selectedStrokes.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectionBounds(null);
+      return;
     }
+    setSelectionBounds(getSelectionBounds(selectedStrokes));
   }, [selectedStrokes]);
 
   // 更新尺寸

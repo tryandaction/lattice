@@ -1,4 +1,4 @@
-import type { AiProvider, AiProviderId, AiModel, AiMessage, AiGenerateOptions, AiGenerateResult, AiStreamChunk } from '../types';
+import type { AiProvider, AiModel, AiMessage, AiGenerateOptions, AiGenerateResult, AiStreamChunk } from '../types';
 import { getMessageText } from '../types';
 import { getApiKey as getKey, getBaseUrl as getUrl } from '../key-storage';
 

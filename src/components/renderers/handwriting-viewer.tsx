@@ -5,7 +5,7 @@
  * 手写笔记查看器 - 用于在主应用中查看和编辑手写笔记
  */
 
-import React, { useEffect, useCallback, useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { HandwritingEditor } from '@/components/handwriting';
 import { useHandwritingStore } from '@/stores/handwriting-store';
@@ -83,21 +83,15 @@ function serializeDocument(
 }
 
 export function HandwritingViewer({
-  filePath,
+  filePath: _filePath,
   content,
   onChange,
   onSave,
   readOnly = false,
   className,
 }: HandwritingViewerProps) {
-  const [document, setDocument] = useState<HandwritingDocument | null>(null);
+  const document = useMemo(() => parseDocument(content), [content]);
   const { background, markSaved } = useHandwritingStore();
-
-  // 加载文档
-  useEffect(() => {
-    const doc = parseDocument(content);
-    setDocument(doc);
-  }, [content, filePath]);
 
   // 处理内容变化
   const handleChange = useCallback((layers: Layer[]) => {

@@ -159,6 +159,7 @@ export function useVirtualKeyboard(options: UseVirtualKeyboardOptions = {}) {
     document.addEventListener('focusout', handleFocusOut);
 
     // Initial check
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     handleViewportChange();
 
     return () => {

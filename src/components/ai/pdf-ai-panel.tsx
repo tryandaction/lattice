@@ -17,7 +17,7 @@ interface PdfAiPanelProps {
 
 type PdfAction = "summarize" | "findings" | "ask";
 
-export function PdfAiPanel({ pdfText, fileName, onClose }: PdfAiPanelProps) {
+export function PdfAiPanel({ pdfText, fileName: _fileName, onClose }: PdfAiPanelProps) {
   const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeAction, setActiveAction] = useState<PdfAction | null>(null);

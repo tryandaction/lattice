@@ -1,16 +1,10 @@
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { FlatCompat } from "@eslint/eslintrc";
+import { defineConfig, globalIgnores } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTypescript from "eslint-config-next/typescript";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
-
-const eslintConfig = [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+const eslintConfig = defineConfig([
+  ...nextVitals,
+  ...nextTypescript,
   {
     rules: {
       // Allow unused vars with underscore prefix (common pattern)
@@ -28,18 +22,28 @@ const eslintConfig = [
       "prefer-const": "warn",
       // Discourage console statements (use logger instead)
       "no-console": "warn",
+      // React Compiler/Hook rules: keep visible but non-blocking
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/refs": "warn",
+      "react-hooks/static-components": "warn",
+      "react-hooks/preserve-manual-memoization": "warn",
+      "react-hooks/error-boundaries": "warn",
+      "react-hooks/purity": "warn",
+      "react-hooks/immutability": "warn",
     },
   },
-  {
-    ignores: [
-      "node_modules/**",
-      ".next/**",
-      "out/**",
-      "src-tauri/**",
-      "releases/**",
-      "**/__tests__/**",
-    ],
-  },
-];
+  globalIgnores([
+    "node_modules/**",
+    ".next/**",
+    "out/**",
+    "build/**",
+    "output/**",
+    "scripts/**",
+    "next-env.d.ts",
+    "src-tauri/**",
+    "releases/**",
+    "**/__tests__/**",
+  ]),
+]);
 
 export default eslintConfig;

@@ -24,7 +24,6 @@ import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot } f
 import { AiContextDialog } from "@/components/ui/ai-context-dialog";
 import { PluginCommandDialog } from "@/components/ui/plugin-command-dialog";
 import { PluginPanelDialog } from "@/components/ui/plugin-panel-dialog";
-import { PluginPanelDock } from "@/components/ui/plugin-panel-dock";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { DownloadAppDialog } from "@/components/ui/download-app-dialog";
 import { OnboardingWizard } from "@/components/onboarding/onboarding-wizard";
@@ -33,7 +32,6 @@ import { usePluginStore } from "@/stores/plugin-store";
 import { useAnnotationStore } from "@/stores/annotation-store";
 import { PluginStatusBarSlot } from "@/components/ui/plugin-statusbar-slot";
 import { PluginToolbarSlot } from "@/components/ui/plugin-toolbar-slot";
-import { AiChatPanel } from "@/components/ai/ai-chat-panel";
 import { useAiChatStore } from "@/stores/ai-chat-store";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { usePluginShortcuts } from "@/hooks/use-plugin-shortcuts";
@@ -68,7 +66,31 @@ const MobileSidebarTrigger = dynamic(
   { ssr: false }
 );
 
+const PluginPanelDock = dynamic(
+  () => import("@/components/ui/plugin-panel-dock").then((mod) => mod.PluginPanelDock),
+  { ssr: false }
+);
+
+const AiChatPanel = dynamic(
+  () => import("@/components/ai/ai-chat-panel").then((mod) => mod.AiChatPanel),
+  { ssr: false }
+);
+
 // Dialogs are kept as static imports to avoid runtime chunk-loading failures
+
+function scheduleIdleTask(task: () => void, timeout = 2000): () => void {
+  if (typeof window === "undefined") return () => {};
+  const win = window as Window & {
+    requestIdleCallback?: (cb: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void, options?: { timeout: number }) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
+  if (win.requestIdleCallback && win.cancelIdleCallback) {
+    const handle = win.requestIdleCallback(() => task(), { timeout });
+    return () => win.cancelIdleCallback?.(handle);
+  }
+  const handle = window.setTimeout(task, 0);
+  return () => window.clearTimeout(handle);
+}
 
 /**
  * Main application layout with responsive support
@@ -110,6 +132,7 @@ function AppLayoutContent() {
   const settings = useSettingsStore((state) => state.settings);
   const isInitialized = useSettingsStore((state) => state.isInitialized);
   const loadPlugins = usePluginStore((state) => state.loadPlugins);
+  const aiChatOpen = useAiChatStore((state) => state.isOpen);
   const { toggleTheme } = useTheme();
   const { t } = useI18n();
   const isDesktopLayout = !isMobile && !isTablet;
@@ -136,12 +159,19 @@ function AppLayoutContent() {
 
   // Initialize AI key storage and load chat history
   useEffect(() => {
-    initKeyStorage().catch(() => {});
-    useAiChatStore.getState().loadConversations?.().catch(() => {});
+    const cancel = scheduleIdleTask(() => {
+      initKeyStorage().catch(() => {});
+      useAiChatStore.getState().loadConversations?.().catch(() => {});
+      void import("@/components/ai/ai-chat-panel");
+    });
+    return cancel;
   }, []);
 
   useEffect(() => {
-    loadPlugins();
+    const cancel = scheduleIdleTask(() => {
+      loadPlugins();
+    });
+    return cancel;
   }, [loadPlugins]);
 
   useEffect(() => {
@@ -182,10 +212,13 @@ function AppLayoutContent() {
     const enabledList = Array.isArray(settings.enabledPlugins) ? settings.enabledPlugins : [];
     const trusted = new Set(trustedList);
     const enabled = enabledList.filter((id) => trusted.has(id));
-    void syncPlugins({
-      pluginsEnabled: settings.pluginsEnabled,
-      enabledPluginIds: enabled,
-    });
+    const cancel = scheduleIdleTask(() => {
+      void syncPlugins({
+        pluginsEnabled: settings.pluginsEnabled,
+        enabledPluginIds: enabled,
+      });
+    }, 3000);
+    return cancel;
   }, [isInitialized, settings.pluginsEnabled, settings.enabledPlugins, settings.trustedPlugins]);
 
   useEffect(() => {
@@ -193,7 +226,10 @@ function AppLayoutContent() {
     const allowlist = Array.isArray(settings.pluginNetworkAllowlist)
       ? settings.pluginNetworkAllowlist
       : [];
-    updatePluginNetworkAllowlist(allowlist);
+    const cancel = scheduleIdleTask(() => {
+      updatePluginNetworkAllowlist(allowlist);
+    }, 3000);
+    return cancel;
   }, [isInitialized, settings.pluginNetworkAllowlist]);
 
   useEffect(() => {
@@ -442,6 +478,7 @@ function AppLayoutContent() {
           {showSidebar && (
             <>
               <ResizablePanel
+                index={0}
                 defaultSize={TABLET_SIDEBAR_DEFAULT}
                 minSize={12}
                 maxSize={80}
@@ -467,6 +504,7 @@ function AppLayoutContent() {
             </>
           )}
           <ResizablePanel
+            index={showSidebar ? 1 : 0}
             defaultSize={showSidebar ? tabletMainDefault : 100}
             minSize={40}
             className="flex flex-col"
@@ -566,6 +604,7 @@ function AppLayoutContent() {
         {!sidebarCollapsed && (
           <>
             <ResizablePanel
+              index={0}
               defaultSize={DESKTOP_SIDEBAR_DEFAULT}
               minSize={8}
               maxSize={80}
@@ -577,6 +616,7 @@ function AppLayoutContent() {
           </>
         )}
         <ResizablePanel
+          index={sidebarCollapsed ? 0 : 1}
           defaultSize={sidebarCollapsed ? 100 : 100 - DESKTOP_SIDEBAR_DEFAULT}
           minSize={40}
         >
@@ -586,6 +626,7 @@ function AppLayoutContent() {
           <>
             <ResizableHandle withHandle index={sidebarCollapsed ? 0 : 1} />
             <ResizablePanel
+              index={sidebarCollapsed ? 1 : 2}
               defaultSize={desktopPanelSize}
               minSize={DESKTOP_PANEL_MIN}
               maxSize={DESKTOP_PANEL_MAX}
@@ -595,7 +636,7 @@ function AppLayoutContent() {
           </>
         )}
       </ResizablePanelGroup>
-      <AiChatPanel />
+      {aiChatOpen && <AiChatPanel />}
       {sidebarCollapsed && (
         <div className={cn(
           "fixed left-0 top-0 z-50 h-full w-12",

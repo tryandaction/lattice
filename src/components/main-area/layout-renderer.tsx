@@ -140,6 +140,7 @@ function SplitChild({ child, size, activePaneId, isLast, index }: SplitChildProp
   return (
     <>
       <ResizablePanel
+        index={index}
         defaultSize={size}
         minSize={10}
         className="h-full"

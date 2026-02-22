@@ -20,7 +20,6 @@ import {
   Loader2,
   Calculator,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import type { AiProviderId } from "@/lib/ai/types";
 
 interface AiInlineMenuProps {

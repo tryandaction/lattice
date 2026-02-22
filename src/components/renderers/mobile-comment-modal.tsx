@@ -60,6 +60,7 @@ export function MobileCommentModal({
   // Reset comment when modal opens
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setComment(initialComment);
     }
   }, [isOpen, initialComment]);

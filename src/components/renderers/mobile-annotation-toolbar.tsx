@@ -123,6 +123,7 @@ export function MobileAnnotationToolbar({
       newY = position.y + 50;
     }
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAdjustedPosition({ x: newX, y: newY });
   }, [isVisible, position]);
 
@@ -150,6 +151,7 @@ export function MobileAnnotationToolbar({
   // Close color picker when toolbar closes
   useEffect(() => {
     if (!isVisible) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setShowColorPicker(false);
       setIsExpanded(false);
     }

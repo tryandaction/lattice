@@ -120,10 +120,6 @@ export const markdownLinterPlugin: PluginModule = {
         lastIssues = [];
       }
 
-      const summary = lastIssues.length === 0
-        ? 'No issues found'
-        : lastIssues.map((i) => `L${i.line} [${i.rule}] ${i.message}`).join('\n');
-
       ctx.log(`Lint: ${lastIssues.length} issue(s)`);
       // Update panel data via log for now — panels read from schema
     }
@@ -132,7 +128,6 @@ export const markdownLinterPlugin: PluginModule = {
       id: 'core.markdown-linter.run',
       title: 'Lint Current File',
       run: async () => {
-        const files = await ctx.workspace.listFiles();
         // We don't have direct active file access via commands, so lint all md files
         // In practice, the event-based lint covers the active file
         ctx.log('Linting triggered via command');

@@ -153,6 +153,7 @@ export const CodeCell = memo(function CodeCell({
   onNavigateDown,
 }: CodeCellProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const [content, setContent] = useState(source);
   const containerRef = useRef<HTMLDivElement>(null);
   
   // Python runner hook for code execution
@@ -166,47 +167,39 @@ export const CodeCell = memo(function CodeCell({
     isLoading 
   } = usePythonRunner();
   
-  // Store content in ref to preserve state across mode switches
-  const contentRef = useRef(source);
-  
-  // Track if we're currently editing to ignore external source updates
-  const isEditingRef = useRef(false);
-  
-  // Always sync contentRef with source when not editing
-  // This ensures we have the latest source when entering edit mode
+  // Sync content when external source updates (skip while editing)
   useEffect(() => {
-    if (!isEditingRef.current) {
-      contentRef.current = source;
-    }
-  }, [source]);
+    if (isEditing) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setContent(source);
+  }, [source, isEditing]);
 
   // Handle double-click to enter edit mode
   const handleDoubleClick = useCallback(() => {
-    isEditingRef.current = true;
+    setContent(source);
     setIsEditing(true);
     onFocus();
-  }, [onFocus]);
+  }, [onFocus, source]);
   
   // Handle exiting edit mode
   const exitEditMode = useCallback(() => {
-    isEditingRef.current = false;
     setIsEditing(false);
   }, []);
 
   // Handle content changes - update ref and notify parent
   const handleChange = useCallback((newContent: string) => {
-    contentRef.current = newContent;
+    setContent(newContent);
     onChange(newContent);
   }, [onChange]);
 
   // Handle Run button click
   const handleRun = useCallback(async () => {
-    const code = contentRef.current.trim();
+    const code = content.trim();
     if (!code) return;
     
     clearOutputs();
     await runCode(code);
-  }, [runCode, clearOutputs]);
+  }, [runCode, clearOutputs, content]);
 
   // Handle Shift+Enter to run code
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -268,7 +261,7 @@ export const CodeCell = memo(function CodeCell({
         {isEditing ? (
           <div className="rounded-lg overflow-hidden border-2 border-primary">
             <CodeEditor
-              initialValue={contentRef.current}
+              initialValue={content}
               language="python"
               onChange={handleChange}
               autoHeight={true}
@@ -283,7 +276,7 @@ export const CodeCell = memo(function CodeCell({
             onClick={onFocus}
             className="cursor-pointer rounded-lg border border-border hover:border-primary/50 transition-colors"
           >
-            <RenderedCode source={contentRef.current} />
+            <RenderedCode source={content} />
           </div>
         )}
       </div>
@@ -307,7 +300,7 @@ export const CodeCell = memo(function CodeCell({
 
       {/* AI Assist */}
       <NotebookAiAssist
-        cellSource={contentRef.current}
+        cellSource={content}
         cellOutput={
           hasExecutionOutputs
             ? executionOutputs.map(o => typeof o === 'string' ? o : JSON.stringify(o)).join("\n")
@@ -321,7 +314,7 @@ export const CodeCell = memo(function CodeCell({
             ?? undefined
         }
         onInsertCode={(code) => {
-          contentRef.current = code;
+          setContent(code);
           onChange(code);
         }}
       />

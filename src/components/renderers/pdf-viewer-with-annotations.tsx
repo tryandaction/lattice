@@ -128,13 +128,19 @@ export function PDFViewerWithAnnotations({
     return annotations.get(fileId) ?? [];
   }, [annotations, fileId]);
 
+  const lastModified = useMemo(() => {
+    return fileAnnotations.reduce((max, annotation) => {
+      return Math.max(max, annotation.timestamp ?? 0);
+    }, 0);
+  }, [fileAnnotations]);
+
   // Create AnnotationFile object for export
   const annotationFileForExport = useMemo<AnnotationFile>(() => ({
     version: 1,
     fileId,
     annotations: fileAnnotations,
-    lastModified: Date.now(),
-  }), [fileId, fileAnnotations]);
+    lastModified,
+  }), [fileId, fileAnnotations, lastModified]);
 
   // PDF annotation hook
   const {

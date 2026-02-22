@@ -119,6 +119,7 @@ export function CodeEditorViewer({
   // Show output panel when there are outputs
   useEffect(() => {
     if (outputs.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setShowOutput(true);
     }
   }, [outputs]);
