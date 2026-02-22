@@ -28,25 +28,25 @@ function WelcomePlaceholder() {
           <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border p-4">
             <FileText className="h-6 w-6 text-muted-foreground" />
             <span className="font-scientific text-muted-foreground">PDF Viewer</span>
-            <span className="text-xs text-muted-foreground/60">Ready</span>
+            <span className="text-xs text-muted-foreground">Ready</span>
           </div>
 
           <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border p-4">
             <Code className="h-6 w-6 text-muted-foreground" />
             <span className="font-scientific text-muted-foreground">Code Reader</span>
-            <span className="text-xs text-muted-foreground/60">Ready</span>
+            <span className="text-xs text-muted-foreground">Ready</span>
           </div>
 
           <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border p-4">
             <ImageIcon className="h-6 w-6 text-muted-foreground" />
             <span className="font-scientific text-muted-foreground">Image Viewer</span>
-            <span className="text-xs text-muted-foreground/60">Ready</span>
+            <span className="text-xs text-muted-foreground">Ready</span>
           </div>
 
           <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border p-4">
             <Sparkles className="h-6 w-6 text-muted-foreground" />
             <span className="font-scientific text-muted-foreground">AI Assistant</span>
-            <span className="text-xs text-muted-foreground/60">Coming Soon</span>
+            <span className="text-xs text-muted-foreground">Coming Soon</span>
           </div>
         </div>
 
