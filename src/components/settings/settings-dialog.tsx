@@ -405,31 +405,85 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
             )}
 
             {activeTab === 'shortcuts' && (
-              <div className="space-y-4">
-                <div className="text-sm font-medium text-muted-foreground mb-4">
-                  {t('settings.shortcuts')}
+              <div className="space-y-6">
+                {/* App shortcuts */}
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">
+                    应用操作
+                  </div>
+                  <div className="space-y-1">
+                    <ShortcutItem label={t('settings.shortcuts.toggleSidebar')} shortcut="Ctrl+B" />
+                    <ShortcutItem label={t('settings.shortcuts.openSettings')} shortcut="Ctrl+," />
+                    <ShortcutItem label={t('settings.shortcuts.openCommandCenter')} shortcut="Ctrl+K" />
+                    <ShortcutItem label={t('settings.shortcuts.openPanels')} shortcut="Ctrl+Shift+P" />
+                    <ShortcutItem label={t('settings.shortcuts.toggleTheme')} shortcut="Ctrl+Shift+T" />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <ShortcutItem
-                    label={t('settings.shortcuts.toggleSidebar')}
-                    shortcut={isTauri() ? 'Ctrl+B' : 'Ctrl+B'}
-                  />
-                  <ShortcutItem
-                    label={t('settings.shortcuts.openSettings')}
-                    shortcut="Ctrl+,"
-                  />
-                  <ShortcutItem
-                    label={t('settings.shortcuts.openCommandCenter')}
-                    shortcut="Ctrl+K"
-                  />
-                  <ShortcutItem
-                    label={t('settings.shortcuts.openPanels')}
-                    shortcut="Ctrl+Shift+P"
-                  />
-                  <ShortcutItem
-                    label={t('settings.shortcuts.toggleTheme')}
-                    shortcut="Ctrl+Shift+T"
-                  />
+
+                {/* Text formatting */}
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">
+                    文本格式
+                  </div>
+                  <div className="space-y-1">
+                    <ShortcutItem label="粗体" shortcut="Ctrl+B" />
+                    <ShortcutItem label="斜体" shortcut="Ctrl+I" />
+                    <ShortcutItem label="行内代码" shortcut="Ctrl+`" />
+                    <ShortcutItem label="删除线" shortcut="Ctrl+Shift+S" />
+                    <ShortcutItem label="高亮" shortcut="Ctrl+Shift+H" />
+                    <ShortcutItem label="插入链接" shortcut="Ctrl+K" />
+                    <ShortcutItem label="插入代码块" shortcut="Ctrl+Shift+`" />
+                    <ShortcutItem label="切换注释" shortcut="Ctrl+/" />
+                  </div>
+                </div>
+
+                {/* Math shortcuts */}
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">
+                    公式编辑
+                  </div>
+                  <div className="space-y-1">
+                    <ShortcutItem label="行内公式 $…$（选中文字则包裹）" shortcut="Ctrl+Shift+M" />
+                    <ShortcutItem label="块级公式 $$…$$" shortcut="Ctrl+Alt+M" />
+                    <ShortcutItem label="分数 \frac{}" shortcut="Ctrl+Shift+F" />
+                    <ShortcutItem label="根号 \sqrt{}" shortcut="Ctrl+Shift+R" />
+                    <ShortcutItem label="积分 \int_{a}^{b}" shortcut="Ctrl+Shift+I" />
+                    <ShortcutItem label="求和 \sum_{i=1}^{n}" shortcut="Ctrl+Shift+U" />
+                    <ShortcutItem label="极限 \lim_{x \to }" shortcut="Ctrl+Shift+L" />
+                    <ShortcutItem label="矩阵 pmatrix 2×2" shortcut="Ctrl+Shift+X" />
+                    <ShortcutItem label="向量 \vec{}" shortcut="Ctrl+Shift+V" />
+                    <ShortcutItem label="偏导 \frac{\partial }{\partial x}" shortcut="Ctrl+Shift+P" />
+                    <ShortcutItem label="上标 ^{}" shortcut="Ctrl+↑" />
+                    <ShortcutItem label="下标 _{}" shortcut="Ctrl+↓" />
+                  </div>
+                </div>
+
+                {/* Quantum keyboard */}
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">
+                    量子键盘（公式输入时）
+                  </div>
+                  <div className="space-y-1">
+                    <ShortcutItem label="Tab — 切换行内 / 块级模式" shortcut="Tab" />
+                    <ShortcutItem label="Shift+Tab — 切换 Markdown / LaTeX 插入格式" shortcut="Shift+Tab" />
+                    <ShortcutItem label="Shift+符号键 — 插入变体符号" shortcut="Shift+符号" />
+                    <ShortcutItem label="关闭量子键盘" shortcut="Esc" />
+                  </div>
+                </div>
+
+                {/* Line operations */}
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">
+                    行操作
+                  </div>
+                  <div className="space-y-1">
+                    <ShortcutItem label="上移行" shortcut="Alt+↑" />
+                    <ShortcutItem label="下移行" shortcut="Alt+↓" />
+                    <ShortcutItem label="复制行" shortcut="Ctrl+D" />
+                    <ShortcutItem label="在下方插入新行" shortcut="Ctrl+Enter" />
+                    <ShortcutItem label="增加缩进" shortcut="Ctrl+]" />
+                    <ShortcutItem label="减少缩进" shortcut="Ctrl+[" />
+                  </div>
                 </div>
               </div>
             )}
@@ -1052,12 +1106,22 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
 }
 
 function ShortcutItem({ label, shortcut }: { label: string; shortcut: string }) {
+  const parts = shortcut.split('+');
   return (
-    <div className="flex items-center justify-between py-2 px-3 bg-muted/50 rounded-lg">
-      <span className="text-sm">{label}</span>
-      <kbd className="px-2 py-1 text-xs bg-background border border-border rounded">
-        {shortcut}
-      </kbd>
+    <div className="flex items-center justify-between py-1.5 px-3 rounded-lg hover:bg-muted/50 transition-colors">
+      <span className="text-sm text-foreground/80">{label}</span>
+      <span className="flex items-center gap-0.5 shrink-0 ml-4">
+        {parts.map((part, i) => (
+          <span key={i} className="flex items-center gap-0.5">
+            <kbd className="px-1.5 py-0.5 text-[11px] font-mono bg-muted border border-border/70 rounded shadow-sm">
+              {part}
+            </kbd>
+            {i < parts.length - 1 && (
+              <span className="text-muted-foreground/50 text-[10px] mx-0.5">+</span>
+            )}
+          </span>
+        ))}
+      </span>
     </div>
   );
 }

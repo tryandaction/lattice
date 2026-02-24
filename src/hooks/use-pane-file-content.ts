@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceStore, type PaneId } from "@/stores/workspace-store";
 import { findPane } from "@/lib/layout-utils";
 import { getFileExtension, isBinaryFile } from "@/lib/file-utils";

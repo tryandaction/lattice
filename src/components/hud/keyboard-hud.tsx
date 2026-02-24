@@ -84,6 +84,7 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const activeMathFieldRef = useRef<HTMLElement | null>(null);
   const isProcessingEnterRef = useRef(false);
   const [selectorAnchor, setSelectorAnchor] = useState({ x: 0, y: 0 });
+  const [showHelp, setShowHelp] = useState(false);
 
   // Store state
   const isOpen = useHUDStore((state) => state.isOpen);
@@ -732,6 +733,14 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
                   <RotateCcw className="w-3 h-3" />
                 </button>
               )}
+              <button
+                className="quantum-reset-btn ml-auto"
+                onClick={(e) => { e.stopPropagation(); setShowHelp(v => !v); }}
+                title="快捷键帮助"
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <span className="text-[11px] font-bold leading-none">?</span>
+              </button>
             </div>
 
             {/* Ripple Background */}
@@ -795,6 +804,33 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
                   ? '↑↓/空格 选择 • Enter 确认 • Esc 返回'
                   : '拖动移动 • Shift 变体 • Tab 行内/块级 • Shift+Tab MD/LaTeX • Esc 关闭'}
               </div>
+
+              {showHelp && (
+                <div className="quantum-help-panel">
+                  <div className="quantum-help-title">编辑器公式快捷键</div>
+                  <div className="quantum-help-grid">
+                    <span className="quantum-help-label">行内公式</span><kbd className="quantum-help-kbd">Ctrl+Shift+M</kbd>
+                    <span className="quantum-help-label">块级公式</span><kbd className="quantum-help-kbd">Ctrl+Alt+M</kbd>
+                    <span className="quantum-help-label">分数</span><kbd className="quantum-help-kbd">Ctrl+Shift+F</kbd>
+                    <span className="quantum-help-label">根号</span><kbd className="quantum-help-kbd">Ctrl+Shift+R</kbd>
+                    <span className="quantum-help-label">积分</span><kbd className="quantum-help-kbd">Ctrl+Shift+I</kbd>
+                    <span className="quantum-help-label">求和</span><kbd className="quantum-help-kbd">Ctrl+Shift+U</kbd>
+                    <span className="quantum-help-label">极限</span><kbd className="quantum-help-kbd">Ctrl+Shift+L</kbd>
+                    <span className="quantum-help-label">矩阵</span><kbd className="quantum-help-kbd">Ctrl+Shift+X</kbd>
+                    <span className="quantum-help-label">向量</span><kbd className="quantum-help-kbd">Ctrl+Shift+V</kbd>
+                    <span className="quantum-help-label">偏导</span><kbd className="quantum-help-kbd">Ctrl+Shift+P</kbd>
+                    <span className="quantum-help-label">上标</span><kbd className="quantum-help-kbd">Ctrl+↑</kbd>
+                    <span className="quantum-help-label">下标</span><kbd className="quantum-help-kbd">Ctrl+↓</kbd>
+                  </div>
+                  <div className="quantum-help-title" style={{ marginTop: '6px' }}>量子键盘</div>
+                  <div className="quantum-help-grid">
+                    <span className="quantum-help-label">行内/块级</span><kbd className="quantum-help-kbd">Tab</kbd>
+                    <span className="quantum-help-label">MD/LaTeX</span><kbd className="quantum-help-kbd">Shift+Tab</kbd>
+                    <span className="quantum-help-label">符号变体</span><kbd className="quantum-help-kbd">Shift+键</kbd>
+                    <span className="quantum-help-label">关闭</span><kbd className="quantum-help-kbd">Esc</kbd>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Symbol Selector */}
