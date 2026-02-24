@@ -1394,8 +1394,8 @@ export class MathWidget extends WidgetType {
             from: this.from,
             to: this.to,
             position: {
-              top: rect.bottom + window.scrollY,
-              left: rect.left + window.scrollX,
+              top: rect.bottom,
+              left: rect.left,
             },
           },
           bubbles: true,

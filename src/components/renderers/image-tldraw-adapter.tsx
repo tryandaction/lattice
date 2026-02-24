@@ -195,9 +195,15 @@ export function ImageTldrawAdapter({
   const currentAnnotationIdRef = useRef<string | null>(null);
   const isRestoringRef = useRef(false);
   const imageSetupDoneRef = useRef(false);
+  // Prevent re-converting the same ArrayBuffer reference on parent re-renders
+  const prevContentRef = useRef<ArrayBuffer | null>(null);
+  const checkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Create data URL from ArrayBuffer
+  // Create data URL from ArrayBuffer — skip if content reference hasn't changed
   useEffect(() => {
+    if (prevContentRef.current === content) return;
+    prevContentRef.current = content;
+
     const blob = new Blob([content], { type: mimeType });
     const reader = new FileReader();
     reader.onload = () => {
@@ -273,62 +279,68 @@ export function ImageTldrawAdapter({
     };
   }, []);
 
-  // Set up background image
-  useEffect(() => {
-    if (!editor || !imageUrl || imageSize.width === 0 || imageSetupDoneRef.current) return;
+  // Unified background setup — called both on initial mount and during recovery
+  const setupBackground = useCallback(() => {
+    if (!editor || !imageUrl || imageSize.width === 0) return;
+    try {
+      const backgroundId = createShapeId('background');
+      const assetId: TLAssetId = AssetRecordType.createId('background-image');
 
-    const timer = setTimeout(() => {
-      try {
-        const existingShapes = editor.getCurrentPageShapes();
-        const hasBackground = existingShapes.some(s => s.id === createShapeId('background'));
-        if (hasBackground) {
-          imageSetupDoneRef.current = true;
-          setIsReady(true);
-          return;
-        }
+      if (!editor.getAsset(assetId)) {
+        editor.createAssets([{
+          id: assetId,
+          type: 'image',
+          typeName: 'asset',
+          props: {
+            name: fileName,
+            src: imageUrl,
+            w: imageSize.width,
+            h: imageSize.height,
+            mimeType: mimeType,
+            isAnimated: false,
+          },
+          meta: {},
+        }]);
+      }
 
-        const assetId: TLAssetId = AssetRecordType.createId('background-image');
-        const existingAsset = editor.getAsset(assetId);
-        if (!existingAsset) {
-          editor.createAssets([{
-            id: assetId,
-            type: 'image',
-            typeName: 'asset',
-            props: {
-              name: fileName,
-              src: imageUrl,
-              w: imageSize.width,
-              h: imageSize.height,
-              mimeType: mimeType,
-              isAnimated: false,
-            },
-            meta: {},
-          }]);
-        }
-
-        const shapeId: TLShapeId = createShapeId('background');
+      if (!editor.getShape(backgroundId)) {
         editor.createShape<TLImageShape>({
-          id: shapeId,
+          id: backgroundId,
           type: 'image',
           x: 0,
           y: 0,
           isLocked: true,
           props: { assetId, w: imageSize.width, h: imageSize.height },
         });
+        editor.sendToBack([backgroundId]);
+      }
 
-        editor.sendToBack([shapeId]);
-        editor.zoomToFit();
-        
+      imageSetupDoneRef.current = true;
+      setIsReady(true);
+    } catch (err) {
+      console.error('Failed to set up Tldraw canvas:', err);
+      setTldrawError(err instanceof Error ? err : new Error('Failed to initialize canvas'));
+    }
+  }, [editor, imageUrl, imageSize, fileName, mimeType]);
+
+  // Set up background image on initial load
+  useEffect(() => {
+    if (!editor || !imageUrl || imageSize.width === 0 || imageSetupDoneRef.current) return;
+
+    const timer = setTimeout(() => {
+      const existingShapes = editor.getCurrentPageShapes();
+      const hasBackground = existingShapes.some(s => s.id === createShapeId('background'));
+      if (hasBackground) {
         imageSetupDoneRef.current = true;
         setIsReady(true);
-      } catch (err) {
-        console.error('Failed to set up Tldraw canvas:', err);
-        setTldrawError(err instanceof Error ? err : new Error('Failed to initialize canvas'));
+        return;
       }
+      setupBackground();
+      editor.zoomToFit();
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [editor, imageUrl, imageSize, fileName, mimeType]);
+  }, [editor, imageUrl, imageSize, setupBackground]);
 
   // Restore shapes from annotation
   useEffect(() => {
@@ -404,73 +416,35 @@ export function ImageTldrawAdapter({
     };
   }, [editor, isReady, saveShapes]);
 
-  // Background image existence check and auto-recovery
-  // This ensures the background image is recreated if it gets lost during operations
+  // Background image existence check and auto-recovery.
+  // Only listens to user-initiated document changes (not internal tldraw state),
+  // with a debounce to avoid excessive checks. No interval polling needed.
   useEffect(() => {
     if (!editor || !isReady || !imageUrl || imageSize.width === 0) return;
 
-    const checkBackgroundExists = () => {
-      try {
-        const shapes = editor.getCurrentPageShapes();
-        const backgroundId = createShapeId('background');
-        const hasBackground = shapes.some(s => s.id === backgroundId);
-
-        if (!hasBackground) {
-          console.warn('[ImageTldraw] Background image lost, recreating...');
-          imageSetupDoneRef.current = false;
-
-          // Recreate the background
-          const assetId: TLAssetId = AssetRecordType.createId('background-image');
-          const existingAsset = editor.getAsset(assetId);
-
-          if (!existingAsset) {
-            editor.createAssets([{
-              id: assetId,
-              type: 'image',
-              typeName: 'asset',
-              props: {
-                name: fileName,
-                src: imageUrl,
-                w: imageSize.width,
-                h: imageSize.height,
-                mimeType: mimeType,
-                isAnimated: false,
-              },
-              meta: {},
-            }]);
-          }
-
-          editor.createShape<TLImageShape>({
-            id: backgroundId,
-            type: 'image',
-            x: 0,
-            y: 0,
-            isLocked: true,
-            props: { assetId, w: imageSize.width, h: imageSize.height },
-          });
-
-          editor.sendToBack([backgroundId]);
-          imageSetupDoneRef.current = true;
-        }
-      } catch (err) {
-        console.error('[ImageTldraw] Error checking/recreating background:', err);
-      }
-    };
-
-    // Check periodically and after any store change
-    const interval = setInterval(checkBackgroundExists, 2000);
-
-    // Also listen to store changes for immediate recovery
     const unsubscribe = editor.store.listen(() => {
-      // Debounce the check slightly to avoid excessive calls
-      setTimeout(checkBackgroundExists, 100);
-    }, { source: 'all', scope: 'document' });
+      if (checkTimeoutRef.current) clearTimeout(checkTimeoutRef.current);
+      checkTimeoutRef.current = setTimeout(() => {
+        try {
+          const shapes = editor.getCurrentPageShapes();
+          const backgroundId = createShapeId('background');
+          const hasBackground = shapes.some(s => s.id === backgroundId);
+          if (!hasBackground) {
+            console.warn('[ImageTldraw] Background image lost, recreating...');
+            imageSetupDoneRef.current = false;
+            setupBackground();
+          }
+        } catch (err) {
+          console.error('[ImageTldraw] Error checking/recreating background:', err);
+        }
+      }, 500);
+    }, { source: 'user', scope: 'document' });
 
     return () => {
-      clearInterval(interval);
       unsubscribe();
+      if (checkTimeoutRef.current) clearTimeout(checkTimeoutRef.current);
     };
-  }, [editor, isReady, imageUrl, imageSize, fileName, mimeType]);
+  }, [editor, isReady, imageUrl, imageSize, setupBackground]);
 
   // Tool handlers
   const setTool = (toolId: string) => editor?.setCurrentTool(toolId);

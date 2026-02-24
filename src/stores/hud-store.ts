@@ -82,18 +82,17 @@ export interface HUDState {
   getCurrentSymbols: () => string[];
   getHighlightedSymbol: () => string | null;
   getTotalItems: () => number;
-  computeOptimalPosition: () => 'top' | 'bottom';
+  computeOptimalPosition: () => { side: 'top' | 'bottom'; topPx: number };
 }
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const HUD_HEIGHT = 320; // Approximate height of the keyboard HUD (including drag handle)
-const _HUD_WIDTH = 480;  // Approximate width of the keyboard HUD (reserved for future use)
-const HUD_MARGIN = 20;  // Margin between cursor and HUD (reduced for better positioning)
-const VIEWPORT_PADDING = 20; // Padding from viewport edges
-const BOTTOM_THRESHOLD = 0.55; // If cursor is below this % of viewport, show HUD on top
+const HUD_HEIGHT = 320;
+const _HUD_WIDTH = 480;
+const HUD_MARGIN = 20;
+const VIEWPORT_PADDING = 20;
 const POSITION_STORAGE_KEY = 'lattice-quantum-keyboard-position';
 
 // ============================================================================
@@ -372,75 +371,45 @@ export const useHUDStore = create<HUDState>((set, get) => ({
    */
   computeOptimalPosition: () => {
     const state = get();
-    
-    // If user has set a fixed position, use it
-    if (state.position !== 'auto') {
-      return state.position;
-    }
-    
-    // If user has dragged to a custom position, don't auto-switch
-    // This prevents jarring position changes while user is adjusting
-    if (state.customOffset && (Math.abs(state.customOffset.x) > 10 || Math.abs(state.customOffset.y) > 10)) {
-      // Keep current position based on offset direction
-      // If dragged upward (negative y), likely wants top; if downward, likely wants bottom
-      // But we'll just maintain the last computed position by returning based on cursor
-    }
-    
-    // If no cursor position, default to bottom
-    if (!state.cursorPosition) {
-      return 'bottom';
-    }
-    
-    // Get viewport height (with SSR safety)
     const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
-    
-    const { top: cursorTop, bottom: cursorBottom, centerY } = state.cursorPosition;
-    
-    // Calculate available space above and below cursor
-    const spaceAbove = cursorTop - VIEWPORT_PADDING;
-    const spaceBelow = viewportHeight - cursorBottom - VIEWPORT_PADDING;
-    
-    // Calculate the threshold position (where cursor is considered "in bottom part")
-    const thresholdY = viewportHeight * BOTTOM_THRESHOLD;
-    
-    // Check if keyboard would overlap with the math field when positioned at bottom
-    // The keyboard is centered horizontally and positioned at bottom: 20px
-    const keyboardBottomPosition = viewportHeight - 20; // bottom edge of keyboard
-    const keyboardTopPosition = keyboardBottomPosition - HUD_HEIGHT; // top edge of keyboard
-    
-    // Would the keyboard overlap with the cursor/math field?
-    const wouldOverlapAtBottom = cursorBottom > keyboardTopPosition - HUD_MARGIN;
-    
-    // Check if keyboard would overlap when positioned at top
-    const keyboardTopAtTop = 20; // top edge when positioned at top
-    const keyboardBottomAtTop = keyboardTopAtTop + HUD_HEIGHT; // bottom edge when at top
-    const wouldOverlapAtTop = cursorTop < keyboardBottomAtTop + HUD_MARGIN;
-    
-    // Decision logic:
-    // 1. If cursor center is below threshold -> show on top (if it won't overlap)
-    // 2. If keyboard would overlap at bottom but not at top -> show on top
-    // 3. If not enough space below but enough above -> show on top
-    // 4. Otherwise -> show on bottom
-    
-    const cursorInBottomPart = centerY > thresholdY;
-    const notEnoughSpaceBelow = spaceBelow < HUD_HEIGHT + HUD_MARGIN;
-    const enoughSpaceAbove = spaceAbove >= HUD_HEIGHT + HUD_MARGIN;
-    
-    // Prefer position that doesn't overlap
-    if (wouldOverlapAtBottom && !wouldOverlapAtTop) {
-      return 'top';
+
+    // Helper to clamp topPx within viewport
+    const clampTop = (t: number) =>
+      Math.max(VIEWPORT_PADDING, Math.min(t, viewportHeight - HUD_HEIGHT - VIEWPORT_PADDING));
+
+    // No cursor info — fall back to fixed edges
+    if (!state.cursorPosition) {
+      if (state.position === 'top') return { side: 'top', topPx: clampTop(VIEWPORT_PADDING) };
+      return { side: 'bottom', topPx: clampTop(viewportHeight - HUD_HEIGHT - VIEWPORT_PADDING) };
     }
-    
-    if (!wouldOverlapAtBottom && wouldOverlapAtTop) {
-      return 'bottom';
+
+    const { top: cursorTop, bottom: cursorBottom } = state.cursorPosition;
+
+    // Preferred: place HUD just below the math-field
+    const belowTop = cursorBottom + HUD_MARGIN;
+    const aboveTop = cursorTop - HUD_HEIGHT - HUD_MARGIN;
+
+    const fitsBelow = belowTop + HUD_HEIGHT + VIEWPORT_PADDING <= viewportHeight;
+    const fitsAbove = aboveTop >= VIEWPORT_PADDING;
+
+    // If user set a fixed side, honour it but still use computed pixel position
+    if (state.position === 'top') {
+      return { side: 'top', topPx: clampTop(fitsAbove ? aboveTop : VIEWPORT_PADDING) };
     }
-    
-    // If both would overlap or neither would, use traditional logic
-    if (cursorInBottomPart || (notEnoughSpaceBelow && enoughSpaceAbove)) {
-      return 'top';
+    if (state.position === 'bottom') {
+      return { side: 'bottom', topPx: clampTop(fitsBelow ? belowTop : viewportHeight - HUD_HEIGHT - VIEWPORT_PADDING) };
     }
-    
-    return 'bottom';
+
+    // Auto: prefer below, fall back to above, last resort centre
+    if (fitsBelow) {
+      return { side: 'bottom', topPx: clampTop(belowTop) };
+    }
+    if (fitsAbove) {
+      return { side: 'top', topPx: clampTop(aboveTop) };
+    }
+    // Neither fits cleanly — centre vertically
+    const centred = clampTop((viewportHeight - HUD_HEIGHT) / 2);
+    return { side: 'bottom', topPx: centred };
   },
 }));
 

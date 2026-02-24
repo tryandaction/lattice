@@ -164,14 +164,14 @@ const insertSquareRoot: Command = (view) => {
 const insertSum: Command = (view) => {
   const { state } = view;
   const selection = state.selection.main;
-  
+
   const insert = '\\sum_{i=1}^{n}';
-  
+
   view.dispatch({
     changes: { from: selection.from, to: selection.to, insert },
     selection: EditorSelection.cursor(selection.from + insert.length),
   });
-  
+
   return true;
 };
 
@@ -181,14 +181,14 @@ const insertSum: Command = (view) => {
 const insertIntegral: Command = (view) => {
   const { state } = view;
   const selection = state.selection.main;
-  
+
   const insert = '\\int_{a}^{b}';
-  
+
   view.dispatch({
     changes: { from: selection.from, to: selection.to, insert },
     selection: EditorSelection.cursor(selection.from + insert.length),
   });
-  
+
   return true;
 };
 
@@ -198,14 +198,134 @@ const insertIntegral: Command = (view) => {
 const insertLimit: Command = (view) => {
   const { state } = view;
   const selection = state.selection.main;
-  
+
   const insert = '\\lim_{x \\to }';
-  
+
   view.dispatch({
     changes: { from: selection.from, to: selection.to, insert },
     selection: EditorSelection.cursor(selection.from + insert.length - 1),
   });
-  
+
+  return true;
+};
+
+/**
+ * Insert matrix (2x2)
+ */
+const insertMatrix: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+
+  const insert = '\\begin{pmatrix} a & b \\\\\\\\ c & d \\end{pmatrix}';
+
+  view.dispatch({
+    changes: { from: selection.from, to: selection.to, insert },
+    // Position cursor at 'a'
+    selection: EditorSelection.cursor(selection.from + 18),
+  });
+
+  return true;
+};
+
+/**
+ * Insert vector notation
+ */
+const insertVector: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+  const selectedText = state.sliceDoc(selection.from, selection.to);
+
+  const content = selectedText || 'v';
+  const insert = `\\vec{${content}}`;
+
+  view.dispatch({
+    changes: { from: selection.from, to: selection.to, insert },
+    selection: EditorSelection.cursor(selection.from + 5 + content.length),
+  });
+
+  return true;
+};
+
+/**
+ * Insert partial derivative
+ */
+const insertPartial: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+
+  const insert = '\\frac{\\partial }{\\partial x}';
+
+  view.dispatch({
+    changes: { from: selection.from, to: selection.to, insert },
+    // Position cursor after \partial (before closing brace of numerator)
+    selection: EditorSelection.cursor(selection.from + 15),
+  });
+
+  return true;
+};
+
+/**
+ * Insert superscript (^{})
+ */
+const insertSuperscript: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+  const selectedText = state.sliceDoc(selection.from, selection.to);
+
+  const content = selectedText || '';
+  const insert = `^{${content}}`;
+
+  view.dispatch({
+    changes: { from: selection.from, to: selection.to, insert },
+    selection: EditorSelection.cursor(selection.from + 2 + content.length),
+  });
+
+  return true;
+};
+
+/**
+ * Insert subscript (_{})
+ */
+const insertSubscript: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+  const selectedText = state.sliceDoc(selection.from, selection.to);
+
+  const content = selectedText || '';
+  const insert = `_{${content}}`;
+
+  view.dispatch({
+    changes: { from: selection.from, to: selection.to, insert },
+    selection: EditorSelection.cursor(selection.from + 2 + content.length),
+  });
+
+  return true;
+};
+
+/**
+ * Wrap selection in inline math, or insert empty $|$
+ * Smart: if selection exists, wraps it; otherwise inserts $$ with cursor inside
+ */
+const wrapInlineMath: Command = (view) => {
+  const { state } = view;
+  const selection = state.selection.main;
+  const selectedText = state.sliceDoc(selection.from, selection.to);
+
+  if (selectedText) {
+    // Wrap selection
+    const insert = `$${selectedText}$`;
+    view.dispatch({
+      changes: { from: selection.from, to: selection.to, insert },
+      selection: EditorSelection.range(selection.from + 1, selection.from + 1 + selectedText.length),
+    });
+  } else {
+    // Insert empty inline math with cursor inside
+    view.dispatch({
+      changes: { from: selection.from, insert: '$$' },
+      selection: EditorSelection.cursor(selection.from + 1),
+    });
+  }
+
   return true;
 };
 
@@ -403,10 +523,18 @@ export const markdownKeymap = keymap.of([
   { key: 'Ctrl-Shift-`', run: insertCodeBlock },
   
   // Math shortcuts
-  { key: 'Ctrl-Shift-m', mac: 'Cmd-Shift-m', run: insertInlineMath },
+  { key: 'Ctrl-Shift-m', mac: 'Cmd-Shift-m', run: wrapInlineMath },
   { key: 'Ctrl-Alt-m', mac: 'Cmd-Alt-m', run: insertBlockMath },
   { key: 'Ctrl-Shift-f', mac: 'Cmd-Shift-f', run: insertFraction },
   { key: 'Ctrl-Shift-r', mac: 'Cmd-Shift-r', run: insertSquareRoot },
+  { key: 'Ctrl-Shift-i', mac: 'Cmd-Shift-i', run: insertIntegral },
+  { key: 'Ctrl-Shift-u', mac: 'Cmd-Shift-u', run: insertSum },
+  { key: 'Ctrl-Shift-l', mac: 'Cmd-Shift-l', run: insertLimit },
+  { key: 'Ctrl-Shift-x', mac: 'Cmd-Shift-x', run: insertMatrix },
+  { key: 'Ctrl-Shift-v', mac: 'Cmd-Shift-v', run: insertVector },
+  { key: 'Ctrl-Shift-p', mac: 'Cmd-Shift-p', run: insertPartial },
+  { key: 'Ctrl-ArrowUp', mac: 'Cmd-ArrowUp', run: insertSuperscript },
+  { key: 'Ctrl-ArrowDown', mac: 'Cmd-ArrowDown', run: insertSubscript },
   
   // Line operations
   { key: 'Alt-ArrowUp', run: moveLineUp },
@@ -422,6 +550,7 @@ export const markdownKeymap = keymap.of([
 
 // Export individual commands for use elsewhere
 export {
+  wrapInlineMath,
   insertInlineMath,
   insertBlockMath,
   insertFraction,
@@ -429,4 +558,9 @@ export {
   insertSum,
   insertIntegral,
   insertLimit,
+  insertMatrix,
+  insertVector,
+  insertPartial,
+  insertSuperscript,
+  insertSubscript,
 };

@@ -1479,21 +1479,7 @@ math-field.quantum-keyboard-active {
   transform: translateX(-50%);
   z-index: 9999;
   pointer-events: none;
-  /* Default to bottom */
-  bottom: 20px;
-  top: auto;
-  transition: top 0.3s ease, bottom 0.3s ease;
-}
-
-/* Position variants - controlled by data attribute */
-.quantum-hud-container[data-position="top"] {
-  bottom: auto;
-  top: 20px;
-}
-
-.quantum-hud-container[data-position="bottom"] {
-  bottom: 20px;
-  top: auto;
+  /* top is set via inline style from keyboard-hud.tsx */
 }
 
 /* Drag handle for repositioning */

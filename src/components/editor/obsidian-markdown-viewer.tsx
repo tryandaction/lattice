@@ -456,12 +456,6 @@ export function ObsidianMarkdownViewer({
         />
       )}
 
-      {/* Mode hint */}
-      {mode === "live" && (
-        <div className="absolute bottom-4 right-4 text-xs text-muted-foreground bg-background/80 backdrop-blur px-2 py-1 rounded border border-border/50">
-          Live Preview • <kbd className="px-1 py-0.5 rounded bg-muted text-[10px]">Ctrl+E</kbd> cycle modes
-        </div>
-      )}
     </div>
   );
 }

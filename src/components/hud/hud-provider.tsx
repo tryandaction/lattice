@@ -184,31 +184,45 @@ function createMathLiveAtPosition(editor: Editor, pos: number): Promise<Mathfiel
   }
   
   return new Promise((resolve) => {
-    setTimeout(() => {
+    const tryResolve = (): MathfieldElement | null => {
       const allFields = document.querySelectorAll('math-field');
-      
-      // 找新创建的空 math-field
       for (let i = allFields.length - 1; i >= 0; i--) {
         const mf = allFields[i] as MathfieldElement;
-        if (mf.getValue?.() === '') {
-          mf.focus();
-          setActiveMathField(mf);
-          resolve(mf);
-          return;
-        }
+        if (mf.getValue?.() === '') return mf;
       }
-      
-      // 如果数量增加了，用最后一个
       if (allFields.length > countBefore) {
-        const mf = allFields[allFields.length - 1] as MathfieldElement;
+        return allFields[allFields.length - 1] as MathfieldElement;
+      }
+      return null;
+    };
+
+    const finish = (mf: MathfieldElement) => {
+      clearTimeout(fallbackTimer);
+      observer.disconnect();
+      mf.focus();
+      setActiveMathField(mf);
+      resolve(mf);
+    };
+
+    // MutationObserver: resolves as soon as the new math-field appears in DOM
+    const observer = new MutationObserver(() => {
+      const mf = tryResolve();
+      if (mf) finish(mf);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Fallback timeout in case mutation fires before getValue is ready
+    const fallbackTimer = setTimeout(() => {
+      observer.disconnect();
+      const mf = tryResolve();
+      if (mf) {
         mf.focus();
         setActiveMathField(mf);
         resolve(mf);
-        return;
+      } else {
+        resolve(null);
       }
-      
-      resolve(null);
-    }, 120);
+    }, 500);
   });
 }
 

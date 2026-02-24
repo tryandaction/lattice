@@ -127,7 +127,7 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
 
   // Compute current mode and position
   const mode = computeMode({ isOpen, activeSymbolKey });
-  const optimalPosition = computeOptimalPosition();
+  const { side: optimalPosition, topPx } = computeOptimalPosition();
 
   // ============================================================================
   // MathLive Integration (moved before useEffects that depend on it)
@@ -251,10 +251,10 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const handleDragEnd = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
     const newOffset = {
       x: dragOffset.x + info.offset.x,
+      // Y drag shifts the computed topPx — store it so the container inline style picks it up
       y: dragOffset.y + info.offset.y,
     };
     setCustomOffset(newOffset);
-    // Delay setting isDragging to false to prevent immediate position recalculation
     setTimeout(() => setIsDragging(false), 100);
   }, [dragOffset, setCustomOffset, setIsDragging]);
 
@@ -535,6 +535,17 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
       }
     }
 
+    // HUD mode toggles (Tab = inline/block, Shift+Tab = markdown/latex)
+    if (keyCode === 'Tab') {
+      event.preventDefault();
+      if (event.shiftKey) {
+        useHUDStore.getState().toggleInsertFormat();
+      } else {
+        useHUDStore.getState().toggleInsertMode();
+      }
+      return;
+    }
+
     // Markdown shortcuts when editing non-math inputs
     const activeTarget = getActiveInputTarget() || getLastActiveInputTarget();
     if (activeTarget && activeTarget.type !== 'mathlive') {
@@ -648,7 +659,11 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="quantum-hud-container" data-position={optimalPosition}>
+        <div
+          className="quantum-hud-container"
+          data-position={optimalPosition}
+          style={{ top: `${topPx + dragOffset.y}px` }}
+        >
           <input
             ref={inputRef}
             type="password"
@@ -674,23 +689,23 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
             dragElastic={0.1}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
-            initial={{ 
-              y: optimalPosition === 'top' ? -150 : 150, 
+            initial={{
+              y: optimalPosition === 'top' ? -150 : 150,
               x: dragOffset.x,
-              opacity: 0, 
+              opacity: 0,
               scale: 0.3,
               borderRadius: '50%',
             }}
-            animate={{ 
-              y: dragOffset.y, 
+            animate={{
+              y: 0,
               x: dragOffset.x,
-              opacity: 1, 
+              opacity: 1,
               scale: 1,
               borderRadius: '20px',
             }}
-            exit={{ 
-              y: optimalPosition === 'top' ? -120 : 120, 
-              opacity: 0, 
+            exit={{
+              y: optimalPosition === 'top' ? -120 : 120,
+              opacity: 0,
               scale: 0.5,
               borderRadius: '40px',
               transition: { type: "spring", stiffness: 400, damping: 30, mass: 0.8 }
@@ -776,9 +791,9 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
               />
 
               <div className="quantum-hint">
-                {mode === 'symbol-selector' 
+                {mode === 'symbol-selector'
                   ? '↑↓/空格 选择 • Enter 确认 • Esc 返回'
-                  : '拖动移动 • 按键输入 • Shift 变体 • Esc 关闭'}
+                  : '拖动移动 • Shift 变体 • Tab 行内/块级 • Shift+Tab MD/LaTeX • Esc 关闭'}
               </div>
             </div>
 

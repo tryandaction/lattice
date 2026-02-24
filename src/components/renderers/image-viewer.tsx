@@ -19,9 +19,24 @@ type FitMode = "fit" | "width" | "height" | "actual";
  * Optimized for large images and long images
  */
 export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
+  // Use refs to avoid recreating the blob URL when the parent re-renders with
+  // the same ArrayBuffer reference (which is the common case after initial load).
+  const prevContentRef = useRef<ArrayBuffer | null>(null);
+  const imageUrlRef = useRef<string | null>(null);
+
   const imageUrl = useMemo(() => {
+    if (prevContentRef.current === content && imageUrlRef.current) {
+      return imageUrlRef.current;
+    }
+    // Revoke the previous URL before creating a new one
+    if (imageUrlRef.current) {
+      URL.revokeObjectURL(imageUrlRef.current);
+    }
     const blob = new Blob([content], { type: mimeType });
-    return URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
+    prevContentRef.current = content;
+    imageUrlRef.current = url;
+    return url;
   }, [content, mimeType]);
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
@@ -71,12 +86,16 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
     },
   });
 
-  // Cleanup object URL on unmount or when content changes
+  // Cleanup object URL only on unmount — revocation on content change is
+  // handled inside the useMemo above to avoid a race with the <img> tag.
   useEffect(() => {
     return () => {
-      URL.revokeObjectURL(imageUrl);
+      if (imageUrlRef.current) {
+        URL.revokeObjectURL(imageUrlRef.current);
+        imageUrlRef.current = null;
+      }
     };
-  }, [imageUrl]);
+  }, []);
 
   // Calculate fit zoom based on container and image size
   const calculateFitZoom = useCallback(() => {

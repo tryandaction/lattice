@@ -519,7 +519,20 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         to: number;
         position: { top: number; left: number };
       }>;
-      setMathEditor(customEvent.detail);
+      const detail = customEvent.detail;
+      // Clamp position so the overlay stays within the viewport
+      const editorWidth = detail.isBlock ? 524 : 324; // approx overlay widths
+      const clampedLeft = Math.min(detail.position.left, window.innerWidth - editorWidth - 16);
+      const clampedTop = detail.position.top + 300 > window.innerHeight
+        ? detail.position.top - 320  // flip above the formula
+        : detail.position.top;
+      setMathEditor({
+        ...detail,
+        position: {
+          top: Math.max(8, clampedTop),
+          left: Math.max(8, clampedLeft),
+        },
+      });
     };
 
     container.addEventListener('open-math-editor', handleOpenMathEditor);

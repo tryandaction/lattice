@@ -45,7 +45,9 @@ export function useTabContent(tab: TabState | null) {
   const [content, setContent] = useState<string | ArrayBuffer | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loadedTabId, setLoadedTabId] = useState<string | null>(null);
+  // Use ref instead of state: we don't need a re-render when this changes,
+  // and keeping it as state caused the effect to re-run unnecessarily.
+  const loadedTabIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect */
@@ -55,33 +57,36 @@ export function useTabContent(tab: TabState | null) {
       setContent(null);
       setIsLoading(false);
       setError(null);
-      setLoadedTabId(null);
+      loadedTabIdRef.current = null;
       return;
     }
 
     // Skip if already loaded this tab
-    if (loadedTabId === tab.id && (content !== null || isLoading)) {
+    if (loadedTabIdRef.current === tab.id) {
       return;
     }
 
     const loadFile = async () => {
+      // Mark as loading immediately to prevent duplicate loads
+      loadedTabIdRef.current = tab.id;
       setIsLoading(true);
       setError(null);
-      setLoadedTabId(tab.id);
 
       try {
         const file = await tab.fileHandle.getFile();
         const extension = getFileExtension(file.name);
-        
-        const content = isBinaryFile(extension)
+
+        const fileContent = isBinaryFile(extension)
           ? await file.arrayBuffer()
           : await file.text();
 
         if (canceled) return;
-        setContent(content);
+        setContent(fileContent);
         setIsLoading(false);
       } catch (err) {
         if (canceled) return;
+        // Reset so a retry is possible
+        loadedTabIdRef.current = null;
         setError(err instanceof Error ? err.message : "Failed to read file");
         setIsLoading(false);
       }
@@ -92,7 +97,7 @@ export function useTabContent(tab: TabState | null) {
     return () => {
       canceled = true;
     };
-  }, [tab, content, isLoading, loadedTabId]);
+  }, [tab]); // Only depend on tab — content/isLoading are outputs, not inputs
 
   return {
     content,
