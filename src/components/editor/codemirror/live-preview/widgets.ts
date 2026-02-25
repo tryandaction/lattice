@@ -35,6 +35,7 @@ import { getKaTeXOptions } from './katex-config';
 import { wrapLatexForMarkdown } from '@/lib/formula-utils';
 import { sanitizeInlineHtml } from '@/lib/sanitize';
 import { logger } from '@/lib/logger';
+import { imageResolverFacet } from './image-resolver-facet';
 
 type KaTeXModule = typeof import('katex').default;
 type HighlightModule = typeof import('highlight.js').default;
@@ -267,6 +268,17 @@ export class FormattedTextWidget extends WidgetType {
       }
       sourceIndex += 1;
     }
+    // After reaching maxVisible visible chars, skip any source chars that are
+    // syntax markers not present in the visible text (e.g. '_' in "hello _world_").
+    // This ensures the returned offset points to the actual content character,
+    // not a hidden syntax marker.
+    while (
+      sourceIndex < this.content.length &&
+      visibleIndex < visibleText.length &&
+      this.content[sourceIndex] !== visibleText[visibleIndex]
+    ) {
+      sourceIndex += 1;
+    }
     return Math.min(sourceIndex, this.content.length);
   }
 
@@ -281,6 +293,8 @@ export class FormattedTextWidget extends WidgetType {
       }
       sourceIndex += 1;
     }
+    // If we stopped at a syntax marker (source char not in visible text),
+    // don't advance visibleIndex — the cursor sits just before the next visible char.
     return visibleIndex;
   }
 
@@ -324,8 +338,12 @@ export class FormattedTextWidget extends WidgetType {
     });
   }
 
-  ignoreEvent(_event: Event) {
-    // Allow CodeMirror to handle cursor positioning
+  ignoreEvent(event: Event) {
+    // Block mousedown from reaching CodeMirror — we handle cursor placement
+    // manually in the mousedown listener above. Returning true here prevents
+    // CodeMirror from also trying to set the cursor, which would fight with
+    // our custom positioning and cause misalignment.
+    if (event.type === 'mousedown') return true;
     return false;
   }
 }
@@ -574,7 +592,6 @@ export class ImageWidget extends WidgetType {
 
     const img = document.createElement('img');
     img.className = 'cm-image';
-    img.src = this.url;
     img.alt = this.alt;
     if (this.width) {
       img.style.width = `${this.width}px`;
@@ -592,6 +609,24 @@ export class ImageWidget extends WidgetType {
       errorSpan.textContent = `[Image not found: ${this.alt}]`;
       container.appendChild(errorSpan);
     };
+
+    // Try to resolve local image paths via the facet resolver
+    const resolver = view.state.facet(imageResolverFacet);
+    if (resolver && this.url) {
+      // Set a placeholder while resolving
+      img.src = '';
+      resolver(this.url).then((resolvedUrl) => {
+        if (resolvedUrl) {
+          img.src = resolvedUrl;
+        } else {
+          img.src = this.url;
+        }
+      }).catch(() => {
+        img.src = this.url;
+      });
+    } else {
+      img.src = this.url;
+    }
 
     // 点击定位到alt文本
     container.addEventListener('mousedown', (e) => {

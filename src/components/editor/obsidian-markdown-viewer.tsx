@@ -94,6 +94,10 @@ interface ObsidianMarkdownViewerProps {
   initialMode?: ViewMode;
   /** Unique file identifier for proper re-mounting */
   fileId?: string;
+  /** Workspace root handle for resolving local image paths */
+  rootHandle?: FileSystemDirectoryHandle | null;
+  /** File path relative to workspace root (for resolving relative image paths) */
+  filePath?: string;
 }
 
 /**
@@ -181,6 +185,8 @@ export function ObsidianMarkdownViewer({
   onNavigateToFile,
   initialMode = "live",
   fileId, // Unique file identifier
+  rootHandle,
+  filePath,
 }: ObsidianMarkdownViewerProps) {
   const [mode, setMode] = useState<ViewMode>(initialMode);
   const [localContent, setLocalContent] = useState(content);
@@ -441,6 +447,8 @@ export function ObsidianMarkdownViewer({
             onSave={handleSave}
             fileId={fileId || fileName}
             className="min-h-full"
+            rootHandle={rootHandle}
+            filePath={filePath}
           />
         </div>
       </div>

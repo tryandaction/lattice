@@ -208,6 +208,7 @@ function FileViewer({
   onContentChange,
   onSave,
   fileId,
+  filePath,
   onNavigateToFile,
 }: {
   content: string | ArrayBuffer;
@@ -218,6 +219,7 @@ function FileViewer({
   onContentChange?: (content: string) => void;
   onSave?: () => Promise<void>;
   fileId?: string;
+  filePath?: string;
   onNavigateToFile?: (target: string) => void;
 }) {
   const extension = getFileExtension(fileName);
@@ -275,6 +277,8 @@ function FileViewer({
             fileId={fileId} // Pass fileId for internal tracking
             onSave={onSave}
             onNavigateToFile={onNavigateToFile}
+            rootHandle={rootHandle}
+            filePath={filePath}
           />
         );
       }
@@ -526,15 +530,16 @@ export function UniversalFileViewer({
 
   return (
     <div className="h-full overflow-auto bg-background">
-      <FileViewer 
-        content={content} 
-        fileName={fileName} 
+      <FileViewer
+        content={content}
+        fileName={fileName}
         rendererType={rendererType}
         fileHandle={handle}
         rootHandle={rootHandle}
         onContentChange={onContentChange}
         onSave={onSave}
         fileId={fileId}
+        filePath={filePath}
         onNavigateToFile={handleNavigateToFile}
       />
     </div>

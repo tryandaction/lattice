@@ -12,7 +12,7 @@ import "highlight.js/styles/github-dark.css";
 import { useEffect, useRef, useState, useCallback, memo, forwardRef, useImperativeHandle } from 'react';
 import { Loader2 } from 'lucide-react';
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
-import { EditorState, Extension, Transaction } from '@codemirror/state';
+import { EditorState, Extension, Transaction, Facet } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { bracketMatching } from '@codemirror/language';
@@ -37,6 +37,41 @@ import { registerCodeMirrorView, unregisterCodeMirrorView, setActiveInputTargetF
 import { normalizeFormulaInput, wrapLatexForMarkdown } from '@/lib/formula-utils';
 import { useSearchParams } from 'next/navigation';
 import { useSettingsStore } from '@/stores/settings-store';
+import { imageResolverFacet } from './image-resolver-facet';
+
+// Helper: resolve a relative image path against the current file's directory
+function resolveImagePath(currentFilePath: string, imageUrl: string): string {
+  if (imageUrl.startsWith('/')) return imageUrl.slice(1);
+  const baseParts = currentFilePath.replace(/\\/g, '/').split('/');
+  baseParts.pop(); // remove filename
+  const targetParts = imageUrl.replace(/\\/g, '/').split('/');
+  const resolved = [...baseParts];
+  for (const part of targetParts) {
+    if (!part || part === '.') continue;
+    if (part === '..') { resolved.pop(); continue; }
+    resolved.push(part);
+  }
+  return resolved.join('/');
+}
+
+// Helper: traverse FileSystemDirectoryHandle to get a file handle by path
+async function resolveFileHandleFromRoot(
+  root: FileSystemDirectoryHandle,
+  filePath: string
+): Promise<FileSystemFileHandle> {
+  const parts = filePath.replace(/\\/g, '/').split('/').filter(Boolean);
+  const startIndex = parts[0] === root.name ? 1 : 0;
+  let current: FileSystemDirectoryHandle | FileSystemFileHandle = root;
+  for (let i = startIndex; i < parts.length; i++) {
+    const isLast = i === parts.length - 1;
+    if (isLast) {
+      current = await (current as FileSystemDirectoryHandle).getFileHandle(parts[i]);
+    } else {
+      current = await (current as FileSystemDirectoryHandle).getDirectoryHandle(parts[i]);
+    }
+  }
+  return current as FileSystemFileHandle;
+}
 
 type LivePreviewViewWithHandlers = EditorView & {
   _outlineTimeout?: ReturnType<typeof setTimeout>;
@@ -76,6 +111,10 @@ export interface LivePreviewEditorProps {
   useWikiImageStyle?: boolean;
   /** Enable high contrast mode */
   highContrast?: boolean;
+  /** Workspace root handle for resolving local image paths */
+  rootHandle?: FileSystemDirectoryHandle | null;
+  /** File path relative to workspace root (for resolving relative image paths) */
+  filePath?: string;
 }
 
 /** Ref handle for LivePreviewEditor */
@@ -256,6 +295,8 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     onImageUpload,
     useWikiImageStyle = false,
     highContrast = false,
+    rootHandle,
+    filePath,
   }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -385,6 +426,28 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           highContrast
         );
 
+        // Add image resolver facet if rootHandle is available
+        if (rootHandle) {
+          const currentRootHandle = rootHandle;
+          const currentFilePath = filePath;
+          const resolver = async (url: string): Promise<string | null> => {
+            // Skip external URLs and data URLs
+            if (!url || /^(https?:|data:|blob:)/.test(url)) return null;
+            try {
+              // Resolve relative path against the current file's directory
+              const resolvedPath = currentFilePath
+                ? resolveImagePath(currentFilePath, url)
+                : url.replace(/^\.\//, '');
+              const fileHandle = await resolveFileHandleFromRoot(currentRootHandle, resolvedPath);
+              const file = await fileHandle.getFile();
+              return URL.createObjectURL(file);
+            } catch {
+              return null;
+            }
+          };
+          extensions.push(imageResolverFacet.of(resolver));
+        }
+
         console.log('[EditorInit] Extensions built, creating state with content length:', initialContent.length);
 
         // Create state with the current content
@@ -462,7 +525,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         viewRef.current = null;
       }
     };
-  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, aiCompletionEnabled, fileId, onImageUpload, useWikiImageStyle, highContrast, applyEditorState]); // fileId triggers re-init on file switch, content is handled by separate useEffect
+  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, aiCompletionEnabled, fileId, onImageUpload, useWikiImageStyle, highContrast, applyEditorState, rootHandle, filePath]); // fileId triggers re-init on file switch, content is handled by separate useEffect
 
   // Update content when it changes externally (but fileId change triggers re-init above)
   useEffect(() => {

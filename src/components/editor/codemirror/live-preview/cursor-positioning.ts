@@ -147,6 +147,20 @@ function getTextOffsetWithinWidget(
   if (!widget.contains(node)) return null;
 
   try {
+    // Walk all text nodes inside the widget in order, summing their lengths
+    // until we reach the target node. This is more reliable than Range.toString()
+    // when the widget contains nested elements (e.g. <em>, <strong>).
+    const walker = document.createTreeWalker(widget, NodeFilter.SHOW_TEXT);
+    let total = 0;
+    let current = walker.nextNode() as Text | null;
+    while (current) {
+      if (current === node) {
+        return total + offset;
+      }
+      total += current.nodeValue?.length ?? 0;
+      current = walker.nextNode() as Text | null;
+    }
+    // Fallback: use Range if the node wasn't found via walker
     const range = document.createRange();
     range.setStart(widget, 0);
     range.setEnd(node, offset);
