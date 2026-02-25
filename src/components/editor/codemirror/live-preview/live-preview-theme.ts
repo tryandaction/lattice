@@ -717,15 +717,16 @@ export const livePreviewTheme = EditorView.theme({
     animation: 'cm-fade-in 150ms ease-out',
   },
   
-  // Keyframes for smooth animations
+  // Keyframes for smooth animations (opacity only — no transform to avoid
+  // caretRangeFromPoint returning wrong nodes during animation)
   '@keyframes cm-fade-in': {
-    from: { opacity: '0', transform: 'translateY(-2px)' },
-    to: { opacity: '1', transform: 'translateY(0)' },
+    from: { opacity: '0' },
+    to: { opacity: '1' },
   },
-  
+
   '@keyframes cm-fade-out': {
-    from: { opacity: '1', transform: 'translateY(0)' },
-    to: { opacity: '0', transform: 'translateY(2px)' },
+    from: { opacity: '1' },
+    to: { opacity: '0' },
   },
   
   // Source mode syntax markers (shown when editing) - with smooth reveal

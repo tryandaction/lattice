@@ -1818,10 +1818,10 @@ function parseInlineMarkdown(
       if (katex) {
         return katex.renderToString(formula, getKaTeXOptions(false));
       }
-      // 回退：显示公式在样式化的span中
       return `<span class="cm-math-inline-table">$${formula}$</span>`;
     } catch {
-      return `<span class="cm-math-inline-table">$${formula}$</span>`;
+      // KaTeX error: show raw source so content never disappears
+      return `<span class="cm-math-inline-table cm-math-error">$${formula}$</span>`;
     }
   });
 
@@ -1833,7 +1833,19 @@ function parseInlineMarkdown(
       }
       return `<span class="cm-math-inline-table">\\(${formula}\\)</span>`;
     } catch {
-      return `<span class="cm-math-inline-table">\\(${formula}\\)</span>`;
+      return `<span class="cm-math-inline-table cm-math-error">\\(${formula}\\)</span>`;
+    }
+  });
+
+  // 块级公式: \[formula\] (在表格/行内上下文中作为块公式渲染)
+  result = result.replace(/\\\[(.+?)\\\]/gs, (match, formula) => {
+    try {
+      if (katex) {
+        return katex.renderToString(formula, getKaTeXOptions(true));
+      }
+      return `<span class="cm-math-inline-table">\\[${formula}\\]</span>`;
+    } catch {
+      return `<span class="cm-math-inline-table cm-math-error">\\[${formula}\\]</span>`;
     }
   });
 

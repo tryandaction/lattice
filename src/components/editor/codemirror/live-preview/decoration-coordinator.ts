@@ -758,13 +758,16 @@ function parseMathBlocks(
       continue;
     }
 
-    if (!inBlock && trimmed === '$$') {
-      // 公式块开始
+    // Support $$ alone OR $$ with content on the opening line (e.g. "$$ \frac{1}{2}")
+    // inlineBlockMatch already handled $$ content $$ on a single line above
+    const dollarOpenMatch = trimmed.match(/^\$\$(.*)$/);
+    if (!inBlock && dollarOpenMatch) {
       inBlock = true;
       blockType = 'dollar';
       blockStart = lineStart;
-      blockLatex = [];
-      blockStartLine = i + 1; // 行号从1开始
+      const firstContent = dollarOpenMatch[1].trim();
+      blockLatex = firstContent ? [firstContent] : [];
+      blockStartLine = i + 1;
     } else if (!inBlock && trimmed === '$') {
       // 容错：单 $ 包裹的块级公式
       inBlock = true;
@@ -772,22 +775,26 @@ function parseMathBlocks(
       blockStart = lineStart;
       blockLatex = [];
       blockStartLine = i + 1;
-    } else if (!inBlock && trimmed === '\\[') {
-      // \[ ... \] 公式块开始
-      inBlock = true;
-      blockType = 'bracket';
-      blockStart = lineStart;
-      blockLatex = [];
-      blockStartLine = i + 1;
     } else if (!inBlock) {
-      const envStartMatch = trimmed.match(new RegExp(`^\\\\begin\\{${envNames}\\*?\\}\\s*$`));
-      if (envStartMatch) {
+      // Support \[ alone OR \[ with content on the opening line (e.g. "\[ \frac{1}{2}")
+      const bracketOpenMatch = trimmed.match(/^\\\[(.*)$/);
+      if (bracketOpenMatch) {
         inBlock = true;
-        blockType = 'env';
-        envName = envStartMatch[1];
+        blockType = 'bracket';
         blockStart = lineStart;
-        blockLatex = [stripped];
+        const firstContent = bracketOpenMatch[1].trim();
+        blockLatex = firstContent ? [firstContent] : [];
         blockStartLine = i + 1;
+      } else {
+        const envStartMatch = trimmed.match(new RegExp(`^\\\\begin\\{${envNames}\\*?\\}\\s*$`));
+        if (envStartMatch) {
+          inBlock = true;
+          blockType = 'env';
+          envName = envStartMatch[1];
+          blockStart = lineStart;
+          blockLatex = [stripped];
+          blockStartLine = i + 1;
+        }
       }
     } else if (inBlock && blockType === 'dollar' && trimmed === '$$') {
       // 公式块结束
@@ -3698,13 +3705,8 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
           });
         }
       } else {
-        entries.push({
-          from: element.from,
-          to: element.to,
-          decoration: Decoration.replace({}),
-          priority: element.type,
-          isLine: false,
-        });
+        // Single-line reference definition: do NOT apply Decoration.replace({}) which
+        // would make the line invisible. Just skip — raw markdown is shown instead.
       }
       continue;
     }
