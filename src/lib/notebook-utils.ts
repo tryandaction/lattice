@@ -17,6 +17,7 @@ export interface JupyterOutput {
     "text/html"?: string | string[];
     "image/png"?: string;
     "image/jpeg"?: string;
+    "image/svg+xml"?: string | string[];
   };
   ename?: string;
   evalue?: string;

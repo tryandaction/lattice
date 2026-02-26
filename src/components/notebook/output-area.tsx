@@ -8,7 +8,7 @@
 
 "use client";
 
-import { memo, useState } from 'react';
+import { memo, useState, useRef, useEffect } from 'react';
 import { ChevronDown, ChevronRight, Copy, Check, AlertTriangle } from 'lucide-react';
 import type { ExecutionOutput } from '@/lib/python-worker-manager';
 
@@ -162,6 +162,77 @@ function parseError(content: string): { type: string; message: string; traceback
 }
 
 /**
+ * Render HTML output in a sandboxed iframe with auto-height
+ */
+export function HtmlOutput({ content }: { content: string }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(150);
+
+  useEffect(() => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    doc.open();
+    doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  body{margin:0;padding:8px;font-family:system-ui,sans-serif;font-size:13px;background:transparent}
+  table{border-collapse:collapse;width:100%;font-size:12px}
+  th,td{border:1px solid #e2e8f0;padding:4px 8px;text-align:left}
+  th{background:#f8fafc;font-weight:600}
+  tr:nth-child(even){background:#f8fafc}
+</style></head><body>${content}
+<script>
+  function rh(){window.parent.postMessage({type:'ih',h:document.body.scrollHeight},'*')}
+  window.addEventListener('load',rh);setTimeout(rh,300);setTimeout(rh,1200);
+</script></body></html>`);
+    doc.close();
+  }, [content]);
+
+  useEffect(() => {
+    const fn = (e: MessageEvent) => {
+      if (e.data?.type === 'ih') setHeight(Math.min(Math.max(e.data.h + 16, 80), 600));
+    };
+    window.addEventListener('message', fn);
+    return () => window.removeEventListener('message', fn);
+  }, []);
+
+  return (
+    <div className="rounded-md overflow-hidden border border-border">
+      <iframe
+        ref={iframeRef}
+        sandbox="allow-scripts"
+        style={{ width: '100%', height, border: 'none', display: 'block' }}
+        title="output"
+      />
+    </div>
+  );
+}
+
+/**
+ * Strip potentially dangerous elements/attributes from SVG before rendering inline.
+ * Removes script tags, event handlers, and external references.
+ */
+function sanitizeSvg(svg: string): string {
+  return svg
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/\son\w+\s*=\s*["'][^"']*["']/gi, '')
+    .replace(/\son\w+\s*=\s*[^\s>]*/gi, '')
+    .replace(/href\s*=\s*["']javascript:[^"']*["']/gi, '')
+    .replace(/xlink:href\s*=\s*["']javascript:[^"']*["']/gi, '');
+}
+
+/**
+ * Render SVG output inline
+ */
+function SvgOutput({ content }: { content: string }) {
+  return (
+    <div
+      className="rounded-md overflow-hidden bg-white dark:bg-gray-900 p-2 max-w-full overflow-x-auto"
+      dangerouslySetInnerHTML={{ __html: sanitizeSvg(content) }}
+    />
+  );
+}
+
+/**
  * Render an error output with improved formatting
  */
 function ErrorOutput({ content }: { content: string }) {
@@ -217,6 +288,10 @@ function OutputItem({ output }: { output: ExecutionOutput }) {
       return <TextOutput content={output.content} />;
     case 'image':
       return <ImageOutput src={output.content} />;
+    case 'html':
+      return <HtmlOutput content={output.content} />;
+    case 'svg':
+      return <SvgOutput content={output.content} />;
     case 'error':
       return <ErrorOutput content={output.content} />;
     default:

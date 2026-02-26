@@ -27,6 +27,9 @@ const activePlugins = new Map<string, PluginModule>();
 const activeWorkers = new Map<string, PluginWorkerHost>();
 const commands = new Map<string, RegisteredCommand>();
 const panels = new Map<string, RegisteredPanel>();
+// Live panel props — updated by plugins via ctx.panels.update()
+const panelProps = new Map<string, Record<string, unknown>>();
+const panelPropsListeners = new Set<() => void>();
 const assetUrls = new Map<string, Set<string>>();
 const registryListeners = new Set<() => void>();
 let registryEmitScheduled = false;
@@ -340,6 +343,20 @@ export function subscribePluginRegistry(listener: () => void) {
   };
 }
 
+export function getPanelProps(panelId: string): Record<string, unknown> {
+  return panelProps.get(panelId) ?? {};
+}
+
+export function subscribePanelProps(listener: () => void): () => void {
+  panelPropsListeners.add(listener);
+  return () => panelPropsListeners.delete(listener);
+}
+
+function updatePanelProps(panelId: string, props: Record<string, unknown>) {
+  panelProps.set(panelId, { ...(panelProps.get(panelId) ?? {}), ...props });
+  for (const l of panelPropsListeners) { try { l(); } catch { /* */ } }
+}
+
 export function subscribeVaultChange(listener: (path: string) => void) {
   vaultChangeListeners.add(listener);
   return () => {
@@ -507,6 +524,7 @@ function unregisterPanelsFor(pluginId: string) {
   for (const [id, entry] of panels.entries()) {
     if (entry.pluginId === pluginId) {
       panels.delete(id);
+      panelProps.delete(id);
       changed = true;
     }
   }
@@ -641,6 +659,10 @@ function createContext(manifest: PluginManifest): PluginContext {
       register: (panel) => {
         if (!canRegisterPanels) return;
         registerPanel(pluginId, panel);
+      },
+      update: (panelId, props) => {
+        if (!canRegisterPanels) return;
+        updatePanelProps(panelId, props);
       },
     },
     sidebar: {

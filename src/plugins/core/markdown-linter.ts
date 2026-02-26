@@ -111,17 +111,23 @@ export const markdownLinterPlugin: PluginModule = {
     async function runLint(path: string | null) {
       if (!path || !path.toLowerCase().endsWith('.md')) {
         lastIssues = [];
-        return;
-      }
-      try {
-        const content = await ctx.workspace.readFile(path);
-        lastIssues = lintMarkdown(content);
-      } catch {
-        lastIssues = [];
+      } else {
+        try {
+          const content = await ctx.workspace.readFile(path);
+          lastIssues = lintMarkdown(content);
+        } catch {
+          lastIssues = [];
+        }
       }
 
       ctx.log(`Lint: ${lastIssues.length} issue(s)`);
-      // Update panel data via log for now — panels read from schema
+      ctx.panels.update('core.markdown-linter.results', {
+        items: lastIssues.map((issue) => ({
+          title: `[${issue.severity.toUpperCase()}] ${issue.rule}`,
+          description: issue.message,
+          meta: `Line ${issue.line}`,
+        })),
+      });
     }
 
     ctx.commands.register({

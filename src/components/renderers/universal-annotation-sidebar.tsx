@@ -8,11 +8,11 @@
  */
 
 import { useMemo, useCallback, useState } from "react";
-import { 
-  ChevronDown, 
-  ChevronRight, 
-  MessageSquare, 
-  FileText, 
+import {
+  ChevronDown,
+  ChevronRight,
+  MessageSquare,
+  FileText,
   Square,
   Image as ImageIcon,
   Code,
@@ -20,6 +20,7 @@ import {
   File
 } from "lucide-react";
 import type { AnnotationItem, AnnotationTarget } from "../../types/universal-annotation";
+import { AnnotationMarkdownRenderer } from "./annotation-markdown-renderer";
 
 // ============================================================================
 // Types
@@ -262,10 +263,10 @@ function AnnotationItemComponent({ annotation, isSelected, onClick }: Annotation
           {/* Comment preview */}
           {annotation.comment && (
             <div className="mt-1 flex items-start gap-1">
-              <MessageSquare className="mt-0.5 h-3 w-3 flex-shrink-0 text-muted-foreground" />
-              <span className="line-clamp-2 text-xs text-muted-foreground">
-                {truncateText(annotation.comment, 60)}
-              </span>
+              <MessageSquare className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
+              <div className="flex-1 min-w-0 max-h-16 overflow-hidden">
+                <AnnotationMarkdownRenderer content={annotation.comment} />
+              </div>
             </div>
           )}
         </div>

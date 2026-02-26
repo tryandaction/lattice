@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from "react";
 import { X, PanelLeft } from "lucide-react";
 import { useI18n } from "@/hooks/use-i18n";
 import { useSettingsStore } from "@/stores/settings-store";
-import { getRegisteredCommands, getRegisteredPanels, runPluginCommand, subscribePluginRegistry } from "@/lib/plugins/runtime";
+import { getRegisteredCommands, getRegisteredPanels, runPluginCommand, subscribePluginRegistry, getPanelProps, subscribePanelProps } from "@/lib/plugins/runtime";
 import type { PluginCommand, PluginPanel, PluginPanelSchema } from "@/lib/plugins/types";
 import { cn } from "@/lib/utils";
 import { MarkdownRenderer } from "@/components/renderers/markdown-renderer";
@@ -274,6 +274,23 @@ export function PluginPanelDialog({ isOpen, onClose }: PluginPanelDialogProps) {
     [panels, activePanelId]
   );
 
+  // Subscribe to live panel props pushed by plugins via ctx.panels.update()
+  const livePanelProps = useSyncExternalStore(subscribePanelProps, () => activePanelId ? getPanelProps(activePanelId) : {}, () => ({}));
+
+  // Merge live props into the active panel schema for rendering
+  const activePanelWithLiveProps = useMemo(() => {
+    if (!activePanel) return null;
+    const live = activePanelId ? getPanelProps(activePanelId) : {};
+    if (Object.keys(live).length === 0) return activePanel;
+    return {
+      ...activePanel,
+      schema: {
+        ...activePanel.schema,
+        props: { ...(activePanel.schema.props ?? {}), ...live },
+      },
+    };
+  }, [activePanel, activePanelId, livePanelProps]);
+
   const commandsById = useMemo(() => {
     return new Map(commands.map((command) => [command.id, command]));
   }, [commands]);
@@ -397,22 +414,22 @@ export function PluginPanelDialog({ isOpen, onClose }: PluginPanelDialogProps) {
           </div>
 
           <div className="flex-1 p-6 overflow-y-auto">
-            {activePanel && (
+            {activePanelWithLiveProps && (
               <div className="space-y-4">
                 <div>
-                  <div className="text-sm font-medium">{activePanel.title}</div>
-                  {activePanel.schema.description && (
+                  <div className="text-sm font-medium">{activePanelWithLiveProps.title}</div>
+                  {activePanelWithLiveProps.schema.description && (
                     <div className="text-xs text-muted-foreground mt-1">
-                      {activePanel.schema.description}
+                      {activePanelWithLiveProps.schema.description}
                     </div>
                   )}
                 </div>
 
-                {renderPanelSchema(activePanel.schema, formState, setFormState, activePanel.id)}
+                {renderPanelSchema(activePanelWithLiveProps.schema, formState, setFormState, activePanelWithLiveProps.id)}
 
-                {activePanel.actions && activePanel.actions.length > 0 && (
+                {activePanelWithLiveProps.actions && activePanelWithLiveProps.actions.length > 0 && (
                   <div className="flex items-center gap-2 pt-2 border-t border-border">
-                    {activePanel.actions.map((action) => (
+                    {activePanelWithLiveProps.actions.map((action) => (
                       <button
                         key={action.id}
                         type="button"
@@ -423,8 +440,8 @@ export function PluginPanelDialog({ isOpen, onClose }: PluginPanelDialogProps) {
                             return;
                           }
                           const payload = {
-                            panelId: activePanel.id,
-                            formData: formState[activePanel.id] ?? {},
+                            panelId: activePanelWithLiveProps.id,
+                            formData: formState[activePanelWithLiveProps.id] ?? {},
                           };
                           void runPluginCommand(action.id, payload);
                         }}

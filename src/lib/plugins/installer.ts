@@ -71,7 +71,13 @@ export async function installPluginFromZip(file: File): Promise<PluginInstallRes
     throw new Error('manifest.json not found in plugin package');
   }
 
-  const validation = validatePluginManifest(JSON.parse(manifestRaw));
+  let parsedManifest: unknown;
+  try {
+    parsedManifest = JSON.parse(manifestRaw);
+  } catch {
+    throw new Error('manifest.json is not valid JSON');
+  }
+  const validation = validatePluginManifest(parsedManifest);
   if (!validation.valid || !validation.manifest) {
     throw new Error(`Invalid manifest: ${validation.errors.join('; ')}`);
   }
@@ -97,7 +103,13 @@ export async function installPluginFromDirectory(
 ): Promise<PluginInstallResult> {
   const manifestHandle = await handle.getFileHandle('manifest.json');
   const manifestText = await (await manifestHandle.getFile()).text();
-  const validation = validatePluginManifest(JSON.parse(manifestText));
+  let parsedDir: unknown;
+  try {
+    parsedDir = JSON.parse(manifestText);
+  } catch {
+    throw new Error('manifest.json is not valid JSON');
+  }
+  const validation = validatePluginManifest(parsedDir);
   if (!validation.valid || !validation.manifest) {
     throw new Error(`Invalid manifest: ${validation.errors.join('; ')}`);
   }

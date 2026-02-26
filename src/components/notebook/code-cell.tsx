@@ -20,7 +20,7 @@ import { highlightCode } from "@/lib/code-highlighter";
 import type { JupyterOutput } from "@/lib/notebook-utils";
 import { AnsiText } from "./ansi-text";
 import { usePythonRunner } from "@/hooks/use-python-runner";
-import { OutputArea } from "./output-area";
+import { OutputArea, HtmlOutput } from "./output-area";
 import { KernelStatus } from "./kernel-status";
 import { NotebookAiAssist } from "@/components/ai/notebook-ai-assist";
 
@@ -80,6 +80,19 @@ function CellOutput({ output }: { output: JupyterOutput }) {
           className="max-w-full rounded"
         />
       );
+    }
+    if (data["image/svg+xml"]) {
+      const svg = normalizeText(data["image/svg+xml"] as string | string[]);
+      return (
+        <div
+          className="rounded bg-white dark:bg-gray-900 p-2 max-w-full overflow-x-auto"
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      );
+    }
+    if (data["text/html"]) {
+      const html = normalizeText(data["text/html"] as string | string[]);
+      return <HtmlOutput content={html} />;
     }
 
     // Text output

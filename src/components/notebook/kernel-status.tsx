@@ -7,7 +7,7 @@
 
 "use client";
 
-import { memo } from 'react';
+import { memo, useState, useEffect } from 'react';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import type { KernelStatus as KernelStatusType } from '@/lib/python-worker-manager';
 
@@ -65,13 +65,18 @@ function RunningIndicator() {
 }
 
 /**
- * Ready indicator
+ * Ready indicator — icon only, fades out after 1.5s
  */
 function ReadyIndicator() {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setVisible(false), 1500);
+    return () => clearTimeout(t);
+  }, []);
+  if (!visible) return null;
   return (
-    <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
-      <CheckCircle2 className="h-3 w-3" />
-      <span>Kernel ready</span>
+    <div className="flex items-center transition-opacity duration-500">
+      <CheckCircle2 className="h-3 w-3 text-green-600 dark:text-green-400" />
     </div>
   );
 }

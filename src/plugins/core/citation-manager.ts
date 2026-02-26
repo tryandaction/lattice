@@ -119,6 +119,17 @@ export const citationManagerPlugin: PluginModule = {
         entries = [];
         ctx.log(`No BibTeX file found at ${bibPath}`);
       }
+
+      const style = (ctx.settings.get('citationStyle') as string) || 'apa';
+      ctx.panels.update('core.citation-manager.library', {
+        items: entries.length > 0
+          ? entries.map((e) => ({
+              title: e.title || e.key,
+              description: formatCitation(e, style),
+              meta: `${e.author} (${e.year})`,
+            }))
+          : [{ title: 'No references loaded', description: `Add a .bib file at: ${bibPath}` }],
+      });
     }
 
     ctx.commands.register({

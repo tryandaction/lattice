@@ -37,20 +37,15 @@ function CellTypeSelector({
     <div className="relative">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-accent transition-colors"
+        className="flex items-center gap-1 rounded px-1.5 py-1 text-xs hover:bg-accent transition-colors"
+        title={currentType === "code" ? "Code cell" : "Markdown cell"}
       >
         {currentType === "code" ? (
-          <>
-            <Code className="h-3 w-3" />
-            <span>Code</span>
-          </>
+          <Code className="h-3 w-3" />
         ) : (
-          <>
-            <FileText className="h-3 w-3" />
-            <span>Markdown</span>
-          </>
+          <FileText className="h-3 w-3" />
         )}
-        <ChevronDown className="h-3 w-3" />
+        <ChevronDown className="h-3 w-3 opacity-50" />
       </button>
 
       {isOpen && (

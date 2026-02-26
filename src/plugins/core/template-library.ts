@@ -163,5 +163,14 @@ export const templateLibraryPlugin: PluginModule = {
         ctx.log(`Available templates: ${names.join(', ')}`);
       },
     });
+
+    // Push template list to panel
+    ctx.panels.update('core.template-library.browser', {
+      items: Object.entries(TEMPLATES).map(([key, t]) => ({
+        title: t.name,
+        description: `Use command: New from Template: ${t.name}`,
+        meta: key,
+      })),
+    });
   },
 };

@@ -489,7 +489,6 @@ export class AnnotationLinkWidget extends WidgetType {
     const icon = document.createElement('span');
     icon.className = 'cm-annotation-link-icon';
     icon.innerHTML = '📌';
-    icon.style.marginRight = '2px';
     icon.style.fontSize = '0.85em';
 
     // 文本
@@ -1297,7 +1296,7 @@ export class ListBulletWidget extends WidgetType {
     } else if (this.type === 'bullet') {
       // 无序列表 - 显示为•
       span.textContent = '•';
-      span.style.marginRight = '0.5em';
+      span.style.paddingRight = '0.5em';
     } else {
       // 有序列表 - 保留数字
       span.textContent = this.marker;

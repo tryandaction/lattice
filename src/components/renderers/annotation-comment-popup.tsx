@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { X, Trash2, Save } from "lucide-react";
 import type { LatticeAnnotation } from "../../types/annotation";
 import { adjustPopupPosition, type PopupSize } from "@/lib/coordinate-adapter";
+import { AnnotationMarkdownRenderer } from "./annotation-markdown-renderer";
 
 // ============================================================================
 // Types
@@ -45,6 +46,7 @@ export function AnnotationCommentPopup({
 }: CommentPopupProps) {
   const [comment, setComment] = useState(annotation.comment);
   const [isDirty, setIsDirty] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -211,18 +213,50 @@ export function AnnotationCommentPopup({
         </div>
       )}
 
-      {/* Comment textarea */}
+      {/* Comment editor with MD preview toggle */}
       <div className="p-3">
-        <textarea
-          ref={textareaRef}
-          value={comment}
-          onChange={handleCommentChange}
-          onKeyDown={handleKeyDown}
-          placeholder="Add a note..."
-          className="h-24 w-full resize-none rounded border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-        />
+        <div className="mb-1.5 flex gap-1">
+          <button
+            onClick={() => setShowPreview(false)}
+            className={`rounded px-2 py-0.5 text-xs transition-colors ${
+              !showPreview
+                ? "bg-primary/10 text-primary font-medium"
+                : "text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            Edit
+          </button>
+          <button
+            onClick={() => setShowPreview(true)}
+            className={`rounded px-2 py-0.5 text-xs transition-colors ${
+              showPreview
+                ? "bg-primary/10 text-primary font-medium"
+                : "text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            Preview
+          </button>
+        </div>
+        {showPreview ? (
+          <div className="min-h-24 max-h-40 overflow-y-auto rounded border border-border bg-background px-2 py-1.5">
+            {comment.trim() ? (
+              <AnnotationMarkdownRenderer content={comment} />
+            ) : (
+              <span className="text-xs text-muted-foreground italic">Nothing to preview</span>
+            )}
+          </div>
+        ) : (
+          <textarea
+            ref={textareaRef}
+            value={comment}
+            onChange={handleCommentChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Add a note... (supports Markdown and $math$)"
+            className="h-24 w-full resize-none rounded border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+        )}
         <p className="mt-1 text-xs text-muted-foreground">
-          Press Ctrl+Enter to save
+          Ctrl+Enter to save · supports Markdown &amp; $formula$
         </p>
       </div>
 
@@ -282,7 +316,9 @@ export function AnnotationCommentTooltip({ comment, position }: CommentTooltipPr
         transform: 'translate(-50%, -100%) translateY(-8px)',
       }}
     >
-      <p className="line-clamp-3 text-xs">{comment}</p>
+      <div className="max-h-20 overflow-hidden">
+        <AnnotationMarkdownRenderer content={comment} />
+      </div>
     </div>
   );
 }

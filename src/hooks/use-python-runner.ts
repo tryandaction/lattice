@@ -101,7 +101,15 @@ export function usePythonRunner(): UsePythonRunnerReturn {
         case 'image':
           setOutputs(prev => [...prev, { type: 'image', content: message.payload }]);
           break;
-          
+
+        case 'html':
+          setOutputs(prev => [...prev, { type: 'html', content: message.payload }]);
+          break;
+
+        case 'svg':
+          setOutputs(prev => [...prev, { type: 'svg', content: message.payload }]);
+          break;
+
         case 'result':
           if (message.value) {
             setOutputs(prev => [...prev, { type: 'text', content: message.value }]);

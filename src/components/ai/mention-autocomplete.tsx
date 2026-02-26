@@ -6,7 +6,7 @@
  * Lists files from workspace and special mentions like @selection
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { FileText, TextSelect } from "lucide-react";
 import { getAvailableFiles } from "@/lib/ai/mention-resolver";
 import { cn } from "@/lib/utils";
@@ -57,28 +57,33 @@ export function MentionAutocomplete({
 
   const activeIndex = Math.min(selectedIndex, Math.max(0, items.length - 1));
 
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setSelectedIndex(i => Math.min(i + 1, items.length - 1));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setSelectedIndex(i => Math.max(i - 1, 0));
-    } else if (e.key === 'Enter' || e.key === 'Tab') {
-      e.preventDefault();
-      if (items[activeIndex]) {
-        onSelect(items[activeIndex].value);
+  const handlerRef = useRef<(e: KeyboardEvent) => void>(() => {});
+
+  useEffect(() => {
+    handlerRef.current = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedIndex(i => Math.min(i + 1, items.length - 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedIndex(i => Math.max(i - 1, 0));
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        if (items[activeIndex]) {
+          onSelect(items[activeIndex].value);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
       }
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
-    }
+    };
   }, [items, activeIndex, onSelect, onClose]);
 
   useEffect(() => {
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
+    const handler = (e: KeyboardEvent) => handlerRef.current(e);
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, []);
 
   // Scroll selected item into view
   useEffect(() => {

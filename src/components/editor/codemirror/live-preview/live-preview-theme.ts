@@ -98,25 +98,24 @@ export const livePreviewTheme = EditorView.theme({
     borderLeftWidth: '2px',
   },
   
-  // Line wrapping with smooth transition for active line highlight
+  // Line wrapping — NO transition, it breaks getBoundingClientRect() during click
   '.cm-line': {
     padding: '0 1rem',
-    transition: 'background-color 150ms ease-out',
   },
 
-  // Vertical rhythm for paragraphs
+  // Vertical rhythm for paragraphs — padding, NOT margin (margin breaks posAtCoords)
   '.cm-line + .cm-line': {
-    marginTop: '0.25em',
+    paddingTop: '0.25em',
   },
 
-  // Extra spacing after headings
+  // Extra spacing after headings — padding, NOT margin
   '.cm-heading + .cm-line:not(.cm-heading)': {
-    marginTop: '0.75em',
+    paddingTop: '0.75em',
   },
 
-  // List item spacing
+  // List item spacing — padding, NOT margin
   '.cm-list-item + .cm-list-item': {
-    marginTop: '0.25em',
+    paddingTop: '0.25em',
   },
 
   // Block spacing - blockquote styles are defined below in === Blockquotes === section
@@ -206,11 +205,10 @@ export const livePreviewTheme = EditorView.theme({
     display: 'inline-flex',
     alignItems: 'center',
     gap: '2px',
-    transition: 'background-color 150ms ease, color 150ms ease, transform 150ms ease',
+    transition: 'background-color 150ms ease, color 150ms ease',
     '&:hover': {
       backgroundColor: 'rgba(245, 158, 11, 0.25)',
       color: '#d97706',
-      transform: 'translateY(-1px)',
     },
   },
   
@@ -229,24 +227,23 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-heading-1': {
     fontSize: '2em',
     lineHeight: '1.3',
-    marginTop: '1em',
-    marginBottom: '0.5em',
+    paddingTop: '1em',
+    paddingBottom: '0.5em',
     borderBottom: `1px solid ${colors.border}`,
-    paddingBottom: '0.3em',
   },
-  
+
   '.cm-heading-2': {
     fontSize: '1.5em',
     lineHeight: '1.35',
-    marginTop: '0.8em',
-    marginBottom: '0.4em',
+    paddingTop: '0.8em',
+    paddingBottom: '0.4em',
   },
-  
+
   '.cm-heading-3': {
     fontSize: '1.25em',
     lineHeight: '1.4',
-    marginTop: '0.6em',
-    marginBottom: '0.3em',
+    paddingTop: '0.6em',
+    paddingBottom: '0.3em',
   },
   
   '.cm-heading-4': {
@@ -319,8 +316,8 @@ export const livePreviewTheme = EditorView.theme({
     borderLeft: `4px solid ${colors.primary}`,
     paddingLeft: '1em',
     marginLeft: '0',
-    marginTop: '0.5em',
-    marginBottom: '0.5em',
+    paddingTop: '0.5em',
+    paddingBottom: '0.5em',
     color: colors.mutedForeground,
     fontStyle: 'italic',
   },
@@ -349,8 +346,10 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-horizontal-rule-container': {
     display: 'block',
     width: 'calc(100% + var(--cm-content-padding-x-double, 0px))',
-    margin: '1em var(--cm-content-padding-x-neg, 0px)',
-    padding: '0',
+    paddingTop: '1em',
+    paddingBottom: '1em',
+    paddingLeft: 'var(--cm-content-padding-x-neg, 0px)',
+    paddingRight: 'var(--cm-content-padding-x-neg, 0px)',
     cursor: 'pointer',
   },
   
@@ -369,7 +368,8 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-code-block-widget': {
     backgroundColor: colors.codeBackground,
     borderRadius: '8px',
-    margin: '1em 0',
+    paddingTop: '1em',
+    paddingBottom: '1em',
     overflow: 'hidden',
   },
   
@@ -471,7 +471,8 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-math-block': {
     display: 'block',
     textAlign: 'center',
-    margin: '1em 0',
+    paddingTop: '1em',
+    paddingBottom: '1em',
     padding: '0.5em',
     cursor: 'text',
     width: '100%',
@@ -530,7 +531,8 @@ export const livePreviewTheme = EditorView.theme({
     fontFamily: '"JetBrains Mono", monospace',
     fontSize: '0.9em',
     display: 'block',
-    margin: '0.5em 0',
+    paddingTop: '0.5em',
+    paddingBottom: '0.5em',
   },
   
   // Hidden lines for multi-line block math (when not editing)
@@ -550,7 +552,8 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-table-widget': {
     width: '100%',
     borderCollapse: 'collapse',
-    margin: '1em 0',
+    paddingTop: '1em',
+    paddingBottom: '1em',
     fontSize: '14px',
   },
   
@@ -651,10 +654,6 @@ export const livePreviewTheme = EditorView.theme({
     display: 'inline-block',
     maxWidth: '100%',
     cursor: 'pointer',
-    transition: 'transform 150ms ease',
-    '&:hover': {
-      transform: 'scale(1.01)',
-    },
   },
   
   '.cm-image': {
@@ -708,7 +707,7 @@ export const livePreviewTheme = EditorView.theme({
   // === Syntax Transitions (Obsidian-like smooth reveal/hide) ===
   
   '.cm-syntax-transition': {
-    transition: 'opacity 150ms ease-out, transform 150ms ease-out',
+    transition: 'opacity 150ms ease-out',
   },
   
   '.cm-formatted-widget': {
@@ -808,7 +807,8 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-footnote-def': {
     display: 'block',
     padding: '8px 12px',
-    margin: '8px 0',
+    paddingTop: '8px',
+    paddingBottom: '8px',
     backgroundColor: `${colors.muted}50`,
     borderLeft: `3px solid ${colors.primary}`,
     borderRadius: '0 4px 4px 0',
@@ -864,7 +864,8 @@ export const livePreviewTheme = EditorView.theme({
   
   '.cm-embed-widget': {
     display: 'block',
-    margin: '12px 0',
+    paddingTop: '12px',
+    paddingBottom: '12px',
     padding: '12px 16px',
     backgroundColor: `${colors.muted}50`,
     border: `1px solid ${colors.border}`,
@@ -909,8 +910,8 @@ export const livePreviewTheme = EditorView.theme({
   
   '.cm-details-widget': {
     display: 'block',
-    margin: '8px 0',
-    padding: '0',
+    paddingTop: '8px',
+    paddingBottom: '8px',
     border: `1px solid ${colors.border}`,
     borderRadius: '8px',
     overflow: 'hidden',
@@ -932,12 +933,11 @@ export const livePreviewTheme = EditorView.theme({
     '&::before': {
       content: '"▶"',
       fontSize: '0.8em',
-      transition: 'transform 150ms ease',
     },
   },
   
   '.cm-details-widget[open] .cm-details-summary::before': {
-    transform: 'rotate(90deg)',
+    content: '"▼"',
   },
   
   '.cm-details-content': {
@@ -953,7 +953,8 @@ export const livePreviewTheme = EditorView.theme({
   
   '.cm-callout': {
     display: 'block',
-    margin: '12px 0',
+    paddingTop: '12px',
+    paddingBottom: '12px',
     padding: '12px 16px',
     borderRadius: '4px',
   },

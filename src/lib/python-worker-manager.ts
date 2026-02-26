@@ -13,11 +13,13 @@ export type WorkerOutMessage =
   | { type: 'stdout'; id: string; content: string }
   | { type: 'stderr'; id: string; content: string }
   | { type: 'image'; id: string; payload: string }
+  | { type: 'html'; id: string; payload: string }
+  | { type: 'svg'; id: string; payload: string }
   | { type: 'result'; id: string; value: string }
   | { type: 'error'; id: string; error: string; traceback?: string };
 
 export interface ExecutionOutput {
-  type: 'text' | 'image' | 'error';
+  type: 'text' | 'image' | 'html' | 'svg' | 'error';
   content: string;
 }
 
@@ -50,30 +52,30 @@ import base64
 class _WorkerStdout:
     def __init__(self):
         self._buffer = []
-    
+
     def write(self, text):
-        if text and text.strip():
+        if text:
             self._buffer.append(text)
-    
+
     def flush(self):
         if self._buffer:
             content = ''.join(self._buffer)
-            if content.strip():
+            if content:
                 _send_stdout(content)
             self._buffer = []
 
 class _WorkerStderr:
     def __init__(self):
         self._buffer = []
-    
+
     def write(self, text):
-        if text and text.strip():
+        if text:
             self._buffer.append(text)
-    
+
     def flush(self):
         if self._buffer:
             content = ''.join(self._buffer)
-            if content.strip():
+            if content:
                 _send_stderr(content)
             self._buffer = []
 
@@ -110,6 +112,44 @@ def _setup_matplotlib():
         pass
 
 _setup_matplotlib()
+
+def display(*objs, **kwargs):
+    for obj in objs:
+        if hasattr(obj, '_repr_html_'):
+            try:
+                html = obj._repr_html_()
+                if html:
+                    _send_html(html)
+                    continue
+            except Exception:
+                pass
+        if hasattr(obj, '_repr_svg_'):
+            try:
+                svg = obj._repr_svg_()
+                if svg:
+                    _send_svg(svg)
+                    continue
+            except Exception:
+                pass
+        if hasattr(obj, '_repr_png_'):
+            try:
+                import base64 as _b64
+                png = obj._repr_png_()
+                if png:
+                    _send_image('data:image/png;base64,' + _b64.b64encode(png).decode())
+                    continue
+            except Exception:
+                pass
+        try:
+            if hasattr(obj, 'to_html'):
+                _send_html(obj.to_html(full_html=False, include_plotlyjs='cdn'))
+                continue
+        except Exception:
+            pass
+        _send_stdout(repr(obj) + '\\n')
+
+import builtins as _builtins
+_builtins.display = display
 \`;
 
 // Common package name mappings (import name -> package name)
@@ -348,6 +388,14 @@ async function initializePyodide() {
     
     pyodide.globals.set('_send_image', (payload) => {
       postMsg({ type: 'image', id: currentExecutionId, payload });
+    });
+
+    pyodide.globals.set('_send_html', (payload) => {
+      postMsg({ type: 'html', id: currentExecutionId, payload });
+    });
+
+    pyodide.globals.set('_send_svg', (payload) => {
+      postMsg({ type: 'svg', id: currentExecutionId, payload });
     });
     
     pyodide.globals.set('_set_execution_id', (id) => {

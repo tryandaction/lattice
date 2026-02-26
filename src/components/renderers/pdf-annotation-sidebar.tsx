@@ -14,6 +14,7 @@
  */
 
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
+import { AnnotationMarkdownRenderer } from "./annotation-markdown-renderer";
 import { 
   Highlighter, 
   StickyNote, 
@@ -744,6 +745,7 @@ function AnnotationCard({
 }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const [editComment, setEditComment] = useState(annotation.comment || '');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -933,38 +935,71 @@ function AnnotationCard({
           {!isTextAnnotation && (
             <>
               {isEditing ? (
-                <div className="mt-2">
-                  <textarea
-                    ref={textareaRef}
-                    value={editComment}
-                    onChange={(e) => setEditComment(e.target.value)}
-                    className="w-full p-2 text-sm border border-border rounded bg-background resize-none focus:outline-none focus:ring-1 focus:ring-primary"
-                    rows={2}
-                    placeholder="添加笔记..."
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                        handleSaveComment();
-                      }
-                      if (e.key === 'Escape') {
-                        setIsEditing(false);
-                        setEditComment(annotation.comment || '');
-                      }
-                    }}
-                  />
+                <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                  {/* Edit / Preview tabs */}
+                  <div className="flex gap-1 mb-1">
+                    <button
+                      onClick={() => setShowPreview(false)}
+                      className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+                        !showPreview ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      编辑
+                    </button>
+                    <button
+                      onClick={() => setShowPreview(true)}
+                      className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+                        showPreview ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      预览
+                    </button>
+                  </div>
+
+                  {showPreview ? (
+                    <div className="min-h-[48px] max-h-40 overflow-y-auto rounded border border-border bg-background px-2 py-1.5">
+                      {editComment.trim() ? (
+                        <AnnotationMarkdownRenderer content={editComment} />
+                      ) : (
+                        <span className="text-xs text-muted-foreground italic">（空）</span>
+                      )}
+                    </div>
+                  ) : (
+                    <textarea
+                      ref={textareaRef}
+                      value={editComment}
+                      onChange={(e) => setEditComment(e.target.value)}
+                      className="w-full p-2 text-xs border border-border rounded bg-background resize-none focus:outline-none focus:ring-1 focus:ring-primary font-mono"
+                      rows={3}
+                      placeholder="支持 Markdown 和 $公式$..."
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                          handleSaveComment();
+                        }
+                        if (e.key === 'Escape') {
+                          setIsEditing(false);
+                          setShowPreview(false);
+                          setEditComment(annotation.comment || '');
+                        }
+                      }}
+                    />
+                  )}
+
                   <div className="flex justify-end gap-1 mt-1">
-                    <Button 
-                      size="sm" 
-                      variant="ghost" 
+                    <Button
+                      size="sm"
+                      variant="ghost"
                       className="h-6 text-xs"
                       onClick={() => {
                         setIsEditing(false);
+                        setShowPreview(false);
                         setEditComment(annotation.comment || '');
                       }}
                     >
                       取消
                     </Button>
-                    <Button 
-                      size="sm" 
+                    <Button
+                      size="sm"
                       className="h-6 text-xs"
                       onClick={handleSaveComment}
                     >
@@ -973,21 +1008,25 @@ function AnnotationCard({
                   </div>
                 </div>
               ) : annotation.comment ? (
-                <div 
-                  className="text-xs text-muted-foreground mt-1 flex items-start gap-1.5 cursor-text"
+                <div
+                  className="mt-1 flex items-start gap-1.5 cursor-text group/comment"
                   onClick={(e) => {
                     e.stopPropagation();
+                    setShowPreview(false);
                     setIsEditing(true);
                   }}
                 >
-                  <MessageSquare className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                  <span className="line-clamp-2">{annotation.comment}</span>
+                  <MessageSquare className="h-3 w-3 mt-0.5 flex-shrink-0 text-muted-foreground" />
+                  <div className="flex-1 min-w-0 max-h-24 overflow-y-auto">
+                    <AnnotationMarkdownRenderer content={annotation.comment} />
+                  </div>
                 </div>
               ) : (
                 <button
                   className="text-xs text-muted-foreground/60 hover:text-muted-foreground mt-1 flex items-center gap-1"
                   onClick={(e) => {
                     e.stopPropagation();
+                    setShowPreview(false);
                     setIsEditing(true);
                   }}
                 >

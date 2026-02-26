@@ -31,8 +31,6 @@ export const tableOfContentsPlugin: PluginModule = {
       line: number;
     }
 
-    let headings: Heading[] = [];
-
     function parseHeadings(content: string): Heading[] {
       const result: Heading[] = [];
       const lines = content.split('\n');
@@ -58,14 +56,33 @@ export const tableOfContentsPlugin: PluginModule = {
       return result;
     }
 
-    function formatOutline(): string {
-      if (headings.length === 0) return 'No headings found';
-      return headings
-        .map((h) => {
-          const indent = '  '.repeat(h.level - 1);
-          return `${indent}${h.text}`;
-        })
-        .join('\n');
+    // Register sidebar once — render() reads from closure
+    let headings: Heading[] = [];
+    let sidebarRegistered = false;
+
+    function registerSidebarOnce() {
+      if (sidebarRegistered) return;
+      sidebarRegistered = true;
+      ctx.sidebar.register({
+        id: 'toc',
+        title: 'Outline',
+        icon: 'list-tree',
+        position: 'top',
+        render: () => {
+          if (headings.length === 0) {
+            return { type: 'text', props: { content: 'No headings found' } };
+          }
+          return {
+            type: 'list',
+            props: {
+              items: headings.map((h) => ({
+                title: '  '.repeat(h.level - 1) + h.text,
+                meta: `Line ${h.line}`,
+              })),
+            },
+          };
+        },
+      });
     }
 
     async function refresh(path: string | null) {
@@ -80,15 +97,15 @@ export const tableOfContentsPlugin: PluginModule = {
         }
       }
 
-      ctx.sidebar.register({
-        id: 'toc',
-        title: 'Outline',
-        icon: 'list-tree',
-        position: 'top',
-        render: () => ({
-          type: 'text',
-          props: { content: formatOutline() },
-        }),
+      registerSidebarOnce();
+
+      // Push live data to the panel
+      ctx.panels.update('core.table-of-contents.panel', {
+        items: headings.map((h) => ({
+          title: '  '.repeat(h.level - 1) + h.text,
+          description: `h${h.level}`,
+          meta: `Line ${h.line}`,
+        })),
       });
     }
 

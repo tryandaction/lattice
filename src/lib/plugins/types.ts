@@ -294,6 +294,7 @@ export interface PluginContext {
   };
   panels: {
     register: (panel: PluginPanel) => void;
+    update: (panelId: string, props: Record<string, unknown>) => void;
   };
   sidebar: {
     register: (item: PluginSidebarItem) => void;

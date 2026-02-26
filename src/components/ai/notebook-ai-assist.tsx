@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { Sparkles, Loader2, Wand2, AlertCircle, BarChart3 } from "lucide-react";
+import { Loader2, Wand2, AlertCircle, BarChart3 } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings-store";
 import { getDefaultProvider, getProvider } from "@/lib/ai/providers";
 import type { AiProviderId } from "@/lib/ai/types";
@@ -136,30 +136,23 @@ export function NotebookAiAssist({ cellSource, cellOutput, cellError, onInsertCo
 
       {/* Result area */}
       {showResult && (
-        <div className="mt-1.5 rounded border border-border bg-muted/30 p-2">
-          <div className="flex items-center justify-between mb-1">
-            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Sparkles className="h-3 w-3" />
-              <span>AI Result</span>
-            </div>
-            <div className="flex gap-1">
-              {!loading && result && (
-                <button
-                  onClick={() => onInsertCode(result)}
-                  className="rounded bg-primary/10 px-2 py-0.5 text-xs text-primary hover:bg-primary/20"
-                >
-                  Insert
-                </button>
-              )}
+        <div className="mt-1.5 rounded border border-border bg-muted/30 p-2 relative group/result">
+          <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover/result:opacity-100 transition-opacity z-10">
+            {!loading && result && (
               <button
-                onClick={() => { setShowResult(false); setResult(""); }}
-                className="rounded px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent"
+                onClick={() => onInsertCode(result)}
+                className="rounded bg-primary/10 px-2 py-0.5 text-xs text-primary hover:bg-primary/20"
               >
-                Close
+                Insert
               </button>
-            </div>
+            )}
+            <button
+              onClick={() => { setShowResult(false); setResult(""); }}
+              className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent"
+              title="Close"
+            >✕</button>
           </div>
-          <div className="text-xs whitespace-pre-wrap break-words max-h-48 overflow-y-auto leading-relaxed font-mono">
+          <div className="text-xs whitespace-pre-wrap break-words max-h-48 overflow-y-auto leading-relaxed font-mono pr-14">
             {loading && !result && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
             {result}
             {loading && result && <span className="animate-pulse">▊</span>}
