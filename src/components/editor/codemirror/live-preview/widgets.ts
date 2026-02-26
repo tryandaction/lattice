@@ -259,19 +259,21 @@ export class FormattedTextWidget extends WidgetType {
 
   private mapVisibleOffsetToSourceOffset(visibleText: string, visibleOffset: number): number {
     if (!visibleText) return 0;
-    const maxVisible = Math.min(visibleOffset, visibleText.length);
+    // Clicking at or past the end of visible text → cursor at end of source content.
+    // This handles trailing syntax markers (e.g. closing '_' in "_world_") that are
+    // invisible in the rendered output but present in this.content.
+    if (visibleOffset >= visibleText.length) return this.content.length;
+
     let sourceIndex = 0;
     let visibleIndex = 0;
-    while (sourceIndex < this.content.length && visibleIndex < maxVisible) {
+    while (sourceIndex < this.content.length && visibleIndex < visibleOffset) {
       if (this.content[sourceIndex] === visibleText[visibleIndex]) {
         visibleIndex += 1;
       }
       sourceIndex += 1;
     }
-    // After reaching maxVisible visible chars, skip any source chars that are
-    // syntax markers not present in the visible text (e.g. '_' in "hello _world_").
-    // This ensures the returned offset points to the actual content character,
-    // not a hidden syntax marker.
+    // Skip any source chars that are syntax markers between visible characters
+    // (e.g. '_' between words in "hello _world_").
     while (
       sourceIndex < this.content.length &&
       visibleIndex < visibleText.length &&

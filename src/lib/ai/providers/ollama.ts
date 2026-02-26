@@ -6,6 +6,25 @@ function getBaseUrl(): string {
   return getUrl('ollama') || 'http://localhost:11434';
 }
 
+/**
+ * Detect CORS / network errors from fetch (TypeError: Failed to fetch / Load failed on Safari)
+ */
+function isCorsOrNetworkError(err: unknown): boolean {
+  if (!(err instanceof TypeError)) return false;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes('failed to fetch') ||
+    msg.includes('load failed') ||
+    msg.includes('networkerror') ||
+    msg.includes('network request failed')
+  );
+}
+
+const CORS_HINT =
+  'Cannot connect to Ollama. If using the web version, start Ollama with CORS enabled:\n' +
+  '  OLLAMA_ORIGINS=* ollama serve\n' +
+  'Or set your specific origin: OLLAMA_ORIGINS=https://your-domain.com ollama serve';
+
 export const ollamaProvider: AiProvider = {
   id: 'ollama',
   name: 'Ollama (Local)',
@@ -16,7 +35,10 @@ export const ollamaProvider: AiProvider = {
     try {
       const res = await fetch(`${getBaseUrl()}/api/tags`);
       return res.ok;
-    } catch {
+    } catch (err) {
+      if (isCorsOrNetworkError(err)) {
+        console.warn('[Ollama] Connection blocked (CORS or network):', CORS_HINT);
+      }
       return false;
     }
   },
@@ -31,10 +53,13 @@ export const ollamaProvider: AiProvider = {
         id: m.name,
         name: m.name,
         provider: 'ollama' as const,
-        contextWindow: 8192, // Conservative default; varies by model
+        contextWindow: 8192,
         supportsStreaming: true,
       }));
-    } catch {
+    } catch (err) {
+      if (isCorsOrNetworkError(err)) {
+        console.warn('[Ollama] getAvailableModels blocked (CORS or network):', CORS_HINT);
+      }
       return [];
     }
   },
@@ -46,20 +71,28 @@ export const ollamaProvider: AiProvider = {
       formatted.unshift({ role: 'system', content: options.systemPrompt });
     }
 
-    const res = await fetch(`${getBaseUrl()}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages: formatted,
-        stream: false,
-        options: {
-          temperature: options?.temperature ?? 0.7,
-          num_predict: options?.maxTokens,
-        },
-      }),
-      signal: options?.signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${getBaseUrl()}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          messages: formatted,
+          stream: false,
+          options: {
+            temperature: options?.temperature ?? 0.7,
+            num_predict: options?.maxTokens,
+          },
+        }),
+        signal: options?.signal,
+      });
+    } catch (err) {
+      if (isCorsOrNetworkError(err)) {
+        throw new Error(`[Ollama CORS] ${CORS_HINT}`);
+      }
+      throw err;
+    }
 
     if (!res.ok) {
       const err = await res.text();
@@ -85,20 +118,29 @@ export const ollamaProvider: AiProvider = {
       formatted.unshift({ role: 'system', content: options.systemPrompt });
     }
 
-    const res = await fetch(`${getBaseUrl()}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages: formatted,
-        stream: true,
-        options: {
-          temperature: options?.temperature ?? 0.7,
-          num_predict: options?.maxTokens,
-        },
-      }),
-      signal: options?.signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${getBaseUrl()}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          messages: formatted,
+          stream: true,
+          options: {
+            temperature: options?.temperature ?? 0.7,
+            num_predict: options?.maxTokens,
+          },
+        }),
+        signal: options?.signal,
+      });
+    } catch (err) {
+      if (isCorsOrNetworkError(err)) {
+        yield { type: 'error', error: `[Ollama CORS] ${CORS_HINT}` };
+        return;
+      }
+      throw err;
+    }
 
     if (!res.ok) {
       const err = await res.text();

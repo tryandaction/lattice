@@ -86,7 +86,16 @@ export async function requestCompletion(
     return text;
   } catch (err) {
     if ((err as Error).name === 'AbortError') return null;
-    console.warn('[AI Completion] Request failed:', err);
+    const msg = (err as Error).message ?? '';
+    if (msg.includes('[Ollama CORS]')) {
+      // Log once with clear instructions, not on every keystroke
+      if (!(requestCompletion as { _corsWarned?: boolean })._corsWarned) {
+        (requestCompletion as { _corsWarned?: boolean })._corsWarned = true;
+        console.warn('[AI Completion] Ollama CORS error — completions disabled until resolved.\n' + msg);
+      }
+    } else {
+      console.warn('[AI Completion] Request failed:', err);
+    }
     return null;
   }
 }

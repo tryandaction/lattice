@@ -978,6 +978,16 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                           onChange={(e) => updateSetting('aiOllamaUrl', e.target.value)}
                           placeholder="http://localhost:11434"
                         />
+                        {!isTauri() && (
+                          <div className="rounded-lg border border-amber-400/50 bg-amber-50/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+                            <div className="font-semibold mb-1">⚠️ Web 版本需要配置 CORS</div>
+                            <p className="mb-1">从网页版访问本地 Ollama 时，浏览器会阻止跨域请求。请使用以下命令启动 Ollama：</p>
+                            <code className="block bg-black/10 dark:bg-white/10 rounded px-2 py-1 font-mono text-[11px] break-all">
+                              OLLAMA_ORIGINS=* ollama serve
+                            </code>
+                            <p className="mt-1 text-muted-foreground">或指定具体来源：<code className="font-mono">OLLAMA_ORIGINS=https://lattice-apq.pages.dev ollama serve</code></p>
+                          </div>
+                        )}
                       </div>
                     )}
 
