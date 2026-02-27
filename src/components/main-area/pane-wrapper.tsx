@@ -72,9 +72,8 @@ export function PaneWrapper({
   const originalContentRef = useRef<string | ArrayBuffer | null>(null);
 
   // Content cache store - use getState() for non-reactive access in effects
-  const setContentToCache = useContentCacheStore((state) => state.setContent);
-  const getContentFromCache = useContentCacheStore((state) => state.getContent);
-  const markAsSaved = useContentCacheStore((state) => state.markAsSaved);
+  // NOTE: getContent/setContent/markAsSaved are accessed via getState() inside effects
+  // to avoid stale function references in dependency arrays causing infinite re-renders.
   const removeFromCache = useContentCacheStore((state) => state.removeFromCache);
   const hasUnsavedChanges = useContentCacheStore((state) => state.hasUnsavedChanges);
 
@@ -121,7 +120,7 @@ export function PaneWrapper({
     }
 
     // PRIORITY 1: Check cache first - this preserves unsaved changes
-    const cached = getContentFromCache(currentTabId);
+    const cached = useContentCacheStore.getState().getContent(currentTabId);
     if (cached) {
       // Immediately update state for cached content
       setLoadedTabId(currentTabId);
@@ -177,7 +176,7 @@ export function PaneWrapper({
             originalContentRef.current = fileContent;
           }
           // Initialize cache with original content (supports both string and ArrayBuffer)
-          setContentToCache(loadingForTabId, fileContent, fileContent);
+          useContentCacheStore.getState().setContent(loadingForTabId, fileContent, fileContent);
           // Loaded from disk, so not dirty
           setTabDirty(paneId, activeTabIndex, false);
           setIsLoading(false);
@@ -203,8 +202,6 @@ export function PaneWrapper({
     activeTab?.fileHandle,
     activeTabIndex,
     paneId,
-    getContentFromCache,
-    setContentToCache,
     setTabDirty,
     loadedTabId,
   ]);
@@ -241,7 +238,7 @@ export function PaneWrapper({
     if (!tab || tabIndex === null) return;
 
     // Get cached content for this tab
-    const cached = getContentFromCache(tab.id);
+    const cached = useContentCacheStore.getState().getContent(tab.id);
     if (!cached || typeof cached.content !== 'string') {
       // No content to save, just close
       setSaveDialogOpen(false);
@@ -270,7 +267,7 @@ export function PaneWrapper({
       console.error('Failed to save file:', err);
       throw err;
     }
-  }, [paneId, closeTab, pendingCloseTabIndex, getContentFromCache, removeFromCache]);
+  }, [paneId, closeTab, pendingCloseTabIndex, removeFromCache]);
 
   // Handle don't save from dialog
   const handleDialogDontSave = useCallback(() => {
@@ -324,7 +321,7 @@ export function PaneWrapper({
       setContent(newContent);
 
       const originalContent = originalContentRef.current ?? newContent;
-      setContentToCache(tabId, newContent, originalContent);
+      useContentCacheStore.getState().setContent(tabId, newContent, originalContent);
 
       // Mark dirty when differs, clear when equals
       const isDirty = newContent !== originalContent;
@@ -335,7 +332,7 @@ export function PaneWrapper({
         setTabDirty(paneId, currentIndex, isDirty);
       }
     };
-  }, [paneId, setTabDirty, setContentToCache]);
+  }, [paneId, setTabDirty]);
 
   // Handle file save - optimized with fast save
   const handleSave = useCallback(async () => {
@@ -347,16 +344,16 @@ export function PaneWrapper({
       emitVaultChange(activeTab.filePath);
       
       // Update cache - mark as saved with new original content
-      markAsSaved(activeTab.id, content);
+      useContentCacheStore.getState().markAsSaved(activeTab.id, content);
       originalContentRef.current = content;
-      
+
       // Clear dirty state
       setTabDirty(paneId, activeTabIndex, false);
     } catch (err) {
       console.error('Failed to save file:', err);
       throw err;
     }
-  }, [activeTab, content, paneId, activeTabIndex, setTabDirty, markAsSaved]);
+  }, [activeTab, content, paneId, activeTabIndex, setTabDirty]);
 
   // Handle pane click to activate
   const handlePaneClick = useCallback(() => {
