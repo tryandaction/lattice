@@ -1,2 +1,0 @@
-Error: "next start" does not work with "output: export" configuration. Use "npx serve@latest out" instead.
-    at ignore-listed frames
