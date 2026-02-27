@@ -225,23 +225,23 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-heading-1': {
     fontSize: '2em',
     lineHeight: '1.3',
-    paddingTop: '1em',
-    paddingBottom: '0.5em',
+    paddingTop: '0.8em',
+    paddingBottom: '0.3em',
     borderBottom: `1px solid ${colors.border}`,
   },
 
   '.cm-heading-2': {
     fontSize: '1.5em',
     lineHeight: '1.35',
-    paddingTop: '0.8em',
-    paddingBottom: '0.4em',
+    paddingTop: '0.6em',
+    paddingBottom: '0.2em',
   },
 
   '.cm-heading-3': {
     fontSize: '1.25em',
     lineHeight: '1.4',
-    paddingTop: '0.6em',
-    paddingBottom: '0.3em',
+    paddingTop: '0.4em',
+    paddingBottom: '0.1em',
   },
   
   '.cm-heading-4': {
