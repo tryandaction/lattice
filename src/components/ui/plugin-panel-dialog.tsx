@@ -274,8 +274,16 @@ export function PluginPanelDialog({ isOpen, onClose }: PluginPanelDialogProps) {
     [panels, activePanelId]
   );
 
+  // Stable empty object reference to avoid useSyncExternalStore infinite loop
+  // (getSnapshot must return a cached reference, not a new {} literal each call)
+  const EMPTY_PANEL_PROPS = useMemo(() => ({}), []);
+
   // Subscribe to live panel props pushed by plugins via ctx.panels.update()
-  const livePanelProps = useSyncExternalStore(subscribePanelProps, () => activePanelId ? getPanelProps(activePanelId) : {}, () => ({}));
+  const livePanelProps = useSyncExternalStore(
+    subscribePanelProps,
+    () => activePanelId ? getPanelProps(activePanelId) : EMPTY_PANEL_PROPS,
+    () => EMPTY_PANEL_PROPS
+  );
 
   // Merge live props into the active panel schema for rendering
   const activePanelWithLiveProps = useMemo(() => {

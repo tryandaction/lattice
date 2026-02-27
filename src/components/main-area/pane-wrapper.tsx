@@ -110,11 +110,10 @@ export function PaneWrapper({
     }
 
     const hasLoadedCurrent = loadedTabId === currentTabId;
-    const hasContent = content !== null;
     const isLoadingCurrent = loadingTabIdRef.current === currentTabId;
 
     // Same tab already loaded with content and no active load - no need to reload
-    if (hasLoadedCurrent && hasContent && !isLoadingCurrent) {
+    if (hasLoadedCurrent && !isLoadingCurrent) {
       if (error) {
         setError(null);
       }
@@ -207,8 +206,6 @@ export function PaneWrapper({
     getContentFromCache,
     setContentToCache,
     setTabDirty,
-    content,
-    error,
     loadedTabId,
   ]);
 

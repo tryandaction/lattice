@@ -343,13 +343,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     });
   },
 
-  setTabDirty: (paneId, tabIndex, isDirty) =>
-    set((state) => ({
+  setTabDirty: (paneId, tabIndex, isDirty) => {
+    const state = get();
+    const pane = findPane(state.layout.root, paneId);
+    if (!pane || tabIndex < 0 || tabIndex >= pane.tabs.length) return;
+    if (pane.tabs[tabIndex].isDirty === isDirty) return;
+    set((s) => ({
       layout: {
-        ...state.layout,
-        root: setTabDirtyUtil(state.layout.root, paneId, tabIndex, isDirty),
+        ...s.layout,
+        root: setTabDirtyUtil(s.layout.root, paneId, tabIndex, isDirty),
       },
-    })),
+    }));
+  },
 
   // Batch tab operations
   closeAllTabs: (paneId) => {
