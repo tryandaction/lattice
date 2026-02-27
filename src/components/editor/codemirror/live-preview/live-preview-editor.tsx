@@ -19,7 +19,7 @@ import { bracketMatching } from '@codemirror/language';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 
-import { cursorContextExtension } from './cursor-context-plugin';
+import { cursorContextExtension, setEditorFocus } from './cursor-context-plugin';
 import { decorationCoordinatorExtension, parsedElementsField, clearDecorationCache } from './decoration-coordinator';
 import { foldingExtension } from './folding-plugin';
 import { markdownKeymap } from './keyboard-shortcuts';
@@ -76,6 +76,7 @@ async function resolveFileHandleFromRoot(
 type LivePreviewViewWithHandlers = EditorView & {
   _outlineTimeout?: ReturnType<typeof setTimeout>;
   _unifiedInputFocusHandler?: () => void;
+  _unifiedInputBlurHandler?: () => void;
 };
 
 export interface LivePreviewEditorProps {
@@ -400,6 +401,10 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           if (existingHandler) {
             existingView.dom.removeEventListener('focusin', existingHandler);
           }
+          const existingBlurHandler = (existingView as LivePreviewViewWithHandlers)._unifiedInputBlurHandler;
+          if (existingBlurHandler) {
+            existingView.dom.removeEventListener('focusout', existingBlurHandler);
+          }
           unregisterCodeMirrorView(existingView.dom);
           existingView.destroy();
           viewRef.current = null;
@@ -448,14 +453,11 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           extensions.push(imageResolverFacet.of(resolver));
         }
 
-        console.log('[EditorInit] Extensions built, creating state with content length:', initialContent.length);
-
         // Create state with the current content
-        // CRITICAL: Set initial selection to position 0 to prevent select-all behavior
         const state = EditorState.create({
           doc: initialContent,
           extensions,
-          selection: { anchor: 0, head: 0 }, // Cursor at start, no selection
+          // No explicit selection — avoids triggering revealLines on line 1 before user interaction
         });
 
         // Create view
@@ -468,18 +470,27 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
 
         // Register unified input target for CodeMirror integration
         registerCodeMirrorView(view.dom, view);
-        const focusHandler = () => setActiveInputTargetFromElement(view.dom);
+        const focusHandler = () => {
+          setActiveInputTargetFromElement(view.dom);
+          // Mark editor as focused so cursor context starts revealing syntax
+          if (viewRef.current) {
+            viewRef.current.dispatch({ effects: setEditorFocus.of(true) });
+          }
+        };
+        const blurHandler = () => {
+          if (viewRef.current) {
+            viewRef.current.dispatch({ effects: setEditorFocus.of(false) });
+          }
+        };
         view.dom.addEventListener('focusin', focusHandler);
+        view.dom.addEventListener('focusout', blurHandler);
         (view as LivePreviewViewWithHandlers)._unifiedInputFocusHandler = focusHandler;
+        (view as LivePreviewViewWithHandlers)._unifiedInputBlurHandler = blurHandler;
 
-        // CRITICAL: Ensure cursor is at position 0 after view creation
-        // This prevents any browser-induced select-all behavior
+        // Ensure editor does not steal focus on mount
         requestAnimationFrame(() => {
           if (viewRef.current) {
-            viewRef.current.dispatch({
-              selection: { anchor: 0, head: 0 },
-              scrollIntoView: false,
-            });
+            viewRef.current.contentDOM.blur();
           }
         });
 
@@ -519,6 +530,10 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         const existingHandler = (existingView as LivePreviewViewWithHandlers)._unifiedInputFocusHandler;
         if (existingHandler) {
           existingView.dom.removeEventListener('focusin', existingHandler);
+        }
+        const existingBlurHandler = (existingView as LivePreviewViewWithHandlers)._unifiedInputBlurHandler;
+        if (existingBlurHandler) {
+          existingView.dom.removeEventListener('focusout', existingBlurHandler);
         }
         unregisterCodeMirrorView(existingView.dom);
         existingView.destroy();

@@ -150,6 +150,8 @@ export class FormattedTextWidget extends WidgetType {
       span.textContent = this.content;
     } else {
       span.innerHTML = sanitizeInlineHtml(parseInlineMarkdown(this.content, this.referenceDefs));
+      const visibleText = span.textContent ?? '';
+      (span as HTMLElement & { _v2sMap?: number[] })._v2sMap = this.buildVisibleToSourceMap(visibleText);
     }
 
     // 处理点击 - 精确光标定位 + 内嵌链接行为
@@ -172,6 +174,8 @@ export class FormattedTextWidget extends WidgetType {
             window.clearTimeout((span as unknown as { _linkClickTimer?: number })._linkClickTimer);
             (span as unknown as { _linkClickTimer?: number })._linkClickTimer = undefined;
             handleWidgetClick(view, span, e, this.contentFrom, this.contentTo, (visibleOffset, widget) => {
+              const map = (widget as HTMLElement & { _v2sMap?: number[] })._v2sMap;
+              if (map && visibleOffset < map.length) return map[visibleOffset];
               const visibleText = widget.textContent ?? '';
               return this.mapVisibleOffsetToSourceOffset(visibleText, visibleOffset);
             });
@@ -201,6 +205,8 @@ export class FormattedTextWidget extends WidgetType {
       }
 
       handleWidgetClick(view, span, e, this.contentFrom, this.contentTo, (visibleOffset, widget) => {
+        const map = (widget as HTMLElement & { _v2sMap?: number[] })._v2sMap;
+        if (map && visibleOffset < map.length) return map[visibleOffset];
         const visibleText = widget.textContent ?? '';
         return this.mapVisibleOffsetToSourceOffset(visibleText, visibleOffset);
       });
@@ -298,6 +304,67 @@ export class FormattedTextWidget extends WidgetType {
     // If we stopped at a syntax marker (source char not in visible text),
     // don't advance visibleIndex — the cursor sits just before the next visible char.
     return visibleIndex;
+  }
+
+  private buildVisibleToSourceMap(visibleText: string): number[] {
+    const map: number[] = [];
+    const src = this.content;
+    let si = 0;
+    let vi = 0;
+
+    while (si < src.length && vi < visibleText.length) {
+      // 转义字符: \X → X
+      if (src[si] === '\\' && si + 1 < src.length &&
+          '\\`*_[]{}()#+-.!|$'.includes(src[si + 1])) {
+        if (visibleText[vi] === src[si + 1]) { map[vi] = si; vi++; }
+        si += 2; continue;
+      }
+      // Wiki链接: [[target|alias]] → alias (或 target)
+      if (src[si] === '[' && src[si + 1] === '[') {
+        const closeIdx = src.indexOf(']]', si + 2);
+        if (closeIdx !== -1) {
+          const inner = src.slice(si + 2, closeIdx);
+          const pipeIdx = inner.indexOf('|');
+          const display = pipeIdx !== -1 ? inner.slice(pipeIdx + 1) : inner.split('#')[0];
+          for (let di = 0; di < display.length && vi < visibleText.length; di++, vi++) {
+            map[vi] = si;
+          }
+          si = closeIdx + 2; continue;
+        }
+      }
+      // 内联公式: $formula$ → KaTeX渲染不可预测，整体映射到 $
+      if (src[si] === '$' && src[si + 1] !== '$') {
+        const closeIdx = src.indexOf('$', si + 1);
+        if (closeIdx !== -1) {
+          const afterMath = src[closeIdx + 1] ?? '';
+          while (vi < visibleText.length && visibleText[vi] !== afterMath) {
+            map[vi] = si; vi++;
+          }
+          si = closeIdx + 1; continue;
+        }
+      }
+      // 粗斜体标记: *** 或 ___ (3字符 → 0可见)
+      if ((src[si] === '*' || src[si] === '_') &&
+          src[si] === src[si + 1] && src[si] === src[si + 2] &&
+          visibleText[vi] !== src[si]) { si += 3; continue; }
+      // 粗体标记: ** 或 __ (2字符 → 0可见)
+      if ((src[si] === '*' || src[si] === '_') &&
+          src[si] === src[si + 1] && visibleText[vi] !== src[si]) { si += 2; continue; }
+      // 斜体/单删除线标记 (1字符 → 0可见)
+      if ((src[si] === '*' || src[si] === '_') && visibleText[vi] !== src[si]) { si++; continue; }
+      // 删除线: ~~ (2字符 → 0可见)
+      if (src[si] === '~' && src[si + 1] === '~' && visibleText[vi] !== '~') { si += 2; continue; }
+      // 高亮: == (2字符 → 0可见)
+      if (src[si] === '=' && src[si + 1] === '=' && visibleText[vi] !== '=') { si += 2; continue; }
+      // 行内代码反引号 (1字符 → 0可见)
+      if (src[si] === '`' && visibleText[vi] !== '`') { si++; continue; }
+      // 普通字符 1:1
+      if (src[si] === visibleText[vi]) { map[vi] = si; vi++; si++; continue; }
+      // 其他源码字符（语法标记）跳过
+      si++;
+    }
+    while (vi < visibleText.length) { map[vi] = si; vi++; }
+    return map;
   }
 
   private renderContentWithMath(container: HTMLElement, text: string) {
@@ -1404,12 +1471,14 @@ export class MathWidget extends WidgetType {
       return container;
     }
 
-    // 单击: 定位光标到公式开始位置（触发显示源码）
+    // 单击: 根据点击左右半区定位光标到公式前或后
     container.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      // Avoid coordinate-based cursor drift for math widgets
-      setCursorPosition(view, this.from);
+      const me = e as MouseEvent;
+      const rect = container.getBoundingClientRect();
+      const clickedRightHalf = rect.width > 0 && (me.clientX - rect.left) / rect.width >= 0.5;
+      setCursorPosition(view, clickedRightHalf ? this.to : this.from);
       view.focus();
     });
 

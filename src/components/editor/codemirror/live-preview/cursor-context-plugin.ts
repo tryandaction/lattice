@@ -20,6 +20,23 @@ type ParsedElementsCarrier = {
 export const updateCursorContext = StateEffect.define<CursorContext>();
 
 /**
+ * State effect and field to track editor DOM focus.
+ * revealLines is only populated when the editor has focus,
+ * preventing heading markers from showing on initial file open.
+ */
+export const setEditorFocus = StateEffect.define<boolean>();
+
+export const editorFocusField = StateField.define<boolean>({
+  create() { return false; },
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setEditorFocus)) return effect.value;
+    }
+    return value;
+  },
+});
+
+/**
  * Cursor context information
  */
 export interface CursorContext {
@@ -129,15 +146,24 @@ function computeCursorContext(state: EditorState): CursorContext {
     revealElements.add(elementKey);
   }
 
-  // Always reveal the current line (backward compatibility)
-  revealLines.add(cursorLine);
+  // Only reveal lines when the editor has DOM focus.
+  // This prevents heading markers from showing on initial file open.
+  const hasFocus = (() => {
+    try { return state.field(editorFocusField, false) ?? false; } catch { return false; }
+  })();
+
+  if (hasFocus) {
+    revealLines.add(cursorLine);
+  }
 
   if (hasSelection) {
     // Reveal all lines in selection
     const fromLine = state.doc.lineAt(selection.from).number;
     const toLine = state.doc.lineAt(selection.to).number;
-    for (let i = fromLine; i <= toLine; i++) {
-      revealLines.add(i);
+    if (hasFocus) {
+      for (let i = fromLine; i <= toLine; i++) {
+        revealLines.add(i);
+      }
     }
 
     // Reveal all elements in selection
@@ -153,7 +179,9 @@ function computeCursorContext(state: EditorState): CursorContext {
   // Handle multi-cursor
   for (const range of state.selection.ranges) {
     const line = state.doc.lineAt(range.head).number;
-    revealLines.add(line);
+    if (hasFocus) {
+      revealLines.add(line);
+    }
 
     // CRITICAL FIX: Find ALL elements at each cursor (for nested elements)
     const rangeElements = findElementsAtPosition(range.head, parsedElements);
@@ -165,8 +193,10 @@ function computeCursorContext(state: EditorState): CursorContext {
     if (!range.empty) {
       const fromLine = state.doc.lineAt(range.from).number;
       const toLine = state.doc.lineAt(range.to).number;
-      for (let i = fromLine; i <= toLine; i++) {
-        revealLines.add(i);
+      if (hasFocus) {
+        for (let i = fromLine; i <= toLine; i++) {
+          revealLines.add(i);
+        }
       }
 
       // Reveal all elements in range
@@ -404,6 +434,7 @@ export const cursorContextPlugin = ViewPlugin.fromClass(
  * Extension bundle for cursor context
  */
 export const cursorContextExtension = [
+  editorFocusField,
   cursorContextField,
   cursorContextPlugin,
 ];
