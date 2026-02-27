@@ -49,6 +49,11 @@ export function AnnotationCommentPopup({
   const [showPreview, setShowPreview] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Stable refs so event listeners don't need to re-register on every keystroke
+  const commentRef = useRef(comment);
+  const isDirtyRef = useRef(isDirty);
+  useEffect(() => { commentRef.current = comment; }, [comment]);
+  useEffect(() => { isDirtyRef.current = isDirty; }, [isDirty]);
 
   // Auto-focus textarea on mount
   useEffect(() => {
@@ -59,9 +64,8 @@ export function AnnotationCommentPopup({
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        if (isDirty) {
-          // Auto-save on click outside if there are changes
-          onSave(comment);
+        if (isDirtyRef.current) {
+          onSave(commentRef.current);
         }
         onClose();
       }
@@ -84,7 +88,7 @@ export function AnnotationCommentPopup({
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [onClose, onSave, comment, isDirty]);
+  }, [onClose, onSave]);
 
   const handleCommentChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setComment(e.target.value);

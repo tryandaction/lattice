@@ -345,21 +345,21 @@ export function PDFViewerWithAnnotations({
 
   // Handle comment save
   const handleCommentSave = useCallback((comment: string) => {
-    if (selectedAnnotation) {
-      updateAnnotation(selectedAnnotation.id, { comment });
-    }
-    setSelectedAnnotation(null);
+    setSelectedAnnotation((prev) => {
+      if (prev) updateAnnotation(prev.id, { comment });
+      return null;
+    });
     setCommentPopupPosition(null);
-  }, [selectedAnnotation, updateAnnotation]);
+  }, [updateAnnotation]);
 
   // Handle annotation delete
   const handleAnnotationDelete = useCallback(() => {
-    if (selectedAnnotation) {
-      deleteAnnotation(selectedAnnotation.id);
-    }
-    setSelectedAnnotation(null);
+    setSelectedAnnotation((prev) => {
+      if (prev) deleteAnnotation(prev.id);
+      return null;
+    });
     setCommentPopupPosition(null);
-  }, [selectedAnnotation, deleteAnnotation]);
+  }, [deleteAnnotation]);
 
   // Handle comment popup close
   const handleCommentPopupClose = useCallback(() => {

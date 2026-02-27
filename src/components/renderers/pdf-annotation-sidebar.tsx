@@ -471,7 +471,7 @@ function AnnotationContextMenu({
         setAdjustedPosition({ x: newX, y: newY });
       }
     }
-  }, [x, y, showTextStyleEditor, adjustedPosition.x, adjustedPosition.y]);
+  }, [x, y, showTextStyleEditor]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {

@@ -200,6 +200,10 @@ export function ObsidianMarkdownViewer({
   const resolvedFileId = fileId || fileName;
   const prevFileIdRef = useRef(resolvedFileId);
   const fileChangeCounterRef = useRef(0);
+  const localContentRef = useRef(localContent);
+  const isDirtyRef = useRef(isDirty);
+  useEffect(() => { localContentRef.current = localContent; }, [localContent]);
+  useEffect(() => { isDirtyRef.current = isDirty; }, [isDirty]);
   const { selection: aiSelection, dismiss: dismissAiMenu } = useTextSelection(containerRef);
   const saveEditorState = useContentCacheStore((state) => state.saveEditorState);
   const getEditorState = useContentCacheStore((state) => state.getEditorState);
@@ -237,11 +241,11 @@ export function ObsidianMarkdownViewer({
       if (cachedState && fileChangeCounterRef.current === changeId) {
         editorRef.current?.restoreEditorState(cachedState);
       }
-    } else if (content !== localContent && !isDirty) {
+    } else if (content !== localContentRef.current && !isDirtyRef.current) {
       // Content changed externally (not by user editing)
       setLocalContent(content);
     }
-  }, [content, resolvedFileId, getEditorState, saveEditorState, isDirty, localContent]);
+  }, [content, resolvedFileId, getEditorState, saveEditorState]);
 
   // Persist editor state on unmount
   useEffect(() => {

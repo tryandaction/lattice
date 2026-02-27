@@ -61,21 +61,20 @@ export function usePopupPosition(options: UsePopupPositionOptions = {}): UsePopu
 
   // Recalculate when target position or size changes
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    recalculate();
-  }, [recalculate]);
+    const newPosition = adjustPopupPosition(targetPosition, popupSize, padding);
+    setAdjustedPosition(newPosition);
+  }, [targetPosition, popupSize, padding]);
 
   // Recalculate on window resize
   useEffect(() => {
     if (!recalculateOnResize) return;
-
     const handleResize = () => {
-      recalculate();
+      const newPosition = adjustPopupPosition(targetPosition, popupSize, padding);
+      setAdjustedPosition(newPosition);
     };
-
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [recalculateOnResize, recalculate]);
+  }, [recalculateOnResize, targetPosition, popupSize, padding]);
 
   return {
     position: adjustedPosition,
@@ -107,13 +106,15 @@ export function useContextMenuPosition() {
     if (menuRef.current && position) {
       const rect = menuRef.current.getBoundingClientRect();
       if (rect.width !== menuSize.width || rect.height !== menuSize.height) {
-        setMenuSize({ width: rect.width, height: rect.height });
+        const newSize = { width: rect.width, height: rect.height };
+        setMenuSize(newSize);
         // Recalculate position with new size
-        const adjusted = getContextMenuPosition(position, { width: rect.width, height: rect.height });
+        const adjusted = getContextMenuPosition(position, newSize);
         setPosition(adjusted);
       }
     }
-  }, [position, menuSize]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [position?.x, position?.y]);
 
   return {
     position,
@@ -159,7 +160,8 @@ export function useDropdownPosition(triggerRef: React.RefObject<HTMLElement | nu
         setMenuSize({ width: rect.width, height: rect.height });
       }
     }
-  }, [position, menuSize]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [position?.x, position?.y]);
 
   return {
     position,
@@ -202,7 +204,8 @@ export function useTooltipPosition(
         setTooltipSize({ width: rect.width, height: rect.height });
       }
     }
-  }, [position, tooltipSize]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [position?.x, position?.y]);
 
   return {
     position,

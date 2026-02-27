@@ -439,15 +439,22 @@ async function runCode(code, id) {
     
     // Execute the user's code
     const result = await pyodide.runPythonAsync(code);
-    
+
     pyodide.runPython('sys.stdout.flush(); sys.stderr.flush()');
-    
-    const resultStr = result !== undefined && result !== null ? String(result) : '';
-    
-    if (resultStr && resultStr !== 'None') {
-      postMsg({ type: 'result', id, value: resultStr });
-    } else {
-      postMsg({ type: 'result', id, value: '' });
+
+    if (result !== undefined && result !== null) {
+      try {
+        // Use display() for rich output (DataFrames → HTML, plots → image, etc.)
+        pyodide.globals.set('_exec_result', result);
+        pyodide.runPython('display(_exec_result)');
+        pyodide.globals.delete('_exec_result');
+      } catch {
+        // Fallback to plain string representation
+        const resultStr = String(result);
+        if (resultStr && resultStr !== 'None') {
+          postMsg({ type: 'result', id, value: resultStr });
+        }
+      }
     }
     
   } catch (error) {
