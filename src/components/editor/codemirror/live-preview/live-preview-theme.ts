@@ -37,7 +37,7 @@ export const livePreviewTheme = EditorView.theme({
     backgroundColor: colors.background,
     color: colors.foreground,
     fontSize: '16px',
-    lineHeight: '1.75',
+    lineHeight: '1.6',
   },
   
   // Content
@@ -103,19 +103,17 @@ export const livePreviewTheme = EditorView.theme({
     padding: '0 1rem',
   },
 
-  // Vertical rhythm for paragraphs — padding, NOT margin (margin breaks posAtCoords)
-  '.cm-line + .cm-line': {
-    paddingTop: '0.25em',
-  },
+  // Vertical rhythm for paragraphs — use lineHeight only, no paddingTop (padding creates click dead zones)
+  // '.cm-line + .cm-line': removed — caused posAtCoords dead zones between lines
 
   // Extra spacing after headings — padding, NOT margin
   '.cm-heading + .cm-line:not(.cm-heading)': {
-    paddingTop: '0.75em',
+    paddingTop: '0.5em',
   },
 
   // List item spacing — padding, NOT margin
   '.cm-list-item + .cm-list-item': {
-    paddingTop: '0.25em',
+    paddingTop: '0.1em',
   },
 
   // Block spacing - blockquote styles are defined below in === Blockquotes === section
@@ -123,7 +121,7 @@ export const livePreviewTheme = EditorView.theme({
   // Improved reading width
   '.cm-formatted-content': {
     maxWidth: '65ch',
-    lineHeight: '1.75',
+    lineHeight: '1.6',
   },
   
   // === Inline Styles ===
