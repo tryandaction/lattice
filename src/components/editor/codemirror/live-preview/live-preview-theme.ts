@@ -103,18 +103,8 @@ export const livePreviewTheme = EditorView.theme({
     padding: '0 1rem',
   },
 
-  // Vertical rhythm for paragraphs — use lineHeight only, no paddingTop (padding creates click dead zones)
-  // '.cm-line + .cm-line': removed — caused posAtCoords dead zones between lines
-
-  // Extra spacing after headings — padding, NOT margin
-  '.cm-heading + .cm-line:not(.cm-heading)': {
-    paddingTop: '0.5em',
-  },
-
-  // List item spacing — padding, NOT margin
-  '.cm-list-item + .cm-list-item': {
-    paddingTop: '0.1em',
-  },
+  // No vertical padding on .cm-line — padding creates posAtCoords() dead zones
+  // Use line-height on heading/list classes for visual spacing instead
 
   // Block spacing - blockquote styles are defined below in === Blockquotes === section
 
@@ -224,24 +214,18 @@ export const livePreviewTheme = EditorView.theme({
   
   '.cm-heading-1': {
     fontSize: '2em',
-    lineHeight: '1.3',
-    paddingTop: '0.8em',
-    paddingBottom: '0.3em',
+    lineHeight: '1.8',
     borderBottom: `1px solid ${colors.border}`,
   },
 
   '.cm-heading-2': {
     fontSize: '1.5em',
-    lineHeight: '1.35',
-    paddingTop: '0.6em',
-    paddingBottom: '0.2em',
+    lineHeight: '1.7',
   },
 
   '.cm-heading-3': {
     fontSize: '1.25em',
-    lineHeight: '1.4',
-    paddingTop: '0.4em',
-    paddingBottom: '0.1em',
+    lineHeight: '1.6',
   },
   
   '.cm-heading-4': {
@@ -314,8 +298,6 @@ export const livePreviewTheme = EditorView.theme({
     borderLeft: `4px solid ${colors.primary}`,
     paddingLeft: '1em',
     marginLeft: '0',
-    paddingTop: '0.5em',
-    paddingBottom: '0.5em',
     color: colors.mutedForeground,
     fontStyle: 'italic',
   },
