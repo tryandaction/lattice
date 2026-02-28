@@ -107,11 +107,8 @@ fn main() {
             // Ensure window starts maximized
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.maximize();
-            }
-            #[cfg(debug_assertions)]
-            {
-                // Open devtools in debug mode
-                // This helps with debugging during development
+                // Clear WebView2 cache on every startup so CSS/JS updates take effect immediately
+                let _ = window.clear_all_browsing_data();
             }
             Ok(())
         })
