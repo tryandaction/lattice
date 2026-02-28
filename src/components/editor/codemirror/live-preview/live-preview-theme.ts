@@ -214,23 +214,23 @@ export const livePreviewTheme = EditorView.theme({
   
   '.cm-heading-1': {
     fontSize: '2em',
-    lineHeight: '1.8',
+    lineHeight: '1.4',
     borderBottom: `1px solid ${colors.border}`,
   },
 
   '.cm-heading-2': {
     fontSize: '1.5em',
-    lineHeight: '1.7',
+    lineHeight: '1.4',
   },
 
   '.cm-heading-3': {
     fontSize: '1.25em',
-    lineHeight: '1.6',
+    lineHeight: '1.4',
   },
-  
+
   '.cm-heading-4': {
     fontSize: '1.1em',
-    lineHeight: '1.45',
+    lineHeight: '1.4',
   },
   
   // Heading content widgets (rendered without # markers)
@@ -242,15 +242,15 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-heading-1-content': {
     fontSize: '2em',
     fontWeight: 'bold',
-    lineHeight: '1.3',
+    lineHeight: '1.4',
   },
-  
+
   '.cm-heading-2-content': {
     fontSize: '1.5em',
     fontWeight: 'bold',
-    lineHeight: '1.35',
+    lineHeight: '1.4',
   },
-  
+
   '.cm-heading-3-content': {
     fontSize: '1.25em',
     fontWeight: 'bold',

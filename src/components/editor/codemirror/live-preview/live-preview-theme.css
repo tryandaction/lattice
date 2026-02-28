@@ -11,10 +11,8 @@
 
 /* No vertical padding on .cm-line — padding creates posAtCoords() dead zones */
 
-/* Smooth transitions for all interactive elements — opacity/color only, NOT layout properties */
-.cm-content * {
-  transition: opacity 0.15s ease, color 0.15s ease;
-}
+/* No blanket transition on .cm-content * — it causes layout recalculation in WebView2
+   and breaks getBoundingClientRect() during click. Transitions are applied per-element only. */
 
 /* Hide all formatting markers by default */
 .cm-formatting {
@@ -39,13 +37,13 @@
 }
 
 /* Heading styles - NO padding (padding on .cm-line breaks posAtCoords click positioning) */
-/* Use line-height for visual spacing instead */
-.cm-heading-1 { font-size: 2em; font-weight: 600; line-height: 1.8; }
-.cm-heading-2 { font-size: 1.5em; font-weight: 600; line-height: 1.7; }
-.cm-heading-3 { font-size: 1.25em; font-weight: 600; line-height: 1.6; }
-.cm-heading-4 { font-size: 1.1em; font-weight: 600; line-height: 1.5; }
-.cm-heading-5 { font-size: 1em; font-weight: 600; line-height: 1.5; }
-.cm-heading-6 { font-size: 0.9em; font-weight: 600; line-height: 1.5; opacity: 0.8; }
+/* Use line-height for visual spacing instead — keep values close to 1.4 to avoid large gaps */
+.cm-heading-1 { font-size: 2em; font-weight: 600; line-height: 1.4; }
+.cm-heading-2 { font-size: 1.5em; font-weight: 600; line-height: 1.4; }
+.cm-heading-3 { font-size: 1.25em; font-weight: 600; line-height: 1.4; }
+.cm-heading-4 { font-size: 1.1em; font-weight: 600; line-height: 1.4; }
+.cm-heading-5 { font-size: 1em; font-weight: 600; line-height: 1.4; }
+.cm-heading-6 { font-size: 0.9em; font-weight: 600; line-height: 1.4; opacity: 0.8; }
 
 /* Bold/Italic/Strikethrough markers */
 .cm-formatting-strong,
