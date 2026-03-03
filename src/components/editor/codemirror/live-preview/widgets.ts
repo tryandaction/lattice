@@ -1577,6 +1577,9 @@ export class MathWidget extends WidgetType {
       const isBlock = this.isBlock;
       const timeoutMs = 8000;
 
+      // Track if widget is still mounted to prevent rendering to removed DOM
+      let isMounted = true;
+
       const loadWithTimeout = Promise.race([
         loadKaTeX(),
         new Promise<never>((_, reject) =>
@@ -1586,12 +1589,20 @@ export class MathWidget extends WidgetType {
 
       loadWithTimeout
         .then((k) => {
+          // Check if container is still in DOM before rendering
+          if (!isMounted || !container.parentElement) {
+            return;
+          }
+
           try {
             container.innerHTML = '';
             k.render(latexStr, container, getKaTeXOptions(isBlock));
             container.classList.remove('cm-math-loading');
-          } catch {
+          } catch (e) {
             // Render failed — show raw source
+            if (!isMounted || !container.parentElement) {
+              return;
+            }
             container.innerHTML = '';
             container.textContent = isBlock ? `$$${latexStr}$$` : `$${latexStr}$`;
             container.classList.remove('cm-math-loading');
@@ -1599,11 +1610,23 @@ export class MathWidget extends WidgetType {
           }
         })
         .catch((err) => {
+          if (!isMounted || !container.parentElement) {
+            return;
+          }
           logger.warn('[KaTeX] Failed to load or render:', err);
-          // Keep raw LaTeX visible as fallback
+          // Show raw LaTeX as fallback
+          container.textContent = isBlock ? `$$${latexStr}$$` : `$${latexStr}$`;
           container.classList.remove('cm-math-loading');
           container.classList.add('cm-math-error');
         });
+
+      // Cleanup function to mark widget as unmounted
+      // Note: CodeMirror doesn't provide a destroy hook, but this helps prevent errors
+      setTimeout(() => {
+        if (!container.parentElement) {
+          isMounted = false;
+        }
+      }, 100);
     }
 
     return container;

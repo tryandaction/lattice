@@ -413,10 +413,10 @@ export const parsedElementsField = StateField.define<ParsedElement[]>({
  * 3. Escape sequences (\*) should be handled
  */
 const REGEX_PATTERNS = {
-  // Inline math: $...$ (not $$)
-  inlineMath: /(?<!\$)\$(?!\$)(.+?)\$(?!\$)/g,
-  // Inline math: \( ... \)
-  inlineMathParen: /\\\((.+?)\\\)/g,
+  // Inline math: $...$ (not $$) - exclude newlines to prevent multi-line matches
+  inlineMath: /(?<!\$)\$(?!\$)([^\n$]+?)\$(?!\$)/g,
+  // Inline math: \( ... \) - exclude newlines
+  inlineMathParen: /\\\(([^\n]+?)\\\)/g,
 
   // Bold+Italic: ***text*** - allows nested content
   boldItalic: /\*\*\*(.+?)\*\*\*/g,
@@ -2351,13 +2351,14 @@ function parseInlineElements(
     if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
 
     const latex = match[1];
-    if (latex.includes('\n')) continue;
-    
+
     // PHASE 4 FIX: Validate latex parameter to prevent "undefined" rendering
-    if (!latex || latex.trim() === '') {
-      console.warn('[parseInlineElements] Empty latex for inline math at', lineFrom + match.index);
+    if (!latex || latex.trim() === '' || latex === 'undefined' || latex === 'null') {
+      console.warn('[parseInlineElements] Invalid latex for inline math at', lineFrom + match.index, ':', latex);
       continue;
     }
+
+    if (latex.includes('\n')) continue;
 
     elements.push({
       type: ElementType.MATH_INLINE,
@@ -3212,9 +3213,19 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
     }
 
     // Skip empty ranges (can happen after clamping)
-    if (safeFrom === safeTo && element.type !== ElementType.HEADING &&
-        element.type !== ElementType.BLOCKQUOTE && element.type !== ElementType.LIST_ITEM) {
-      // Line decorations (HEADING, BLOCKQUOTE, LIST_ITEM) can have from === to
+    // Allow empty ranges for line decorations and certain inline elements
+    const allowEmptyRange =
+      element.type === ElementType.HEADING ||
+      element.type === ElementType.BLOCKQUOTE ||
+      element.type === ElementType.LIST_ITEM ||
+      element.type === ElementType.MATH_INLINE ||
+      element.type === ElementType.INLINE_BOLD ||
+      element.type === ElementType.INLINE_ITALIC ||
+      element.type === ElementType.INLINE_CODE ||
+      element.type === ElementType.INLINE_LINK ||
+      element.type === ElementType.INLINE_IMAGE;
+
+    if (safeFrom === safeTo && !allowEmptyRange) {
       debugLog('[buildDecorations] Skipping empty range after clamping');
       skippedCount++;
       continue;
@@ -3422,13 +3433,19 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
         const firstLine = doc.line(element.startLine);
         const context = getBlockContext(firstLine.text);
 
+        // Validate table data before creating widget
+        if (!data.rows || data.rows.length === 0) {
+          debugLog('[buildDecorations] Empty table rows at', element.from, element.to);
+          continue;
+        }
+
         // 1. 在第一行添加widget
         entries.push({
           from: firstLine.from,
           to: firstLine.from,
           decoration: Decoration.widget({
             widget: new TableWidget(
-              data.rows || [],
+              data.rows,
               data.hasHeader !== false,
               alignments,
               element.from,
@@ -3443,13 +3460,13 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
           isLine: true,
         });
 
-        // 2. 隐藏所有表格行
+        // 2. 隐藏所有表格行 - 使用 display:none 而非 visibility:hidden
         for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
           const line = doc.line(lineNum);
           entries.push({
             from: line.from,
             to: line.from,
-            decoration: Decoration.line({ class: 'cm-table-hidden' }),
+            decoration: Decoration.line({ class: 'cm-table-line-hidden' }),
             priority: element.type,
             isLine: true,
           });
@@ -3457,12 +3474,19 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
       } else {
         // 单行表格（罕见）
         const lineContext = getBlockContext(state.doc.lineAt(element.from).text);
+
+        // Validate table data before creating widget
+        if (!data.rows || data.rows.length === 0) {
+          debugLog('[buildDecorations] Empty table rows at', element.from, element.to);
+          continue;
+        }
+
         entries.push({
           from: element.from,
           to: element.to,
           decoration: Decoration.replace({
             widget: new TableWidget(
-              data.rows || [],
+              data.rows,
               data.hasHeader !== false,
               alignments,
               element.from,

@@ -98,9 +98,10 @@ export const livePreviewTheme = EditorView.theme({
     borderLeftWidth: '2px',
   },
   
-  // Line wrapping — NO transition, it breaks getBoundingClientRect() during click
+  // Line wrapping — NO padding on .cm-line (breaks posAtCoords() click positioning)
+  // Use margin on .cm-content instead for horizontal spacing
   '.cm-line': {
-    padding: '0 1rem',
+    padding: '0',
   },
 
   // No vertical padding on .cm-line — padding creates posAtCoords() dead zones
@@ -626,6 +627,11 @@ export const livePreviewTheme = EditorView.theme({
     padding: '0',
     lineHeight: '0',
     fontSize: '0',
+  },
+
+  // Hidden table lines - completely remove from layout to fix table disappearing
+  '.cm-table-line-hidden': {
+    display: 'none',
   },
   
   // === Images ===
