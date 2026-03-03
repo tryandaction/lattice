@@ -16,8 +16,12 @@
  */
 
 import type { JSONContent } from "@tiptap/core";
+import { logger } from './logger';
 
 export type ContentNode = JSONContent;
+
+// Maximum iterations to prevent infinite loops in parseInline
+const MAX_PARSE_ITERATIONS = 10000;
 
 /**
  * Check if text looks like markdown
@@ -291,11 +295,22 @@ function tokenize(text: string): Token[] {
  */
 function parseInline(text: string): ContentNode[] {
   if (!text) return [];
-  
+
   const result: ContentNode[] = [];
   let remaining = text;
-  
+  let iterations = 0;
+
   while (remaining.length > 0) {
+    // Safety check: prevent infinite loops
+    if (++iterations > MAX_PARSE_ITERATIONS) {
+      logger.error('parseInline exceeded iteration limit', {
+        textLength: text.length,
+        remainingLength: remaining.length,
+        iterations
+      });
+      throw new Error('Markdown parsing failed: content too complex or malformed');
+    }
+
     let matched = false;
     
     // Block math $$...$$ (shouldn't appear inline, but handle it)

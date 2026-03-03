@@ -36,6 +36,7 @@ import { wrapLatexForMarkdown } from '@/lib/formula-utils';
 import { sanitizeInlineHtml } from '@/lib/sanitize';
 import { logger } from '@/lib/logger';
 import { imageResolverFacet } from './image-resolver-facet';
+import { MarkdownErrorHandler } from '@/lib/markdown-error-handler';
 
 type KaTeXModule = typeof import('katex').default;
 type HighlightModule = typeof import('highlight.js').default;
@@ -388,16 +389,24 @@ export class FormattedTextWidget extends WidgetType {
         } else {
           mathSpan.textContent = part;
           // Try to render when KaTeX loads
-          loadKaTeX()
-            .then((k) => {
+          MarkdownErrorHandler.loadKaTeXWithRetry(
+            () => loadKaTeX().then((k) => {
               try {
                 mathSpan.innerHTML = '';
                 k.render(latex, mathSpan, getKaTeXOptions(false));
-              } catch {
+              } catch (renderError) {
                 mathSpan.textContent = part;
               }
-            })
-            .catch(() => {});
+            }),
+            latex
+          ).catch((error) => {
+            MarkdownErrorHandler.handleMathError(
+              error instanceof Error ? error : new Error(String(error)),
+              latex,
+              mathSpan,
+              'FormattedTextWidget'
+            );
+          });
         }
         container.appendChild(mathSpan);
       } else if (part) {
@@ -689,8 +698,14 @@ export class ImageWidget extends WidgetType {
         } else {
           img.src = this.url;
         }
-      }).catch(() => {
-        img.src = this.url;
+      }).catch((error) => {
+        MarkdownErrorHandler.handleImageError(
+          error instanceof Error ? error : new Error(String(error)),
+          this.url,
+          container,
+          'ImageWidget'
+        );
+        img.src = this.url; // Fallback to original URL
       });
     } else {
       img.src = this.url;
@@ -1189,7 +1204,11 @@ loadKaTeX()
   .then((k) => {
     katexForHeading = k;
   })
-  .catch(() => {});
+  .catch((error) => {
+    logger.error('Failed to load KaTeX for headings', {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  });
 
 /**
  * 标题内容Widget - 渲染标题文本（隐藏#标记）
@@ -1246,17 +1265,25 @@ export class HeadingContentWidget extends WidgetType {
         } else {
           mathSpan.textContent = part;
           // 等待KaTeX加载 (使用共享加载器)
-          loadKaTeX()
-            .then((k) => {
+          MarkdownErrorHandler.loadKaTeXWithRetry(
+            () => loadKaTeX().then((k) => {
               katexForHeading = k;
               try {
                 mathSpan.innerHTML = '';
                 k.render(latex, mathSpan, getKaTeXOptions(false));
-              } catch {
+              } catch (renderError) {
                 mathSpan.textContent = part;
               }
-            })
-            .catch(() => {});
+            }),
+            latex
+          ).catch((error) => {
+            MarkdownErrorHandler.handleMathError(
+              error instanceof Error ? error : new Error(String(error)),
+              latex,
+              mathSpan,
+              'HeadingContentWidget'
+            );
+          });
         }
         container.appendChild(mathSpan);
       } else if (part) {
@@ -1798,8 +1825,12 @@ export class CodeBlockWidget extends WidgetType {
             }
           }
         })
-        .catch(() => {
-          // 加载失败，保持纯文本
+        .catch((error) => {
+          MarkdownErrorHandler.handleGenericError(
+            error instanceof Error ? error : new Error(String(error)),
+            'highlight.js loading',
+            'CodeBlockWidget'
+          );
         });
     }
 

@@ -37,6 +37,7 @@
 import { EditorView, DecorationSet, Decoration } from '@codemirror/view';
 import { EditorState, StateField, StateEffect, Text } from '@codemirror/state';
 import { shouldRevealAt } from './cursor-context-plugin';
+import { logger } from '@/lib/logger';
 import {
   FormattedTextWidget,
   LinkWidget,
@@ -718,7 +719,7 @@ function parseMathBlocks(
           endLine: i + 1,
         });
       } else {
-        console.warn('[parseMathBlocks] Empty inline block math at line', i + 1);
+        logger.debug('Empty inline block math at line', { line: i + 1, context: 'parseMathBlocks' });
       }
       offset = lineEnd + 1;
       continue;
@@ -735,7 +736,7 @@ function parseMathBlocks(
           endLine: i + 1,
         });
       } else {
-        console.warn('[parseMathBlocks] Empty inline bracket math at line', i + 1);
+        logger.debug('Empty inline bracket math at line', { line: i + 1, context: 'parseMathBlocks' });
       }
       offset = lineEnd + 1;
       continue;
@@ -752,7 +753,7 @@ function parseMathBlocks(
           endLine: i + 1,
         });
       } else {
-        console.warn('[parseMathBlocks] Empty inline env math at line', i + 1);
+        logger.debug('Empty inline env math at line', { line: i + 1, context: 'parseMathBlocks' });
       }
       offset = lineEnd + 1;
       continue;
@@ -811,7 +812,7 @@ function parseMathBlocks(
           endLine: i + 1,
         });
       } else {
-        console.warn('[parseMathBlocks] Empty math block at lines', blockStartLine, '-', i + 1);
+        logger.debug('Empty math block at lines', { startLine: blockStartLine, endLine: i + 1, context: 'parseMathBlocks' });
       }
       inBlock = false;
       blockType = null;
@@ -828,7 +829,7 @@ function parseMathBlocks(
           endLine: i + 1,
         });
       } else {
-        console.warn('[parseMathBlocks] Empty single-dollar math block at lines', blockStartLine, '-', i + 1);
+        logger.debug('Empty single-dollar math block at lines', { startLine: blockStartLine, endLine: i + 1, context: 'parseMathBlocks' });
       }
       inBlock = false;
       blockType = null;
@@ -845,7 +846,7 @@ function parseMathBlocks(
           endLine: i + 1,
         });
       } else {
-        console.warn('[parseMathBlocks] Empty bracket math block at lines', blockStartLine, '-', i + 1);
+        logger.debug('Empty bracket math block at lines', { startLine: blockStartLine, endLine: i + 1, context: 'parseMathBlocks' });
       }
       inBlock = false;
       blockType = null;
@@ -863,7 +864,7 @@ function parseMathBlocks(
           endLine: i + 1,
         });
       } else {
-        console.warn('[parseMathBlocks] Empty env math block at lines', blockStartLine, '-', i + 1);
+        logger.debug('Empty env math block at lines', { startLine: blockStartLine, endLine: i + 1, context: 'parseMathBlocks' });
       }
       inBlock = false;
       blockType = null;
@@ -2324,7 +2325,7 @@ function parseInlineElements(
     if (latex.includes('\n')) continue;
 
     if (!latex || latex.trim() === '') {
-      console.warn('[parseInlineElements] Empty latex for inline math (paren) at', lineFrom + match.index);
+      logger.debug('Empty latex for inline math (paren)', { position: lineFrom + match.index, context: 'parseInlineElements' });
       continue;
     }
 
@@ -2354,7 +2355,7 @@ function parseInlineElements(
 
     // PHASE 4 FIX: Validate latex parameter to prevent "undefined" rendering
     if (!latex || latex.trim() === '' || latex === 'undefined' || latex === 'null') {
-      console.warn('[parseInlineElements] Invalid latex for inline math at', lineFrom + match.index, ':', latex);
+      logger.debug('Invalid latex for inline math', { position: lineFrom + match.index, latex, context: 'parseInlineElements' });
       continue;
     }
 
@@ -2413,7 +2414,7 @@ function parseInlineElements(
     const to = lineFrom + match.index + fullMatch.length;
     
     if (from >= to) {
-      console.warn('[parseInlineElements] Invalid bold range:', from, to, 'content:', content);
+      logger.debug('Invalid bold range', { from, to, content, context: 'parseInlineElements' });
       continue;
     }
     
@@ -2447,7 +2448,7 @@ function parseInlineElements(
     const to = lineFrom + match.index + fullMatch.length;
     
     if (from >= to) {
-      console.warn('[parseInlineElements] Invalid italic range:', from, to, 'content:', content);
+      logger.debug('Invalid italic range', { from, to, content, context: 'parseInlineElements' });
       continue;
     }
     
@@ -2524,7 +2525,7 @@ function parseInlineElements(
     const to = lineFrom + match.index + fullMatch.length;
 
     if (from >= to) {
-      console.warn('[parseInlineElements] Invalid inline code (double) range:', from, to, 'content:', content);
+      logger.debug('Invalid inline code (double) range', { from, to, content, context: 'parseInlineElements' });
       continue;
     }
 
@@ -2558,7 +2559,7 @@ function parseInlineElements(
     const to = lineFrom + match.index + fullMatch.length;
 
     if (from >= to) {
-      console.warn('[parseInlineElements] Invalid inline code range:', from, to, 'content:', content);
+      logger.debug('Invalid inline code range', { from, to, content, context: 'parseInlineElements' });
       continue;
     }
 
@@ -2616,7 +2617,7 @@ function parseInlineElements(
     const to = lineFrom + match.index + match[0].length;
     
     if (from >= to) {
-      console.warn('[parseInlineElements] Invalid wiki link range:', from, to, 'target:', target);
+      logger.debug('Invalid wiki link range', { from, to, target, context: 'parseInlineElements' });
       continue;
     }
 
@@ -2647,7 +2648,7 @@ function parseInlineElements(
     const to = lineFrom + match.index + match[0].length;
     
     if (from >= to) {
-      console.warn('[parseInlineElements] Invalid link range:', from, to, 'text:', match[1]);
+      logger.debug('Invalid link range', { from, to, text: match[1], context: 'parseInlineElements' });
       continue;
     }
     
@@ -2682,7 +2683,7 @@ function parseInlineElements(
       const from = lineFrom + match.index;
       const to = lineFrom + match.index + match[0].length;
       if (from >= to) {
-        console.warn('[parseInlineElements] Invalid reference image range:', from, to, 'alt:', altText);
+        logger.debug('Invalid reference image range', { from, to, alt: altText, context: 'parseInlineElements' });
         continue;
       }
 
@@ -2719,7 +2720,7 @@ function parseInlineElements(
       const from = lineFrom + match.index;
       const to = lineFrom + match.index + match[0].length;
       if (from >= to) {
-        console.warn('[parseInlineElements] Invalid reference link range:', from, to, 'text:', text);
+        logger.debug('Invalid reference link range', { from, to, text, context: 'parseInlineElements' });
         continue;
       }
 
@@ -2764,7 +2765,7 @@ function parseInlineElements(
       const from = lineFrom + startIndex;
       const to = lineFrom + match.index + match[0].length;
       if (from >= to) {
-        console.warn('[parseInlineElements] Invalid reference shortcut range:', from, to, 'label:', labelText);
+        logger.debug('Invalid reference shortcut range', { from, to, label: labelText, context: 'parseInlineElements' });
         continue;
       }
 
@@ -2804,7 +2805,7 @@ function parseInlineElements(
       const from = lineFrom + startIndex;
       const to = lineFrom + match.index + match[0].length;
       if (from >= to) {
-        console.warn('[parseInlineElements] Invalid reference image shortcut range:', from, to, 'alt:', altText);
+        logger.debug('Invalid reference image shortcut range', { from, to, alt: altText, context: 'parseInlineElements' });
         continue;
       }
 
@@ -2860,7 +2861,7 @@ function parseInlineElements(
     const to = lineFrom + match.index + match[0].length;
     
     if (from >= to) {
-      console.warn('[parseInlineElements] Invalid image range:', from, to, 'alt:', match[1]);
+      logger.debug('Invalid image range', { from, to, alt: match[1], context: 'parseInlineElements' });
       continue;
     }
     
@@ -3343,7 +3344,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
         // 多行公式块：widget + 隐藏行
         // CRITICAL: Validate latex parameter
         if (!element.latex || element.latex.trim() === '') {
-          console.warn('[buildDecorations] Empty latex for MATH_BLOCK at', element.from, element.to);
+          logger.debug('Empty latex for MATH_BLOCK', { from: element.from, to: element.to, context: 'buildDecorations' });
           continue;
         }
 
@@ -3383,7 +3384,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
       } else {
         // 单行公式块
         if (!element.latex || element.latex.trim() === '') {
-          console.warn('[buildDecorations] Empty latex for single-line MATH_BLOCK at', element.from, element.to);
+          logger.debug('Empty latex for single-line MATH_BLOCK', { from: element.from, to: element.to, context: 'buildDecorations' });
           continue;
         }
         const lineContext = getBlockContext(state.doc.lineAt(element.from).text);
@@ -3883,7 +3884,7 @@ function createDecorationForElement(
       // CRITICAL: Ensure we replace the ENTIRE syntax range including ** markers
       // from and to should cover **text** not just text
       if (element.from >= element.to) {
-        console.warn('[Decoration] Invalid range for INLINE_BOLD:', element.from, element.to);
+        logger.debug('Invalid range for INLINE_BOLD', { from: element.from, to: element.to, context: 'buildDecorations' });
         return null;
       }
       
@@ -3914,7 +3915,7 @@ function createDecorationForElement(
     case ElementType.INLINE_ITALIC:
       // CRITICAL: Ensure we replace the ENTIRE syntax range including * or _ markers
       if (element.from >= element.to) {
-        console.warn('[Decoration] Invalid range for INLINE_ITALIC:', element.from, element.to);
+        logger.debug('Invalid range for INLINE_ITALIC', { from: element.from, to: element.to, context: 'buildDecorations' });
         return null;
       }
       return Decoration.replace({
@@ -3947,7 +3948,7 @@ function createDecorationForElement(
     case ElementType.INLINE_LINK:
       // CRITICAL: Ensure we replace the ENTIRE syntax range including []() markers
       if (element.from >= element.to) {
-        console.warn('[Decoration] Invalid range for INLINE_LINK:', element.from, element.to);
+        logger.debug('Invalid range for INLINE_LINK', { from: element.from, to: element.to, context: 'buildDecorations' });
         return null;
       }
       if (data?.isWikiLink) {
@@ -4110,7 +4111,7 @@ function createDecorationForElement(
       // 使用MathWidget渲染行内公式
       // CRITICAL: Validate latex parameter to prevent "undefined" rendering
       if (!element.latex || element.latex.trim() === '') {
-        console.warn('[Decoration] Empty latex for INLINE_MATH at', element.from, element.to);
+        logger.debug('Empty latex for INLINE_MATH', { from: element.from, to: element.to, context: 'buildDecorations' });
         return null;
       }
       
@@ -4136,7 +4137,7 @@ function createDecorationForElement(
       // 使用MathWidget渲染块级公式
       // CRITICAL: Validate latex parameter to prevent "undefined" rendering
       if (!element.latex || element.latex.trim() === '') {
-        console.warn('[Decoration] Empty latex for MATH_BLOCK at', element.from, element.to);
+        logger.debug('Empty latex for MATH_BLOCK', { from: element.from, to: element.to, context: 'buildDecorations' });
         return null;
       }
       

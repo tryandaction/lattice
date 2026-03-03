@@ -18,6 +18,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { bracketMatching } from '@codemirror/language';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import { logger } from '@/lib/logger';
 
 import { cursorContextExtension, setEditorFocus } from './cursor-context-plugin';
 import { decorationCoordinatorExtension, parsedElementsField, clearDecorationCache } from './decoration-coordinator';
@@ -372,7 +373,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     ]).then(() => {
       setLibrariesLoaded(true);
     }).catch((err) => {
-      console.error('Failed to load libraries:', err);
+      logger.error('Failed to load libraries', { error: err instanceof Error ? err.message : String(err) });
       setLibrariesLoaded(true); // Continue anyway
     });
   }, []);
@@ -515,7 +516,10 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         
         setIsLoading(false);
       } catch (err) {
-        console.error('[EditorInit] Failed to initialize Live Preview Editor:', err);
+        logger.error('Failed to initialize Live Preview Editor', {
+          error: err instanceof Error ? err.message : String(err),
+          context: 'EditorInit'
+        });
         setError(err instanceof Error ? err : new Error('Failed to initialize editor'));
         setIsLoading(false);
       }
