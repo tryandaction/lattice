@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useLayoutEffect } from "react";
-import { Trash2, Pencil } from "lucide-react";
+import { Trash2, Pencil, FilePlus, FolderPlus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface FileContextMenuProps {
@@ -10,13 +10,16 @@ interface FileContextMenuProps {
   onRename: () => void;
   onDelete: () => void;
   onClose: () => void;
+  onNewFile?: () => void;
+  onNewFolder?: () => void;
+  isDirectory?: boolean;
 }
 
 /**
  * Context menu for file operations
  * Adjusts position to stay within viewport bounds
  */
-export function FileContextMenu({ x, y, onRename, onDelete, onClose }: FileContextMenuProps) {
+export function FileContextMenu({ x, y, onRename, onDelete, onClose, onNewFile, onNewFolder, isDirectory }: FileContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Adjust position to stay within viewport
@@ -78,6 +81,41 @@ export function FileContextMenu({ x, y, onRename, onDelete, onClose }: FileConte
       className="fixed z-50 min-w-[160px] rounded-md border border-border bg-popover p-1 shadow-md"
       style={{ left: x, top: y }}
     >
+      {isDirectory && onNewFile && (
+        <button
+          onClick={() => {
+            onNewFile();
+            onClose();
+          }}
+          className={cn(
+            "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
+            "hover:bg-accent transition-colors",
+            "focus:outline-none focus:bg-accent"
+          )}
+        >
+          <FilePlus className="h-4 w-4" />
+          <span>New File</span>
+        </button>
+      )}
+      {isDirectory && onNewFolder && (
+        <button
+          onClick={() => {
+            onNewFolder();
+            onClose();
+          }}
+          className={cn(
+            "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
+            "hover:bg-accent transition-colors",
+            "focus:outline-none focus:bg-accent"
+          )}
+        >
+          <FolderPlus className="h-4 w-4" />
+          <span>New Folder</span>
+        </button>
+      )}
+      {(isDirectory && (onNewFile || onNewFolder)) && (
+        <div className="my-1 h-px bg-border" />
+      )}
       <button
         onClick={() => {
           onRename();

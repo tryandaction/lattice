@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Live Preview Diagnostics
  * Validates parsed elements for test fixtures without relying on browser UI.
  */
@@ -6,19 +6,14 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { describe, it, expect } from "vitest";
+import { LIVE_PREVIEW_DIAGNOSTIC_FIXTURES } from "@/components/diagnostics/live-preview-content";
 import {
   parseDocumentFromText,
   resolveConflicts,
   ElementType,
 } from "../decoration-coordinator";
 
-const FIXTURES = [
-  "public/test-syntax-hiding.md",
-  "public/test-nested-formatting.md",
-  "public/test-10000-lines.md",
-  "public/test-markdown-coverage.md",
-  "public/test-math-block-prefix.md",
-];
+const FIXTURES = LIVE_PREVIEW_DIAGNOSTIC_FIXTURES.map((fixture) => `public${fixture.url}`);
 
 const INLINE_TYPES = new Set<ElementType>([
   ElementType.INLINE_BOLD,
@@ -67,7 +62,6 @@ describe("live preview diagnostics", () => {
         }
       }
 
-      // Ensure inline code/math do not contain nested elements
       for (const container of elements) {
         if (!NO_NESTING_TYPES.has(container.type)) continue;
         for (const other of elements) {
@@ -82,7 +76,6 @@ describe("live preview diagnostics", () => {
         }
       }
 
-      // Helpful console summary for manual review
       // eslint-disable-next-line no-console
       console.log(`[diagnostics] ${fixture}`, counts);
     }

@@ -111,10 +111,10 @@ function CellOutput({ output }: { output: JupyterOutput }) {
       `${output.ename}: ${output.evalue}`,
       ...(output.traceback || []),
     ].join("\n");
-    
+
     return (
-      <div className="rounded bg-destructive/10 p-3">
-        <AnsiText text={errorText} className="text-destructive" />
+      <div className="rounded bg-red-500/15 p-3 border border-red-500/30">
+        <AnsiText text={errorText} className="text-red-400" />
       </div>
     );
   }

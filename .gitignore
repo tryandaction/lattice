@@ -49,3 +49,9 @@ app-icon.png
 
 # releases (too large for git)
 /releases/
+
+# local QA artifacts
+/output/
+/test-results/
+/.playwright-cli/
+lattice-*.log

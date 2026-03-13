@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Live Preview Widgets - 统一的Widget库
  *
  * 从inline-decoration-plugin、block-decoration-plugin、code-block-plugin提取所有Widget类，统一管理。
@@ -29,7 +29,9 @@
  */
 
 import { EditorView, WidgetType } from '@codemirror/view';
-import { handleWidgetClick, setCursorPosition } from './cursor-positioning';
+import { createElement } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { handleWidgetClick } from './cursor-positioning';
 import { loadKaTeX } from './katex-loader';
 import { getKaTeXOptions } from './katex-config';
 import { wrapLatexForMarkdown } from '@/lib/formula-utils';
@@ -37,6 +39,9 @@ import { sanitizeInlineHtml } from '@/lib/sanitize';
 import { logger } from '@/lib/logger';
 import { imageResolverFacet } from './image-resolver-facet';
 import { MarkdownErrorHandler } from '@/lib/markdown-error-handler';
+import { enterCodeBlockSourceMode, enterMathSourceMode } from './source-mode';
+import { TableEditor } from './table-editor';
+export { tableToMarkdown, insertTableColumn, deleteTableColumn, insertTableDataRow, deleteTableDataRow, setTableColumnAlignment, type TableAlignment } from './table-editor';
 
 type KaTeXModule = typeof import('katex').default;
 type HighlightModule = typeof import('highlight.js').default;
@@ -1416,19 +1421,28 @@ export class HorizontalRuleWidget extends WidgetType {
     super();
   }
 
+  get estimatedHeight() {
+    return -1;
+  }
+
+  updateDOM() {
+    return false;
+  }
+
   toDOM(view: EditorView) {
     const container = document.createElement('div');
     container.className = 'cm-horizontal-rule-container';
+    container.dataset.from = String(this.originalFrom);
+    container.dataset.to = String(this.originalTo);
 
     const hr = document.createElement('hr');
     hr.className = 'cm-horizontal-rule';
 
     container.appendChild(hr);
 
-    // 点击定位光标
-    container.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+    container.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       view.dispatch({
         selection: { anchor: this.originalFrom, head: this.originalFrom },
         scrollIntoView: true,
@@ -1436,15 +1450,32 @@ export class HorizontalRuleWidget extends WidgetType {
       view.focus();
     });
 
+    requestAnimationFrame(() => {
+      if (container.isConnected) {
+        view.requestMeasure();
+      }
+    });
+
     return container;
+  }
+
+  coordsAt(dom: HTMLElement, pos: number, _side: number) {
+    const rect = dom.getBoundingClientRect();
+    if (!rect.width && !rect.height) {
+      return null;
+    }
+
+    const midpoint = this.originalFrom + Math.floor((this.originalTo - this.originalFrom) / 2);
+    const x = pos <= midpoint ? rect.left : rect.right;
+    return { left: x, right: x, top: rect.top, bottom: rect.bottom };
   }
 
   eq() {
     return true;
   }
 
-  ignoreEvent(e: Event) {
-    return e.type !== 'mousedown';
+  ignoreEvent(event: Event) {
+    return /^(mouse|pointer|click|contextmenu)/.test(event.type);
   }
 }
 
@@ -1475,6 +1506,14 @@ export class MathWidget extends WidgetType {
     return other.latex === this.latex && other.isBlock === this.isBlock;
   }
 
+  get estimatedHeight() {
+    return -1;
+  }
+
+  updateDOM() {
+    return false;
+  }
+
   toDOM(view: EditorView) {
     const container = document.createElement(this.isBlock ? 'div' : 'span');
     container.className = this.isBlock ? 'cm-math-block' : 'cm-math-inline';
@@ -1498,41 +1537,11 @@ export class MathWidget extends WidgetType {
       return container;
     }
 
-    // 单击: 根据点击左右半区定位光标到公式前或后
+    // 单击: 切换到源码态，光标落到公式内部起点
     container.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const me = e as MouseEvent;
-      const rect = container.getBoundingClientRect();
-      const clickedRightHalf = rect.width > 0 && (me.clientX - rect.left) / rect.width >= 0.5;
-      setCursorPosition(view, clickedRightHalf ? this.to : this.from);
-      view.focus();
-    });
-
-    // 双击: 打开MathLive可视化编辑器
-    container.addEventListener('dblclick', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      // 获取容器位置
-      const rect = container.getBoundingClientRect();
-
-      // 派发自定义事件打开MathEditor
-      view.dom.dispatchEvent(
-        new CustomEvent('open-math-editor', {
-          detail: {
-            latex: this.latex,
-            isBlock: this.isBlock,
-            from: this.from,
-            to: this.to,
-            position: {
-              top: rect.bottom,
-              left: rect.left,
-            },
-          },
-          bubbles: true,
-        })
-      );
+      enterMathSourceMode(view, this.from, this.to);
     });
 
     // 右键: 复制LaTeX源码
@@ -1574,6 +1583,12 @@ export class MathWidget extends WidgetType {
     if (katex) {
       try {
         katex.render(this.latex, container, getKaTeXOptions(this.isBlock));
+
+        // CRITICAL FIX: Even for synchronous render, request measure for block math
+        // This ensures CodeMirror recalculates coordinates after initial render
+        if (this.isBlock) {
+          view.requestMeasure();
+        }
       } catch (e) {
         // 显示错误和原始LaTeX
         container.innerHTML = '';
@@ -1593,6 +1608,11 @@ export class MathWidget extends WidgetType {
         errorWrapper.appendChild(errorSource);
         container.appendChild(errorWrapper);
         container.classList.add('cm-math-error');
+
+        // Also request measure on error
+        if (this.isBlock) {
+          view.requestMeasure();
+        }
       }
     } else {
       // KaTeX未加载，显示原始LaTeX作为占位符
@@ -1625,6 +1645,12 @@ export class MathWidget extends WidgetType {
             container.innerHTML = '';
             k.render(latexStr, container, getKaTeXOptions(isBlock));
             container.classList.remove('cm-math-loading');
+
+            // CRITICAL FIX: Notify CodeMirror to recalculate coordinates after async render
+            // This fixes cursor positioning issues after math formulas
+            if (isBlock) {
+              view.requestMeasure();
+            }
           } catch (e) {
             // Render failed — show raw source
             if (!isMounted || !container.parentElement) {
@@ -1634,6 +1660,11 @@ export class MathWidget extends WidgetType {
             container.textContent = isBlock ? `$$${latexStr}$$` : `$${latexStr}$`;
             container.classList.remove('cm-math-loading');
             container.classList.add('cm-math-error');
+
+            // Also request measure on error (height may have changed)
+            if (isBlock) {
+              view.requestMeasure();
+            }
           }
         })
         .catch((err) => {
@@ -1645,6 +1676,11 @@ export class MathWidget extends WidgetType {
           container.textContent = isBlock ? `$$${latexStr}$$` : `$${latexStr}$`;
           container.classList.remove('cm-math-loading');
           container.classList.add('cm-math-error');
+
+          // Request measure even on load failure
+          if (isBlock) {
+            view.requestMeasure();
+          }
         });
 
       // Cleanup function to mark widget as unmounted
@@ -1659,8 +1695,26 @@ export class MathWidget extends WidgetType {
     return container;
   }
 
+  coordsAt(dom: HTMLElement, pos: number) {
+    const rect = dom.getBoundingClientRect();
+    if (!rect.width && !rect.height) {
+      return null;
+    }
+
+    if (this.isBlock) {
+      const midpoint = this.from + Math.floor((this.to - this.from) / 2);
+      const x = pos <= midpoint ? rect.left : rect.right;
+      return { left: x, right: x, top: rect.top, bottom: rect.bottom };
+    }
+
+    const length = Math.max(1, this.to - this.from);
+    const ratio = Math.max(0, Math.min(1, (pos - this.from) / length));
+    const x = rect.left + rect.width * ratio;
+    return { left: x, right: x, top: rect.top, bottom: rect.bottom };
+  }
+
   ignoreEvent(e: Event) {
-    return e.type !== 'mousedown' && e.type !== 'dblclick' && e.type !== 'contextmenu';
+    return /^(mouse|pointer|click|contextmenu)/.test(e.type);
   }
 }
 
@@ -1733,14 +1787,23 @@ export class CodeBlockWidget extends WidgetType {
     );
   }
 
-  toDOM(_view: EditorView) {
+  toDOM(view: EditorView) {
     const container = document.createElement('div');
     container.className = 'cm-code-block-widget';
     container.dataset.from = String(this.from);
     container.dataset.to = String(this.to);
     applyBlockContext(container, this.context);
 
-    // Let CodeMirror handle cursor positioning naturally - no custom mousedown handlers
+    container.addEventListener('mousedown', (event) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('.cm-code-block-copy')) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      enterCodeBlockSourceMode(view, this.from, this.to);
+    });
 
     // 头部：语言标签 + 复制按钮
     const header = document.createElement('div');
@@ -1842,9 +1905,7 @@ export class CodeBlockWidget extends WidgetType {
   }
 
   ignoreEvent(_event: Event) {
-    // Don't intercept events - let CodeMirror handle cursor positioning
-    // (Copy button still works through normal event propagation)
-    return false;
+    return true;
   }
 }
 
@@ -1860,6 +1921,49 @@ type ReferenceDefinition = {
   url: string;
   title?: string;
 };
+
+type TableWidgetRootHost = HTMLDivElement & {
+  __tableRoot?: Root;
+  __tableUnmountTimer?: number;
+};
+
+function scheduleTableRootUnmount(host: TableWidgetRootHost): void {
+  if (host.__tableUnmountTimer !== undefined) {
+    return;
+  }
+
+  const root = host.__tableRoot;
+  if (!root) {
+    return;
+  }
+
+  host.__tableRoot = undefined;
+
+  const win = host.ownerDocument.defaultView ?? window;
+  host.__tableUnmountTimer = win.setTimeout(() => {
+    host.__tableUnmountTimer = undefined;
+    root.unmount();
+  }, 0);
+}
+
+function isMarkdownTableSeparatorCell(value: string): boolean {
+  return /^:?-{3,}:?$/.test(value.trim());
+}
+
+function stripMarkdownTableSeparatorRow(rows: string[][], hasHeader: boolean): string[][] {
+  if (!hasHeader || rows.length < 2) {
+    return rows.map((row) => [...row]);
+  }
+
+  const [headerRow, maybeSeparator, ...bodyRows] = rows;
+  const isSeparatorRow = maybeSeparator.length > 0 && maybeSeparator.every(isMarkdownTableSeparatorCell);
+
+  if (!isSeparatorRow) {
+    return rows.map((row) => [...row]);
+  }
+
+  return [[...headerRow], ...bodyRows.map((row) => [...row])];
+}
 
 function normalizeReferenceLabel(label: string): string {
   return label.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -2103,139 +2207,44 @@ export class TableWidget extends WidgetType {
   eq(other: TableWidget) {
     return (
       JSON.stringify(other.rows) === JSON.stringify(this.rows) &&
+      other.hasHeader === this.hasHeader &&
+      JSON.stringify(other.alignments) === JSON.stringify(this.alignments) &&
       other.referenceSignature === this.referenceSignature
     );
   }
 
   toDOM(view: EditorView) {
-    const wrapper = document.createElement('div');
+    const wrapper = document.createElement('div') as TableWidgetRootHost;
     wrapper.className = 'cm-table-widget-wrapper';
     wrapper.dataset.from = String(this.from);
     wrapper.dataset.to = String(this.to);
     applyBlockContext(wrapper, this.context);
 
-    const table = document.createElement('table');
-    table.className = 'cm-table-widget';
-    table.dataset.from = String(this.from);
-    table.dataset.to = String(this.to);
+    const root = createRoot(wrapper);
+    wrapper.__tableRoot = root;
+    root.render(
+      createElement(TableEditor, {
+        rows: stripMarkdownTableSeparatorRow(this.rows, this.hasHeader),
+        hasHeader: this.hasHeader,
+        alignments: [...this.alignments],
+        from: this.from,
+        to: this.to,
+        view,
+        onUpdate: () => undefined,
+      })
+    );
 
-    // 点击定位光标到表格开始
-    wrapper.addEventListener('mousedown', (e) => {
-      // 不拦截wiki链接和普通链接点击
-      if ((e.target as HTMLElement).classList.contains('cm-wiki-link-table')) return;
-      if ((e.target as HTMLElement).classList.contains('cm-link-table')) return;
-
-      handleWidgetClick(view, wrapper, e, this.from, this.to);
-    });
-
-    // 计算列宽（基于内容）
-    const colCount = this.rows.length > 0 ? Math.max(1, ...this.rows.map(r => r.length)) : 1;
-    const colWidths: number[] = new Array(colCount).fill(0);
-
-    const getDisplayTextForWidth = (cell: string) => {
-      let text = cell;
-
-      // Links & images
-      text = text.replace(/!\[([^\]]*?)\]\([^)]+\)/g, '$1');
-      text = text.replace(/\[([^\]]+?)\]\([^)]+\)/g, '$1');
-      text = text.replace(/\[([^\]]+?)\]\s*\[[^\]]*\]/g, '$1');
-      text = text.replace(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_match, target, alias) => alias || target);
-
-      // Inline code
-      text = text.replace(/``([^`]+?)``/g, '$1');
-      text = text.replace(/`([^`]+?)`/g, '$1');
-
-      // Inline math delimiters
-      text = text.replace(/\$([^$\n]+)\$/g, '$1');
-      text = text.replace(/\\\((.+?)\\\)/g, '$1');
-
-      // Formatting markers
-      text = text.replace(/(\*\*|__|~~|==|\*|_)/g, '');
-
-      // Escaped pipes
-      text = text.replace(/\\\|/g, '|');
-
-      return text.trim();
-    };
-
-    // 测量每列的最大内容宽度
-    this.rows.forEach((row, rowIndex) => {
-      // 跳过分隔行
-      if (rowIndex === 1 && this.hasHeader && row.every(c => /^[-:]+$/.test(c.trim()))) {
-        return;
-      }
-      row.forEach((cell, colIndex) => {
-        // 使用纯文本长度计算宽度
-        const plainText = getDisplayTextForWidth(cell);
-        const cellLen = plainText.length;
-        colWidths[colIndex] = Math.max(colWidths[colIndex], cellLen);
-      });
-    });
-
-    // 创建colgroup设置列宽
-    const colgroup = document.createElement('colgroup');
-    const totalWidth = colWidths.reduce((a, b) => a + b, 0);
-    const minPercentage = Math.min(10, 100 / colCount);
-    colWidths.forEach(width => {
-      const col = document.createElement('col');
-      // 设置比例宽度（最小10%）
-      const percentage = totalWidth > 0
-        ? Math.max(minPercentage, (width / totalWidth) * 100)
-        : 100 / colCount;
-      col.style.width = `${percentage}%`;
-      colgroup.appendChild(col);
-    });
-    table.appendChild(colgroup);
-
-    this.rows.forEach((row, rowIndex) => {
-      // 跳过分隔行
-      if (rowIndex === 1 && this.hasHeader && row.every(c => /^[-:]+$/.test(c.trim()))) {
-        return;
-      }
-
-      const tr = document.createElement('tr');
-
-      for (let colIndex = 0; colIndex < colCount; colIndex++) {
-        const cell = row[colIndex] ?? '';
-        const cellEl = document.createElement(
-          this.hasHeader && rowIndex === 0 ? 'th' : 'td'
-        );
-        const alignment = this.alignments[colIndex];
-        if (alignment) {
-          cellEl.style.textAlign = alignment;
-        }
-        // 解析并渲染单元格中的行内Markdown
-        const cellContent = cell.trim();
-        cellEl.innerHTML = sanitizeInlineHtml(parseInlineMarkdown(cellContent, this.referenceDefs));
-        tr.appendChild(cellEl);
-      }
-
-      table.appendChild(tr);
-    });
-
-    // 为表格中的wiki链接添加点击处理
-    table.addEventListener('click', (e) => {
-      const target = e.target as HTMLElement;
-      if (target.classList.contains('cm-wiki-link-table')) {
-        e.preventDefault();
-        e.stopPropagation();
-        const linkTarget = target.dataset.target;
-        if (linkTarget) {
-          // 分发wiki链接点击事件
-          table.dispatchEvent(new CustomEvent('wiki-link-click', {
-            detail: { target: linkTarget },
-            bubbles: true,
-          }));
-        }
-      }
-    });
-
-    wrapper.appendChild(table);
+    view.requestMeasure();
     return wrapper;
   }
 
-  ignoreEvent(e: Event) {
-    return e.type !== 'mousedown';
+  destroy(dom: HTMLElement) {
+    scheduleTableRootUnmount(dom as TableWidgetRootHost);
+  }
+
+  ignoreEvent() {
+    return true;
   }
 }
+
 

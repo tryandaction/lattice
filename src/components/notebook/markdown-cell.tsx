@@ -130,12 +130,12 @@ function RenderedMarkdown({ content }: { content: string }) {
           h6: ({ children }) => <h6 className="text-sm font-medium mt-2 mb-1 text-muted-foreground">{children}</h6>,
           // Paragraphs - use div to avoid nesting issues with pre/code blocks
           p: ({ children, node }: MarkdownProps<"p">) => {
-            // Check if children contain block-level elements
+            // Check if children contain block-level elements or code elements
             const typedNode = node as { children?: Array<{ type?: string; tagName?: string }> } | undefined;
             const hasBlockChild = typedNode?.children?.some(
               (child) =>
                 child.type === 'element' &&
-                ['pre', 'div', 'table', 'ul', 'ol', 'blockquote', 'img'].includes(child.tagName ?? '')
+                ['pre', 'div', 'table', 'ul', 'ol', 'blockquote', 'img', 'code'].includes(child.tagName ?? '')
             );
             // Use div if contains block elements, otherwise use p
             if (hasBlockChild) {

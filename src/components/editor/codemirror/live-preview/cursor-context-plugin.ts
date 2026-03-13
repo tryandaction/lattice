@@ -308,6 +308,20 @@ export function shouldRevealAt(
           }
         }
       }
+
+      // Math blocks reveal with cursor; code blocks are controlled by explicit
+      // double-click source mode and do not auto-reveal on cursor move.
+      if (elementType === ElementType.MATH_BLOCK) {
+        // Check if cursor is inside the element
+        if (selection.head >= from && selection.head <= to) {
+          return true; // Reveal source code for editing
+        }
+        // Check if selection overlaps with the element
+        if (!selection.empty && selection.from <= to && selection.to >= from) {
+          return true; // Reveal source code for editing
+        }
+        return false; // Show as widget when cursor is outside
+      }
     }
 
     // Check if cursor is inside the range

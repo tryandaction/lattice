@@ -1,20 +1,24 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import { pythonWorkerManager, type ExecutionOutput, type WorkerOutMessage } from "@/lib/python-worker-manager";
+import type { IKernelManager, ExecutionOutput as KernelExecutionOutput, KernelStatus } from "@/lib/kernel/kernel-manager";
+import { createKernel } from "@/lib/kernel/kernel-factory";
 
 export type ExecutionState = "idle" | "running" | "interrupted";
 
 export interface CellExecutionResult {
   cellId: string;
-  outputs: ExecutionOutput[];
+  outputs: KernelExecutionOutput[];
   executionCount: number;
   success: boolean;
+  executionTime?: number;
+  variables?: Record<string, any>;
 }
 
 interface UseNotebookExecutorOptions {
+  kernel?: IKernelManager;
   onCellStart?: (cellId: string) => void;
-  onCellOutput?: (cellId: string, output: ExecutionOutput) => void;
+  onCellOutput?: (cellId: string, output: KernelExecutionOutput) => void;
   onCellComplete?: (cellId: string, result: CellExecutionResult) => void;
   onAllComplete?: (results: CellExecutionResult[]) => void;
 }
@@ -24,12 +28,13 @@ interface UseNotebookExecutorOptions {
  * Supports Run All, Run All Above, Run All Below, and interruption
  */
 export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
-  const { onCellStart, onCellOutput, onCellComplete, onAllComplete } = options;
-  
+  const { kernel: externalKernel, onCellStart, onCellOutput, onCellComplete, onAllComplete } = options;
+
   const [executionState, setExecutionState] = useState<ExecutionState>("idle");
   const [currentCellId, setCurrentCellId] = useState<string | null>(null);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
-  
+  const [kernel, setKernel] = useState<IKernelManager | null>(externalKernel || null);
+
   const interruptedRef = useRef(false);
   const executionCountRef = useRef(0);
 
@@ -40,73 +45,61 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
     cellId: string,
     code: string
   ): Promise<CellExecutionResult> => {
-    return new Promise((resolve) => {
-      const outputs: ExecutionOutput[] = [];
-      const executionId = `${cellId}-${Date.now()}`;
-      executionCountRef.current += 1;
-      const executionCount = executionCountRef.current;
+    if (!kernel) {
+      return {
+        cellId,
+        outputs: [{
+          type: "error",
+          content: {
+            ename: "KernelError",
+            evalue: "No kernel available",
+            traceback: ["No kernel available"],
+          }
+        }],
+        executionCount: 0,
+        success: false,
+      };
+    }
 
-      // Set up message handler
-      const unsubscribe = pythonWorkerManager.onMessage(executionId, (message: WorkerOutMessage) => {
-        let output: ExecutionOutput | null = null;
+    executionCountRef.current += 1;
+    const executionCount = executionCountRef.current;
 
-        switch (message.type) {
-          case "stdout":
-            output = { type: "text", content: message.content };
-            break;
-          case "stderr":
-            output = { type: "text", content: message.content };
-            break;
-          case "image":
-            output = { type: "image", content: message.payload };
-            break;
-          case "result":
-            if (message.value && message.value !== "None") {
-              output = { type: "text", content: message.value };
-            }
-            // Execution complete - success
-            unsubscribe();
-            resolve({
-              cellId,
-              outputs,
-              executionCount,
-              success: true,
-            });
-            return;
-          case "error":
-            output = {
-              type: "error",
-              content: message.traceback || message.error,
-            };
-            // Execution complete - error
-            unsubscribe();
-            resolve({
-              cellId,
-              outputs: [...outputs, output],
-              executionCount,
-              success: false,
-            });
-            return;
-        }
-
-        if (output) {
-          outputs.push(output);
-          onCellOutput?.(cellId, output);
-        }
+    try {
+      const result = await kernel.execute(code, {
+        silent: false,
+        storeHistory: true,
       });
 
-      // Start execution
-      pythonWorkerManager.runCode(code, executionId).catch((error) => {
-        unsubscribe();
-        resolve({
-          cellId,
-          outputs: [{ type: "error", content: error.message }],
-          executionCount,
-          success: false,
-        });
+      // Convert outputs and notify
+      result.outputs.forEach(output => {
+        onCellOutput?.(cellId, output);
       });
-    });
-  }, [onCellOutput]);
+
+      return {
+        cellId,
+        outputs: result.outputs,
+        executionCount: result.executionCount || executionCount,
+        success: result.status === "ok",
+        executionTime: result.executionTime,
+        variables: result.variables,
+      };
+    } catch (error) {
+      const errorOutput: KernelExecutionOutput = {
+        type: "error",
+        content: {
+          ename: "ExecutionError",
+          evalue: error instanceof Error ? error.message : String(error),
+          traceback: [error instanceof Error ? error.message : String(error)],
+        },
+      };
+      return {
+        cellId,
+        outputs: [errorOutput],
+        executionCount,
+        success: false,
+      };
+    }
+  }, [kernel, onCellOutput]);
 
   /**
    * Run multiple cells sequentially
@@ -116,9 +109,32 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
   ): Promise<CellExecutionResult[]> => {
     // Filter to only code cells
     const codeCells = cells.filter(cell => cell.type === "code");
-    
+
     if (codeCells.length === 0) {
       return [];
+    }
+
+    // Initialize kernel if needed
+    if (!kernel) {
+      const defaultKernel = createKernel({ type: "pyodide" });
+      setKernel(defaultKernel);
+      try {
+        await defaultKernel.initialize();
+      } catch (error) {
+        return [{
+          cellId: codeCells[0].id,
+          outputs: [{
+            type: "error",
+            content: {
+              ename: "KernelError",
+              evalue: `Kernel initialization failed: ${error}`,
+              traceback: [`Kernel initialization failed: ${error}`],
+            }
+          }],
+          executionCount: 0,
+          success: false,
+        }];
+      }
     }
 
     interruptedRef.current = false;
@@ -126,19 +142,6 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
     setProgress({ current: 0, total: codeCells.length });
 
     const results: CellExecutionResult[] = [];
-
-    // Initialize kernel if needed
-    try {
-      await pythonWorkerManager.initialize();
-    } catch (error) {
-      setExecutionState("idle");
-      return [{
-        cellId: codeCells[0].id,
-        outputs: [{ type: "error", content: `Kernel initialization failed: ${error}` }],
-        executionCount: 0,
-        success: false,
-      }];
-    }
 
     // Execute cells sequentially
     for (let i = 0; i < codeCells.length; i++) {
@@ -169,7 +172,7 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
     onAllComplete?.(results);
 
     return results;
-  }, [executeCell, onCellStart, onCellComplete, onAllComplete]);
+  }, [kernel, executeCell, onCellStart, onCellComplete, onAllComplete]);
 
   /**
    * Run all cells in the notebook
@@ -211,10 +214,17 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
   /**
    * Interrupt the current execution
    */
-  const interrupt = useCallback(() => {
+  const interrupt = useCallback(async () => {
     interruptedRef.current = true;
     setExecutionState("interrupted");
-  }, []);
+    if (kernel) {
+      try {
+        await kernel.interrupt();
+      } catch (error) {
+        console.error("Failed to interrupt kernel:", error);
+      }
+    }
+  }, [kernel]);
 
   /**
    * Restart the kernel
@@ -224,18 +234,50 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
     setExecutionState("idle");
     setCurrentCellId(null);
     executionCountRef.current = 0;
-    await pythonWorkerManager.restart();
-  }, []);
+    if (kernel) {
+      try {
+        await kernel.restart();
+      } catch (error) {
+        console.error("Failed to restart kernel:", error);
+      }
+    }
+  }, [kernel]);
+
+  /**
+   * Switch to a different kernel
+   */
+  const switchKernel = useCallback(async (newKernel: IKernelManager) => {
+    // Shutdown old kernel
+    if (kernel) {
+      try {
+        await kernel.shutdown();
+      } catch (error) {
+        console.error("Failed to shutdown old kernel:", error);
+      }
+    }
+
+    // Initialize new kernel
+    setKernel(newKernel);
+    executionCountRef.current = 0;
+    try {
+      await newKernel.initialize();
+    } catch (error) {
+      console.error("Failed to initialize new kernel:", error);
+      throw error;
+    }
+  }, [kernel]);
 
   return {
     executionState,
     currentCellId,
     progress,
+    kernel,
     runAll,
     runAllAbove,
     runAllBelow,
     interrupt,
     restartKernel,
+    switchKernel,
     executeCell,
   };
 }

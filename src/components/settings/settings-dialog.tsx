@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Settings, Palette, FolderOpen, Info, Keyboard, RotateCcw, Plug, Bot } from 'lucide-react';
@@ -417,6 +417,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     <ShortcutItem label={t('settings.shortcuts.openCommandCenter')} shortcut="Ctrl+K" />
                     <ShortcutItem label={t('settings.shortcuts.openPanels')} shortcut="Ctrl+Shift+P" />
                     <ShortcutItem label={t('settings.shortcuts.toggleTheme')} shortcut="Ctrl+Shift+T" />
+                    <ShortcutItem label="打开实时预览指南" shortcut="Ctrl+Shift+/" />
                   </div>
                 </div>
 
@@ -1441,3 +1442,4 @@ function AiModelSelector({ provider, currentModel, onSelect }: { provider: strin
     </select>
   );
 }
+

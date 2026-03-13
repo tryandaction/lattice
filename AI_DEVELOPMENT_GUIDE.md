@@ -1,109 +1,57 @@
 # AI Development Guide - Lattice 格致
 
-**Last Updated**: 2026-01-22
+**Last Updated**: 2026-03-06
 **Purpose**: 为AI助手提供项目上下文、已知问题和开发指南
 
 ---
 
 ## 🚨 Critical Known Issues (未解决的关键问题)
 
-### 1. **长文件截断问题** ⚠️ HIGH PRIORITY
-**Status**: 未解决
-**Reported**: 2026-01-22
+### 1. **Jupyter Notebook Python 执行问题** ✅ RESOLVED
+**Status**: 已修复
+**Fixed**: 2026-03-06
 **Description**:
-- 长文件（>100行）无法完整显示，内容被截断
-- 控制台显示文档有36行，解析了37个元素，但渲染不完整
-- 用户只能看到前面一小部分内容
+- Python 代码执行时出现 `SyntaxError: unterminated string literal` 错误
+- HTML 嵌套错误导致 React hydration 警告
 
-**Debug Info**:
-```
-[parseDocument] Lines: 36 ViewportOnly: false
-[parseDocument] Ranges: [{from: 0, to: 634}]
-[parseDocument] Processing lines: 1 to 36
-[Decoration] Doc lines: 36 Elements: 37
-```
-
-**Possible Causes**:
-- CSS高度限制
-- 视口（viewport）渲染限制
-- 装饰器（decoration）构建问题
-- 滚动容器配置问题
-
-**Files to Check**:
-- `src/components/editor/codemirror/live-preview/decoration-coordinator.ts`
-- `src/components/editor/codemirror/live-preview/live-preview-theme.ts`
-- `src/components/editor/codemirror/live-preview/live-preview-editor.tsx`
-
----
-
-### 2. **文件切换显示错误** ⚠️ HIGH PRIORITY
-**Status**: 未解决
-**Reported**: 2026-01-22
-**Description**:
-- 点击文件A，显示文件B的内容
-- 文件切换后内容不更新或显示错误的文件内容
-
-**Previous Attempts**:
-- 已修改 `obsidian-markdown-viewer.tsx` 的 useEffect 依赖
-- 已添加 `prevFileNameRef` 追踪文件变化
-- 已在 `live-preview-editor.tsx` 添加 content 到依赖数组
+**Solution**:
+- 使用 `js` 模块和 `pyodide.globals.set()` 安全传递字符串，避免字符串注入
+- 修复 markdown 渲染中 `<p>` 标签包含 `<code>` 的问题
+- 改进输出缓冲机制
 
 **Files Modified**:
-- `src/components/editor/obsidian-markdown-viewer.tsx` (Line 149-166)
-- `src/components/editor/codemirror/live-preview/live-preview-editor.tsx` (Line 341)
-
-**Still Not Working**: 需要更深入的状态管理重构
-
----
-
-### 3. **文本重复显示** ⚠️ MEDIUM PRIORITY
-**Status**: 部分解决，仍有问题
-**Description**:
-- 某些markdown元素的文本会重复显示
-- 可能是装饰器（decoration）和原始文本同时显示
-
-**Related Files**:
-- `src/components/editor/codemirror/live-preview/decoration-coordinator.ts`
-- `src/components/editor/codemirror/live-preview/widgets.ts`
+- `src/lib/python-worker-manager.ts`
+- `src/workers/pyodide.worker.ts`
+- `src/components/notebook/markdown-cell.tsx`
 
 ---
 
-### 4. **公式渲染失败** ⚠️ MEDIUM PRIORITY
-**Status**: 部分解决
-**Description**:
-- 某些上下文中的公式无法渲染
-- 公式显示为 "undefined" 或空白
-
-**Previous Fixes**:
-- 已导入 KaTeX CSS
-- 已改进正则表达式匹配
-
-**Still Failing**: 需要检查 MathWidget 的错误处理
+### 2. **长文件截断问题** ✅ RESOLVED
+**Status**: 已解决
+**Description**: 长文件（>100行）无法完整显示的问题已修复
 
 ---
 
-### 5. **Markdown语法标记未隐藏** ⚠️ MEDIUM PRIORITY
-**Status**: 未完全解决
-**Description**:
-- 标题的 `#` 符号没有隐藏
-- 粗体的 `**` 符号可见
-- 其他markdown语法标记显示
-
-**Related**:
-- `Decoration.replace()` 可能没有正确覆盖语法范围
+### 3. **文件切换显示错误** ✅ RESOLVED
+**Status**: 已解决
+**Description**: 文件切换后内容不更新或显示错误的问题已修复
 
 ---
 
-### 6. **React Hydration 错误** ⚠️ LOW PRIORITY
+### 4. **文本重复显示** ✅ RESOLVED
+**Status**: 已解决
+**Description**: Markdown 元素文本重复显示的问题已修复
+
+---
+
+### 5. **React Hydration 错误** ✅ RESOLVED
 **Status**: 已修复
-**Fixed**: 2026-01-22
 **Solution**: 在 `app-layout.tsx` 添加 `mounted` 状态检查
 
 ---
 
-### 7. **Service Worker 404 错误** ⚠️ LOW PRIORITY
+### 6. **Service Worker 404 错误** ✅ RESOLVED
 **Status**: 已修复
-**Fixed**: 2026-01-22
 **Solution**: 删除 `public/sw.js`，添加 unregister 逻辑
 
 ---
@@ -134,6 +82,37 @@ Lattice/
 ├── docs/                      # 文档（应该存放的位置）
 └── [配置文件]
 ```
+
+---
+
+## 📋 Current Development Focus (当前开发重点)
+
+### Phase 1: Jupyter Notebook Enhancement (对标 VSCode)
+**Priority**: HIGH
+**Goal**: 提升 Jupyter Notebook 体验，对标 VSCode 的 Jupyter 扩展
+
+**Planned Features**:
+1. **变量查看器** - 显示当前 Python 命名空间中的变量
+2. **执行控制** - 内核重启、中断执行、清除输出
+3. **代码补全** - 基于 Pyodide 的智能提示
+4. **执行时间统计** - 显示每个 cell 的执行时间
+5. **更多输出格式** - 支持 Plotly、Altair 等交互式图表
+
+### Phase 2: File Management (文件管理)
+**Priority**: MEDIUM
+**Features**:
+- 全局文件搜索（Ctrl+P）
+- 文件内容搜索
+- 文件操作（重命名、删除、新建）
+- 最近打开文件历史
+
+### Phase 3: Desktop App Enhancement (桌面应用增强)
+**Priority**: MEDIUM
+**Features**:
+- 文件关联（.ipynb、.md 等）
+- 全局快捷键
+- 系统托盘
+- 自动更新
 
 ---
 
@@ -288,7 +267,7 @@ useEffect(() => {
 
 ---
 
-**最后更新**: 2026-01-22
-**文档版本**: 1.0
+**最后更新**: 2026-03-06
+**文档版本**: 2.0
 **状态**: 活跃维护中
 

@@ -21,6 +21,7 @@ export function ExplorerSidebar() {
   const sidebarCollapsed = useWorkspaceStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
+  const selectedDirectoryPath = useWorkspaceStore((state) => state.selectedDirectoryPath);
 
   const hasDirectory = !!fileTree.root;
 
@@ -28,31 +29,34 @@ export function ExplorerSidebar() {
    * Create a new note and open it in the active pane
    */
   const handleCreateNote = useCallback(async () => {
-    const result = await createFile("Untitled", "note");
+    // 如果有选中的文件夹，在该文件夹内创建，否则在根目录创建
+    const result = await createFile("Untitled", "note", selectedDirectoryPath || undefined);
     if (result.success && result.handle && result.path) {
       openFileInActivePane(result.handle, result.path);
     }
-  }, [createFile, openFileInActivePane]);
+  }, [createFile, openFileInActivePane, selectedDirectoryPath]);
 
   /**
    * Create a new notebook and open it in the active pane
    */
   const handleCreateNotebook = useCallback(async () => {
-    const result = await createFile("Untitled", "notebook");
+    // 如果有选中的文件夹，在该文件夹内创建，否则在根目录创建
+    const result = await createFile("Untitled", "notebook", selectedDirectoryPath || undefined);
     if (result.success && result.handle && result.path) {
       openFileInActivePane(result.handle, result.path);
     }
-  }, [createFile, openFileInActivePane]);
+  }, [createFile, openFileInActivePane, selectedDirectoryPath]);
 
   /**
-   * Create a new folder in the root directory
+   * Create a new folder in the root directory or selected directory
    */
   const handleCreateFolder = useCallback(async () => {
-    const result = await createDirectory("New Folder");
+    // 如果有选中的文件夹，在该文件夹内创建，否则在根目录创建
+    const result = await createDirectory("New Folder", selectedDirectoryPath || undefined);
     if (!result.success && result.error) {
       console.error("Failed to create folder:", result.error);
     }
-  }, [createDirectory]);
+  }, [createDirectory, selectedDirectoryPath]);
 
   return (
     <div className="flex h-full flex-col">

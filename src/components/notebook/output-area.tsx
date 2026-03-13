@@ -241,13 +241,13 @@ function ErrorOutput({ content }: { content: string }) {
   const hasTraceback = traceback.length > 0;
   
   return (
-    <div className="rounded-md border border-destructive/30 overflow-hidden">
+    <div className="rounded-md border border-red-500/40 overflow-hidden">
       {/* Error header */}
-      <div className="flex items-start gap-2 bg-destructive/10 p-3">
-        <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
+      <div className="flex items-start gap-2 bg-red-500/15 p-3">
+        <AlertTriangle className="h-4 w-4 text-red-400 mt-0.5 flex-shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="font-semibold text-destructive text-sm">{type}</div>
-          <pre className="whitespace-pre-wrap break-words font-mono text-sm text-destructive/90 mt-1">
+          <div className="font-semibold text-red-400 text-sm">{type}</div>
+          <pre className="whitespace-pre-wrap break-words font-mono text-sm text-red-300 mt-1">
             {message}
           </pre>
         </div>
@@ -258,7 +258,7 @@ function ErrorOutput({ content }: { content: string }) {
         <>
           <button
             onClick={() => setShowTraceback(!showTraceback)}
-            className="flex items-center gap-1 w-full px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 transition-colors border-t border-destructive/20"
+            className="flex items-center gap-1 w-full px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 transition-colors border-t border-red-500/30"
           >
             {showTraceback ? (
               <ChevronDown className="h-3 w-3" />
@@ -267,9 +267,9 @@ function ErrorOutput({ content }: { content: string }) {
             )}
             <span>{showTraceback ? 'Hide' : 'Show'} traceback ({traceback.length} lines)</span>
           </button>
-          
+
           {showTraceback && (
-            <pre className="whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground bg-muted/30 p-3 border-t border-destructive/20 max-h-[300px] overflow-auto">
+            <pre className="whitespace-pre-wrap break-words font-mono text-xs text-red-300/80 bg-muted/30 p-3 border-t border-red-500/30 max-h-[300px] overflow-auto">
               {traceback.join('\n')}
             </pre>
           )}

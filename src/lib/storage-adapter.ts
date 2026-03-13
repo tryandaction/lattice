@@ -5,10 +5,35 @@
  * Web (localStorage) and Desktop (Tauri store) environments.
  */
 
-// Check if running in Tauri environment
+function hasTauriCore(win: Window & { __TAURI__?: { core?: { invoke?: unknown } } }): boolean {
+  return typeof win.__TAURI__?.core?.invoke === 'function';
+}
+
+/**
+ * Detect whether current runtime is hosted by a Tauri shell.
+ * This check is intentionally broad and should be used for UI gating only.
+ */
+export function isTauriHost(): boolean {
+  if (typeof window === 'undefined') return false;
+
+  const win = window as Window & {
+    __TAURI__?: { core?: { invoke?: unknown } };
+    __TAURI_INTERNALS__?: unknown;
+  };
+
+  if (hasTauriCore(win)) return true;
+  if ('__TAURI_INTERNALS__' in win) return true;
+  if (typeof navigator !== 'undefined' && /tauri/i.test(navigator.userAgent)) return true;
+  return typeof location !== 'undefined' && location.protocol === 'tauri:';
+}
+
+/**
+ * Detect whether Tauri invoke bridge is ready.
+ * Use this before any `window.__TAURI__.core.invoke(...)` call paths.
+ */
 export function isTauri(): boolean {
   if (typeof window === 'undefined') return false;
-  return '__TAURI__' in window;
+  return hasTauriCore(window as Window & { __TAURI__?: { core?: { invoke?: unknown } } });
 }
 
 export interface StorageAdapter {

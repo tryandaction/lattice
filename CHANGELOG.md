@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 新增 (2026-03-06)
+- **Jupyter Notebook 深度集成**
+  - ✅ 变量查看器（Variable Inspector）
+    - 实时显示 Python 命名空间中的所有变量
+    - 显示变量类型、值预览、内存大小、形状信息
+    - 支持搜索过滤和多种排序方式（名称、类型、大小）
+    - 可展开查看详细信息
+    - 侧边栏面板，可切换显示/隐藏
+  - ✅ 内核控制工具栏（Kernel Toolbar）
+    - 内核状态实时显示（Idle/Busy/Loading/Error）
+    - 性能指标显示（最后执行时间、平均时间、总执行次数）
+    - Run All、Restart、Clear Outputs、Stop 按钮
+    - 执行进度显示
+  - ✅ 执行时间统计
+    - 每个单元格执行时间精确记录
+    - 全局执行历史追踪（保留最近 100 条）
+    - 平均执行时间自动计算
+  - ✅ 状态管理重构
+    - 使用 Zustand + Immer 实现集中式状态管理
+    - 内核状态、变量命名空间、执行历史统一管理
+  - ✅ Notebook 编辑器完整集成
+    - 分屏布局（编辑器 + 变量查看器）
+    - 执行状态与 UI 实时同步
+    - 变量自动更新
+
+### 修复 (2026-03-06)
+- **Jupyter Notebook 执行问题**: 修复 Python 代码执行时的字符串注入漏洞，使用 `js` 模块和 `pyodide.globals.set()` 安全传递参数
+- **HTML 嵌套错误**: 修复 Markdown 渲染中 `<p>` 标签包含 `<code>` 导致的 React hydration 警告
+- **输出缓冲优化**: 改进 Python stdout/stderr 缓冲机制，使用 `str()` 替代 `repr()` 避免额外引号问题
+
+### 文档更新 (2026-03-06)
+- 更新 `AI_DEVELOPMENT_GUIDE.md`，标记已解决的问题，添加当前开发重点
+- 新增 `docs/DEVELOPMENT_ROADMAP_2026.md`，详细规划 2026 年开发路线图
+
 ## [1.0.0] - 2026-02-12
 
 ### Phase 1: 代码质量与稳定性 (v0.4.0)

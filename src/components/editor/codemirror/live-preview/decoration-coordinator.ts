@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Decoration Coordinator - 装饰器统一协调系统
  *
  * 解决当前7个插件独立重建装饰器导致的性能问题和冲突。
@@ -37,6 +37,7 @@
 import { EditorView, DecorationSet, Decoration } from '@codemirror/view';
 import { EditorState, StateField, StateEffect, Text } from '@codemirror/state';
 import { shouldRevealAt } from './cursor-context-plugin';
+import { codeBlockSourceModeField, isCodeBlockSourceMode, mathSourceModeField, isMathSourceMode } from './source-mode';
 import { logger } from '@/lib/logger';
 import {
   FormattedTextWidget,
@@ -79,6 +80,67 @@ function debugLog(prefix: string, ...args: unknown[]) {
   if (DEBUG_MODE) {
     console.log(prefix, ...args);
   }
+}
+
+type MathSourceDecorationEntry = {
+  from: number;
+  to: number;
+  decoration: Decoration;
+};
+
+function getMathSourceDecorations(
+  from: number,
+  to: number,
+  source: string,
+  isBlock: boolean,
+): MathSourceDecorationEntry[] {
+  if (!source || from >= to) {
+    return [];
+  }
+
+  const entries: MathSourceDecorationEntry[] = [
+    {
+      from,
+      to,
+      decoration: Decoration.mark({
+        class: isBlock ? 'cm-math-source-block' : 'cm-math-source-inline',
+      }),
+    },
+  ];
+
+  const delimiterPairs = [
+    { open: '$$', close: '$$' },
+    { open: '\[', close: '\]' },
+    { open: '\(', close: '\)' },
+    { open: '$', close: '$' },
+  ];
+
+  for (const pair of delimiterPairs) {
+    if (!source.startsWith(pair.open) || !source.endsWith(pair.close)) {
+      continue;
+    }
+
+    const openLength = pair.open.length;
+    const closeLength = pair.close.length;
+
+    entries.push({
+      from,
+      to: Math.min(to, from + openLength),
+      decoration: Decoration.mark({ class: 'cm-math-delimiter-source cm-formatting-math' }),
+    });
+
+    if (source.length > openLength) {
+      entries.push({
+        from: Math.max(from, to - closeLength),
+        to,
+        decoration: Decoration.mark({ class: 'cm-math-delimiter-source cm-formatting-math' }),
+      });
+    }
+
+    break;
+  }
+
+  return entries;
 }
 
 // ============================================================================
@@ -533,7 +595,13 @@ function parseCodeBlocks(lines: string[], docLength?: number): CodeBlockMatch[] 
     const line = lines[i];
     const lineStart = offset;
     const lineEnd = offset + line.length;
-    const { stripped, prefix } = stripMathLinePrefix(line);
+
+    // CRITICAL FIX: Only strip prefixes when NOT in a code block
+    // Inside code blocks, we need to preserve the original line structure
+    // to correctly detect closing fences
+    const { stripped, prefix } = inBlock
+      ? { stripped: line, prefix: '' }
+      : stripMathLinePrefix(line);
     const trimmed = stripped.trim();
 
     if (!inBlock) {
@@ -551,11 +619,48 @@ function parseCodeBlocks(lines: string[], docLength?: number): CodeBlockMatch[] 
         const blockquotePrefix = blockquotePrefixMatch?.[0] ?? '';
         blockquotePrefixLength = blockquotePrefix.length;
         listIndentToStrip = Math.max(0, prefix.length - blockquotePrefixLength);
+
+        // DEBUG: Log opening fence
+        console.log('[parseCodeBlocks] Opening fence:', {
+          lineNum: i + 1,
+          fenceChar,
+          fenceLength,
+          blockLang,
+          trimmed,
+        });
       }
     } else {
       const closeRegex = new RegExp(`^${fenceChar}{${fenceLength},}\\s*$`);
-      if (closeRegex.test(trimmed)) {
+      const isClosing = closeRegex.test(trimmed);
+
+      // DEBUG: Log closing fence check
+      console.log('[parseCodeBlocks] Checking line for closing fence:', {
+        lineNum: i + 1,
+        trimmed,
+        fenceChar,
+        fenceLength,
+        regexPattern: closeRegex.source,
+        isClosing,
+        stripped,
+        prefix,
+      });
+
+      if (isClosing) {
+        // CRITICAL: blockTo must include the newline after closing fence
+        // Otherwise, Decoration.replace won't cover the newline, causing
+        // subsequent content to appear immediately after the widget
         const blockTo = docLength !== undefined ? Math.min(lineEnd, docLength) : lineEnd;
+
+        // DEBUG: Log completed block
+        console.log('[parseCodeBlocks] Closing fence found, block complete:', {
+          from: blockStart,
+          to: blockTo,
+          startLine: blockStartLine,
+          endLine: i + 1,
+          codeLines: blockCode.length,
+          code: blockCode.join('\n'),
+        });
+
         blocks.push({
           from: blockStart,
           to: blockTo,
@@ -595,6 +700,13 @@ function parseCodeBlocks(lines: string[], docLength?: number): CodeBlockMatch[] 
             removedSpaces += 1;
           }
         }
+
+        // DEBUG: Log content line being added
+        console.log('[parseCodeBlocks] Adding content line:', {
+          lineNum: i + 1,
+          contentLine,
+          originalLine: line,
+        });
 
         blockCode.push(contentLine);
       }
@@ -1504,13 +1616,8 @@ function parseDocument(
   debugLog('[parseDocument] Found', codeBlocks.length, 'code blocks');
 
   for (const block of codeBlocks) {
-    // 检查代码块是否应该被reveal (element-level check)
-    const shouldReveal = shouldRevealAt(
-      state,
-      block.from,
-      block.to,
-      ElementType.CODE_BLOCK
-    );
+    // 代码块源码模式仅由双击显式触发，不随光标自动 reveal。
+    const shouldReveal = isCodeBlockSourceMode(state, block.from, block.to);
 
     if (!shouldReveal) {
       // 添加代码块元素
@@ -1555,13 +1662,8 @@ function parseDocument(
   debugLog('[parseDocument] Found', mathBlocks.length, 'math blocks');
 
   for (const block of mathBlocks) {
-    // 检查公式块是否应该被reveal (element-level check)
-    const shouldReveal = shouldRevealAt(
-      state,
-      block.from,
-      block.to,
-      ElementType.MATH_BLOCK
-    );
+    // 数学公式仅由显式 source mode 控制，不随光标自动 reveal
+    const shouldReveal = isMathSourceMode(state, block.from, block.to);
 
     if (!shouldReveal) {
       // 添加公式块元素
@@ -1605,13 +1707,8 @@ function parseDocument(
   debugLog('[parseDocument] Found', tables.length, 'tables');
 
   for (const table of tables) {
-    // 检查表格是否应该被reveal (element-level check)
-    const shouldReveal = shouldRevealAt(
-      state,
-      table.from,
-      table.to,
-      ElementType.TABLE
-    );
+    // 产品约束：Live Preview 中表格始终保持渲染态，不进入源码 reveal
+    const shouldReveal = false;
 
     if (!shouldReveal) {
       // 添加表格元素
@@ -3234,7 +3331,17 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
 
     // Element-level reveal check: Skip decoration if cursor is in this element
     // Keep line/editing styles even when revealing syntax markers
-    let reveal = shouldRevealAt(state, element.from, element.to, element.type);
+    let reveal = element.type === ElementType.TABLE
+      ? false
+      : shouldRevealAt(state, element.from, element.to, element.type);
+    if (element.type === ElementType.CODE_BLOCK) {
+      reveal = isCodeBlockSourceMode(state, element.from, element.to);
+    } else if (
+      element.type === ElementType.MATH_INLINE ||
+      element.type === ElementType.MATH_BLOCK
+    ) {
+      reveal = isMathSourceMode(state, element.from, element.to);
+    }
     const data = element.decorationData as DecorationData | undefined;
     const isLineStyle = data?.isLineStyle === true;
     const isEditingStyle = data?.isEditingStyle === true;
@@ -3242,6 +3349,21 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
     // Heading marker hide should only reveal when cursor is within the marker itself
     if (element.type === ElementType.HEADING && data?.isMarkerHide) {
       reveal = shouldRevealAt(state, element.from, element.to, undefined);
+    }
+
+    if (element.type === ElementType.MATH_INLINE && reveal) {
+      const source = state.doc.sliceString(element.from, element.to);
+      for (const decoration of getMathSourceDecorations(element.from, element.to, source, false)) {
+        entries.push({
+          from: decoration.from,
+          to: decoration.to,
+          decoration: decoration.decoration,
+          priority: element.type,
+          isLine: false,
+        });
+      }
+      processedCount++;
+      continue;
     }
 
     if (reveal && !isLineStyle && !isEditingStyle) {
@@ -3272,11 +3394,11 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
         const firstLine = doc.line(element.startLine);
         const context = getBlockContext(firstLine.text);
 
-        // 1. 在第一行添加widget
+        // 1. 用 replace 覆盖首行源码，保留 widget 可见
         entries.push({
           from: firstLine.from,
-          to: firstLine.from,
-          decoration: Decoration.widget({
+          to: firstLine.to,
+          decoration: Decoration.replace({
             widget: new CodeBlockWidget(
               element.content || '',
               element.language || '',
@@ -3285,14 +3407,14 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
               element.to,
               context ?? undefined
             ),
-            side: -1,
+            block: true,
           }),
           priority: element.type,
-          isLine: true,
+          isLine: false,
         });
 
-        // 2. 隐藏所有代码块行
-        for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
+        // 2. 仅隐藏后续源码行，避免首行把 widget 一并隐藏
+        for (let lineNum = element.startLine + 1; lineNum <= element.endLine; lineNum++) {
           const line = doc.line(lineNum);
           entries.push({
             from: line.from,
@@ -3317,6 +3439,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
               element.to,
               lineContext ?? undefined
             ),
+            block: true,
           }),
           priority: element.type,
           isLine: false,
@@ -3325,12 +3448,11 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
       continue;
     }
 
-    // 多行数学公式块需要特殊处理
-    if (element.type === ElementType.MATH_BLOCK && element.decorationData) {
-      const data = element.decorationData as DecorationData;
+    // 数学公式块需要特殊处理（首行替换 + 后续行隐藏，确保坐标按渲染结果计算）
+    if (element.type === ElementType.MATH_BLOCK) {
+      const data = element.decorationData as DecorationData | undefined;
 
       if (data?.isEditingStyle) {
-        // 编辑模式：每行添加样式
         entries.push({
           from: element.from,
           to: element.to,
@@ -3340,68 +3462,65 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
           priority: element.type,
           isLine: true,
         });
-      } else if (data?.isMultiLine && element.startLine && element.endLine) {
-        // 多行公式块：widget + 隐藏行
-        // CRITICAL: Validate latex parameter
-        if (!element.latex || element.latex.trim() === '') {
-          logger.debug('Empty latex for MATH_BLOCK', { from: element.from, to: element.to, context: 'buildDecorations' });
-          continue;
-        }
+        continue;
+      }
 
-        const doc = state.doc;
-        const firstLine = doc.line(element.startLine);
-        const context = getBlockContext(firstLine.text);
+      if (!element.latex || element.latex.trim() === '') {
+        logger.debug('Empty latex for MATH_BLOCK', { from: element.from, to: element.to, context: 'buildDecorations' });
+        continue;
+      }
 
-        // 1. 在第一行添加widget
-        entries.push({
-          from: firstLine.from,
-          to: firstLine.from,
-          decoration: Decoration.widget({
-            widget: new MathWidget(
-              element.latex,
-              true, // isBlock
-              element.from,
-              element.to,
-              context ?? undefined
-            ),
-            side: -1,
-          }),
-          priority: element.type,
-          isLine: true,
-        });
-
-        // 2. 隐藏所有公式块行
-        for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
-          const line = doc.line(lineNum);
-          entries.push({
-            from: line.from,
-            to: line.from,
-            decoration: Decoration.line({ class: 'cm-math-block-hidden' }),
-            priority: element.type,
-            isLine: true,
-          });
-        }
-      } else {
-        // 单行公式块
-        if (!element.latex || element.latex.trim() === '') {
-          logger.debug('Empty latex for single-line MATH_BLOCK', { from: element.from, to: element.to, context: 'buildDecorations' });
-          continue;
-        }
-        const lineContext = getBlockContext(state.doc.lineAt(element.from).text);
-        entries.push({
+      if (isMathSourceMode(state, element.from, element.to)) {
+        debugLog('[Decoration] MATH_BLOCK in source mode, showing raw source:', {
           from: element.from,
           to: element.to,
-          decoration: Decoration.replace({
-            widget: new MathWidget(
-              element.latex,
-              true, // isBlock
-              element.from,
-              element.to,
-              lineContext ?? undefined
-            ),
-          }),
+        });
+        const source = state.doc.sliceString(element.from, element.to);
+        for (const decoration of getMathSourceDecorations(element.from, element.to, source, true)) {
+          entries.push({
+            from: decoration.from,
+            to: decoration.to,
+            decoration: decoration.decoration,
+            priority: element.type,
+            isLine: false,
+          });
+        }
+        continue;
+      }
+
+      const doc = state.doc;
+      const startLine = element.startLine ? doc.line(element.startLine) : doc.lineAt(element.from);
+      const endLine = element.endLine ? doc.line(element.endLine) : doc.lineAt(element.to);
+      const context = getBlockContext(startLine.text);
+
+      // CRITICAL: Use the same strategy as tables
+      // 1. Replace the first line with the widget
+      entries.push({
+        from: startLine.from,
+        to: startLine.to,
+        decoration: Decoration.replace({
+          widget: new MathWidget(
+            element.latex,
+            true,
+            element.from,
+            element.to,
+            context ?? undefined
+          ),
+          block: true,
+        }),
+        priority: element.type,
+        isLine: false,
+      });
+
+      // 2. Hide subsequent lines (if any)
+      for (let lineNum = startLine.number + 1; lineNum <= endLine.number; lineNum++) {
+        const line = doc.line(lineNum);
+        entries.push({
+          from: line.from,
+          to: line.from,
+          decoration: Decoration.line({ class: 'cm-math-block-line-hidden' }),
           priority: element.type,
-          isLine: false,
+          isLine: true,
         });
       }
       continue;
@@ -3440,11 +3559,11 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
           continue;
         }
 
-        // 1. 在第一行添加widget
+        // 1. 用 replace 覆盖首行源码，保留 widget 可见
         entries.push({
           from: firstLine.from,
-          to: firstLine.from,
-          decoration: Decoration.widget({
+          to: firstLine.to,
+          decoration: Decoration.replace({
             widget: new TableWidget(
               data.rows,
               data.hasHeader !== false,
@@ -3455,14 +3574,14 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
               referenceSignature,
               context ?? undefined
             ),
-            side: -1,
+            block: true,
           }),
           priority: element.type,
-          isLine: true,
+          isLine: false,
         });
 
-        // 2. 隐藏所有表格行 - 使用 display:none 而非 visibility:hidden
-        for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
+        // 2. 仅隐藏后续源码行，避免首行把 widget 一并隐藏
+        for (let lineNum = element.startLine + 1; lineNum <= element.endLine; lineNum++) {
           const line = doc.line(lineNum);
           entries.push({
             from: line.from,
@@ -3496,6 +3615,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
               referenceSignature,
               lineContext ?? undefined
             ),
+            block: true,
           }),
           priority: element.type,
           isLine: false,
@@ -3522,8 +3642,8 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
 
         entries.push({
           from: firstLine.from,
-          to: firstLine.from,
-          decoration: Decoration.widget({
+          to: firstLine.to,
+          decoration: Decoration.replace({
             widget: new CalloutWidget(
               data.type || 'note',
               data.title || '',
@@ -3534,13 +3654,13 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
               referenceDefs,
               referenceSignature
             ),
-            side: -1,
+            block: true,
           }),
           priority: element.type,
-          isLine: true,
+          isLine: false,
         });
 
-        for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
+        for (let lineNum = element.startLine + 1; lineNum <= element.endLine; lineNum++) {
           const line = doc.line(lineNum);
           entries.push({
             from: line.from,
@@ -3565,6 +3685,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
               referenceDefs,
               referenceSignature
             ),
+            block: true,
           }),
           priority: element.type,
           isLine: false,
@@ -3591,8 +3712,8 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
 
         entries.push({
           from: firstLine.from,
-          to: firstLine.from,
-          decoration: Decoration.widget({
+          to: firstLine.to,
+          decoration: Decoration.replace({
             widget: new DetailsWidget(
               data.summary || 'Details',
               data.contentLines || [],
@@ -3602,13 +3723,13 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
               referenceDefs,
               referenceSignature
             ),
-            side: -1,
+            block: true,
           }),
           priority: element.type,
-          isLine: true,
+          isLine: false,
         });
 
-        for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
+        for (let lineNum = element.startLine + 1; lineNum <= element.endLine; lineNum++) {
           const line = doc.line(lineNum);
           entries.push({
             from: line.from,
@@ -3632,6 +3753,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
               referenceDefs,
               referenceSignature
             ),
+            block: true,
           }),
           priority: element.type,
           isLine: false,
@@ -3658,8 +3780,8 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
 
         entries.push({
           from: firstLine.from,
-          to: firstLine.from,
-          decoration: Decoration.widget({
+          to: firstLine.to,
+          decoration: Decoration.replace({
             widget: new FootnoteDefWidget(
               data.identifier || '',
               data.contentLines || [],
@@ -3668,13 +3790,13 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
               referenceDefs,
               referenceSignature
             ),
-            side: -1,
+            block: true,
           }),
           priority: element.type,
-          isLine: true,
+          isLine: false,
         });
 
-        for (let lineNum = element.startLine; lineNum <= element.endLine; lineNum++) {
+        for (let lineNum = element.startLine + 1; lineNum <= element.endLine; lineNum++) {
           const line = doc.line(lineNum);
           entries.push({
             from: line.from,
@@ -3697,6 +3819,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
               referenceDefs,
               referenceSignature
             ),
+            block: true,
           }),
           priority: element.type,
           isLine: false,
@@ -3737,7 +3860,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
     }
 
     // 其他元素使用通用创建函数
-    const decoration = createDecorationForElement(element, referenceDefs, referenceSignature);
+    const decoration = createDecorationForElement(element, referenceDefs, referenceSignature, state);
     if (decoration) {
       entries.push({
         from: element.from,
@@ -3803,7 +3926,8 @@ function isLineDecoration(element: ParsedElement): boolean {
 function createDecorationForElement(
   element: ParsedElement,
   referenceDefs: Map<string, ReferenceDefinition>,
-  referenceSignature: string
+  referenceSignature: string,
+  state: EditorState
 ): Decoration | null {
   const data = element.decorationData as DecorationData | undefined;
 
@@ -4114,7 +4238,16 @@ function createDecorationForElement(
         logger.debug('Empty latex for INLINE_MATH', { from: element.from, to: element.to, context: 'buildDecorations' });
         return null;
       }
-      
+
+      // Check if this math formula is in source mode (being edited)
+      if (isMathSourceMode(state, element.from, element.to)) {
+        debugLog('[Decoration] MATH_INLINE in source mode, showing raw source:', {
+          from: element.from,
+          to: element.to,
+        });
+        return null; // Show raw source code for editing
+      }
+
       // PHASE 4 FIX: Enhanced validation and logging
       debugLog('[Decoration] Creating INLINE_MATH widget:', {
         from: element.from,
@@ -4122,7 +4255,7 @@ function createDecorationForElement(
         latex: element.latex,
         latexLength: element.latex.length,
       });
-      
+
       return Decoration.replace({
         widget: new MathWidget(
           element.latex,
@@ -4131,32 +4264,7 @@ function createDecorationForElement(
           element.to,
           undefined
         ),
-      });
-
-    case ElementType.MATH_BLOCK:
-      // 使用MathWidget渲染块级公式
-      // CRITICAL: Validate latex parameter to prevent "undefined" rendering
-      if (!element.latex || element.latex.trim() === '') {
-        logger.debug('Empty latex for MATH_BLOCK', { from: element.from, to: element.to, context: 'buildDecorations' });
-        return null;
-      }
-      
-      // PHASE 4 FIX: Enhanced validation and logging
-      debugLog('[Decoration] Creating MATH_BLOCK widget:', {
-        from: element.from,
-        to: element.to,
-        latex: element.latex,
-        latexLength: element.latex.length,
-      });
-      
-      return Decoration.replace({
-        widget: new MathWidget(
-          element.latex,
-          true, // isBlock
-          element.from,
-          element.to,
-          undefined
-        ),
+        block: false,
       });
 
     default:
@@ -4217,6 +4325,8 @@ export const decorationCoordinatorField = StateField.define<DecorationSet>({
 });
 
 export const decorationCoordinatorExtension = [
+  codeBlockSourceModeField,
+  mathSourceModeField,
   decorationCoordinatorField,
   EditorView.decorations.from(decorationCoordinatorField),
 ];

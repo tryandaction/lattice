@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { X, Download, Zap, FolderOpen, Gauge } from "lucide-react";
-import { isTauri } from "@/hooks/use-tauri-settings";
+import { isTauriHost } from "@/lib/storage-adapter";
 
 export function DownloadAppDialog() {
+  const isDesktopApp = isTauriHost();
   const [isOpen, setIsOpen] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
 
   useEffect(() => {
     // 如果已经在 Tauri 环境中，不显示
-    if (isTauri()) return;
+    if (isDesktopApp) return;
 
     // 检查是否已经选择不再显示
     const dismissed = localStorage.getItem("lattice-download-dismissed");
@@ -22,7 +23,7 @@ export function DownloadAppDialog() {
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, []);
+  }, [isDesktopApp]);
 
   const handleClose = () => {
     if (dontShowAgain) {
@@ -31,7 +32,7 @@ export function DownloadAppDialog() {
     setIsOpen(false);
   };
 
-  if (!isOpen) return null;
+  if (isDesktopApp || !isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">

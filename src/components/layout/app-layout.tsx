@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -15,11 +15,12 @@ import { useUnsavedWarning } from "@/hooks/use-unsaved-warning";
 import { useTheme } from "@/hooks/use-theme";
 import { useI18n } from "@/hooks/use-i18n";
 import { useAutoOpenFolder } from "@/hooks/use-auto-open-folder";
-import { isTauri } from "@/lib/storage-adapter";
+import { isTauriHost } from "@/lib/storage-adapter";
 import { setLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { TOUCH_TARGET_MIN } from "@/lib/responsive";
 import { syncPlugins, updatePluginNetworkAllowlist } from "@/lib/plugins/runtime";
+import { resolveAppRoute } from "@/lib/app-route";
 import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot } from "lucide-react";
 import { AiContextDialog } from "@/components/ui/ai-context-dialog";
 import { PluginCommandDialog } from "@/components/ui/plugin-command-dialog";
@@ -136,6 +137,10 @@ function AppLayoutContent() {
   const { toggleTheme } = useTheme();
   const { t } = useI18n();
   const isDesktopLayout = !isMobile && !isTablet;
+  const openGuide = useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.location.assign(resolveAppRoute("/guide"));
+  }, []);
 
   useAutoOpenFolder();
 
@@ -303,11 +308,15 @@ function AppLayoutContent() {
         e.preventDefault();
         toggleTheme();
       }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "?") {
+        e.preventDefault();
+        openGuide();
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isMobile, toggleSidebar, toggleTheme]);
+  }, [isMobile, openGuide, toggleSidebar, toggleTheme]);
 
   const desktopGroupSizes = useMemo(() => {
     if (sidebarCollapsed) {
@@ -379,14 +388,14 @@ function AppLayoutContent() {
           <Bot className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         </button>
         <button
-          onClick={() => window.open("https://github.com/your-repo/lattice", "_blank")}
+          onClick={openGuide}
           className={cn(
             "p-1.5 rounded-md",
             "text-muted-foreground",
             "hover:bg-muted hover:text-foreground transition-colors"
           )}
           style={(isMobile || isTablet) ? { minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN } : undefined}
-          title="Help"
+          title="实时预览指南 (Ctrl+Shift+/)" aria-label="打开实时预览指南" data-guide-entry="sidebar"
         >
           <HelpCircle className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         </button>
@@ -425,6 +434,18 @@ function AppLayoutContent() {
               title={t("panels.open")}
             >
               <PanelLeft className="h-5 w-5" />
+            </button>
+            <button
+              onClick={openGuide}
+              className={cn(
+                "flex items-center justify-center rounded-md",
+                "text-muted-foreground hover:text-foreground",
+                "hover:bg-muted transition-colors"
+              )}
+              style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
+              title="实时预览指南" aria-label="打开实时预览指南" data-guide-entry="mobile-header"
+            >
+              <HelpCircle className="h-5 w-5" />
             </button>
             <button
               onClick={() => setShowSettings(true)}
@@ -738,7 +759,7 @@ function Dialogs({
 }) {
   return (
     <>
-      {!isTauri() && <DownloadAppDialog />}
+      {!isTauriHost() && <DownloadAppDialog />}
       <ErrorBoundary onReset={() => setShowCommands(false)}>
         <PluginCommandDialog isOpen={showCommands} onClose={() => setShowCommands(false)} />
       </ErrorBoundary>
@@ -756,3 +777,9 @@ function Dialogs({
     </>
   );
 }
+
+
+
+
+
+

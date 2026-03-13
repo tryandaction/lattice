@@ -1,0 +1,305 @@
+/**
+ * 彻底修复点击位置和光标位置错位问题
+ * 
+ * 核心原则：
+ * 1. 所有 inline widget 必须 display: inline, vertical-align: baseline
+ * 2. 所有 padding/margin 必须最小化或为 0
+ * 3. 行高必须统一为 1.6
+ * 4. 不使用任何会影响布局的 transform
+ */
+
+/* 强制所有行使用统一的行高和无 padding */
+.live-preview-editor .cm-line {
+  padding: 0 !important;
+  margin: 0 !important;
+  line-height: 1.6 !important;
+  min-height: 1.6em !important;
+  font-size: 16px !important;
+}
+
+/* 空行也必须保持相同高度 */
+.live-preview-editor .cm-line:empty {
+  height: 1.6em !important;
+  line-height: 1.6 !important;
+  min-height: 1.6em !important;
+}
+
+/* 所有 inline widget 必须使用 inline 和 baseline */
+.live-preview-editor .cm-formatted-widget,
+.live-preview-editor .cm-bold,
+.live-preview-editor .cm-italic,
+.live-preview-editor .cm-strikethrough,
+.live-preview-editor .cm-highlight,
+.live-preview-editor .cm-inline-code,
+.live-preview-editor .cm-link,
+.live-preview-editor .cm-wiki-link {
+  display: inline !important;
+  vertical-align: baseline !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  line-height: 1.6 !important;
+}
+
+/* Math inline needs special handling - use inline-block for proper event handling */
+.live-preview-editor .cm-math-inline {
+  display: inline-block !important;
+  vertical-align: middle !important;
+  padding: 0 0.2em !important;
+  margin: 0 !important;
+  line-height: 1.6 !important;
+  cursor: pointer !important;
+}
+
+/* inline-code 需要最小的 padding */
+.live-preview-editor .cm-inline-code {
+  padding: 0.05em 0.2em !important;
+}
+
+/* highlight 需要最小的 padding */
+.live-preview-editor .cm-highlight {
+  padding: 0 0.1em !important;
+}
+
+/* wiki-link 需要最小的 padding */
+.live-preview-editor .cm-wiki-link {
+  padding: 0 0.1em !important;
+}
+
+/* 标题也必须遵循统一的行高 - 但允许 margin 用于视觉间距 */
+.live-preview-editor .cm-heading-1,
+.live-preview-editor .cm-heading-2,
+.live-preview-editor .cm-heading-3,
+.live-preview-editor .cm-heading-4,
+.live-preview-editor .cm-heading-5,
+.live-preview-editor .cm-heading-6 {
+  padding: 0 !important;
+  line-height: 1.3 !important;
+}
+
+/* 标题所在的行必须保持一致的行为 */
+.live-preview-editor .cm-line.cm-heading-1,
+.live-preview-editor .cm-line.cm-heading-2,
+.live-preview-editor .cm-line.cm-heading-3,
+.live-preview-editor .cm-line.cm-heading-4,
+.live-preview-editor .cm-line.cm-heading-5,
+.live-preview-editor .cm-line.cm-heading-6 {
+  padding: 0 !important;
+}
+
+/* 标题内容 widget */
+.live-preview-editor .cm-heading-1-content,
+.live-preview-editor .cm-heading-2-content,
+.live-preview-editor .cm-heading-3-content,
+.live-preview-editor .cm-heading-4-content,
+.live-preview-editor .cm-heading-5-content,
+.live-preview-editor .cm-heading-6-content,
+.live-preview-editor .cm-blockquote-content {
+  display: inline !important;
+  vertical-align: baseline !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* 列表项 - 保持 padding-left 用于缩进，但移除垂直 padding */
+.live-preview-editor .cm-list-item {
+  padding-left: 0.5em !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  padding-right: 0 !important;
+  line-height: 1.6 !important;
+  margin: 0 !important;
+}
+
+/* 列表项所在的行 */
+.live-preview-editor .cm-line.cm-list-item {
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* 引用块 - 保持 padding-left 用于视觉缩进，但移除垂直 padding */
+.live-preview-editor .cm-blockquote {
+  padding-left: 1em !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  padding-right: 0 !important;
+  line-height: 1.6 !important;
+}
+
+/* 引用块所在的行 */
+.live-preview-editor .cm-line.cm-blockquote {
+  padding-left: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  padding-right: 0 !important;
+}
+
+/* 数学公式 */
+.live-preview-editor .cm-math-inline {
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* 表格内的 inline 元素 */
+.live-preview-editor .cm-table-widget code,
+.live-preview-editor .cm-table-widget .cm-wiki-link-table,
+.live-preview-editor .cm-table-widget .cm-link-table,
+.live-preview-editor .cm-table-widget .cm-math-inline-table {
+  display: inline !important;
+  vertical-align: baseline !important;
+  padding: 0 0.15em !important;
+  margin: 0 !important;
+}
+
+/* 表格编辑器 - 确保不受 click-fix 影响 */
+.live-preview-editor .table-editor-wrapper {
+  display: block !important;
+  margin: 1em 0 !important;
+  line-height: normal !important;
+}
+
+.live-preview-editor .table-editor {
+  line-height: normal !important;
+}
+
+.live-preview-editor .table-editor td,
+.live-preview-editor .table-editor th {
+  line-height: normal !important;
+  padding: 8px 12px !important;
+}
+
+.live-preview-editor .table-editor textarea {
+  line-height: 1.4 !important;
+  padding: 8px 12px !important;
+}
+
+/* 确保 content 区域没有额外的 padding */
+.live-preview-editor .cm-content {
+  line-height: 1.6 !important;
+  font-size: 16px !important;
+}
+
+/* 上标和下标 */
+.live-preview-editor .cm-superscript,
+.live-preview-editor .cm-subscript {
+  line-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* 分隔线 - 必须占据完整的一行高度 */
+.live-preview-editor .cm-horizontal-rule-container {
+  display: block !important;
+  height: 1.6em !important;
+  line-height: 1.6 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+}
+
+.live-preview-editor .cm-horizontal-rule {
+  margin: 1em 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  border-top: 2px solid currentColor !important;
+  height: 0 !important;
+}
+
+/* Block widgets - 统一的间距和行高 */
+.live-preview-editor .cm-math-block,
+.live-preview-editor .cm-callout,
+.live-preview-editor .cm-details-widget,
+.live-preview-editor .cm-embed-widget,
+.live-preview-editor .cm-footnote-def,
+.live-preview-editor .cm-embed {
+  display: block !important;
+  margin: 1em 0 !important;
+  line-height: 1.6 !important;
+}
+
+/* 代码块和表格由源码行高锁定，不允许额外 margin */
+.live-preview-editor .cm-code-block-widget,
+.live-preview-editor .cm-table-widget-wrapper,
+.live-preview-editor .cm-table-widget {
+  margin: 0 !important;
+}
+
+/* Math block 需要特殊处理 - 保持居中对齐 */
+.live-preview-editor .cm-math-block {
+  text-align: center !important;
+}
+
+/* 确保 block widget 所在的行不会影响行高计算 */
+.live-preview-editor .cm-line:has(.cm-horizontal-rule-container),
+.live-preview-editor .cm-line:has(.cm-code-block-widget),
+.live-preview-editor .cm-line:has(.cm-table-widget-wrapper),
+.live-preview-editor .cm-line:has(.cm-math-block),
+.live-preview-editor .cm-line:has(.cm-callout),
+.live-preview-editor .cm-line:has(.cm-details-widget),
+.live-preview-editor .cm-line:has(.cm-embed-widget),
+.live-preview-editor .cm-line:has(.cm-footnote-def),
+.live-preview-editor .cm-line:has(.cm-embed) {
+  min-height: auto !important;
+  line-height: 1.6 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* 图片容器 */
+.live-preview-editor .cm-image-container {
+  display: inline-block !important;
+  vertical-align: baseline !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  line-height: 1.6 !important;
+}
+
+.live-preview-editor .cm-image {
+  vertical-align: baseline !important;
+  margin: 0 !important;
+}
+
+/* 脚注引用和定义 */
+.live-preview-editor .cm-footnote-ref {
+  display: inline !important;
+  vertical-align: baseline !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  line-height: 0 !important;
+}
+
+/* 脚注定义 - 已在 Block widgets 统一规则中定义 */
+
+/* 嵌入内容 - 已在 Block widgets 统一规则中定义 */
+
+/* 键盘按键 */
+.live-preview-editor .cm-kbd {
+  display: inline !important;
+  vertical-align: baseline !important;
+  padding: 0.1em 0.3em !important;
+  margin: 0 !important;
+  line-height: 1.6 !important;
+}
+
+/* 批注链接 */
+.live-preview-editor .cm-annotation-link {
+  display: inline !important;
+  vertical-align: baseline !important;
+  padding: 0 0.2em !important;
+  margin: 0 !important;
+  line-height: 1.6 !important;
+}
+
+/* 列表标记 */
+.live-preview-editor .cm-list-marker {
+  display: inline !important;
+  vertical-align: baseline !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  line-height: 1.6 !important;
+}
+
+/* 任务复选框 */
+.live-preview-editor .cm-task-checkbox {
+  vertical-align: baseline !important;
+  margin: 0 0.3em 0 0 !important;
+}

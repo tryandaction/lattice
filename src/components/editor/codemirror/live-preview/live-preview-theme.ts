@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Live Preview Theme for CodeMirror 6
  * Obsidian-style markdown rendering theme
  */
@@ -8,6 +8,7 @@ import { Extension } from '@codemirror/state';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import './live-preview-theme.css';
+import './table-editor.css';
 
 /**
  * Theme colors
@@ -43,6 +44,8 @@ export const livePreviewTheme = EditorView.theme({
   // Content
   '.cm-content': {
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    fontSize: '16px',
+    lineHeight: '1.6',
     padding: 'var(--cm-content-padding-y, 1rem) var(--cm-content-padding-x, 0px)',
     caretColor: colors.cursor,
   },
@@ -101,7 +104,18 @@ export const livePreviewTheme = EditorView.theme({
   // Line wrapping — NO padding on .cm-line (breaks posAtCoords() click positioning)
   // Use margin on .cm-content instead for horizontal spacing
   '.cm-line': {
-    padding: '0',
+    padding: '0 !important',
+    margin: '0 !important',
+    fontSize: '16px',
+    lineHeight: '1.6',
+    minHeight: '1.6em',
+  },
+
+  // Paragraph spacing: blank lines render as explicit vertical rhythm
+  '.cm-line:empty': {
+    height: '1.6em',
+    lineHeight: '1.6',
+    minHeight: '1.6em',
   },
 
   // No vertical padding on .cm-line — padding creates posAtCoords() dead zones
@@ -116,37 +130,44 @@ export const livePreviewTheme = EditorView.theme({
   },
   
   // === Inline Styles ===
-  
+
   '.cm-bold': {
     fontWeight: 'bold',
     cursor: 'text',
   },
-  
+
   '.cm-italic': {
     fontStyle: 'italic',
     cursor: 'text',
   },
-  
+
   '.cm-strikethrough': {
     textDecoration: 'line-through',
     color: colors.mutedForeground,
     cursor: 'text',
   },
-  
+
   '.cm-highlight': {
     backgroundColor: colors.highlight,
     borderRadius: '2px',
-    padding: '0 2px',
+    padding: '0',
+    margin: '0',
     cursor: 'text',
+    display: 'inline',
+    verticalAlign: 'baseline',
   },
-  
+
   '.cm-inline-code': {
     backgroundColor: colors.codeBackground,
-    borderRadius: '4px',
-    padding: '2px 6px',
+    borderRadius: '3px',
+    padding: '0.05em 0.25em',
+    margin: '0',
     fontFamily: '"JetBrains Mono", "Fira Code", monospace',
     fontSize: '0.9em',
     cursor: 'text',
+    display: 'inline',
+    verticalAlign: 'baseline',
+    lineHeight: '1.6',
   },
   
   // === Links ===
@@ -157,20 +178,27 @@ export const livePreviewTheme = EditorView.theme({
     textDecorationColor: `${colors.primary}60`,
     cursor: 'pointer',
     transition: 'text-decoration-color 150ms ease, color 150ms ease',
+    display: 'inline',
+    verticalAlign: 'baseline',
+    padding: '0',
+    margin: '0',
     '&:hover': {
       textDecorationColor: colors.primary,
       color: `${colors.primary}`,
     },
   },
-  
+
   '.cm-wiki-link': {
     color: colors.accent,
     backgroundColor: `${colors.accent}15`,
-    padding: '0 4px',
-    borderRadius: '4px',
+    padding: '0 0.15em',
+    margin: '0',
+    borderRadius: '3px',
     cursor: 'pointer',
     textDecoration: 'none',
     transition: 'background-color 150ms ease, color 150ms ease',
+    display: 'inline',
+    verticalAlign: 'baseline',
     '&:hover': {
       backgroundColor: `${colors.accent}25`,
       color: colors.accent,
@@ -211,102 +239,157 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-heading': {
     fontWeight: 'bold',
     color: colors.foreground,
+    lineHeight: '1.3',
+    padding: '0',
+    margin: '0',
   },
-  
+
   '.cm-heading-1': {
     fontSize: '2em',
-    lineHeight: '1.4',
+    lineHeight: '1.3',
+    marginTop: '0.67em',
+    marginBottom: '0.67em',
+    padding: '0',
     borderBottom: `1px solid ${colors.border}`,
+    paddingBottom: '0.3em',
   },
 
   '.cm-heading-2': {
     fontSize: '1.5em',
-    lineHeight: '1.4',
+    lineHeight: '1.3',
+    marginTop: '0.83em',
+    marginBottom: '0.83em',
+    padding: '0',
   },
 
   '.cm-heading-3': {
     fontSize: '1.25em',
-    lineHeight: '1.4',
+    lineHeight: '1.3',
+    marginTop: '1em',
+    marginBottom: '1em',
+    padding: '0',
   },
 
   '.cm-heading-4': {
     fontSize: '1.1em',
-    lineHeight: '1.4',
+    lineHeight: '1.3',
+    marginTop: '1.33em',
+    marginBottom: '1.33em',
+    padding: '0',
   },
   
   // Heading content widgets (rendered without # markers)
   '.cm-heading-content': {
     display: 'inline',
     cursor: 'text',
+    verticalAlign: 'baseline',
+    padding: '0',
+    margin: '0',
   },
-  
+
   '.cm-heading-1-content': {
     fontSize: '2em',
     fontWeight: 'bold',
-    lineHeight: '1.4',
+    lineHeight: '1.3',
+    padding: '0',
+    margin: '0',
   },
 
   '.cm-heading-2-content': {
     fontSize: '1.5em',
     fontWeight: 'bold',
-    lineHeight: '1.4',
+    lineHeight: '1.3',
+    padding: '0',
+    margin: '0',
   },
 
   '.cm-heading-3-content': {
     fontSize: '1.25em',
     fontWeight: 'bold',
-    lineHeight: '1.4',
+    lineHeight: '1.3',
+    padding: '0',
+    margin: '0',
   },
-  
+
   '.cm-heading-4-content': {
     fontSize: '1.1em',
     fontWeight: 'bold',
+    lineHeight: '1.3',
+    padding: '0',
+    margin: '0',
   },
-  
+
   '.cm-heading-5-content': {
     fontSize: '1em',
     fontWeight: 'bold',
+    lineHeight: '1.3',
+    padding: '0',
+    margin: '0',
   },
-  
+
   '.cm-heading-6-content': {
     fontSize: '0.9em',
     fontWeight: 'bold',
+    lineHeight: '1.3',
     color: colors.mutedForeground,
+    padding: '0',
+    margin: '0',
   },
-  
+
   // Blockquote content widget
   '.cm-blockquote-content': {
     display: 'inline',
     cursor: 'text',
     fontStyle: 'italic',
     color: colors.mutedForeground,
+    verticalAlign: 'baseline',
+    padding: '0',
+    margin: '0',
   },
   
   '.cm-heading-5': {
     fontSize: '1em',
-    lineHeight: '1.5',
+    lineHeight: '1.3',
+    marginTop: '1.67em',
+    marginBottom: '1.67em',
+    padding: '0',
   },
-  
+
   '.cm-heading-6': {
     fontSize: '0.9em',
-    lineHeight: '1.5',
+    lineHeight: '1.3',
+    marginTop: '2.33em',
+    marginBottom: '2.33em',
+    padding: '0',
     color: colors.mutedForeground,
   },
-  
+
   // === Blockquotes ===
-  
+
   '.cm-blockquote': {
     borderLeft: `4px solid ${colors.primary}`,
     paddingLeft: '1em',
     marginLeft: '0',
+    marginTop: '1em',
+    marginBottom: '1em',
+    paddingTop: '0',
+    paddingBottom: '0',
+    paddingRight: '0',
+    lineHeight: '1.6',
     color: colors.mutedForeground,
     fontStyle: 'italic',
   },
   
   // === Lists ===
-  
+
   '.cm-list-item': {
     paddingLeft: '0.5em',
+    paddingTop: '0',
+    paddingBottom: '0',
+    paddingRight: '0',
+    lineHeight: '1.6',
+    marginTop: '0.25em',
+    marginBottom: '0.25em',
   },
   
   '.cm-list-marker': {
@@ -326,6 +409,8 @@ export const livePreviewTheme = EditorView.theme({
   
   '.cm-horizontal-rule-container': {
     display: 'block',
+    boxSizing: 'border-box',
+    position: 'relative',
     width: 'calc(100% + var(--cm-content-padding-x-double, 0px))',
     paddingTop: '1em',
     paddingBottom: '1em',
@@ -348,34 +433,62 @@ export const livePreviewTheme = EditorView.theme({
   
   '.cm-code-block-widget': {
     backgroundColor: colors.codeBackground,
-    borderRadius: '8px',
-    paddingTop: '1em',
-    paddingBottom: '1em',
-    overflow: 'hidden',
+    borderRadius: '4px',
+    marginTop: '0',
+    marginBottom: '0',
+    paddingTop: '0',
+    paddingBottom: '0',
+    overflow: 'visible',
+    position: 'relative',
+    fontSize: '16px',
+    lineHeight: '1.6',
+    display: 'block',
+    boxSizing: 'border-box',
   },
-  
+
+  '.cm-code-block': {
+    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+    fontSize: '0.9em',
+    lineHeight: '1.5',
+    marginTop: '1em',
+    marginBottom: '1em',
+  },
+
   '.cm-code-block-header': {
+    position: 'absolute',
+    top: '2px',
+    right: '4px',
     display: 'flex',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
-    padding: '8px 12px',
-    backgroundColor: `${colors.border}50`,
-    borderBottom: `1px solid ${colors.border}`,
+    padding: '2px 4px',
+    backgroundColor: 'transparent',
+    borderBottom: 'none',
+    zIndex: '10',
+    gap: '4px',
+    opacity: '0.6',
+    transition: 'opacity 150ms ease',
+    '&:hover': {
+      opacity: '1',
+    },
   },
   
   '.cm-code-block-lang': {
-    fontSize: '12px',
+    fontSize: '10px',
     fontWeight: '500',
     color: colors.mutedForeground,
     textTransform: 'uppercase',
+    backgroundColor: `${colors.border}90`,
+    padding: '1px 4px',
+    borderRadius: '2px',
   },
-  
+
   '.cm-code-block-copy': {
-    fontSize: '12px',
-    padding: '4px 8px',
-    borderRadius: '4px',
+    fontSize: '10px',
+    padding: '1px 4px',
+    borderRadius: '2px',
     border: 'none',
-    backgroundColor: 'transparent',
+    backgroundColor: `${colors.border}80`,
     color: colors.mutedForeground,
     cursor: 'pointer',
     transition: 'background-color 150ms ease, color 150ms ease',
@@ -384,79 +497,127 @@ export const livePreviewTheme = EditorView.theme({
       color: colors.foreground,
     },
   },
-  
+
   '.cm-code-block-wrapper': {
-    display: 'flex',
-    overflow: 'auto',
+    display: 'block',
+    overflowX: 'auto',
+    overflowY: 'visible',
+    padding: '0',
+    margin: '0',
+    position: 'relative',
+    boxSizing: 'border-box',
+    paddingTop: 'var(--cm-code-fence-gap, 0px)',
+    paddingBottom: 'var(--cm-code-fence-gap, 0px)',
   },
-  
+
   '.cm-code-block-line-numbers': {
-    display: 'flex',
-    flexDirection: 'column',
-    padding: '12px 0',
-    backgroundColor: `${colors.border}30`,
-    borderRight: `1px solid ${colors.border}`,
-    userSelect: 'none',
+    display: 'none',
   },
-  
+
   '.cm-code-block-line-number': {
-    padding: '0 12px',
-    fontSize: '14px',
-    lineHeight: '1.5',
-    color: colors.mutedForeground,
-    textAlign: 'right',
-    minWidth: '32px',
+    display: 'none',
   },
-  
+
   '.cm-code-block-pre': {
     margin: '0',
-    padding: '12px 16px',
-    overflow: 'auto',
-    flex: '1',
+    padding: '0 12px',
+    overflowX: 'auto',
+    overflowY: 'visible',
+    whiteSpace: 'pre',
+    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+    fontSize: '16px',
+    lineHeight: '1.6',
+    height: 'auto',
+    boxSizing: 'border-box',
   },
-  
+
   '.cm-code-block-code': {
     fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-    fontSize: '14px',
-    lineHeight: '1.5',
+    fontSize: '16px',
+    lineHeight: '1.6',
+    whiteSpace: 'pre',
+    padding: '0',
+    margin: '0',
+    display: 'block',
   },
-  
+
+  '.cm-code-block-widget-editing .cm-code-block-code': {
+    pointerEvents: 'none',
+  },
+
+  '.cm-code-block-inline-editor': {
+    position: 'absolute',
+    inset: '0',
+    width: '100%',
+    minHeight: '100%',
+    border: 'none',
+    outline: 'none',
+    resize: 'none',
+    backgroundColor: 'transparent',
+    color: 'transparent',
+    caretColor: colors.foreground,
+    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+    fontSize: '16px',
+    lineHeight: '1.6',
+    whiteSpace: 'pre',
+    overflowX: 'auto',
+    overflowY: 'hidden',
+    boxSizing: 'border-box',
+    paddingTop: 'var(--cm-code-fence-gap, 0px)',
+    paddingBottom: 'var(--cm-code-fence-gap, 0px)',
+    paddingLeft: '12px',
+    paddingRight: '12px',
+  },
+
   '.cm-code-block-line': {
-    backgroundColor: `${colors.codeBackground}80`,
+    padding: '0',
+    margin: '0',
   },
-  
+
   '.cm-code-block-editing': {
-    backgroundColor: colors.codeBackground,
+    padding: '0',
+    margin: '0',
   },
   
   // Hidden lines for multi-line code blocks (when not editing)
-  // CRITICAL FIX: Use visibility instead of display:none to maintain document flow
+  // Use display:none to completely remove from layout
   '.cm-code-block-hidden': {
-    visibility: 'hidden',
-    height: '0',
-    overflow: 'hidden',
-    margin: '0',
-    padding: '0',
-    lineHeight: '0',
-    fontSize: '0',
+    display: 'none',
   },
   
   // === Math ===
-  
+
   '.cm-math-inline': {
     display: 'inline-block',
     verticalAlign: 'middle',
-    padding: '0 2px',
+    padding: '0',
+    margin: '0',
+    lineHeight: '1.6',
+    border: 'none',
+    outline: 'none',
+    resize: 'none',
+    overflow: 'visible',
+    appearance: 'none',
+    userSelect: 'none',
   },
-  
+
   '.cm-math-block': {
     display: 'block',
     textAlign: 'center',
-    paddingTop: '1em',
-    paddingBottom: '1em',
-    padding: '0.5em',
+    paddingTop: '0.75em',
+    paddingBottom: '0.75em',
+    padding: '0.75em 0',
+    marginTop: '0',
+    marginBottom: '0',
     cursor: 'text',
     width: '100%',
+    lineHeight: '1.6',
+    border: 'none',
+    outline: 'none',
+    resize: 'none',
+    overflow: 'visible',
+    appearance: 'none',
+    userSelect: 'none',
   },
   
   '.cm-widgetBuffer + .cm-math-block, .cm-widgetBuffer + .cm-code-block-widget, .cm-widgetBuffer + .cm-table-widget': {
@@ -468,10 +629,13 @@ export const livePreviewTheme = EditorView.theme({
     fontStyle: 'italic',
     border: `1px solid ${colors.destructive}`,
     borderRadius: '4px',
-    padding: '2px 6px',
+    padding: '0.05em 0.25em',
+    margin: '0',
     backgroundColor: `${colors.destructive}10`,
     fontFamily: '"JetBrains Mono", monospace',
     fontSize: '0.9em',
+    display: 'inline',
+    verticalAlign: 'baseline',
   },
   
   '.cm-math-error-wrapper': {
@@ -500,20 +664,32 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-math-source-inline': {
     backgroundColor: `${colors.primary}15`,
     borderRadius: '4px',
-    padding: '0 4px',
+    padding: '0 0.2em',
+    margin: '0',
     fontFamily: '"JetBrains Mono", monospace',
     fontSize: '0.9em',
+    display: 'inline',
+    verticalAlign: 'baseline',
   },
-  
+
+  '.cm-math-delimiter-source': {
+    color: colors.primary,
+    fontWeight: '700',
+    opacity: '0.9',
+  },
+
   '.cm-math-source-block': {
     backgroundColor: `${colors.primary}10`,
     borderRadius: '8px',
-    padding: '8px 12px',
+    padding: '0.5em',
+    margin: '0',
     fontFamily: '"JetBrains Mono", monospace',
     fontSize: '0.9em',
     display: 'block',
     paddingTop: '0.5em',
     paddingBottom: '0.5em',
+    marginTop: '0.5em',
+    marginBottom: '0.5em',
   },
   
   // Hidden lines for multi-line block math (when not editing)
@@ -529,19 +705,73 @@ export const livePreviewTheme = EditorView.theme({
   },
   
   // === Tables ===
-  
-  '.cm-table-widget': {
-    width: '100%',
-    borderCollapse: 'collapse',
-    paddingTop: '1em',
-    paddingBottom: '1em',
-    fontSize: '14px',
+
+  '.cm-table-widget-wrapper': {
+    display: 'block',
+    marginTop: '0',
+    marginBottom: '0',
+    padding: '0',
+    overflowX: 'auto',
+    overflowY: 'visible',
+    borderRadius: '6px',
+    border: `1px solid ${colors.border}`,
+    boxSizing: 'border-box',
+    backgroundColor: colors.background,
+    position: 'relative',
   },
-  
+
+  '.cm-table-toolbar': {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: '6px',
+    padding: '6px 8px',
+    borderBottom: `1px solid ${colors.border}`,
+    backgroundColor: `${colors.muted}70`,
+  },
+
+  '.cm-table-toolbar-group': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    flexWrap: 'wrap',
+  },
+
+  '.cm-table-toolbar-selection': {
+    marginLeft: 'auto',
+    fontSize: '11px',
+    color: colors.mutedForeground,
+    fontFamily: '"JetBrains Mono", monospace',
+    userSelect: 'none',
+  },
+
+  '.cm-table-widget-viewport': {
+    width: '100%',
+    overflow: 'visible',
+  },
+
+  '.cm-table-widget': {
+    width: 'max-content',
+    minWidth: '100%',
+    borderCollapse: 'collapse',
+    marginTop: '0',
+    marginBottom: '0',
+    paddingTop: '0',
+    paddingBottom: '0',
+    fontSize: '16px',
+    lineHeight: '1.6',
+    tableLayout: 'auto',
+  },
+
   '.cm-table-widget th, .cm-table-widget td': {
     border: `1px solid ${colors.border}`,
-    padding: '8px 12px',
+    padding: '4px 8px',
     textAlign: 'left',
+    lineHeight: '1.6',
+    verticalAlign: 'top',
+    position: 'relative',
+    whiteSpace: 'normal',
+    wordBreak: 'break-word',
   },
   
   '.cm-table-widget th': {
@@ -576,45 +806,61 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-table-widget code': {
     backgroundColor: colors.codeBackground,
     borderRadius: '4px',
-    padding: '2px 6px',
+    padding: '0.05em 0.25em',
+    margin: '0',
     fontFamily: '"JetBrains Mono", "Fira Code", monospace',
     fontSize: '0.9em',
+    display: 'inline',
+    verticalAlign: 'baseline',
   },
-  
+
   '.cm-wiki-link-table': {
     color: colors.accent,
     backgroundColor: `${colors.accent}15`,
-    padding: '0 4px',
+    padding: '0 0.2em',
+    margin: '0',
     borderRadius: '4px',
     cursor: 'pointer',
     textDecoration: 'none',
     transition: 'background-color 150ms ease',
+    display: 'inline',
+    verticalAlign: 'baseline',
     '&:hover': {
       backgroundColor: `${colors.accent}25`,
     },
   },
-  
+
   '.cm-link-table': {
     color: colors.primary,
     textDecoration: 'underline',
     textDecorationColor: `${colors.primary}60`,
+    padding: '0',
+    margin: '0',
+    display: 'inline',
+    verticalAlign: 'baseline',
     '&:hover': {
       textDecorationColor: colors.primary,
     },
   },
-  
+
   '.cm-math-inline-table': {
     fontFamily: '"JetBrains Mono", monospace',
     fontSize: '0.9em',
     color: colors.accent,
     backgroundColor: `${colors.accent}10`,
-    padding: '0 4px',
+    padding: '0 0.2em',
+    margin: '0',
     borderRadius: '4px',
+    display: 'inline',
+    verticalAlign: 'baseline',
   },
-  
+
   '.cm-table-line': {
     fontFamily: '"JetBrains Mono", monospace',
-    fontSize: '14px',
+    fontSize: '16px',
+    lineHeight: '1.6',
+    padding: '0',
+    margin: '0',
   },
   
   // Hidden lines for multi-line tables (when not editing)
@@ -629,9 +875,76 @@ export const livePreviewTheme = EditorView.theme({
     fontSize: '0',
   },
 
-  // Hidden table lines - completely remove from layout to fix table disappearing
+  // Hidden table lines - keep positional mapping stable for click/coords
   '.cm-table-line-hidden': {
-    display: 'none',
+    visibility: 'hidden',
+    height: '0 !important',
+    overflow: 'hidden',
+    margin: '0 !important',
+    padding: '0 !important',
+    lineHeight: '0 !important',
+    fontSize: '0 !important',
+    display: 'block',
+    minHeight: '0 !important',
+    maxHeight: '0 !important',
+  },
+
+  '.cm-math-block-line-hidden': {
+    visibility: 'hidden',
+    height: '0 !important',
+    overflow: 'hidden',
+    margin: '0 !important',
+    padding: '0 !important',
+    lineHeight: '0 !important',
+    fontSize: '0 !important',
+    display: 'block',
+    minHeight: '0 !important',
+    maxHeight: '0 !important',
+  },
+
+  '.cm-table-cell-content': {
+    minHeight: '1.6em',
+    outline: 'none',
+    whiteSpace: 'normal',
+    wordBreak: 'break-word',
+  },
+
+  '.cm-table-cell-editing': {
+    outline: `2px solid ${colors.primary}`,
+    outlineOffset: '-2px',
+    backgroundColor: `${colors.primary}10`,
+  },
+
+  '.cm-table-cell-selected': {
+    boxShadow: `inset 0 0 0 2px ${colors.primary}55`,
+  },
+
+  '.cm-table-action-btn': {
+    border: `1px solid ${colors.border}`,
+    backgroundColor: colors.background,
+    color: colors.mutedForeground,
+    borderRadius: '4px',
+    fontSize: '10px',
+    lineHeight: '1',
+    padding: '2px 4px',
+    cursor: 'pointer',
+    userSelect: 'none',
+    '&:hover': {
+      color: colors.foreground,
+      borderColor: colors.primary,
+    },
+    '&:disabled': {
+      opacity: '0.45',
+      cursor: 'not-allowed',
+      borderColor: colors.border,
+      color: colors.mutedForeground,
+    },
+  },
+
+  '.cm-table-action-btn.is-active': {
+    color: colors.foreground,
+    borderColor: colors.primary,
+    backgroundColor: `${colors.primary}12`,
   },
   
   // === Images ===
@@ -640,6 +953,9 @@ export const livePreviewTheme = EditorView.theme({
     display: 'inline-block',
     maxWidth: '100%',
     cursor: 'pointer',
+    verticalAlign: 'baseline',
+    margin: '0.5em 0',
+    padding: '0',
   },
   
   '.cm-image': {
@@ -698,6 +1014,10 @@ export const livePreviewTheme = EditorView.theme({
   
   '.cm-formatted-widget': {
     cursor: 'text',
+    display: 'inline',
+    verticalAlign: 'baseline',
+    padding: '0',
+    margin: '0',
     // Smooth appearance animation
     animation: 'cm-fade-in 150ms ease-out',
   },
@@ -743,14 +1063,16 @@ export const livePreviewTheme = EditorView.theme({
   
   '.cm-superscript': {
     verticalAlign: 'super',
-    fontSize: '0.8em',
+    fontSize: '0.75em',
     cursor: 'text',
+    lineHeight: '0',
   },
-  
+
   '.cm-subscript': {
     verticalAlign: 'sub',
-    fontSize: '0.8em',
+    fontSize: '0.75em',
     cursor: 'text',
+    lineHeight: '0',
   },
   
   // === Keyboard Keys ===
@@ -1024,3 +1346,4 @@ export const livePreviewThemeExtension: Extension = [
   livePreviewTheme,
   syntaxHighlighting(livePreviewHighlightStyle),
 ];
+

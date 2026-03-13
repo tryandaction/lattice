@@ -98,4 +98,4 @@ If clipboard content looks like regular Markdown:
 
 ---
 
-If you add new math behavior, update this guide and `DOCS_INDEX.md`.
+If you add new math behavior, update this guide, `README.md`, and `docs/guides/live-preview-guide.md`.

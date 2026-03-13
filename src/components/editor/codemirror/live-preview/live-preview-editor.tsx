@@ -39,6 +39,7 @@ import { normalizeFormulaInput, wrapLatexForMarkdown } from '@/lib/formula-utils
 import { useSearchParams } from 'next/navigation';
 import { useSettingsStore } from '@/stores/settings-store';
 import { imageResolverFacet } from './image-resolver-facet';
+import { setCodeBlockSourceMode, setMathSourceMode } from './source-mode';
 
 // Helper: resolve a relative image path against the current file's directory
 function resolveImagePath(currentFilePath: string, imageUrl: string): string {
@@ -78,7 +79,32 @@ type LivePreviewViewWithHandlers = EditorView & {
   _outlineTimeout?: ReturnType<typeof setTimeout>;
   _unifiedInputFocusHandler?: () => void;
   _unifiedInputBlurHandler?: () => void;
+  _mathEditorHandler?: (e: Event) => void;
 };
+
+type DebuggableEditorDom = HTMLElement & { cmView?: EditorView };
+type LivePreviewWindow = Window & { __latticeLivePreviewView?: EditorView };
+
+function exposeEditorView(view: EditorView): void {
+  const dom = view.dom as DebuggableEditorDom;
+  dom.cmView = view;
+  if (typeof window !== 'undefined') {
+    (window as LivePreviewWindow).__latticeLivePreviewView = view;
+  }
+}
+
+function clearExposedEditorView(view: EditorView): void {
+  const dom = view.dom as DebuggableEditorDom;
+  if (dom.cmView === view) {
+    delete dom.cmView;
+  }
+  if (typeof window !== 'undefined') {
+    const win = window as LivePreviewWindow;
+    if (win.__latticeLivePreviewView === view) {
+      delete win.__latticeLivePreviewView;
+    }
+  }
+}
 
 export interface LivePreviewEditorProps {
   /** Initial content */
@@ -406,6 +432,11 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           if (existingBlurHandler) {
             existingView.dom.removeEventListener('focusout', existingBlurHandler);
           }
+          const existingMathHandler = (existingView as LivePreviewViewWithHandlers)._mathEditorHandler;
+          if (existingMathHandler) {
+            existingView.dom.removeEventListener('open-math-editor', existingMathHandler);
+          }
+          clearExposedEditorView(existingView);
           unregisterCodeMirrorView(existingView.dom);
           existingView.destroy();
           viewRef.current = null;
@@ -469,6 +500,42 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
 
         viewRef.current = view;
 
+        // Expose view for debugging (document.querySelector('.cm-editor')?.cmView)
+        exposeEditorView(view);
+
+        // Attach MathEditor event listener immediately after view creation
+        const handleOpenMathEditor = (e: Event) => {
+          console.log('[LivePreviewEditor] Received open-math-editor event', e);
+          const customEvent = e as CustomEvent<{
+            latex: string;
+            isBlock: boolean;
+            from: number;
+            to: number;
+            position: { top: number; left: number };
+          }>;
+          const detail = customEvent.detail;
+          console.log('[LivePreviewEditor] Event detail:', detail);
+          // Clamp position so the overlay stays within the viewport
+          const editorWidth = detail.isBlock ? 524 : 324; // approx overlay widths
+          const clampedLeft = Math.min(detail.position.left, window.innerWidth - editorWidth - 16);
+          const clampedTop = detail.position.top + 300 > window.innerHeight
+            ? detail.position.top - 320  // flip above the formula
+            : detail.position.top;
+          setMathEditor({
+            ...detail,
+            position: {
+              top: Math.max(8, clampedTop),
+              left: Math.max(8, clampedLeft),
+            },
+          });
+          console.log('[LivePreviewEditor] MathEditor state set');
+        };
+        console.log('[LivePreviewEditor] Attaching open-math-editor listener to view.dom');
+        view.dom.addEventListener('open-math-editor', handleOpenMathEditor);
+
+        // Store handler for cleanup
+        (view as LivePreviewViewWithHandlers)._mathEditorHandler = handleOpenMathEditor;
+
         // Register unified input target for CodeMirror integration
         registerCodeMirrorView(view.dom, view);
         const focusHandler = () => {
@@ -480,7 +547,21 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         };
         const blurHandler = () => {
           if (viewRef.current) {
-            viewRef.current.dispatch({ effects: setEditorFocus.of(false) });
+            requestAnimationFrame(() => {
+              if (viewRef.current) {
+                const activeElement = document.activeElement;
+                if (activeElement && viewRef.current.dom.contains(activeElement)) {
+                  return;
+                }
+                viewRef.current.dispatch({
+                  effects: [
+                    setEditorFocus.of(false),
+                    setMathSourceMode.of(null),
+                    setCodeBlockSourceMode.of(null),
+                  ],
+                });
+              }
+            });
           }
         };
         view.dom.addEventListener('focusin', focusHandler);
@@ -539,6 +620,11 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         if (existingBlurHandler) {
           existingView.dom.removeEventListener('focusout', existingBlurHandler);
         }
+        const existingMathHandler = (existingView as LivePreviewViewWithHandlers)._mathEditorHandler;
+        if (existingMathHandler) {
+          existingView.dom.removeEventListener('open-math-editor', existingMathHandler);
+        }
+        clearExposedEditorView(existingView);
         unregisterCodeMirrorView(existingView.dom);
         existingView.destroy();
         viewRef.current = null;
@@ -588,40 +674,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     };
   }, [onWikiLinkClick]);
 
-  // Handle MathEditor open event
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const handleOpenMathEditor = (e: Event) => {
-      const customEvent = e as CustomEvent<{
-        latex: string;
-        isBlock: boolean;
-        from: number;
-        to: number;
-        position: { top: number; left: number };
-      }>;
-      const detail = customEvent.detail;
-      // Clamp position so the overlay stays within the viewport
-      const editorWidth = detail.isBlock ? 524 : 324; // approx overlay widths
-      const clampedLeft = Math.min(detail.position.left, window.innerWidth - editorWidth - 16);
-      const clampedTop = detail.position.top + 300 > window.innerHeight
-        ? detail.position.top - 320  // flip above the formula
-        : detail.position.top;
-      setMathEditor({
-        ...detail,
-        position: {
-          top: Math.max(8, clampedTop),
-          left: Math.max(8, clampedLeft),
-        },
-      });
-    };
-
-    container.addEventListener('open-math-editor', handleOpenMathEditor);
-    return () => {
-      container.removeEventListener('open-math-editor', handleOpenMathEditor);
-    };
-  }, []);
+  // Handle MathEditor open event - REMOVED (now handled in editor init)
 
   // Handle MathEditor save
   const handleMathSave = useCallback((latex: string) => {

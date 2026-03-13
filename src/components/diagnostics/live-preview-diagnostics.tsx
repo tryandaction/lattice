@@ -1,8 +1,11 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import dynamic from "next/dynamic";
 import { cn } from "@/lib/utils";
+import { LIVE_PREVIEW_DIAGNOSTIC_FIXTURES } from "./live-preview-content";
+import { resolveAppRoute } from "@/lib/app-route";
 
 const ObsidianMarkdownViewer = dynamic(
   () => import("@/components/editor/obsidian-markdown-viewer").then((mod) => mod.ObsidianMarkdownViewer),
@@ -15,22 +18,6 @@ type DiagnosticResult = {
   counts: Record<string, number>;
 };
 
-const FILES = [
-  // Broad coverage first for fastest regression validation.
-  { id: "test-markdown-coverage.md", label: "覆盖用例", url: "/test-markdown-coverage.md" },
-  { id: "test-advanced-markdown.md", label: "高级渲染", url: "/test-advanced-markdown.md" },
-  { id: "test-formula-rendering.md", label: "公式渲染", url: "/test-formula-rendering.md" },
-  { id: "test-cursor-positioning.md", label: "光标定位", url: "/test-cursor-positioning.md" },
-
-  // Focused fixtures.
-  { id: "test-syntax-hiding.md", label: "语法隐藏", url: "/test-syntax-hiding.md" },
-  { id: "test-nested-formatting.md", label: "嵌套格式", url: "/test-nested-formatting.md" },
-  { id: "test-text-duplication.md", label: "重复文本", url: "/test-text-duplication.md" },
-
-  // Stress test.
-  { id: "test-10000-lines.md", label: "超长文档", url: "/test-10000-lines.md" },
-];
-
 function isEscaped(text: string, index: number): boolean {
   let backslashes = 0;
   for (let i = index - 1; i >= 0 && text[i] === "\\"; i--) {
@@ -40,9 +27,10 @@ function isEscaped(text: string, index: number): boolean {
 }
 
 export function LivePreviewDiagnostics() {
-  const [selectedId, setSelectedId] = useState(FILES[0].id);
+  const guideHref = resolveAppRoute("/guide");
+  const [selectedId, setSelectedId] = useState(LIVE_PREVIEW_DIAGNOSTIC_FIXTURES[0].id);
   const selected = useMemo(
-    () => FILES.find((f) => f.id === selectedId) ?? FILES[0],
+    () => LIVE_PREVIEW_DIAGNOSTIC_FIXTURES.find((file) => file.id === selectedId) ?? LIVE_PREVIEW_DIAGNOSTIC_FIXTURES[0],
     [selectedId]
   );
   const [content, setContent] = useState("");
@@ -124,11 +112,8 @@ export function LivePreviewDiagnostics() {
       for (const other of elements) {
         if (other === container) continue;
         const inside = other.from >= container.from && other.to <= container.to;
-        if (!inside) continue;
-        if (other.type === container.type) continue;
-        errors.push(
-          `嵌套冲突: ${ElementType[container.type]} 包含 ${ElementType[other.type]}`
-        );
+        if (!inside || other.type === container.type) continue;
+        errors.push(`嵌套冲突: ${ElementType[container.type]} 包含 ${ElementType[other.type]}`);
         break;
       }
     }
@@ -140,31 +125,39 @@ export function LivePreviewDiagnostics() {
   return (
     <div className="flex h-screen w-screen flex-col bg-background text-foreground">
       <header className="flex items-center gap-3 border-b border-border px-4 py-3">
-        <h1 className="text-sm font-medium">Live Preview 自检面板</h1>
+        <div>
+          <h1 className="text-sm font-medium">Live Preview 自检面板</h1>
+          <p className="text-xs text-muted-foreground">用于验证实时预览渲染、光标定位和复杂块级交互。</p>
+        </div>
+
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>文件：</span>
-          {FILES.map((file) => (
+          <span>测试集：</span>
+          {LIVE_PREVIEW_DIAGNOSTIC_FIXTURES.map((file) => (
             <button
               key={file.id}
               onClick={() => setSelectedId(file.id)}
               className={cn(
                 "rounded px-2 py-1",
-                selectedId === file.id
-                  ? "bg-muted text-foreground"
-                  : "hover:bg-muted/50"
+                selectedId === file.id ? "bg-muted text-foreground" : "hover:bg-muted/50"
               )}
             >
               {file.label}
             </button>
           ))}
         </div>
+
         <div className="ml-auto flex items-center gap-2 text-xs">
+          <Link
+            href={guideHref}
+            className="rounded border border-border px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          >
+            用户指南
+          </Link>
           <button
             onClick={runDiagnostics}
             disabled={!content || isRunning}
             className={cn(
-              "rounded px-3 py-1",
-              "border border-border",
+              "rounded border border-border px-3 py-1",
               isRunning ? "opacity-60" : "hover:bg-muted"
             )}
           >
@@ -199,24 +192,27 @@ export function LivePreviewDiagnostics() {
               </div>
               <div>
                 <div className="mb-1 text-[11px] uppercase text-muted-foreground">元素统计</div>
-                <pre className="rounded bg-muted/50 p-2 text-[11px] leading-relaxed">
-{JSON.stringify(result.counts, null, 2)}
-                </pre>
+                <pre className="rounded bg-muted/50 p-2 text-[11px] leading-relaxed">{JSON.stringify(result.counts, null, 2)}</pre>
               </div>
               {result.errors.length > 0 && (
                 <div>
                   <div className="mb-1 text-[11px] uppercase text-muted-foreground">异常明细</div>
-                  <pre className="rounded bg-muted/50 p-2 text-[11px] leading-relaxed">
-{result.errors.join("\n")}
-                  </pre>
+                  <pre className="rounded bg-muted/50 p-2 text-[11px] leading-relaxed">{result.errors.join("\n")}</pre>
                 </div>
               )}
             </div>
           ) : (
-            <div className="text-muted-foreground">点击“运行自检”开始检测。</div>
+            <div className="space-y-3 text-muted-foreground">
+              <p>点击“运行自检”即可分析当前示例中的实时预览元素。</p>
+              <div className="rounded-lg border border-dashed border-border p-3 text-[11px] leading-6">
+                这个面板继续保留开发定位价值；普通用户请使用上方的“用户指南”，在那里可以通过同一套实时预览引擎学习语法与交互。
+              </div>
+            </div>
           )}
         </section>
       </main>
     </div>
   );
 }
+
+

@@ -198,13 +198,17 @@ describe('HUD Store', () => {
 
     it('computeOptimalPosition returns bottom when no cursor position', () => {
       useHUDStore.getState().openHUD('test');
-      expect(useHUDStore.getState().computeOptimalPosition()).toBe('bottom');
+      const result = useHUDStore.getState().computeOptimalPosition();
+      expect(result.side).toBe('bottom');
+      expect(typeof result.topPx).toBe('number');
     });
 
     it('computeOptimalPosition respects fixed position setting', () => {
       useHUDStore.getState().openHUD('test');
       useHUDStore.getState().setPosition('top');
-      expect(useHUDStore.getState().computeOptimalPosition()).toBe('top');
+      const result = useHUDStore.getState().computeOptimalPosition();
+      expect(result.side).toBe('top');
+      expect(typeof result.topPx).toBe('number');
     });
 
     it('closeHUD preserves position settings', () => {

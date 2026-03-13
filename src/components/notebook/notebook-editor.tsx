@@ -5,8 +5,11 @@ import { Save, Loader2, Check, AlertCircle, Plus, Code, FileText, Play, Square, 
 import { useNotebookEditor } from "@/hooks/use-notebook-editor";
 import { useNotebookExecutor } from "@/hooks/use-notebook-executor";
 import { NotebookCellComponent } from "./notebook-cell";
+import { KernelSelector } from "./kernel-selector";
 import { cn } from "@/lib/utils";
 import { debounce } from "@/lib/fast-save";
+import type { IKernelManager } from "@/lib/kernel/kernel-manager";
+import type { KernelOption } from "./kernel-selector";
 
 interface NotebookEditorProps {
   content: string;
@@ -93,8 +96,9 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [runMenuOpen, setRunMenuOpen] = useState(false);
+  const [currentKernel, setCurrentKernel] = useState<KernelOption | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  
+
   // Notebook executor for Run All functionality
   const {
     executionState,
@@ -104,6 +108,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
     runAllBelow,
     interrupt,
     restartKernel,
+    switchKernel,
   } = useNotebookExecutor({
     onCellStart: (cellId) => {
       clearCellOutputs(cellId);
@@ -113,23 +118,33 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
       const cell = state.cells.find(c => c.id === cellId);
       if (cell) {
         const newOutputs = [...(cell.outputs || [])];
-        if (output.type === "image") {
+        if (output.type === "display_data") {
+          const displayData = output.content as import("@/lib/kernel/kernel-manager").DisplayDataOutput;
           newOutputs.push({
             output_type: "display_data",
-            data: { "image/png": output.content.replace("data:image/png;base64,", "") },
+            data: displayData.data,
           });
         } else if (output.type === "error") {
+          const errorData = output.content as import("@/lib/kernel/kernel-manager").ErrorOutput;
           newOutputs.push({
             output_type: "error",
-            ename: "Error",
-            evalue: output.content,
-            traceback: [output.content],
+            ename: errorData.ename,
+            evalue: errorData.evalue,
+            traceback: errorData.traceback,
           });
-        } else {
+        } else if (output.type === "stream") {
+          const streamData = output.content as import("@/lib/kernel/kernel-manager").StreamOutput;
           newOutputs.push({
             output_type: "stream",
-            name: "stdout",
-            text: output.content,
+            name: streamData.name,
+            text: streamData.text,
+          });
+        } else if (output.type === "execute_result") {
+          const resultData = output.content as import("@/lib/kernel/kernel-manager").ExecuteResultOutput;
+          newOutputs.push({
+            output_type: "execute_result",
+            data: resultData.data,
+            execution_count: resultData.execution_count,
           });
         }
         updateCellOutputs(cellId, newOutputs);
@@ -137,6 +152,54 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
     },
     onCellComplete: (cellId, result) => {
       updateCellExecutionCount(cellId, result.executionCount);
+
+      // If there are outputs in the result that weren't already added via onCellOutput,
+      // add them now (this handles the case where executeCell resolves with error outputs)
+      if (result.outputs && result.outputs.length > 0) {
+        const cell = state.cells.find(c => c.id === cellId);
+        if (cell) {
+          const currentOutputCount = cell.outputs?.length || 0;
+          const resultOutputCount = result.outputs.length;
+
+          // If result has more outputs than current cell, add the missing ones
+          if (resultOutputCount > currentOutputCount) {
+            const newOutputs = [...(cell.outputs || [])];
+            for (let i = currentOutputCount; i < resultOutputCount; i++) {
+              const output = result.outputs[i];
+              if (output.type === "error") {
+                const errorData = output.content as import("@/lib/kernel/kernel-manager").ErrorOutput;
+                newOutputs.push({
+                  output_type: "error",
+                  ename: errorData.ename,
+                  evalue: errorData.evalue,
+                  traceback: errorData.traceback,
+                });
+              } else if (output.type === "display_data") {
+                const displayData = output.content as import("@/lib/kernel/kernel-manager").DisplayDataOutput;
+                newOutputs.push({
+                  output_type: "display_data",
+                  data: displayData.data,
+                });
+              } else if (output.type === "stream") {
+                const streamData = output.content as import("@/lib/kernel/kernel-manager").StreamOutput;
+                newOutputs.push({
+                  output_type: "stream",
+                  name: streamData.name,
+                  text: streamData.text,
+                });
+              } else if (output.type === "execute_result") {
+                const resultData = output.content as import("@/lib/kernel/kernel-manager").ExecuteResultOutput;
+                newOutputs.push({
+                  output_type: "execute_result",
+                  data: resultData.data,
+                  execution_count: resultData.execution_count,
+                });
+              }
+            }
+            updateCellOutputs(cellId, newOutputs);
+          }
+        }
+      }
     },
   });
   
@@ -189,6 +252,55 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
     const serialized = serialize();
     debouncedNotifyChangeRef.current?.(serialized);
   }, [state, serialize, isDirty, onContentChange]);
+
+  /**
+   * Handle kernel change
+   */
+  const handleKernelChange = useCallback(async (kernel: KernelOption) => {
+    setCurrentKernel(kernel);
+
+    // Create and switch to new kernel
+    try {
+      const { createKernel } = await import("@/lib/kernel/kernel-factory");
+
+      let newKernel: IKernelManager;
+      if (kernel.type === "pyodide") {
+        newKernel = createKernel({ type: "pyodide" });
+      } else {
+        // For Jupyter kernel, we need to start the server first
+        const { invoke } = await import("@tauri-apps/api/core");
+
+        // Start Jupyter server if not already running
+        const serverInfo = await invoke("get_jupyter_server_info");
+        if (!serverInfo) {
+          await invoke("start_jupyter_server", {
+            pythonPath: kernel.pythonEnv?.path,
+          });
+        }
+
+        // Get server info
+        const info = await invoke<{ url: string; token: string }>("get_jupyter_server_info");
+
+        // Start a kernel
+        const session = await invoke<{ id: string; kernel_id: string }>("start_kernel", {
+          kernelName: "python3",
+        });
+
+        newKernel = createKernel({
+          type: "jupyter",
+          jupyter: {
+            serverUrl: info.url,
+            kernelId: session.kernel_id,
+            sessionId: session.id,
+          },
+        });
+      }
+
+      await switchKernel(newKernel);
+    } catch (error) {
+      console.error("Failed to switch kernel:", error);
+    }
+  }, [switchKernel]);
 
   /**
    * Handle save operation
@@ -311,6 +423,14 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
           </div>
           
           <div className="flex items-center gap-2">
+            {/* Kernel Selector */}
+            <KernelSelector
+              currentKernel={currentKernel}
+              onKernelChange={handleKernelChange}
+            />
+
+            <div className="w-px h-4 bg-border" />
+
             {/* Run All dropdown */}
             <div className="relative">
               {executionState === "running" ? (
@@ -435,14 +555,6 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
               </button>
             )}
           </div>
-        </div>
-        
-        {/* Keyboard shortcuts hint */}
-        <div className="flex items-center gap-4 px-6 py-1.5 text-[10px] text-muted-foreground border-t border-border/50 bg-muted/30">
-          <span><kbd className="px-1 py-0.5 rounded bg-muted text-[9px]">Ctrl+S</kbd> Save</span>
-          <span><kbd className="px-1 py-0.5 rounded bg-muted text-[9px]">Ctrl+Shift+Enter</kbd> Run All</span>
-          <span><kbd className="px-1 py-0.5 rounded bg-muted text-[9px]">Ctrl+Shift+B</kbd> Add code</span>
-          <span><kbd className="px-1 py-0.5 rounded bg-muted text-[9px]">Ctrl+Shift+M</kbd> Add markdown</span>
         </div>
       </div>
 

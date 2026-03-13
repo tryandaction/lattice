@@ -1,12 +1,14 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useSettingsStore } from '@/stores/settings-store';
 import { LanguageSelector } from '@/components/settings/language-selector';
 import { ThemeSelector } from '@/components/settings/theme-selector';
 import { FolderSelector } from '@/components/settings/folder-selector';
+import { resolveAppRoute } from '@/lib/app-route';
 
 type OnboardingStep = 'welcome' | 'language' | 'theme' | 'folder' | 'complete';
 
@@ -176,6 +178,13 @@ function WelcomeStep() {
       <h2 className="text-2xl font-bold mb-2">{t('onboarding.welcome')}</h2>
       <p className="text-muted-foreground mb-4">{t('onboarding.welcome.description')}</p>
       <p className="text-sm text-muted-foreground">{t('onboarding.welcome.subtitle')}</p>
+      <div className="mt-6">
+        <Link
+          href={resolveAppRoute("/guide")} data-guide-entry="onboarding" className="inline-flex items-center rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        >
+          查看实时预览指南
+        </Link>
+      </div>
     </div>
   );
 }
@@ -235,3 +244,6 @@ function CompleteStep() {
     </div>
   );
 }
+
+
+

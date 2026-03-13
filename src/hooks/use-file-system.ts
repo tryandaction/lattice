@@ -34,8 +34,8 @@ interface UseFileSystemReturn {
   // Actions
   openDirectory: () => Promise<void>;
   openQaWorkspace?: () => Promise<void>;
-  createFile: (name: string, type: FileType, parentHandle?: FileSystemDirectoryHandle) => Promise<FileOperationResult>;
-  createDirectory: (name: string, parentHandle?: FileSystemDirectoryHandle) => Promise<DirectoryOperationResult>;
+  createFile: (name: string, type: FileType | 'file', parentPath?: string) => Promise<FileOperationResult>;
+  createDirectory: (name: string, parentPath?: string) => Promise<DirectoryOperationResult>;
   deleteFile: (path: string) => Promise<FileOperationResult>;
   renameFile: (path: string, newName: string) => Promise<FileOperationResult>;
   refreshDirectory: () => Promise<void>;
@@ -331,28 +331,80 @@ export function useFileSystem(): UseFileSystemReturn {
 
   /**
    * Create a new file in the workspace
-   * 
+   *
    * @param name - Desired filename (without extension)
-   * @param type - Type of file ('note' for .md, 'notebook' for .ipynb)
-   * @param parentHandle - Optional parent directory handle (defaults to root)
+   * @param type - Type of file ('note' for .md, 'notebook' for .ipynb, 'file' for any extension)
+   * @param parentPath - Optional parent directory path (defaults to root)
    * @returns FileOperationResult with the created file handle
    */
   const createFile = useCallback(async (
     name: string,
-    type: FileType,
-    parentHandle?: FileSystemDirectoryHandle
+    type: FileType | 'file',
+    parentPath?: string
   ): Promise<FileOperationResult> => {
-    const targetDir = parentHandle ?? rootHandle;
-    
-    if (!targetDir) {
+    if (!rootHandle) {
       return {
         success: false,
         error: "No directory is open. Please open a folder first.",
       };
     }
 
+    let targetDir = rootHandle;
+
+    // If parentPath is provided, navigate to that directory
+    if (parentPath) {
+      const parts = parentPath.split('/');
+      // Skip the root name (first part)
+      for (let i = 1; i < parts.length; i++) {
+        try {
+          targetDir = await targetDir.getDirectoryHandle(parts[i]);
+        } catch {
+          return {
+            success: false,
+            error: `Could not find directory: ${parentPath}`,
+          };
+        }
+      }
+    }
+
+    // Handle generic file type
+    if (type === 'file') {
+      try {
+        // For generic files, use the name as-is (with extension)
+        const fileHandle = await targetDir.getFileHandle(name, { create: true });
+
+        // Write empty content
+        const writable = await fileHandle.createWritable();
+        await writable.write('');
+        await writable.close();
+
+        // Build the path
+        const pathParts = parentPath ? parentPath.split('/') : [rootHandle.name];
+        const fullPath = [...pathParts, name].join('/');
+
+        const result = {
+          success: true,
+          handle: fileHandle,
+          path: fullPath,
+        };
+
+        // Refresh the file tree to show the new file
+        await refreshDirectory();
+        if (result.path) {
+          emitVaultChange(result.path);
+        }
+
+        return result;
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : 'Failed to create file',
+        };
+      }
+    }
+
     const result = await createFileUtil(targetDir, name, type);
-    
+
     if (result.success) {
       // Refresh the file tree to show the new file
       await refreshDirectory();
@@ -366,26 +418,42 @@ export function useFileSystem(): UseFileSystemReturn {
 
   /**
    * Create a new directory in the workspace
-   * 
+   *
    * @param name - Desired directory name
-   * @param parentHandle - Optional parent directory handle (defaults to root)
+   * @param parentPath - Optional parent directory path (defaults to root)
    * @returns DirectoryOperationResult with the created directory handle
    */
   const createDirectory = useCallback(async (
     name: string,
-    parentHandle?: FileSystemDirectoryHandle
+    parentPath?: string
   ): Promise<DirectoryOperationResult> => {
-    const targetDir = parentHandle ?? rootHandle;
-    
-    if (!targetDir) {
+    if (!rootHandle) {
       return {
         success: false,
         error: "No directory is open. Please open a folder first.",
       };
     }
 
+    let targetDir = rootHandle;
+
+    // If parentPath is provided, navigate to that directory
+    if (parentPath) {
+      const parts = parentPath.split('/');
+      // Skip the root name (first part)
+      for (let i = 1; i < parts.length; i++) {
+        try {
+          targetDir = await targetDir.getDirectoryHandle(parts[i]);
+        } catch {
+          return {
+            success: false,
+            error: `Could not find directory: ${parentPath}`,
+          };
+        }
+      }
+    }
+
     const result = await createDirectoryUtil(targetDir, name);
-    
+
     if (result.success) {
       // Refresh the file tree to show the new directory
       await refreshDirectory();

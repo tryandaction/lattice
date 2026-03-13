@@ -16,7 +16,16 @@ export type WorkerOutMessage =
   | { type: 'html'; id: string; payload: string }
   | { type: 'svg'; id: string; payload: string }
   | { type: 'result'; id: string; value: string }
+  | { type: 'variables'; id: string; variables: Record<string, VariableInfo> }
+  | { type: 'execution_complete'; id: string; executionTime: number; timestamp: number }
   | { type: 'error'; id: string; error: string; traceback?: string };
+
+export interface VariableInfo {
+  type: string;
+  value: string;
+  size: number | null;
+  shape: string | null;
+}
 
 export interface ExecutionOutput {
   type: 'text' | 'image' | 'html' | 'svg' | 'error';
@@ -87,17 +96,17 @@ def _setup_matplotlib():
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
-        
+
         _original_show = plt.show
-        
+
         def _patched_show(*args, **kwargs):
             import io
             import base64
-            
+
             fig = plt.gcf()
             if fig.get_axes():
                 buf = io.BytesIO()
-                fig.savefig(buf, format='png', bbox_inches='tight', dpi=100, 
+                fig.savefig(buf, format='png', bbox_inches='tight', dpi=100,
                            facecolor='white', edgecolor='none')
                 buf.seek(0)
                 img_base64 = base64.b64encode(buf.read()).decode('utf-8')
@@ -105,9 +114,56 @@ def _setup_matplotlib():
                 buf.close()
             plt.clf()
             plt.close('all')
-        
+
         plt.show = _patched_show
-        
+
+        # Patch plt.style.use to handle legacy seaborn styles
+        _original_style_use = plt.style.use
+
+        def _patched_style_use(style):
+            # Map legacy seaborn style names to new ones
+            style_mapping = {
+                'seaborn-v0_8-whitegrid': 'seaborn-v0_8-whitegrid',
+                'seaborn-whitegrid': 'seaborn-v0_8-whitegrid',
+                'seaborn-darkgrid': 'seaborn-v0_8-darkgrid',
+                'seaborn-dark': 'seaborn-v0_8-dark',
+                'seaborn-white': 'seaborn-v0_8-white',
+                'seaborn-ticks': 'seaborn-v0_8-ticks',
+                'seaborn-pastel': 'seaborn-v0_8-pastel',
+                'seaborn-bright': 'seaborn-v0_8-bright',
+                'seaborn-muted': 'seaborn-v0_8-muted',
+                'seaborn-colorblind': 'seaborn-v0_8-colorblind',
+            }
+
+            # Try to use the style, with fallback
+            if isinstance(style, str):
+                # Check if it's a legacy seaborn style
+                if style.startswith('seaborn'):
+                    try:
+                        # Try the original style first
+                        _original_style_use(style)
+                        return
+                    except (OSError, IOError):
+                        # Try mapped style
+                        if style in style_mapping:
+                            try:
+                                _original_style_use(style_mapping[style])
+                                return
+                            except (OSError, IOError):
+                                pass
+                        # Fall back to default
+                        _send_stderr(f"Warning: Style '{style}' not available in Pyodide. Using default style.\\\\n")
+                        _send_stderr(f"Tip: In Pyodide, use 'seaborn-v0_8-whitegrid' instead of 'seaborn-whitegrid'\\\\n")
+                        return
+
+            # For non-seaborn styles, use original
+            try:
+                _original_style_use(style)
+            except (OSError, IOError) as e:
+                _send_stderr(f"Warning: Style '{style}' not available. Using default style.\\\\n")
+
+        plt.style.use = _patched_style_use
+
     except ImportError:
         pass
 
@@ -146,7 +202,7 @@ def display(*objs, **kwargs):
                 continue
         except Exception:
             pass
-        _send_stdout(repr(obj) + '\\n')
+        _send_stdout(repr(obj) + '\\\\n')
 
 import builtins as _builtins
 _builtins.display = display

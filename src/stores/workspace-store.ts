@@ -82,6 +82,7 @@ interface WorkspaceState {
   fileTree: FileTree;
   isLoading: boolean;
   error: string | null;
+  selectedDirectoryPath: string | null; // 新增：当前选中的文件夹路径
 
   // Layout state (new advanced layout system)
   layout: LayoutState;
@@ -94,6 +95,7 @@ interface WorkspaceState {
   setError: (error: string | null) => void;
   clearWorkspace: () => void;
   toggleDirectory: (path: string) => void;
+  setSelectedDirectoryPath: (path: string | null) => void; // 新增：设置选中的文件夹
 
   // Layout actions
   splitPane: (paneId: PaneId, direction: SplitDirection) => PaneId | null;
@@ -138,6 +140,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   fileTree: initialFileTree,
   isLoading: false,
   error: null,
+  selectedDirectoryPath: null,
 
   // Initial layout state
   layout: createInitialLayout(),
@@ -173,6 +176,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const newRoot = toggleNodeExpansion(state.fileTree.root, path) as DirectoryNode;
       return { fileTree: { root: newRoot } };
     }),
+
+  setSelectedDirectoryPath: (path) => set({ selectedDirectoryPath: path }),
 
   // Layout actions
   splitPane: (paneId, direction) => {

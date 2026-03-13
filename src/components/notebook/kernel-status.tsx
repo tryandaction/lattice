@@ -75,8 +75,13 @@ function ReadyIndicator() {
   }, []);
   if (!visible) return null;
   return (
-    <div className="flex items-center transition-opacity duration-500">
+    <div
+      className="flex items-center transition-opacity duration-500"
+      role="status"
+      aria-label="Kernel ready"
+    >
       <CheckCircle2 className="h-3 w-3 text-green-600 dark:text-green-400" />
+      <span className="sr-only">Kernel ready</span>
     </div>
   );
 }
@@ -86,7 +91,7 @@ function ReadyIndicator() {
  */
 function ErrorIndicator({ error }: { error?: string | null }) {
   return (
-    <div className="flex items-center gap-1.5 text-xs text-destructive">
+    <div className="flex items-center gap-1.5 text-xs text-red-400">
       <AlertCircle className="h-3 w-3" />
       <span>{error || 'Kernel error'}</span>
     </div>

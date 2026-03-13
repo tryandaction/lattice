@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Live Preview Theme - Obsidian-style CSS
  * Hides markdown syntax when cursor is not on the element
  */
@@ -271,4 +271,16 @@
   height: 0;
   overflow: hidden;
   line-height: 0;
+}
+
+.cm-formatting-math,
+.cm-math-delimiter-source {
+  color: var(--link-color, #3b82f6);
+  opacity: 0.85;
+  font-weight: 600;
+}
+
+.dark .cm-formatting-math,
+.dark .cm-math-delimiter-source {
+  color: var(--link-color-dark, #60a5fa);
 }

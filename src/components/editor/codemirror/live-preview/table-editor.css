@@ -1,0 +1,245 @@
+﻿/**
+ * 表格编辑器样式 - 类似 Obsidian/Excel 的交互式表格
+ */
+
+.table-editor-wrapper {
+  color: var(--text-color, #111827);
+  margin: 1em 0;
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border-color, #e0e0e0);
+  background: var(--table-bg, #ffffff);
+}
+
+.table-editor {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+/* 列工具栏 */
+.table-editor thead .col-toolbar {
+  background: var(--table-header-bg, #f5f5f5);
+  border-bottom: 2px solid var(--border-color, #e0e0e0);
+}
+
+.table-editor thead .col-toolbar th {
+  padding: 4px;
+  text-align: center;
+  border-right: 1px solid var(--border-color, #e0e0e0);
+  position: relative;
+}
+
+.table-editor thead .col-toolbar th:last-child {
+  border-right: none;
+}
+
+.table-editor thead .col-toolbar th.hovered {
+  background: var(--hover-bg, #e8f4fd);
+}
+
+.col-actions {
+  display: flex;
+  gap: 2px;
+  justify-content: center;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.table-editor thead .col-toolbar th:hover .col-actions,
+.table-editor thead .col-toolbar th.hovered .col-actions {
+  opacity: 1;
+}
+
+/* 行工具栏 */
+.row-toolbar {
+  background: var(--table-header-bg, #f5f5f5);
+  border-left: 2px solid var(--border-color, #e0e0e0);
+  padding: 4px !important;
+  text-align: center;
+  vertical-align: middle;
+  width: 60px;
+}
+
+.row-actions {
+  display: flex;
+  gap: 2px;
+  justify-content: center;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.table-editor tbody tr:hover .row-actions,
+.table-editor tbody tr.hovered .row-actions {
+  opacity: 1;
+}
+
+/* 单元格 */
+.table-editor tbody td,
+.table-editor tbody th {
+  padding: 8px 12px;
+  border: 1px solid var(--border-color, #e0e0e0);
+  position: relative;
+  min-width: 80px;
+  max-width: 400px;
+  vertical-align: top;
+  color: var(--text-color, #111827);
+}
+
+.table-editor tbody tr:hover td:not(.row-toolbar),
+.table-editor tbody tr:hover th {
+  background: var(--hover-bg, #f9f9f9);
+}
+
+.table-editor tbody tr.hovered td:not(.row-toolbar),
+.table-editor tbody tr.hovered th {
+  background: var(--hover-bg, #f9f9f9);
+}
+
+/* 选中状态 */
+.table-editor tbody td.selected,
+.table-editor tbody th.selected {
+  background: var(--selected-bg, #e8f4fd);
+  outline: 2px solid var(--primary-color, #0066cc);
+  outline-offset: -2px;
+}
+
+/* 编辑状态 */
+.table-editor tbody td.editing,
+.table-editor tbody th.editing {
+  padding: 0;
+  background: var(--editing-bg, #ffffff);
+}
+
+.table-editor tbody td.editing textarea,
+.table-editor tbody th.editing textarea {
+  width: 100%;
+  height: 100%;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: none;
+  outline: 2px solid var(--primary-color, #0066cc);
+  outline-offset: -2px;
+  font-family: inherit;
+  font-size: inherit;
+  resize: vertical;
+  background: transparent;
+  color: var(--text-color, #111827);
+  caret-color: var(--text-color, #111827);
+}
+
+/* 单元格内容 */
+.cell-content {
+  min-height: 20px;
+  cursor: text;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  color: var(--text-color, #111827);
+}
+
+/* 按钮样式 */
+.btn-icon {
+  background: var(--button-bg, #ffffff);
+  border: 1px solid var(--border-color, #d0d0d0);
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-color, #333333);
+  transition: all 0.2s;
+}
+
+.btn-icon:hover {
+  background: var(--button-hover-bg, #e8f4fd);
+  border-color: var(--primary-color, #0066cc);
+  color: var(--primary-color, #0066cc);
+}
+
+.btn-icon:active {
+  transform: scale(0.95);
+}
+
+/* 表头样式 */
+.table-editor tbody th {
+  font-weight: 600;
+  background: var(--table-header-bg, #f5f5f5);
+}
+
+/* 暗色主题支持 */
+@media (prefers-color-scheme: dark) {
+  .table-editor-wrapper {
+    --border-color: #404040;
+    --table-bg: #1e1e1e;
+    --table-header-bg: #2a2a2a;
+    --hover-bg: #2a2a2a;
+    --selected-bg: #1e3a5f;
+    --editing-bg: #1e1e1e;
+    --primary-color: #4da6ff;
+    --button-bg: #2a2a2a;
+    --button-hover-bg: #1e3a5f;
+    --text-color: #e0e0e0;
+  }
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+  .table-editor {
+    font-size: 12px;
+  }
+
+  .table-editor tbody td,
+  .table-editor tbody th {
+    padding: 6px 8px;
+    min-width: 60px;
+  }
+
+  .row-toolbar {
+    width: 50px;
+  }
+
+  .btn-icon {
+    padding: 1px 4px;
+    font-size: 11px;
+  }
+}
+
+.dark .table-editor-wrapper {
+  --border-color: #404040;
+  --table-bg: #1b1f24;
+  --table-header-bg: #242a31;
+  --hover-bg: #222831;
+  --selected-bg: rgba(59, 130, 246, 0.2);
+  --editing-bg: #111827;
+  --primary-color: #60a5fa;
+  --button-bg: #1f2937;
+  --button-hover-bg: rgba(96, 165, 250, 0.18);
+  --text-color: #e5e7eb;
+}
+
+
+.dark .table-editor,
+.dark .table-editor tbody td,
+.dark .table-editor tbody th,
+.dark .table-editor thead .col-toolbar th,
+.dark .table-editor .row-toolbar,
+.dark .table-editor .cell-content,
+.dark .table-editor textarea {
+  color: var(--text-color, #e5e7eb);
+}
+
+.dark .table-editor tbody tr:hover td:not(.row-toolbar),
+.dark .table-editor tbody tr:hover th,
+.dark .table-editor tbody tr.hovered td:not(.row-toolbar),
+.dark .table-editor tbody tr.hovered th {
+  background: var(--hover-bg, #222831);
+}
+
+.dark .table-editor tbody td.editing,
+.dark .table-editor tbody th.editing {
+  background: var(--editing-bg, #111827);
+}

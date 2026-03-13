@@ -1,12 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
-// 检测是否在 Tauri 环境中运行
-export function isTauri(): boolean {
-  if (typeof window === "undefined") return false;
-  return "__TAURI__" in window;
-}
+import { isTauri } from "@/lib/storage-adapter";
 
 // Tauri 命令类型定义
 declare global {
