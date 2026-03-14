@@ -408,12 +408,13 @@ export const livePreviewTheme = EditorView.theme({
   // === Horizontal Rule ===
   
   '.cm-horizontal-rule-container': {
-    display: 'block',
+    display: 'flex',
+    alignItems: 'center',
     boxSizing: 'border-box',
     position: 'relative',
     width: 'calc(100% + var(--cm-content-padding-x-double, 0px))',
-    paddingTop: '1em',
-    paddingBottom: '1em',
+    height: '40px',
+    minHeight: '40px',
     paddingLeft: 'var(--cm-content-padding-x-neg, 0px)',
     paddingRight: 'var(--cm-content-padding-x-neg, 0px)',
     cursor: 'pointer',
@@ -676,6 +677,8 @@ export const livePreviewTheme = EditorView.theme({
     color: colors.primary,
     fontWeight: '700',
     opacity: '0.9',
+    backgroundColor: `${colors.primary}18`,
+    borderRadius: '4px',
   },
 
   '.cm-math-source-block': {

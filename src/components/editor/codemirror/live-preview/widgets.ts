@@ -53,6 +53,15 @@ type BlockContext = {
 
 const DOUBLE_CLICK_DELAY = 260;
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function isExternalUrl(url: string): boolean {
   const trimmed = url.trim();
   if (!trimmed) return false;
@@ -399,7 +408,7 @@ export class FormattedTextWidget extends WidgetType {
               try {
                 mathSpan.innerHTML = '';
                 k.render(latex, mathSpan, getKaTeXOptions(false));
-              } catch (renderError) {
+              } catch {
                 mathSpan.textContent = part;
               }
             }),
@@ -1276,7 +1285,7 @@ export class HeadingContentWidget extends WidgetType {
               try {
                 mathSpan.innerHTML = '';
                 k.render(latex, mathSpan, getKaTeXOptions(false));
-              } catch (renderError) {
+              } catch {
                 mathSpan.textContent = part;
               }
             }),
@@ -1422,7 +1431,7 @@ export class HorizontalRuleWidget extends WidgetType {
   }
 
   get estimatedHeight() {
-    return -1;
+    return 40;
   }
 
   updateDOM() {
@@ -1651,7 +1660,7 @@ export class MathWidget extends WidgetType {
             if (isBlock) {
               view.requestMeasure();
             }
-          } catch (e) {
+          } catch {
             // Render failed — show raw source
             if (!isMounted || !container.parentElement) {
               return;
@@ -1942,8 +1951,12 @@ function scheduleTableRootUnmount(host: TableWidgetRootHost): void {
   const win = host.ownerDocument.defaultView ?? window;
   host.__tableUnmountTimer = win.setTimeout(() => {
     host.__tableUnmountTimer = undefined;
-    root.unmount();
-  }, 0);
+    try {
+      root.unmount();
+    } catch (error) {
+      logger.warn('[TableWidget] delayed unmount failed', error);
+    }
+  }, 32);
 }
 
 function isMarkdownTableSeparatorCell(value: string): boolean {
@@ -1991,33 +2004,82 @@ function parseInlineMarkdown(
 ): string {
   let result = text;
 
-  // Protect escaped markdown symbols so they won't be parsed
-  const escapeMap = new Map<string, string>();
-  let escapeIndex = 0;
-  result = result.replace(/\\([\\`*_[\]{}()#+\-.!|$])/g, (_, ch: string) => {
-    const token = `@@ESC_${escapeIndex++}@@`;
-    escapeMap.set(token, ch);
-    return token;
-  });
-
   // Protect inline code spans so they won't be parsed by other rules
   const codeSpans: string[] = [];
-  const escapeHtml = (value: string) =>
-    value
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-
   const storeCodeSpan = (code: string) => {
-    const token = `@@CODE_${codeSpans.length}@@`;
+    const token = `@@CODE${codeSpans.length}@@`;
     codeSpans.push(escapeHtml(code));
     return token;
   };
 
   result = result.replace(/``([^`]+?)``/g, (_, code: string) => storeCodeSpan(code));
   result = result.replace(/(?<!`)`(?!`)([^`]+)`(?!`)/g, (_, code: string) => storeCodeSpan(code));
+
+  const mathSpans: string[] = [];
+  const storeMathSpan = (html: string) => {
+    const token = `@@MATH${mathSpans.length}@@`;
+    mathSpans.push(html);
+    return token;
+  };
+
+  const renderMathSpan = (source: string, formula: string, displayMode: boolean) => {
+    try {
+      if (katex) {
+        return katex.renderToString(formula.trim(), getKaTeXOptions(displayMode));
+      }
+      return `<span class="${displayMode ? 'cm-math-block-table' : 'cm-math-inline-table'}">${escapeHtml(source)}</span>`;
+    } catch {
+      return `<span class="${displayMode ? 'cm-math-block-table' : 'cm-math-inline-table'} cm-math-error">${escapeHtml(source)}</span>`;
+    }
+  };
+
+  const mathRules: Array<{
+    regex: RegExp;
+    displayMode: boolean;
+    resolve: (match: string, ...groups: string[]) => { source: string; formula: string };
+  }> = [
+    {
+      regex: /\\begin\{([a-zA-Z*]+)\}([\s\S]+?)\\end\{\1\}/g,
+      displayMode: true,
+      resolve: (match: string) => ({ source: match, formula: match }),
+    },
+    {
+      regex: /\$\$([\s\S]+?)\$\$/g,
+      displayMode: true,
+      resolve: (match: string, formula: string) => ({ source: match, formula }),
+    },
+    {
+      regex: /\\\[([\s\S]+?)\\\]/g,
+      displayMode: true,
+      resolve: (match: string, formula: string) => ({ source: match, formula }),
+    },
+    {
+      regex: /\\\((.+?)\\\)/g,
+      displayMode: false,
+      resolve: (match: string, formula: string) => ({ source: match, formula }),
+    },
+    {
+      regex: /(?<!\\)(?<!\$)\$([^\n$]+?)\$(?!\$)/g,
+      displayMode: false,
+      resolve: (match: string, formula: string) => ({ source: match, formula }),
+    },
+  ];
+
+  for (const rule of mathRules) {
+    result = result.replace(rule.regex, (match, ...groups: string[]) => {
+      const { source, formula } = rule.resolve(match, ...groups);
+      return storeMathSpan(renderMathSpan(source, formula, rule.displayMode));
+    });
+  }
+
+  // Protect escaped markdown symbols after math parsing so \(...\) and \[...\] still work.
+  const escapeMap = new Map<string, string>();
+  let escapeIndex = 0;
+  result = result.replace(/\\([\\`*_[\]{}()#+\-.!|$])/g, (_, ch: string) => {
+    const token = `@@ESC${escapeIndex++}@@`;
+    escapeMap.set(token, ch);
+    return token;
+  });
 
   // 先转义HTML
   result = result
@@ -2039,43 +2101,6 @@ function parseInlineMarkdown(
 
   // 高亮: ==text==
   result = result.replace(/==(.+?)==/g, '<mark>$1</mark>');
-
-  // 行内公式: $formula$ (如果KaTeX可用则渲染)
-  result = result.replace(/\$([^$\n]+)\$/g, (match, formula) => {
-    try {
-      if (katex) {
-        return katex.renderToString(formula, getKaTeXOptions(false));
-      }
-      return `<span class="cm-math-inline-table">$${formula}$</span>`;
-    } catch {
-      // KaTeX error: show raw source so content never disappears
-      return `<span class="cm-math-inline-table cm-math-error">$${formula}$</span>`;
-    }
-  });
-
-  // 行内公式: \(formula\)
-  result = result.replace(/\\\((.+?)\\\)/g, (match, formula) => {
-    try {
-      if (katex) {
-        return katex.renderToString(formula, getKaTeXOptions(false));
-      }
-      return `<span class="cm-math-inline-table">\\(${formula}\\)</span>`;
-    } catch {
-      return `<span class="cm-math-inline-table cm-math-error">\\(${formula}\\)</span>`;
-    }
-  });
-
-  // 块级公式: \[formula\] (在表格/行内上下文中作为块公式渲染)
-  result = result.replace(/\\\[(.+?)\\\]/gs, (match, formula) => {
-    try {
-      if (katex) {
-        return katex.renderToString(formula, getKaTeXOptions(true));
-      }
-      return `<span class="cm-math-inline-table">\\[${formula}\\]</span>`;
-    } catch {
-      return `<span class="cm-math-inline-table cm-math-error">\\[${formula}\\]</span>`;
-    }
-  });
 
   if (!options?.disableLinks) {
     // Wiki链接: [[target]] 或 [[target#heading|alias]]
@@ -2166,7 +2191,13 @@ function parseInlineMarkdown(
   // Restore inline code spans
   if (codeSpans.length > 0) {
     codeSpans.forEach((code, index) => {
-      result = result.replace(new RegExp(`@@CODE_${index}@@`, 'g'), `<code>${code}</code>`);
+      result = result.replace(new RegExp(`@@CODE${index}@@`, 'g'), `<code>${code}</code>`);
+    });
+  }
+
+  if (mathSpans.length > 0) {
+    mathSpans.forEach((html, index) => {
+      result = result.replace(new RegExp(`@@MATH${index}@@`, 'g'), html);
     });
   }
 
@@ -2178,6 +2209,14 @@ function parseInlineMarkdown(
   }
 
   return result;
+}
+
+export function renderInlineMarkdownHtml(
+  text: string,
+  referenceDefs?: Map<string, ReferenceDefinition>,
+  options?: InlineParseOptions
+): string {
+  return sanitizeInlineHtml(parseInlineMarkdown(text, referenceDefs, options));
 }
 
 /**
@@ -2213,6 +2252,15 @@ export class TableWidget extends WidgetType {
     );
   }
 
+  get estimatedHeight() {
+    const visibleRows = stripMarkdownTableSeparatorRow(this.rows, this.hasHeader).length + 1;
+    return Math.max(96, visibleRows * 44 + 12);
+  }
+
+  updateDOM() {
+    return false;
+  }
+
   toDOM(view: EditorView) {
     const wrapper = document.createElement('div') as TableWidgetRootHost;
     wrapper.className = 'cm-table-widget-wrapper';
@@ -2231,11 +2279,23 @@ export class TableWidget extends WidgetType {
         to: this.to,
         view,
         onUpdate: () => undefined,
+        renderCellHtml: (value: string) => renderInlineMarkdownHtml(value, this.referenceDefs),
       })
     );
 
     view.requestMeasure();
     return wrapper;
+  }
+
+  coordsAt(dom: HTMLElement, pos: number) {
+    const rect = dom.getBoundingClientRect();
+    if (!rect.width && !rect.height) {
+      return null;
+    }
+
+    const midpoint = this.from + Math.floor((this.to - this.from) / 2);
+    const x = pos <= midpoint ? rect.left : rect.right;
+    return { left: x, right: x, top: rect.top, bottom: rect.bottom };
   }
 
   destroy(dom: HTMLElement) {

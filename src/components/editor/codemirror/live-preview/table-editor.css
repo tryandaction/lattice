@@ -1,14 +1,25 @@
-﻿/**
- * 表格编辑器样式 - 类似 Obsidian/Excel 的交互式表格
- */
-
 .table-editor-wrapper {
-  color: var(--text-color, #111827);
-  margin: 1em 0;
-  overflow-x: auto;
-  border-radius: 8px;
-  border: 1px solid var(--border-color, #e0e0e0);
-  background: var(--table-bg, #ffffff);
+  --table-border: hsl(var(--border));
+  --table-surface: hsl(var(--card));
+  --table-surface-muted: hsl(var(--muted));
+  --table-surface-hover: hsl(var(--accent) / 0.55);
+  --table-surface-selected: hsl(var(--primary) / 0.12);
+  --table-surface-editing: hsl(var(--background));
+  --table-text: hsl(var(--foreground));
+  --table-muted-text: hsl(var(--muted-foreground));
+  --table-accent: hsl(var(--primary));
+  color: var(--table-text);
+  margin: 0.6rem 0;
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid var(--table-border);
+  background: var(--table-surface);
+  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.03);
+  outline: none;
+}
+
+.table-editor-wrapper:focus-visible {
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.24);
 }
 
 .table-editor {
@@ -17,229 +28,262 @@
   border-spacing: 0;
   font-size: 14px;
   font-family: inherit;
+  table-layout: fixed;
 }
 
-/* 列工具栏 */
 .table-editor thead .col-toolbar {
-  background: var(--table-header-bg, #f5f5f5);
-  border-bottom: 2px solid var(--border-color, #e0e0e0);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--table-surface-muted);
 }
 
 .table-editor thead .col-toolbar th {
-  padding: 4px;
+  padding: 8px 10px;
   text-align: center;
-  border-right: 1px solid var(--border-color, #e0e0e0);
-  position: relative;
+  border-right: 1px solid var(--table-border);
+  border-bottom: 1px solid var(--table-border);
+  background: var(--table-surface-muted);
+  vertical-align: middle;
 }
 
 .table-editor thead .col-toolbar th:last-child {
   border-right: none;
 }
 
-.table-editor thead .col-toolbar th.hovered {
-  background: var(--hover-bg, #e8f4fd);
+.table-editor thead .col-toolbar th.selected {
+  background: var(--table-surface-selected);
 }
 
-.col-actions {
+.col-toolbar-label,
+.row-toolbar-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--table-muted-text);
+}
+
+.col-actions,
+.row-actions {
   display: flex;
-  gap: 2px;
+  gap: 4px;
   justify-content: center;
   align-items: center;
   opacity: 0;
-  transition: opacity 0.2s;
+  transition: opacity 0.15s ease;
 }
 
 .table-editor thead .col-toolbar th:hover .col-actions,
-.table-editor thead .col-toolbar th.hovered .col-actions {
+.table-editor thead .col-toolbar th.selected .col-actions,
+.table-editor tbody tr:hover .row-actions,
+.table-editor tbody tr:has(td.selected, th.selected) .row-actions {
   opacity: 1;
 }
 
-/* 行工具栏 */
 .row-toolbar {
-  background: var(--table-header-bg, #f5f5f5);
-  border-left: 2px solid var(--border-color, #e0e0e0);
-  padding: 4px !important;
+  width: 84px;
+  min-width: 84px;
+  padding: 8px 10px !important;
   text-align: center;
   vertical-align: middle;
-  width: 60px;
+  border-right: 1px solid var(--table-border);
+  border-bottom: 1px solid var(--table-border);
+  background: var(--table-surface-muted);
 }
 
-.row-actions {
-  display: flex;
-  gap: 2px;
-  justify-content: center;
-  align-items: center;
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-
-.table-editor tbody tr:hover .row-actions,
-.table-editor tbody tr.hovered .row-actions {
-  opacity: 1;
-}
-
-/* 单元格 */
 .table-editor tbody td,
 .table-editor tbody th {
-  padding: 8px 12px;
-  border: 1px solid var(--border-color, #e0e0e0);
+  padding: 10px 12px;
+  border-right: 1px solid var(--table-border);
+  border-bottom: 1px solid var(--table-border);
   position: relative;
-  min-width: 80px;
-  max-width: 400px;
+  min-width: 96px;
+  max-width: 420px;
   vertical-align: top;
-  color: var(--text-color, #111827);
+  color: var(--table-text);
+  background: var(--table-surface);
+}
+
+.table-editor tbody tr:last-child td,
+.table-editor tbody tr:last-child th,
+.table-editor tbody tr:last-child .row-toolbar {
+  border-bottom: none;
+}
+
+.table-editor tbody td:last-child,
+.table-editor tbody th:last-child {
+  border-right: none;
 }
 
 .table-editor tbody tr:hover td:not(.row-toolbar),
-.table-editor tbody tr:hover th {
-  background: var(--hover-bg, #f9f9f9);
+.table-editor tbody tr:hover th:not(.row-toolbar) {
+  background: var(--table-surface-hover);
 }
 
-.table-editor tbody tr.hovered td:not(.row-toolbar),
-.table-editor tbody tr.hovered th {
-  background: var(--hover-bg, #f9f9f9);
-}
-
-/* 选中状态 */
 .table-editor tbody td.selected,
 .table-editor tbody th.selected {
-  background: var(--selected-bg, #e8f4fd);
-  outline: 2px solid var(--primary-color, #0066cc);
-  outline-offset: -2px;
+  background: var(--table-surface-selected) !important;
+  box-shadow: inset 0 0 0 2px var(--table-accent);
 }
 
-/* 编辑状态 */
 .table-editor tbody td.editing,
 .table-editor tbody th.editing {
   padding: 0;
-  background: var(--editing-bg, #ffffff);
+  background: var(--table-surface-editing) !important;
 }
 
 .table-editor tbody td.editing textarea,
 .table-editor tbody th.editing textarea {
   width: 100%;
-  height: 100%;
-  min-height: 36px;
-  padding: 8px 12px;
+  min-height: 42px;
+  padding: 10px 12px;
   border: none;
-  outline: 2px solid var(--primary-color, #0066cc);
+  outline: 2px solid var(--table-accent);
   outline-offset: -2px;
   font-family: inherit;
   font-size: inherit;
+  line-height: 1.55;
   resize: vertical;
   background: transparent;
-  color: var(--text-color, #111827);
-  caret-color: var(--text-color, #111827);
-}
-
-/* 单元格内容 */
-.cell-content {
-  min-height: 20px;
-  cursor: text;
-  word-wrap: break-word;
+  color: var(--table-text);
+  caret-color: var(--table-text);
   white-space: pre-wrap;
-  color: var(--text-color, #111827);
 }
 
-/* 按钮样式 */
-.btn-icon {
-  background: var(--button-bg, #ffffff);
-  border: 1px solid var(--border-color, #d0d0d0);
+.cell-content {
+  display: block;
+  min-height: 20px;
+  cursor: default;
+  overflow-wrap: break-word;
+  white-space: normal;
+  line-height: 1.6;
+  color: var(--table-text);
+}
+
+.cell-content a {
+  color: var(--table-accent);
+  text-decoration: none;
+}
+
+.cell-content a:hover {
+  text-decoration: underline;
+}
+
+.cell-content code {
+  background: hsl(var(--muted));
+  color: var(--table-text);
+  border-radius: 6px;
+  padding: 0.08rem 0.35rem;
+  font-size: 0.92em;
+}
+
+.cell-content mark {
+  background: hsl(48 96% 68% / 0.45);
+  color: inherit;
   border-radius: 4px;
-  padding: 2px 6px;
+  padding: 0 0.15rem;
+}
+
+.cell-content .cm-tag,
+.cell-content .cm-embed-title,
+.cell-content .cm-footnote-ref-link {
+  color: var(--table-accent);
+}
+
+.cell-content .cm-math-inline-table {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: middle;
+}
+
+.cell-content .cm-math-block-table,
+.cell-content .katex-display {
+  display: block;
+  margin: 0.35rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.cell-content .katex {
+  font-size: 1em;
+}
+
+.btn-icon {
+  min-width: 28px;
+  height: 26px;
+  background: hsl(var(--background));
+  border: 1px solid var(--table-border);
+  border-radius: 6px;
+  padding: 0 6px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
-  color: var(--text-color, #333333);
-  transition: all 0.2s;
+  color: var(--table-muted-text);
+  transition: all 0.15s ease;
 }
 
 .btn-icon:hover {
-  background: var(--button-hover-bg, #e8f4fd);
-  border-color: var(--primary-color, #0066cc);
-  color: var(--primary-color, #0066cc);
+  background: hsl(var(--accent));
+  border-color: hsl(var(--primary) / 0.45);
+  color: var(--table-accent);
 }
 
 .btn-icon:active {
-  transform: scale(0.95);
+  transform: scale(0.97);
 }
 
-/* 表头样式 */
 .table-editor tbody th {
   font-weight: 600;
-  background: var(--table-header-bg, #f5f5f5);
 }
 
-/* 暗色主题支持 */
+.dark .table-editor-wrapper {
+  --table-border: hsl(var(--border));
+  --table-surface: hsl(var(--card));
+  --table-surface-muted: hsl(var(--muted));
+  --table-surface-hover: hsl(var(--accent) / 0.68);
+  --table-surface-selected: hsl(var(--primary) / 0.18);
+  --table-surface-editing: hsl(var(--background));
+  --table-text: hsl(var(--foreground));
+  --table-muted-text: hsl(var(--muted-foreground));
+  --table-accent: hsl(var(--primary));
+}
+
 @media (prefers-color-scheme: dark) {
   .table-editor-wrapper {
-    --border-color: #404040;
-    --table-bg: #1e1e1e;
-    --table-header-bg: #2a2a2a;
-    --hover-bg: #2a2a2a;
-    --selected-bg: #1e3a5f;
-    --editing-bg: #1e1e1e;
-    --primary-color: #4da6ff;
-    --button-bg: #2a2a2a;
-    --button-hover-bg: #1e3a5f;
-    --text-color: #e0e0e0;
+    --table-border: hsl(var(--border));
+    --table-surface: hsl(var(--card));
+    --table-surface-muted: hsl(var(--muted));
+    --table-surface-hover: hsl(var(--accent) / 0.68);
+    --table-surface-selected: hsl(var(--primary) / 0.18);
+    --table-surface-editing: hsl(var(--background));
+    --table-text: hsl(var(--foreground));
+    --table-muted-text: hsl(var(--muted-foreground));
+    --table-accent: hsl(var(--primary));
   }
 }
 
-/* 响应式 */
 @media (max-width: 768px) {
   .table-editor {
     font-size: 12px;
   }
 
-  .table-editor tbody td,
-  .table-editor tbody th {
-    padding: 6px 8px;
-    min-width: 60px;
+  .row-toolbar {
+    width: 72px;
+    min-width: 72px;
   }
 
-  .row-toolbar {
-    width: 50px;
+  .table-editor tbody td,
+  .table-editor tbody th {
+    padding: 8px 10px;
+    min-width: 72px;
   }
 
   .btn-icon {
-    padding: 1px 4px;
-    font-size: 11px;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 4px;
   }
-}
-
-.dark .table-editor-wrapper {
-  --border-color: #404040;
-  --table-bg: #1b1f24;
-  --table-header-bg: #242a31;
-  --hover-bg: #222831;
-  --selected-bg: rgba(59, 130, 246, 0.2);
-  --editing-bg: #111827;
-  --primary-color: #60a5fa;
-  --button-bg: #1f2937;
-  --button-hover-bg: rgba(96, 165, 250, 0.18);
-  --text-color: #e5e7eb;
-}
-
-
-.dark .table-editor,
-.dark .table-editor tbody td,
-.dark .table-editor tbody th,
-.dark .table-editor thead .col-toolbar th,
-.dark .table-editor .row-toolbar,
-.dark .table-editor .cell-content,
-.dark .table-editor textarea {
-  color: var(--text-color, #e5e7eb);
-}
-
-.dark .table-editor tbody tr:hover td:not(.row-toolbar),
-.dark .table-editor tbody tr:hover th,
-.dark .table-editor tbody tr.hovered td:not(.row-toolbar),
-.dark .table-editor tbody tr.hovered th {
-  background: var(--hover-bg, #222831);
-}
-
-.dark .table-editor tbody td.editing,
-.dark .table-editor tbody th.editing {
-  background: var(--editing-bg, #111827);
 }

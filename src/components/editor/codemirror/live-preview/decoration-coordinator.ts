@@ -108,36 +108,29 @@ function getMathSourceDecorations(
     },
   ];
 
-  const delimiterPairs = [
-    { open: '$$', close: '$$' },
-    { open: '\[', close: '\]' },
-    { open: '\(', close: '\)' },
-    { open: '$', close: '$' },
+  const delimiterPatterns = [
+    /\\begin\{[^\n}]+\}/g,
+    /\\end\{[^\n}]+\}/g,
+    /\\\(/g,
+    /\\\)/g,
+    /\\\[/g,
+    /\\\]/g,
+    /\$\$/g,
+    /(?<!\\)(?<!\$)\$(?!\$)/g,
   ];
 
-  for (const pair of delimiterPairs) {
-    if (!source.startsWith(pair.open) || !source.endsWith(pair.close)) {
-      continue;
-    }
+  for (const pattern of delimiterPatterns) {
+    for (const match of source.matchAll(pattern)) {
+      if (match.index === undefined) {
+        continue;
+      }
 
-    const openLength = pair.open.length;
-    const closeLength = pair.close.length;
-
-    entries.push({
-      from,
-      to: Math.min(to, from + openLength),
-      decoration: Decoration.mark({ class: 'cm-math-delimiter-source cm-formatting-math' }),
-    });
-
-    if (source.length > openLength) {
       entries.push({
-        from: Math.max(from, to - closeLength),
-        to,
+        from: from + match.index,
+        to: Math.min(to, from + match.index + match[0].length),
         decoration: Decoration.mark({ class: 'cm-math-delimiter-source cm-formatting-math' }),
       });
     }
-
-    break;
   }
 
   return entries;

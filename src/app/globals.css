@@ -3124,11 +3124,16 @@ math-field.quantum-keyboard-active {
 
 /* Horizontal rule */
 .live-preview-editor .cm-horizontal-rule-container {
-  display: block;
+  display: flex;
+  align-items: center;
+  position: relative;
   width: calc(100% + var(--cm-content-padding-x-double));
-  margin: 1em var(--cm-content-padding-x-neg);
+  height: 40px;
+  min-height: 40px;
+  margin: 0 var(--cm-content-padding-x-neg);
   padding: 0;
   cursor: pointer;
+  box-sizing: border-box;
 }
 
 .live-preview-editor .cm-horizontal-rule {

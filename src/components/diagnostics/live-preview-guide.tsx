@@ -1,6 +1,6 @@
-﻿"use client";
+"use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { cn } from "@/lib/utils";
@@ -20,14 +20,30 @@ export function LivePreviewGuide() {
     () => LIVE_PREVIEW_GUIDE_SCENARIOS.find((item) => item.id === selectedId) ?? LIVE_PREVIEW_GUIDE_SCENARIOS[0],
     [selectedId]
   );
-  const [content, setContent] = useState(selected.content);
+  const [contentById, setContentById] = useState<Record<string, string>>(() =>
+    Object.fromEntries(LIVE_PREVIEW_GUIDE_SCENARIOS.map((item) => [item.id, item.content]))
+  );
+  const content = contentById[selected.id] ?? selected.content;
 
-  const handleSelect = (id: string) => {
+  const handleSelect = useCallback((id: string) => {
     const next = LIVE_PREVIEW_GUIDE_SCENARIOS.find((item) => item.id === id);
     if (!next) return;
     setSelectedId(id);
-    setContent(next.content);
-  };
+  }, []);
+
+  const handleContentChange = useCallback((nextContent: string) => {
+    setContentById((previous) => ({
+      ...previous,
+      [selected.id]: nextContent,
+    }));
+  }, [selected.id]);
+
+  const handleResetCurrent = useCallback(() => {
+    setContentById((previous) => ({
+      ...previous,
+      [selected.id]: selected.content,
+    }));
+  }, [selected.content, selected.id]);
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
@@ -37,8 +53,8 @@ export function LivePreviewGuide() {
             <div className="text-xs font-medium uppercase tracking-[0.18em] text-primary">Live Preview Guide</div>
             <h1 className="text-2xl font-semibold">实时预览语法指南</h1>
             <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-              这里不只是开发自检页面，而是面向用户的学习入口。你可以直接在示例里输入、编辑、点击公式、点击表格，
-              感受 Lattice 的实时预览如何按照渲染后的视觉结果来响应点击与光标定位。
+              这里既是用户指南，也是交互式练习场。每个示例都可以直接编辑、点击、切换源码态与渲染态，
+              用真实交互理解 Lattice 的实时预览逻辑。
             </p>
           </div>
           <div className="flex items-center gap-2 text-sm">
@@ -53,9 +69,14 @@ export function LivePreviewGuide() {
       </header>
 
       <main className="mx-auto flex w-full max-w-7xl flex-1 gap-6 px-6 py-6">
-        <aside className="w-[320px] shrink-0 space-y-4">
+        <aside className="sticky top-6 h-fit w-[320px] shrink-0 space-y-4 self-start">
           <section className="rounded-xl border border-border bg-card p-4">
-            <h2 className="text-sm font-semibold">学习路径</h2>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold">学习路径</h2>
+              <span className="rounded-full bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+                {LIVE_PREVIEW_GUIDE_SCENARIOS.length} 个主题
+              </span>
+            </div>
             <div className="mt-3 space-y-2">
               {LIVE_PREVIEW_GUIDE_SCENARIOS.map((item) => (
                 <button
@@ -100,13 +121,25 @@ export function LivePreviewGuide() {
 
         <section className="min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card">
           <div className="border-b border-border px-5 py-4">
-            <div className="text-lg font-semibold">{selected.title}</div>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">{selected.summary}</p>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-lg font-semibold">{selected.title}</div>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">{selected.summary}</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleResetCurrent}
+                className="rounded border border-border px-3 py-2 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              >
+                重置当前示例
+              </button>
+            </div>
           </div>
           <div className="h-[calc(100vh-220px)] min-h-[640px] overflow-hidden">
             <ObsidianMarkdownViewer
+              key={selected.id}
               content={content}
-              onChange={setContent}
+              onChange={handleContentChange}
               fileName={`guide-${selected.id}.md`}
               fileId={`guide-${selected.id}`}
               initialMode="live"
@@ -117,5 +150,3 @@ export function LivePreviewGuide() {
     </div>
   );
 }
-
-
