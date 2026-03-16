@@ -20,6 +20,25 @@ type CommandItem = PluginCommand & { source: CommandSource };
 const RECENT_COMMANDS_KEY = "lattice-command-recent";
 const MAX_RECENT = 5;
 
+function readRecentCommandIds(): string[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const raw = localStorage.getItem(RECENT_COMMANDS_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
+  } catch (error) {
+    console.warn("Failed to read recent commands:", error);
+    return [];
+  }
+}
+
 function getBuiltinCommands(language: string): CommandItem[] {
   const isZh = language !== "en-US";
   return [
@@ -79,7 +98,7 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
   const [pluginCommands, setPluginCommands] = useState<PluginCommand[]>([]);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
-  const [recentIds, setRecentIds] = useState<string[]>([]);
+  const [recentIds, setRecentIds] = useState<string[]>(() => readRecentCommandIds());
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const builtinCommands = useMemo(() => getBuiltinCommands(language), [language]);
@@ -98,18 +117,6 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
       }
     };
     updateCommands();
-    setActiveIndex(0);
-    try {
-      const raw = localStorage.getItem(RECENT_COMMANDS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          setRecentIds(parsed.filter((id) => typeof id === "string"));
-        }
-      }
-    } catch (error) {
-      console.warn("Failed to read recent commands:", error);
-    }
     const timer = setTimeout(() => inputRef.current?.focus(), 0);
     const unsubscribe = subscribePluginRegistry(updateCommands);
     return () => {
@@ -139,14 +146,9 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
     const map = new Map(allCommands.map((cmd) => [cmd.id, cmd]));
     return recentIds.map((id) => map.get(id)).filter(Boolean) as CommandItem[];
   }, [allCommands, recentIds]);
-
-  useEffect(() => {
-    if (filteredCommands.length === 0) {
-      setActiveIndex(0);
-      return;
-    }
-    setActiveIndex((prev) => Math.min(prev, filteredCommands.length - 1));
-  }, [filteredCommands.length]);
+  const effectiveActiveIndex = filteredCommands.length === 0
+    ? 0
+    : Math.min(activeIndex, filteredCommands.length - 1);
 
   const runCommand = async (command: CommandItem) => {
     try {
@@ -179,7 +181,7 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
           setActiveIndex((prev) => Math.max(prev - 1, 0));
         } else if (event.key === "Enter") {
           event.preventDefault();
-          const command = filteredCommands[activeIndex];
+          const command = filteredCommands[effectiveActiveIndex];
           if (command) {
             void runCommand(command);
           }
@@ -288,7 +290,7 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
                   data-command-id={command.id}
                   className={cn(
                     "flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2",
-                    index === activeIndex && "border-primary/60 bg-primary/5"
+                    index === effectiveActiveIndex && "border-primary/60 bg-primary/5"
                   )}
                 >
                   <div className="min-w-0">

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AiMessage } from '@/lib/ai/types';
+import type { AiMessage, AiFollowUpAction, AiModelInfo, AiPromptContext, EvidenceRef } from '@/lib/ai/types';
 import { getStorageAdapter } from '@/lib/storage-adapter';
 
 const AI_CHAT_STORAGE_KEY = 'lattice-ai-chat';
@@ -17,6 +17,14 @@ export interface ChatMessage {
   timestamp: number;
   isStreaming?: boolean;
   usage?: ChatMessageUsage;
+  model?: AiModelInfo;
+  evidenceRefs?: EvidenceRef[];
+  promptContext?: AiPromptContext;
+  followUpActions?: AiFollowUpAction[];
+  draftSuggestion?: {
+    type: string;
+    title: string;
+  };
 }
 
 export interface ChatConversation {
@@ -44,6 +52,10 @@ interface AiChatActions {
   appendToAssistantMessage: (messageId: string, text: string) => void;
   finishAssistantMessage: (messageId: string) => void;
   setAssistantError: (messageId: string, error: string) => void;
+  setAssistantMetadata: (
+    messageId: string,
+    metadata: Partial<Pick<ChatMessage, 'model' | 'evidenceRefs' | 'promptContext' | 'followUpActions' | 'draftSuggestion'>>
+  ) => void;
   setGenerating: (generating: boolean, controller?: AbortController | null) => void;
   stopGenerating: () => void;
   deleteConversation: (id: string) => void;
@@ -181,6 +193,18 @@ export const useAiChatStore = create<AiChatState & AiChatActions>((set, get) => 
       isGenerating: false,
       abortController: null,
     }));
+  },
+
+  setAssistantMetadata: (messageId, metadata) => {
+    set((s) => ({
+      conversations: s.conversations.map((c) => ({
+        ...c,
+        messages: c.messages.map((m) =>
+          m.id === messageId ? { ...m, ...metadata } : m
+        ),
+      })),
+    }));
+    debouncedSave(get().conversations);
   },
 
   setGenerating: (generating, controller) =>

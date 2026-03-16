@@ -12,7 +12,7 @@ import "highlight.js/styles/github-dark.css";
 import { useEffect, useRef, useState, useCallback, memo, forwardRef, useImperativeHandle } from 'react';
 import { Loader2 } from 'lucide-react';
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
-import { EditorState, Extension, Transaction, Facet } from '@codemirror/state';
+import { EditorState, Extension, Transaction } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { bracketMatching } from '@codemirror/language';
@@ -125,6 +125,8 @@ export interface LivePreviewEditorProps {
   onOutlineChange?: (outline: OutlineItem[]) => void;
   /** Wiki link click callback */
   onWikiLinkClick?: (target: string) => void;
+  /** Unified link navigation callback */
+  onLinkNavigate?: (target: string) => void;
   /** Save callback */
   onSave?: () => void;
   /** Additional class name */
@@ -155,6 +157,8 @@ export interface EditorStateSnapshot {
 export interface LivePreviewEditorRef {
   /** Scroll to a specific line number */
   scrollToLine: (lineNumber: number) => void;
+  /** Flash a specific line to confirm navigation */
+  flashLine: (lineNumber: number) => void;
   /** Focus the editor */
   focus: () => void;
   /** Get current editor state for restoration */
@@ -316,6 +320,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     readOnly = false,
     onOutlineChange,
     onWikiLinkClick,
+    onLinkNavigate,
     onSave,
     className = '',
     fileId,
@@ -658,21 +663,42 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     updateAvailableFiles(viewRef.current, availableFiles);
   }, [availableFiles]);
   
-  // Handle wiki link clicks
+  // Handle link clicks emitted by live preview widgets and table editor
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || !onWikiLinkClick) return;
-    
+    if (!container || (!onWikiLinkClick && !onLinkNavigate)) return;
+
+    const emitNavigate = (target: string) => {
+      onLinkNavigate?.(target);
+      if (!onLinkNavigate) {
+        onWikiLinkClick?.(target);
+      }
+    };
+
     const handleWikiLinkClick = (e: Event) => {
       const customEvent = e as CustomEvent<{ target: string }>;
-      onWikiLinkClick(customEvent.detail.target);
+      emitNavigate(customEvent.detail.target);
     };
-    
+
+    const handleAnnotationLinkClick = (e: Event) => {
+      const customEvent = e as CustomEvent<{ filePath: string; annotationId: string }>;
+      emitNavigate(`${customEvent.detail.filePath}#${customEvent.detail.annotationId}`);
+    };
+
+    const handleExternalLinkClick = (e: Event) => {
+      const customEvent = e as CustomEvent<{ url: string }>;
+      emitNavigate(customEvent.detail.url);
+    };
+
     container.addEventListener('wiki-link-click', handleWikiLinkClick);
+    container.addEventListener('annotation-link-click', handleAnnotationLinkClick);
+    container.addEventListener('external-link-click', handleExternalLinkClick);
     return () => {
       container.removeEventListener('wiki-link-click', handleWikiLinkClick);
+      container.removeEventListener('annotation-link-click', handleAnnotationLinkClick);
+      container.removeEventListener('external-link-click', handleExternalLinkClick);
     };
-  }, [onWikiLinkClick]);
+  }, [onLinkNavigate, onWikiLinkClick]);
 
   // Handle MathEditor open event - REMOVED (now handled in editor init)
 
@@ -752,14 +778,46 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
       console.warn('Failed to scroll to line:', lineNumber, e);
     }
   }, []);
+
+  const flashLine = useCallback((lineNumber: number) => {
+    const view = viewRef.current;
+    if (!view) return;
+
+    try {
+      const safeLine = Math.max(1, Math.min(lineNumber, view.state.doc.lines));
+      const line = view.state.doc.line(safeLine);
+      const domAtPos = view.domAtPos(line.from);
+      const lineElement =
+        (domAtPos.node instanceof HTMLElement ? domAtPos.node : domAtPos.node.parentElement)?.closest('.cm-line');
+
+      if (!(lineElement instanceof HTMLElement)) {
+        return;
+      }
+
+      lineElement.animate(
+        [
+          { backgroundColor: 'rgba(59, 130, 246, 0.22)' },
+          { backgroundColor: 'rgba(59, 130, 246, 0.12)' },
+          { backgroundColor: 'transparent' },
+        ],
+        {
+          duration: 1800,
+          easing: 'ease-out',
+        },
+      );
+    } catch (e) {
+      console.warn('Failed to flash line:', lineNumber, e);
+    }
+  }, []);
   
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
     scrollToLine,
+    flashLine,
     focus,
     getEditorState,
     restoreEditorState: applyEditorState,
-  }), [scrollToLine, focus, getEditorState, applyEditorState]);
+  }), [scrollToLine, flashLine, focus, getEditorState, applyEditorState]);
 
   if (!librariesLoaded) {
     return (

@@ -128,3 +128,211 @@ export interface AgentTask {
   result?: string;
   error?: string;
 }
+
+// ============================================================================
+// AI-Native Workbench Types
+// ============================================================================
+
+export type EvidenceKind =
+  | 'file'
+  | 'heading'
+  | 'pdf_page'
+  | 'pdf_annotation'
+  | 'code_line'
+  | 'notebook_cell';
+
+export interface EvidenceRef {
+  kind: EvidenceKind;
+  label: string;
+  locator: string;
+  preview?: string;
+}
+
+export type AiModelSource = 'local' | 'cloud';
+
+export interface AiModelInfo {
+  providerId: AiProviderId;
+  providerName: string;
+  model: string | null;
+  source: AiModelSource;
+}
+
+export type AiDraftArtifactType =
+  | 'research_summary'
+  | 'paper_note'
+  | 'annotation_digest'
+  | 'formula_explainer'
+  | 'code_explainer'
+  | 'experiment_note'
+  | 'comparison_summary'
+  | 'task_plan';
+
+export type AiDraftArtifactStatus = 'draft' | 'approved' | 'applied' | 'discarded';
+export type AiDraftWriteMode = 'create' | 'append';
+
+export interface AiDraftArtifact {
+  id: string;
+  type: AiDraftArtifactType;
+  title: string;
+  sourceRefs: EvidenceRef[];
+  content: string;
+  status: AiDraftArtifactStatus;
+  createdAt: number;
+  targetPath?: string;
+  writeMode?: AiDraftWriteMode;
+}
+
+export interface AiPlannedWrite {
+  targetPath: string;
+  mode: 'create' | 'append' | 'update';
+  contentPreview: string;
+}
+
+export interface AiTaskProposalStep {
+  id: string;
+  title: string;
+  description: string;
+}
+
+export type AiTaskProposalStatus = 'pending' | 'approved' | 'discarded';
+
+export interface AiTaskProposal {
+  id: string;
+  summary: string;
+  steps: AiTaskProposalStep[];
+  requiredApprovals: string[];
+  plannedWrites: AiPlannedWrite[];
+  sourceRefs: EvidenceRef[];
+  status: AiTaskProposalStatus;
+  confirmedApprovals: string[];
+  approvedWrites: string[];
+  generatedDraftTargets: string[];
+  createdAt: number;
+}
+
+export interface AiActionApproval {
+  proposalId: string;
+  approved: boolean;
+  approvedWrites?: string[];
+}
+
+export type AiTaskType =
+  | 'chat'
+  | 'inline'
+  | 'research'
+  | 'pdf_summary'
+  | 'pdf_qa'
+  | 'notebook_assist'
+  | 'code_explain'
+  | 'knowledge_organize'
+  | 'task_proposal';
+
+export interface ModelRouterPolicy {
+  taskType: AiTaskType;
+  preferredProvider: AiProviderId | null;
+  fallbackProvider: AiProviderId | null;
+  maxContextTokens: number;
+  evidenceRequired: boolean;
+}
+
+export interface AiRuntimeSettings {
+  aiEnabled: boolean;
+  providerId: AiProviderId | null;
+  model: string | null;
+  temperature: number;
+  maxTokens: number;
+  systemPrompt: string;
+  preferLocal?: boolean;
+}
+
+export interface AiContextNode {
+  id: string;
+  kind: 'selection' | 'file' | 'heading' | 'annotation' | 'code_symbol' | 'notebook_cell' | 'workspace_chunk';
+  label: string;
+  content: string;
+  priority: number;
+  evidenceRef?: EvidenceRef;
+}
+
+export interface AiPromptContext {
+  nodes: AiContextNode[];
+  prompt: string;
+  evidenceRefs: EvidenceRef[];
+  truncated: boolean;
+}
+
+export interface AiReferenceInput {
+  path: string;
+  content: string;
+}
+
+export interface AiResearchContextInput {
+  filePath?: string;
+  content?: string;
+  selection?: string;
+  references?: AiReferenceInput[];
+  annotations?: Array<{
+    id: string;
+    target: {
+      type: 'pdf' | 'image' | 'text_anchor' | 'code_line';
+      page?: number;
+      line?: number;
+    };
+    content?: string;
+    comment?: string;
+  }>;
+  query?: string;
+  explicitEvidenceRefs?: EvidenceRef[];
+}
+
+export interface AiChatRequest extends AiResearchContextInput {
+  prompt: string;
+  history?: AiMessage[];
+  settings: AiRuntimeSettings;
+}
+
+export interface AiInlineActionRequest extends AiResearchContextInput {
+  action:
+    | 'summarize'
+    | 'translate'
+    | 'explain_formula'
+    | 'improve_writing'
+    | 'continue_writing';
+  input: string;
+  settings: AiRuntimeSettings;
+}
+
+export interface AiResearchActionRequest extends AiResearchContextInput {
+  action:
+    | 'summarize_paper'
+    | 'extract_findings'
+    | 'answer_question'
+    | 'digest_annotations'
+    | 'explain_code'
+    | 'interpret_output';
+  prompt: string;
+  settings: AiRuntimeSettings;
+}
+
+export interface AiTaskProposalRequest extends AiResearchContextInput {
+  prompt: string;
+  settings: AiRuntimeSettings;
+}
+
+export interface AiFollowUpAction {
+  id: string;
+  label: string;
+  kind: 'create_draft' | 'propose_task';
+}
+
+export interface AiRunResult {
+  text: string;
+  evidenceRefs: EvidenceRef[];
+  context: AiPromptContext;
+  model: AiModelInfo;
+  followUpActions: AiFollowUpAction[];
+  draftSuggestion?: {
+    type: AiDraftArtifactType;
+    title: string;
+  };
+}

@@ -266,8 +266,8 @@ print(json.dumps(get_variables()))
           try {
             const variables = JSON.parse(streamContent.text);
             return variables;
-          } catch (error) {
-            console.error('Failed to parse variables:', error);
+          } catch {
+            // Ignore malformed stdout and fall back to an empty variable snapshot.
           }
         }
       }

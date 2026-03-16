@@ -176,6 +176,8 @@ export function LivePreviewDiagnostics() {
               onChange={setContent}
               fileName={selected.id}
               fileId={selected.id}
+              paneId="diagnostics-live-preview-pane"
+              filePath={selected.id}
               initialMode="live"
             />
           ) : (

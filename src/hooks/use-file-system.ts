@@ -12,12 +12,21 @@ import {
   createFile as createFileUtil,
   deleteFile as deleteFileUtil,
   renameFile as renameFileUtil,
+  deleteEntry as deleteEntryUtil,
+  renameEntry as renameEntryUtil,
   createDirectory as createDirectoryUtil,
-  findParentDirectory,
-  getFileName,
+  getParentPath,
+  joinPath,
+  moveEntryToDirectory,
+  copyEntryToDirectory,
+  resolveDirectoryHandle,
+  resolveEntry,
+  generateUniqueName,
+  sanitizeFileName,
   type FileType,
   type FileOperationResult,
   type DirectoryOperationResult,
+  type EntryOperationResult,
 } from "@/lib/file-operations";
 import { emitVaultChange, emitVaultDelete, emitVaultRename } from "@/lib/plugins/runtime";
 
@@ -36,9 +45,11 @@ interface UseFileSystemReturn {
   openQaWorkspace?: () => Promise<void>;
   createFile: (name: string, type: FileType | 'file', parentPath?: string) => Promise<FileOperationResult>;
   createDirectory: (name: string, parentPath?: string) => Promise<DirectoryOperationResult>;
-  deleteFile: (path: string) => Promise<FileOperationResult>;
-  renameFile: (path: string, newName: string) => Promise<FileOperationResult>;
-  refreshDirectory: () => Promise<void>;
+  deleteFile: (path: string) => Promise<EntryOperationResult>;
+  renameFile: (path: string, newName: string) => Promise<EntryOperationResult>;
+  copyEntry: (sourcePath: string, targetDirectoryPath: string) => Promise<EntryOperationResult>;
+  moveEntry: (sourcePath: string, targetDirectoryPath: string) => Promise<EntryOperationResult>;
+  refreshDirectory: (options?: { silent?: boolean }) => Promise<void>;
 
   // Derived
   fileTree: FileTree;
@@ -188,6 +199,42 @@ async function readDirectoryRecursive(
   });
 }
 
+function collectExpandedDirectoryPaths(node: DirectoryNode | null): Set<string> {
+  const expandedPaths = new Set<string>();
+
+  const visit = (current: TreeNode) => {
+    if (current.kind === "file") {
+      return;
+    }
+
+    if (current.isExpanded) {
+      expandedPaths.add(current.path);
+    }
+
+    current.children.forEach(visit);
+  };
+
+  if (node) {
+    visit(node);
+  }
+
+  return expandedPaths;
+}
+
+function applyExpandedState(children: TreeNode[], expandedPaths: Set<string>): TreeNode[] {
+  return children.map((child) => {
+    if (child.kind === "file") {
+      return child;
+    }
+
+    return {
+      ...child,
+      isExpanded: expandedPaths.has(child.path),
+      children: applyExpandedState(child.children, expandedPaths),
+    };
+  });
+}
+
 /**
  * Custom hook for File System Access API operations
  * Provides functionality to open directories, create/delete files, and build file trees
@@ -199,6 +246,7 @@ export function useFileSystem(): UseFileSystemReturn {
     isLoading,
     error,
     setRootHandle,
+    setWorkspaceRootPath,
     setFileTree,
     setLoading,
     setError,
@@ -217,20 +265,24 @@ export function useFileSystem(): UseFileSystemReturn {
   /**
    * Refresh the file tree from the current root handle
    */
-  const refreshDirectory = useCallback(async () => {
+  const refreshDirectory = useCallback(async (options: { silent?: boolean } = {}) => {
     if (!rootHandle) return;
 
     try {
-      setLoading(true);
+      if (!options.silent) {
+        setLoading(true);
+      }
       
       // Rebuild the file tree
       const children = await readDirectoryRecursive(rootHandle);
+      const expandedPaths = collectExpandedDirectoryPaths(fileTree.root);
+      const preservedChildren = applyExpandedState(children, expandedPaths);
 
       const rootNode: DirectoryNode = {
         name: rootHandle.name,
         kind: "directory",
         handle: rootHandle,
-        children,
+        children: preservedChildren,
         path: rootHandle.name,
         isExpanded: true,
       };
@@ -240,9 +292,11 @@ export function useFileSystem(): UseFileSystemReturn {
       const message = err instanceof Error ? err.message : "Failed to refresh directory";
       setError(message);
     } finally {
-      setLoading(false);
+      if (!options.silent) {
+        setLoading(false);
+      }
     }
-  }, [rootHandle, setFileTree, setLoading, setError]);
+  }, [rootHandle, fileTree.root, setFileTree, setLoading, setError]);
 
   /**
    * Open a directory using the File System Access API
@@ -263,6 +317,7 @@ export function useFileSystem(): UseFileSystemReturn {
       });
 
       setRootHandle(handle);
+      setWorkspaceRootPath(null);
 
       // Build the file tree
       const children = await readDirectoryRecursive(handle);
@@ -289,7 +344,7 @@ export function useFileSystem(): UseFileSystemReturn {
     } finally {
       setLoading(false);
     }
-  }, [isSupported, setRootHandle, setFileTree, setLoading, setError]);
+  }, [isSupported, setRootHandle, setWorkspaceRootPath, setFileTree, setLoading, setError]);
 
   /**
    * Open a QA workspace in OPFS (dev-only helper)
@@ -309,6 +364,7 @@ export function useFileSystem(): UseFileSystemReturn {
       await ensureQaFixtures(workspaceHandle);
 
       setRootHandle(workspaceHandle);
+      setWorkspaceRootPath(null);
 
       const children = await readDirectoryRecursive(workspaceHandle);
       const rootNode: DirectoryNode = {
@@ -327,7 +383,7 @@ export function useFileSystem(): UseFileSystemReturn {
     } finally {
       setLoading(false);
     }
-  }, [setRootHandle, setFileTree, setLoading, setError]);
+  }, [setRootHandle, setWorkspaceRootPath, setFileTree, setLoading, setError]);
 
   /**
    * Create a new file in the workspace
@@ -370,8 +426,19 @@ export function useFileSystem(): UseFileSystemReturn {
     // Handle generic file type
     if (type === 'file') {
       try {
-        // For generic files, use the name as-is (with extension)
-        const fileHandle = await targetDir.getFileHandle(name, { create: true });
+        const sanitizedName = sanitizeFileName(name);
+        if (!sanitizedName) {
+          return {
+            success: false,
+            error: "Invalid file name",
+          };
+        }
+
+        const dotIndex = sanitizedName.lastIndexOf(".");
+        const baseName = dotIndex > 0 ? sanitizedName.slice(0, dotIndex) : sanitizedName;
+        const extension = dotIndex > 0 ? sanitizedName.slice(dotIndex) : "";
+        const uniqueName = await generateUniqueName(targetDir, baseName || "untitled", extension);
+        const fileHandle = await targetDir.getFileHandle(uniqueName, { create: true });
 
         // Write empty content
         const writable = await fileHandle.createWritable();
@@ -380,7 +447,7 @@ export function useFileSystem(): UseFileSystemReturn {
 
         // Build the path
         const pathParts = parentPath ? parentPath.split('/') : [rootHandle.name];
-        const fullPath = [...pathParts, name].join('/');
+        const fullPath = [...pathParts, uniqueName].join('/');
 
         const result = {
           success: true,
@@ -389,7 +456,7 @@ export function useFileSystem(): UseFileSystemReturn {
         };
 
         // Refresh the file tree to show the new file
-        await refreshDirectory();
+        await refreshDirectory({ silent: true });
         if (result.path) {
           emitVaultChange(result.path);
         }
@@ -406,11 +473,14 @@ export function useFileSystem(): UseFileSystemReturn {
     const result = await createFileUtil(targetDir, name, type);
 
     if (result.success) {
+      const createdName = result.handle?.name || result.path?.split("/").pop() || "";
+      const fullPath = joinPath(parentPath || rootHandle.name, createdName);
       // Refresh the file tree to show the new file
-      await refreshDirectory();
-      if (result.path) {
-        emitVaultChange(result.path);
+      await refreshDirectory({ silent: true });
+      if (fullPath) {
+        emitVaultChange(fullPath);
       }
+      result.path = fullPath;
     }
 
     return result;
@@ -456,7 +526,9 @@ export function useFileSystem(): UseFileSystemReturn {
 
     if (result.success) {
       // Refresh the file tree to show the new directory
-      await refreshDirectory();
+      await refreshDirectory({ silent: true });
+      const createdName = result.handle?.name || result.path?.split("/").pop() || "";
+      result.path = joinPath(parentPath || rootHandle.name, createdName);
     }
 
     return result;
@@ -468,7 +540,7 @@ export function useFileSystem(): UseFileSystemReturn {
    * @param path - Full path to the file to delete
    * @returns FileOperationResult indicating success or failure
    */
-  const deleteFile = useCallback(async (path: string): Promise<FileOperationResult> => {
+  const deleteFile = useCallback(async (path: string): Promise<EntryOperationResult> => {
     if (!rootHandle) {
       return {
         success: false,
@@ -476,33 +548,26 @@ export function useFileSystem(): UseFileSystemReturn {
       };
     }
 
-    // Find the parent directory
-    const parentDir = await findParentDirectory(rootHandle, path);
-    if (!parentDir) {
+    const resolvedEntry = await resolveEntry(rootHandle, path);
+    if (!resolvedEntry) {
       return {
         success: false,
-        error: "Could not find parent directory.",
+        error: "Could not find entry.",
       };
     }
 
-    // Get the filename from the path
-    const fileName = getFileName(path);
-    if (!fileName) {
-      return {
-        success: false,
-        error: "Invalid file path.",
-      };
-    }
-
-    const result = await deleteFileUtil(parentDir, fileName);
+    const result =
+      resolvedEntry.kind === "file"
+        ? await deleteFileUtil(resolvedEntry.parentHandle, resolvedEntry.name)
+        : await deleteEntryUtil(resolvedEntry.parentHandle, resolvedEntry.name, resolvedEntry.kind);
     
     if (result.success) {
       // Refresh the file tree to reflect the deletion
-      await refreshDirectory();
+      await refreshDirectory({ silent: true });
       emitVaultDelete(path);
     }
 
-    return result;
+    return { ...result, kind: resolvedEntry.kind, path };
   }, [rootHandle, refreshDirectory]);
 
   /**
@@ -512,7 +577,7 @@ export function useFileSystem(): UseFileSystemReturn {
    * @param newName - New name for the file (with extension)
    * @returns FileOperationResult indicating success or failure
    */
-  const renameFile = useCallback(async (path: string, newName: string): Promise<FileOperationResult> => {
+  const renameFile = useCallback(async (path: string, newName: string): Promise<EntryOperationResult> => {
     if (!rootHandle) {
       return {
         success: false,
@@ -520,32 +585,128 @@ export function useFileSystem(): UseFileSystemReturn {
       };
     }
 
-    // Find the parent directory
-    const parentDir = await findParentDirectory(rootHandle, path);
-    if (!parentDir) {
+    const resolvedEntry = await resolveEntry(rootHandle, path);
+    if (!resolvedEntry) {
       return {
         success: false,
-        error: "Could not find parent directory.",
+        error: "Could not find entry.",
       };
     }
 
-    // Get the filename from the path
-    const fileName = getFileName(path);
-    if (!fileName) {
-      return {
-        success: false,
-        error: "Invalid file path.",
-      };
-    }
-
-    const result = await renameFileUtil(parentDir, fileName, newName);
+    const result =
+      resolvedEntry.kind === "file"
+        ? await renameFileUtil(resolvedEntry.parentHandle, resolvedEntry.name, newName)
+        : await renameEntryUtil(resolvedEntry.parentHandle, resolvedEntry.name, newName, resolvedEntry.kind);
     
     if (result.success) {
+      const renamedName = result.handle?.name || result.path?.split("/").pop() || newName;
+      const fullPath = joinPath(getParentPath(path), renamedName);
       // Refresh the file tree to reflect the rename
-      await refreshDirectory();
-      if (result.path) {
-        emitVaultRename(path, result.path);
+      await refreshDirectory({ silent: true });
+      if (fullPath) {
+        emitVaultRename(path, fullPath);
       }
+      result.path = fullPath;
+    }
+
+    return { ...result, kind: resolvedEntry.kind };
+  }, [rootHandle, refreshDirectory]);
+
+  const copyEntry = useCallback(async (
+    sourcePath: string,
+    targetDirectoryPath: string
+  ): Promise<EntryOperationResult> => {
+    if (!rootHandle) {
+      return {
+        success: false,
+        error: "No directory is open.",
+      };
+    }
+
+    const resolvedEntry = await resolveEntry(rootHandle, sourcePath);
+    const targetDirectory = await resolveDirectoryHandle(rootHandle, targetDirectoryPath);
+    if (!resolvedEntry || !targetDirectory) {
+      return {
+        success: false,
+        error: "Could not resolve source or target path.",
+      };
+    }
+
+    if (
+      resolvedEntry.kind === "directory" &&
+      (targetDirectoryPath === sourcePath || targetDirectoryPath.startsWith(`${sourcePath}/`))
+    ) {
+      return {
+        success: false,
+        error: "Cannot copy a folder into itself.",
+      };
+    }
+
+    const result = await copyEntryToDirectory(resolvedEntry.handle, targetDirectory);
+    if (result.success) {
+      const copiedName = result.handle?.name || result.path?.split("/").pop() || resolvedEntry.name;
+      const fullPath = joinPath(targetDirectoryPath, copiedName);
+      await refreshDirectory({ silent: true });
+      emitVaultChange(fullPath);
+      result.path = fullPath;
+      result.kind = resolvedEntry.kind;
+    }
+
+    return result;
+  }, [rootHandle, refreshDirectory]);
+
+  const moveEntry = useCallback(async (
+    sourcePath: string,
+    targetDirectoryPath: string
+  ): Promise<EntryOperationResult> => {
+    if (!rootHandle) {
+      return {
+        success: false,
+        error: "No directory is open.",
+      };
+    }
+
+    const resolvedEntry = await resolveEntry(rootHandle, sourcePath);
+    const targetDirectory = await resolveDirectoryHandle(rootHandle, targetDirectoryPath);
+    if (!resolvedEntry || !targetDirectory) {
+      return {
+        success: false,
+        error: "Could not resolve source or target path.",
+      };
+    }
+
+    if (getParentPath(sourcePath) === targetDirectoryPath) {
+      return {
+        success: true,
+        handle: resolvedEntry.handle,
+        path: sourcePath,
+        kind: resolvedEntry.kind,
+      };
+    }
+
+    if (
+      resolvedEntry.kind === "directory" &&
+      (targetDirectoryPath === sourcePath || targetDirectoryPath.startsWith(`${sourcePath}/`))
+    ) {
+      return {
+        success: false,
+        error: "Cannot move a folder into itself.",
+      };
+    }
+
+    const result = await moveEntryToDirectory(
+      resolvedEntry.parentHandle,
+      resolvedEntry.handle,
+      targetDirectory
+    );
+
+    if (result.success) {
+      const movedName = result.handle?.name || result.path?.split("/").pop() || resolvedEntry.name;
+      const fullPath = joinPath(targetDirectoryPath, movedName);
+      await refreshDirectory({ silent: true });
+      emitVaultRename(sourcePath, fullPath);
+      result.path = fullPath;
+      result.kind = resolvedEntry.kind;
     }
 
     return result;
@@ -562,6 +723,8 @@ export function useFileSystem(): UseFileSystemReturn {
     createDirectory,
     deleteFile,
     renameFile,
+    copyEntry,
+    moveEntry,
     refreshDirectory,
     fileTree,
     rootHandle,

@@ -4,6 +4,8 @@ import { useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useExplorerStore } from "@/stores/explorer-store";
+import { getParentPath } from "@/lib/file-operations";
 import { EmptyState } from "./empty-state";
 import { TreeView } from "./tree-view";
 import { NewFileButtons } from "./new-file-buttons";
@@ -21,42 +23,71 @@ export function ExplorerSidebar() {
   const sidebarCollapsed = useWorkspaceStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
-  const selectedDirectoryPath = useWorkspaceStore((state) => state.selectedDirectoryPath);
+  const setSelectedDirectoryPath = useWorkspaceStore((state) => state.setSelectedDirectoryPath);
+  const selectedPath = useExplorerStore((state) => state.selectedPath);
+  const selectedKind = useExplorerStore((state) => state.selectedKind);
+  const setSelection = useExplorerStore((state) => state.setSelection);
+  const startRenaming = useExplorerStore((state) => state.startRenaming);
 
   const hasDirectory = !!fileTree.root;
+  const rootPath = fileTree.root?.path;
+
+  const getCreationTargetPath = useCallback(() => {
+    if (!rootPath) {
+      return undefined;
+    }
+
+    if (selectedPath && selectedKind === "directory") {
+      return selectedPath;
+    }
+
+    if (selectedPath && selectedKind === "file") {
+      return getParentPath(selectedPath);
+    }
+
+    return rootPath;
+  }, [rootPath, selectedKind, selectedPath]);
 
   /**
    * Create a new note and open it in the active pane
    */
   const handleCreateNote = useCallback(async () => {
-    // 如果有选中的文件夹，在该文件夹内创建，否则在根目录创建
-    const result = await createFile("Untitled", "note", selectedDirectoryPath || undefined);
+    const result = await createFile("Untitled", "note", getCreationTargetPath());
     if (result.success && result.handle && result.path) {
+      setSelection(result.path, "file");
+      startRenaming(result.path);
       openFileInActivePane(result.handle, result.path);
     }
-  }, [createFile, openFileInActivePane, selectedDirectoryPath]);
+  }, [createFile, getCreationTargetPath, openFileInActivePane, setSelection, startRenaming]);
 
   /**
    * Create a new notebook and open it in the active pane
    */
   const handleCreateNotebook = useCallback(async () => {
-    // 如果有选中的文件夹，在该文件夹内创建，否则在根目录创建
-    const result = await createFile("Untitled", "notebook", selectedDirectoryPath || undefined);
+    const result = await createFile("Untitled", "notebook", getCreationTargetPath());
     if (result.success && result.handle && result.path) {
+      setSelection(result.path, "file");
+      startRenaming(result.path);
       openFileInActivePane(result.handle, result.path);
     }
-  }, [createFile, openFileInActivePane, selectedDirectoryPath]);
+  }, [createFile, getCreationTargetPath, openFileInActivePane, setSelection, startRenaming]);
 
   /**
    * Create a new folder in the root directory or selected directory
    */
   const handleCreateFolder = useCallback(async () => {
-    // 如果有选中的文件夹，在该文件夹内创建，否则在根目录创建
-    const result = await createDirectory("New Folder", selectedDirectoryPath || undefined);
+    const result = await createDirectory("New Folder", getCreationTargetPath());
     if (!result.success && result.error) {
       console.error("Failed to create folder:", result.error);
+      return;
     }
-  }, [createDirectory, selectedDirectoryPath]);
+
+    if (result.path) {
+      setSelection(result.path, "directory");
+      setSelectedDirectoryPath(result.path);
+      startRenaming(result.path);
+    }
+  }, [createDirectory, getCreationTargetPath, setSelectedDirectoryPath, setSelection, startRenaming]);
 
   return (
     <div className="flex h-full flex-col">

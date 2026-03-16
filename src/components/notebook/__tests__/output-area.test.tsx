@@ -9,7 +9,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 import { OutputArea } from '../output-area';
-import type { ExecutionOutput } from '@/lib/python-worker-manager';
+import type { ExecutionOutput } from '@/lib/runner/types';
 
 describe('OutputArea', () => {
   afterEach(() => {

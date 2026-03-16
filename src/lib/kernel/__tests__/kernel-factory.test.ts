@@ -18,8 +18,7 @@ describe('Kernel Factory', () => {
       const kernel = createKernel({
         type: 'jupyter',
         jupyter: {
-          baseUrl: 'http://localhost:8888',
-          token: 'test-token',
+          serverUrl: 'http://localhost:8888',
           kernelId: 'test-kernel-id',
         },
       });

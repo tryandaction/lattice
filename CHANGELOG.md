@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 新增 (2026-03-15)
+- **AI-Native 科研副驾 v1**
+  - ✅ 新增统一 `AiOrchestrator`，统一 Chat、选区动作、PDF 助手、Notebook 助手和代码解释入口
+  - ✅ 新增 `AiContextGraph`，统一文件、Markdown 标题、PDF 批注、Notebook 单元、代码符号、工作区索引和当前选区上下文
+  - ✅ 新增 `EvidenceRef` / `AiDraftArtifact` / `AiTaskProposal` / `AiActionApproval` 公共接口
+  - ✅ 科研回答默认携带证据引用，并支持“保存为草稿”和“生成整理计划”两类后续动作
+- **工作区 AI 引用系统**
+  - ✅ `@引用` 从“已打开标签页文件名”升级为“工作区文件路径”补全
+  - ✅ 支持带 fragment 的引用解析：Markdown 标题、代码行、Notebook 单元、PDF 页码/批注
+  - ✅ 引用解析结果自动转成 `explicitEvidenceRefs`，让用户显式引用直接进入 AI 证据链
+  - ✅ `@引用` 支持可视化 fragment 选择：文件命中后可继续选择 heading / line / cell / page / annotation
+- **AI Workbench 产品化升级**
+  - ✅ `drafts` / `proposals` 持久化，刷新后不再丢失本次 AI 工作流状态
+  - ✅ proposal 支持展开审阅步骤、审批项和 planned writes
+  - ✅ proposal 支持批准 / 拒绝状态流转
+  - ✅ proposal 支持一键生成“计划草稿”，把 AI 计划沉淀到可写回的草稿资产
+  - ✅ proposal 审批状态、勾选审批项和勾选 planned writes 全部持久化保存
+  - ✅ Workbench 具备“计划 -> 草稿 -> 写回”的连续链路，减少 AI 结果停留在聊天记录中的流失
+  - ✅ approved proposal 现已支持按已勾选 `plannedWrites` 批量生成目标草稿集合
+  - ✅ 目标草稿会预填目标路径与写入模式，并对已生成目标去重，避免重复生成
+  - ✅ proposal 现已支持从已批准 writes 批量派生目标草稿集，进一步形成 `Proposal -> Draft Set -> Writeback` 链路
+  - ✅ proposal 现已支持批量写回目标草稿，成功后会同步刷新草稿状态并打开首个写回结果
+  - ✅ Workbench 面板新增目标草稿状态汇总：待写回 / 已写回 / 阻塞
+- **AI 核心测试**
+  - ✅ 新增 `context-graph`、`model-router`、`orchestrator` 单测，覆盖证据链、模型来源路由、草稿与提案输出
+- **桌面本地运行 v1**
+  - ✅ 新增统一 Runner 抽象，统一代码文件、Notebook 单元和 Markdown 代码块执行事件模型
+  - ✅ 桌面端默认优先使用 `python-local`
+  - ✅ 自动发现系统 Python、项目 `.venv`、激活的 `venv` / `conda`
+  - ✅ 外部命令运行器支持 `.js/.mjs/.cjs`、`.jl`、`.R`
+- **Notebook 本地持久会话**
+  - ✅ 桌面 `python-local` Notebook 单元复用同一个本地 Python 会话
+  - ✅ 支持单元连续执行、停止、中断后重建会话、重启 kernel
+
+### 改进 (2026-03-15)
+- **科研输出统一化**
+  - ✅ Python 本地运行统一支持文本、错误、图片、HTML 表格、SVG 等输出
+- **AI Workbench 审批写回**
+  - ✅ 草稿写回支持自定义目标路径
+  - ✅ 支持将 AI 草稿 `append` 到现有 Markdown 笔记
+  - ✅ 写回后自动打开目标文件，并记录实际落地路径
+  - ✅ proposal 新增证据来源 `sourceRefs`，计划草稿可保留原始证据上下文
+- **证据回链可感知反馈**
+  - ✅ Markdown 标题、代码行、Notebook 单元、PDF 页码/批注跳转后增加短时高亮反馈
+- **QA 门禁 v1**
+  - ✅ 门禁补齐为 `lint` / `typecheck` / `test:run` / `build` / `tauri:build`
+  - ✅ 本轮顺序验证 `lint` / `typecheck` / `test:run` / `build` / `tauri:build` 全绿
+  - ✅ `lint` 从 `0 error / 38 warnings` 继续压降到 `0 error / 0 warnings`
+  - ✅ 清理预期失败路径中的解析噪音日志，测试输出更可读
+  - ✅ 本轮新增 `mention-resolver` 测试，验证工作区文件引用、fragment 解析和 PDF 页码引用
+  - ✅ 本轮新增 Workbench store / proposal 草稿格式化测试，并将慢诊断测试超时调到稳定区间
+  - ✅ 本轮顺序验证 `lint` / `typecheck` / `test:run` / `build` 全绿，当前阶段可稳定跑通
+  - ✅ 本轮新增 fragment suggestion 测试，验证 `@引用` 的 heading / line / cell / pdf page / annotation 候选生成
+  - ✅ 本轮新增目标草稿生成测试，验证 proposal -> drafts 的筛选与去重逻辑
+  - ✅ 本轮再次顺序验证 `lint` / `typecheck` / `test:run` / `build` 全绿，目标草稿集合能力已可稳定跑通
+  - ✅ 本轮新增批量写回测试与状态汇总逻辑，`Proposal -> Draft Set -> Writeback` 已具备阶段性完整性
+
+### 清理 (2026-03-15)
+- **会话临时产物清理**: 删除桌面持久 Python session 未使用的空 payload 临时文件生成逻辑
+- **测试噪音压降**: 清理 Notebook 测试中的 `act(...)` 噪音，并将 live preview 代码块调试日志改为受控调试输出
+- **旧实现重构**:
+  - 重构 `image-viewer` 的对象 URL 生命周期，移除渲染期 ref 读写和过度缓存逻辑
+  - 重构 `use-popup-position`，移除 effect 驱动的派生状态
+  - 精简 `plugin-command-dialog` 的活动索引同步逻辑，避免 effect 内部强制 setState
+  - 收敛 kernel 协议层 `any`，补充共享 JSON/MIME 类型，并让 WebSocket 泛型边界与已实现消息子集一致
+  - 删除 `generateUniqueEntryName` 等未使用旧实现和多处无用导入
+  - 将 `lint` warning 从 `50` 压降到 `38` 后继续压到 `0`
+
+### 文档更新 (2026-03-15)
+- 更新 `docs/ARCHITECTURE.md`，明确当前阶段是本地优先的科研运行工作台而非完整 VS Code 克隆
+- 更新 `docs/ARCHITECTURE.md`，补充 AI-Native 科研副驾 v1 的 orchestrator / context graph / evidence / draft 架构
+- 更新 `docs/DESKTOP_FEATURES.md`，补充桌面本地运行能力、Notebook 持久会话和 QA 门禁
+- 更新 `docs/USER_GUIDE.md`，修正文档中将 Notebook 主路径描述为 Pyodide 的过时表述
+- 更新 `docs/RELEASE_NOTES.md` 与 `docs/MANUAL_RELEASE_GUIDE.md`，同步桌面本地运行 v1、AI 副驾 v1 与 QA v1 状态
+
+### 新增 (2026-03-14)
+- **统一链接路由**
+  - ✅ 外部网页链接在桌面端改为系统默认浏览器打开
+  - ✅ 工作区文件链接继续在应用内打开
+  - ✅ 支持 PDF 页码、PDF 批注、Markdown 标题、代码行、Notebook 单元格深链
+- **Explorer 资源管理增强**
+  - ✅ 新建文件和文件夹后立即进入重命名
+  - ✅ 支持文件树复制、剪切、粘贴
+  - ✅ 支持拖放移动文件和文件夹
+  - ✅ 目录重命名或移动后自动同步已打开标签路径
+
+### 修复 (2026-03-14)
+- **PDF 阅读稳定性**: 修复放大、缩小或适宽时视图跳回第一页的问题
+- **PDF 文本选区样式**: 选中文本改为浅蓝色高亮，并适配浅色/深色主题
+- **文件树状态保持**: 刷新工作区后保留目录展开状态
+- **任意文件创建安全性**: 通用新建文件逻辑改为唯一命名，避免同名覆盖已有文件
+
+### 文档更新 (2026-03-14)
+- 更新 `docs/USER_GUIDE.md`，补充深链、PDF 缩放与文件树快捷键说明
+- 更新 `docs/DESKTOP_FEATURES.md`，补充桌面端外链、深链与资源管理能力
+- 重写 `docs/RELEASE_NOTES.md` 与 `docs/MANUAL_RELEASE_GUIDE.md`，同步最新发布流程与产物路径
+
 ### 新增 (2026-03-06)
 - **Jupyter Notebook 深度集成**
   - ✅ 变量查看器（Variable Inspector）
@@ -313,7 +410,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [Planned]
 
 ### Planned Features
 

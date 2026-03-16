@@ -3,8 +3,8 @@
 import { useState, useCallback } from "react";
 import { Loader2, Wand2, AlertCircle, BarChart3 } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings-store";
-import { getDefaultProvider, getProvider } from "@/lib/ai/providers";
-import type { AiProviderId } from "@/lib/ai/types";
+import { aiOrchestrator } from "@/lib/ai/orchestrator";
+import type { AiRuntimeSettings } from "@/lib/ai/types";
 
 interface NotebookAiAssistProps {
   /** Current cell source code */
@@ -26,61 +26,56 @@ export function NotebookAiAssist({ cellSource, cellOutput, cellError, onInsertCo
   const [prompt, setPrompt] = useState("");
   const settings = useSettingsStore((s) => s.settings);
 
-  const getAiProvider = useCallback(() => {
-    if (!settings.aiEnabled) return null;
-    const providerId = (settings.aiProvider ?? undefined) as AiProviderId | undefined;
-    return providerId ? getProvider(providerId) : getDefaultProvider();
-  }, [settings]);
-
   const runAction = useCallback(async (action: AiAction) => {
-    const provider = getAiProvider();
-    if (!provider) return;
+    if (!settings.aiEnabled) return;
 
     setLoading(true);
     setShowResult(true);
     setResult("");
 
-    let systemPrompt = "";
+    const runtimeSettings: AiRuntimeSettings = {
+      aiEnabled: settings.aiEnabled,
+      providerId: (settings.aiProvider as AiRuntimeSettings["providerId"]) ?? null,
+      model: settings.aiModel,
+      temperature: settings.aiTemperature,
+      maxTokens: settings.aiMaxTokens,
+      systemPrompt: settings.aiSystemPrompt,
+      preferLocal: settings.aiProvider === "ollama",
+    };
+
+    let researchAction: "answer_question" | "explain_code" | "interpret_output";
     let userPrompt = "";
 
     switch (action) {
       case "generate":
-        systemPrompt = "You are a Python coding assistant for Jupyter notebooks. Generate clean, well-commented Python code. Return ONLY the code, no markdown fences.";
+        researchAction = "answer_question";
         userPrompt = prompt
           ? `Generate Python code: ${prompt}\n\nExisting code context:\n${cellSource}`
           : `Continue or improve this code:\n${cellSource}`;
         break;
       case "explain-error":
-        systemPrompt = "You are a Python debugging assistant. Explain the error concisely and suggest a fix.";
+        researchAction = "explain_code";
         userPrompt = `Code:\n${cellSource}\n\nError:\n${cellError}`;
         break;
       case "interpret-output":
-        systemPrompt = "You are a data science assistant. Interpret the output of this code concisely.";
+        researchAction = "interpret_output";
         userPrompt = `Code:\n${cellSource}\n\nOutput:\n${cellOutput}`;
         break;
     }
 
     try {
-      const stream = provider.stream(
-        [{ role: "user", content: userPrompt }],
-        { systemPrompt, temperature: 0.3 }
-      );
-
-      let accumulated = "";
-      for await (const chunk of stream) {
-        if (chunk.type === "text" && chunk.text) {
-          accumulated += chunk.text;
-          setResult(accumulated);
-        } else if (chunk.type === "error") {
-          setResult(`Error: ${chunk.error}`);
-          break;
-        }
-      }
+      const response = await aiOrchestrator.runResearchAction({
+        action: researchAction,
+        prompt: userPrompt,
+        content: cellSource,
+        settings: runtimeSettings,
+      });
+      setResult(response.text);
     } catch (err) {
       setResult(`Error: ${(err as Error).message}`);
     }
     setLoading(false);
-  }, [cellSource, cellOutput, cellError, prompt, getAiProvider]);
+  }, [cellSource, cellOutput, cellError, prompt, settings]);
 
   if (!settings.aiEnabled) return null;
 

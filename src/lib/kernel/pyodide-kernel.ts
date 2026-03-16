@@ -15,6 +15,7 @@ import type {
   InspectionResult,
   KernelStatus,
 } from './kernel-manager';
+import type { MimeData } from './kernel-types';
 
 // ============================================================================
 // Worker 消息类型
@@ -91,7 +92,7 @@ export class PyodideKernel implements IKernelManager {
   /**
    * 执行代码
    */
-  async execute(code: string, options?: ExecuteOptions): Promise<ExecutionResult> {
+  async execute(code: string, _options?: ExecuteOptions): Promise<ExecutionResult> {
     // 确保已初始化
     if (this.status === 'idle' || this.status === 'starting') {
       await this.initialize();
@@ -200,8 +201,8 @@ print(json.dumps(get_variables()))
             try {
               const variables = JSON.parse(streamContent.text);
               return variables;
-            } catch (error) {
-              console.error('Failed to parse variables:', error);
+            } catch {
+              // Ignore malformed stdout and fall back to an empty variable snapshot.
             }
           }
         }
@@ -214,7 +215,7 @@ print(json.dumps(get_variables()))
   /**
    * 代码补全（Pyodide 不支持，返回空）
    */
-  async complete(code: string, cursorPos: number): Promise<CompletionResult> {
+  async complete(_code: string, cursorPos: number): Promise<CompletionResult> {
     return {
       matches: [],
       cursorStart: cursorPos,
@@ -225,7 +226,7 @@ print(json.dumps(get_variables()))
   /**
    * 代码检查（Pyodide 不支持，返回未找到）
    */
-  async inspect(code: string, cursorPos: number): Promise<InspectionResult> {
+  async inspect(_code: string, _cursorPos: number): Promise<InspectionResult> {
     return {
       found: false,
     };
@@ -440,7 +441,7 @@ print(json.dumps(get_variables()))
   /**
    * 创建 MIME Bundle
    */
-  private createMimeBundle(type: 'image' | 'html' | 'svg', payload: string): Record<string, any> {
+  private createMimeBundle(type: 'image' | 'html' | 'svg', payload: string): MimeData {
     switch (type) {
       case 'image':
         return { 'image/png': payload };

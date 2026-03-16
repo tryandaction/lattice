@@ -12,7 +12,7 @@
  * by accounting for the cumulative width difference of all inline widgets before the click.
  */
 
-import { EditorView, ViewPlugin, ViewUpdate } from '@codemirror/view';
+import { EditorView, ViewPlugin } from '@codemirror/view';
 import { Extension } from '@codemirror/state';
 
 /**

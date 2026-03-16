@@ -49,8 +49,12 @@ import { adjustPopupPosition, type PopupSize } from "@/lib/coordinate-adapter";
 import type { AnnotationItem, PdfTarget, BoundingBox } from "@/types/universal-annotation";
 import { useInkAnnotationStore } from "@/stores/ink-annotation-store";
 import { PdfAiPanel } from "@/components/ai/pdf-ai-panel";
+import type { PaneId } from "@/types/layout";
+import { useLinkNavigationStore } from "@/stores/link-navigation-store";
+import { isSameWorkspacePath } from "@/lib/link-router/path-utils";
 
 import "react-pdf-highlighter/dist/style.css";
+import "./pdf-highlighter-adapter.css";
 
 // ============================================================================
 // Types
@@ -61,6 +65,8 @@ interface PDFHighlighterAdapterProps {
   fileName: string;
   fileHandle: FileSystemFileHandle;
   rootHandle: FileSystemDirectoryHandle;
+  paneId: PaneId;
+  filePath: string;
 }
 
 // Annotation tool types (Zotero-style)
@@ -1265,6 +1271,8 @@ export function PDFHighlighterAdapter({
   fileName,
   fileHandle,
   rootHandle,
+  paneId,
+  filePath,
 }: PDFHighlighterAdapterProps) {
   const {
     annotations,
@@ -1306,6 +1314,32 @@ export function PDFHighlighterAdapter({
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const pdfHighlighterRef = useRef<PdfHighlighter<IHighlight> | null>(null);
+  const pendingNavigation = useLinkNavigationStore((state) => state.pendingByPane[paneId]);
+  const consumePendingNavigation = useLinkNavigationStore((state) => state.consumePendingNavigation);
+
+  const getViewerScrollContainer = useCallback((): HTMLDivElement | null => {
+    const viewerContainer = pdfHighlighterRef.current?.viewer?.container;
+    return viewerContainer instanceof HTMLDivElement ? viewerContainer : scrollContainerRef.current;
+  }, []);
+
+  const flashPdfElement = useCallback((element: Element | null) => {
+    if (!(element instanceof HTMLElement)) {
+      return;
+    }
+
+    element.animate(
+      [
+        { boxShadow: '0 0 0 0 rgba(59, 130, 246, 0.00)', backgroundColor: 'rgba(59, 130, 246, 0.00)' },
+        { boxShadow: '0 0 0 3px rgba(59, 130, 246, 0.20)', backgroundColor: 'rgba(59, 130, 246, 0.08)' },
+        { boxShadow: '0 0 0 0 rgba(59, 130, 246, 0.00)', backgroundColor: 'rgba(59, 130, 246, 0.00)' },
+      ],
+      {
+        duration: 1800,
+        easing: 'ease-out',
+      },
+    );
+  }, []);
 
   // Ink annotation merge callback - creates merged annotation from buffered strokes
   const handleCreateMergedInkAnnotation = useCallback((merged: MergedInkAnnotation) => {
@@ -1372,7 +1406,7 @@ export function PDFHighlighterAdapter({
     };
     window.addEventListener('keydown', handleSidebarShortcut);
     return () => window.removeEventListener('keydown', handleSidebarShortcut);
-  }, []);
+  }, [getViewerScrollContainer]);
 
   // Zoom limits
   const ZOOM_MIN = 0.25;
@@ -1386,6 +1420,77 @@ export function PDFHighlighterAdapter({
     if (zoomMode === 'fit-page') return 'page-fit';
     return String(scale);
   }, [scale, zoomMode]);
+
+  useEffect(() => {
+    const viewerContainer = getViewerScrollContainer();
+    const pdfHighlighter = pdfHighlighterRef.current;
+    if (!viewerContainer || !pdfHighlighter) {
+      return;
+    }
+
+    const maxScrollTop = Math.max(1, viewerContainer.scrollHeight - viewerContainer.clientHeight);
+    const maxScrollLeft = Math.max(1, viewerContainer.scrollWidth - viewerContainer.clientWidth);
+    const scrollState = {
+      topRatio: viewerContainer.scrollTop / maxScrollTop,
+      leftRatio: viewerContainer.scrollLeft / maxScrollLeft,
+    };
+
+    pdfHighlighter.handleScaleValue();
+
+    const restoreScroll = () => {
+      const nextMaxTop = Math.max(0, viewerContainer.scrollHeight - viewerContainer.clientHeight);
+      const nextMaxLeft = Math.max(0, viewerContainer.scrollWidth - viewerContainer.clientWidth);
+      viewerContainer.scrollTo({
+        top: scrollState.topRatio * nextMaxTop,
+        left: scrollState.leftRatio * nextMaxLeft,
+        behavior: "auto",
+      });
+    };
+
+    const frame1 = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(restoreScroll);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame1);
+    };
+  }, [getViewerScrollContainer, pdfScaleValue]);
+
+  useEffect(() => {
+    if (zoomMode === "manual") {
+      return;
+    }
+
+    const container = scrollContainerRef.current;
+    const viewerContainer = getViewerScrollContainer();
+    if (!container || !viewerContainer) {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      const maxScrollTop = Math.max(1, viewerContainer.scrollHeight - viewerContainer.clientHeight);
+      const maxScrollLeft = Math.max(1, viewerContainer.scrollWidth - viewerContainer.clientWidth);
+      const scrollState = {
+        topRatio: viewerContainer.scrollTop / maxScrollTop,
+        leftRatio: viewerContainer.scrollLeft / maxScrollLeft,
+      };
+
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          const nextMaxTop = Math.max(0, viewerContainer.scrollHeight - viewerContainer.clientHeight);
+          const nextMaxLeft = Math.max(0, viewerContainer.scrollWidth - viewerContainer.clientWidth);
+          viewerContainer.scrollTo({
+            top: scrollState.topRatio * nextMaxTop,
+            left: scrollState.leftRatio * nextMaxLeft,
+            behavior: "auto",
+          });
+        });
+      });
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [getViewerScrollContainer, zoomMode]);
 
   // Apply zoom mode
   const applyZoomMode = useCallback((mode: 'manual' | 'fit-width' | 'fit-page') => {
@@ -1553,16 +1658,6 @@ export function PDFHighlighterAdapter({
   const textAnnotations = useMemo(() => {
     return annotations.filter(a => a.style.type === 'text');
   }, [annotations]);
-
-  // Navigation handler
-  useAnnotationNavigation({
-    handlers: {
-      onPdfNavigate: (page, annotationId) => {
-        setHighlightedId(annotationId);
-        setTimeout(() => setHighlightedId(null), 2000);
-      },
-    },
-  });
 
   // Handle PDF click in note/text mode
   const handlePdfClick = useCallback(
@@ -1778,7 +1873,7 @@ export function PDFHighlighterAdapter({
     if (annotation.target.type === 'pdf') {
       const target = annotation.target as PdfTarget;
       const pageElement = document.querySelector(`[data-page-number="${target.page}"]`);
-      const container = scrollContainerRef.current;
+      const container = getViewerScrollContainer();
 
       if (!pageElement || !container) {
         // Fallback: try scrolling to page later
@@ -1845,7 +1940,7 @@ export function PDFHighlighterAdapter({
 
     // Clear highlight after animation
     setTimeout(() => setHighlightedId(null), 2500);
-  }, []);
+  }, [getViewerScrollContainer]);
 
   // Handle sidebar delete
   const handleSidebarDelete = useCallback((id: string) => {
@@ -1855,12 +1950,83 @@ export function PDFHighlighterAdapter({
     }
   }, [deleteAnnotation, selectedAnnotationId]);
 
+  useAnnotationNavigation({
+    handlers: {
+      onPdfNavigate: (page, annotationId) => {
+        const annotation = annotations.find((item) => item.id === annotationId);
+        if (annotation) {
+          handleSidebarSelect(annotation);
+          return;
+        }
+
+        const pageElement = document.querySelector(`[data-page-number="${page}"]`) as HTMLElement | null;
+        if (pageElement) {
+          setSelectedAnnotationId(annotationId);
+          setHighlightedId(annotationId);
+          pageElement.scrollIntoView({ behavior: "smooth", block: "center" });
+          window.setTimeout(() => flashPdfElement(pageElement), 120);
+          window.setTimeout(() => setHighlightedId(null), 2000);
+        }
+      },
+    },
+  });
+
+  useEffect(() => {
+    if (!pendingNavigation || !isSameWorkspacePath(pendingNavigation.filePath, filePath)) {
+      return;
+    }
+
+    const attemptNavigation = () => {
+      const pendingTarget = pendingNavigation.target;
+
+      if (pendingTarget.type === "pdf_page") {
+        const pageElement = document.querySelector(`[data-page-number="${pendingTarget.page}"]`) as HTMLElement | null;
+        if (!pageElement) return false;
+        pageElement.scrollIntoView({ behavior: "smooth", block: "center" });
+        window.setTimeout(() => flashPdfElement(pageElement), 120);
+        consumePendingNavigation(paneId, filePath);
+        return true;
+      }
+
+      if (pendingTarget.type === "pdf_annotation") {
+        const annotation = annotations.find((item) => item.id === pendingTarget.annotationId);
+        if (!annotation) return false;
+        handleSidebarSelect(annotation);
+        consumePendingNavigation(paneId, filePath);
+        return true;
+      }
+
+      return false;
+    };
+
+    if (attemptNavigation()) {
+      return;
+    }
+
+    let attemptsLeft = 24;
+    let frameId = 0;
+    const retry = () => {
+      attemptsLeft -= 1;
+      if (attemptNavigation() || attemptsLeft <= 0) {
+        return;
+      }
+      frameId = window.requestAnimationFrame(retry);
+    };
+
+    frameId = window.requestAnimationFrame(retry);
+    return () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [annotations, consumePendingNavigation, filePath, flashPdfElement, handleSidebarSelect, paneId, pendingNavigation]);
+
   if (annotationsError) {
     console.error('Annotation error:', annotationsError);
   }
 
   return (
-    <div ref={containerRef} className="flex h-full flex-col">
+    <div ref={containerRef} className="lattice-pdf-viewer flex h-full flex-col">
       {/* Error banner */}
       {annotationsError && (
         <div className="bg-red-50 dark:bg-red-950 border-b border-red-200 dark:border-red-800 px-4 py-2 text-sm text-red-700 dark:text-red-300">
@@ -2179,7 +2345,7 @@ export function PDFHighlighterAdapter({
           >
             {(pdfDocument) => (
               <PdfHighlighter
-                key={`pdf-scale-${pdfScaleValue}`}
+                ref={pdfHighlighterRef}
                 pdfDocument={pdfDocument}
                 enableAreaSelection={(event) => event.altKey || activeTool === 'area'}
                 onSelectionFinished={(

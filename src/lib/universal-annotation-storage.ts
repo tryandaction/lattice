@@ -177,13 +177,11 @@ export function deserializeAnnotationFile(json: string): UniversalAnnotationFile
     
     // Validate the structure
     if (!isUniversalAnnotationFile(parsed)) {
-      console.warn('Invalid annotation file structure');
       return null;
     }
     
     return parsed;
-  } catch (error) {
-    console.warn('Failed to parse annotation file:', error);
+  } catch {
     return null;
   }
 }

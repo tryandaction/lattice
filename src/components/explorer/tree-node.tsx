@@ -17,38 +17,107 @@ import {
 import type { TreeNode, FileNode, DirectoryNode } from "@/types/file-system";
 import { isFileNode, isDirectoryNode } from "@/types/file-system";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useExplorerStore } from "@/stores/explorer-store";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { getAllPaneIds, findPane } from "@/lib/layout-utils";
 import { cn } from "@/lib/utils";
 import { FileContextMenu, DeleteConfirmDialog } from "./file-context-menu";
+import { type EntryKind } from "@/lib/file-operations";
 
 interface TreeNodeProps {
   node: TreeNode;
   depth: number;
 }
 
-/**
- * Recursive tree node component
- * Renders either a file or directory with appropriate styling and interactions
- */
-export function TreeNodeComponent({ node, depth }: TreeNodeProps) {
-  if (isFileNode(node)) {
-    return <FileNodeComponent node={node} depth={depth} />;
-  }
-
-  if (isDirectoryNode(node)) {
-    return <DirectoryNodeComponent node={node} depth={depth} />;
-  }
-
-  return null;
+interface DragPayload {
+  path: string;
+  kind: EntryKind;
 }
 
-interface FileNodeProps {
-  node: FileNode;
-  depth: number;
+const EXPLORER_DRAG_MIME = "application/x-lattice-explorer-entry";
+
+function hasPathPrefix(path: string | null, prefix: string): boolean {
+  if (!path) {
+    return false;
+  }
+  return path === prefix || path.startsWith(`${prefix}/`);
 }
 
-let pendingOpenTimeout: NodeJS.Timeout | null = null;
+function replacePathPrefix(path: string, oldPrefix: string, newPrefix: string): string {
+  if (!hasPathPrefix(path, oldPrefix)) {
+    return path;
+  }
+  return `${newPrefix}${path.slice(oldPrefix.length)}`;
+}
+
+function selectFileName(input: HTMLInputElement, fileName: string): void {
+  const dotIndex = fileName.lastIndexOf(".");
+  if (dotIndex > 0) {
+    input.setSelectionRange(0, dotIndex);
+    return;
+  }
+  input.select();
+}
+
+function parseDraggedEntry(event: React.DragEvent): DragPayload | null {
+  const raw = event.dataTransfer.getData(EXPLORER_DRAG_MIME);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as DragPayload;
+    if (!parsed.path || (parsed.kind !== "file" && parsed.kind !== "directory")) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function setExplorerClipboardForPath(path: string, kind: EntryKind, mode: "copy" | "cut"): void {
+  useExplorerStore.getState().setClipboard({ path, kind, mode });
+}
+
+function syncExplorerSelectionAfterPathChange(
+  oldPath: string,
+  newPath: string,
+  selectedKind: EntryKind | null
+): void {
+  const explorerState = useExplorerStore.getState();
+
+  if (hasPathPrefix(explorerState.selectedPath, oldPath)) {
+    const nextSelectedPath = replacePathPrefix(explorerState.selectedPath!, oldPath, newPath);
+    const nextSelectedKind =
+      explorerState.selectedPath === oldPath ? selectedKind : explorerState.selectedKind;
+    explorerState.setSelection(nextSelectedPath, nextSelectedKind);
+  }
+
+  if (explorerState.renamingPath && hasPathPrefix(explorerState.renamingPath, oldPath)) {
+    explorerState.startRenaming(replacePathPrefix(explorerState.renamingPath, oldPath, newPath));
+  }
+
+  if (explorerState.clipboard && hasPathPrefix(explorerState.clipboard.path, oldPath)) {
+    explorerState.setClipboard({
+      ...explorerState.clipboard,
+      path: replacePathPrefix(explorerState.clipboard.path, oldPath, newPath),
+    });
+  }
+}
+
+function clearExplorerSelectionForDeletedPath(deletedPath: string): void {
+  const explorerState = useExplorerStore.getState();
+  if (hasPathPrefix(explorerState.selectedPath, deletedPath)) {
+    explorerState.setSelection(null, null);
+  }
+  if (explorerState.renamingPath && hasPathPrefix(explorerState.renamingPath, deletedPath)) {
+    explorerState.stopRenaming();
+  }
+  if (explorerState.clipboard && hasPathPrefix(explorerState.clipboard.path, deletedPath)) {
+    explorerState.clearClipboard();
+  }
+}
 
 function FileIcon({
   extension,
@@ -80,28 +149,48 @@ function FileIcon({
   return <File className={className} />;
 }
 
-/**
- * File node component
- * Displays file with appropriate icon and handles click to open file
- */
+export function TreeNodeComponent({ node, depth }: TreeNodeProps) {
+  if (isFileNode(node)) {
+    return <FileNodeComponent node={node} depth={depth} />;
+  }
+
+  if (isDirectoryNode(node)) {
+    return <DirectoryNodeComponent node={node} depth={depth} />;
+  }
+
+  return null;
+}
+
+interface FileNodeProps {
+  node: FileNode;
+  depth: number;
+}
+
 function FileNodeComponent({ node, depth }: FileNodeProps) {
   const openFileInPane = useWorkspaceStore((state) => state.openFileInPane);
   const closeTabsByPath = useWorkspaceStore((state) => state.closeTabsByPath);
   const updateTabPath = useWorkspaceStore((state) => state.updateTabPath);
   const layout = useWorkspaceStore((state) => state.layout);
   const { deleteFile, renameFile } = useFileSystem();
+  const selectedPath = useExplorerStore((state) => state.selectedPath);
+  const renamingPath = useExplorerStore((state) => state.renamingPath);
+  const clipboard = useExplorerStore((state) => state.clipboard);
+  const setSelection = useExplorerStore((state) => state.setSelection);
+  const startRenaming = useExplorerStore((state) => state.startRenaming);
+  const stopRenaming = useExplorerStore((state) => state.stopRenaming);
+  const dragOverPath = useExplorerStore((state) => state.dragOverPath);
+  const setDragOverPath = useExplorerStore((state) => state.setDragOverPath);
 
-  // Context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  
-  // Rename state
-  const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(node.name);
   const [renameError, setRenameError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Check if this file is open in any pane
+  const isRenaming = renamingPath === node.path;
+  const isSelected = selectedPath === node.path;
+  const isCutItem = clipboard?.mode === "cut" && clipboard.path === node.path;
+
   const { openCount, isActiveFile } = useMemo(() => {
     const paneIds = getAllPaneIds(layout.root);
     let count = 0;
@@ -114,11 +203,8 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
 
     for (const paneId of paneIds) {
       const pane = findPane(layout.root, paneId);
-      if (pane) {
-        const isOpen = pane.tabs.some(tab => tab.filePath === node.path);
-        if (isOpen) {
-          count++;
-        }
+      if (pane?.tabs.some((tab) => tab.filePath === node.path)) {
+        count += 1;
       }
     }
 
@@ -126,125 +212,69 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
       openCount: count,
       isActiveFile: activeFilePath === node.path,
     };
-  }, [layout.root, layout.activePaneId, node.path]);
+  }, [layout.activePaneId, layout.root, node.path]);
 
-  // Focus input when entering rename mode
   useEffect(() => {
     if (isRenaming && inputRef.current) {
       inputRef.current.focus();
-      // Select filename without extension
-      const dotIndex = renameValue.lastIndexOf('.');
-      if (dotIndex > 0) {
-        inputRef.current.setSelectionRange(0, dotIndex);
-      } else {
-        inputRef.current.select();
-      }
+      selectFileName(inputRef.current, node.name);
     }
-  }, [isRenaming, renameValue]);
-
-  const handleClick = () => {
-    if (isRenaming) return;
-    
-    // Delay single click action to allow double-click detection
-    if (pendingOpenTimeout) {
-      clearTimeout(pendingOpenTimeout);
-      pendingOpenTimeout = null;
-    }
-    const targetPaneId = layout.activePaneId;
-    pendingOpenTimeout = setTimeout(() => {
-      openFileInPane(targetPaneId, node.handle, node.path);
-      pendingOpenTimeout = null;
-    }, 200);
-  };
-
-  const handleDoubleClick = () => {
-    if (pendingOpenTimeout) {
-      clearTimeout(pendingOpenTimeout);
-      pendingOpenTimeout = null;
-    }
-    
-    // Enter rename mode
-    setRenameValue(node.name);
-    setRenameError(null);
-    setIsRenaming(true);
-  };
-
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setContextMenu({ x: e.clientX, y: e.clientY });
-  }, []);
+  }, [isRenaming, node.name]);
 
   const handleRename = useCallback(async () => {
     const trimmedName = renameValue.trim();
-    
-    // Validate
     if (!trimmedName) {
       setRenameError("Name cannot be empty");
       return;
     }
-    
-    if (trimmedName === node.name) {
-      setIsRenaming(false);
+
+    const result = await renameFile(node.path, trimmedName);
+    if (!result.success || !result.path) {
+      setRenameError(result.error || "Failed to rename");
       return;
     }
 
-    const result = await renameFile(node.path, trimmedName);
-    
-    if (result.success) {
-      // Update any open tabs with the new path
-      if (result.path) {
-        updateTabPath(node.path, result.path);
-      }
-      setIsRenaming(false);
-    } else {
-      setRenameError(result.error || "Failed to rename");
-    }
-  }, [renameValue, node.name, node.path, renameFile, updateTabPath]);
-
-  const handleRenameKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleRename();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      setIsRenaming(false);
-      setRenameError(null);
-    }
-  };
-
-  const handleRenameBlur = () => {
-    // Small delay to allow click on error message
-    setTimeout(() => {
-      if (isRenaming) {
-        handleRename();
-      }
-    }, 100);
-  };
+    updateTabPath(node.path, result.path);
+    syncExplorerSelectionAfterPathChange(node.path, result.path, "file");
+    stopRenaming();
+    setRenameError(null);
+  }, [node.path, renameFile, renameValue, stopRenaming, updateTabPath]);
 
   const handleDelete = useCallback(async () => {
-    // Close any open tabs for this file first
     closeTabsByPath(node.path);
-    // Delete the file
-    await deleteFile(node.path);
-    setShowDeleteConfirm(false);
-  }, [node.path, closeTabsByPath, deleteFile]);
+    const result = await deleteFile(node.path);
+    if (result.success) {
+      clearExplorerSelectionForDeletedPath(node.path);
+      setShowDeleteConfirm(false);
+      return;
+    }
+    console.error("Failed to delete file:", result.error);
+  }, [closeTabsByPath, deleteFile, node.path]);
 
-  const startRename = useCallback(() => {
-    setRenameValue(node.name);
-    setRenameError(null);
-    setIsRenaming(true);
-  }, [node.name]);
+  const handleRenameKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void handleRename();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      stopRenaming();
+      setRenameError(null);
+      setRenameValue(node.name);
+    }
+  };
 
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (pendingOpenTimeout) {
-        clearTimeout(pendingOpenTimeout);
-        pendingOpenTimeout = null;
-      }
-    };
-  }, []);
+  const handleContextMenu = useCallback((event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelection(node.path, "file");
+    setContextMenu({ x: event.clientX, y: event.clientY });
+  }, [node.path, setSelection]);
+
+  const handleDragStart = useCallback((event: React.DragEvent<HTMLButtonElement>) => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(EXPLORER_DRAG_MIME, JSON.stringify({ path: node.path, kind: "file" }));
+    setSelection(node.path, "file");
+  }, [node.path, setSelection]);
 
   return (
     <>
@@ -262,33 +292,39 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
               ref={inputRef}
               type="text"
               value={renameValue}
-              onChange={(e) => {
-                setRenameValue(e.target.value);
+              onChange={(event) => {
+                setRenameValue(event.target.value);
                 setRenameError(null);
               }}
               onKeyDown={handleRenameKeyDown}
-              onBlur={handleRenameBlur}
+              onBlur={() => void handleRename()}
               className={cn(
-                "flex-1 bg-background border rounded px-1 py-0.5 text-sm",
+                "flex-1 rounded border bg-background px-1 py-0.5 text-sm",
                 "focus:outline-none focus:ring-1 focus:ring-primary",
                 renameError && "border-destructive focus:ring-destructive"
               )}
             />
           </div>
           {renameError && (
-            <span className="text-xs text-destructive mt-0.5 ml-6">{renameError}</span>
+            <span className="ml-6 mt-0.5 text-xs text-destructive">{renameError}</span>
           )}
         </div>
       ) : (
         <button
-          onClick={handleClick}
-          onDoubleClick={handleDoubleClick}
+          draggable
+          onClick={() => {
+            setSelection(node.path, "file");
+            openFileInPane(layout.activePaneId, node.handle, node.path);
+          }}
           onContextMenu={handleContextMenu}
+          onDragStart={handleDragStart}
+          onDragEnd={() => setDragOverPath(null)}
           className={cn(
-            "flex w-full items-center gap-2 px-2 py-1 text-left text-sm",
-            "hover:bg-accent/50 transition-colors",
-            "focus:outline-none focus:bg-accent",
-            isActiveFile && "bg-accent"
+            "flex w-full items-center gap-2 px-2 py-1 text-left text-sm transition-colors",
+            "hover:bg-accent/50 focus:bg-accent focus:outline-none",
+            (isSelected || isActiveFile) && "bg-accent",
+            dragOverPath === node.path && "ring-1 ring-primary/50",
+            isCutItem && "opacity-55"
           )}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
@@ -303,14 +339,17 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
         </button>
       )}
 
-      {/* Context Menu */}
       {contextMenu && (
         <FileContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
+          onCopy={() => setExplorerClipboardForPath(node.path, "file", "copy")}
+          onCut={() => setExplorerClipboardForPath(node.path, "file", "cut")}
           onRename={() => {
             setContextMenu(null);
-            startRename();
+            startRenaming(node.path);
+            setRenameValue(node.name);
+            setRenameError(null);
           }}
           onDelete={() => {
             setContextMenu(null);
@@ -320,11 +359,10 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
         />
       )}
 
-      {/* Delete Confirmation Dialog */}
       {showDeleteConfirm && (
         <DeleteConfirmDialog
           fileName={node.name}
-          onConfirm={handleDelete}
+          onConfirm={() => void handleDelete()}
           onCancel={() => setShowDeleteConfirm(false)}
         />
       )}
@@ -337,34 +375,43 @@ interface DirectoryNodeProps {
   depth: number;
 }
 
-/**
- * Directory node component
- * Displays folder with expand/collapse functionality
- */
 function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
   const toggleDirectory = useWorkspaceStore((state) => state.toggleDirectory);
   const setSelectedDirectoryPath = useWorkspaceStore((state) => state.setSelectedDirectoryPath);
-  const selectedDirectoryPath = useWorkspaceStore((state) => state.selectedDirectoryPath);
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
-  const { createFile, createDirectory, deleteFile, renameFile } = useFileSystem();
+  const closeTabsByPrefix = useWorkspaceStore((state) => state.closeTabsByPrefix);
+  const updateTabPathPrefix = useWorkspaceStore((state) => state.updateTabPathPrefix);
+  const {
+    createFile,
+    createDirectory,
+    deleteFile,
+    renameFile,
+    copyEntry,
+    moveEntry,
+  } = useFileSystem();
+  const selectedPath = useExplorerStore((state) => state.selectedPath);
+  const selectedKind = useExplorerStore((state) => state.selectedKind);
+  const renamingPath = useExplorerStore((state) => state.renamingPath);
+  const clipboard = useExplorerStore((state) => state.clipboard);
+  const dragOverPath = useExplorerStore((state) => state.dragOverPath);
+  const setSelection = useExplorerStore((state) => state.setSelection);
+  const startRenaming = useExplorerStore((state) => state.startRenaming);
+  const stopRenaming = useExplorerStore((state) => state.stopRenaming);
+  const setClipboard = useExplorerStore((state) => state.setClipboard);
+  const clearClipboard = useExplorerStore((state) => state.clearClipboard);
+  const setDragOverPath = useExplorerStore((state) => state.setDragOverPath);
 
-  // Context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-
-  // Rename state
-  const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(node.name);
   const [renameError, setRenameError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // New file dialog state
-  const [showNewFileDialog, setShowNewFileDialog] = useState(false);
-  const [newFileName, setNewFileName] = useState("");
-  const [newFileError, setNewFileError] = useState<string | null>(null);
-  const newFileInputRef = useRef<HTMLInputElement>(null);
+  const isRenaming = renamingPath === node.path;
+  const isSelected = selectedPath === node.path && selectedKind === "directory";
+  const isCutItem = clipboard?.mode === "cut" && clipboard.path === node.path;
+  const isDragOver = dragOverPath === node.path;
 
-  // Focus input when entering rename mode
   useEffect(() => {
     if (isRenaming && inputRef.current) {
       inputRef.current.focus();
@@ -372,107 +419,141 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
     }
   }, [isRenaming]);
 
-  // Focus input when showing new file dialog
-  useEffect(() => {
-    if (showNewFileDialog && newFileInputRef.current) {
-      newFileInputRef.current.focus();
+  const ensureExpanded = useCallback(() => {
+    if (!node.isExpanded) {
+      toggleDirectory(node.path);
     }
-  }, [showNewFileDialog]);
-
-  const handleToggle = () => {
-    toggleDirectory(node.path);
-    setSelectedDirectoryPath(node.path); // 选中这个文件夹
-  };
-
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setContextMenu({ x: e.clientX, y: e.clientY });
-  }, []);
+  }, [node.isExpanded, node.path, toggleDirectory]);
 
   const handleRename = useCallback(async () => {
     const trimmedName = renameValue.trim();
-
     if (!trimmedName) {
       setRenameError("Name cannot be empty");
       return;
     }
 
-    if (trimmedName === node.name) {
-      setIsRenaming(false);
+    const result = await renameFile(node.path, trimmedName);
+    if (!result.success || !result.path) {
+      setRenameError(result.error || "Failed to rename");
       return;
     }
 
-    const result = await renameFile(node.path, trimmedName);
-
-    if (result.success) {
-      setIsRenaming(false);
-    } else {
-      setRenameError(result.error || "Failed to rename");
-    }
-  }, [renameValue, node.name, node.path, renameFile]);
-
-  const handleRenameKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleRename();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      setIsRenaming(false);
-      setRenameError(null);
-    }
-  };
+    updateTabPathPrefix(node.path, result.path);
+    syncExplorerSelectionAfterPathChange(node.path, result.path, "directory");
+    setSelectedDirectoryPath(result.path);
+    stopRenaming();
+    setRenameError(null);
+  }, [node.path, renameFile, renameValue, setSelectedDirectoryPath, stopRenaming, updateTabPathPrefix]);
 
   const handleDelete = useCallback(async () => {
-    await deleteFile(node.path);
-    setShowDeleteConfirm(false);
-  }, [node.path, deleteFile]);
-
-  const startRename = useCallback(() => {
-    setRenameValue(node.name);
-    setRenameError(null);
-    setIsRenaming(true);
-  }, [node.name]);
-
-  const handleNewFile = useCallback(() => {
-    setNewFileName("");
-    setNewFileError(null);
-    setShowNewFileDialog(true);
-  }, []);
-
-  const handleNewFolder = useCallback(async () => {
-    const result = await createDirectory("New Folder", node.path);
-    if (!result.success && result.error) {
-      console.error("Failed to create folder:", result.error);
+    closeTabsByPrefix(node.path);
+    const result = await deleteFile(node.path);
+    if (result.success) {
+      clearExplorerSelectionForDeletedPath(node.path);
+      setShowDeleteConfirm(false);
+      setSelectedDirectoryPath(null);
+      return;
     }
-  }, [createDirectory, node.path]);
+    console.error("Failed to delete directory:", result.error);
+  }, [closeTabsByPrefix, deleteFile, node.path, setSelectedDirectoryPath]);
 
   const handleCreateFile = useCallback(async () => {
-    const trimmedName = newFileName.trim();
-
-    if (!trimmedName) {
-      setNewFileError("Name cannot be empty");
+    ensureExpanded();
+    const result = await createFile("untitled.txt", "file", node.path);
+    if (!result.success || !result.handle || !result.path) {
+      console.error("Failed to create file:", result.error);
       return;
     }
 
-    const result = await createFile(trimmedName, "file", node.path);
+    setSelection(result.path, "file");
+    startRenaming(result.path);
+    openFileInActivePane(result.handle, result.path);
+  }, [createFile, ensureExpanded, node.path, openFileInActivePane, setSelection, startRenaming]);
 
-    if (result.success && result.handle && result.path) {
-      openFileInActivePane(result.handle, result.path);
-      setShowNewFileDialog(false);
-    } else {
-      setNewFileError(result.error || "Failed to create file");
+  const handleCreateFolder = useCallback(async () => {
+    ensureExpanded();
+    const result = await createDirectory("New Folder", node.path);
+    if (!result.success || !result.path) {
+      console.error("Failed to create folder:", result.error);
+      return;
     }
-  }, [newFileName, createFile, node.path, openFileInActivePane]);
 
-  const handleNewFileKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleCreateFile();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      setShowNewFileDialog(false);
-      setNewFileError(null);
+    setSelection(result.path, "directory");
+    setSelectedDirectoryPath(result.path);
+    startRenaming(result.path);
+  }, [createDirectory, ensureExpanded, node.path, setSelectedDirectoryPath, setSelection, startRenaming]);
+
+  const handlePaste = useCallback(async () => {
+    if (!clipboard) {
+      return;
+    }
+
+    ensureExpanded();
+
+    const result =
+      clipboard.mode === "copy"
+        ? await copyEntry(clipboard.path, node.path)
+        : await moveEntry(clipboard.path, node.path);
+
+    if (!result.success || !result.path) {
+      console.error("Failed to paste entry:", result.error);
+      return;
+    }
+
+    if (clipboard.mode === "cut") {
+      if (clipboard.kind === "file") {
+        useWorkspaceStore.getState().updateTabPath(clipboard.path, result.path);
+      } else {
+        updateTabPathPrefix(clipboard.path, result.path);
+      }
+      clearClipboard();
+    }
+
+    setSelection(result.path, clipboard.kind);
+    if (clipboard.kind === "directory") {
+      setSelectedDirectoryPath(result.path);
+    }
+  }, [
+    clearClipboard,
+    clipboard,
+    copyEntry,
+    ensureExpanded,
+    moveEntry,
+    node.path,
+    setSelectedDirectoryPath,
+    setSelection,
+    updateTabPathPrefix,
+  ]);
+
+  const handleDropMove = useCallback(async (dragged: DragPayload) => {
+    const result = await moveEntry(dragged.path, node.path);
+    if (!result.success || !result.path) {
+      console.error("Failed to move entry:", result.error);
+      return;
+    }
+
+    if (dragged.kind === "file") {
+      useWorkspaceStore.getState().updateTabPath(dragged.path, result.path);
+    } else {
+      updateTabPathPrefix(dragged.path, result.path);
+    }
+
+    syncExplorerSelectionAfterPathChange(dragged.path, result.path, dragged.kind);
+    setSelection(result.path, dragged.kind);
+    if (dragged.kind === "directory") {
+      setSelectedDirectoryPath(result.path);
+    }
+  }, [moveEntry, node.path, setSelectedDirectoryPath, setSelection, updateTabPathPrefix]);
+
+  const handleRenameKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void handleRename();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      stopRenaming();
+      setRenameError(null);
+      setRenameValue(node.name);
     }
   };
 
@@ -494,39 +575,81 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
                 ref={inputRef}
                 type="text"
                 value={renameValue}
-                onChange={(e) => {
-                  setRenameValue(e.target.value);
+                onChange={(event) => {
+                  setRenameValue(event.target.value);
                   setRenameError(null);
                 }}
                 onKeyDown={handleRenameKeyDown}
-                onBlur={() => setTimeout(() => isRenaming && handleRename(), 100)}
+                onBlur={() => void handleRename()}
                 className={cn(
-                  "flex-1 bg-background border rounded px-1 py-0.5 text-sm",
+                  "flex-1 rounded border bg-background px-1 py-0.5 text-sm",
                   "focus:outline-none focus:ring-1 focus:ring-primary",
                   renameError && "border-destructive focus:ring-destructive"
                 )}
               />
             </div>
             {renameError && (
-              <span className="text-xs text-destructive mt-0.5 ml-10">{renameError}</span>
+              <span className="ml-10 mt-0.5 text-xs text-destructive">{renameError}</span>
             )}
           </div>
         ) : (
           <button
-            onClick={handleToggle}
-            onContextMenu={handleContextMenu}
+            draggable
+            onClick={() => {
+              setSelection(node.path, "directory");
+              setSelectedDirectoryPath(node.path);
+              toggleDirectory(node.path);
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setSelection(node.path, "directory");
+              setSelectedDirectoryPath(node.path);
+              setContextMenu({ x: event.clientX, y: event.clientY });
+            }}
+            onDragStart={(event) => {
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData(EXPLORER_DRAG_MIME, JSON.stringify({ path: node.path, kind: "directory" }));
+              setSelection(node.path, "directory");
+              setSelectedDirectoryPath(node.path);
+            }}
+            onDragOver={(event) => {
+              const dragged = parseDraggedEntry(event);
+              if (!dragged || dragged.path === node.path || hasPathPrefix(node.path, dragged.path)) {
+                return;
+              }
+
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+              setDragOverPath(node.path);
+            }}
+            onDragLeave={() => {
+              if (dragOverPath === node.path) {
+                setDragOverPath(null);
+              }
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              const dragged = parseDraggedEntry(event);
+              setDragOverPath(null);
+              if (!dragged || dragged.path === node.path || hasPathPrefix(node.path, dragged.path)) {
+                return;
+              }
+
+              ensureExpanded();
+              void handleDropMove(dragged);
+            }}
+            onDragEnd={() => setDragOverPath(null)}
             className={cn(
-              "flex w-full items-center gap-1 px-2 py-1 text-left text-sm",
-              "hover:bg-accent/50 transition-colors",
-              "focus:outline-none focus:bg-accent",
-              selectedDirectoryPath === node.path && "bg-accent/70"
+              "flex w-full items-center gap-1 px-2 py-1 text-left text-sm transition-colors",
+              "hover:bg-accent/50 focus:bg-accent focus:outline-none",
+              isSelected && "bg-accent/70",
+              isDragOver && "bg-primary/10 ring-1 ring-primary/50",
+              isCutItem && "opacity-55"
             )}
             style={{ paddingLeft: `${depth * 12 + 4}px` }}
           >
-            <ChevronIcon className={cn(
-              "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-150",
-              node.isExpanded && "transform rotate-0"
-            )} />
+            <ChevronIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
             <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="truncate font-medium">{node.name}</span>
             <span className="ml-auto font-scientific text-muted-foreground">
@@ -535,7 +658,6 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
           </button>
         )}
 
-        {/* Children container - render only when expanded */}
         {node.isExpanded && (
           <div className="animate-in fade-in-0 slide-in-from-top-1 duration-150">
             {node.children.map((child) => (
@@ -549,17 +671,22 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
         )}
       </div>
 
-      {/* Context Menu */}
       {contextMenu && (
         <FileContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
           isDirectory={true}
-          onNewFile={handleNewFile}
-          onNewFolder={handleNewFolder}
+          canPaste={!!clipboard}
+          onNewFile={() => void handleCreateFile()}
+          onNewFolder={() => void handleCreateFolder()}
+          onPaste={() => void handlePaste()}
+          onCopy={() => setClipboard({ mode: "copy", path: node.path, kind: "directory" })}
+          onCut={() => setClipboard({ mode: "cut", path: node.path, kind: "directory" })}
           onRename={() => {
             setContextMenu(null);
-            startRename();
+            setRenameValue(node.name);
+            setRenameError(null);
+            startRenaming(node.path);
           }}
           onDelete={() => {
             setContextMenu(null);
@@ -569,61 +696,13 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
         />
       )}
 
-      {/* Delete Confirmation Dialog */}
       {showDeleteConfirm && (
         <DeleteConfirmDialog
           fileName={node.name}
-          onConfirm={handleDelete}
+          itemType="folder"
+          onConfirm={() => void handleDelete()}
           onCancel={() => setShowDeleteConfirm(false)}
         />
-      )}
-
-      {/* New File Dialog */}
-      {showNewFileDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="w-full max-w-sm rounded-lg border border-border bg-background p-4 shadow-lg">
-            <h3 className="text-lg font-semibold">New File</h3>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Enter the file name (with extension):
-            </p>
-            <input
-              ref={newFileInputRef}
-              type="text"
-              value={newFileName}
-              onChange={(e) => {
-                setNewFileName(e.target.value);
-                setNewFileError(null);
-              }}
-              onKeyDown={handleNewFileKeyDown}
-              placeholder="example.txt"
-              className={cn(
-                "mt-2 w-full bg-background border rounded px-3 py-2 text-sm",
-                "focus:outline-none focus:ring-2 focus:ring-primary",
-                newFileError && "border-destructive focus:ring-destructive"
-              )}
-            />
-            {newFileError && (
-              <span className="text-xs text-destructive mt-1 block">{newFileError}</span>
-            )}
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => {
-                  setShowNewFileDialog(false);
-                  setNewFileError(null);
-                }}
-                className="rounded-md px-3 py-1.5 text-sm hover:bg-accent transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateFile}
-                className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors"
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </>
   );

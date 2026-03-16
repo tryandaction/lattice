@@ -7,7 +7,6 @@
 
 import type {
   JupyterMessage,
-  MessageType,
   MessageContentMap,
 } from './jupyter-messages';
 
@@ -27,8 +26,16 @@ export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'err
 // 消息处理器
 // ============================================================================
 
-export type MessageHandler<T extends MessageType = MessageType> = (
-  message: JupyterMessage<any>
+type RegisteredMessageType = keyof MessageContentMap;
+
+type AnyJupyterMessage = {
+  [K in RegisteredMessageType]: JupyterMessage<MessageContentMap[K]>;
+}[RegisteredMessageType];
+
+type AnyMessageHandler = (message: AnyJupyterMessage) => void;
+
+export type MessageHandler<T extends RegisteredMessageType = RegisteredMessageType> = (
+  message: JupyterMessage<MessageContentMap[T]>
 ) => void;
 
 // ============================================================================
@@ -39,7 +46,7 @@ class JupyterWebSocketChannel {
   private ws: WebSocket | null = null;
   private url: string;
   private channelType: ChannelType;
-  private messageHandlers: Map<MessageType, Set<MessageHandler>> = new Map();
+  private messageHandlers = new Map<RegisteredMessageType, Set<AnyMessageHandler>>();
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
@@ -94,7 +101,7 @@ class JupyterWebSocketChannel {
   /**
    * 发送消息
    */
-  send<T extends MessageType>(message: JupyterMessage<any>): void {
+  send<T extends RegisteredMessageType>(message: JupyterMessage<MessageContentMap[T]>): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error(`[${this.channelType}] WebSocket not connected`);
     }
@@ -106,20 +113,22 @@ class JupyterWebSocketChannel {
   /**
    * 监听消息
    */
-  on<T extends MessageType>(
+  on<T extends RegisteredMessageType>(
     msgType: T,
     handler: MessageHandler<T>
   ): () => void {
+    const wrappedHandler = handler as AnyMessageHandler;
     if (!this.messageHandlers.has(msgType)) {
       this.messageHandlers.set(msgType, new Set());
     }
-    this.messageHandlers.get(msgType)!.add(handler as MessageHandler);
+    const handlers = this.messageHandlers.get(msgType)!;
+    handlers.add(wrappedHandler);
 
     // 返回取消监听函数
     return () => {
-      const handlers = this.messageHandlers.get(msgType);
-      if (handlers) {
-        handlers.delete(handler as MessageHandler);
+      handlers.delete(wrappedHandler);
+      if (handlers.size === 0) {
+        this.messageHandlers.delete(msgType);
       }
     };
   }
@@ -158,13 +167,15 @@ class JupyterWebSocketChannel {
    */
   private handleMessage(data: string): void {
     try {
-      const message = JSON.parse(data) as JupyterMessage;
-      const msgType = message.header.msg_type as MessageType;
+      const message = JSON.parse(data) as AnyJupyterMessage;
+      const msgType = message.header.msg_type as RegisteredMessageType;
 
       // 调用对应的消息处理器
       const handlers = this.messageHandlers.get(msgType);
       if (handlers) {
-        handlers.forEach((handler) => handler(message));
+        handlers.forEach((handler) => {
+          handler(message);
+        });
       }
     } catch (error) {
       console.error(`[${this.channelType}] Failed to parse message:`, error);

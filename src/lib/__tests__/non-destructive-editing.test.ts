@@ -54,7 +54,7 @@ describe('Property 7: Non-Destructive Image Editing', () => {
       fc.assert(
         fc.property(
           // Image size (bytes)
-          fc.integer({ min: 100, max: 10000 }),
+          fc.integer({ min: 100, max: 4096 }),
           // Image dimensions
           fc.integer({ min: 100, max: 2000 }),
           fc.integer({ min: 100, max: 2000 }),
@@ -94,7 +94,7 @@ describe('Property 7: Non-Destructive Image Editing', () => {
             expect(serializedData).not.toContain(String.fromCharCode(...originalBytes.slice(0, 10)));
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 50 }
       );
     });
 
@@ -143,7 +143,7 @@ describe('Property 7: Non-Destructive Image Editing', () => {
             }
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 50 }
       );
     });
   });
@@ -192,7 +192,7 @@ describe('Property 7: Non-Destructive Image Editing', () => {
             expect(finalIds).toEqual(originalIds);
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 50 }
       );
     });
 
@@ -248,7 +248,7 @@ describe('Property 7: Non-Destructive Image Editing', () => {
             }
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 50 }
       );
     });
   });

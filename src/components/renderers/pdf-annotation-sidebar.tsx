@@ -466,10 +466,13 @@ function AnnotationContextMenu({
       }
       if (newY < padding) newY = padding;
       
-      if (newX !== adjustedPosition.x || newY !== adjustedPosition.y) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setAdjustedPosition({ x: newX, y: newY });
-      }
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setAdjustedPosition((prev) => {
+        if (newX === prev.x && newY === prev.y) {
+          return prev;
+        }
+        return { x: newX, y: newY };
+      });
     }
   }, [x, y, showTextStyleEditor]);
 

@@ -19,28 +19,13 @@ type FitMode = "fit" | "width" | "height" | "actual";
  * Optimized for large images and long images
  */
 export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
-  // Use refs to avoid recreating the blob URL when the parent re-renders with
-  // the same ArrayBuffer reference (which is the common case after initial load).
-  const prevContentRef = useRef<ArrayBuffer | null>(null);
-  const imageUrlRef = useRef<string | null>(null);
-
   const imageUrl = useMemo(() => {
-    if (prevContentRef.current === content && imageUrlRef.current) {
-      return imageUrlRef.current;
-    }
-    // Revoke the previous URL before creating a new one
-    if (imageUrlRef.current) {
-      URL.revokeObjectURL(imageUrlRef.current);
-    }
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    prevContentRef.current = content;
-    imageUrlRef.current = url;
-    return url;
+    return URL.createObjectURL(new Blob([content], { type: mimeType }));
   }, [content, mimeType]);
-  const [zoom, setZoom] = useState(1);
+  const [manualZoom, setManualZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [fitMode, setFitMode] = useState<FitMode>("fit");
   const [isPanning, setIsPanning] = useState(false);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
@@ -55,6 +40,35 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+
+  useEffect(() => {
+    return () => {
+      URL.revokeObjectURL(imageUrl);
+    };
+  }, [imageUrl]);
+
+  useEffect(() => {
+    const container = imageContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const updateContainerSize = () => {
+      setContainerSize({
+        width: container.clientWidth,
+        height: container.clientHeight,
+      });
+    };
+
+    const frameId = window.requestAnimationFrame(updateContainerSize);
+    const observer = new ResizeObserver(updateContainerSize);
+    observer.observe(container);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      observer.disconnect();
+    };
+  }, []);
 
   // Universal annotation navigation support
   useAnnotationNavigation({
@@ -86,24 +100,12 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
     },
   });
 
-  // Cleanup object URL only on unmount — revocation on content change is
-  // handled inside the useMemo above to avoid a race with the <img> tag.
-  useEffect(() => {
-    return () => {
-      if (imageUrlRef.current) {
-        URL.revokeObjectURL(imageUrlRef.current);
-        imageUrlRef.current = null;
-      }
-    };
-  }, []);
-
   // Calculate fit zoom based on container and image size
   const calculateFitZoom = useCallback(() => {
-    if (!imageContainerRef.current || naturalSize.width === 0) return 1;
+    if (containerSize.width === 0 || containerSize.height === 0 || naturalSize.width === 0) return 1;
     
-    const container = imageContainerRef.current;
-    const containerWidth = container.clientWidth - 48; // padding
-    const containerHeight = container.clientHeight - 48;
+    const containerWidth = containerSize.width - 48; // padding
+    const containerHeight = containerSize.height - 48;
     
     const { width, height } = naturalSize;
     
@@ -128,15 +130,8 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
       default:
         return 1;
     }
-  }, [naturalSize, fitMode, rotation]);
-
-  // Update zoom when fit mode or natural size changes
-  useEffect(() => {
-    const newZoom = calculateFitZoom();
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setZoom(newZoom);
-    setPanOffset({ x: 0, y: 0 });
-  }, [calculateFitZoom]);
+  }, [containerSize.height, containerSize.width, naturalSize, fitMode, rotation]);
+  const zoom = fitMode === "actual" ? manualZoom : calculateFitZoom();
 
   const handleImageLoad = () => {
     if (imageRef.current) {
@@ -155,12 +150,12 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
   };
 
   const handleZoomIn = () => {
-    setZoom((z) => Math.min(z * 1.25, 10));
+    setManualZoom((z) => Math.min(z * 1.25, 10));
     setFitMode("actual"); // Switch to manual zoom mode
   };
   
   const handleZoomOut = () => {
-    setZoom((z) => Math.max(z / 1.25, 0.05));
+    setManualZoom((z) => Math.max(z / 1.25, 0.05));
     setFitMode("actual");
   };
   
@@ -171,11 +166,15 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
   const handleReset = () => {
     setRotation(0);
     setFitMode("fit");
+    setManualZoom(1);
     setPanOffset({ x: 0, y: 0 });
   };
 
   const handleFitMode = (mode: FitMode) => {
     setFitMode(mode);
+    if (mode === "actual") {
+      setManualZoom(1);
+    }
     setPanOffset({ x: 0, y: 0 });
   };
 
@@ -203,7 +202,7 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
       const factor = e.deltaY > 0 ? 0.9 : 1.1;
-      setZoom((z) => Math.max(0.05, Math.min(10, z * factor)));
+      setManualZoom((z) => Math.max(0.05, Math.min(10, z * factor)));
       setFitMode("actual");
     }
   };
@@ -245,14 +244,6 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
   const isLargeImage = naturalSize.width > 2000 || naturalSize.height > 2000;
   const aspectRatio = naturalSize.height / naturalSize.width;
   const isUnusualAspect = aspectRatio > 1.5 || aspectRatio < 0.67;
-
-  if (!imageUrl) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-muted-foreground">Loading image...</p>
-      </div>
-    );
-  }
 
   return (
     <div ref={containerRef} className="flex h-full flex-col bg-background">

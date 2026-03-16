@@ -6,10 +6,12 @@ import { cn } from "@/lib/utils";
 import { CodeCell } from "./code-cell";
 import { MarkdownCell } from "./markdown-cell";
 import type { NotebookCell as NotebookCellType } from "@/lib/notebook-utils";
+import type { KernelOption } from "./kernel-selector";
 
 interface NotebookCellProps {
   cell: NotebookCellType;
   isActive: boolean;
+  isHighlighted?: boolean;
   canDelete: boolean;
   onActivate: () => void;
   onAddAbove: (type: "markdown" | "code") => void;
@@ -19,6 +21,8 @@ interface NotebookCellProps {
   onTypeChange: (type: "markdown" | "code") => void;
   onNavigateUp?: () => void;
   onNavigateDown?: () => void;
+  runner?: KernelOption | null;
+  cwd?: string;
 }
 
 /**
@@ -153,6 +157,7 @@ function AddCellButton({
 export function NotebookCellComponent({
   cell,
   isActive,
+  isHighlighted = false,
   canDelete,
   onActivate,
   onAddAbove,
@@ -162,6 +167,8 @@ export function NotebookCellComponent({
   onTypeChange,
   onNavigateUp,
   onNavigateDown,
+  runner,
+  cwd,
 }: NotebookCellProps) {
   const [showControls, setShowControls] = useState(false);
 
@@ -222,10 +229,11 @@ export function NotebookCellComponent({
     <div
       className={cn(
         "group relative",
-        "border-l-2 transition-all duration-150 pl-4",
+        "border-l-2 transition-all duration-300 pl-4 rounded-r-md",
         isActive
           ? "border-primary bg-primary/5"
-          : "border-transparent hover:border-muted"
+          : "border-transparent hover:border-muted",
+        isHighlighted && "border-amber-400 bg-amber-400/10 shadow-[0_0_0_1px_rgba(251,191,36,0.22)]"
       )}
       onMouseEnter={() => setShowControls(true)}
       onMouseLeave={() => setShowControls(false)}
@@ -268,6 +276,8 @@ export function NotebookCellComponent({
           onFocus={onActivate}
           onNavigateUp={onNavigateUp}
           onNavigateDown={onNavigateDown}
+          runner={runner}
+          cwd={cwd}
         />
       ) : (
         <MarkdownCell

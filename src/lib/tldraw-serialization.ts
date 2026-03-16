@@ -226,13 +226,11 @@ export function jsonToShapes(
     const data = JSON.parse(json);
     
     if (!isValidTldrawShapeData(data)) {
-      console.warn('Invalid Tldraw shape data');
       return null;
     }
     
     return deserializeShapes(data, canvasWidth, canvasHeight);
-  } catch (error) {
-    console.error('Failed to parse Tldraw shapes:', error);
+  } catch {
     return null;
   }
 }

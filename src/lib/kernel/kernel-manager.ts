@@ -4,6 +4,8 @@
  * 统一 Pyodide 和 Jupyter Kernel 的接口，支持运行时切换
  */
 
+import type { KernelMetadata, MimeData } from './kernel-types';
+
 // ============================================================================
 // 执行选项
 // ============================================================================
@@ -36,12 +38,11 @@ export interface ExecutionResult {
   variables?: Record<string, VariableInfo>;
 }
 
-export interface ExecutionOutput {
-  /** 输出类型 */
-  type: 'stream' | 'display_data' | 'execute_result' | 'error';
-  /** 输出内容 */
-  content: OutputContent;
-}
+export type ExecutionOutput =
+  | StreamExecutionOutput
+  | DisplayDataExecutionOutput
+  | ExecuteResultExecutionOutput
+  | ErrorExecutionOutput;
 
 export type OutputContent =
   | StreamOutput
@@ -49,33 +50,39 @@ export type OutputContent =
   | ExecuteResultOutput
   | ErrorOutput;
 
+export interface StreamExecutionOutput {
+  type: 'stream';
+  content: StreamOutput;
+}
+
+export interface DisplayDataExecutionOutput {
+  type: 'display_data';
+  content: DisplayDataOutput;
+}
+
+export interface ExecuteResultExecutionOutput {
+  type: 'execute_result';
+  content: ExecuteResultOutput;
+}
+
+export interface ErrorExecutionOutput {
+  type: 'error';
+  content: ErrorOutput;
+}
+
 export interface StreamOutput {
   name: 'stdout' | 'stderr';
   text: string;
 }
 
 export interface DisplayDataOutput {
-  data: {
-    'text/plain'?: string;
-    'text/html'?: string;
-    'image/png'?: string;
-    'image/jpeg'?: string;
-    'image/svg+xml'?: string;
-    'application/json'?: any;
-  };
-  metadata?: Record<string, any>;
+  data: MimeData;
+  metadata?: KernelMetadata;
 }
 
 export interface ExecuteResultOutput {
-  data: {
-    'text/plain'?: string;
-    'text/html'?: string;
-    'image/png'?: string;
-    'image/jpeg'?: string;
-    'image/svg+xml'?: string;
-    'application/json'?: any;
-  };
-  metadata?: Record<string, any>;
+  data: MimeData;
+  metadata?: KernelMetadata;
   execution_count: number;
 }
 
@@ -131,7 +138,7 @@ export interface CompletionResult {
   /** 光标结束位置 */
   cursorEnd: number;
   /** 元数据 */
-  metadata?: Record<string, any>;
+  metadata?: KernelMetadata;
 }
 
 // ============================================================================
@@ -147,7 +154,7 @@ export interface InspectionResult {
     'text/html'?: string;
   };
   /** 元数据 */
-  metadata?: Record<string, any>;
+  metadata?: KernelMetadata;
 }
 
 // ============================================================================

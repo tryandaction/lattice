@@ -49,13 +49,58 @@
 - **上次打开的文件夹**：自动记录你最后一次打开的文件夹
 - **清除设置**：点击垃圾桶图标可以清除默认文件夹设置
 
-### 2. 自动记住工作目录
+### 5. 自动记住工作目录
 
 应用会自动记住你上次打开的文件夹，下次启动时可以快速恢复工作状态。
 
-### 3. 更好的文件系统访问
+### 6. 更好的文件系统访问
 
 桌面应用拥有完整的文件系统访问权限，无需每次都授权。
+
+### 7. 本地代码运行工作台 v1
+
+桌面版现在默认优先走本地运行器，而不是浏览器内的 Pyodide。
+
+#### 当前支持
+
+- **Python 本地运行优先**：自动发现系统 Python、项目内 `.venv`、激活的 `venv` / `conda`
+- **Notebook 持久会话**：同一个 Notebook 中的 Python 单元格会复用本地会话，变量可跨单元保留
+- **代码文件运行**：支持运行当前 `.py` 文件，并统一展示标准输出、错误输出、图片和 HTML 表格等结果
+- **外部命令运行**：支持通过外部命令运行 `.js/.mjs/.cjs`、`.jl`、`.R`
+- **降级策略**：桌面端无本地 Python 时，可回退到 Pyodide；网页版继续以 Pyodide 为主
+
+#### 当前不在本阶段范围
+
+- 调试断点
+- 调用栈
+- LSP 补全 / hover
+- 远程 kernel 管理
+
+### 8. 外部链接与工作区深链
+
+桌面应用会区分外部网址和工作区内部资源：
+
+- 外部网页链接使用系统默认浏览器打开，不覆盖当前应用窗口
+- 工作区文件链接继续在应用内打开
+- 支持 PDF 页码、PDF 批注、Markdown 标题、代码行、Notebook 单元格的深链跳转
+
+示例：
+
+- `https://example.com`
+- `papers/math.pdf#page=12`
+- `[[papers/math.pdf#ann-123]]`
+- `src/main.py#line=88`
+- `analysis.ipynb#cell=cell-42`
+
+### 9. 更顺滑的资源管理
+
+最新版本的文件树交互已经补齐为更接近日常 IDE 的行为：
+
+- 新建文件或文件夹后立即进入重命名
+- 支持文件和文件夹的复制、剪切、粘贴
+- 支持拖放移动文件和文件夹
+- 目录重命名或移动后，已打开的标签路径会自动同步
+- 刷新文件树后会保留原有展开状态
 
 ## 🌐 网页版 vs 桌面版
 
@@ -66,6 +111,10 @@
 | 文件访问 | 需要每次授权 | 完整权限 |
 | 默认文件夹 | ❌ | ✅ |
 | 记住工作目录 | ❌ | ✅ |
+| Python 运行 | Pyodide | 本地 Python 优先，Pyodide 降级 |
+| Notebook 变量持久化 | 浏览器会话内 | 本地持久 Python 会话 |
+| 外部链接打开 | 可能留在当前标签页 | 系统浏览器打开 |
+| 资源拖放/剪贴板操作 | 受浏览器限制 | 完整支持 |
 | 离线使用 | 有限支持 | 完全支持 |
 | 内存占用 | 较高（浏览器开销） | 较低（原生应用） |
 
@@ -76,6 +125,8 @@
 - `Ctrl+B` / `Cmd+B`：切换侧边栏
 - `Ctrl+,` / `Cmd+,`：打开设置
 - `Ctrl+Shift+T` / `Cmd+Shift+T`：切换主题
+- `F2`：重命名文件树中当前选中项
+- `Ctrl/Cmd + C / X / V`：复制、剪切、粘贴文件树选中项
 
 ### 首次使用建议
 
@@ -111,6 +162,13 @@
 - `get_last_opened_folder()`: 获取上次打开的文件夹
 - `set_last_opened_folder(folder: string)`: 保存上次打开的文件夹
 - `clear_default_folder()`: 清除默认文件夹设置
+- `detect_python_environments(cwd?)`: 发现本地 Python 解释器
+- `probe_command_availability(command)`: 探测外部命令是否可用
+- `start_local_execution(request)`: 启动一次性本地运行
+- `terminate_local_execution(sessionId)`: 终止一次性本地运行
+- `start_python_session(request)`: 启动持久 Python 会话
+- `execute_python_session(request)`: 向持久 Python 会话发送单元代码
+- `stop_python_session(sessionId)`: 停止持久 Python 会话
 
 ## 🚀 下载与安装
 
@@ -120,23 +178,21 @@
 
 ```bash
 # 下载并运行
-Lattice_0.1.0_x64-setup.exe
+Lattice_2.0.0_x64-setup.exe
 ```
 
 或使用 MSI 安装包（适合企业部署）：
 
 ```bash
 # 下载并运行
-Lattice_0.1.0_x64_en-US.msi
+Lattice_2.0.0_x64_en-US.msi
 ```
 
 ### macOS
 
 ```bash
-# 下载 DMG 镜像
-Lattice_0.1.0_x64.dmg
-
-# 拖拽到 Applications 文件夹
+# 当前仓库发布目录暂未提供 macOS 产物
+# 以实际 Release 页面为准
 ```
 
 ### Linux
@@ -144,21 +200,15 @@ Lattice_0.1.0_x64.dmg
 **AppImage（推荐）**：
 
 ```bash
-# 下载并添加执行权限
-chmod +x lattice_0.1.0_amd64.AppImage
-
-# 运行
-./lattice_0.1.0_amd64.AppImage
+# 当前仓库发布目录暂未提供 Linux AppImage 产物
+# 以实际 Release 页面为准
 ```
 
 **DEB 包**：
 
 ```bash
-# 安装
-sudo dpkg -i lattice_0.1.0_amd64.deb
-
-# 运行
-lattice
+# 当前仓库发布目录暂未提供 Linux DEB 产物
+# 以实际 Release 页面为准
 ```
 
 ## 📝 常见问题
@@ -187,6 +237,25 @@ A: 删除设置文件即可：
 A: 可以，它们是独立的。但建议使用桌面应用以获得更好的体验。
 
 ## 🔄 更新日志
+
+### v2.0.0 阶段收尾补充 (2026-03-15)
+
+- ✅ 桌面端默认优先使用本地 Python 运行器
+- ✅ Notebook 单元支持复用同一个本地 Python 会话
+- ✅ 统一运行事件流覆盖代码文件、Notebook 与 Markdown 代码块
+- ✅ 支持 Python、Node、Julia、Rscript 的最小通用桌面运行能力
+- ✅ QA 门禁补齐为 `lint` / `typecheck` / `test:run` / `build` / `tauri:build`
+
+### v2.0.0 (2026-03-14)
+
+- ✅ 外部网页链接改为系统浏览器打开
+- ✅ 支持 PDF 页码、PDF 批注、Markdown 标题、代码行、Notebook 单元格深链
+- ✅ 修复 PDF 缩放或适宽时视图跳回第一页
+- ✅ 调整 PDF 文本选区颜色，适配浅色与深色主题
+- ✅ 文件树支持复制、剪切、粘贴、拖放移动
+- ✅ 新建文件/文件夹后自动进入重命名
+- ✅ 目录移动或重命名后自动同步已打开标签路径
+- ✅ 文件树刷新后保留展开状态
 
 ### v0.2.0 (2026-01-04)
 

@@ -17,8 +17,12 @@ function enableTauriRuntime() {
 }
 
 function disableTauriRuntime() {
-  delete (window as Window & Record<string, unknown>).__TAURI_INTERNALS__;
-  delete (window as Window & Record<string, unknown>).__TAURI__;
+  const tauriWindow = window as Window & {
+    __TAURI__?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+  };
+  delete tauriWindow.__TAURI_INTERNALS__;
+  delete tauriWindow.__TAURI__;
 }
 
 describe("DownloadAppDialog", () => {

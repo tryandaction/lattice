@@ -418,7 +418,7 @@ async function ensurePackagesInstalled(packages: string[], id: string): Promise<
 
   for (const { importName, packageName } of toInstall) {
     let installed = false;
-    let lastError: any = null;
+    let lastError: unknown = null;
 
     // Try up to 2 times
     for (let attempt = 1; attempt <= 2 && !installed; attempt++) {
@@ -450,10 +450,12 @@ async function ensurePackagesInstalled(packages: string[], id: string): Promise<
       });
     } else {
       allSucceeded = false;
+      const failureReason =
+        lastError instanceof Error ? `: ${lastError.message}` : lastError ? `: ${String(lastError)}` : '';
       postMsg({
         type: 'stderr',
         id,
-        content: `✗ Failed to install ${packageName}\n`
+        content: `✗ Failed to install ${packageName}${failureReason}\n`
       });
     }
   }

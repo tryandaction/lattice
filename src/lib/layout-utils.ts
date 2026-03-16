@@ -690,6 +690,51 @@ export function removeTabsByPath(
   return transform(root);
 }
 
+function matchesPathPrefix(filePath: string, pathPrefix: string): boolean {
+  return filePath === pathPrefix || filePath.startsWith(`${pathPrefix}/`);
+}
+
+export function removeTabsByPrefix(
+  root: LayoutNode,
+  pathPrefix: string
+): LayoutNode {
+  function transform(node: LayoutNode): LayoutNode {
+    if (isPaneNode(node)) {
+      const newTabs = node.tabs.filter((tab) => !matchesPathPrefix(tab.filePath, pathPrefix));
+      if (newTabs.length === node.tabs.length) {
+        return node;
+      }
+
+      let newActiveIndex = node.activeTabIndex;
+      if (newTabs.length === 0) {
+        newActiveIndex = -1;
+      } else {
+        const removedBeforeActive = node.tabs
+          .slice(0, node.activeTabIndex + 1)
+          .filter((tab) => matchesPathPrefix(tab.filePath, pathPrefix)).length;
+
+        newActiveIndex = Math.max(0, Math.min(
+          node.activeTabIndex - removedBeforeActive,
+          newTabs.length - 1
+        ));
+      }
+
+      return {
+        ...node,
+        tabs: newTabs,
+        activeTabIndex: newActiveIndex,
+      };
+    }
+
+    return {
+      ...node,
+      children: node.children.map((child) => transform(child)),
+    };
+  }
+
+  return transform(root);
+}
+
 /**
  * Update the path and filename of tabs matching an old path
  * Used when a file is renamed to update open tabs
@@ -737,6 +782,49 @@ export function updateTabsPath(
     return {
       ...node,
       children: node.children.map(child => transform(child)),
+    };
+  }
+
+  return transform(root);
+}
+
+export function updateTabsPathPrefix(
+  root: LayoutNode,
+  oldPathPrefix: string,
+  newPathPrefix: string
+): LayoutNode {
+  function transform(node: LayoutNode): LayoutNode {
+    if (isPaneNode(node)) {
+      const newTabs = node.tabs.map((tab) => {
+        if (!matchesPathPrefix(tab.filePath, oldPathPrefix)) {
+          return tab;
+        }
+
+        const suffix = tab.filePath.slice(oldPathPrefix.length);
+        const nextPath = `${newPathPrefix}${suffix}`;
+        const nextFileName = nextPath.split("/").pop() || nextPath;
+
+        return {
+          ...tab,
+          filePath: nextPath,
+          fileName: nextFileName,
+        };
+      });
+
+      const hasChanges = newTabs.some((tab, index) => tab !== node.tabs[index]);
+      if (!hasChanges) {
+        return node;
+      }
+
+      return {
+        ...node,
+        tabs: newTabs,
+      };
+    }
+
+    return {
+      ...node,
+      children: node.children.map((child) => transform(child)),
     };
   }
 

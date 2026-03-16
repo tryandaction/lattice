@@ -275,15 +275,20 @@
 
 .cm-formatting-math,
 .cm-math-delimiter-source {
-  color: var(--link-color, #2563eb);
-  background-color: rgba(37, 99, 235, 0.1);
-  border-radius: 4px;
-  opacity: 0.95;
+  color: #7c3aed;
+  background: linear-gradient(180deg, rgba(124, 58, 237, 0.14), rgba(124, 58, 237, 0.08));
+  box-shadow: inset 0 0 0 1px rgba(124, 58, 237, 0.22);
+  border-radius: 5px;
+  opacity: 0.98;
   font-weight: 700;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  letter-spacing: 0.01em;
+  padding: 0 0.16rem;
 }
 
 .dark .cm-formatting-math,
 .dark .cm-math-delimiter-source {
-  color: var(--link-color-dark, #93c5fd);
-  background-color: rgba(96, 165, 250, 0.16);
+  color: #c4b5fd;
+  background: linear-gradient(180deg, rgba(139, 92, 246, 0.22), rgba(139, 92, 246, 0.12));
+  box-shadow: inset 0 0 0 1px rgba(196, 181, 253, 0.22);
 }

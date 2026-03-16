@@ -25,6 +25,18 @@ interface TableMutationResult {
 }
 
 const ALIGNMENT_SEQUENCE: TableAlignment[] = [null, 'left', 'center', 'right'];
+const COLUMN_ACTION_ANCHOR_ROW = 0;
+
+function isDirectTypingKey(event: React.KeyboardEvent): boolean {
+  return !event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1;
+}
+
+function isExternalLinkTarget(url: string): boolean {
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith('//')) return true;
+  return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed);
+}
 
 function escapeHtml(value: string): string {
   return value
@@ -288,6 +300,8 @@ export const TableEditor: React.FC<TableEditorProps> = ({
   );
   const [editingCell, setEditingCell] = useState<CellPosition | null>(null);
   const [draftValue, setDraftValue] = useState('');
+  const [hoveredColumn, setHoveredColumn] = useState<number | null>(null);
+  const [hoveredRow, setHoveredRow] = useState<number | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isMountedRef = useRef(true);
@@ -370,6 +384,14 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     setDraftValue(rows[normalized.row]?.[normalized.col] ?? '');
   }, [alignments, rows]);
 
+  const beginTypingInCell = useCallback((cell: CellPosition, nextValue: string) => {
+    const normalized = clampCellPosition(cell, rows, alignments);
+    if (!normalized) return;
+    setSelectedCell(normalized);
+    setEditingCell(normalized);
+    setDraftValue(nextValue);
+  }, [alignments, rows]);
+
   const moveCell = useCallback((cell: CellPosition, rowDelta: number, colDelta: number): CellPosition => {
     const nextRow = Math.max(0, Math.min(cell.row + rowDelta, rows.length - 1));
     const nextCol = Math.max(0, Math.min(cell.col + colDelta, columnCount - 1));
@@ -443,6 +465,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     if (!link) return;
 
     const isWikiLink = link.classList.contains('cm-wiki-link-table');
+    const linkTarget = link.getAttribute('data-target') ?? link.getAttribute('href') ?? '';
     const shouldOpenLink = event.metaKey || event.ctrlKey;
     if (!shouldOpenLink) {
       event.preventDefault();
@@ -451,18 +474,27 @@ export const TableEditor: React.FC<TableEditorProps> = ({
       return;
     }
 
-    if (isWikiLink) {
-      event.preventDefault();
-      event.stopPropagation();
-      const wikiTarget = link.getAttribute('data-target');
-      if (wikiTarget) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isWikiLink || !isExternalLinkTarget(linkTarget)) {
+      if (linkTarget) {
         link.dispatchEvent(
           new CustomEvent('wiki-link-click', {
-            detail: { target: wikiTarget },
+            detail: { target: linkTarget },
             bubbles: true,
           })
         );
       }
+      return;
+    }
+
+    if (linkTarget) {
+      link.dispatchEvent(
+        new CustomEvent('external-link-click', {
+          detail: { url: linkTarget },
+          bubbles: true,
+        })
+      );
     }
   }, [selectCell]);
 
@@ -530,9 +562,21 @@ export const TableEditor: React.FC<TableEditorProps> = ({
         return;
       }
       default:
+        if (isDirectTypingKey(event)) {
+          event.preventDefault();
+          beginTypingInCell(selectedCell, event.key);
+          return;
+        }
+
+        if (event.key === 'Backspace' || event.key === 'Delete') {
+          event.preventDefault();
+          beginTypingInCell(selectedCell, '');
+          return;
+        }
+
         return;
     }
-  }, [columnCount, editingCell, moveCell, rows.length, selectedCell, startEditingCell]);
+  }, [beginTypingInCell, columnCount, editingCell, moveCell, rows.length, selectedCell, startEditingCell]);
 
   const handleInputKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (!editingCell) {
@@ -588,67 +632,26 @@ export const TableEditor: React.FC<TableEditorProps> = ({
       className="table-editor-wrapper"
       tabIndex={0}
       onKeyDown={handleWrapperKeyDown}
+      onMouseLeave={() => {
+        setHoveredColumn(null);
+        setHoveredRow(null);
+      }}
       role="group"
       aria-label="Markdown table editor"
     >
       <table className="table-editor">
-        <thead>
-          <tr className="col-toolbar">
-            <th className="row-toolbar">#</th>
-            {Array.from({ length: columnCount }, (_, colIndex) => (
-              <th
-                key={`toolbar-${colIndex}`}
-                className={selectedCell?.col === colIndex ? 'selected' : ''}
-              >
-                <div className="col-toolbar-label">列 {colIndex + 1}</div>
-                <div className="col-actions">
-                  <button
-                    type="button"
-                    className="btn-icon"
-                    title="切换对齐"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => cycleAlignment(colIndex)}
-                  >
-                    {alignments[colIndex] === 'left' ? '左' : alignments[colIndex] === 'center' ? '中' : alignments[colIndex] === 'right' ? '右' : '无'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-icon"
-                    title="在右侧插入列"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => handleTableMutation(
-                      (workingRows, workingAlignments) =>
-                        insertTableColumn(workingRows, workingAlignments, hasHeader, colIndex),
-                      { row: selectedCell?.row ?? 0, col: Math.min(colIndex + 1, columnCount) }
-                    )}
-                  >
-                    ＋
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-icon"
-                    title="删除当前列"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => handleTableMutation(
-                      (workingRows, workingAlignments) =>
-                        deleteTableColumn(workingRows, workingAlignments, hasHeader, colIndex),
-                      selectedCell ? { row: selectedCell.row, col: Math.max(0, Math.min(colIndex - 1, columnCount - 2)) } : { row: 0, col: 0 }
-                    )}
-                  >
-                    －
-                  </button>
-                </div>
-              </th>
-            ))}
-          </tr>
-        </thead>
         <tbody>
           {rows.map((row, rowIndex) => (
-            <tr key={rowIndex}>
-              <td className="row-toolbar">
+            <tr
+              key={rowIndex}
+              onMouseEnter={() => setHoveredRow(rowIndex)}
+            >
+              <td
+                className={`row-toolbar ${selectedCell?.row === rowIndex ? 'active' : ''}`}
+              >
                 <div className="row-toolbar-label">{getRowLabel(rowIndex)}</div>
                 {rowIndex >= dataRowStart ? (
-                  <div className="row-actions">
+                  <div className={`row-actions ${hoveredRow === rowIndex || selectedCell?.row === rowIndex ? 'visible' : ''}`}>
                     <button
                       type="button"
                       className="btn-icon"
@@ -694,19 +697,74 @@ export const TableEditor: React.FC<TableEditorProps> = ({
               {row.map((cell, colIndex) => {
                 const isEditing = editingCell?.row === rowIndex && editingCell?.col === colIndex;
                 const isSelected = selectedCell?.row === rowIndex && selectedCell?.col === colIndex;
+                const isColumnSelected = selectedCell?.col === colIndex;
                 const isHeader = hasHeader && rowIndex === 0;
                 const CellTag = isHeader ? 'th' : 'td';
                 const renderedHtml = renderCellHtml ? renderCellHtml(cell) : escapeHtml(cell);
                 const cellPosition = { row: rowIndex, col: colIndex };
+                const showColumnActions =
+                  rowIndex === COLUMN_ACTION_ANCHOR_ROW &&
+                  !isEditing &&
+                  (hoveredColumn === colIndex || isColumnSelected);
 
                 return (
                   <CellTag
                     key={colIndex}
-                    className={[isEditing ? 'editing' : '', isSelected ? 'selected' : ''].filter(Boolean).join(' ')}
+                    className={[
+                      isEditing ? 'editing' : '',
+                      isSelected ? 'selected' : '',
+                      isColumnSelected ? 'column-active' : '',
+                      showColumnActions ? 'column-control-anchor' : '',
+                    ].filter(Boolean).join(' ')}
                     style={{ textAlign: alignments[colIndex] || 'left' }}
+                    onMouseEnter={() => setHoveredColumn(colIndex)}
                     onClick={() => !isEditing && handleCellClick(rowIndex, colIndex)}
                     onDoubleClick={() => handleCellDoubleClick(rowIndex, colIndex)}
                   >
+                    {rowIndex === COLUMN_ACTION_ANCHOR_ROW ? (
+                      <div className={`column-quick-actions ${showColumnActions ? 'visible' : ''}`}>
+                        <button
+                          type="button"
+                          className="btn-icon btn-icon--floating"
+                          title="切换列对齐"
+                          aria-label="切换列对齐"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => cycleAlignment(colIndex)}
+                        >
+                          {alignments[colIndex] === 'left' ? '左' : alignments[colIndex] === 'center' ? '中' : alignments[colIndex] === 'right' ? '右' : '无'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-icon btn-icon--floating"
+                          title="在右侧插入列"
+                          aria-label="在右侧插入列"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => handleTableMutation(
+                            (workingRows, workingAlignments) =>
+                              insertTableColumn(workingRows, workingAlignments, hasHeader, colIndex),
+                            { row: selectedCell?.row ?? 0, col: Math.min(colIndex + 1, columnCount) }
+                          )}
+                        >
+                          ＋
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-icon btn-icon--floating"
+                          title="删除当前列"
+                          aria-label="删除当前列"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => handleTableMutation(
+                            (workingRows, workingAlignments) =>
+                              deleteTableColumn(workingRows, workingAlignments, hasHeader, colIndex),
+                            selectedCell
+                              ? { row: selectedCell.row, col: Math.max(0, Math.min(colIndex - 1, columnCount - 2)) }
+                              : { row: 0, col: 0 }
+                          )}
+                        >
+                          －
+                        </button>
+                      </div>
+                    ) : null}
                     {isEditing ? (
                       <textarea
                         ref={inputRef}

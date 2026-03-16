@@ -64,6 +64,7 @@ export function useAutoOpenFolder() {
 
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
   const setRootHandle = useWorkspaceStore((state) => state.setRootHandle);
+  const setWorkspaceRootPath = useWorkspaceStore((state) => state.setWorkspaceRootPath);
 
   const hasAttemptedAutoOpen = useRef(false);
 
@@ -89,6 +90,7 @@ export function useAutoOpenFolder() {
         const { open } = await import('@tauri-apps/plugin-dialog');
         const path = settings.defaultFolder;
         if (!path) return;
+        setWorkspaceRootPath(path);
         // In Tauri, we can programmatically access the filesystem
         // but still need to set the root handle through the workspace store
         logger.info('[AutoOpen] Tauri mode - attempting to open:', path);
@@ -130,7 +132,7 @@ export function useAutoOpenFolder() {
     } catch (err) {
       logger.warn('[AutoOpen] Failed to restore folder handle:', err);
     }
-  }, [settings.defaultFolder, settings.onboardingCompleted, rootHandle, setRootHandle]);
+  }, [rootHandle, setRootHandle, setWorkspaceRootPath, settings.defaultFolder, settings.onboardingCompleted]);
 
   useEffect(() => {
     if (isInitialized) {

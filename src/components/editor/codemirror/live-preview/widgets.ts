@@ -86,6 +86,15 @@ function dispatchWikiLinkClick(element: HTMLElement, target: string): void {
   );
 }
 
+function dispatchExternalLinkClick(element: HTMLElement, url: string): void {
+  element.dispatchEvent(
+    new CustomEvent('external-link-click', {
+      detail: { url },
+      bubbles: true,
+    })
+  );
+}
+
 function applyBlockContext(container: HTMLElement, context?: BlockContext) {
   if (!context) return;
   const blockquoteDepth = context.blockquoteDepth ?? 0;
@@ -201,7 +210,7 @@ export class FormattedTextWidget extends WidgetType {
             if (isWikiLink || !isExternalUrl(linkTarget)) {
               dispatchWikiLinkClick(span, linkTarget);
             } else {
-              window.open(linkTarget, '_blank', 'noopener,noreferrer');
+              dispatchExternalLinkClick(span, linkTarget);
             }
             return;
           }
@@ -211,7 +220,7 @@ export class FormattedTextWidget extends WidgetType {
             if (isWikiLink || !isExternalUrl(linkTarget)) {
               dispatchWikiLinkClick(span, linkTarget);
             } else {
-              window.open(linkTarget, '_blank', 'noopener,noreferrer');
+              dispatchExternalLinkClick(span, linkTarget);
             }
           }, DOUBLE_CLICK_DELAY);
 
@@ -500,7 +509,7 @@ export class LinkWidget extends WidgetType {
         dispatchWikiLinkClick(view.dom, target);
         return;
       }
-      window.open(target, '_blank', 'noopener,noreferrer');
+      dispatchExternalLinkClick(view.dom, target);
     };
 
     // 定位光标

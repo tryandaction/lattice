@@ -201,6 +201,7 @@ export function PaneWrapper({
     activeTab?.id,
     activeTab?.fileHandle,
     activeTabIndex,
+    error,
     paneId,
     setTabDirty,
     loadedTabId,

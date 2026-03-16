@@ -2,6 +2,7 @@ import { exportAnnotationsForAI } from '@/lib/annotation-ai-bridge';
 import type { AnnotationItem } from '@/types/universal-annotation';
 import type { AiContext, AiContextItem, AiMessage } from './types';
 import { estimateTokens } from './token-estimator';
+import { aiContextGraph } from './context-graph';
 
 export function buildAiContext(params: {
   filePath: string;
@@ -10,43 +11,38 @@ export function buildAiContext(params: {
   annotations?: AnnotationItem[];
   maxTokens?: number;
 }): AiContext {
-  const items: AiContextItem[] = [];
+  const promptContext = aiContextGraph.buildPromptContext(
+    {
+      filePath: params.filePath,
+      content: params.content,
+      selection: params.selection,
+      annotations: params.annotations,
+      query: params.filePath,
+    },
+    params.maxTokens ?? Math.max(estimateTokens(params.content), 6000),
+  );
 
-  items.push({
-    type: 'system',
-    title: 'Project Context',
-    content: 'Lattice is a local-first research workbench. Prefer precise, file-based answers.',
-  });
+  const items: AiContextItem[] = [
+    {
+      type: 'system',
+      title: 'Project Context',
+      content: 'Lattice is a local-first, evidence-first research workbench. Prefer precise, file-based answers with traceable references.',
+    },
+  ];
 
-  // If content is too long, truncate to fit within model context window
-  let fileContent = params.content;
-  if (params.maxTokens) {
-    const estimatedTk = estimateTokens(fileContent);
-    const budget = Math.floor(params.maxTokens * 0.6); // 60% for file content
-    if (estimatedTk > budget) {
-      // Approximate char limit based on content type ratio
-      const ratio = fileContent.length / Math.max(1, estimatedTk);
-      const charLimit = Math.floor(budget * ratio);
-      fileContent = fileContent.slice(0, charLimit) + '\n\n[... truncated]';
-    }
-  }
-
-  items.push({
-    type: 'file',
-    title: `File: ${params.filePath}`,
-    content: fileContent,
-    metadata: { path: params.filePath },
-  });
-
-  if (params.selection) {
+  for (const node of promptContext.nodes) {
+    let type: AiContextItem['type'] = 'file';
+    if (node.kind === 'selection') type = 'selection';
+    if (node.kind === 'annotation') type = 'annotations';
     items.push({
-      type: 'selection',
-      title: 'Selected Text',
-      content: params.selection,
+      type,
+      title: node.label,
+      content: node.content,
+      metadata: node.evidenceRef ? { locator: node.evidenceRef.locator } : undefined,
     });
   }
 
-  if (params.annotations && params.annotations.length > 0) {
+  if (params.annotations && params.annotations.length > 0 && !items.some((item) => item.type === 'annotations')) {
     items.push({
       type: 'annotations',
       title: 'Annotations',

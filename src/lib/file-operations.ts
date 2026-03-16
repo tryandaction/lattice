@@ -20,6 +20,16 @@ export interface FileOperationResult {
   error?: string;
 }
 
+export type EntryKind = "file" | "directory";
+
+export interface EntryOperationResult {
+  success: boolean;
+  handle?: FileSystemHandle;
+  path?: string;
+  error?: string;
+  kind?: EntryKind;
+}
+
 /**
  * Empty Jupyter Notebook structure (nbformat v4)
  */
@@ -78,6 +88,28 @@ export function sanitizeFileName(name: string): string {
     .trim();
 }
 
+export function getParentPath(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
+}
+
+export function joinPath(parentPath: string, name: string): string {
+  return parentPath ? `${parentPath}/${name}` : name;
+}
+
+function splitFileName(name: string): { baseName: string; extension: string } {
+  const dotIndex = name.lastIndexOf(".");
+  if (dotIndex <= 0) {
+    return { baseName: name, extension: "" };
+  }
+
+  return {
+    baseName: name.slice(0, dotIndex),
+    extension: name.slice(dotIndex),
+  };
+}
+
 /**
  * Check if a file exists in a directory
  */
@@ -116,6 +148,135 @@ export async function generateUniqueName(
   }
 
   return candidate;
+}
+
+async function generateUniqueCopyName(
+  parentHandle: FileSystemDirectoryHandle,
+  originalName: string,
+  kind: EntryKind
+): Promise<string> {
+  if (kind === "file") {
+    const { baseName, extension } = splitFileName(originalName);
+    const copyBaseName = `${baseName || "Untitled"} copy`;
+    return generateUniqueName(parentHandle, copyBaseName, extension);
+  }
+
+  return generateUniqueDirectoryName(parentHandle, `${originalName || "New Folder"} copy`);
+}
+
+async function writeBlobToFile(fileHandle: FileSystemFileHandle, blob: Blob): Promise<void> {
+  const writable = await fileHandle.createWritable();
+  await writable.write(blob);
+  await writable.close();
+}
+
+async function copyFileHandle(
+  sourceHandle: FileSystemFileHandle,
+  targetDirectoryHandle: FileSystemDirectoryHandle,
+  desiredName?: string
+): Promise<{ handle: FileSystemFileHandle; name: string }> {
+  const sourceFile = await sourceHandle.getFile();
+  const targetName = desiredName
+    ? sanitizeFileName(desiredName)
+    : await generateUniqueCopyName(targetDirectoryHandle, sourceHandle.name, "file");
+
+  const targetHandle = await targetDirectoryHandle.getFileHandle(targetName, { create: true });
+  await writeBlobToFile(targetHandle, sourceFile);
+
+  return { handle: targetHandle, name: targetName };
+}
+
+async function copyDirectoryHandle(
+  sourceHandle: FileSystemDirectoryHandle,
+  targetDirectoryHandle: FileSystemDirectoryHandle,
+  desiredName?: string
+): Promise<{ handle: FileSystemDirectoryHandle; name: string }> {
+  const targetName = desiredName
+    ? sanitizeFileName(desiredName)
+    : await generateUniqueCopyName(targetDirectoryHandle, sourceHandle.name, "directory");
+
+  const newDirectoryHandle = await targetDirectoryHandle.getDirectoryHandle(targetName, { create: true });
+
+  for await (const entry of sourceHandle.values()) {
+    if (entry.kind === "file") {
+      await copyFileHandle(entry as FileSystemFileHandle, newDirectoryHandle, entry.name);
+      continue;
+    }
+
+    await copyDirectoryHandle(entry as FileSystemDirectoryHandle, newDirectoryHandle, entry.name);
+  }
+
+  return { handle: newDirectoryHandle, name: targetName };
+}
+
+export async function resolveDirectoryHandle(
+  rootHandle: FileSystemDirectoryHandle,
+  directoryPath: string
+): Promise<FileSystemDirectoryHandle | null> {
+  const parts = directoryPath.split("/").filter(Boolean);
+  if (parts.length === 0) {
+    return rootHandle;
+  }
+
+  let currentHandle = rootHandle;
+  const startIndex = parts[0] === rootHandle.name ? 1 : 0;
+
+  for (let index = startIndex; index < parts.length; index += 1) {
+    const part = parts[index];
+    try {
+      currentHandle = await currentHandle.getDirectoryHandle(part);
+    } catch {
+      return null;
+    }
+  }
+
+  return currentHandle;
+}
+
+export interface ResolvedEntry {
+  kind: EntryKind;
+  name: string;
+  parentHandle: FileSystemDirectoryHandle;
+  handle: FileSystemHandle;
+}
+
+export async function resolveEntry(
+  rootHandle: FileSystemDirectoryHandle,
+  path: string
+): Promise<ResolvedEntry | null> {
+  const parentDirectory = await findParentDirectory(rootHandle, path);
+  if (!parentDirectory) {
+    return null;
+  }
+
+  const entryName = getFileName(path);
+  if (!entryName) {
+    return null;
+  }
+
+  try {
+    const fileHandle = await parentDirectory.getFileHandle(entryName);
+    return {
+      kind: "file",
+      name: entryName,
+      parentHandle: parentDirectory,
+      handle: fileHandle,
+    };
+  } catch {
+    // Try as directory below.
+  }
+
+  try {
+    const directoryHandle = await parentDirectory.getDirectoryHandle(entryName);
+    return {
+      kind: "directory",
+      name: entryName,
+      parentHandle: parentDirectory,
+      handle: directoryHandle,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -178,6 +339,23 @@ export async function deleteFile(
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Failed to delete file',
+    };
+  }
+}
+
+export async function deleteEntry(
+  dirHandle: FileSystemDirectoryHandle,
+  entryName: string,
+  kind: EntryKind
+): Promise<EntryOperationResult> {
+  try {
+    await dirHandle.removeEntry(entryName, kind === "directory" ? { recursive: true } : undefined);
+    return { success: true, kind };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to delete entry",
+      kind,
     };
   }
 }
@@ -262,15 +440,12 @@ export async function renameFile(
     // Get the old file handle and read its content
     const oldFileHandle = await dirHandle.getFileHandle(oldName);
     const oldFile = await oldFileHandle.getFile();
-    const content = await oldFile.text();
 
     // Create the new file
     const newFileHandle = await dirHandle.getFileHandle(sanitized, { create: true });
     
     // Write content to new file
-    const writable = await newFileHandle.createWritable();
-    await writable.write(content);
-    await writable.close();
+    await writeBlobToFile(newFileHandle, oldFile);
 
     // Delete the old file
     await dirHandle.removeEntry(oldName);
@@ -287,6 +462,92 @@ export async function renameFile(
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Failed to rename file',
+    };
+  }
+}
+
+export async function renameEntry(
+  dirHandle: FileSystemDirectoryHandle,
+  oldName: string,
+  newName: string,
+  kind: EntryKind
+): Promise<EntryOperationResult> {
+  const sanitized = sanitizeFileName(newName);
+  if (!sanitized) {
+    return {
+      success: false,
+      error: "Invalid file name",
+      kind,
+    };
+  }
+
+  if (sanitized === oldName) {
+    try {
+      const handle =
+        kind === "file"
+          ? await dirHandle.getFileHandle(oldName)
+          : await dirHandle.getDirectoryHandle(oldName);
+
+      return {
+        success: true,
+        handle,
+        path: `${dirHandle.name}/${sanitized}`,
+        kind,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : "Failed to resolve entry",
+        kind,
+      };
+    }
+  }
+
+  try {
+    if (kind === "file") {
+      if (await fileExists(dirHandle, sanitized)) {
+        return {
+          success: false,
+          error: "A file with this name already exists",
+          kind,
+        };
+      }
+
+      const sourceHandle = await dirHandle.getFileHandle(oldName);
+      const { handle, name } = await copyFileHandle(sourceHandle, dirHandle, sanitized);
+      await dirHandle.removeEntry(oldName);
+
+      return {
+        success: true,
+        handle,
+        path: `${dirHandle.name}/${name}`,
+        kind,
+      };
+    }
+
+    if (await directoryExists(dirHandle, sanitized)) {
+      return {
+        success: false,
+        error: "A folder with this name already exists",
+        kind,
+      };
+    }
+
+    const sourceHandle = await dirHandle.getDirectoryHandle(oldName);
+    const { handle, name } = await copyDirectoryHandle(sourceHandle, dirHandle, sanitized);
+    await dirHandle.removeEntry(oldName, { recursive: true });
+
+    return {
+      success: true,
+      handle,
+      path: `${dirHandle.name}/${name}`,
+      kind,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to rename entry",
+      kind,
     };
   }
 }
@@ -368,6 +629,61 @@ export async function createDirectory(
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Failed to create directory',
+    };
+  }
+}
+
+export async function copyEntryToDirectory(
+  entryHandle: FileSystemHandle,
+  targetDirectoryHandle: FileSystemDirectoryHandle
+): Promise<EntryOperationResult> {
+  try {
+    if (entryHandle.kind === "file") {
+      const { handle, name } = await copyFileHandle(entryHandle as FileSystemFileHandle, targetDirectoryHandle);
+      return {
+        success: true,
+        handle,
+        path: `${targetDirectoryHandle.name}/${name}`,
+        kind: "file",
+      };
+    }
+
+    const { handle, name } = await copyDirectoryHandle(entryHandle as FileSystemDirectoryHandle, targetDirectoryHandle);
+    return {
+      success: true,
+      handle,
+      path: `${targetDirectoryHandle.name}/${name}`,
+      kind: "directory",
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to copy entry",
+    };
+  }
+}
+
+export async function moveEntryToDirectory(
+  sourceParentHandle: FileSystemDirectoryHandle,
+  entryHandle: FileSystemHandle,
+  targetDirectoryHandle: FileSystemDirectoryHandle
+): Promise<EntryOperationResult> {
+  try {
+    const copied = await copyEntryToDirectory(entryHandle, targetDirectoryHandle);
+    if (!copied.success) {
+      return copied;
+    }
+
+    await sourceParentHandle.removeEntry(
+      entryHandle.name,
+      entryHandle.kind === "directory" ? { recursive: true } : undefined
+    );
+
+    return copied;
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to move entry",
     };
   }
 }

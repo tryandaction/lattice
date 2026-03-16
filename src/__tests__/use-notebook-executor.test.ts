@@ -171,8 +171,10 @@ describe('useNotebookExecutor', () => {
 
       expect(result.current.executionState).toBe('idle');
 
-      const promise = act(async () => {
-        await result.current.runAll(cells);
+      let runPromise: Promise<unknown> | undefined;
+      await act(async () => {
+        runPromise = result.current.runAll(cells);
+        await Promise.resolve();
       });
 
       // 执行期间应该是 running
@@ -184,7 +186,9 @@ describe('useNotebookExecutor', () => {
         // 如果执行太快，可能直接完成
       });
 
-      await promise;
+      await act(async () => {
+        await runPromise;
+      });
 
       expect(result.current.executionState).toBe('idle');
     }, 30000);
@@ -202,19 +206,12 @@ describe('useNotebookExecutor', () => {
         { id: 'cell-1', source: 'import time; time.sleep(10)', type: 'code' },
       ];
 
-      // 开始执行
-      const executePromise = act(async () => {
-        await result.current.runAll(cells);
-      });
-
-      // 等待一小段时间后中断
-      await new Promise(resolve => setTimeout(resolve, 100));
-
       await act(async () => {
+        const executePromise = result.current.runAll(cells);
+        await new Promise(resolve => setTimeout(resolve, 100));
         await result.current.interrupt();
+        await executePromise;
       });
-
-      await executePromise;
 
       expect(result.current.executionState).toBe('interrupted');
     }, 30000);

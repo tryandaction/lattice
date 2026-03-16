@@ -2,7 +2,7 @@
 
 > **Source of Truth** for the Lattice project's technical decisions and component relationships.
 > 
-> Last Updated: January 2026 | Version: 1.0
+> Last Updated: March 2026 | Version: 1.1
 
 ---
 
@@ -13,8 +13,9 @@
 3. [State Management](#state-management)
 4. [Editor Ecosystem](#editor-ecosystem)
 5. [Execution Engine](#execution-engine)
-6. [Storage Layer](#storage-layer)
-7. [Component Diagrams](#component-diagrams)
+6. [AI System](#ai-system)
+7. [Storage Layer](#storage-layer)
+8. [Component Diagrams](#component-diagrams)
 
 ---
 
@@ -29,7 +30,7 @@ Lattice follows a **"Lightweight & High-Performance"** architecture principle. E
 - **Lazy loading**: Heavy resources load on-demand, never eagerly.
 - **Web standards**: Prefer native browser APIs over polyfills.
 
-This philosophy directly influenced our rejection of Monaco Editor (2MB+ bundle) in favor of CodeMirror 6 (~150KB), and our lazy-loading strategy for Pyodide (20MB WASM runtime).
+This philosophy directly influenced our rejection of Monaco Editor (2MB+ bundle) in favor of CodeMirror 6 (~150KB), and our hybrid execution strategy: desktop shells prefer local runtimes, while the web app keeps Pyodide as an on-demand fallback.
 
 ---
 
@@ -168,7 +169,7 @@ See [UX_GUIDELINES.md](./UX_GUIDELINES.md) for the "Structure-First" interaction
 **Monaco is REJECTED** for the following reasons:
 1. **Bundle bloat**: 2MB+ adds unacceptable load time
 2. **Mobile unfriendly**: Monaco has poor touch/mobile support
-3. **Overkill**: We don't need full IDE features (IntelliSense, debugging)
+3. **Phase mismatch**: this stage targets a scientific workbench with strong local execution, not a full VS Code clone with debugger/LSP parity
 4. **Integration friction**: Monaco wants to own the entire viewport
 
 ---
@@ -264,6 +265,96 @@ The PDF annotation system is designed to match Zotero's professional annotation 
 
 ## Execution Engine
 
+### Unified Runner Model
+
+Lattice now exposes a single runner event model across code files, notebook cells, and markdown code blocks.
+
+**Runner types in the current phase**:
+- **`python-local`**: Preferred on desktop. Runs local Python with real process execution and streamed events.
+- **`external-command`**: Minimal support for Node, Julia, and Rscript through explicit command templates.
+- **`python-pyodide`**: Web and desktop fallback when no local Python is available.
+
+**Current scope boundary**:
+- We do support local execution, streamed stdout/stderr, stop/rerun, and rich outputs such as images and HTML tables.
+- We do **not** yet target full IDE parity such as breakpoints, call stacks, or deep LSP integration in this phase.
+
+### Desktop Local Execution
+
+On desktop, the frontend talks to the Tauri backend through a unified runner API. The backend is responsible for:
+
+- Discovering Python environments (`system`, `.venv`, `conda`)
+- Probing external command availability
+- Spawning local child processes
+- Streaming `stdout` / `stderr`
+- Emitting structured `display_data`, `error`, `completed`, and `terminated` events
+- Terminating in-flight executions
+
+Python execution uses a lightweight bootstrap wrapper so Lattice can normalize common scientific outputs such as:
+- plain text streams
+- traceback/error payloads
+- HTML tables
+- rendered matplotlib figures
+
+### Persistent Notebook Sessions
+
+In the current desktop phase, notebook cells running on `python-local` reuse a persistent local Python process instead of spawning a fresh interpreter for every cell. This gives notebook execution the expected scientific workflow semantics:
+
+- variables persist across cells
+- rerun/interrupt/restart operate on the same local session lifecycle
+- notebook output still flows through the same unified runner event model
+
+This is intentionally narrower than a full kernel gateway or remote Jupyter management layer. The current goal is reliable local execution for real desktop work, not multi-kernel orchestration.
+
+---
+
+## AI System
+
+### AI-Native Research Copilot v1
+
+Lattice now uses a unified AI system instead of separate, component-specific prompt pipelines. The current phase is centered on an **evidence-first research copilot** for personal researchers.
+
+**Core building blocks**:
+
+- **`AiOrchestrator`**: single entry point for chat, inline actions, research actions, and safe task proposals
+- **`AiContextGraph`**: resolves focus context from files, headings, notebook cells, annotations, code symbols, workspace chunks, and current selection
+- **`EvidenceRef`**: shared evidence model for file paths, markdown headings, PDF pages/annotations, code lines, and notebook cells
+- **`AiDraftArtifact`**: write-back target for summaries, reading notes, formula explainers, code notes, and comparison drafts
+- **`AiTaskProposal`**: half-automatic task plan that enumerates reads/writes before any user-approved action
+- **`ModelRouter`**: provider selection policy that keeps local models and cloud models under one routing layer
+
+### Workbench Approval Layer
+
+- Drafts are surfaced in a dedicated **AI Workbench** panel instead of being applied immediately
+- Approved drafts can either:
+  - create a new markdown file under the default drafts area
+  - write to a user-selected target path
+  - append into an existing markdown note after explicit approval
+- Applied drafts record the resolved target path so users can reopen the written note directly from the workbench
+
+### Current Interaction Model
+
+- Side chat, inline menu, PDF assistant, and notebook assistant all call the same orchestrator
+- Scientific answers default to evidence-first output and expose context sources in the UI
+- Write-back flows default to **draft only**
+- File creation or content changes require explicit user approval through proposals
+- Evidence navigation is actionable and visible: target jumps for headings, code lines, notebook cells, and PDF references now provide transient highlight feedback after navigation
+
+### Scope Boundary
+
+This phase intentionally does **not** attempt to match general-purpose autonomous agents or full IDE copilots. Current focus is:
+
+- evidence-grounded answers
+- structured draft generation
+- workspace-aware knowledge organization
+- safe, approval-gated task proposals
+
+Not included in the current phase:
+
+- autonomous long-running multi-step execution
+- silent batch rewrites
+- background agent loops
+- debugger/LSP-style code intelligence parity
+
 ### Pyodide (Python in WebAssembly)
 
 **Technology**: [Pyodide](https://pyodide.org/) - CPython compiled to WebAssembly
@@ -301,7 +392,7 @@ sequenceDiagram
 - 20MB is too large for eager loading
 - Most users may never execute Python
 - Preserves fast initial page load
-- Progressive enhancement pattern
+- Progressive enhancement pattern for web and desktop fallback
 
 **Implementation**:
 ```typescript
@@ -316,6 +407,18 @@ async function runPython(code: string) {
   return pyodide.runPython(code);
 }
 ```
+
+### QA Gate v1
+
+The current phase also formalizes a repeatable product gate for desktop delivery:
+
+- `npm run lint` must stay at zero errors, with warnings frozen and reduced incrementally
+- `npm run typecheck`
+- `npm run test:run`
+- `npm run build`
+- `npm run tauri:build`
+
+This gate is the minimum definition of "ready to ship locally" for the desktop scientific workbench phase.
 
 ---
 
@@ -392,6 +495,8 @@ graph TB
     end
     
     subgraph "Execution Layer"
+        RUNNER[Runner Manager]
+        TAURIRUN[Tauri Local Runner]
         WORKER[Web Worker]
         PYODIDE[Pyodide WASM]
     end
@@ -409,7 +514,9 @@ graph TB
     REACT --> ZUSTAND
     REACT --> JOTAI
     
-    REACT --> WORKER
+    REACT --> RUNNER
+    RUNNER --> TAURIRUN
+    RUNNER --> WORKER
     WORKER --> PYODIDE
     
     ZUSTAND --> FSAPI

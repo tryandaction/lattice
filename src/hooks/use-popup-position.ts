@@ -7,7 +7,7 @@
 
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   adjustPopupPosition,
   getDropdownPosition,
@@ -52,29 +52,25 @@ export function usePopupPosition(options: UsePopupPositionOptions = {}): UsePopu
 
   const [targetPosition, setTargetPosition] = useState<PopupPosition>(initialPosition);
   const [popupSize, setPopupSize] = useState<PopupSize>(initialSize);
-  const [adjustedPosition, setAdjustedPosition] = useState<PopupPosition>(initialPosition);
 
   const recalculate = useCallback(() => {
-    const newPosition = adjustPopupPosition(targetPosition, popupSize, padding);
-    setAdjustedPosition(newPosition);
-  }, [targetPosition, popupSize, padding]);
+    setTargetPosition((position) => ({ ...position }));
+  }, []);
 
-  // Recalculate when target position or size changes
-  useEffect(() => {
-    const newPosition = adjustPopupPosition(targetPosition, popupSize, padding);
-    setAdjustedPosition(newPosition);
-  }, [targetPosition, popupSize, padding]);
+  const adjustedPosition = useMemo(
+    () => adjustPopupPosition(targetPosition, popupSize, padding),
+    [padding, popupSize, targetPosition],
+  );
 
   // Recalculate on window resize
   useEffect(() => {
     if (!recalculateOnResize) return;
     const handleResize = () => {
-      const newPosition = adjustPopupPosition(targetPosition, popupSize, padding);
-      setAdjustedPosition(newPosition);
+      setTargetPosition((position) => ({ ...position }));
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [recalculateOnResize, targetPosition, popupSize, padding]);
+  }, [recalculateOnResize]);
 
   return {
     position: adjustedPosition,

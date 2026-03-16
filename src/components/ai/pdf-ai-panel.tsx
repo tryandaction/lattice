@@ -3,8 +3,8 @@
 import { useState, useCallback } from "react";
 import { Sparkles, FileText, Search, MessageSquare, Loader2, X } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings-store";
-import { getDefaultProvider, getProvider } from "@/lib/ai/providers";
-import type { AiProviderId } from "@/lib/ai/types";
+import { aiOrchestrator } from "@/lib/ai/orchestrator";
+import type { AiRuntimeSettings } from "@/lib/ai/types";
 
 interface PdfAiPanelProps {
   /** Extracted text content from the PDF */
@@ -24,62 +24,56 @@ export function PdfAiPanel({ pdfText, fileName: _fileName, onClose }: PdfAiPanel
   const [question, setQuestion] = useState("");
   const settings = useSettingsStore((s) => s.settings);
 
-  const getAiProvider = useCallback(() => {
-    if (!settings.aiEnabled) return null;
-    const providerId = (settings.aiProvider ?? undefined) as AiProviderId | undefined;
-    return providerId ? getProvider(providerId) : getDefaultProvider();
-  }, [settings]);
-
   const runAction = useCallback(async (action: PdfAction, userQuestion?: string) => {
-    const provider = getAiProvider();
-    if (!provider) return;
+    if (!settings.aiEnabled) return;
 
     setLoading(true);
     setActiveAction(action);
     setResult("");
 
-    // PLACEHOLDER_ACTIONS
-    let systemPrompt = "";
-    let userPrompt = "";
-
     const truncatedText = pdfText.length > 12000 ? pdfText.slice(0, 12000) + "\n\n[... truncated]" : pdfText;
+    const runtimeSettings: AiRuntimeSettings = {
+      aiEnabled: settings.aiEnabled,
+      providerId: (settings.aiProvider as AiRuntimeSettings["providerId"]) ?? null,
+      model: settings.aiModel,
+      temperature: settings.aiTemperature,
+      maxTokens: settings.aiMaxTokens,
+      systemPrompt: settings.aiSystemPrompt,
+      preferLocal: settings.aiProvider === "ollama",
+    };
+
+    let researchAction: "summarize_paper" | "extract_findings" | "answer_question";
+    let prompt: string;
 
     switch (action) {
       case "summarize":
-        systemPrompt = "You are a research assistant. Summarize academic papers concisely, covering the main objective, methodology, key results, and conclusions.";
-        userPrompt = `Summarize this paper:\n\n${truncatedText}`;
+        researchAction = "summarize_paper";
+        prompt = `File: ${_fileName}\n\n${truncatedText}`;
         break;
       case "findings":
-        systemPrompt = "You are a research assistant. Extract and list the key findings, contributions, and important data points from academic papers.";
-        userPrompt = `Extract the key findings from this paper:\n\n${truncatedText}`;
+        researchAction = "extract_findings";
+        prompt = `File: ${_fileName}\n\n${truncatedText}`;
         break;
       case "ask":
-        systemPrompt = "You are a research assistant. Answer questions about the given paper accurately based on its content.";
-        userPrompt = `Paper content:\n\n${truncatedText}\n\nQuestion: ${userQuestion}`;
+        researchAction = "answer_question";
+        prompt = `Paper content:\n\n${truncatedText}\n\nQuestion: ${userQuestion}`;
         break;
     }
 
     try {
-      const stream = provider.stream(
-        [{ role: "user", content: userPrompt }],
-        { systemPrompt, temperature: 0.3 }
-      );
-
-      let accumulated = "";
-      for await (const chunk of stream) {
-        if (chunk.type === "text" && chunk.text) {
-          accumulated += chunk.text;
-          setResult(accumulated);
-        } else if (chunk.type === "error") {
-          setResult(`Error: ${chunk.error}`);
-          break;
-        }
-      }
+      const response = await aiOrchestrator.runResearchAction({
+        action: researchAction,
+        prompt,
+        content: truncatedText,
+        filePath: _fileName,
+        settings: runtimeSettings,
+      });
+      setResult(response.text);
     } catch (err) {
       setResult(`Error: ${(err as Error).message}`);
     }
     setLoading(false);
-  }, [pdfText, getAiProvider]);
+  }, [pdfText, settings, _fileName]);
 
   const handleAsk = useCallback(() => {
     if (!question.trim()) return;

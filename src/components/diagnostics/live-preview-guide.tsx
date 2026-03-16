@@ -142,6 +142,8 @@ export function LivePreviewGuide() {
               onChange={handleContentChange}
               fileName={`guide-${selected.id}.md`}
               fileId={`guide-${selected.id}`}
+              paneId="diagnostics-guide-pane"
+              filePath={`guide-${selected.id}.md`}
               initialMode="live"
             />
           </div>

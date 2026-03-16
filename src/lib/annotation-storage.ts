@@ -106,13 +106,11 @@ export function deserializeAnnotationFile(json: string): AnnotationFile | null {
     
     // Validate the structure
     if (!isAnnotationFile(parsed)) {
-      console.warn('Invalid annotation file structure');
       return null;
     }
     
     return parsed;
-  } catch (error) {
-    console.warn('Failed to parse annotation file:', error);
+  } catch {
     return null;
   }
 }

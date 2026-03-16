@@ -36,6 +36,7 @@ const eslintConfig = defineConfig([
     "node_modules/**",
     ".next/**",
     "out/**",
+    "web-dist/**",
     "build/**",
     "output/**",
     "scripts/**",

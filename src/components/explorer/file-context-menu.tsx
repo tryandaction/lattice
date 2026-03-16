@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useLayoutEffect } from "react";
-import { Trash2, Pencil, FilePlus, FolderPlus } from "lucide-react";
+import { Trash2, Pencil, FilePlus, FolderPlus, Copy, Scissors, ClipboardPaste } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface FileContextMenuProps {
@@ -12,6 +12,10 @@ interface FileContextMenuProps {
   onClose: () => void;
   onNewFile?: () => void;
   onNewFolder?: () => void;
+  onCopy?: () => void;
+  onCut?: () => void;
+  onPaste?: () => void;
+  canPaste?: boolean;
   isDirectory?: boolean;
 }
 
@@ -19,7 +23,20 @@ interface FileContextMenuProps {
  * Context menu for file operations
  * Adjusts position to stay within viewport bounds
  */
-export function FileContextMenu({ x, y, onRename, onDelete, onClose, onNewFile, onNewFolder, isDirectory }: FileContextMenuProps) {
+export function FileContextMenu({
+  x,
+  y,
+  onRename,
+  onDelete,
+  onClose,
+  onNewFile,
+  onNewFolder,
+  onCopy,
+  onCut,
+  onPaste,
+  canPaste = false,
+  isDirectory,
+}: FileContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Adjust position to stay within viewport
@@ -116,6 +133,62 @@ export function FileContextMenu({ x, y, onRename, onDelete, onClose, onNewFile, 
       {(isDirectory && (onNewFile || onNewFolder)) && (
         <div className="my-1 h-px bg-border" />
       )}
+      {isDirectory && onPaste && (
+        <button
+          onClick={() => {
+            onPaste();
+            onClose();
+          }}
+          disabled={!canPaste}
+          className={cn(
+            "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
+            "hover:bg-accent transition-colors",
+            "focus:outline-none focus:bg-accent",
+            !canPaste && "cursor-not-allowed opacity-50"
+          )}
+        >
+          <ClipboardPaste className="h-4 w-4" />
+          <span>Paste</span>
+        </button>
+      )}
+      {(isDirectory && (onNewFile || onNewFolder || onPaste)) && (
+        <div className="my-1 h-px bg-border" />
+      )}
+      {onCopy && (
+        <button
+          onClick={() => {
+            onCopy();
+            onClose();
+          }}
+          className={cn(
+            "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
+            "hover:bg-accent transition-colors",
+            "focus:outline-none focus:bg-accent"
+          )}
+        >
+          <Copy className="h-4 w-4" />
+          <span>Copy</span>
+        </button>
+      )}
+      {onCut && (
+        <button
+          onClick={() => {
+            onCut();
+            onClose();
+          }}
+          className={cn(
+            "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
+            "hover:bg-accent transition-colors",
+            "focus:outline-none focus:bg-accent"
+          )}
+        >
+          <Scissors className="h-4 w-4" />
+          <span>Cut</span>
+        </button>
+      )}
+      {(onCopy || onCut) && (
+        <div className="my-1 h-px bg-border" />
+      )}
       <button
         onClick={() => {
           onRename();
@@ -150,6 +223,7 @@ export function FileContextMenu({ x, y, onRename, onDelete, onClose, onNewFile, 
 
 interface DeleteConfirmDialogProps {
   fileName: string;
+  itemType?: "file" | "folder";
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -157,7 +231,7 @@ interface DeleteConfirmDialogProps {
 /**
  * Confirmation dialog for file deletion
  */
-export function DeleteConfirmDialog({ fileName, onConfirm, onCancel }: DeleteConfirmDialogProps) {
+export function DeleteConfirmDialog({ fileName, itemType = "file", onConfirm, onCancel }: DeleteConfirmDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // Close on escape
@@ -178,7 +252,7 @@ export function DeleteConfirmDialog({ fileName, onConfirm, onCancel }: DeleteCon
         ref={dialogRef}
         className="w-full max-w-sm rounded-lg border border-border bg-background p-4 shadow-lg"
       >
-        <h3 className="text-lg font-semibold">Delete File</h3>
+        <h3 className="text-lg font-semibold">{itemType === "folder" ? "Delete Folder" : "Delete File"}</h3>
         <p className="mt-2 text-sm text-muted-foreground">
           Are you sure you want to delete <span className="font-medium text-foreground">{fileName}</span>?
           This action cannot be undone.

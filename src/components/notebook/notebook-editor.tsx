@@ -8,14 +8,20 @@ import { NotebookCellComponent } from "./notebook-cell";
 import { KernelSelector } from "./kernel-selector";
 import { cn } from "@/lib/utils";
 import { debounce } from "@/lib/fast-save";
-import type { IKernelManager } from "@/lib/kernel/kernel-manager";
 import type { KernelOption } from "./kernel-selector";
+import type { PaneId } from "@/types/layout";
+import { useLinkNavigationStore } from "@/stores/link-navigation-store";
+import { isSameWorkspacePath } from "@/lib/link-router/path-utils";
+import { dirname, resolveWorkspaceFilePath } from "@/lib/runner/path-utils";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 
 interface NotebookEditorProps {
   content: string;
   fileName: string;
   onContentChange?: (content: string) => void;
   onSave?: () => Promise<void>;
+  paneId: PaneId;
+  filePath: string;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -71,7 +77,7 @@ function SaveIndicator({ status }: { status: SaveStatus }) {
  * - Ctrl+Shift+Enter: Run all cells
  * - Arrow Up/Down: Navigate between cells (when not editing)
  */
-export function NotebookEditor({ content, fileName, onContentChange, onSave }: NotebookEditorProps) {
+export function NotebookEditor({ content, fileName, onContentChange, onSave, paneId, filePath }: NotebookEditorProps) {
   const {
     state,
     isDirty,
@@ -97,7 +103,16 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [runMenuOpen, setRunMenuOpen] = useState(false);
   const [currentKernel, setCurrentKernel] = useState<KernelOption | null>(null);
+  const [highlightedCellId, setHighlightedCellId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const cellElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const highlightTimeoutRef = useRef<number | null>(null);
+  const pendingNavigation = useLinkNavigationStore((state) => state.pendingByPane[paneId]);
+  const consumePendingNavigation = useLinkNavigationStore((state) => state.consumePendingNavigation);
+  const rootName = useWorkspaceStore((workspace) => workspace.rootHandle?.name ?? workspace.fileTree.root?.name ?? null);
+  const workspaceRootPath = useWorkspaceStore((workspace) => workspace.workspaceRootPath);
+  const notebookAbsolutePath = resolveWorkspaceFilePath(workspaceRootPath, filePath, rootName);
+  const notebookCwd = notebookAbsolutePath ? dirname(notebookAbsolutePath) : workspaceRootPath ?? undefined;
 
   // Notebook executor for Run All functionality
   const {
@@ -110,96 +125,21 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
     restartKernel,
     switchKernel,
   } = useNotebookExecutor({
+    runner: currentKernel,
+    cwd: notebookCwd,
     onCellStart: (cellId) => {
       clearCellOutputs(cellId);
     },
     onCellOutput: (cellId, output) => {
-      // Append output to cell
       const cell = state.cells.find(c => c.id === cellId);
       if (cell) {
         const newOutputs = [...(cell.outputs || [])];
-        if (output.type === "display_data") {
-          const displayData = output.content as import("@/lib/kernel/kernel-manager").DisplayDataOutput;
-          newOutputs.push({
-            output_type: "display_data",
-            data: displayData.data,
-          });
-        } else if (output.type === "error") {
-          const errorData = output.content as import("@/lib/kernel/kernel-manager").ErrorOutput;
-          newOutputs.push({
-            output_type: "error",
-            ename: errorData.ename,
-            evalue: errorData.evalue,
-            traceback: errorData.traceback,
-          });
-        } else if (output.type === "stream") {
-          const streamData = output.content as import("@/lib/kernel/kernel-manager").StreamOutput;
-          newOutputs.push({
-            output_type: "stream",
-            name: streamData.name,
-            text: streamData.text,
-          });
-        } else if (output.type === "execute_result") {
-          const resultData = output.content as import("@/lib/kernel/kernel-manager").ExecuteResultOutput;
-          newOutputs.push({
-            output_type: "execute_result",
-            data: resultData.data,
-            execution_count: resultData.execution_count,
-          });
-        }
+        newOutputs.push(output);
         updateCellOutputs(cellId, newOutputs);
       }
     },
     onCellComplete: (cellId, result) => {
       updateCellExecutionCount(cellId, result.executionCount);
-
-      // If there are outputs in the result that weren't already added via onCellOutput,
-      // add them now (this handles the case where executeCell resolves with error outputs)
-      if (result.outputs && result.outputs.length > 0) {
-        const cell = state.cells.find(c => c.id === cellId);
-        if (cell) {
-          const currentOutputCount = cell.outputs?.length || 0;
-          const resultOutputCount = result.outputs.length;
-
-          // If result has more outputs than current cell, add the missing ones
-          if (resultOutputCount > currentOutputCount) {
-            const newOutputs = [...(cell.outputs || [])];
-            for (let i = currentOutputCount; i < resultOutputCount; i++) {
-              const output = result.outputs[i];
-              if (output.type === "error") {
-                const errorData = output.content as import("@/lib/kernel/kernel-manager").ErrorOutput;
-                newOutputs.push({
-                  output_type: "error",
-                  ename: errorData.ename,
-                  evalue: errorData.evalue,
-                  traceback: errorData.traceback,
-                });
-              } else if (output.type === "display_data") {
-                const displayData = output.content as import("@/lib/kernel/kernel-manager").DisplayDataOutput;
-                newOutputs.push({
-                  output_type: "display_data",
-                  data: displayData.data,
-                });
-              } else if (output.type === "stream") {
-                const streamData = output.content as import("@/lib/kernel/kernel-manager").StreamOutput;
-                newOutputs.push({
-                  output_type: "stream",
-                  name: streamData.name,
-                  text: streamData.text,
-                });
-              } else if (output.type === "execute_result") {
-                const resultData = output.content as import("@/lib/kernel/kernel-manager").ExecuteResultOutput;
-                newOutputs.push({
-                  output_type: "execute_result",
-                  data: resultData.data,
-                  execution_count: resultData.execution_count,
-                });
-              }
-            }
-            updateCellOutputs(cellId, newOutputs);
-          }
-        }
-      }
     },
   });
   
@@ -242,6 +182,48 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
     }
   }, [fileName, content, resetState]);
 
+  useEffect(() => {
+    if (!pendingNavigation || !isSameWorkspacePath(pendingNavigation.filePath, filePath)) {
+      return;
+    }
+
+    if (pendingNavigation.target.type !== "notebook_cell") {
+      return;
+    }
+
+    const targetCellId = pendingNavigation.target.cellId;
+    const targetCell = state.cells.find((cell) => cell.id === targetCellId);
+    const targetElement = cellElementRefs.current[targetCellId];
+    if (!targetCell || !targetElement) {
+      return;
+    }
+
+    activateCell(targetCell.id);
+    targetElement.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (highlightTimeoutRef.current) {
+      window.clearTimeout(highlightTimeoutRef.current);
+    }
+    const frameId = window.requestAnimationFrame(() => {
+      setHighlightedCellId(targetCell.id);
+      highlightTimeoutRef.current = window.setTimeout(() => {
+        setHighlightedCellId(null);
+        highlightTimeoutRef.current = null;
+      }, 1800);
+    });
+    consumePendingNavigation(paneId, filePath);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [activateCell, consumePendingNavigation, filePath, paneId, pendingNavigation, state.cells]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) {
+        window.clearTimeout(highlightTimeoutRef.current);
+      }
+    };
+  }, []);
+
   // Notify parent of content changes (debounced) - triggered by user edits
   useEffect(() => {
     if (!onContentChange) return;
@@ -258,48 +240,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
    */
   const handleKernelChange = useCallback(async (kernel: KernelOption) => {
     setCurrentKernel(kernel);
-
-    // Create and switch to new kernel
-    try {
-      const { createKernel } = await import("@/lib/kernel/kernel-factory");
-
-      let newKernel: IKernelManager;
-      if (kernel.type === "pyodide") {
-        newKernel = createKernel({ type: "pyodide" });
-      } else {
-        // For Jupyter kernel, we need to start the server first
-        const { invoke } = await import("@tauri-apps/api/core");
-
-        // Start Jupyter server if not already running
-        const serverInfo = await invoke("get_jupyter_server_info");
-        if (!serverInfo) {
-          await invoke("start_jupyter_server", {
-            pythonPath: kernel.pythonEnv?.path,
-          });
-        }
-
-        // Get server info
-        const info = await invoke<{ url: string; token: string }>("get_jupyter_server_info");
-
-        // Start a kernel
-        const session = await invoke<{ id: string; kernel_id: string }>("start_kernel", {
-          kernelName: "python3",
-        });
-
-        newKernel = createKernel({
-          type: "jupyter",
-          jupyter: {
-            serverUrl: info.url,
-            kernelId: session.kernel_id,
-            sessionId: session.id,
-          },
-        });
-      }
-
-      await switchKernel(newKernel);
-    } catch (error) {
-      console.error("Failed to switch kernel:", error);
-    }
+    await switchKernel(kernel);
   }, [switchKernel]);
 
   /**
@@ -427,6 +368,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
             <KernelSelector
               currentKernel={currentKernel}
               onKernelChange={handleKernelChange}
+              cwd={notebookCwd}
             />
 
             <div className="w-px h-4 bg-border" />
@@ -561,20 +503,30 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave }: N
       {/* Cells */}
       <div className="mx-auto max-w-4xl space-y-6 p-6">
         {state.cells.map((cell, index) => (
-          <NotebookCellComponent
+          <div
             key={cell.id}
-            cell={cell}
-            isActive={cell.id === state.activeCellId}
-            canDelete={state.cells.length > 1}
-            onActivate={() => activateCell(cell.id)}
-            onAddAbove={(type) => addCellAbove(cell.id, type)}
-            onAddBelow={(type) => addCellBelow(cell.id, type)}
-            onDelete={() => removeCell(cell.id)}
-            onSourceChange={(source) => updateSource(cell.id, source)}
-            onTypeChange={(type) => changeType(cell.id, type)}
-            onNavigateUp={index > 0 ? activatePrevCell : undefined}
-            onNavigateDown={index < state.cells.length - 1 ? activateNextCell : undefined}
-          />
+            data-cell-id={cell.id}
+            ref={(element) => {
+              cellElementRefs.current[cell.id] = element;
+            }}
+          >
+            <NotebookCellComponent
+              cell={cell}
+              isActive={cell.id === state.activeCellId}
+              isHighlighted={cell.id === highlightedCellId}
+              canDelete={state.cells.length > 1}
+              onActivate={() => activateCell(cell.id)}
+              onAddAbove={(type) => addCellAbove(cell.id, type)}
+              onAddBelow={(type) => addCellBelow(cell.id, type)}
+              onDelete={() => removeCell(cell.id)}
+              onSourceChange={(source) => updateSource(cell.id, source)}
+              onTypeChange={(type) => changeType(cell.id, type)}
+              onNavigateUp={index > 0 ? activatePrevCell : undefined}
+              onNavigateDown={index < state.cells.length - 1 ? activateNextCell : undefined}
+              runner={currentKernel}
+              cwd={notebookCwd}
+            />
+          </div>
         ))}
       </div>
 

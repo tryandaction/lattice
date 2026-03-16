@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { FileTree, DirectoryNode, TreeNode } from "@/types/file-system";
+import type { WorkspaceRunnerPreferences } from "@/lib/runner/types";
 import type {
   LayoutState,
   LayoutNode,
@@ -17,7 +18,9 @@ import {
   addTabToPane,
   removeTabFromPane,
   removeTabsByPath as removeTabsByPathUtil,
+  removeTabsByPrefix as removeTabsByPrefixUtil,
   updateTabsPath as updateTabsPathUtil,
+  updateTabsPathPrefix as updateTabsPathPrefixUtil,
   reorderTabsInPane,
   moveTabBetweenPanes,
   setActiveTabInPane,
@@ -45,6 +48,12 @@ const createInitialLayout = (): LayoutState => {
  */
 const initialFileTree: FileTree = {
   root: null,
+};
+
+const initialRunnerPreferences: WorkspaceRunnerPreferences = {
+  defaultPythonPath: null,
+  defaultLanguageRunners: {},
+  recentRunByFile: {},
 };
 
 /**
@@ -79,10 +88,12 @@ function toggleNodeExpansion(
 interface WorkspaceState {
   // File system state
   rootHandle: FileSystemDirectoryHandle | null;
+  workspaceRootPath: string | null;
   fileTree: FileTree;
   isLoading: boolean;
   error: string | null;
   selectedDirectoryPath: string | null; // 新增：当前选中的文件夹路径
+  runnerPreferences: WorkspaceRunnerPreferences;
 
   // Layout state (new advanced layout system)
   layout: LayoutState;
@@ -90,12 +101,18 @@ interface WorkspaceState {
 
   // File system actions
   setRootHandle: (handle: FileSystemDirectoryHandle | null) => void;
+  setWorkspaceRootPath: (path: string | null) => void;
   setFileTree: (tree: FileTree) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   clearWorkspace: () => void;
   toggleDirectory: (path: string) => void;
   setSelectedDirectoryPath: (path: string | null) => void; // 新增：设置选中的文件夹
+  setRunnerPreferences: (preferences: Partial<WorkspaceRunnerPreferences>) => void;
+  setRecentRunConfig: (
+    filePath: string,
+    config: WorkspaceRunnerPreferences["recentRunByFile"][string],
+  ) => void;
 
   // Layout actions
   splitPane: (paneId: PaneId, direction: SplitDirection) => PaneId | null;
@@ -108,7 +125,9 @@ interface WorkspaceState {
   openFileInActivePane: (handle: FileSystemFileHandle, path: string) => void;
   closeTab: (paneId: PaneId, tabIndex: number) => void;
   closeTabsByPath: (path: string) => void;
+  closeTabsByPrefix: (pathPrefix: string) => void;
   updateTabPath: (oldPath: string, newPath: string) => void;
+  updateTabPathPrefix: (oldPathPrefix: string, newPathPrefix: string) => void;
   setActiveTab: (paneId: PaneId, tabIndex: number) => void;
   reorderTabs: (paneId: PaneId, fromIndex: number, toIndex: number) => void;
   moveTabToPane: (sourcePaneId: PaneId, tabIndex: number, targetPaneId: PaneId) => void;
@@ -137,10 +156,12 @@ interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   // Initial file system state
   rootHandle: null,
+  workspaceRootPath: null,
   fileTree: initialFileTree,
   isLoading: false,
   error: null,
   selectedDirectoryPath: null,
+  runnerPreferences: initialRunnerPreferences,
 
   // Initial layout state
   layout: createInitialLayout(),
@@ -157,6 +178,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }).catch(() => {});
     }
   },
+  setWorkspaceRootPath: (path) => set({ workspaceRootPath: path }),
   setFileTree: (tree) => set({ fileTree: tree }),
   setLoading: (loading) => set({ isLoading: loading }),
   setError: (error) => set({ error }),
@@ -164,10 +186,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   clearWorkspace: () =>
     set({
       rootHandle: null,
+      workspaceRootPath: null,
       fileTree: initialFileTree,
       isLoading: false,
       error: null,
       layout: createInitialLayout(),
+      runnerPreferences: initialRunnerPreferences,
     }),
 
   toggleDirectory: (path) =>
@@ -178,6 +202,31 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }),
 
   setSelectedDirectoryPath: (path) => set({ selectedDirectoryPath: path }),
+  setRunnerPreferences: (preferences) =>
+    set((state) => ({
+      runnerPreferences: {
+        ...state.runnerPreferences,
+        ...preferences,
+        defaultLanguageRunners: {
+          ...state.runnerPreferences.defaultLanguageRunners,
+          ...preferences.defaultLanguageRunners,
+        },
+        recentRunByFile: {
+          ...state.runnerPreferences.recentRunByFile,
+          ...preferences.recentRunByFile,
+        },
+      },
+    })),
+  setRecentRunConfig: (filePath, config) =>
+    set((state) => ({
+      runnerPreferences: {
+        ...state.runnerPreferences,
+        recentRunByFile: {
+          ...state.runnerPreferences.recentRunByFile,
+          [filePath]: config,
+        },
+      },
+    })),
 
   // Layout actions
   splitPane: (paneId, direction) => {
@@ -287,11 +336,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     emitFileClose(path);
   },
 
+  closeTabsByPrefix: (pathPrefix) => {
+    set((state) => ({
+      layout: {
+        ...state.layout,
+        root: removeTabsByPrefixUtil(state.layout.root, pathPrefix),
+      },
+    }));
+  },
+
   updateTabPath: (oldPath, newPath) =>
     set((state) => ({
       layout: {
         ...state.layout,
         root: updateTabsPathUtil(state.layout.root, oldPath, newPath),
+      },
+    })),
+
+  updateTabPathPrefix: (oldPathPrefix, newPathPrefix) =>
+    set((state) => ({
+      layout: {
+        ...state.layout,
+        root: updateTabsPathPrefixUtil(state.layout.root, oldPathPrefix, newPathPrefix),
       },
     })),
 

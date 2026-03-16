@@ -1,0 +1,10 @@
+.lattice-pdf-viewer .textLayer ::selection,
+.lattice-pdf-viewer .textLayer ::-moz-selection {
+  background: rgba(73, 149, 255, 0.28);
+  mix-blend-mode: normal;
+}
+
+.dark .lattice-pdf-viewer .textLayer ::selection,
+.dark .lattice-pdf-viewer .textLayer ::-moz-selection {
+  background: rgba(123, 185, 255, 0.34);
+}

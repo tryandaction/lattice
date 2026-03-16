@@ -477,6 +477,7 @@ async function runCode(code, id) {
   }
   
   try {
+    const startTime = Date.now();
     pyodide.runPython('_set_execution_id("' + id + '")');
     pyodide.runPython('_setup_matplotlib()');
     
@@ -512,6 +513,13 @@ async function runCode(code, id) {
         }
       }
     }
+
+    postMsg({
+      type: 'execution_complete',
+      id,
+      executionTime: Date.now() - startTime,
+      timestamp: Date.now(),
+    });
     
   } catch (error) {
     let errorMessage = 'Unknown error';
@@ -674,7 +682,7 @@ class PythonWorkerManager {
       callback(message);
       
       // Clean up callback on result or error (execution complete)
-      if (message.type === 'result' || message.type === 'error') {
+      if (message.type === 'result' || message.type === 'error' || message.type === 'execution_complete') {
         this.messageCallbacks.delete(message.id);
         // Update status back to ready if no more pending
         if (this.status === 'running' && this.messageCallbacks.size === 0) {

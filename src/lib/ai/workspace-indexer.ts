@@ -12,7 +12,27 @@ export interface FileIndex {
   summary: string;       // First ~200 chars or extracted structure
   headings?: string[];   // For markdown files
   exports?: string[];    // For code files (function/class names)
+  chunks?: WorkspaceContentChunk[];
+  symbols?: WorkspaceSymbolRef[];
+  notebookCells?: WorkspaceNotebookCellRef[];
   lastModified: number;
+}
+
+export interface WorkspaceContentChunk {
+  id: string;
+  label: string;
+  content: string;
+}
+
+export interface WorkspaceSymbolRef {
+  name: string;
+  kind: 'function' | 'class' | 'const' | 'type' | 'interface' | 'enum';
+}
+
+export interface WorkspaceNotebookCellRef {
+  id: string;
+  kind: 'markdown' | 'code';
+  preview: string;
 }
 
 export interface WorkspaceIndex {
@@ -50,22 +70,74 @@ export function isIndexing(): boolean {
 /**
  * Extract a summary from file content based on type
  */
+function chunkContent(content: string, size = 800): WorkspaceContentChunk[] {
+  const chunks: WorkspaceContentChunk[] = [];
+  for (let index = 0; index < content.length; index += size) {
+    const chunk = content.slice(index, index + size).trim();
+    if (!chunk) continue;
+    chunks.push({
+      id: `chunk-${index}`,
+      label: `Chunk ${chunks.length + 1}`,
+      content: chunk,
+    });
+    if (chunks.length >= 8) break;
+  }
+  return chunks;
+}
+
+function extractNotebookCells(content: string): WorkspaceNotebookCellRef[] {
+  try {
+    const raw = JSON.parse(content) as {
+      cells?: Array<{ cell_type?: 'markdown' | 'code' | 'raw'; source?: string | string[] }>;
+    };
+    return (raw.cells ?? []).slice(0, 20).map((cell, index) => {
+      const joined = Array.isArray(cell.source) ? cell.source.join('') : (cell.source ?? '');
+      return {
+        id: `cell-${index + 1}`,
+        kind: cell.cell_type === 'markdown' ? 'markdown' : 'code',
+        preview: joined.slice(0, 180).trim(),
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 function extractSummary(content: string, ext: string): Partial<FileIndex> {
   const summary = content.slice(0, 200).replace(/\n/g, ' ').trim();
+  const chunks = chunkContent(content);
 
   if (ext === '.md' || ext === '.mdx') {
     const headings = [...content.matchAll(/^#{1,6}\s+(.+)$/gm)].map(m => m[1].trim());
-    return { summary, headings };
+    return { summary, headings, chunks };
   }
 
   if (['.ts', '.tsx', '.js', '.jsx'].includes(ext)) {
     const exports: string[] = [];
+    const symbols: WorkspaceSymbolRef[] = [];
     const funcMatches = content.matchAll(/export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var|type|interface|enum)\s+(\w+)/g);
-    for (const m of funcMatches) exports.push(m[1]);
-    return { summary, exports: exports.slice(0, 20) };
+    for (const m of funcMatches) {
+      exports.push(m[1]);
+    }
+    const symbolMatches = content.matchAll(/(?:export\s+)?(?:default\s+)?(?:async\s+)?(function|class|const|type|interface|enum)\s+(\w+)/g);
+    for (const match of symbolMatches) {
+      symbols.push({
+        kind: match[1] as WorkspaceSymbolRef['kind'],
+        name: match[2],
+      });
+    }
+    return { summary, exports: exports.slice(0, 20), symbols: symbols.slice(0, 20), chunks };
   }
 
-  return { summary };
+  if (ext === '.ipynb') {
+    return {
+      summary,
+      notebookCells: extractNotebookCells(content),
+      chunks,
+    };
+  }
+
+  return { summary, chunks };
 }
 
 /**
@@ -104,6 +176,9 @@ async function indexFile(
       summary: extracted.summary ?? '',
       headings: extracted.headings,
       exports: extracted.exports,
+      chunks: extracted.chunks,
+      symbols: extracted.symbols,
+      notebookCells: extracted.notebookCells,
       lastModified: file.lastModified,
     };
   } catch {
@@ -219,6 +294,8 @@ export function buildIndexContext(relevantPaths?: string[]): string {
     let entry = `## ${f.path} (${f.size}B)`;
     if (f.headings?.length) entry += `\nHeadings: ${f.headings.join(', ')}`;
     if (f.exports?.length) entry += `\nExports: ${f.exports.join(', ')}`;
+    if (f.symbols?.length) entry += `\nSymbols: ${f.symbols.map((symbol) => `${symbol.kind} ${symbol.name}`).join(', ')}`;
+    if (f.notebookCells?.length) entry += `\nNotebook cells: ${f.notebookCells.map((cell) => `${cell.id}(${cell.kind})`).join(', ')}`;
     if (f.summary) entry += `\n${f.summary}`;
     return entry;
   }).join('\n\n');

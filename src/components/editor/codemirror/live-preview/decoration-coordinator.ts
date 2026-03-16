@@ -614,7 +614,7 @@ function parseCodeBlocks(lines: string[], docLength?: number): CodeBlockMatch[] 
         listIndentToStrip = Math.max(0, prefix.length - blockquotePrefixLength);
 
         // DEBUG: Log opening fence
-        console.log('[parseCodeBlocks] Opening fence:', {
+        debugLog('[parseCodeBlocks] Opening fence:', {
           lineNum: i + 1,
           fenceChar,
           fenceLength,
@@ -627,7 +627,7 @@ function parseCodeBlocks(lines: string[], docLength?: number): CodeBlockMatch[] 
       const isClosing = closeRegex.test(trimmed);
 
       // DEBUG: Log closing fence check
-      console.log('[parseCodeBlocks] Checking line for closing fence:', {
+      debugLog('[parseCodeBlocks] Checking line for closing fence:', {
         lineNum: i + 1,
         trimmed,
         fenceChar,
@@ -645,7 +645,7 @@ function parseCodeBlocks(lines: string[], docLength?: number): CodeBlockMatch[] 
         const blockTo = docLength !== undefined ? Math.min(lineEnd, docLength) : lineEnd;
 
         // DEBUG: Log completed block
-        console.log('[parseCodeBlocks] Closing fence found, block complete:', {
+        debugLog('[parseCodeBlocks] Closing fence found, block complete:', {
           from: blockStart,
           to: blockTo,
           startLine: blockStartLine,
@@ -695,7 +695,7 @@ function parseCodeBlocks(lines: string[], docLength?: number): CodeBlockMatch[] 
         }
 
         // DEBUG: Log content line being added
-        console.log('[parseCodeBlocks] Adding content line:', {
+        debugLog('[parseCodeBlocks] Adding content line:', {
           lineNum: i + 1,
           contentLine,
           originalLine: line,

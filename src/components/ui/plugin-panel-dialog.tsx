@@ -288,7 +288,7 @@ export function PluginPanelDialog({ isOpen, onClose }: PluginPanelDialogProps) {
   // Merge live props into the active panel schema for rendering
   const activePanelWithLiveProps = useMemo(() => {
     if (!activePanel) return null;
-    const live = activePanelId ? getPanelProps(activePanelId) : {};
+    const live = activePanelId ? livePanelProps : EMPTY_PANEL_PROPS;
     if (Object.keys(live).length === 0) return activePanel;
     return {
       ...activePanel,
@@ -297,7 +297,7 @@ export function PluginPanelDialog({ isOpen, onClose }: PluginPanelDialogProps) {
         props: { ...(activePanel.schema.props ?? {}), ...live },
       },
     };
-  }, [activePanel, activePanelId, livePanelProps]);
+  }, [EMPTY_PANEL_PROPS, activePanel, activePanelId, livePanelProps]);
 
   const commandsById = useMemo(() => {
     return new Map(commands.map((command) => [command.id, command]));

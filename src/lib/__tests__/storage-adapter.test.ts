@@ -16,8 +16,12 @@ function setWindowProp(key: string, value: unknown) {
 }
 
 function clearTauriGlobals() {
-  delete (window as Window & Record<string, unknown>).__TAURI__;
-  delete (window as Window & Record<string, unknown>).__TAURI_INTERNALS__;
+  const tauriWindow = window as Window & {
+    __TAURI__?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+  };
+  delete tauriWindow.__TAURI__;
+  delete tauriWindow.__TAURI_INTERNALS__;
 }
 
 describe('storage-adapter environment detection', () => {

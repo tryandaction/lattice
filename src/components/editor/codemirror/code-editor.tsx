@@ -40,6 +40,10 @@ export type CodeEditorLanguage =
 export interface CodeEditorRef {
   /** Focus the editor */
   focus: () => void;
+  /** Scroll to a specific line */
+  scrollToLine: (lineNumber: number) => void;
+  /** Flash a specific line to confirm navigation */
+  flashLine: (lineNumber: number) => void;
   /** Get current content */
   getContent: () => string;
   /** Get selected text (empty string if no selection) */
@@ -346,6 +350,46 @@ function CodeEditorComponent({
     viewRef.current?.focus();
   }, []);
 
+  const scrollToLine = useCallback((lineNumber: number) => {
+    const view = viewRef.current;
+    if (!view) return;
+
+    const safeLine = Math.max(1, Math.min(lineNumber, view.state.doc.lines));
+    const line = view.state.doc.line(safeLine);
+    view.dispatch({
+      selection: { anchor: line.from },
+      scrollIntoView: true,
+    });
+    view.focus();
+  }, []);
+
+  const flashLine = useCallback((lineNumber: number) => {
+    const view = viewRef.current;
+    if (!view) return;
+
+    const safeLine = Math.max(1, Math.min(lineNumber, view.state.doc.lines));
+    const line = view.state.doc.line(safeLine);
+    const domAtPos = view.domAtPos(line.from);
+    const lineElement =
+      (domAtPos.node instanceof HTMLElement ? domAtPos.node : domAtPos.node.parentElement)?.closest('.cm-line');
+
+    if (!(lineElement instanceof HTMLElement)) {
+      return;
+    }
+
+    lineElement.animate(
+      [
+        { backgroundColor: 'rgba(250, 204, 21, 0.38)' },
+        { backgroundColor: 'rgba(250, 204, 21, 0.18)' },
+        { backgroundColor: 'transparent' },
+      ],
+      {
+        duration: 1800,
+        easing: 'ease-out',
+      },
+    );
+  }, []);
+
   // Get current content
   const getContent = useCallback(() => {
     return viewRef.current?.state.doc.toString() ?? initialValue;
@@ -371,6 +415,8 @@ function CodeEditorComponent({
     if (editorRef && 'current' in editorRef) {
       editorRef.current = {
         focus,
+        scrollToLine,
+        flashLine,
         getContent,
         getSelection,
         hasSelection,
@@ -381,7 +427,7 @@ function CodeEditorComponent({
         editorRef.current = null;
       }
     };
-  }, [editorRef, focus, getContent, getSelection, hasSelection]);
+  }, [editorRef, flashLine, focus, getContent, getSelection, hasSelection, scrollToLine]);
 
   // Error state
   if (error) {

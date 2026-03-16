@@ -5,6 +5,8 @@
  * https://jupyter-client.readthedocs.io/en/stable/messaging.html
  */
 
+import type { JsonValue, KernelMetadata, MimeData } from './kernel-types';
+
 // ============================================================================
 // 消息头
 // ============================================================================
@@ -28,13 +30,13 @@ export interface MessageHeader {
 // 完整消息结构
 // ============================================================================
 
-export interface JupyterMessage<T = any> {
+export interface JupyterMessage<T = unknown> {
   /** 消息头 */
   header: MessageHeader;
   /** 父消息头（用于关联请求和响应） */
   parent_header: Partial<MessageHeader> | Record<string, never>;
   /** 元数据 */
-  metadata: Record<string, any>;
+  metadata: KernelMetadata;
   /** 消息内容 */
   content: T;
   /** 二进制缓冲区 */
@@ -105,9 +107,9 @@ export interface ExecuteReplyContent {
   /** 执行计数 */
   execution_count: number;
   /** 用户表达式结果（仅 status='ok' 时） */
-  user_expressions?: Record<string, any>;
+  user_expressions?: Record<string, JsonValue>;
   /** 负载（仅 status='ok' 时） */
-  payload?: any[];
+  payload?: JsonValue[];
   /** 错误名称（仅 status='error' 时） */
   ename?: string;
   /** 错误值（仅 status='error' 时） */
@@ -135,27 +137,14 @@ export interface DisplayDataContent {
   /** 数据字典（MIME 类型 -> 数据） */
   data: MimeBundle;
   /** 元数据 */
-  metadata: Record<string, any>;
+  metadata: KernelMetadata;
   /** 瞬态数据 */
   transient?: {
     display_id?: string;
   };
 }
 
-export interface MimeBundle {
-  'text/plain'?: string;
-  'text/html'?: string;
-  'text/markdown'?: string;
-  'text/latex'?: string;
-  'application/json'?: any;
-  'application/javascript'?: string;
-  'image/png'?: string;
-  'image/jpeg'?: string;
-  'image/svg+xml'?: string;
-  'image/gif'?: string;
-  'application/pdf'?: string;
-  [mimeType: string]: any;
-}
+export type MimeBundle = MimeData;
 
 // ============================================================================
 // Execute Result
@@ -167,7 +156,7 @@ export interface ExecuteResultContent {
   /** 数据字典 */
   data: MimeBundle;
   /** 元数据 */
-  metadata: Record<string, any>;
+  metadata: KernelMetadata;
 }
 
 // ============================================================================
@@ -231,7 +220,7 @@ export interface CompleteReplyContent {
   /** 光标结束位置 */
   cursor_end: number;
   /** 元数据 */
-  metadata: Record<string, any>;
+  metadata: KernelMetadata;
   /** 状态 */
   status: 'ok' | 'error';
 }
@@ -257,7 +246,7 @@ export interface InspectReplyContent {
   /** 数据字典 */
   data: MimeBundle;
   /** 元数据 */
-  metadata: Record<string, any>;
+  metadata: KernelMetadata;
 }
 
 // ============================================================================
@@ -282,7 +271,7 @@ export interface KernelInfoReplyContent {
     mimetype: string;
     file_extension: string;
     pygments_lexer?: string;
-    codemirror_mode?: string | Record<string, any>;
+    codemirror_mode?: string | KernelMetadata;
     nbconvert_exporter?: string;
   };
   /** Banner */

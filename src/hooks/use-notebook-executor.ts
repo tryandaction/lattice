@@ -1,140 +1,300 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
-import type { IKernelManager, ExecutionOutput as KernelExecutionOutput, KernelStatus } from "@/lib/kernel/kernel-manager";
-import { createKernel } from "@/lib/kernel/kernel-factory";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { runnerManager, type ExecutionSession, type PersistentPythonSession } from "@/lib/runner/runner-manager";
+import type { JupyterOutput } from "@/lib/notebook-utils";
+import type { RunnerEvent } from "@/lib/runner/types";
+import type { KernelOption } from "@/components/notebook/kernel-selector";
+import { isTauri } from "@/lib/storage-adapter";
+
+interface LegacyKernel {
+  initialize?: () => Promise<void>;
+  execute: (code: string, options?: Record<string, unknown>) => Promise<{
+    outputs: unknown[];
+    executionCount?: number;
+    status?: string;
+    executionTime?: number;
+  }>;
+  interrupt: () => Promise<void>;
+  restart: () => Promise<void>;
+  shutdown?: () => Promise<void>;
+}
 
 export type ExecutionState = "idle" | "running" | "interrupted";
 
 export interface CellExecutionResult {
   cellId: string;
-  outputs: KernelExecutionOutput[];
+  outputs: Array<JupyterOutput | Record<string, unknown>>;
   executionCount: number;
   success: boolean;
   executionTime?: number;
-  variables?: Record<string, any>;
 }
 
 interface UseNotebookExecutorOptions {
-  kernel?: IKernelManager;
+  kernel?: LegacyKernel | null;
+  runner?: KernelOption | null;
+  cwd?: string;
   onCellStart?: (cellId: string) => void;
-  onCellOutput?: (cellId: string, output: KernelExecutionOutput) => void;
+  onCellOutput?: (cellId: string, output: JupyterOutput) => void;
   onCellComplete?: (cellId: string, result: CellExecutionResult) => void;
   onAllComplete?: (results: CellExecutionResult[]) => void;
 }
 
-/**
- * Hook for managing notebook cell execution
- * Supports Run All, Run All Above, Run All Below, and interruption
- */
-export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
-  const { kernel: externalKernel, onCellStart, onCellOutput, onCellComplete, onAllComplete } = options;
+function isLegacyKernel(value: KernelOption | LegacyKernel | null | undefined): value is LegacyKernel {
+  return Boolean(value && typeof value === "object" && "execute" in value);
+}
 
+function normalizeNotebookOutput(event: RunnerEvent): JupyterOutput[] {
+  switch (event.type) {
+    case "stdout":
+    case "stderr":
+      return [
+        {
+          output_type: "stream",
+          name: event.payload.channel,
+          text: event.payload.text,
+        },
+      ];
+    case "display_data":
+      return [
+        {
+          output_type: "display_data",
+          data: event.payload.data,
+        },
+      ];
+    case "error":
+      return [
+        {
+          output_type: "error",
+          ename: event.payload.ename || "ExecutionError",
+          evalue: event.payload.evalue || event.payload.message,
+          traceback: event.payload.traceback || [event.payload.message],
+        },
+      ];
+    default:
+      return [];
+  }
+}
+
+export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
+  const { kernel, runner, cwd, onCellStart, onCellOutput, onCellComplete, onAllComplete } = options;
   const [executionState, setExecutionState] = useState<ExecutionState>("idle");
   const [currentCellId, setCurrentCellId] = useState<string | null>(null);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
-  const [kernel, setKernel] = useState<IKernelManager | null>(externalKernel || null);
-
+  const [activeKernel, setActiveKernel] = useState<KernelOption | LegacyKernel | null>(runner ?? kernel ?? null);
   const interruptedRef = useRef(false);
   const executionCountRef = useRef(0);
+  const activeSessionRef = useRef<ExecutionSession | null>(null);
+  const notebookSessionRef = useRef<PersistentPythonSession | null>(null);
 
-  /**
-   * Execute a single cell and collect outputs
-   */
+  useEffect(() => {
+    setActiveKernel(runner ?? kernel ?? null);
+  }, [kernel, runner]);
+
+  useEffect(() => {
+    return () => {
+      void activeSessionRef.current?.terminate();
+      activeSessionRef.current = null;
+
+      if (notebookSessionRef.current) {
+        void notebookSessionRef.current.dispose();
+        notebookSessionRef.current = null;
+      }
+    };
+  }, []);
+
   const executeCell = useCallback(async (
     cellId: string,
-    code: string
+    code: string,
   ): Promise<CellExecutionResult> => {
-    if (!kernel) {
+    if (!activeKernel) {
       return {
         cellId,
-        outputs: [{
-          type: "error",
-          content: {
-            ename: "KernelError",
-            evalue: "No kernel available",
-            traceback: ["No kernel available"],
-          }
-        }],
+        outputs: [
+          {
+            type: "error",
+            content: {
+              ename: "ExecutionError",
+              evalue: "No runner available",
+              traceback: ["No runner available"],
+            },
+          },
+        ],
         executionCount: 0,
         success: false,
       };
     }
 
+    if (isLegacyKernel(activeKernel)) {
+      executionCountRef.current += 1;
+      const executionCount = executionCountRef.current;
+      try {
+        const result = await activeKernel.execute(code, {
+          silent: false,
+          storeHistory: true,
+        });
+
+        return {
+          cellId,
+          outputs: result.outputs as Array<Record<string, unknown>>,
+          executionCount: result.executionCount ?? executionCount,
+          success: result.status !== "error",
+          executionTime: result.executionTime,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          cellId,
+          outputs: [
+            {
+              type: "error",
+              content: {
+                ename: "ExecutionError",
+                evalue: message,
+                traceback: [message],
+              },
+            },
+          ],
+          executionCount,
+          success: false,
+        };
+      }
+    }
+
+    if (isTauri() && activeKernel.runnerType === "python-local") {
+      const shouldRecreateSession =
+        !notebookSessionRef.current ||
+        interruptedRef.current;
+
+      if (shouldRecreateSession) {
+        if (notebookSessionRef.current) {
+          await notebookSessionRef.current.dispose();
+        }
+        notebookSessionRef.current = runnerManager.createPersistentPythonSession({
+          command: activeKernel.command,
+          cwd,
+        });
+      }
+
+      interruptedRef.current = false;
+      executionCountRef.current += 1;
+      const executionCount = executionCountRef.current;
+      const outputs: JupyterOutput[] = [];
+      const startedAt = Date.now();
+      const persistentSession = notebookSessionRef.current;
+
+      if (!persistentSession) {
+        return {
+          cellId,
+          outputs: [
+            {
+              output_type: "error",
+              ename: "ExecutionError",
+              evalue: "Failed to initialize persistent Python session",
+              traceback: ["Failed to initialize persistent Python session"],
+            },
+          ],
+          executionCount,
+          success: false,
+        };
+      }
+
+      try {
+        const result = await persistentSession.execute({ code }, (event) => {
+          const notebookOutputs = normalizeNotebookOutput(event);
+          notebookOutputs.forEach((output) => {
+            outputs.push(output);
+            onCellOutput?.(cellId, output);
+          });
+        });
+
+        return {
+          cellId,
+          outputs,
+          executionCount,
+          success: result.success,
+          executionTime: Date.now() - startedAt,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const failureOutput: JupyterOutput = {
+          output_type: "error",
+          ename: "ExecutionError",
+          evalue: message,
+          traceback: [message],
+        };
+        outputs.push(failureOutput);
+        onCellOutput?.(cellId, failureOutput);
+        return {
+          cellId,
+          outputs,
+          executionCount,
+          success: false,
+        };
+      }
+    }
+
     executionCountRef.current += 1;
     const executionCount = executionCountRef.current;
+    const session = runnerManager.createSession();
+    activeSessionRef.current = session;
 
-    try {
-      const result = await kernel.execute(code, {
-        silent: false,
-        storeHistory: true,
-      });
-
-      // Convert outputs and notify
-      result.outputs.forEach(output => {
+    const startedAt = Date.now();
+    const outputs: JupyterOutput[] = [];
+    session.onEvent((event) => {
+      const notebookOutputs = normalizeNotebookOutput(event);
+      notebookOutputs.forEach((output) => {
+        outputs.push(output);
         onCellOutput?.(cellId, output);
       });
+    });
 
+    try {
+      const result = await session.run({
+        runnerType: activeKernel.runnerType,
+        command: activeKernel.command,
+        code,
+        cwd,
+        mode: "cell",
+        allowPyodideFallback: true,
+      });
+
+      const executionTime = Date.now() - startedAt;
       return {
         cellId,
-        outputs: result.outputs,
-        executionCount: result.executionCount || executionCount,
-        success: result.status === "ok",
-        executionTime: result.executionTime,
-        variables: result.variables,
+        outputs,
+        executionCount,
+        success: result.success,
+        executionTime,
       };
     } catch (error) {
-      const errorOutput: KernelExecutionOutput = {
-        type: "error",
-        content: {
-          ename: "ExecutionError",
-          evalue: error instanceof Error ? error.message : String(error),
-          traceback: [error instanceof Error ? error.message : String(error)],
-        },
+      const message = error instanceof Error ? error.message : String(error);
+      const failureOutput: JupyterOutput = {
+        output_type: "error",
+        ename: "ExecutionError",
+        evalue: message,
+        traceback: [message],
       };
+      outputs.push(failureOutput);
+      onCellOutput?.(cellId, failureOutput);
       return {
         cellId,
-        outputs: [errorOutput],
+        outputs,
         executionCount,
         success: false,
       };
+    } finally {
+      session.dispose();
+      activeSessionRef.current = null;
     }
-  }, [kernel, onCellOutput]);
+  }, [activeKernel, cwd, onCellOutput]);
 
-  /**
-   * Run multiple cells sequentially
-   */
   const runCells = useCallback(async (
-    cells: Array<{ id: string; source: string; type: string }>
+    cells: Array<{ id: string; source: string; type: string }>,
   ): Promise<CellExecutionResult[]> => {
-    // Filter to only code cells
-    const codeCells = cells.filter(cell => cell.type === "code");
-
+    const codeCells = cells.filter((cell) => cell.type === "code");
     if (codeCells.length === 0) {
       return [];
-    }
-
-    // Initialize kernel if needed
-    if (!kernel) {
-      const defaultKernel = createKernel({ type: "pyodide" });
-      setKernel(defaultKernel);
-      try {
-        await defaultKernel.initialize();
-      } catch (error) {
-        return [{
-          cellId: codeCells[0].id,
-          outputs: [{
-            type: "error",
-            content: {
-              ename: "KernelError",
-              evalue: `Kernel initialization failed: ${error}`,
-              traceback: [`Kernel initialization failed: ${error}`],
-            }
-          }],
-          executionCount: 0,
-          success: false,
-        }];
-      }
     }
 
     interruptedRef.current = false;
@@ -142,136 +302,112 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
     setProgress({ current: 0, total: codeCells.length });
 
     const results: CellExecutionResult[] = [];
+    let didInterrupt = false;
 
-    // Execute cells sequentially
-    for (let i = 0; i < codeCells.length; i++) {
-      // Check for interruption
+    for (let index = 0; index < codeCells.length; index += 1) {
       if (interruptedRef.current) {
         setExecutionState("interrupted");
+        didInterrupt = true;
         break;
       }
 
-      const cell = codeCells[i];
+      const cell = codeCells[index];
       setCurrentCellId(cell.id);
-      setProgress({ current: i + 1, total: codeCells.length });
+      setProgress({ current: index + 1, total: codeCells.length });
       onCellStart?.(cell.id);
 
       const result = await executeCell(cell.id, cell.source);
       results.push(result);
       onCellComplete?.(cell.id, result);
 
-      // Stop on error (optional - could make this configurable)
+      if (interruptedRef.current) {
+        didInterrupt = true;
+      }
+
       if (!result.success) {
         break;
       }
     }
 
-    setExecutionState("idle");
+    setExecutionState(didInterrupt ? "interrupted" : "idle");
     setCurrentCellId(null);
     setProgress({ current: 0, total: 0 });
     onAllComplete?.(results);
-
     return results;
-  }, [kernel, executeCell, onCellStart, onCellComplete, onAllComplete]);
+  }, [executeCell, onAllComplete, onCellComplete, onCellStart]);
 
-  /**
-   * Run all cells in the notebook
-   */
-  const runAll = useCallback(async (
-    cells: Array<{ id: string; source: string; type: string }>
-  ) => {
+  const runAll = useCallback(async (cells: Array<{ id: string; source: string; type: string }>) => {
     return runCells(cells);
   }, [runCells]);
 
-  /**
-   * Run all cells above (and including) the specified cell
-   */
   const runAllAbove = useCallback(async (
     cells: Array<{ id: string; source: string; type: string }>,
-    targetCellId: string
+    targetCellId: string,
   ) => {
-    const targetIndex = cells.findIndex(c => c.id === targetCellId);
+    const targetIndex = cells.findIndex((cell) => cell.id === targetCellId);
     if (targetIndex === -1) return [];
-    
-    const cellsToRun = cells.slice(0, targetIndex + 1);
-    return runCells(cellsToRun);
+    return runCells(cells.slice(0, targetIndex + 1));
   }, [runCells]);
 
-  /**
-   * Run all cells below (and including) the specified cell
-   */
   const runAllBelow = useCallback(async (
     cells: Array<{ id: string; source: string; type: string }>,
-    targetCellId: string
+    targetCellId: string,
   ) => {
-    const targetIndex = cells.findIndex(c => c.id === targetCellId);
+    const targetIndex = cells.findIndex((cell) => cell.id === targetCellId);
     if (targetIndex === -1) return [];
-    
-    const cellsToRun = cells.slice(targetIndex);
-    return runCells(cellsToRun);
+    return runCells(cells.slice(targetIndex));
   }, [runCells]);
 
-  /**
-   * Interrupt the current execution
-   */
   const interrupt = useCallback(async () => {
     interruptedRef.current = true;
     setExecutionState("interrupted");
-    if (kernel) {
-      try {
-        await kernel.interrupt();
-      } catch (error) {
-        console.error("Failed to interrupt kernel:", error);
-      }
+    if (isLegacyKernel(activeKernel)) {
+      await activeKernel.interrupt();
+      return;
     }
-  }, [kernel]);
+    if (notebookSessionRef.current) {
+      await notebookSessionRef.current.stop();
+      return;
+    }
+    await activeSessionRef.current?.terminate();
+  }, [activeKernel]);
 
-  /**
-   * Restart the kernel
-   */
   const restartKernel = useCallback(async () => {
     interruptedRef.current = true;
+    executionCountRef.current = 0;
     setExecutionState("idle");
     setCurrentCellId(null);
-    executionCountRef.current = 0;
-    if (kernel) {
-      try {
-        await kernel.restart();
-      } catch (error) {
-        console.error("Failed to restart kernel:", error);
-      }
+    setProgress({ current: 0, total: 0 });
+    if (isLegacyKernel(activeKernel)) {
+      await activeKernel.restart();
+      return;
     }
-  }, [kernel]);
+    if (notebookSessionRef.current) {
+      await notebookSessionRef.current.dispose();
+      notebookSessionRef.current = null;
+      return;
+    }
+    await activeSessionRef.current?.terminate();
+    activeSessionRef.current = null;
+  }, [activeKernel]);
 
-  /**
-   * Switch to a different kernel
-   */
-  const switchKernel = useCallback(async (newKernel: IKernelManager) => {
-    // Shutdown old kernel
-    if (kernel) {
-      try {
-        await kernel.shutdown();
-      } catch (error) {
-        console.error("Failed to shutdown old kernel:", error);
-      }
-    }
-
-    // Initialize new kernel
-    setKernel(newKernel);
+  const switchKernel = useCallback(async (newKernel: KernelOption | LegacyKernel) => {
+    interruptedRef.current = false;
     executionCountRef.current = 0;
-    try {
-      await newKernel.initialize();
-    } catch (error) {
-      console.error("Failed to initialize new kernel:", error);
-      throw error;
+    await activeSessionRef.current?.terminate();
+    activeSessionRef.current = null;
+    if (notebookSessionRef.current) {
+      await notebookSessionRef.current.dispose();
+      notebookSessionRef.current = null;
     }
-  }, [kernel]);
+    setActiveKernel(newKernel);
+  }, []);
 
   return {
     executionState,
     currentCellId,
     progress,
-    kernel,
+    kernel: activeKernel,
     runAll,
     runAllAbove,
     runAllBelow,

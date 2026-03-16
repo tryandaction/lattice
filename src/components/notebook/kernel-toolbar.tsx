@@ -17,8 +17,6 @@ import { Play, Square, RotateCcw } from 'lucide-react';
 
 interface KernelToolbarProps {
   onRunAll: () => void;
-  onRunAllAbove: () => void;
-  onRunAllBelow: () => void;
   onRestart: () => Promise<void>;
   onInterrupt: () => void;
   onClearOutputs: () => void;
@@ -28,8 +26,6 @@ interface KernelToolbarProps {
 
 export function KernelToolbar({
   onRunAll,
-  onRunAllAbove,
-  onRunAllBelow,
   onRestart,
   onInterrupt,
   onClearOutputs,

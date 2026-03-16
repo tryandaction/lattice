@@ -33,6 +33,10 @@ import type { LivePreviewEditorRef } from "./codemirror/live-preview/live-previe
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { clearDecorationCache } from "./codemirror/live-preview/decoration-coordinator";
 import { emitFileSave } from "@/lib/plugins/runtime";
+import { navigateLink } from "@/lib/link-router/navigate-link";
+import { useLinkNavigationStore } from "@/stores/link-navigation-store";
+import { parseHeadings, buildOutlineTree } from "./codemirror/live-preview/markdown-parser";
+import type { PaneId } from "@/types/layout";
 
 // Lazy load components
 const LivePreviewEditor = dynamic(
@@ -47,24 +51,12 @@ const OutlinePanel = dynamic(
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
-function safeDecode(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
 function normalizeHeading(value: string): string {
   return value
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "-")
     .replace(/[^\p{L}\p{N}-]/gu, "");
-}
-
-function stripExtension(value: string): string {
-  return value.replace(/\.[^/.]+$/, "");
 }
 
 function findHeadingLine(items: OutlineItem[], target: string): number | undefined {
@@ -90,6 +82,8 @@ interface ObsidianMarkdownViewerProps {
   onSave?: () => Promise<void>;
   /** Callback for wiki link navigation */
   onNavigateToFile?: (filename: string) => void;
+  /** Current pane identifier for in-app navigation */
+  paneId: PaneId;
   /** Initial view mode */
   initialMode?: ViewMode;
   /** Unique file identifier for proper re-mounting */
@@ -183,6 +177,7 @@ export function ObsidianMarkdownViewer({
   fileName,
   onSave,
   onNavigateToFile,
+  paneId,
   initialMode = "live",
   fileId, // Unique file identifier
   rootHandle,
@@ -207,6 +202,8 @@ export function ObsidianMarkdownViewer({
   const { selection: aiSelection, dismiss: dismissAiMenu } = useTextSelection(containerRef);
   const saveEditorState = useContentCacheStore((state) => state.saveEditorState);
   const getEditorState = useContentCacheStore((state) => state.getEditorState);
+  const pendingNavigation = useLinkNavigationStore((state) => state.pendingByPane[paneId]);
+  const consumePendingNavigation = useLinkNavigationStore((state) => state.consumePendingNavigation);
 
   // CRITICAL: Force content update when file changes
   // Use fileId instead of fileName for more reliable detection
@@ -317,31 +314,32 @@ export function ObsidianMarkdownViewer({
     }
   }, [localContent, handleContentChange]);
 
-  // Handle wiki link click
-  const handleWikiLinkClick = useCallback((target: string) => {
-    const decodedTarget = safeDecode(target);
-    const [pathPart, headingPart] = decodedTarget.split('#');
-    const heading = headingPart ?? (decodedTarget.startsWith('#') ? decodedTarget.slice(1) : undefined);
+  useEffect(() => {
+    if (!filePath || !pendingNavigation) return;
+    if (pendingNavigation.filePath !== filePath) return;
+    if (pendingNavigation.target.type !== "workspace_heading") return;
 
-    if (heading) {
-      const pathFileName = (pathPart || "").split('/').pop() || '';
-      const sameFile =
-        !pathPart ||
-        pathFileName === fileName ||
-        stripExtension(pathFileName) === stripExtension(fileName);
+    const headingOutline = outline.length > 0
+      ? outline
+      : buildOutlineTree(parseHeadings(localContent));
+    const line = findHeadingLine(headingOutline, pendingNavigation.target.heading);
+    if (!line) return;
 
-      if (sameFile) {
-        const line = findHeadingLine(outline, heading);
-        if (line) {
-          setActiveHeading(line);
-          editorRef.current?.scrollToLine(line);
-          return;
-        }
-      }
-    }
+    editorRef.current?.scrollToLine(line);
+    window.setTimeout(() => {
+      editorRef.current?.flashLine(line);
+    }, 120);
+    consumePendingNavigation(paneId, filePath);
+  }, [consumePendingNavigation, filePath, localContent, outline, paneId, pendingNavigation]);
 
-    onNavigateToFile?.(decodedTarget);
-  }, [onNavigateToFile, fileName, outline]);
+  const handleLinkNavigate = useCallback((target: string) => {
+    void navigateLink(target, {
+      paneId,
+      rootHandle,
+      currentFilePath: filePath,
+    });
+    onNavigateToFile?.(target);
+  }, [filePath, onNavigateToFile, paneId, rootHandle]);
 
   return (
     <div ref={containerRef} className="h-full flex flex-col bg-background">
@@ -447,7 +445,8 @@ export function ObsidianMarkdownViewer({
             showFoldGutter={mode === 'live'}
             readOnly={mode === 'reading'}
             onOutlineChange={handleOutlineChange}
-            onWikiLinkClick={handleWikiLinkClick}
+            onWikiLinkClick={handleLinkNavigate}
+            onLinkNavigate={handleLinkNavigate}
             onSave={handleSave}
             fileId={fileId || fileName}
             className="min-h-full"

@@ -19,10 +19,11 @@ import { CodeEditor } from "@/components/editor/codemirror/code-editor";
 import { highlightCode } from "@/lib/code-highlighter";
 import type { JupyterOutput } from "@/lib/notebook-utils";
 import { AnsiText } from "./ansi-text";
-import { usePythonRunner } from "@/hooks/use-python-runner";
+import { useExecutionRunner } from "@/hooks/use-execution-runner";
 import { OutputArea, HtmlOutput } from "./output-area";
 import { KernelStatus } from "./kernel-status";
 import { NotebookAiAssist } from "@/components/ai/notebook-ai-assist";
+import type { KernelOption } from "./kernel-selector";
 
 interface CodeCellProps {
   source: string;
@@ -33,6 +34,8 @@ interface CodeCellProps {
   onFocus: () => void;
   onNavigateUp?: () => void;
   onNavigateDown?: () => void;
+  runner?: KernelOption | null;
+  cwd?: string;
 }
 
 /**
@@ -164,21 +167,23 @@ export const CodeCell = memo(function CodeCell({
   onFocus,
   onNavigateUp,
   onNavigateDown,
+  runner,
+  cwd,
 }: CodeCellProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [content, setContent] = useState(source);
   const containerRef = useRef<HTMLDivElement>(null);
   
   // Python runner hook for code execution
-  const { 
-    status, 
-    outputs: executionOutputs, 
+  const {
+    status,
+    outputs: executionOutputs,
     error: kernelError,
-    runCode, 
+    run,
     clearOutputs,
     isRunning,
-    isLoading 
-  } = usePythonRunner();
+    isLoading,
+  } = useExecutionRunner();
   
   // Sync content when external source updates (skip while editing)
   useEffect(() => {
@@ -211,8 +216,15 @@ export const CodeCell = memo(function CodeCell({
     if (!code) return;
     
     clearOutputs();
-    await runCode(code);
-  }, [runCode, clearOutputs, content]);
+    await run({
+      runnerType: runner?.runnerType ?? "python-local",
+      command: runner?.command,
+      code,
+      cwd,
+      mode: "cell",
+      allowPyodideFallback: true,
+    });
+  }, [clearOutputs, content, cwd, run, runner?.command, runner?.runnerType]);
 
   // Handle Shift+Enter to run code
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {

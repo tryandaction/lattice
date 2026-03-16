@@ -52,12 +52,16 @@ export function normalizedToPoints(
   pageWidth: number,
   pageHeight: number
 ): { x: number; y: number; width: number; height: number } {
+  const width = Math.max((rect.x2 - rect.x1) * pageWidth, Number.EPSILON);
+  // Keep degenerate selections minimally visible instead of collapsing to zero height.
+  const height = Math.max((rect.y2 - rect.y1) * pageHeight, Number.EPSILON);
+
   return {
     x: rect.x1 * pageWidth,
     // Flip Y axis: PDF origin is bottom-left, our coords are top-left
     y: pageHeight - (rect.y2 * pageHeight),
-    width: (rect.x2 - rect.x1) * pageWidth,
-    height: (rect.y2 - rect.y1) * pageHeight,
+    width,
+    height,
   };
 }
 

@@ -9,7 +9,7 @@
 
 import { memo, useState, useEffect } from 'react';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
-import type { KernelStatus as KernelStatusType } from '@/lib/python-worker-manager';
+import type { RunnerStatus as KernelStatusType } from '@/lib/runner/types';
 
 interface KernelStatusProps {
   status: KernelStatusType;

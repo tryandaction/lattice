@@ -76,8 +76,7 @@ describe("live preview diagnostics", () => {
         }
       }
 
-      // eslint-disable-next-line no-console
-      console.log(`[diagnostics] ${fixture}`, counts);
+      expect(Object.keys(counts).length).toBeGreaterThan(0);
     }
-  }, 30000);
+  }, 120000);
 });

@@ -2,14 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { useSettingsStore } from "@/stores/settings-store";
-import { getDefaultProvider, getProvider } from "@/lib/ai/providers";
-import {
-  summarizeSelection,
-  translateText,
-  explainFormula,
-  improveWriting,
-  continueWriting,
-} from "@/lib/ai/inline-actions";
+import { aiOrchestrator } from "@/lib/ai/orchestrator";
 import {
   Sparkles,
   Languages,
@@ -20,7 +13,7 @@ import {
   Loader2,
   Calculator,
 } from "lucide-react";
-import type { AiProviderId } from "@/lib/ai/types";
+import type { AiRuntimeSettings } from "@/lib/ai/types";
 
 interface AiInlineMenuProps {
   selectedText: string;
@@ -49,39 +42,40 @@ export function AiInlineMenu({ selectedText, position, onInsert, onReplace, onCl
   const runAction = useCallback(async (actionId: ActionId) => {
     if (!settings.aiEnabled) return;
 
-    const providerId = (settings.aiProvider ?? undefined) as AiProviderId | undefined;
-    const provider = providerId ? getProvider(providerId) : getDefaultProvider();
-    if (!provider) return;
-
     setLoading(true);
     setActiveAction(actionId);
     setResult("");
 
     try {
-      let stream: AsyncIterable<string>;
-      switch (actionId) {
-        case "summarize":
-          stream = summarizeSelection(selectedText, provider);
-          break;
-        case "translate":
-          stream = translateText(selectedText, "English", provider);
-          break;
-        case "explain":
-          stream = explainFormula(selectedText, provider);
-          break;
-        case "improve":
-          stream = improveWriting(selectedText, provider);
-          break;
-        case "continue":
-          stream = continueWriting(selectedText, provider);
-          break;
-      }
+      const runtimeSettings: AiRuntimeSettings = {
+        aiEnabled: settings.aiEnabled,
+        providerId: (settings.aiProvider as AiRuntimeSettings["providerId"]) ?? null,
+        model: settings.aiModel,
+        temperature: settings.aiTemperature,
+        maxTokens: settings.aiMaxTokens,
+        systemPrompt: settings.aiSystemPrompt,
+        preferLocal: settings.aiProvider === "ollama",
+      };
 
-      let accumulated = "";
-      for await (const chunk of stream) {
-        accumulated += chunk;
-        setResult(accumulated);
-      }
+      const action =
+        actionId === "summarize"
+          ? "summarize"
+          : actionId === "translate"
+            ? "translate"
+            : actionId === "explain"
+              ? "explain_formula"
+              : actionId === "improve"
+                ? "improve_writing"
+                : "continue_writing";
+
+      const response = await aiOrchestrator.runInlineAction({
+        action,
+        input: selectedText,
+        selection: selectedText,
+        settings: runtimeSettings,
+      });
+
+      setResult(response.text);
     } catch (err) {
       setResult(`Error: ${(err as Error).message}`);
     }
