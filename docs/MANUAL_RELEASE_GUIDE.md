@@ -65,6 +65,9 @@ npm run tauri:build
 - Notebook 单元在桌面端可以连续运行并保留上一个单元的变量
 - PDF 放大、缩小、适宽不会跳回第一页
 - PDF 文本选区显示为淡蓝色
+- Markdown 编辑器可以直接导出 `.docx` 与 `.pdf`
+- Markdown 导出的 `clean` / `appendix` / `study-note` 模式可正常工作
+- Markdown 导出的“文档版式”与“当前渲染视图”都能正常出文件
 - 外部网页链接会打开系统浏览器
 - 文件树支持复制、剪切、粘贴和拖放移动
 - 目录重命名或移动后，已打开标签仍然有效

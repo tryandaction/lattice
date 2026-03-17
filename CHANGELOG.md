@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 新增 (2026-03-17)
+- **Markdown 导出产品化**
+  - ✅ Markdown 编辑器顶栏新增可发现的 Export 入口，用户可直接从产品 UI 导出当前文档
+  - ✅ 新增 Markdown 导出对话框，支持选择 `.docx` / `.pdf`
+  - ✅ 导出对话框新增导出标题配置与实时预览，导出前即可确认成品结构
+  - ✅ 导出不再走低质量正则转换，改为统一渲染文档模型，尽量保留标题层级、列表、代码块、表格、引用块与公式渲染
+  - ✅ 新增统一标注导出策略：`clean` / `appendix` / `study-note`
+  - ✅ 支持“文档版式”与“当前渲染视图”两种导出视觉模式
+  - ✅ 当前文件侧车标注现可随 Markdown 导出带出，并保留 page / line / anchor 等来源定位信息
+  - ✅ `.pdf` 导出采用渲染快照链路，保证最终分享稿尽量贴近产品内阅读效果
+  - ✅ `.docx` 导出采用结构化 HTML 导入链路，兼顾文档结构与可交付性
+
+### 改进 (2026-03-17)
+- **导出基础设施统一**
+  - ✅ 新增统一 Markdown 导出服务，复用现有 Web/Tauri `export-adapter` 保存链路
+  - ✅ 导出时可自动内联本地 Markdown 图片，减少相对路径资源在成品文档中失效
+  - ✅ 导出模型已支持统一汇入当前文件标注与显式证据引用，后续可继续扩展到更广的 Evidence 工作流
+- **QA 门禁更新**
+  - ✅ 本轮新增 Markdown 导出测试，覆盖附录预览、统一来源模型与 DOCX 包结构
+  - ✅ 当前完整门禁已更新为 `75` 个测试文件、`911` 个测试全绿
+  - ✅ 本轮顺序验证 `lint` / `typecheck` / `test:run` / `build` / `tauri:build` 全绿
+
+### 清理 (2026-03-17)
+- **旧导出实现移除**
+  - ✅ 删除未接入主路径且质量偏低的 `src/lib/export-utils.ts`
+  - ✅ 删除未被产品主界面使用的旧 `src/components/editor/export-button.tsx`
+
+### 文档更新 (2026-03-17)
+- 更新 `docs/RELEASE_NOTES.md`，补充 Markdown 导出产品化能力与 QA 基线
+- 更新 `docs/roadmap.md`，同步当前阶段已完成项与下一轮导出深化方向
+- 更新 `docs/USER_GUIDE.md`，补充 Markdown 导出操作说明
+- 更新 `docs/DESKTOP_FEATURES.md`，补充桌面端 DOCX / PDF 导出体验与验证点
+- 更新 `docs/MANUAL_RELEASE_GUIDE.md`，将 Markdown 导出纳入发布前验收清单
+
 ### 新增 (2026-03-15)
 - **AI-Native 科研副驾 v1**
   - ✅ 新增统一 `AiOrchestrator`，统一 Chat、选区动作、PDF 助手、Notebook 助手和代码解释入口
@@ -18,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - ✅ 支持带 fragment 的引用解析：Markdown 标题、代码行、Notebook 单元、PDF 页码/批注
   - ✅ 引用解析结果自动转成 `explicitEvidenceRefs`，让用户显式引用直接进入 AI 证据链
   - ✅ `@引用` 支持可视化 fragment 选择：文件命中后可继续选择 heading / line / cell / page / annotation
+  - ✅ `@引用` 现已支持真正的两段式浏览：先选文件，再自动进入片段选择模式
 - **AI Workbench 产品化升级**
   - ✅ `drafts` / `proposals` 持久化，刷新后不再丢失本次 AI 工作流状态
   - ✅ proposal 支持展开审阅步骤、审批项和 planned writes
@@ -30,6 +65,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - ✅ proposal 现已支持从已批准 writes 批量派生目标草稿集，进一步形成 `Proposal -> Draft Set -> Writeback` 链路
   - ✅ proposal 现已支持批量写回目标草稿，成功后会同步刷新草稿状态并打开首个写回结果
   - ✅ Workbench 面板新增目标草稿状态汇总：待写回 / 已写回 / 阻塞
+- **AI 结果视图产品化**
+  - ✅ assistant 回答现已支持结构化 `Conclusion / Evidence / Next Actions` 三段式结果视图
+  - ✅ 当模型输出带有显式章节时，结果会以分区卡片渲染，而不再只是连续聊天文本
+  - ✅ 新增统一 Evidence 面板，证据引用与上下文节点不再散落在消息卡片中
+  - ✅ Evidence 面板支持在多条 assistant 结果之间切换浏览，开始形成统一知识浏览入口
+  - ✅ Evidence 面板现已支持按文件路径聚合的引用树，证据不再只是平面列表
+  - ✅ Evidence Panel 已开始具备“知识浏览器”形态：消息切换、引用树、上下文分组并存
+  - ✅ Evidence Panel 现已支持直接发起“保存草稿 / 生成计划”动作，证据浏览开始与知识沉淀合流
+  - ✅ Evidence Panel 现已支持文件分组级草稿与计划动作，以及节点级证据草稿动作
+  - ✅ Evidence Panel 现已支持多证据选择后的合并草稿与合并计划动作
+  - ✅ 新增统一 Evidence 面板，证据引用与上下文节点不再分散在消息卡片中
+  - ✅ assistant 消息现在只保留证据摘要入口，证据细节统一进入 Evidence 面板浏览
+- **AI 结果视图产品化**
+  - ✅ assistant 消息现已支持结构化 `Conclusion / Evidence / Next Actions` 三段式结果视图
+  - ✅ 当模型输出符合结构化格式时，AI 结果会按分区卡片渲染，而不再只是连续聊天文本
 - **AI 核心测试**
   - ✅ 新增 `context-graph`、`model-router`、`orchestrator` 单测，覆盖证据链、模型来源路由、草稿与提案输出
 - **桌面本地运行 v1**
@@ -44,6 +94,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 改进 (2026-03-15)
 - **科研输出统一化**
   - ✅ Python 本地运行统一支持文本、错误、图片、HTML 表格、SVG 等输出
+- **表格交互重构**
+  - ✅ Markdown 表格不再默认激活首格，也不再在表格内部挤出操作位
+  - ✅ 行列操作控件已移到表格外围，通过外部句柄与外部菜单触发，不再遮挡文字
+  - ✅ 表格保留编辑/插入/删除/对齐能力，但交互方式更接近 Obsidian 的外围操作模型
 - **AI Workbench 审批写回**
   - ✅ 草稿写回支持自定义目标路径
   - ✅ 支持将 AI 草稿 `append` 到现有 Markdown 笔记
@@ -63,6 +117,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - ✅ 本轮新增目标草稿生成测试，验证 proposal -> drafts 的筛选与去重逻辑
   - ✅ 本轮再次顺序验证 `lint` / `typecheck` / `test:run` / `build` 全绿，目标草稿集合能力已可稳定跑通
   - ✅ 本轮新增批量写回测试与状态汇总逻辑，`Proposal -> Draft Set -> Writeback` 已具备阶段性完整性
+  - ✅ `use-notebook-executor` 集成测试已改为确定性 fake kernel，完整测试门禁恢复稳定
+  - ✅ 本轮新增 Evidence 面板 helper 测试，并将完整门禁稳定在 `73` 个测试文件、`902` 个测试全绿
+  - ✅ 本轮新增 mention browser 测试，并将完整门禁更新到 `74` 个测试文件、`905` 个测试全绿
+  - ✅ 本轮继续顺序验证 `lint` / `typecheck` / `test:run` / `build` 全绿，引用树浏览能力已稳定可用
+  - ✅ 当前完整门禁保持 `74` 个测试文件、`905` 个测试全绿
+  - ✅ 本轮继续顺序验证 `lint` / `typecheck` / `test:run` / `build` 全绿，当前完整门禁更新为 `74` 个测试文件、`907` 个测试全绿
+  - ✅ 当前完整门禁已更新为 `74` 个测试文件、`908` 个测试全绿
+  - ✅ 本轮新增 Evidence 面板 helper 测试，完整测试门禁当前稳定保持全绿
+  - ✅ `use-notebook-executor` 集成测试已切换到确定性 fake kernel，完整测试门禁恢复稳定
 
 ### 清理 (2026-03-15)
 - **会话临时产物清理**: 删除桌面持久 Python session 未使用的空 payload 临时文件生成逻辑

@@ -23,6 +23,7 @@ import {
   PanelLeftClose,
   PanelLeft,
   Sparkles,
+  Download,
 } from "lucide-react";
 import { useTextSelection } from "@/hooks/use-text-selection";
 import { AiInlineMenu } from "@/components/ai/ai-inline-menu";
@@ -37,6 +38,7 @@ import { navigateLink } from "@/lib/link-router/navigate-link";
 import { useLinkNavigationStore } from "@/stores/link-navigation-store";
 import { parseHeadings, buildOutlineTree } from "./codemirror/live-preview/markdown-parser";
 import type { PaneId } from "@/types/layout";
+import { MarkdownExportDialog } from "./markdown-export-dialog";
 
 // Lazy load components
 const LivePreviewEditor = dynamic(
@@ -189,6 +191,7 @@ export function ObsidianMarkdownViewer({
   const [isDirty, setIsDirty] = useState(false);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [showOutline, setShowOutline] = useState(false);
+  const [showExportDialog, setShowExportDialog] = useState(false);
   const [activeHeading, setActiveHeading] = useState<number | undefined>();
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<LivePreviewEditorRef>(null);
@@ -416,6 +419,15 @@ export function ObsidianMarkdownViewer({
               <span className="hidden sm:inline">Save</span>
             </button>
           )}
+
+          <button
+            onClick={() => setShowExportDialog(true)}
+            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors ml-1 hover:bg-accent"
+            title="导出 Markdown"
+          >
+            <Download className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Export</span>
+          </button>
         </div>
       </div>
 
@@ -466,6 +478,15 @@ export function ObsidianMarkdownViewer({
           onClose={dismissAiMenu}
         />
       )}
+
+      <MarkdownExportDialog
+        isOpen={showExportDialog}
+        onClose={() => setShowExportDialog(false)}
+        content={localContent}
+        fileName={fileName}
+        filePath={filePath}
+        rootHandle={rootHandle}
+      />
 
     </div>
   );

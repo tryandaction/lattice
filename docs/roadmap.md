@@ -6,6 +6,7 @@
 
 - 桌面端本地运行主链路已可用，Python / 外部命令运行、Notebook 连续执行、运行结果展示已跑通
 - QA 基线已收敛到 `lint` / `typecheck` / `test:run` / `build` / `tauri:build` 可稳定通过
+- Markdown 导出已产品化进入主界面，支持 `.docx` / `.pdf`、`clean` / `appendix` / `study-note` 和“当前渲染视图”导出
 - AI Workbench 已形成主闭环：
   - `Chat -> Proposal -> Target Draft Set -> Batch Writeback -> Workspace`
 - `@引用` 已升级到工作区级引用，并支持 heading / line / cell / page / annotation 片段选择
@@ -158,6 +159,7 @@
 
 - 更完整的知识图谱与跨文档关系可视化
 - 更强的 Agent 工具编排
+- Markdown 导出继续深化到真正的 `annotated` inline 视图、跨文件 Evidence 导出和更强的桌面原生排版能力
 - 多平台桌面与自动更新
 - 插件生态与外部扩展
 

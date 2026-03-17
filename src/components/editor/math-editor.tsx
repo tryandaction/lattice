@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { MathfieldElement } from 'mathlive';
 import { MathSymbolPalette } from './math-symbol-palette';
 import { getTemplateByPrefix, insertTemplate, type MathTemplate } from '@/lib/math-templates';
-import { copyToClipboard } from '@/lib/export-utils';
+import { copyToClipboard } from '@/lib/clipboard';
 import { formatFormulaForClipboard, normalizeFormulaInput } from '@/lib/formula-utils';
 import { setActiveInputTargetFromElement } from '@/lib/unified-input-handler';
 
