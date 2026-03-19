@@ -10,6 +10,9 @@
 - AI Workbench 已形成主闭环：
   - `Chat -> Proposal -> Target Draft Set -> Batch Writeback -> Workspace`
 - `@引用` 已升级到工作区级引用，并支持 heading / line / cell / page / annotation 片段选择
+- 当前 `@引用` 与 Evidence Panel 已进入产品化收口阶段：两段式浏览、消息切换、证据多选和后续动作链路都已具备可持续深化的基线
+- Selection AI Hub 已完成 Phase 2 收口：最近模式/轻量 prompt 历史、模式差异化、结果来源识别、SelectionContext 精细化已具备产品基线
+- 分屏 PDF 阅读稳定性已补强：pane 作用域缩放、阅读位置保持、切文件后恢复阅读进度、布局不再把右侧内容挤出屏幕
 
 ### 当前阶段仍然刻意不做
 

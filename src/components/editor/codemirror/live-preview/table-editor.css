@@ -12,16 +12,21 @@
   --table-floating-shadow: 0 8px 22px hsl(var(--foreground) / 0.08);
   color: var(--table-text);
   margin: 0.6rem 0;
-  overflow: auto;
-  border-radius: 14px;
-  border: 1px solid var(--table-border);
-  background: var(--table-surface);
-  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.03);
+  position: relative;
+  overflow: visible;
   outline: none;
 }
 
 .table-editor-wrapper:focus-visible {
   box-shadow: 0 0 0 2px hsl(var(--primary) / 0.24);
+}
+
+.table-editor-viewport {
+  overflow: auto;
+  border-radius: 14px;
+  border: 1px solid var(--table-border);
+  background: var(--table-surface);
+  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.03);
 }
 
 .table-editor {
@@ -31,44 +36,6 @@
   font-size: 14px;
   font-family: inherit;
   table-layout: fixed;
-}
-
-.row-toolbar-label {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  color: var(--table-muted-text);
-}
-
-.row-actions {
-  display: flex;
-  gap: 4px;
-  justify-content: center;
-  align-items: center;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.16s ease, transform 0.16s ease;
-}
-
-.row-toolbar {
-  width: 52px;
-  min-width: 52px;
-  padding: 10px 6px !important;
-  text-align: center;
-  vertical-align: middle;
-  border-right: 1px solid var(--table-border);
-  border-bottom: 1px solid var(--table-border);
-  background: var(--table-surface-muted);
-  position: relative;
-}
-
-.row-toolbar.active {
-  background: hsl(var(--primary) / 0.08);
-}
-
-.row-toolbar-label {
-  position: relative;
-  z-index: 1;
 }
 
 .table-editor tbody td,
@@ -85,14 +52,8 @@
   transition: background-color 0.16s ease, box-shadow 0.16s ease;
 }
 
-.table-editor tbody tr:first-child td,
-.table-editor tbody tr:first-child th {
-  padding-top: 38px;
-}
-
 .table-editor tbody tr:last-child td,
-.table-editor tbody tr:last-child th,
-.table-editor tbody tr:last-child .row-toolbar {
+.table-editor tbody tr:last-child th {
   border-bottom: none;
 }
 
@@ -101,14 +62,9 @@
   border-right: none;
 }
 
-.table-editor tbody tr:hover td:not(.row-toolbar),
-.table-editor tbody tr:hover th:not(.row-toolbar) {
+.table-editor tbody tr:hover td,
+.table-editor tbody tr:hover th {
   background: var(--table-surface-hover);
-}
-
-.table-editor tbody td.column-active,
-.table-editor tbody th.column-active {
-  background: var(--table-column-selected);
 }
 
 .table-editor tbody td.selected,
@@ -144,31 +100,11 @@
 .cell-content {
   display: block;
   min-height: 20px;
-  cursor: default;
+  cursor: text;
   overflow-wrap: break-word;
   white-space: normal;
   line-height: 1.6;
   color: var(--table-text);
-}
-
-.column-quick-actions {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-4px);
-  transition: opacity 0.16s ease, transform 0.16s ease;
-  z-index: 2;
-}
-
-.column-quick-actions.visible {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
 }
 
 .cell-content a {
@@ -253,21 +189,88 @@
   box-shadow: var(--table-floating-shadow);
 }
 
-.row-actions {
-  position: absolute;
-  inset: auto 50% 8px auto;
-  transform: translateX(50%) translateY(4px);
-  flex-direction: column;
-}
-
-.row-actions.visible {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateX(50%) translateY(0);
-}
-
 .table-editor tbody th {
   font-weight: 600;
+}
+
+.table-editor-perimeter-handle {
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  width: 24px;
+  height: 24px;
+  border: 1px solid hsl(var(--border) / 0.9);
+  border-radius: 999px;
+  background: hsl(var(--background) / 0.96);
+  color: var(--table-muted-text);
+  cursor: pointer;
+  box-shadow: var(--table-floating-shadow);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3;
+}
+
+.table-editor-perimeter-handle:hover {
+  color: var(--table-accent);
+  border-color: hsl(var(--primary) / 0.45);
+  background: hsl(var(--accent));
+}
+
+.table-editor-perimeter-panel {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  transform: translateX(calc(-100% - 12px));
+  min-width: 180px;
+  border: 1px solid var(--table-border);
+  border-radius: 12px;
+  background: hsl(var(--background) / 0.98);
+  box-shadow: var(--table-floating-shadow);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 3;
+}
+
+.table-editor-perimeter-panel--right {
+  left: auto;
+  right: 0;
+  transform: translateX(calc(100% + 12px));
+}
+
+.table-editor-panel-meta {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--table-muted-text);
+}
+
+.table-editor-panel-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.table-editor-panel-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--table-muted-text);
+}
+
+.table-editor-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.btn-icon--menu {
+  min-width: auto;
+  height: 28px;
+  border-radius: 8px;
+  padding: 0 10px;
+  font-size: 11px;
 }
 
 .dark .table-editor-wrapper {
@@ -305,25 +308,21 @@
     font-size: 12px;
   }
 
-  .row-toolbar {
-    width: 44px;
-    min-width: 44px;
-  }
-
   .table-editor tbody td,
   .table-editor tbody th {
     padding: 8px 10px;
     min-width: 72px;
   }
 
-  .table-editor tbody tr:first-child td,
-  .table-editor tbody tr:first-child th {
-    padding-top: 32px;
-  }
-
   .btn-icon {
     min-width: 24px;
     height: 24px;
     padding: 0 4px;
+  }
+
+  .table-editor-perimeter-panel {
+    position: static;
+    transform: none;
+    margin-bottom: 8px;
   }
 }

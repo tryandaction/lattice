@@ -54,6 +54,7 @@ import {
 import type { AnnotationItem, ImageTarget } from "@/types/universal-annotation";
 import { ImageViewer } from "./image-viewer";
 import { UniversalAnnotationSidebar } from "./universal-annotation-sidebar";
+import { useObjectUrl } from "@/hooks/use-object-url";
 
 // ============================================================================
 // Types
@@ -65,6 +66,7 @@ interface ImageTldrawAdapterProps {
   mimeType: string;
   fileHandle: FileSystemFileHandle;
   rootHandle: FileSystemDirectoryHandle;
+  filePath?: string;
 }
 
 const SAVE_DEBOUNCE_MS = 500;
@@ -163,6 +165,7 @@ export function ImageTldrawAdapter({
   mimeType,
   fileHandle,
   rootHandle,
+  filePath,
 }: ImageTldrawAdapterProps) {
   const { t } = useI18n();
   const {
@@ -175,13 +178,13 @@ export function ImageTldrawAdapter({
     getAnnotationsByTarget,
   } = useAnnotationSystem({
     fileHandle,
+    filePath,
     rootHandle,
     fileType: 'image',
     author: 'user',
   });
 
   const [editor, setEditor] = useState<Editor | null>(null);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [isReady, setIsReady] = useState(false);
   const [tldrawError, setTldrawError] = useState<Error | null>(null);
@@ -198,25 +201,26 @@ export function ImageTldrawAdapter({
   // Prevent re-converting the same ArrayBuffer reference on parent re-renders
   const prevContentRef = useRef<ArrayBuffer | null>(null);
   const checkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const imageBlob = useMemo(() => new Blob([content], { type: mimeType }), [content, mimeType]);
+  const imageUrl = useObjectUrl(imageBlob);
 
-  // Create data URL from ArrayBuffer — skip if content reference hasn't changed
+  // Only re-probe image dimensions when the ArrayBuffer reference actually changes.
   useEffect(() => {
     if (prevContentRef.current === content) return;
     prevContentRef.current = content;
+  }, [content]);
 
-    const blob = new Blob([content], { type: mimeType });
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      setImageUrl(dataUrl);
-      const img = new Image();
-      img.onload = () => setImageSize({ width: img.naturalWidth, height: img.naturalHeight });
-      img.onerror = () => setTldrawError(new Error('Failed to load image'));
-      img.src = dataUrl;
-    };
-    reader.onerror = () => setTldrawError(new Error('Failed to read image data'));
-    reader.readAsDataURL(blob);
-  }, [content, mimeType]);
+  useEffect(() => {
+    if (!imageUrl) {
+      return;
+    }
+
+    const img = new Image();
+    img.onload = () => setImageSize({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => setTldrawError(new Error('Failed to load image'));
+    img.src = imageUrl;
+  }, [imageUrl]);
 
   // Navigation handler
   useAnnotationNavigation({
@@ -228,10 +232,22 @@ export function ImageTldrawAdapter({
           const centerY = (y + height / 2) / 100 * imageSize.height;
           editor.centerOnPoint({ x: centerX, y: centerY });
         }
-        setTimeout(() => setHighlightedRegion(null), 3000);
+        if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+        highlightTimeoutRef.current = setTimeout(() => {
+          setHighlightedRegion(null);
+          highlightTimeoutRef.current = null;
+        }, 3000);
       },
     },
   });
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Find existing image annotation
   const imageAnnotation = useMemo(() => {
@@ -286,24 +302,42 @@ export function ImageTldrawAdapter({
       const backgroundId = createShapeId('background');
       const assetId: TLAssetId = AssetRecordType.createId('background-image');
 
-      if (!editor.getAsset(assetId)) {
+      const assetProps = {
+        name: fileName,
+        src: imageUrl,
+        w: imageSize.width,
+        h: imageSize.height,
+        mimeType,
+        isAnimated: false,
+      };
+      const existingAsset = editor.getAsset(assetId);
+
+      if (!existingAsset) {
         editor.createAssets([{
           id: assetId,
           type: 'image',
           typeName: 'asset',
-          props: {
-            name: fileName,
-            src: imageUrl,
-            w: imageSize.width,
-            h: imageSize.height,
-            mimeType: mimeType,
-            isAnimated: false,
-          },
+          props: assetProps,
           meta: {},
+        }]);
+      } else if (
+        existingAsset.type === 'image' &&
+        (
+          existingAsset.props.src !== imageUrl ||
+          existingAsset.props.w !== imageSize.width ||
+          existingAsset.props.h !== imageSize.height ||
+          existingAsset.props.mimeType !== mimeType
+        )
+      ) {
+        editor.updateAssets([{
+          id: assetId,
+          type: 'image',
+          props: assetProps,
         }]);
       }
 
-      if (!editor.getShape(backgroundId)) {
+      const existingBackground = editor.getShape(backgroundId) as TLImageShape | undefined;
+      if (!existingBackground) {
         editor.createShape<TLImageShape>({
           id: backgroundId,
           type: 'image',
@@ -312,9 +346,22 @@ export function ImageTldrawAdapter({
           isLocked: true,
           props: { assetId, w: imageSize.width, h: imageSize.height },
         });
-        editor.sendToBack([backgroundId]);
+      } else {
+        editor.updateShapes([{
+          id: backgroundId,
+          type: 'image',
+          x: 0,
+          y: 0,
+          isLocked: true,
+          props: {
+            assetId,
+            w: imageSize.width,
+            h: imageSize.height,
+          },
+        }]);
       }
 
+      editor.sendToBack([backgroundId]);
       imageSetupDoneRef.current = true;
       setIsReady(true);
     } catch (err) {
@@ -426,11 +473,12 @@ export function ImageTldrawAdapter({
       if (checkTimeoutRef.current) clearTimeout(checkTimeoutRef.current);
       checkTimeoutRef.current = setTimeout(() => {
         try {
-          const shapes = editor.getCurrentPageShapes();
           const backgroundId = createShapeId('background');
-          const hasBackground = shapes.some(s => s.id === backgroundId);
-          if (!hasBackground) {
-            console.warn('[ImageTldraw] Background image lost, recreating...');
+          const assetId: TLAssetId = AssetRecordType.createId('background-image');
+          const backgroundShape = editor.getShape(backgroundId);
+          const backgroundAsset = editor.getAsset(assetId);
+          if (!backgroundShape || !backgroundAsset) {
+            console.warn('[ImageTldraw] Background image asset/shape lost, recreating...');
             imageSetupDoneRef.current = false;
             setupBackground();
           }
@@ -477,7 +525,11 @@ export function ImageTldrawAdapter({
       const centerY = (target.y + target.height / 2) / 100 * imageSize.height;
       editor.centerOnPoint({ x: centerX, y: centerY });
       setHighlightedRegion({ x: target.x, y: target.y, width: target.width, height: target.height });
-      setTimeout(() => setHighlightedRegion(null), 3000);
+      if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+      highlightTimeoutRef.current = setTimeout(() => {
+        setHighlightedRegion(null);
+        highlightTimeoutRef.current = null;
+      }, 3000);
     }
   }, [editor, imageSize]);
 

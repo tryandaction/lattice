@@ -49,6 +49,7 @@ describe('ai-workbench-store', () => {
     useAiWorkbenchStore.setState({
       drafts: [],
       proposals: [],
+      highlightedProposalId: null,
     });
   });
 
@@ -61,6 +62,20 @@ describe('ai-workbench-store', () => {
     const proposal = useAiWorkbenchStore.getState().getProposal('proposal-1');
     expect(proposal?.status).toBe('pending');
     expect(proposal?.approvedWrites).toEqual([]);
+  });
+
+  it('highlights selection-origin plan proposals for workbench focus', () => {
+    useAiWorkbenchStore.getState().addProposal(createProposal({
+      origin: {
+        kind: 'selection-ai',
+        mode: 'plan',
+        sourceKind: 'markdown',
+        sourceLabel: 'notes.md · 选区',
+        selectionPreview: 'selection preview',
+      },
+    }));
+
+    expect(useAiWorkbenchStore.getState().highlightedProposalId).toBe('proposal-1');
   });
 
   it('toggles proposal approvals and write selections', () => {

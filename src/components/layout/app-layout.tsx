@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { TOUCH_TARGET_MIN } from "@/lib/responsive";
 import { syncPlugins, updatePluginNetworkAllowlist } from "@/lib/plugins/runtime";
 import { resolveAppRoute } from "@/lib/app-route";
+import { getCollapsedSidebarPercent, getCollapsedSidebarPixelWidth } from "@/lib/layout-sidebar";
 import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot } from "lucide-react";
 import { AiContextDialog } from "@/components/ui/ai-context-dialog";
 import { PluginCommandDialog } from "@/components/ui/plugin-command-dialog";
@@ -93,6 +94,41 @@ function scheduleIdleTask(task: () => void, timeout = 2000): () => void {
   return () => window.clearTimeout(handle);
 }
 
+function CollapsedRailButton({
+  icon: Icon,
+  label,
+  title,
+  active = false,
+  onClick,
+}: {
+  icon: typeof Settings;
+  label: string;
+  title: string;
+  active?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "group relative flex h-10 w-10 items-center justify-center rounded-xl transition-all",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+        active
+          ? "bg-primary/10 text-primary shadow-sm"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+      )}
+      title={title}
+      aria-label={label}
+      aria-pressed={active}
+    >
+      <Icon className="h-4 w-4" />
+      <span className="pointer-events-none absolute left-full ml-2 hidden whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] text-foreground shadow-md group-hover:block">
+        {label}
+      </span>
+    </button>
+  );
+}
+
 /**
  * Main application layout with responsive support
  */
@@ -118,6 +154,9 @@ function AppLayoutContent() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [desktopSidebarSize, setDesktopSidebarSize] = useState(DESKTOP_SIDEBAR_DEFAULT);
+  const [desktopCollapsedSidebarSize, setDesktopCollapsedSidebarSize] = useState(() =>
+    typeof window === "undefined" ? getCollapsedSidebarPercent(1280) : getCollapsedSidebarPercent(window.innerWidth)
+  );
   const [desktopPanelSize, setDesktopPanelSize] = useState(DESKTOP_PANEL_DEFAULT);
   const [panelOpenInitialized, setPanelOpenInitialized] = useState(false);
   const [tabletSizes, setTabletSizes] = useState(() => [
@@ -243,6 +282,18 @@ function AppLayoutContent() {
     }
   }, [isMobile, setSidebarCollapsed]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const updateCollapsedSidebarSize = () => {
+      setDesktopCollapsedSidebarSize(getCollapsedSidebarPercent(window.innerWidth));
+    };
+
+    updateCollapsedSidebarSize();
+    window.addEventListener("resize", updateCollapsedSidebarSize);
+    return () => window.removeEventListener("resize", updateCollapsedSidebarSize);
+  }, []);
+
   useUnsavedWarning();
   usePluginShortcuts();
 
@@ -321,15 +372,15 @@ function AppLayoutContent() {
   const desktopGroupSizes = useMemo(() => {
     if (sidebarCollapsed) {
       return showPluginPanels
-        ? [100 - desktopPanelSize, desktopPanelSize]
-        : [100];
+        ? [desktopCollapsedSidebarSize, Math.max(20, 100 - desktopCollapsedSidebarSize - desktopPanelSize), desktopPanelSize]
+        : [desktopCollapsedSidebarSize, 100 - desktopCollapsedSidebarSize];
     }
     if (showPluginPanels) {
       const main = Math.max(20, 100 - desktopSidebarSize - desktopPanelSize);
       return [desktopSidebarSize, main, desktopPanelSize];
     }
     return [desktopSidebarSize, 100 - desktopSidebarSize];
-  }, [sidebarCollapsed, showPluginPanels, desktopSidebarSize, desktopPanelSize]);
+  }, [sidebarCollapsed, showPluginPanels, desktopSidebarSize, desktopCollapsedSidebarSize, desktopPanelSize]);
 
   const SidebarContent = (
     <>
@@ -603,8 +654,8 @@ function AppLayoutContent() {
         sizes={desktopGroupSizes}
         onSizesChange={(sizes) => {
             if (sidebarCollapsed) {
-              if (showPluginPanels && sizes[1]) {
-                const next = clampPanelSize(sizes[1]);
+              if (showPluginPanels && sizes[2]) {
+                const next = clampPanelSize(sizes[2]);
                 setDesktopPanelSize(next);
                 persistPanelSize(next);
               }
@@ -622,7 +673,75 @@ function AppLayoutContent() {
           }
         }}
       >
-        {!sidebarCollapsed && (
+        {sidebarCollapsed ? (
+          <ResizablePanel
+            index={0}
+            defaultSize={desktopCollapsedSidebarSize}
+            minSize={desktopCollapsedSidebarSize}
+            maxSize={desktopCollapsedSidebarSize}
+            className="bg-card/90 backdrop-blur-sm border-r border-border"
+            style={{ width: `${getCollapsedSidebarPixelWidth()}px` }}
+          >
+            <div className="flex h-full w-full flex-col items-center justify-between px-2 py-3">
+              <div className="flex w-full flex-col items-center gap-3">
+                <button
+                  onClick={toggleSidebar}
+                  className={cn(
+                    "flex h-10 w-10 items-center justify-center rounded-xl border border-border/70 bg-background/70",
+                    "text-muted-foreground hover:bg-accent hover:text-foreground transition-colors",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                  )}
+                  title={`${t("explorer.title")} (Ctrl+B)`}
+                  aria-label={t("explorer.title")}
+                >
+                  <PanelLeft className="h-4 w-4" />
+                </button>
+                <div className="flex min-h-[160px] flex-1 items-center justify-center rounded-xl border border-dashed border-border/70 bg-background/40 px-1">
+                  <span className="rotate-90 text-[11px] font-semibold tracking-[0.24em] text-muted-foreground/85">
+                    EXPLORER
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex w-full flex-col items-center gap-2 border-t border-border pt-3">
+                <CollapsedRailButton
+                  icon={Command}
+                  label={t("commands.open")}
+                  title={t("commands.open")}
+                  active={showCommands}
+                  onClick={() => setShowCommands(true)}
+                />
+                <CollapsedRailButton
+                  icon={PanelLeft}
+                  label={t("panels.open")}
+                  title={t("panels.open")}
+                  active={showPluginPanels}
+                  onClick={() => setShowPluginPanels(true)}
+                />
+                <CollapsedRailButton
+                  icon={Bot}
+                  label="AI Chat"
+                  title="AI Chat"
+                  active={aiChatOpen}
+                  onClick={() => useAiChatStore.getState().toggleOpen()}
+                />
+                <CollapsedRailButton
+                  icon={HelpCircle}
+                  label="实时预览指南"
+                  title="实时预览指南 (Ctrl+Shift+/)"
+                  onClick={openGuide}
+                />
+                <CollapsedRailButton
+                  icon={Settings}
+                  label={t("settings.title")}
+                  title={`${t("settings.title")} (Ctrl+,)`}
+                  active={showSettings}
+                  onClick={() => setShowSettings(true)}
+                />
+              </div>
+            </div>
+          </ResizablePanel>
+        ) : (
           <>
             <ResizablePanel
               index={0}
@@ -637,17 +756,17 @@ function AppLayoutContent() {
           </>
         )}
         <ResizablePanel
-          index={sidebarCollapsed ? 0 : 1}
-          defaultSize={sidebarCollapsed ? 100 : 100 - DESKTOP_SIDEBAR_DEFAULT}
+          index={1}
+          defaultSize={sidebarCollapsed ? 100 - desktopCollapsedSidebarSize : 100 - DESKTOP_SIDEBAR_DEFAULT}
           minSize={40}
         >
           <MainArea />
         </ResizablePanel>
         {showPluginPanels && (
           <>
-            <ResizableHandle withHandle index={sidebarCollapsed ? 0 : 1} />
+            <ResizableHandle withHandle index={1} />
             <ResizablePanel
-              index={sidebarCollapsed ? 1 : 2}
+              index={2}
               defaultSize={desktopPanelSize}
               minSize={DESKTOP_PANEL_MIN}
               maxSize={DESKTOP_PANEL_MAX}
@@ -658,71 +777,6 @@ function AppLayoutContent() {
         )}
       </ResizablePanelGroup>
       {aiChatOpen && <AiChatPanel />}
-      {sidebarCollapsed && (
-        <div className={cn(
-          "fixed left-0 top-0 z-50 h-full w-12",
-          "flex flex-col items-center",
-          "bg-card/80 backdrop-blur-sm border-r border-border"
-        )}>
-          <button
-            onClick={toggleSidebar}
-            className={cn(
-              "flex-1 w-full flex items-center justify-center",
-              "hover:bg-accent transition-colors",
-              "text-muted-foreground hover:text-foreground"
-            )}
-            title={`${t("explorer.title")} (Ctrl+B)`}
-          >
-            <span className="rotate-90 text-xs font-medium tracking-wider">EXPLORER</span>
-          </button>
-          <div className="border-t border-border p-2 w-full flex flex-col items-center gap-1">
-            <button
-              onClick={() => setShowCommands(true)}
-              className={cn(
-                "p-2 rounded-md",
-                "text-muted-foreground",
-                "hover:bg-muted hover:text-foreground transition-colors"
-              )}
-              title={t("commands.open")}
-            >
-              <Command className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setShowPluginPanels(true)}
-              className={cn(
-                "p-2 rounded-md",
-                "text-muted-foreground",
-                "hover:bg-muted hover:text-foreground transition-colors"
-              )}
-              title={t("panels.open")}
-            >
-              <PanelLeft className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => useAiChatStore.getState().toggleOpen()}
-              className={cn(
-                "p-2 rounded-md",
-                "text-muted-foreground",
-                "hover:bg-muted hover:text-foreground transition-colors"
-              )}
-              title="AI Chat"
-            >
-              <Bot className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setShowSettings(true)}
-              className={cn(
-                "p-2 rounded-md",
-                "text-muted-foreground",
-                "hover:bg-muted hover:text-foreground transition-colors"
-              )}
-              title={`${t("settings.title")} (Ctrl+,)`}
-            >
-              <Settings className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      )}
       <PluginStatusBarSlot />
       <Dialogs
         showSettings={showSettings}

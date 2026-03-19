@@ -24,7 +24,7 @@ function createProvider(id: AiProvider['id'], name: string): AiProvider {
     id,
     name,
     isConfigured: () => true,
-    testConnection: async () => true,
+    testConnection: async () => ({ ok: true }),
     getAvailableModels: async () => [],
     generate: async () => ({ text: 'ok', model: 'stub-model' }),
     stream: async function* () {

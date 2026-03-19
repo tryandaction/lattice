@@ -1,16 +1,24 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import mammoth from "mammoth";
 import DOMPurify from "dompurify";
 import { Loader2, AlertTriangle, FileText } from "lucide-react";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { emitVaultChange } from "@/lib/plugins/runtime";
+import type { PaneId } from "@/types/layout";
+import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
+import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
+import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
+import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
+import { buildBlockSelectionContext } from "@/lib/ai/selection-dom";
 
 interface WordViewerProps {
   content: ArrayBuffer;
   fileName: string;
+  paneId?: PaneId;
+  filePath?: string;
 }
 
 /**
@@ -68,15 +76,22 @@ function htmlToMarkdown(html: string): string {
  * Renders Word documents (.doc, .docx) using mammoth.js
  * Includes "Import as Note" functionality
  */
-export function WordViewer({ content, fileName }: WordViewerProps) {
+export function WordViewer({ content, fileName, paneId, filePath }: WordViewerProps) {
   const [htmlContent, setHtmlContent] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [selectionHubState, setSelectionHubState] = useState<{
+    context: SelectionContext;
+    mode: SelectionAiMode;
+    returnFocusTo?: HTMLElement | null;
+  } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const { createFile } = useFileSystem();
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
+  const markdownSnapshot = useMemo(() => htmlToMarkdown(htmlContent || ""), [htmlContent]);
 
   useEffect(() => {
     async function convertDocument() {
@@ -131,6 +146,24 @@ export function WordViewer({ content, fileName }: WordViewerProps) {
     }
   }, [htmlContent, fileName, createFile, openFileInActivePane]);
 
+  const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
+    containerRef,
+    ({ text, eventTarget }) => {
+      if (!paneId) return null;
+      const blockContext = buildBlockSelectionContext(eventTarget);
+      return createSelectionContext({
+        sourceKind: "word",
+        paneId,
+        fileName,
+        filePath,
+        selectedText: text,
+        documentText: markdownSnapshot,
+        contextText: blockContext.contextText,
+        blockLabel: blockContext.blockLabel,
+      });
+    }
+  );
+
   if (isLoading) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-8">
@@ -152,7 +185,18 @@ export function WordViewer({ content, fileName }: WordViewerProps) {
   }
 
   return (
-    <div className="h-full overflow-auto">
+    <div ref={containerRef} className="h-full overflow-auto">
+      <SelectionContextMenu
+        state={selectionMenuState}
+        onClose={closeSelectionMenu}
+        onOpenHub={(context, mode, returnFocusTo) => setSelectionHubState({ context, mode, returnFocusTo })}
+      />
+      <SelectionAiHub
+        context={selectionHubState?.context ?? null}
+        initialMode={selectionHubState?.mode ?? "chat"}
+        returnFocusTo={selectionHubState?.returnFocusTo}
+        onClose={() => setSelectionHubState(null)}
+      />
       {/* File header */}
       <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-muted/90 px-4 py-2 backdrop-blur">
         <span className="text-sm font-medium text-foreground">{fileName}</span>

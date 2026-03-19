@@ -180,6 +180,13 @@ describe('Property 2: File Identifier Determinism', () => {
     );
   });
 
+  it('same filename in different directories produces different fileIds', () => {
+    const first = generateFileId('papers/figure.png');
+    const second = generateFileId('archive/figure.png');
+
+    expect(first).not.toBe(second);
+  });
+
   it('getAnnotationFilePath produces valid path', () => {
     fc.assert(
       fc.property(filePathArb, (path) => {

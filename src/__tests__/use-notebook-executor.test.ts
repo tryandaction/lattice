@@ -4,20 +4,114 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useNotebookExecutor } from '@/hooks/use-notebook-executor';
-import { PyodideKernel } from '@/lib/kernel/pyodide-kernel';
+import { useNotebookExecutor, type CellExecutionResult } from '@/hooks/use-notebook-executor';
+
+class FakeLegacyKernel {
+  private initialized = false;
+  private executionCount = 0;
+  private pendingInterruptResolve: ((value: {
+    outputs: unknown[];
+    executionCount: number;
+    status: string;
+    executionTime: number;
+  }) => void) | null = null;
+
+  async initialize(): Promise<void> {
+    this.initialized = true;
+  }
+
+  async execute(code: string): Promise<{
+    outputs: unknown[];
+    executionCount: number;
+    status: string;
+    executionTime: number;
+  }> {
+    if (!this.initialized) {
+      throw new Error('Kernel not initialized');
+    }
+
+    this.executionCount += 1;
+    const currentExecutionCount = this.executionCount;
+
+    if (code.includes('time.sleep')) {
+      return new Promise((resolve) => {
+        this.pendingInterruptResolve = resolve;
+      });
+    }
+
+    if (code.includes('1 / 0')) {
+      return {
+        outputs: [
+          {
+            type: 'error',
+            content: {
+              ename: 'ZeroDivisionError',
+              evalue: 'division by zero',
+              traceback: ['division by zero'],
+            },
+          },
+        ],
+        executionCount: currentExecutionCount,
+        status: 'error',
+        executionTime: 1,
+      };
+    }
+
+    return {
+      outputs: [
+        {
+          type: 'stream',
+          content: {
+            name: 'stdout',
+            text: `${code}\n`,
+          },
+        },
+      ],
+      executionCount: currentExecutionCount,
+      status: 'ok',
+      executionTime: 1,
+    };
+  }
+
+  async interrupt(): Promise<void> {
+    this.pendingInterruptResolve?.({
+      outputs: [
+        {
+          type: 'error',
+          content: {
+            ename: 'InterruptedError',
+            evalue: 'Execution interrupted',
+            traceback: ['Execution interrupted'],
+          },
+        },
+      ],
+      executionCount: this.executionCount,
+      status: 'error',
+      executionTime: 1,
+    });
+    this.pendingInterruptResolve = null;
+  }
+
+  async restart(): Promise<void> {
+    this.executionCount = 0;
+    this.pendingInterruptResolve = null;
+  }
+
+  async shutdown(): Promise<void> {
+    this.pendingInterruptResolve = null;
+    this.initialized = false;
+  }
+}
 
 describe('useNotebookExecutor', () => {
-  let kernel: PyodideKernel;
+  let kernel: FakeLegacyKernel;
 
   beforeEach(() => {
-    kernel = new PyodideKernel();
+    kernel = new FakeLegacyKernel();
   });
 
   afterEach(async () => {
-    if (kernel) {
-      await kernel.shutdown();
-    }
+    await kernel.shutdown();
   });
 
   describe('初始化', () => {
@@ -44,16 +138,17 @@ describe('useNotebookExecutor', () => {
         await kernel.initialize();
       });
 
-      let executionResult: any;
+      let executionResult: CellExecutionResult | null = null;
 
       await act(async () => {
         executionResult = await result.current.executeCell('cell-1', 'print("test")');
       });
 
-      expect(executionResult.cellId).toBe('cell-1');
-      expect(executionResult.success).toBe(true);
-      expect(executionResult.outputs.length).toBeGreaterThan(0);
-    }, 30000);
+      expect(executionResult).not.toBeNull();
+      expect(executionResult!.cellId).toBe('cell-1');
+      expect(executionResult!.success).toBe(true);
+      expect(executionResult!.outputs.length).toBeGreaterThan(0);
+    });
 
     it('应该处理执行错误', async () => {
       const { result } = renderHook(() => useNotebookExecutor({ kernel }));
@@ -62,28 +157,30 @@ describe('useNotebookExecutor', () => {
         await kernel.initialize();
       });
 
-      let executionResult: any;
+      let executionResult: CellExecutionResult | null = null;
 
       await act(async () => {
         executionResult = await result.current.executeCell('cell-1', '1 / 0');
       });
 
-      expect(executionResult.cellId).toBe('cell-1');
-      expect(executionResult.success).toBe(false);
-      expect(executionResult.outputs.some((o: any) => o.type === 'error')).toBe(true);
-    }, 30000);
+      expect(executionResult).not.toBeNull();
+      expect(executionResult!.cellId).toBe('cell-1');
+      expect(executionResult!.success).toBe(false);
+      expect(executionResult!.outputs.some((o: any) => o.type === 'error')).toBe(true);
+    });
 
     it('应该在没有 kernel 时返回错误', async () => {
       const { result } = renderHook(() => useNotebookExecutor());
 
-      let executionResult: any;
+      let executionResult: CellExecutionResult | null = null;
 
       await act(async () => {
         executionResult = await result.current.executeCell('cell-1', 'print("test")');
       });
 
-      expect(executionResult.success).toBe(false);
-      expect(executionResult.outputs[0].type).toBe('error');
+      expect(executionResult).not.toBeNull();
+      expect(executionResult!.success).toBe(false);
+      expect((executionResult!.outputs[0] as any).type).toBe('error');
     });
   });
 
@@ -101,15 +198,15 @@ describe('useNotebookExecutor', () => {
         { id: 'cell-3', source: 'print(x + y)', type: 'code' },
       ];
 
-      let results: any;
+      let results: Awaited<ReturnType<typeof result.current.runAll>> = [];
 
       await act(async () => {
         results = await result.current.runAll(cells);
       });
 
       expect(results).toHaveLength(3);
-      expect(results.every((r: any) => r.success)).toBe(true);
-    }, 30000);
+      expect(results.every((r) => r.success)).toBe(true);
+    });
 
     it('应该跳过 markdown 单元格', async () => {
       const { result } = renderHook(() => useNotebookExecutor({ kernel }));
@@ -123,7 +220,7 @@ describe('useNotebookExecutor', () => {
         { id: 'cell-2', source: 'print("test")', type: 'code' },
       ];
 
-      let results: any;
+      let results: Awaited<ReturnType<typeof result.current.runAll>> = [];
 
       await act(async () => {
         results = await result.current.runAll(cells);
@@ -131,7 +228,7 @@ describe('useNotebookExecutor', () => {
 
       expect(results).toHaveLength(1);
       expect(results[0].cellId).toBe('cell-2');
-    }, 30000);
+    });
 
     it('应该在错误时停止执行', async () => {
       const { result } = renderHook(() => useNotebookExecutor({ kernel }));
@@ -146,7 +243,7 @@ describe('useNotebookExecutor', () => {
         { id: 'cell-3', source: 'print("should not run")', type: 'code' },
       ];
 
-      let results: any;
+      let results: Awaited<ReturnType<typeof result.current.runAll>> = [];
 
       await act(async () => {
         results = await result.current.runAll(cells);
@@ -154,7 +251,7 @@ describe('useNotebookExecutor', () => {
 
       expect(results).toHaveLength(2);
       expect(results[1].success).toBe(false);
-    }, 30000);
+    });
   });
 
   describe('执行状态', () => {
@@ -177,13 +274,12 @@ describe('useNotebookExecutor', () => {
         await Promise.resolve();
       });
 
-      // 执行期间应该是 running
       await waitFor(() => {
         if (result.current.executionState === 'running') {
           expect(result.current.executionState).toBe('running');
         }
       }, { timeout: 1000 }).catch(() => {
-        // 如果执行太快，可能直接完成
+        // execution can complete immediately in the fake kernel path.
       });
 
       await act(async () => {
@@ -191,7 +287,7 @@ describe('useNotebookExecutor', () => {
       });
 
       expect(result.current.executionState).toBe('idle');
-    }, 30000);
+    });
   });
 
   describe('中断执行', () => {
@@ -206,15 +302,22 @@ describe('useNotebookExecutor', () => {
         { id: 'cell-1', source: 'import time; time.sleep(10)', type: 'code' },
       ];
 
+      let executePromise: Promise<unknown> | undefined;
       await act(async () => {
-        const executePromise = result.current.runAll(cells);
-        await new Promise(resolve => setTimeout(resolve, 100));
+        executePromise = result.current.runAll(cells);
+        await Promise.resolve();
+      });
+
+      await act(async () => {
         await result.current.interrupt();
+      });
+
+      await act(async () => {
         await executePromise;
       });
 
       expect(result.current.executionState).toBe('interrupted');
-    }, 30000);
+    });
   });
 
   describe('Kernel 重启', () => {
@@ -225,18 +328,16 @@ describe('useNotebookExecutor', () => {
         await kernel.initialize();
       });
 
-      // 执行一些代码
       await act(async () => {
         await result.current.executeCell('cell-1', 'x = 42');
       });
 
-      // 重启
       await act(async () => {
         await result.current.restartKernel();
       });
 
       expect(result.current.executionState).toBe('idle');
-    }, 60000);
+    });
   });
 
   describe('Kernel 切换', () => {
@@ -247,7 +348,7 @@ describe('useNotebookExecutor', () => {
         await kernel.initialize();
       });
 
-      const newKernel = new PyodideKernel();
+      const newKernel = new FakeLegacyKernel();
 
       await act(async () => {
         await result.current.switchKernel(newKernel);
@@ -256,7 +357,7 @@ describe('useNotebookExecutor', () => {
       expect(result.current.kernel).toBe(newKernel);
 
       await newKernel.shutdown();
-    }, 60000);
+    });
   });
 
   describe('回调函数', () => {
@@ -282,7 +383,7 @@ describe('useNotebookExecutor', () => {
       });
 
       expect(cellStarts).toContain('cell-1');
-    }, 30000);
+    });
 
     it('应该触发 onCellComplete 回调', async () => {
       const completions: string[] = [];
@@ -306,6 +407,6 @@ describe('useNotebookExecutor', () => {
       });
 
       expect(completions).toContain('cell-1');
-    }, 30000);
+    });
   });
 });

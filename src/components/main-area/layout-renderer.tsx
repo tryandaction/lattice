@@ -107,7 +107,7 @@ function SplitRenderer({ split, activePaneId }: SplitRendererProps) {
   return (
     <ResizablePanelGroup
       direction={split.direction}
-      className="h-full w-full"
+      className="h-full w-full min-h-0 min-w-0 overflow-hidden"
       sizes={split.sizes}
       onSizesChange={handleResize}
     >
@@ -143,7 +143,7 @@ function SplitChild({ child, size, activePaneId, isLast, index }: SplitChildProp
         index={index}
         defaultSize={size}
         minSize={10}
-        className="h-full"
+        className="h-full min-h-0 min-w-0 overflow-hidden"
       >
         <LayoutRenderer node={child} activePaneId={activePaneId} />
       </ResizablePanel>

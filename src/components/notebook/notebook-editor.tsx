@@ -14,6 +14,10 @@ import { useLinkNavigationStore } from "@/stores/link-navigation-store";
 import { isSameWorkspacePath } from "@/lib/link-router/path-utils";
 import { dirname, resolveWorkspaceFilePath } from "@/lib/runner/path-utils";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
+import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
+import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
+import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
 
 interface NotebookEditorProps {
   content: string;
@@ -103,6 +107,11 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [runMenuOpen, setRunMenuOpen] = useState(false);
   const [currentKernel, setCurrentKernel] = useState<KernelOption | null>(null);
+  const [selectionHubState, setSelectionHubState] = useState<{
+    context: SelectionContext;
+    mode: SelectionAiMode;
+    returnFocusTo?: HTMLElement | null;
+  } | null>(null);
   const [highlightedCellId, setHighlightedCellId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const cellElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -113,6 +122,27 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   const workspaceRootPath = useWorkspaceStore((workspace) => workspace.workspaceRootPath);
   const notebookAbsolutePath = resolveWorkspaceFilePath(workspaceRootPath, filePath, rootName);
   const notebookCwd = notebookAbsolutePath ? dirname(notebookAbsolutePath) : workspaceRootPath ?? undefined;
+  const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
+    containerRef,
+    ({ text, eventTarget }) => {
+      const sourceElement = eventTarget instanceof HTMLElement ? eventTarget : eventTarget instanceof Node ? eventTarget.parentElement : null;
+      const cellElement = sourceElement?.closest<HTMLElement>("[data-cell-id]");
+      const cellId = cellElement?.dataset.cellId;
+      const cell = state.cells.find((item) => item.id === cellId);
+      const cellIndex = cell ? state.cells.findIndex((item) => item.id === cell.id) : undefined;
+
+      return createSelectionContext({
+        sourceKind: "notebook",
+        paneId,
+        fileName,
+        filePath,
+        selectedText: text,
+        documentText: typeof cell?.source === "string" ? cell.source : undefined,
+        notebookCellId: cellId,
+        notebookCellIndex: typeof cellIndex === "number" && cellIndex >= 0 ? cellIndex : undefined,
+      });
+    }
+  );
 
   // Notebook executor for Run All functionality
   const {
@@ -353,6 +383,19 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
 
   return (
     <div ref={containerRef} className="h-full overflow-auto bg-background">
+      <SelectionContextMenu
+        state={selectionMenuState}
+        onClose={closeSelectionMenu}
+        onOpenHub={(context, mode, returnFocusTo) => setSelectionHubState({ context, mode, returnFocusTo })}
+      />
+
+      <SelectionAiHub
+        context={selectionHubState?.context ?? null}
+        initialMode={selectionHubState?.mode ?? "chat"}
+        returnFocusTo={selectionHubState?.returnFocusTo}
+        onClose={() => setSelectionHubState(null)}
+      />
+
       {/* Header */}
       <div className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur">
         <div className="flex items-center justify-between px-6 py-3">

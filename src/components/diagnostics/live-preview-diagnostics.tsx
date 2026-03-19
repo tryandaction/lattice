@@ -28,6 +28,7 @@ function isEscaped(text: string, index: number): boolean {
 
 export function LivePreviewDiagnostics() {
   const guideHref = resolveAppRoute("/guide");
+  const imageDiagnosticsHref = resolveAppRoute("/diagnostics/image-viewer");
   const [selectedId, setSelectedId] = useState(LIVE_PREVIEW_DIAGNOSTIC_FIXTURES[0].id);
   const selected = useMemo(
     () => LIVE_PREVIEW_DIAGNOSTIC_FIXTURES.find((file) => file.id === selectedId) ?? LIVE_PREVIEW_DIAGNOSTIC_FIXTURES[0],
@@ -147,6 +148,12 @@ export function LivePreviewDiagnostics() {
         </div>
 
         <div className="ml-auto flex items-center gap-2 text-xs">
+          <Link
+            href={imageDiagnosticsHref}
+            className="rounded border border-border px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          >
+            图片诊断
+          </Link>
           <Link
             href={guideHref}
             className="rounded border border-border px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"

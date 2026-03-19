@@ -40,6 +40,7 @@ import { useSearchParams } from 'next/navigation';
 import { useSettingsStore } from '@/stores/settings-store';
 import { imageResolverFacet } from './image-resolver-facet';
 import { setCodeBlockSourceMode, setMathSourceMode } from './source-mode';
+import { createLocalImageUrlCache, type LocalImageUrlCache } from './local-image-url-cache';
 
 // Helper: resolve a relative image path against the current file's directory
 function resolveImagePath(currentFilePath: string, imageUrl: string): string {
@@ -80,7 +81,16 @@ type LivePreviewViewWithHandlers = EditorView & {
   _unifiedInputFocusHandler?: () => void;
   _unifiedInputBlurHandler?: () => void;
   _mathEditorHandler?: (e: Event) => void;
+  _resolvedImageUrls?: LocalImageUrlCache;
 };
+
+function revokeResolvedImageUrls(view: LivePreviewViewWithHandlers | null): void {
+  const urls = view?._resolvedImageUrls;
+  if (!urls || urls.size() === 0) {
+    return;
+  }
+  urls.revokeAll();
+}
 
 type DebuggableEditorDom = HTMLElement & { cmView?: EditorView };
 type LivePreviewWindow = Window & { __latticeLivePreviewView?: EditorView };
@@ -429,6 +439,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         // Destroy existing view
         if (viewRef.current) {
           const existingView = viewRef.current;
+          revokeResolvedImageUrls(existingView as LivePreviewViewWithHandlers);
           const existingHandler = (existingView as LivePreviewViewWithHandlers)._unifiedInputFocusHandler;
           if (existingHandler) {
             existingView.dom.removeEventListener('focusin', existingHandler);
@@ -468,10 +479,14 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           highContrast
         );
 
+        let resolvedImageUrls: LocalImageUrlCache | undefined;
+
         // Add image resolver facet if rootHandle is available
         if (rootHandle) {
           const currentRootHandle = rootHandle;
           const currentFilePath = filePath;
+          const urlCache = createLocalImageUrlCache();
+          resolvedImageUrls = urlCache;
           const resolver = async (url: string): Promise<string | null> => {
             // Skip external URLs and data URLs
             if (!url || /^(https?:|data:|blob:)/.test(url)) return null;
@@ -480,9 +495,15 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
               const resolvedPath = currentFilePath
                 ? resolveImagePath(currentFilePath, url)
                 : url.replace(/^\.\//, '');
+              const cachedUrl = urlCache.get(resolvedPath);
+              if (cachedUrl) {
+                return cachedUrl;
+              }
               const fileHandle = await resolveFileHandleFromRoot(currentRootHandle, resolvedPath);
               const file = await fileHandle.getFile();
-              return URL.createObjectURL(file);
+              const objectUrl = URL.createObjectURL(file);
+              urlCache.set(resolvedPath, objectUrl);
+              return objectUrl;
             } catch {
               return null;
             }
@@ -504,6 +525,9 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         });
 
         viewRef.current = view;
+        if (resolvedImageUrls) {
+          (view as LivePreviewViewWithHandlers)._resolvedImageUrls = resolvedImageUrls;
+        }
 
         // Expose view for debugging (document.querySelector('.cm-editor')?.cmView)
         exposeEditorView(view);
@@ -617,6 +641,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
       mounted = false;
       if (viewRef.current) {
         const existingView = viewRef.current;
+        revokeResolvedImageUrls(existingView as LivePreviewViewWithHandlers);
         const existingHandler = (existingView as LivePreviewViewWithHandlers)._unifiedInputFocusHandler;
         if (existingHandler) {
           existingView.dom.removeEventListener('focusin', existingHandler);

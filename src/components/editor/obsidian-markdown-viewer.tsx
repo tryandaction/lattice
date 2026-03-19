@@ -27,6 +27,8 @@ import {
 } from "lucide-react";
 import { useTextSelection } from "@/hooks/use-text-selection";
 import { AiInlineMenu } from "@/components/ai/ai-inline-menu";
+import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
+import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
 import type { ViewMode, OutlineItem } from "./codemirror/live-preview/types";
@@ -39,6 +41,8 @@ import { useLinkNavigationStore } from "@/stores/link-navigation-store";
 import { parseHeadings, buildOutlineTree } from "./codemirror/live-preview/markdown-parser";
 import type { PaneId } from "@/types/layout";
 import { MarkdownExportDialog } from "./markdown-export-dialog";
+import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
+import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 
 // Lazy load components
 const LivePreviewEditor = dynamic(
@@ -192,6 +196,11 @@ export function ObsidianMarkdownViewer({
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [showOutline, setShowOutline] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [selectionHubState, setSelectionHubState] = useState<{
+    context: SelectionContext;
+    mode: SelectionAiMode;
+    returnFocusTo?: HTMLElement | null;
+  } | null>(null);
   const [activeHeading, setActiveHeading] = useState<number | undefined>();
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<LivePreviewEditorRef>(null);
@@ -203,6 +212,17 @@ export function ObsidianMarkdownViewer({
   useEffect(() => { localContentRef.current = localContent; }, [localContent]);
   useEffect(() => { isDirtyRef.current = isDirty; }, [isDirty]);
   const { selection: aiSelection, dismiss: dismissAiMenu } = useTextSelection(containerRef);
+  const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
+    containerRef,
+    ({ text }) => createSelectionContext({
+      sourceKind: "markdown",
+      paneId,
+      fileName,
+      filePath,
+      selectedText: text,
+      documentText: localContentRef.current,
+    })
+  );
   const saveEditorState = useContentCacheStore((state) => state.saveEditorState);
   const getEditorState = useContentCacheStore((state) => state.getEditorState);
   const pendingNavigation = useLinkNavigationStore((state) => state.pendingByPane[paneId]);
@@ -478,6 +498,19 @@ export function ObsidianMarkdownViewer({
           onClose={dismissAiMenu}
         />
       )}
+
+      <SelectionContextMenu
+        state={selectionMenuState}
+        onClose={closeSelectionMenu}
+        onOpenHub={(context, mode, returnFocusTo) => setSelectionHubState({ context, mode, returnFocusTo })}
+      />
+
+      <SelectionAiHub
+        context={selectionHubState?.context ?? null}
+        initialMode={selectionHubState?.mode ?? "chat"}
+        returnFocusTo={selectionHubState?.returnFocusTo}
+        onClose={() => setSelectionHubState(null)}
+      />
 
       <MarkdownExportDialog
         isOpen={showExportDialog}

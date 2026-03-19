@@ -50,7 +50,7 @@ export async function initKeyStorage(): Promise<void> {
   }
 
   // Pre-load keys into cache for synchronous access
-  const providers: AiProviderId[] = ['openai', 'anthropic', 'google', 'ollama'];
+  const providers: AiProviderId[] = ['openai', 'anthropic', 'google', 'ollama', 'deepseek', 'moonshot', 'zhipu', 'custom'];
   for (const provider of providers) {
     const key = await loadKey(provider);
     if (key) keyCache.set(provider, key);
@@ -64,7 +64,7 @@ export async function initKeyStorage(): Promise<void> {
 
 async function migrateFromLocalStorage(): Promise<void> {
   if (typeof localStorage === 'undefined') return;
-  const providers: AiProviderId[] = ['openai', 'anthropic', 'google', 'ollama'];
+  const providers: AiProviderId[] = ['openai', 'anthropic', 'google', 'ollama', 'deepseek', 'moonshot', 'zhipu', 'custom'];
   for (const provider of providers) {
     const oldKey = localStorage.getItem(`${KEY_PREFIX}${provider}`);
     if (oldKey && !keyCache.has(provider)) {
@@ -88,7 +88,8 @@ async function loadKey(provider: AiProviderId): Promise<string> {
   const stored = sessionStorage.getItem(`${KEY_PREFIX}${provider}`);
   if (stored) return deobfuscate(stored);
   // Fallback: check localStorage for legacy keys
-  return localStorage.getItem(`${KEY_PREFIX}${provider}`) ?? '';
+  const persisted = localStorage.getItem(`${KEY_PREFIX}${provider}`);
+  return persisted ? deobfuscate(persisted) : '';
 }
 
 async function loadBaseUrl(provider: AiProviderId): Promise<string> {

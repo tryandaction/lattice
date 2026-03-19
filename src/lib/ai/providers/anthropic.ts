@@ -92,6 +92,9 @@ export const anthropicProvider: AiProvider = {
   isConfigured: () => !!getApiKey(),
 
   testConnection: async () => {
+    if (!getApiKey()) {
+      return { ok: false, message: '请先填写 Anthropic API Key。' };
+    }
     try {
       const res = await fetch(`${getBaseUrl()}/v1/messages`, {
         method: 'POST',
@@ -107,9 +110,11 @@ export const anthropicProvider: AiProvider = {
           max_tokens: 1,
         }),
       });
-      return res.ok;
-    } catch {
-      return false;
+      return res.ok
+        ? { ok: true, message: 'Anthropic 连接成功。' }
+        : { ok: false, message: `Anthropic 连接失败：${res.status}` };
+    } catch (error) {
+      return { ok: false, message: `Anthropic 网络连接失败：${error instanceof Error ? error.message : String(error)}` };
     }
   },
 

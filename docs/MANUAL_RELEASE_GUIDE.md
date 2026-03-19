@@ -64,7 +64,12 @@ npm run tauri:build
 - `.py` 文件可以在桌面端使用本地 Python 运行
 - Notebook 单元在桌面端可以连续运行并保留上一个单元的变量
 - PDF 放大、缩小、适宽不会跳回第一页
+- 分屏打开两个 PDF 时，`Ctrl+滚轮` / 缩放快捷键只作用于当前 pane
+- 分屏收缩后，右侧 pane 内容不会超出屏幕边界
+- 在同一窗口内切换到其他已打开文件再切回，PDF 阅读进度与缩放状态仍能恢复
 - PDF 文本选区显示为淡蓝色
+- Selection AI Hub 能区分 `快速问答 / 深度分析 / 计划生成`
+- Selection AI Hub 支持最近模式、starter templates、最近 prompt 历史和键盘快捷键
 - Markdown 编辑器可以直接导出 `.docx` 与 `.pdf`
 - Markdown 导出的 `clean` / `appendix` / `study-note` 模式可正常工作
 - Markdown 导出的“文档版式”与“当前渲染视图”都能正常出文件

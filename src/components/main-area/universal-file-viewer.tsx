@@ -215,7 +215,7 @@ function FileViewer({
         );
       }
       // Fallback to read-only renderer if no onChange handler
-      return <MarkdownRenderer key={viewerKey} content={normalizedContent} fileName={fileName} />;
+      return <MarkdownRenderer key={viewerKey} content={normalizedContent} fileName={fileName} paneId={paneId} filePath={filePath} />;
     }
     case "pdf":
       // Use PDFHighlighterAdapter if we have file handles for annotation support
@@ -227,6 +227,7 @@ function FileViewer({
             fileHandle={fileHandle}
             rootHandle={rootHandle}
             paneId={paneId}
+            fileId={fileId ?? fileName}
             filePath={filePath ?? fileName}
           />
         );
@@ -262,7 +263,7 @@ function FileViewer({
         );
       }
       // Fallback to read-only renderer
-      return <JupyterRenderer content={notebookContent} fileName={fileName} />;
+      return <JupyterRenderer content={notebookContent} fileName={fileName} paneId={paneId} filePath={filePath ?? fileName} />;
     }
     case "code": {
       // Ensure content is a string for code editors
@@ -293,10 +294,10 @@ function FileViewer({
         );
       }
       // Fallback to read-only CodeReader for non-editable code files
-      return <CodeReader content={codeContent} fileName={fileName} />;
+      return <CodeReader content={codeContent} fileName={fileName} paneId={paneId} filePath={filePath ?? fileName} />;
     }
     case "word":
-      return <WordViewer content={content as ArrayBuffer} fileName={fileName} />;
+      return <WordViewer content={content as ArrayBuffer} fileName={fileName} paneId={paneId} filePath={filePath ?? fileName} />;
     case "powerpoint":
       return <PowerPointViewer content={content as ArrayBuffer} fileName={fileName} />;
     case "html": {
@@ -313,7 +314,7 @@ function FileViewer({
       } else {
         htmlContent = content;
       }
-      return <HTMLViewer content={htmlContent} fileName={fileName} />;
+      return <HTMLViewer content={htmlContent} fileName={fileName} paneId={paneId} filePath={filePath ?? fileName} />;
     }
     case "image":
       // Use ImageTldrawAdapter if we have file handles for annotation support
@@ -326,6 +327,7 @@ function FileViewer({
             mimeType={getImageMimeType(extension)}
             fileHandle={fileHandle}
             rootHandle={rootHandle}
+            filePath={filePath}
           />
         );
       }
@@ -430,7 +432,7 @@ export function UniversalFileViewer({
   const rendererType = getRendererForExtension(extension);
 
   return (
-    <div className="h-full overflow-auto bg-background">
+    <div className="h-full min-h-0 min-w-0 overflow-hidden bg-background">
       <FileViewer
         content={content}
         fileName={fileName}

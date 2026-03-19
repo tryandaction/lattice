@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 改进 (2026-03-18)
+- **Selection AI Hub Phase 2 产品化深化**
+  - ✅ 新增独立 `selection-ai-store`，记住最近使用模式与轻量 prompt 历史
+  - ✅ Selection AI Hub 现已明确区分 `快速问答 / 深度分析 / 计划生成`
+  - ✅ 每个模式新增独立说明、执行去向、starter templates、最近 prompt 历史与快捷键
+  - ✅ Selection AI 结果现已写入结构化 `origin` metadata，在 Chat / Workbench 中可识别来源
+  - ✅ `Agent` 结果会自动衔接 Evidence Panel，`Plan` 结果会直接高亮对应 proposal
+- **SelectionContext 与 EvidenceRef 精细化**
+  - ✅ `SelectionSourceKind` 补齐 `html` / `word`
+  - ✅ `SelectionContext` 新增 `anchor` / `contextSummary`
+  - ✅ `EvidenceRef` 新增可选 `anchor` 元数据，支持 `lineStart/lineEnd`、`cellId/cellIndex`、`page/rects/snippet`、`blockLabel`
+  - ✅ 代码编辑器现已提供真实选区行范围，Code 选区 evidence 改为 `#line=start-end`
+  - ✅ Notebook 选区同时保留 `cell id + cell index`
+  - ✅ PDF 选区现已带出 `page + rects + snippet` 锚点，而不再只保留 page 级 evidence
+  - ✅ HTML / Word 选区现已提取最近 block/heading 与邻近上下文
+- **PDF / 分屏阅读稳定性修复**
+  - ✅ 修复分屏时 pane 宽度收缩后内容向右溢出的布局问题，右侧阅读区不再被挤出屏幕
+  - ✅ PDF 的 `Ctrl+滚轮` 与缩放快捷键现已按 pane 作用域生效，不会再让两个分屏同时缩放
+  - ✅ PDF 在放大、缩小、适宽、适页以及窗口尺寸变化时，会尽量保持当前阅读位置
+  - ✅ PDF 阅读状态现已按 tab 缓存：切到其他文件再切回，不会自动跳回第一页
+- **图片显示稳定性修复**
+  - ✅ Image Viewer 改为显式管理对象 URL 生命周期，避免图片资源在显示后被过早释放
+  - ✅ Image Tldraw Adapter 现会校验并自动修复背景图片 asset / shape，一并覆盖“图片显示几秒后消失”的高风险链路
+  - ✅ 新增 `/diagnostics/image-viewer` 诊断页，支持心跳检测、强制重渲染和真实页面图片稳定性巡检
+- **资源 URL 生命周期统一**
+  - ✅ 新增通用 `useObjectUrl` hook，并统一接入图片 / HTML / PDF 资源型渲染器
+  - ✅ Markdown 本地图片 resolver 已补 URL 缓存与销毁回收，减少 blob URL 残留与潜在渲染异常
+- **批注 sidecar 隔离修复**
+  - ✅ `useAnnotationSystem` 现优先使用完整工作区路径派生 `fileId`，避免同名不同路径文件共享 annotation sidecar
+  - ✅ 新逻辑仍会兼容读取旧的“按文件名” sidecar，并在命中时规范化到新的路径型 `fileId`
+- **旧代码清理**
+  - ✅ 删除已退出主路径的 `src/components/ai/pdf-ai-panel.tsx`
+  - ✅ 删除未使用的 `src/hooks/use-pane-file-content.ts`
+- **旧入口收敛**
+  - ✅ 删除 PDF 主界面的重复 `PdfAiPanel` 主入口，统一回收至 Selection AI 主链路
+
+### QA 更新 (2026-03-18)
+- ✅ 新增 `selection-ui`、`selection-ai-store`、`selection-ai-hub`、`selection-context-menu`、`ai-chat-panel` 测试
+- ✅ `selection-context` 测试已扩展到 code line range、notebook id/index、pdf rect/snippet、html/word block context
+- ✅ `content-cache-store` 已补 viewState 回归测试，覆盖阅读进度恢复所需状态
+- ✅ 当前测试基线已更新为 `88` 个测试文件、`945` 个测试全绿
+
+### 文档更新 (2026-03-18)
+- 更新 `docs/RELEASE_NOTES.md`，补充 Selection AI Hub Phase 2 与 PDF/分屏阅读稳定性修复
+- 更新 `docs/roadmap.md`，同步当前阶段新增完成项
+- 更新 `docs/USER_GUIDE.md`，补充新的 Selection AI Hub 使用方式与 PDF 分屏阅读行为
+- 更新 `docs/DESKTOP_FEATURES.md`，补充分屏作用域、阅读状态恢复与桌面端 PDF 稳定性说明
+- 更新 `docs/MANUAL_RELEASE_GUIDE.md`，将分屏 PDF 行为与 Selection AI Hub 验收纳入发布检查
+
 ### 新增 (2026-03-17)
 - **Markdown 导出产品化**
   - ✅ Markdown 编辑器顶栏新增可发现的 Export 入口，用户可直接从产品 UI 导出当前文档
@@ -20,13 +69,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - ✅ `.docx` 导出采用结构化 HTML 导入链路，兼顾文档结构与可交付性
 
 ### 改进 (2026-03-17)
+- **桌面折叠侧边栏体验深化**
+  - ✅ 折叠侧边栏已从浮层覆盖改为真实参与桌面布局，不再遮挡标签栏和阅读区
+  - ✅ 折叠宽度策略已升级为“近似固定像素 + 百分比钳制”，不同桌面宽度下更稳定
+  - ✅ 折叠窄栏新增统一 rail button、激活态、帮助入口和更明确的 Explorer 标识区
+- **选区右键 AI Hub**
+  - ✅ Markdown / Code / Notebook / PDF 现已支持“选中文本后右键”的统一 AI 菜单
+  - ✅ 只读 Markdown / Code / Jupyter / HTML / Word 渲染器现也已接入同一套右键 AI 入口
+  - ✅ 右键菜单统一提供 `Chat` / `Agent` / `Plan` 三种模式入口
+  - ✅ 新增 Selection AI Hub：展示选区原文、来源位置、本地上下文，并支持补充问题后再发起 AI 动作
+  - ✅ `Chat` 模式直接进入 AI Chat，保留显式 evidence
+  - ✅ `Agent` 模式默认走更强的结构化分析提示，强调 `Conclusion / Evidence / Next Actions`
+  - ✅ `Plan` 模式直接进入 Workbench proposal 流程，而不是先绕普通聊天
+- **AI Provider 与本地模型配置收口**
+  - ✅ 修复 Web 端 API key 在刷新后从本地存储恢复错误的问题，避免看似已配置但实际 key 无效
+  - ✅ 修复 AI 设置中的 URL 配置与 provider 实际读取源不一致的问题，统一改为同一条安全存储链路
+  - ✅ Ollama 改为 OpenAI 兼容接口优先、原生 `/api/chat` 自动回退，提升本地版本兼容性
+  - ✅ AI 设置页新增统一的 Base URL、连接测试和手输模型 ID 能力
+  - ✅ 连接测试现在会返回更具体的失败原因，而不再只有“成功 / 失败”
+  - ✅ 新增常用兼容 API provider：DeepSeek、Kimi (Moonshot)、智谱 AI、Custom (OpenAI Compatible)
 - **导出基础设施统一**
   - ✅ 新增统一 Markdown 导出服务，复用现有 Web/Tauri `export-adapter` 保存链路
   - ✅ 导出时可自动内联本地 Markdown 图片，减少相对路径资源在成品文档中失效
   - ✅ 导出模型已支持统一汇入当前文件标注与显式证据引用，后续可继续扩展到更广的 Evidence 工作流
+- **AI 证据浏览与引用体验收口**
+  - ✅ `@引用` 两段式浏览新增“文件 / 片段”阶段提示，并支持从片段选择一键返回文件层
+  - ✅ `Conclusion / Evidence / Next Actions` 解析现已兼容同一行标题+内容，以及 `**Evidence:** ...` 这类模型常见输出
+  - ✅ Evidence Panel 在消息切换时会重置证据选择状态，消息摘要按钮支持展开/收起切换
+- **表格外围交互可达性**
+  - ✅ 表格外围句柄现已支持键盘聚焦显现
+  - ✅ 支持 `Shift+F10` / 菜单键打开外围操作面板，提升键盘可用性
 - **QA 门禁更新**
   - ✅ 本轮新增 Markdown 导出测试，覆盖附录预览、统一来源模型与 DOCX 包结构
-  - ✅ 当前完整门禁已更新为 `75` 个测试文件、`911` 个测试全绿
+  - ✅ 本轮新增 `structured-response` / `mention-browser` / 表格键盘交互测试补强
+  - ✅ 本轮新增 AI key storage 与 provider registry 测试，锁住 provider 重构的核心回归点
+  - ✅ 本轮新增 `selection-context` 测试，锁住选区 evidence 与默认模式提示
+  - ✅ 当前完整门禁已更新为 `78` 个测试文件、`920` 个测试全绿
   - ✅ 本轮顺序验证 `lint` / `typecheck` / `test:run` / `build` / `tauri:build` 全绿
 
 ### 清理 (2026-03-17)

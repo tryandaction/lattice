@@ -7,7 +7,6 @@ import {
   Trash2,
   ChevronDown,
   ChevronUp,
-  PlayCircle,
   Square,
   RotateCcw,
 } from "lucide-react";
@@ -22,6 +21,8 @@ import { OutputArea } from "@/components/notebook/output-area";
 import { KernelStatus } from "@/components/notebook/kernel-status";
 import { useTextSelection } from "@/hooks/use-text-selection";
 import { AiInlineMenu } from "@/components/ai/ai-inline-menu";
+import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
+import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
 import type { PaneId } from "@/types/layout";
 import { useLinkNavigationStore } from "@/stores/link-navigation-store";
 import { isSameWorkspacePath } from "@/lib/link-router/path-utils";
@@ -30,6 +31,8 @@ import { dirname, resolveWorkspaceFilePath } from "@/lib/runner/path-utils";
 import type { RunnerExecutionRequest } from "@/lib/runner/types";
 import { useExecutionRunner } from "@/hooks/use-execution-runner";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
+import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 
 interface CodeEditorViewerProps {
   content: string;
@@ -87,9 +90,49 @@ export function CodeEditorViewer({
   const [showOutput, setShowOutput] = useState(false);
   const currentContentRef = useRef(content);
   const editorRef = useRef<CodeEditorRef | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [selectionHubState, setSelectionHubState] = useState<{
+    context: SelectionContext;
+    mode: SelectionAiMode;
+    returnFocusTo?: HTMLElement | null;
+  } | null>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const { selection: aiSelection, dismiss: dismissAiMenu } = useTextSelection(editorContainerRef);
+  const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
+    editorContainerRef,
+    ({ text, inputOffsets, lineStart, lineEnd }) => createSelectionContext({
+      sourceKind: "code",
+      paneId,
+      fileName,
+      filePath,
+      selectedText: text,
+      documentText: currentContentRef.current,
+      selectionRange: inputOffsets
+        ? {
+            start: inputOffsets.start,
+            end: inputOffsets.end,
+            lineStart,
+            lineEnd,
+          }
+        : undefined,
+    }),
+    {
+      getSelectionSnapshot: () => {
+        const details = editorRef.current?.getSelectionDetails();
+        if (!details) {
+          return null;
+        }
+        return {
+          text: details.text,
+          inputOffsets: {
+            start: details.start,
+            end: details.end,
+          },
+          lineStart: details.lineStart,
+          lineEnd: details.lineEnd,
+        };
+      },
+    }
+  );
   const pendingNavigation = useLinkNavigationStore((state) => state.pendingByPane[paneId]);
   const consumePendingNavigation = useLinkNavigationStore((state) => state.consumePendingNavigation);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -232,9 +275,9 @@ export function CodeEditorViewer({
 
     clearOutputs();
     setShowOutput(true);
-    setContextMenu(null);
+    closeSelectionMenu();
     await run(request);
-  }, [buildRunRequest, clearOutputs, run]);
+  }, [buildRunRequest, clearOutputs, closeSelectionMenu, run]);
 
   const handleRerun = useCallback(async () => {
     if (!lastRequest) {
@@ -244,21 +287,6 @@ export function CodeEditorViewer({
     setShowOutput(true);
     await run(lastRequest);
   }, [clearOutputs, lastRequest, run]);
-
-  const handleContextMenu = useCallback((event: React.MouseEvent) => {
-    if (!runnerDefinition?.supportsInlineCode) return;
-    if (editorRef.current?.hasSelection()) {
-      event.preventDefault();
-      setContextMenu({ x: event.clientX, y: event.clientY });
-    }
-  }, [runnerDefinition]);
-
-  useEffect(() => {
-    if (!contextMenu) return;
-    const handleClick = () => setContextMenu(null);
-    document.addEventListener("click", handleClick);
-    return () => document.removeEventListener("click", handleClick);
-  }, [contextMenu]);
 
   const handleAiInsert = useCallback((text: string) => {
     const current = currentContentRef.current;
@@ -300,22 +328,25 @@ export function CodeEditorViewer({
         />
       )}
 
-      {contextMenu && runnerDefinition?.supportsInlineCode && (
-        <div
-          className="fixed z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[160px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button
-            onClick={() => void handleRunSelection()}
-            disabled={isRunning || isLoading}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <PlayCircle className="w-4 h-4" />
-            <span>Run Selection</span>
-          </button>
-        </div>
-      )}
+      <SelectionContextMenu
+        state={selectionMenuState}
+        onClose={closeSelectionMenu}
+        onOpenHub={(context, mode, returnFocusTo) => setSelectionHubState({ context, mode, returnFocusTo })}
+        extraActions={runnerDefinition?.supportsInlineCode ? [{
+          id: "run-selection",
+          label: "Run Selection",
+          onSelect: () => {
+            void handleRunSelection();
+          },
+        }] : []}
+      />
+
+      <SelectionAiHub
+        context={selectionHubState?.context ?? null}
+        initialMode={selectionHubState?.mode ?? "chat"}
+        returnFocusTo={selectionHubState?.returnFocusTo}
+        onClose={() => setSelectionHubState(null)}
+      />
 
       <div className="sticky top-0 z-10 border-b border-border bg-muted/90 px-4 py-2 backdrop-blur flex items-center justify-between">
         <div>
@@ -376,10 +407,7 @@ export function CodeEditorViewer({
         </div>
       </div>
 
-      <div
-        className={`flex-1 overflow-hidden ${showOutput && canRun ? "h-1/2" : ""}`}
-        onContextMenu={handleContextMenu}
-      >
+      <div className={`flex-1 overflow-hidden ${showOutput && canRun ? "h-1/2" : ""}`}>
         <CodeEditor
           initialValue={content}
           language={language}

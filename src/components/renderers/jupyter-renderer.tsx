@@ -1,13 +1,20 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import { MarkdownRenderer } from "./markdown-renderer";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import type { PaneId } from "@/types/layout";
+import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
+import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
+import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
+import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
 
 interface JupyterRendererProps {
   content: string;
   fileName: string;
+  paneId?: PaneId;
+  filePath?: string;
 }
 
 interface JupyterOutput {
@@ -24,6 +31,7 @@ interface JupyterOutput {
 }
 
 interface JupyterCell {
+  id?: string;
   cell_type: "markdown" | "code" | "raw";
   source: string | string[];
   outputs?: JupyterOutput[];
@@ -173,7 +181,13 @@ function NotebookCell({ cell, index }: { cell: JupyterCell; index: number }) {
  * Jupyter Notebook Renderer component
  * Renders .ipynb notebook files in read-only mode
  */
-export function JupyterRenderer({ content, fileName }: JupyterRendererProps) {
+export function JupyterRenderer({ content, fileName, paneId, filePath }: JupyterRendererProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [selectionHubState, setSelectionHubState] = useState<{
+    context: SelectionContext;
+    mode: SelectionAiMode;
+    returnFocusTo?: HTMLElement | null;
+  } | null>(null);
   const notebook = useMemo(() => {
     try {
       return JSON.parse(content) as JupyterNotebook;
@@ -181,6 +195,29 @@ export function JupyterRenderer({ content, fileName }: JupyterRendererProps) {
       return null;
     }
   }, [content]);
+
+  const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
+    containerRef,
+    ({ text, eventTarget }) => {
+      if (!paneId) return null;
+      const sourceElement = eventTarget instanceof HTMLElement ? eventTarget : eventTarget instanceof Node ? eventTarget.parentElement : null;
+      const cellElement = sourceElement?.closest<HTMLElement>("[data-cell-index]");
+      const cellIndex = Number(cellElement?.dataset.cellIndex ?? '');
+      const cell = notebook && Number.isInteger(cellIndex) && cellIndex >= 0 ? notebook.cells[cellIndex] : undefined;
+      const cellId = cell?.id ?? cellElement?.dataset.cellId;
+
+      return createSelectionContext({
+        sourceKind: "notebook",
+        paneId,
+        fileName,
+        filePath: filePath ?? fileName,
+        selectedText: text,
+        documentText: cell ? normalizeSource(cell.source) : content,
+        notebookCellId: cellId,
+        notebookCellIndex: Number.isInteger(cellIndex) && cellIndex >= 0 ? cellIndex : undefined,
+      });
+    }
+  );
 
   if (!notebook) {
     return (
@@ -194,7 +231,18 @@ export function JupyterRenderer({ content, fileName }: JupyterRendererProps) {
   }
 
   return (
-    <div className="mx-auto max-w-4xl p-8">
+    <div ref={containerRef} className="mx-auto max-w-4xl p-8">
+      <SelectionContextMenu
+        state={selectionMenuState}
+        onClose={closeSelectionMenu}
+        onOpenHub={(context, mode, returnFocusTo) => setSelectionHubState({ context, mode, returnFocusTo })}
+      />
+      <SelectionAiHub
+        context={selectionHubState?.context ?? null}
+        initialMode={selectionHubState?.mode ?? "chat"}
+        returnFocusTo={selectionHubState?.returnFocusTo}
+        onClose={() => setSelectionHubState(null)}
+      />
       {/* File header */}
       <div className="mb-6 border-b border-border pb-4">
         <h1 className="font-serif text-2xl font-bold text-foreground">{fileName}</h1>
@@ -206,7 +254,13 @@ export function JupyterRenderer({ content, fileName }: JupyterRendererProps) {
       {/* Cells */}
       <div className="space-y-6">
         {notebook.cells.map((cell, index) => (
-          <NotebookCell key={index} cell={cell} index={index} />
+          <div
+            key={cell.id ?? index}
+            data-cell-id={cell.id ?? `cell-${index}`}
+            data-cell-index={String(index)}
+          >
+            <NotebookCell cell={cell} index={index} />
+          </div>
         ))}
       </div>
     </div>

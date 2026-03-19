@@ -29,6 +29,7 @@ export interface JupyterOutput {
  * Jupyter Notebook cell (raw format from JSON)
  */
 export interface JupyterCell {
+  id?: string;
   cell_type: "markdown" | "code" | "raw";
   source: string | string[];
   metadata: Record<string, unknown>;
@@ -120,7 +121,7 @@ export function parseNotebook(jsonString: string): NotebookEditorState {
     const notebook = JSON.parse(jsonString) as JupyterNotebook;
     
     const cells: NotebookCell[] = notebook.cells.map((cell) => ({
-      id: generateCellId(),
+      id: cell.id || generateCellId(),
       cell_type: cell.cell_type === "raw" ? "code" : cell.cell_type,
       source: normalizeSource(cell.source),
       metadata: cell.metadata || {},
@@ -184,6 +185,7 @@ export function parseNotebook(jsonString: string): NotebookEditorState {
 export function serializeNotebook(state: NotebookEditorState): string {
   const notebook: JupyterNotebook = {
     cells: state.cells.map((cell) => ({
+      id: cell.id,
       cell_type: cell.cell_type,
       source: sourceToArray(cell.source),
       metadata: cell.metadata,

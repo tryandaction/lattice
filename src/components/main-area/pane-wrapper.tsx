@@ -386,7 +386,7 @@ export function PaneWrapper({
   return (
     <div
       className={cn(
-        "flex h-full flex-col overflow-hidden rounded-sm border transition-all duration-150",
+        "flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-sm border transition-all duration-150",
         isActive
           ? "border-blue-500/50 ring-2 ring-blue-500/30"
           : "border-border"
@@ -444,7 +444,7 @@ export function PaneWrapper({
       </div>
 
       {/* Content Area */}
-      <div className="relative flex-1 overflow-hidden">
+      <div className="relative flex-1 min-h-0 min-w-0 overflow-hidden">
         {/* Drop Zones - shown when dragging */}
         <DropZones paneId={paneId} isVisible={isDragging} />
         

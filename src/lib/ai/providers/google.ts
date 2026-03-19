@@ -1,6 +1,6 @@
 import type { AiProvider, AiModel, AiMessage, AiGenerateOptions, AiGenerateResult, AiStreamChunk } from '../types';
 import { getMessageText } from '../types';
-import { getApiKey as getKey } from '../key-storage';
+import { getApiKey as getKey, getBaseUrl as getUrl } from '../key-storage';
 
 const MODELS: AiModel[] = [
   { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'google', contextWindow: 1048576, supportsStreaming: true },
@@ -13,6 +13,10 @@ const MODELS: AiModel[] = [
 
 function getApiKey(): string {
   return getKey('google');
+}
+
+function getBaseUrl(): string {
+  return getUrl('google') || 'https://generativelanguage.googleapis.com';
 }
 
 function buildGeminiContents(messages: AiMessage[], systemPrompt?: string) {
@@ -52,13 +56,18 @@ export const googleProvider: AiProvider = {
   isConfigured: () => !!getApiKey(),
 
   testConnection: async () => {
+    if (!getApiKey()) {
+      return { ok: false, message: '请先填写 Google API Key。' };
+    }
     try {
       const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models?key=${getApiKey()}`
+        `${getBaseUrl()}/v1beta/models?key=${getApiKey()}`
       );
-      return res.ok;
-    } catch {
-      return false;
+      return res.ok
+        ? { ok: true, message: 'Google Gemini 连接成功。' }
+        : { ok: false, message: `Google Gemini 连接失败：${res.status}` };
+    } catch (error) {
+      return { ok: false, message: `Google Gemini 网络连接失败：${error instanceof Error ? error.message : String(error)}` };
     }
   },
 
@@ -80,7 +89,7 @@ export const googleProvider: AiProvider = {
     let res: Response;
     try {
       res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${getApiKey()}`,
+        `${getBaseUrl()}/v1beta/models/${model}:generateContent?key=${getApiKey()}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -129,7 +138,7 @@ export const googleProvider: AiProvider = {
     let res: Response;
     try {
       res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${getApiKey()}`,
+        `${getBaseUrl()}/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${getApiKey()}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

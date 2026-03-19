@@ -953,13 +953,25 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                       <select
                         className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
                         value={settings.aiProvider ?? ''}
-                        onChange={(e) => updateSetting('aiProvider', e.target.value || null)}
+                        onChange={(e) => {
+                          const value = e.target.value || null;
+                          updateSetting('aiProvider', value);
+                          if (value) {
+                            localStorage.setItem('lattice-ai-provider', value);
+                          } else {
+                            localStorage.removeItem('lattice-ai-provider');
+                          }
+                        }}
                       >
                         <option value="">Select a provider...</option>
                         <option value="openai">OpenAI</option>
                         <option value="anthropic">Anthropic</option>
                         <option value="google">Google Gemini</option>
                         <option value="ollama">Ollama (Local)</option>
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="moonshot">Kimi (Moonshot)</option>
+                        <option value="zhipu">智谱 AI</option>
+                        <option value="custom">Custom (OpenAI Compatible)</option>
                       </select>
                     </div>
 
@@ -968,27 +980,22 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                       <AiApiKeyInput provider={settings.aiProvider} />
                     )}
 
-                    {/* Ollama URL */}
-                    {settings.aiProvider === 'ollama' && (
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Ollama URL</label>
-                        <input
-                          type="text"
-                          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                          value={settings.aiOllamaUrl}
-                          onChange={(e) => updateSetting('aiOllamaUrl', e.target.value)}
-                          placeholder="http://localhost:11434"
-                        />
-                        {!isTauri() && (
-                          <div className="rounded-lg border border-amber-400/50 bg-amber-50/10 p-3 text-xs text-amber-700 dark:text-amber-400">
-                            <div className="font-semibold mb-1">⚠️ Web 版本需要配置 CORS</div>
-                            <p className="mb-1">从网页版访问本地 Ollama 时，浏览器会阻止跨域请求。请使用以下命令启动 Ollama：</p>
-                            <code className="block bg-black/10 dark:bg-white/10 rounded px-2 py-1 font-mono text-[11px] break-all">
-                              OLLAMA_ORIGINS=* ollama serve
-                            </code>
-                            <p className="mt-1 text-muted-foreground">或指定具体来源：<code className="font-mono">OLLAMA_ORIGINS=https://lattice-apq.pages.dev ollama serve</code></p>
-                          </div>
-                        )}
+                    {/* Base URL */}
+                    {settings.aiProvider && (
+                      <AiBaseUrlInput provider={settings.aiProvider} />
+                    )}
+
+                    {/* Ollama Help */}
+                    {settings.aiProvider === 'ollama' && !isTauri() && (
+                      <div className="rounded-lg border border-amber-400/50 bg-amber-50/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+                        <div className="font-semibold mb-1">⚠️ Web 版本访问本地 Ollama 需要 CORS</div>
+                        <p className="mb-1">推荐先确认本地地址为 <code className="font-mono">http://localhost:11434</code>，然后使用以下命令启动：</p>
+                        <code className="block bg-black/10 dark:bg-white/10 rounded px-2 py-1 font-mono text-[11px] break-all">
+                          OLLAMA_ORIGINS=* ollama serve
+                        </code>
+                        <p className="mt-1 text-muted-foreground">
+                          如需限制来源：<code className="font-mono">OLLAMA_ORIGINS=https://lattice-apq.pages.dev ollama serve</code>
+                        </p>
                       </div>
                     )}
 
@@ -998,6 +1005,11 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                         <label className="text-sm font-medium">Model</label>
                         <AiModelSelector provider={settings.aiProvider} currentModel={settings.aiModel} onSelect={(m) => updateSetting('aiModel', m)} />
                       </div>
+                    )}
+
+                    {/* Connection Test */}
+                    {settings.aiProvider && (
+                      <AiProviderConnectionTest provider={settings.aiProvider} />
                     )}
 
                     {/* Temperature */}
@@ -1332,10 +1344,19 @@ function PluginSettingsFields({ pluginId, fields }: { pluginId: string; fields: 
   );
 }
 
+const AI_PROVIDER_META: Record<string, { name: string; defaultBaseUrl?: string; apiKeyPlaceholder?: string }> = {
+  openai: { name: 'OpenAI', defaultBaseUrl: 'https://api.openai.com/v1', apiKeyPlaceholder: 'sk-...' },
+  anthropic: { name: 'Anthropic', defaultBaseUrl: 'https://api.anthropic.com', apiKeyPlaceholder: 'sk-ant-...' },
+  google: { name: 'Google Gemini', defaultBaseUrl: 'https://generativelanguage.googleapis.com', apiKeyPlaceholder: 'AIza...' },
+  ollama: { name: 'Ollama', defaultBaseUrl: 'http://localhost:11434' },
+  deepseek: { name: 'DeepSeek', defaultBaseUrl: 'https://api.deepseek.com', apiKeyPlaceholder: 'sk-...' },
+  moonshot: { name: 'Kimi (Moonshot)', defaultBaseUrl: 'https://api.moonshot.cn/v1', apiKeyPlaceholder: 'sk-...' },
+  zhipu: { name: '智谱 AI', defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4', apiKeyPlaceholder: '填写智谱 API Key' },
+  custom: { name: 'Custom (OpenAI Compatible)', defaultBaseUrl: 'https://api.example.com/v1', apiKeyPlaceholder: '填写兼容 API Key' },
+};
+
 function AiApiKeyInput({ provider }: { provider: string }) {
   const [key, setKey] = useState('');
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<'success' | 'fail' | null>(null);
 
   // Load key from secure storage on mount
   useEffect(() => {
@@ -1346,7 +1367,6 @@ function AiApiKeyInput({ provider }: { provider: string }) {
 
   const save = (value: string) => {
     setKey(value);
-    setTestResult(null);
     import('@/lib/ai/key-storage').then(({ setApiKey, clearApiKey }) => {
       if (value) {
         setApiKey(provider as import('@/lib/ai/types').AiProviderId, value);
@@ -1356,51 +1376,103 @@ function AiApiKeyInput({ provider }: { provider: string }) {
     }).catch(() => {});
   };
 
-  const test = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const { getProvider } = await import('@/lib/ai/providers');
-      const p = getProvider(provider as import('@/lib/ai/types').AiProviderId);
-      if (p) {
-        const ok = await p.testConnection();
-        setTestResult(ok ? 'success' : 'fail');
-      } else {
-        setTestResult('fail');
-      }
-    } catch {
-      setTestResult('fail');
-    }
-    setTesting(false);
-  };
+  return (
+    <div className="space-y-2">
+      <label className="text-sm font-medium">{AI_PROVIDER_META[provider]?.name ?? provider} API Key</label>
+      <input
+        type="password"
+        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
+        value={key}
+        onChange={(e) => save(e.target.value)}
+        placeholder={AI_PROVIDER_META[provider]?.apiKeyPlaceholder ?? 'sk-...'}
+      />
+      <p className="text-xs text-muted-foreground">
+        API Key 会持久化保存，并在调用 provider 时直接读取同一份安全存储。
+      </p>
+    </div>
+  );
+}
 
-  const providerNames: Record<string, string> = {
-    openai: 'OpenAI',
-    anthropic: 'Anthropic',
-    google: 'Google',
+function AiBaseUrlInput({ provider }: { provider: string }) {
+  const [url, setUrl] = useState('');
+
+  useEffect(() => {
+    import('@/lib/ai/key-storage').then(({ getBaseUrl }) => {
+      setUrl(getBaseUrl(provider as import('@/lib/ai/types').AiProviderId));
+    }).catch(() => {});
+  }, [provider]);
+
+  const save = (value: string) => {
+    setUrl(value);
+    import('@/lib/ai/key-storage').then(({ setBaseUrl }) => {
+      setBaseUrl(provider as import('@/lib/ai/types').AiProviderId, value.trim());
+    }).catch(() => {});
   };
 
   return (
     <div className="space-y-2">
-      <label className="text-sm font-medium">{providerNames[provider] ?? provider} API Key</label>
-      <div className="flex gap-2">
-        <input
-          type="password"
-          className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
-          value={key}
-          onChange={(e) => save(e.target.value)}
-          placeholder="sk-..."
-        />
+      <label className="text-sm font-medium">
+        {provider === 'ollama' ? 'Ollama Base URL' : 'API Base URL'}
+      </label>
+      <input
+        type="text"
+        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+        value={url}
+        onChange={(e) => save(e.target.value)}
+        placeholder={AI_PROVIDER_META[provider]?.defaultBaseUrl ?? ''}
+      />
+      <p className="text-xs text-muted-foreground">
+        留空将使用默认地址：{AI_PROVIDER_META[provider]?.defaultBaseUrl ?? 'provider default'}
+      </p>
+    </div>
+  );
+}
+
+function AiProviderConnectionTest({ provider }: { provider: string }) {
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const test = async () => {
+    setTesting(true);
+    setResult(null);
+    try {
+      const { getProvider } = await import('@/lib/ai/providers');
+      const resolved = getProvider(provider as import('@/lib/ai/types').AiProviderId);
+      if (!resolved) {
+        setResult({ ok: false, message: 'Provider 不存在。' });
+      } else {
+        const nextResult = await resolved.testConnection();
+        setResult({ ok: nextResult.ok, message: nextResult.message || (nextResult.ok ? '连接成功。' : '连接失败。') });
+      }
+    } catch (error) {
+      setResult({ ok: false, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium">连接测试</div>
+          <p className="text-xs text-muted-foreground mt-1">
+            检查当前 provider、API Key、Base URL 和网络配置是否真的可用。
+          </p>
+        </div>
         <button
           onClick={test}
-          disabled={!key || testing}
+          disabled={testing}
           className="rounded-md border border-border px-3 py-2 text-xs hover:bg-accent disabled:opacity-50 transition-colors"
         >
-          {testing ? 'Testing...' : 'Test'}
+          {testing ? 'Testing...' : 'Test Connection'}
         </button>
       </div>
-      {testResult === 'success' && <p className="text-xs text-green-600">Connection successful</p>}
-      {testResult === 'fail' && <p className="text-xs text-destructive">Connection failed — check your key</p>}
+      {result && (
+        <p className={cn('text-xs whitespace-pre-wrap', result.ok ? 'text-green-600' : 'text-destructive')}>
+          {result.message}
+        </p>
+      )}
     </div>
   );
 }
@@ -1427,19 +1499,26 @@ function AiModelSelector({ provider, currentModel, onSelect }: { provider: strin
     return () => { cancelled = true; };
   }, [provider]);
 
-  if (loading) return <p className="text-xs text-muted-foreground">Loading models...</p>;
-
   return (
-    <select
-      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-      value={currentModel ?? ''}
-      onChange={(e) => onSelect(e.target.value)}
-    >
-      <option value="">Auto (default)</option>
-      {models.map((m) => (
-        <option key={m.id} value={m.id}>{m.name}</option>
-      ))}
-    </select>
+    <div className="space-y-2">
+      <input
+        list={`ai-models-${provider}`}
+        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+        value={currentModel ?? ''}
+        onChange={(e) => onSelect(e.target.value)}
+        placeholder={loading ? 'Loading models...' : '输入模型 ID，或从建议列表中选择'}
+      />
+      <datalist id={`ai-models-${provider}`}>
+        {models.map((model) => (
+          <option key={model.id} value={model.id}>{model.name}</option>
+        ))}
+      </datalist>
+      <p className="text-xs text-muted-foreground">
+        {models.length > 0
+          ? `当前发现 ${models.length} 个可用模型，也支持直接手输模型 ID。`
+          : '当前未拉取到模型列表，仍可直接手输模型 ID。'}
+      </p>
+    </div>
   );
 }
 

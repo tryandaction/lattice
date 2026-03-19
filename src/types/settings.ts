@@ -46,8 +46,6 @@ export interface AppSettings {
   aiEnabled: boolean;
   aiProvider: string | null;
   aiModel: string | null;
-  aiOllamaUrl: string;
-  aiCustomEndpoint: string | null;
   aiTemperature: number;
   aiMaxTokens: number;
   aiStreamingEnabled: boolean;
@@ -73,8 +71,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   aiEnabled: false,
   aiProvider: null,
   aiModel: null,
-  aiOllamaUrl: 'http://localhost:11434',
-  aiCustomEndpoint: null,
   aiTemperature: 0.7,
   aiMaxTokens: 4096,
   aiStreamingEnabled: true,

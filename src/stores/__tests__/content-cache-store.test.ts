@@ -85,6 +85,38 @@ describe('Content Cache Store', () => {
       expect(unsaved).toContain('tab-3');
       expect(unsaved).not.toContain('tab-1');
     });
+
+    it('should preserve editor state view metadata for reading progress restoration', () => {
+      const store = useContentCacheStore.getState();
+      const tabId = 'pdf-tab';
+
+      store.saveEditorState(tabId, {
+        cursorPosition: 0,
+        scrollTop: 420,
+        scrollLeft: 36,
+        viewState: {
+          pdf: {
+            scale: 1.5,
+            zoomMode: 'fit-width',
+            showSidebar: true,
+          },
+        },
+      });
+
+      const editorState = store.getEditorState(tabId);
+      expect(editorState).toEqual({
+        cursorPosition: 0,
+        scrollTop: 420,
+        scrollLeft: 36,
+        viewState: {
+          pdf: {
+            scale: 1.5,
+            zoomMode: 'fit-width',
+            showSidebar: true,
+          },
+        },
+      });
+    });
   });
 
   describe('Property-Based Tests', () => {

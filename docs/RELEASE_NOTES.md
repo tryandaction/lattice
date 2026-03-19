@@ -4,6 +4,81 @@
 
 ## 本次重点
 
+### Selection AI Hub Phase 2
+
+- Selection AI Hub 现在不再只是基础弹层，而是明确区分：
+  - `快速问答`
+  - `深度分析`
+  - `计划生成`
+- Hub 会记住最近使用模式，并保存轻量 prompt 历史
+- 每种模式都新增：
+  - 独立说明
+  - 执行去向
+  - 3 个 starter templates
+  - 最近 prompt 历史
+  - 快捷键：`Alt+1/2/3` 切模式，`Ctrl/Cmd+Enter` 提交
+- Selection AI 结果现在会在 Chat / Workbench 中显示来源 badge，而不再混成普通聊天
+- `Agent` 结果会自动衔接 Evidence Panel
+- `Plan` 结果会直接高亮对应 proposal，并更快进入目标草稿链路
+
+### SelectionContext 精细化
+
+- 代码选区现在会保留真实 `lineStart/lineEnd`
+- Notebook 选区会同时记录 `cell id + cell index`
+- PDF 选区现在会带出 `page + rects + snippet` 锚点
+- HTML / Word 选区会抽取最近 block/heading 与邻近上下文
+- `SelectionContext -> EvidenceRef` 映射现在更统一，也更适合进入 Evidence / Workbench 主链路
+
+### PDF 分屏与阅读稳定性
+
+- 修复分屏后右侧 pane 内容被挤出屏幕、最右侧看不到的问题
+- 修复 PDF `Ctrl+滚轮` / 缩放快捷键在双 pane 下同时作用于两个 PDF 的问题
+- PDF 放大、缩小、适宽、适页时，现在会尽量保持当前阅读位置，不再无故跳回第一页
+- 只要窗口不关闭，切到别的文件再切回，PDF 的阅读进度和缩放状态会继续保留
+
+### 图片显示稳定性
+
+- 修复了“图片显示几秒后消失”的高优先级问题
+- Image Viewer 现在显式管理对象 URL 生命周期，避免资源被过早释放
+- Image Tldraw Adapter 现在会检查背景图片 asset 与 background shape 是否同时存在，并在异常时自动恢复
+- 新增 `/diagnostics/image-viewer` 诊断页，可持续观察图片心跳、当前 blob URL 与强制重渲染后的稳定性
+
+### 资源 URL 生命周期统一
+
+- 新增统一 `useObjectUrl` hook
+- 图片、HTML、PDF 等资源型渲染器开始复用同一套 object URL 生命周期管理
+- Markdown 本地图片解析已补 blob URL 缓存与销毁回收，降低隐藏资源泄漏和渲染异常风险
+
+### 批注 sidecar 隔离修复
+
+- `useAnnotationSystem` 现在优先使用完整工作区路径派生 `fileId`
+- 同名不同路径的 PDF / 图片文件，不会再共用同一份 annotation sidecar
+- 历史上按“文件名”生成的 sidecar 仍可被自动读取并规范化到新 `fileId`
+
+### 选区右键 AI Hub
+
+- Markdown、代码文件、Notebook、PDF 现在都支持“选中文本后右键”的统一 AI 菜单
+- 只读 Markdown、只读代码、只读 Jupyter、HTML、Word 预览也已并入同一套右键 AI 能力
+- 右键后可直接选择：
+  - `Chat`
+  - `Agent`
+  - `Plan`
+- 新增 Selection AI Hub，统一展示：
+  - 选中文本
+  - 来源文件/位置
+  - 本地上下文片段
+  - 当前模式下的补充问题输入框
+- `Chat` 模式会把当前选区作为显式上下文送进 AI Chat
+- `Agent` 模式会默认强调结构化分析输出：`Conclusion / Evidence / Next Actions`
+- `Plan` 模式会直接进入 Workbench proposal 流程，而不是先发送普通聊天
+
+### 桌面折叠侧边栏深化
+
+- 折叠态侧边栏现在不再以浮层方式覆盖主内容，而是作为真实窄栏参与桌面布局
+- 文件标签栏和阅读区现在会紧贴在窄栏右边，不再被遮住
+- 折叠宽度改为更稳定的“近似固定像素”策略，不同桌面尺寸下观感更一致
+- 折叠窄栏补上了统一快捷按钮、激活态和帮助入口
+
 ### Markdown 导出产品化
 
 - Markdown 编辑器顶栏新增可发现的 `Export` 入口，不再依赖零散脚本或隐藏能力
@@ -22,7 +97,10 @@
 ### QA 基线更新
 
 - 本轮新增 Markdown 导出测试，覆盖附录预览、统一来源模型与 DOCX 包结构
-- 当前完整测试门禁更新为 `75` 个测试文件、`911` 个测试全绿
+- 本轮补强了 `structured-response`、`mention-browser` 和 Markdown 表格键盘交互测试
+- 本轮新增 AI key storage 与 provider registry 测试，锁住 provider 配置链路回归
+- 本轮新增 Selection AI Hub / SelectionContext / ai-chat-panel 相关测试
+- 当前完整测试门禁更新为 `88` 个测试文件、`945` 个测试全绿
 - 本轮已顺序验证：
   - `npm run lint`
   - `npm run typecheck`
@@ -31,6 +109,19 @@
   - `npm run tauri:build`
 
 ### AI-Native 科研副驾 v1
+
+### AI Provider 配置升级
+
+- 修复了 Web 端 API key 刷新后恢复错误的问题，避免 provider 看似已配置但实际 key 已损坏
+- 修复了 AI 设置里的 URL 配置与 provider 实际读取源不一致的问题
+- Ollama 现在优先走 OpenAI 兼容接口，并在兼容接口不可用时自动回退到原生 `/api/chat`
+- AI 设置页新增统一的 Base URL 配置、连接测试与手输模型 ID
+- 连接测试会显示更具体的失败原因，便于判断是 API key、Base URL、网络还是 Ollama/CORS 问题
+- 新增常用 provider：
+  - DeepSeek
+  - Kimi (Moonshot)
+  - 智谱 AI
+  - Custom (OpenAI Compatible)
 
 - 统一 AI 入口到同一套 orchestrator，不再让 Chat、PDF、Notebook、选区动作各自维护独立 prompt 逻辑
 - 新增统一上下文图，覆盖文件、标题、PDF 批注、Notebook 单元、代码片段、工作区索引和当前选区
@@ -64,10 +155,13 @@
 - Evidence Panel 现已支持直接发起“保存草稿 / 生成计划”，证据浏览与知识沉淀开始接入同一入口
 - Evidence Panel 现已支持文件分组级草稿/计划动作，以及节点级证据草稿动作
 - Evidence Panel 现已支持多证据选择后的合并草稿与合并计划动作
+- `@引用` 两段式浏览现在会明确提示当前处于“选文件”还是“选片段”阶段，并支持从片段层快速返回文件层
+- Evidence 摘要按钮现在支持展开 / 收起切换，Evidence Panel 在切换消息时会重置上一条消息的临时多选状态
 - 新增统一 Evidence 面板，证据与上下文来源不再散落在消息卡片里
 - assistant 消息现在以“摘要入口 + 面板浏览”的方式查看证据，更接近产品化的知识浏览体验
 - assistant 回答现已支持结构化 `Conclusion / Evidence / Next Actions` 三段式结果视图
 - 当模型输出带有明确章节时，结果会以分区卡片渲染，而不再只是连续聊天内容
+- 结构化回答解析现在兼容 `**Evidence:** ...`、`结论：结果稳定。` 这种同一行标题+内容格式，减少模型输出抖动对 UI 的影响
 
 ### 桌面本地运行 v1
 
@@ -142,6 +236,7 @@
 
 - 表格不再默认让首格处于激活/高亮状态
 - 行列操作控件已移到表格外围，不再侵入表格内容区域
+- 现在外围句柄支持键盘聚焦显现，并可通过 `Shift+F10` / 菜单键打开外围操作面板
 - 现在通过外部句柄打开操作菜单，避免遮挡文字或压缩单元格空间
 
 ## 发布产物

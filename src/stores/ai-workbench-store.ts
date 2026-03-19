@@ -13,6 +13,7 @@ const AI_WORKBENCH_STORAGE_KEY = 'lattice-ai-workbench';
 interface AiWorkbenchState {
   drafts: AiDraftArtifact[];
   proposals: AiTaskProposal[];
+  highlightedProposalId: string | null;
 }
 
 interface AiWorkbenchActions {
@@ -29,6 +30,7 @@ interface AiWorkbenchActions {
   toggleProposalWriteSelection: (proposalId: string, targetPath: string) => void;
   markProposalDraftTargets: (proposalId: string, targetPaths: string[]) => void;
   clearProposal: (proposalId: string) => void;
+  clearHighlightedProposal: () => void;
   getDraft: (draftId: string) => AiDraftArtifact | null;
   getProposal: (proposalId: string) => AiTaskProposal | null;
   loadWorkbench: () => Promise<void>;
@@ -51,7 +53,7 @@ function normalizeProposal(proposal: AiTaskProposal): AiTaskProposal {
   };
 }
 
-function debouncedSave(state: AiWorkbenchState) {
+function debouncedSave(state: Pick<AiWorkbenchState, 'drafts' | 'proposals'>) {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     try {
@@ -69,6 +71,7 @@ function debouncedSave(state: AiWorkbenchState) {
 export const useAiWorkbenchStore = create<AiWorkbenchState & AiWorkbenchActions>((set, get) => ({
   drafts: [],
   proposals: [],
+  highlightedProposalId: null,
 
   createDraft: (draft) => {
     const id = generateId('draft');
@@ -139,6 +142,9 @@ export const useAiWorkbenchStore = create<AiWorkbenchState & AiWorkbenchActions>
     const normalized = normalizeProposal(proposal);
     set((state) => ({
       proposals: [normalized, ...state.proposals.filter((item) => item.id !== normalized.id)],
+      highlightedProposalId: normalized.origin?.kind === 'selection-ai' && normalized.origin.mode === 'plan'
+        ? normalized.id
+        : state.highlightedProposalId,
     }));
     debouncedSave({
       drafts: get().drafts,
@@ -225,11 +231,16 @@ export const useAiWorkbenchStore = create<AiWorkbenchState & AiWorkbenchActions>
   clearProposal: (proposalId) => {
     set((state) => ({
       proposals: state.proposals.filter((proposal) => proposal.id !== proposalId),
+      highlightedProposalId: state.highlightedProposalId === proposalId ? null : state.highlightedProposalId,
     }));
     debouncedSave({
       drafts: get().drafts,
       proposals: get().proposals,
     });
+  },
+
+  clearHighlightedProposal: () => {
+    set({ highlightedProposalId: null });
   },
 
   getDraft: (draftId) => get().drafts.find((draft) => draft.id === draftId) ?? null,
@@ -246,6 +257,7 @@ export const useAiWorkbenchStore = create<AiWorkbenchState & AiWorkbenchActions>
       set({
         drafts: saved.drafts ?? [],
         proposals: (saved.proposals ?? []).map(normalizeProposal),
+        highlightedProposalId: null,
       });
     } catch (error) {
       console.error('Failed to load AI workbench state:', error);

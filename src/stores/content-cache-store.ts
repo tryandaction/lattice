@@ -16,7 +16,9 @@ import { create } from "zustand";
 interface EditorState {
   cursorPosition: number;
   scrollTop: number;
+  scrollLeft?: number;
   selection?: { from: number; to: number };
+  viewState?: Record<string, unknown>;
 }
 
 interface CachedContent {

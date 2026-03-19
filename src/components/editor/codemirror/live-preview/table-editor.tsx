@@ -24,8 +24,9 @@ interface TableMutationResult {
   alignments: TableAlignment[];
 }
 
+type PanelPlacement = 'left' | 'right';
+
 const ALIGNMENT_SEQUENCE: TableAlignment[] = [null, 'left', 'center', 'right'];
-const COLUMN_ACTION_ANCHOR_ROW = 0;
 
 function isDirectTypingKey(event: React.KeyboardEvent): boolean {
   return !event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1;
@@ -135,6 +136,32 @@ function clampCellPosition(
     row: Math.max(0, Math.min(cell.row, rows.length - 1)),
     col: Math.max(0, Math.min(cell.col, colCount - 1)),
   };
+}
+
+function getCellPositionFromTarget(target: EventTarget | null): CellPosition | null {
+  if (!(target instanceof HTMLElement)) {
+    return null;
+  }
+
+  const cell = target.closest<HTMLElement>('[data-table-row][data-table-col]');
+  if (!cell) {
+    return null;
+  }
+
+  const row = Number(cell.dataset.tableRow);
+  const col = Number(cell.dataset.tableCol);
+  if (!Number.isInteger(row) || !Number.isInteger(col)) {
+    return null;
+  }
+
+  return { row, col };
+}
+
+function resolvePanelPlacement(rect: DOMRect | null | undefined): PanelPlacement {
+  if (!rect) {
+    return 'left';
+  }
+  return rect.left < 240 ? 'right' : 'left';
 }
 
 export function tableToMarkdown(rows: string[][], alignments: TableAlignment[], hasHeader: boolean): string {
@@ -295,13 +322,13 @@ export const TableEditor: React.FC<TableEditorProps> = ({
   );
   const [rows, setRows] = useState(initialState.rows);
   const [alignments, setAlignments] = useState(initialState.alignments);
-  const [selectedCell, setSelectedCell] = useState<CellPosition | null>(
-    clampCellPosition({ row: 0, col: 0 }, initialState.rows, initialState.alignments)
-  );
+  const [selectedCell, setSelectedCell] = useState<CellPosition | null>(null);
   const [editingCell, setEditingCell] = useState<CellPosition | null>(null);
   const [draftValue, setDraftValue] = useState('');
-  const [hoveredColumn, setHoveredColumn] = useState<number | null>(null);
-  const [hoveredRow, setHoveredRow] = useState<number | null>(null);
+  const [isHovered, setIsHovered] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+  const [isToolsOpen, setIsToolsOpen] = useState(false);
+  const [panelPlacement, setPanelPlacement] = useState<PanelPlacement>('left');
   const wrapperRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isMountedRef = useRef(true);
@@ -325,11 +352,36 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     }
   }, [editingCell]);
 
+  useEffect(() => {
+    if (!isToolsOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!wrapperRef.current?.contains(event.target as Node)) {
+        setIsToolsOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [isToolsOpen]);
+
   const columnCount = useMemo(() => getColumnCount(rows, alignments), [rows, alignments]);
   const dataRowStart = hasHeader ? 1 : 0;
+  const defaultCell = useMemo(
+    () => clampCellPosition({ row: Math.min(dataRowStart, Math.max(rows.length - 1, 0)), col: 0 }, rows, alignments),
+    [alignments, dataRowStart, rows]
+  );
+  const activeCell = selectedCell ?? defaultCell;
 
   const focusWrapper = useCallback(() => {
     wrapperRef.current?.focus();
+  }, []);
+
+  const prepareToolsPanel = useCallback(() => {
+    setPanelPlacement(resolvePanelPlacement(wrapperRef.current?.getBoundingClientRect()));
+    setIsToolsOpen(true);
   }, []);
 
   const updateEditor = useCallback((nextRows: string[][], nextAlignments: TableAlignment[]) => {
@@ -373,6 +425,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({
 
   const selectCell = useCallback((cell: CellPosition | null) => {
     setSelectedCell(clampCellPosition(cell, rows, alignments));
+    setIsToolsOpen(false);
     focusWrapper();
   }, [alignments, focusWrapper, rows]);
 
@@ -382,6 +435,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     setSelectedCell(normalized);
     setEditingCell(normalized);
     setDraftValue(rows[normalized.row]?.[normalized.col] ?? '');
+    setIsToolsOpen(false);
   }, [alignments, rows]);
 
   const beginTypingInCell = useCallback((cell: CellPosition, nextValue: string) => {
@@ -390,6 +444,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     setSelectedCell(normalized);
     setEditingCell(normalized);
     setDraftValue(nextValue);
+    setIsToolsOpen(false);
   }, [alignments, rows]);
 
   const moveCell = useCallback((cell: CellPosition, rowDelta: number, colDelta: number): CellPosition => {
@@ -409,6 +464,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     setEditingCell(null);
     setDraftValue('');
     setSelectedCell(clampCellPosition(nextSelection ?? selectedCell, nextState.rows, nextState.alignments));
+    setIsToolsOpen(false);
     updateEditor(nextState.rows, nextState.alignments);
     window.setTimeout(() => {
       if (isMountedRef.current) {
@@ -515,12 +571,12 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     handleTableMutation(
       (workingRows, workingAlignments) =>
         setTableColumnAlignment(workingRows, workingAlignments, hasHeader, columnIndex, nextAlignment),
-      selectedCell ? { row: selectedCell.row, col: Math.min(columnIndex, columnCount - 1) } : { row: 0, col: columnIndex }
+      activeCell ? { row: activeCell.row, col: Math.min(columnIndex, columnCount - 1) } : { row: 0, col: columnIndex }
     );
-  }, [alignments, columnCount, handleTableMutation, hasHeader, selectedCell]);
+  }, [activeCell, alignments, columnCount, handleTableMutation, hasHeader]);
 
   const handleWrapperKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (editingCell || !selectedCell || columnCount === 0 || rows.length === 0) {
+    if (editingCell || columnCount === 0 || rows.length === 0 || !activeCell) {
       return;
     }
 
@@ -528,55 +584,67 @@ export const TableEditor: React.FC<TableEditorProps> = ({
       case 'Enter':
       case 'F2':
         event.preventDefault();
-        startEditingCell(selectedCell);
+        startEditingCell(activeCell);
         return;
       case 'ArrowLeft':
         event.preventDefault();
-        setSelectedCell(moveCell(selectedCell, 0, -1));
+        setSelectedCell(moveCell(activeCell, 0, -1));
         return;
       case 'ArrowRight':
         event.preventDefault();
-        setSelectedCell(moveCell(selectedCell, 0, 1));
+        setSelectedCell(moveCell(activeCell, 0, 1));
         return;
       case 'ArrowUp':
         event.preventDefault();
-        setSelectedCell(moveCell(selectedCell, -1, 0));
+        setSelectedCell(moveCell(activeCell, -1, 0));
         return;
       case 'ArrowDown':
         event.preventDefault();
-        setSelectedCell(moveCell(selectedCell, 1, 0));
+        setSelectedCell(moveCell(activeCell, 1, 0));
         return;
       case 'Tab': {
         event.preventDefault();
         if (event.shiftKey) {
-          if (selectedCell.col > 0) {
-            setSelectedCell({ row: selectedCell.row, col: selectedCell.col - 1 });
-          } else if (selectedCell.row > 0) {
-            setSelectedCell({ row: selectedCell.row - 1, col: columnCount - 1 });
+          if (activeCell.col > 0) {
+            setSelectedCell({ row: activeCell.row, col: activeCell.col - 1 });
+          } else if (activeCell.row > 0) {
+            setSelectedCell({ row: activeCell.row - 1, col: columnCount - 1 });
           }
-        } else if (selectedCell.col < columnCount - 1) {
-          setSelectedCell({ row: selectedCell.row, col: selectedCell.col + 1 });
-        } else if (selectedCell.row < rows.length - 1) {
-          setSelectedCell({ row: selectedCell.row + 1, col: 0 });
+        } else if (activeCell.col < columnCount - 1) {
+          setSelectedCell({ row: activeCell.row, col: activeCell.col + 1 });
+        } else if (activeCell.row < rows.length - 1) {
+          setSelectedCell({ row: activeCell.row + 1, col: 0 });
         }
         return;
       }
       default:
         if (isDirectTypingKey(event)) {
           event.preventDefault();
-          beginTypingInCell(selectedCell, event.key);
+          beginTypingInCell(activeCell, event.key);
           return;
         }
 
         if (event.key === 'Backspace' || event.key === 'Delete') {
           event.preventDefault();
-          beginTypingInCell(selectedCell, '');
+          beginTypingInCell(activeCell, '');
+          return;
+        }
+
+        if (event.key === 'Escape') {
+          setIsToolsOpen(false);
+          return;
+        }
+
+        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+          event.preventDefault();
+          setSelectedCell(activeCell);
+          prepareToolsPanel();
           return;
         }
 
         return;
     }
-  }, [beginTypingInCell, columnCount, editingCell, moveCell, rows.length, selectedCell, startEditingCell]);
+  }, [activeCell, beginTypingInCell, columnCount, editingCell, moveCell, prepareToolsPanel, rows.length, startEditingCell]);
 
   const handleInputKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (!editingCell) {
@@ -626,145 +694,147 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     return String(rowIndex - dataRowStart + 1);
   }, [dataRowStart, hasHeader]);
 
+  const handleInsertRow = useCallback((position: 'above' | 'below') => {
+    if (!activeCell) return;
+    handleTableMutation(
+      (workingRows, workingAlignments) =>
+        insertTableDataRow(workingRows, workingAlignments, hasHeader, activeCell.row, position),
+      { row: position === 'above' ? activeCell.row : Math.min(rows.length, activeCell.row + 1), col: activeCell.col }
+    );
+  }, [activeCell, handleTableMutation, hasHeader, rows.length]);
+
+  const handleDeleteRow = useCallback(() => {
+    if (!activeCell) return;
+    handleTableMutation(
+      (workingRows, workingAlignments) =>
+        deleteTableDataRow(workingRows, workingAlignments, hasHeader, activeCell.row),
+      { row: Math.max(dataRowStart, activeCell.row - 1), col: activeCell.col }
+    );
+  }, [activeCell, dataRowStart, handleTableMutation, hasHeader]);
+
+  const handleInsertColumn = useCallback(() => {
+    if (!activeCell) return;
+    handleTableMutation(
+      (workingRows, workingAlignments) =>
+        insertTableColumn(workingRows, workingAlignments, hasHeader, activeCell.col),
+      { row: activeCell.row, col: Math.min(activeCell.col + 1, columnCount) }
+    );
+  }, [activeCell, columnCount, handleTableMutation, hasHeader]);
+
+  const handleDeleteColumn = useCallback(() => {
+    if (!activeCell) return;
+    handleTableMutation(
+      (workingRows, workingAlignments) =>
+        deleteTableColumn(workingRows, workingAlignments, hasHeader, activeCell.col),
+      { row: activeCell.row, col: Math.max(0, Math.min(activeCell.col - 1, columnCount - 2)) }
+    );
+  }, [activeCell, columnCount, handleTableMutation, hasHeader]);
+
+  const showPerimeterHandle = isHovered || isFocused || isToolsOpen || editingCell !== null || selectedCell !== null;
+
   return (
     <div
       ref={wrapperRef}
       className="table-editor-wrapper"
       tabIndex={0}
       onKeyDown={handleWrapperKeyDown}
-      onMouseLeave={() => {
-        setHoveredColumn(null);
-        setHoveredRow(null);
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onFocus={() => setIsFocused(true)}
+      onBlur={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          return;
+        }
+        setIsFocused(false);
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        const contextCell = getCellPositionFromTarget(event.target) ?? activeCell;
+        if (contextCell) {
+          setSelectedCell(contextCell);
+        }
+        prepareToolsPanel();
+        focusWrapper();
       }}
       role="group"
       aria-label="Markdown table editor"
     >
-      <table className="table-editor">
-        <tbody>
-          {rows.map((row, rowIndex) => (
-            <tr
-              key={rowIndex}
-              onMouseEnter={() => setHoveredRow(rowIndex)}
-            >
-              <td
-                className={`row-toolbar ${selectedCell?.row === rowIndex ? 'active' : ''}`}
-              >
-                <div className="row-toolbar-label">{getRowLabel(rowIndex)}</div>
-                {rowIndex >= dataRowStart ? (
-                  <div className={`row-actions ${hoveredRow === rowIndex || selectedCell?.row === rowIndex ? 'visible' : ''}`}>
-                    <button
-                      type="button"
-                      className="btn-icon"
-                      title="在上方插入行"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => handleTableMutation(
-                        (workingRows, workingAlignments) =>
-                          insertTableDataRow(workingRows, workingAlignments, hasHeader, rowIndex, 'above'),
-                        { row: rowIndex, col: selectedCell?.col ?? 0 }
-                      )}
-                    >
-                      ↑＋
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-icon"
-                      title="在下方插入行"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => handleTableMutation(
-                        (workingRows, workingAlignments) =>
-                          insertTableDataRow(workingRows, workingAlignments, hasHeader, rowIndex, 'below'),
-                        { row: Math.min(rows.length, rowIndex + 1), col: selectedCell?.col ?? 0 }
-                      )}
-                    >
-                      ↓＋
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-icon"
-                      title="删除当前行"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => handleTableMutation(
-                        (workingRows, workingAlignments) =>
-                          deleteTableDataRow(workingRows, workingAlignments, hasHeader, rowIndex),
-                        { row: Math.max(dataRowStart, rowIndex - 1), col: selectedCell?.col ?? 0 }
-                      )}
-                    >
-                      －
-                    </button>
-                  </div>
-                ) : null}
-              </td>
+      {showPerimeterHandle ? (
+        <button
+          type="button"
+          className="table-editor-perimeter-handle"
+          title="表格操作"
+          aria-label="表格操作"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (activeCell) {
+              setSelectedCell(activeCell);
+            }
+            setPanelPlacement(resolvePanelPlacement(wrapperRef.current?.getBoundingClientRect()));
+            setIsToolsOpen((value) => !value);
+            focusWrapper();
+          }}
+        >
+          •
+        </button>
+      ) : null}
+      {isToolsOpen && activeCell && (
+        <div
+          className={`table-editor-perimeter-panel table-editor-perimeter-panel--${panelPlacement}`}
+          role="menu"
+          aria-label="表格操作菜单"
+        >
+          <div className="table-editor-panel-meta">
+            行 {getRowLabel(activeCell.row)} · 列 {activeCell.col + 1}
+          </div>
+          {activeCell.row >= dataRowStart && (
+            <div className="table-editor-panel-group">
+              <div className="table-editor-panel-label">行</div>
+              <div className="table-editor-panel-actions">
+                <button type="button" className="btn-icon btn-icon--menu" onClick={() => handleInsertRow('above')}>上方插入</button>
+                <button type="button" className="btn-icon btn-icon--menu" onClick={() => handleInsertRow('below')}>下方插入</button>
+                <button type="button" className="btn-icon btn-icon--menu" onClick={handleDeleteRow}>删除行</button>
+              </div>
+            </div>
+          )}
+          <div className="table-editor-panel-group">
+            <div className="table-editor-panel-label">列</div>
+            <div className="table-editor-panel-actions">
+              <button type="button" className="btn-icon btn-icon--menu" onClick={() => cycleAlignment(activeCell.col)}>
+                对齐：{alignments[activeCell.col] === 'left' ? '左' : alignments[activeCell.col] === 'center' ? '中' : alignments[activeCell.col] === 'right' ? '右' : '无'}
+              </button>
+              <button type="button" className="btn-icon btn-icon--menu" onClick={handleInsertColumn}>右侧插列</button>
+              <button type="button" className="btn-icon btn-icon--menu" onClick={handleDeleteColumn}>删除列</button>
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="table-editor-viewport">
+        <table className="table-editor">
+          <tbody>
+            {rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>
               {row.map((cell, colIndex) => {
                 const isEditing = editingCell?.row === rowIndex && editingCell?.col === colIndex;
                 const isSelected = selectedCell?.row === rowIndex && selectedCell?.col === colIndex;
-                const isColumnSelected = selectedCell?.col === colIndex;
                 const isHeader = hasHeader && rowIndex === 0;
                 const CellTag = isHeader ? 'th' : 'td';
                 const renderedHtml = renderCellHtml ? renderCellHtml(cell) : escapeHtml(cell);
                 const cellPosition = { row: rowIndex, col: colIndex };
-                const showColumnActions =
-                  rowIndex === COLUMN_ACTION_ANCHOR_ROW &&
-                  !isEditing &&
-                  (hoveredColumn === colIndex || isColumnSelected);
 
                 return (
                   <CellTag
                     key={colIndex}
+                    data-table-row={rowIndex}
+                    data-table-col={colIndex}
                     className={[
                       isEditing ? 'editing' : '',
                       isSelected ? 'selected' : '',
-                      isColumnSelected ? 'column-active' : '',
-                      showColumnActions ? 'column-control-anchor' : '',
                     ].filter(Boolean).join(' ')}
                     style={{ textAlign: alignments[colIndex] || 'left' }}
-                    onMouseEnter={() => setHoveredColumn(colIndex)}
                     onClick={() => !isEditing && handleCellClick(rowIndex, colIndex)}
                     onDoubleClick={() => handleCellDoubleClick(rowIndex, colIndex)}
                   >
-                    {rowIndex === COLUMN_ACTION_ANCHOR_ROW ? (
-                      <div className={`column-quick-actions ${showColumnActions ? 'visible' : ''}`}>
-                        <button
-                          type="button"
-                          className="btn-icon btn-icon--floating"
-                          title="切换列对齐"
-                          aria-label="切换列对齐"
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => cycleAlignment(colIndex)}
-                        >
-                          {alignments[colIndex] === 'left' ? '左' : alignments[colIndex] === 'center' ? '中' : alignments[colIndex] === 'right' ? '右' : '无'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-icon btn-icon--floating"
-                          title="在右侧插入列"
-                          aria-label="在右侧插入列"
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => handleTableMutation(
-                            (workingRows, workingAlignments) =>
-                              insertTableColumn(workingRows, workingAlignments, hasHeader, colIndex),
-                            { row: selectedCell?.row ?? 0, col: Math.min(colIndex + 1, columnCount) }
-                          )}
-                        >
-                          ＋
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-icon btn-icon--floating"
-                          title="删除当前列"
-                          aria-label="删除当前列"
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => handleTableMutation(
-                            (workingRows, workingAlignments) =>
-                              deleteTableColumn(workingRows, workingAlignments, hasHeader, colIndex),
-                            selectedCell
-                              ? { row: selectedCell.row, col: Math.max(0, Math.min(colIndex - 1, columnCount - 2)) }
-                              : { row: 0, col: 0 }
-                          )}
-                        >
-                          －
-                        </button>
-                      </div>
-                    ) : null}
                     {isEditing ? (
                       <textarea
                         ref={inputRef}
@@ -785,10 +855,11 @@ export const TableEditor: React.FC<TableEditorProps> = ({
                   </CellTag>
                 );
               })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };

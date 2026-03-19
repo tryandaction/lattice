@@ -21,7 +21,15 @@ export interface AiContext {
 // Provider Types
 // ============================================================================
 
-export type AiProviderId = 'openai' | 'anthropic' | 'google' | 'ollama' | 'custom';
+export type AiProviderId =
+  | 'openai'
+  | 'anthropic'
+  | 'google'
+  | 'ollama'
+  | 'deepseek'
+  | 'moonshot'
+  | 'zhipu'
+  | 'custom';
 
 export interface AiModel {
   id: string;
@@ -76,11 +84,16 @@ export interface AiGenerateOptions {
   signal?: AbortSignal;
 }
 
+export interface AiConnectionTestResult {
+  ok: boolean;
+  message?: string;
+}
+
 export interface AiProvider {
   id: AiProviderId;
   name: string;
   isConfigured: () => boolean;
-  testConnection: () => Promise<boolean>;
+  testConnection: () => Promise<AiConnectionTestResult>;
   getAvailableModels: () => Promise<AiModel[]>;
   generate: (messages: AiMessage[], options?: AiGenerateOptions) => Promise<AiGenerateResult>;
   stream: (messages: AiMessage[], options?: AiGenerateOptions) => AsyncIterable<AiStreamChunk>;
@@ -141,11 +154,46 @@ export type EvidenceKind =
   | 'code_line'
   | 'notebook_cell';
 
+export interface EvidenceAnchorRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export interface EvidenceAnchor {
+  offsets?: {
+    start: number;
+    end: number;
+  };
+  lineStart?: number;
+  lineEnd?: number;
+  cellId?: string;
+  cellIndex?: number;
+  page?: number;
+  rects?: EvidenceAnchorRect[];
+  snippet?: string;
+  blockLabel?: string;
+  heading?: string;
+}
+
 export interface EvidenceRef {
   kind: EvidenceKind;
   label: string;
   locator: string;
   preview?: string;
+  anchor?: EvidenceAnchor;
+}
+
+export type SelectionAiMode = 'chat' | 'agent' | 'plan';
+export type SelectionSourceKind = 'markdown' | 'code' | 'notebook' | 'pdf' | 'html' | 'word';
+
+export interface SelectionAiOrigin {
+  kind: 'selection-ai';
+  mode: SelectionAiMode;
+  sourceKind: SelectionSourceKind;
+  sourceLabel: string;
+  selectionPreview: string;
 }
 
 export type AiModelSource = 'local' | 'cloud';
@@ -208,6 +256,7 @@ export interface AiTaskProposal {
   approvedWrites: string[];
   generatedDraftTargets: string[];
   createdAt: number;
+  origin?: SelectionAiOrigin;
 }
 
 export interface AiActionApproval {

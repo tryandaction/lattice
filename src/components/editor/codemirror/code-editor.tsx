@@ -48,6 +48,14 @@ export interface CodeEditorRef {
   getContent: () => string;
   /** Get selected text (empty string if no selection) */
   getSelection: () => string;
+  /** Get detailed selection info (null if no selection) */
+  getSelectionDetails: () => {
+    text: string;
+    start: number;
+    end: number;
+    lineStart: number;
+    lineEnd: number;
+  } | null;
   /** Check if there's a selection */
   hasSelection: () => boolean;
 }
@@ -404,6 +412,23 @@ function CodeEditorComponent({
     return state.sliceDoc(selection.from, selection.to);
   }, []);
 
+  const getSelectionDetails = useCallback(() => {
+    if (!viewRef.current) return null;
+    const state = viewRef.current.state;
+    const selection = state.selection.main;
+    if (selection.empty) {
+      return null;
+    }
+
+    return {
+      text: state.sliceDoc(selection.from, selection.to),
+      start: selection.from,
+      end: selection.to,
+      lineStart: state.doc.lineAt(selection.from).number,
+      lineEnd: state.doc.lineAt(selection.to).number,
+    };
+  }, []);
+
   // Check if there's a selection
   const hasSelection = useCallback(() => {
     if (!viewRef.current) return false;
@@ -419,6 +444,7 @@ function CodeEditorComponent({
         flashLine,
         getContent,
         getSelection,
+        getSelectionDetails,
         hasSelection,
       };
     }
@@ -427,7 +453,7 @@ function CodeEditorComponent({
         editorRef.current = null;
       }
     };
-  }, [editorRef, flashLine, focus, getContent, getSelection, hasSelection, scrollToLine]);
+  }, [editorRef, flashLine, focus, getContent, getSelection, getSelectionDetails, hasSelection, scrollToLine]);
 
   // Error state
   if (error) {

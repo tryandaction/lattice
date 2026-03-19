@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAiChatStore } from "@/stores/ai-chat-store";
 import { useAiWorkbenchStore } from "@/stores/ai-workbench-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -8,14 +8,16 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useAnnotationStore } from "@/stores/annotation-store";
 import { aiOrchestrator } from "@/lib/ai/orchestrator";
-import { X, Send, Square, Plus, Trash2, MessageSquare, Copy, Check, GitCompareArrows, Bot, FileText, ShieldCheck, Wand2, ChevronDown, ChevronRight, Link2, FolderPen, FileOutput, ListTodo } from "lucide-react";
+import { X, Send, Square, Plus, Trash2, MessageSquare, Copy, Check, GitCompareArrows, Bot, FileText, ShieldCheck, Wand2, ChevronDown, ChevronUp, ChevronRight, FolderPen, FileOutput, ListTodo } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MarkdownRenderer } from "@/components/renderers/markdown-renderer";
 import { useI18n } from "@/hooks/use-i18n";
 import { MentionAutocomplete } from "./mention-autocomplete";
 import { DiffPreview } from "./diff-preview";
+import { EvidencePanel } from "./evidence-panel";
 import { parseMentions, resolveMentions } from "@/lib/ai/mention-resolver";
 import { extractCodeBlocks } from "@/lib/ai/diff-utils";
+import { parseStructuredAiResponse } from "@/lib/ai/structured-response";
 import { deriveFileId } from "@/lib/annotation-storage";
 import { migrateLegacyAnnotation } from "@/lib/annotation-migration";
 import { navigateLink } from "@/lib/link-router/navigate-link";
@@ -26,7 +28,6 @@ import {
   formatTaskProposalDraftContent,
   getProposalTargetDrafts,
   summarizeProposalTargetDrafts,
-  toEvidenceNavigationTarget,
   writeDraftArtifactToTarget,
 } from "@/lib/ai/workbench-actions";
 import type {
@@ -34,6 +35,7 @@ import type {
   AiDraftWriteMode,
   AiRuntimeSettings,
   EvidenceRef,
+  SelectionAiOrigin,
 } from "@/lib/ai/types";
 import { toast } from "sonner";
 
@@ -85,17 +87,121 @@ export function AiChatPanel() {
   const isOpen = useAiChatStore((s) => s.isOpen);
   const setOpen = useAiChatStore((s) => s.setOpen);
   const loadConversations = useAiChatStore((s) => s.loadConversations);
+  const createDraft = useAiWorkbenchStore((state) => state.createDraft);
+  const addProposal = useAiWorkbenchStore((state) => state.addProposal);
+  const settings = useSettingsStore((state) => state.settings);
+  const activeTab = useWorkspaceStore((state) => state.getActiveTab());
+  const getCachedContent = useContentCacheStore((state) => state.getContent);
+  const activeConversation = useAiChatStore((state) =>
+    state.conversations.find((conversation) => conversation.id === state.activeConversationId) ?? null
+  );
+  const [isEvidencePanelOpen, setEvidencePanelOpen] = useState(false);
+  const [focusedEvidenceMessageId, setFocusedEvidenceMessageId] = useState<string | null>(null);
+  const lastAutoOpenedSelectionAgentId = useRef<string | null>(null);
 
   useEffect(() => {
     loadConversations();
   }, [loadConversations]);
+
+  const evidenceMessages = useMemo(
+    () => (activeConversation?.messages ?? []).filter((message) =>
+      message.role === "assistant" && ((message.evidenceRefs?.length ?? 0) > 0 || (message.promptContext?.nodes?.length ?? 0) > 0)
+    ),
+    [activeConversation?.messages]
+  );
+
+  const isEvidencePanelVisible = isEvidencePanelOpen && evidenceMessages.length > 0;
+
+  const selectedEvidenceMessage = useMemo(() => {
+    if (!isEvidencePanelVisible) {
+      return null;
+    }
+    return (
+      evidenceMessages.find((message) => message.id === focusedEvidenceMessageId) ??
+      evidenceMessages[evidenceMessages.length - 1] ??
+      null
+    );
+  }, [evidenceMessages, focusedEvidenceMessageId, isEvidencePanelVisible]);
+
+  useEffect(() => {
+    const candidate = (activeConversation?.messages ?? [])
+      .filter((message) =>
+        message.role === "assistant" &&
+        message.origin?.kind === "selection-ai" &&
+        message.origin.mode === "agent" &&
+        (((message.evidenceRefs?.length ?? 0) > 0) || ((message.promptContext?.nodes?.length ?? 0) > 0))
+      )
+      .at(-1);
+
+    if (!candidate || candidate.id === lastAutoOpenedSelectionAgentId.current) {
+      return;
+    }
+
+    lastAutoOpenedSelectionAgentId.current = candidate.id;
+    startTransition(() => {
+      setFocusedEvidenceMessageId(candidate.id);
+      setEvidencePanelOpen(true);
+    });
+  }, [activeConversation?.messages]);
+
+  const handleCreateEvidenceDraft = useCallback((input: {
+    title: string;
+    content: string;
+    refs: EvidenceRef[] | undefined;
+  }) => {
+    createDraft({
+      type: "paper_note",
+      title: input.title,
+      sourceRefs: input.refs ?? [],
+      content: input.content,
+    });
+  }, [createDraft]);
+
+  const handleProposeEvidenceTask = useCallback(async (input: {
+    prompt: string;
+    refs: EvidenceRef[] | undefined;
+  }) => {
+    const activeContent = await resolveActiveFileContent(
+      activeTab,
+      activeTab ? (typeof getCachedContent(activeTab.id)?.content === "string" ? getCachedContent(activeTab.id)?.content as string : null) : null,
+    );
+
+    const proposal = await aiOrchestrator.proposeTask({
+      prompt: input.prompt,
+      filePath: activeTab?.filePath,
+      content: activeContent,
+      explicitEvidenceRefs: input.refs ?? [],
+      settings: toRuntimeSettings(settings),
+    });
+    addProposal(proposal);
+  }, [activeTab, addProposal, getCachedContent, settings]);
 
   if (!isOpen) return null;
 
   return (
     <div className="flex h-full w-80 flex-col border-l border-border bg-background">
       <ChatHeader onClose={() => setOpen(false)} />
-      <ChatMessages />
+      <EvidencePanel
+        message={selectedEvidenceMessage}
+        messages={evidenceMessages}
+        selectedMessageId={selectedEvidenceMessage?.id ?? null}
+        onSelectMessage={setFocusedEvidenceMessageId}
+        onCreateDraft={handleCreateEvidenceDraft}
+        onProposeTask={handleProposeEvidenceTask}
+        onClose={() => setEvidencePanelOpen(false)}
+      />
+      <ChatMessages
+        onOpenEvidence={(messageId) => {
+          if (isEvidencePanelVisible && selectedEvidenceMessage?.id === messageId) {
+            setEvidencePanelOpen(false);
+            return;
+          }
+          setFocusedEvidenceMessageId(messageId);
+          setEvidencePanelOpen(true);
+        }}
+        selectedEvidenceMessageId={selectedEvidenceMessage?.id ?? null}
+        isEvidencePanelOpen={isEvidencePanelVisible}
+      />
       <WorkbenchPanel />
       <ChatInput />
     </div>
@@ -171,70 +277,42 @@ function CopyMessageButton({ text }: { text: string }) {
   );
 }
 
-function EvidenceList({ refs }: { refs: EvidenceRef[] }) {
-  const rootHandle = useWorkspaceStore((state) => state.rootHandle);
-  const activePaneId = useWorkspaceStore((state) => state.layout.activePaneId);
-  const activeTab = useWorkspaceStore((state) => state.getActiveTab());
-
-  const handleNavigate = useCallback(async (ref: EvidenceRef) => {
-    const success = await navigateLink(toEvidenceNavigationTarget(ref), {
-      paneId: activePaneId,
-      rootHandle,
-      currentFilePath: activeTab?.filePath,
-    });
-
-    if (!success) {
-      toast.error("无法定位证据", {
-        description: ref.locator,
-      });
-    }
-  }, [activePaneId, activeTab?.filePath, rootHandle]);
-
-  if (refs.length === 0) return null;
+function EvidenceSummaryButton({
+  messageId,
+  evidenceCount,
+  contextCount,
+  selected,
+  open,
+  onToggle,
+}: {
+  messageId: string;
+  evidenceCount: number;
+  contextCount: number;
+  selected: boolean;
+  open: boolean;
+  onToggle: (messageId: string) => void;
+}) {
+  if (evidenceCount === 0 && contextCount === 0) {
+    return null;
+  }
 
   return (
-    <div className="mt-2 rounded border border-border/60 bg-background/60 p-2">
-      <div className="mb-1 flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-        <ShieldCheck className="h-3 w-3" />
-        Evidence
-      </div>
-      <div className="space-y-1">
-        {refs.slice(0, 6).map((ref) => (
-          <button
-            key={`${ref.kind}:${ref.locator}`}
-            onClick={() => void handleNavigate(ref)}
-            className="w-full rounded border border-transparent px-2 py-1 text-left text-[11px] leading-relaxed text-muted-foreground hover:border-border/60 hover:bg-accent/50"
-            type="button"
-          >
-            <div className="flex items-center gap-1 font-medium text-foreground">
-              <Link2 className="h-3 w-3 text-muted-foreground" />
-              <span className="truncate">{ref.label}</span>
-            </div>
-            <div className="truncate">{ref.locator}</div>
-            {ref.preview && (
-              <div className="mt-0.5 line-clamp-2 text-[10px] text-muted-foreground/80">{ref.preview}</div>
-            )}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ContextSources({ labels }: { labels: string[] }) {
-  if (labels.length === 0) return null;
-
-  return (
-    <div className="mt-2 flex flex-wrap gap-1">
-      {labels.slice(0, 6).map((label) => (
-        <span
-          key={label}
-          className="rounded-full border border-border/60 bg-background/70 px-2 py-0.5 text-[10px] text-muted-foreground"
-        >
-          {label}
-        </span>
-      ))}
-    </div>
+    <button
+      type="button"
+      onClick={() => onToggle(messageId)}
+      className={cn(
+        "mt-2 inline-flex items-center gap-2 rounded border px-2 py-1 text-[10px] text-muted-foreground transition-colors",
+        selected
+          ? "border-border bg-background/80 text-foreground"
+          : "border-border/60 bg-background/50 hover:bg-accent/40"
+      )}
+    >
+      <ShieldCheck className="h-3 w-3" />
+      <span>{evidenceCount} 证据</span>
+      <span>·</span>
+      <span>{contextCount} 上下文</span>
+      {open && selected ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+    </button>
   );
 }
 
@@ -333,9 +411,48 @@ function proposalStatusLabel(status: string): string {
   }
 }
 
+function selectionOriginModeLabel(mode: SelectionAiOrigin["mode"]): string {
+  switch (mode) {
+    case "agent":
+      return "深度分析";
+    case "plan":
+      return "计划生成";
+    default:
+      return "快速问答";
+  }
+}
+
+function SelectionOriginBadge({
+  origin,
+  compact = false,
+}: {
+  origin: SelectionAiOrigin;
+  compact?: boolean;
+}) {
+  return (
+    <div className={cn(
+      "mt-1 rounded border border-primary/20 bg-primary/5 px-2 py-1.5 text-[11px]",
+      compact && "mt-2",
+    )}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] font-medium text-primary">
+          Selection AI · {selectionOriginModeLabel(origin.mode)}
+        </span>
+        <span className="text-foreground">{origin.sourceLabel}</span>
+      </div>
+      {!compact && (
+        <div className="mt-1 text-muted-foreground">
+          选区：{origin.selectionPreview}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WorkbenchPanel() {
   const drafts = useAiWorkbenchStore((state) => state.drafts);
   const proposals = useAiWorkbenchStore((state) => state.proposals);
+  const highlightedProposalId = useAiWorkbenchStore((state) => state.highlightedProposalId);
   const createDraft = useAiWorkbenchStore((state) => state.createDraft);
   const updateDraftStatus = useAiWorkbenchStore((state) => state.updateDraftStatus);
   const updateDraftWriteConfig = useAiWorkbenchStore((state) => state.updateDraftWriteConfig);
@@ -345,6 +462,7 @@ function WorkbenchPanel() {
   const toggleProposalWriteSelection = useAiWorkbenchStore((state) => state.toggleProposalWriteSelection);
   const markProposalDraftTargets = useAiWorkbenchStore((state) => state.markProposalDraftTargets);
   const clearProposal = useAiWorkbenchStore((state) => state.clearProposal);
+  const clearHighlightedProposal = useAiWorkbenchStore((state) => state.clearHighlightedProposal);
   const loadWorkbench = useAiWorkbenchStore((state) => state.loadWorkbench);
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
   const activePaneId = useWorkspaceStore((state) => state.layout.activePaneId);
@@ -353,6 +471,7 @@ function WorkbenchPanel() {
   const [busyDraftId, setBusyDraftId] = useState<string | null>(null);
   const [busyProposalId, setBusyProposalId] = useState<string | null>(null);
   const [expandedProposalIds, setExpandedProposalIds] = useState<string[]>([]);
+  const proposalCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
     if (drafts.length > 0 || proposals.length > 0) {
@@ -363,6 +482,35 @@ function WorkbenchPanel() {
   useEffect(() => {
     void loadWorkbench();
   }, [loadWorkbench]);
+
+  useEffect(() => {
+    if (!highlightedProposalId) {
+      return;
+    }
+
+    setExpanded(true);
+    setExpandedProposalIds((current) => current.includes(highlightedProposalId)
+      ? current
+      : [...current, highlightedProposalId]);
+
+    const rafId = window.requestAnimationFrame(() => {
+      const targetCard = proposalCardRefs.current[highlightedProposalId];
+      if (targetCard && typeof targetCard.scrollIntoView === "function") {
+        targetCard.scrollIntoView({
+          behavior: "smooth",
+          block: "nearest",
+        });
+      }
+    });
+    const timer = window.setTimeout(() => {
+      clearHighlightedProposal();
+    }, 2200);
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(timer);
+    };
+  }, [clearHighlightedProposal, highlightedProposalId]);
 
   const handleApplyDraft = useCallback(async (draftId: string) => {
     const draft = drafts.find((item) => item.id === draftId);
@@ -646,7 +794,16 @@ function WorkbenchPanel() {
                 Proposals
               </div>
               {proposals.map((proposal) => (
-                <div key={proposal.id} className="rounded border border-border/60 bg-background/60 p-2">
+                <div
+                  key={proposal.id}
+                  ref={(node) => {
+                    proposalCardRefs.current[proposal.id] = node;
+                  }}
+                  className={cn(
+                    "rounded border border-border/60 bg-background/60 p-2 transition-colors",
+                    proposal.id === highlightedProposalId && "border-primary/50 bg-primary/5 shadow-sm",
+                  )}
+                >
                   {(() => {
                     const draftSummary = summarizeProposalTargetDrafts(proposal, drafts);
                     return (
@@ -661,6 +818,9 @@ function WorkbenchPanel() {
                         <div className="mt-1 text-[10px] text-muted-foreground/80">
                           已生成 {proposal.generatedDraftTargets.length} 份目标草稿
                         </div>
+                      )}
+                      {proposal.origin && (
+                        <SelectionOriginBadge origin={proposal.origin} compact />
                       )}
                       {draftSummary.total > 0 && (
                         <div className="mt-1 text-[10px] text-muted-foreground/80">
@@ -764,7 +924,13 @@ function WorkbenchPanel() {
                               .filter((write) => proposal.approvedWrites.includes(write.targetPath))
                               .every((write) => proposal.generatedDraftTargets.includes(write.targetPath))
                           }
-                          className="rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-foreground hover:bg-accent disabled:opacity-50"
+                          className={cn(
+                            "rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-foreground hover:bg-accent disabled:opacity-50",
+                            proposal.id === highlightedProposalId &&
+                              proposal.origin?.kind === "selection-ai" &&
+                              proposal.origin.mode === "plan" &&
+                              "border-primary/50 bg-primary/10",
+                          )}
                         >
                           生成目标草稿
                         </button>
@@ -818,7 +984,15 @@ function WorkbenchPanel() {
   );
 }
 
-function ChatMessages() {
+function ChatMessages({
+  onOpenEvidence,
+  selectedEvidenceMessageId,
+  isEvidencePanelOpen,
+}: {
+  onOpenEvidence: (messageId: string) => void;
+  selectedEvidenceMessageId: string | null;
+  isEvidencePanelOpen: boolean;
+}) {
   const { t } = useI18n();
   const conv = useAiChatStore((s) => s.getActiveConversation());
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -855,18 +1029,45 @@ function ChatMessages() {
             "text-sm rounded-lg px-3 py-2 group relative",
             msg.role === "user"
               ? "bg-primary/10 ml-4"
-              : "bg-muted mr-4"
+              : "bg-muted mr-4",
+            msg.origin?.kind === "selection-ai" && "ring-1 ring-primary/15"
           )}
         >
+          {(() => {
+            const structured = msg.role === "assistant" ? parseStructuredAiResponse(msg.content) : null;
+            return (
+              <>
           <div className="text-[10px] text-muted-foreground mb-1 uppercase">
             {msg.role === "user" ? t('chat.you') : t('chat.ai')}
           </div>
+          {msg.origin?.kind === "selection-ai" && (
+            <SelectionOriginBadge origin={msg.origin} />
+          )}
           {msg.role === "assistant" ? (
             <>
-              <div className="text-xs leading-relaxed ai-chat-markdown [&_.prose]:max-w-none [&_pre]:text-[11px] [&_code]:text-[11px] [&_p]:my-1.5 [&_h1]:text-sm [&_h2]:text-xs [&_h3]:text-xs [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5">
-                <MarkdownRenderer content={msg.content} className="text-xs" />
-                {msg.isStreaming && <span className="animate-pulse">▊</span>}
-              </div>
+              {structured ? (
+                <div className="space-y-2">
+                  {structured.sections.map((section) => (
+                    <div
+                      key={`${msg.id}:${section.kind}`}
+                      className="rounded-md border border-border/60 bg-background/60 p-2"
+                    >
+                      <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                        {section.title}
+                      </div>
+                      <div className="text-xs leading-relaxed ai-chat-markdown [&_.prose]:max-w-none [&_pre]:text-[11px] [&_code]:text-[11px] [&_p]:my-1.5 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5">
+                        <MarkdownRenderer content={section.content} className="text-xs" />
+                      </div>
+                    </div>
+                  ))}
+                  {msg.isStreaming && <span className="animate-pulse text-xs">▊</span>}
+                </div>
+              ) : (
+                <div className="text-xs leading-relaxed ai-chat-markdown [&_.prose]:max-w-none [&_pre]:text-[11px] [&_code]:text-[11px] [&_p]:my-1.5 [&_h1]:text-sm [&_h2]:text-xs [&_h3]:text-xs [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5">
+                  <MarkdownRenderer content={msg.content} className="text-xs" />
+                  {msg.isStreaming && <span className="animate-pulse">▊</span>}
+                </div>
+              )}
               {msg.model && (
                 <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
                   <Bot className="h-3 w-3" />
@@ -875,8 +1076,14 @@ function ChatMessages() {
                   <span>· {msg.model.source === "local" ? "本地模型" : "云模型"}</span>
                 </div>
               )}
-              <ContextSources labels={(msg.promptContext?.nodes ?? []).map((node) => node.label)} />
-              <EvidenceList refs={msg.evidenceRefs ?? []} />
+              <EvidenceSummaryButton
+                messageId={msg.id}
+                evidenceCount={msg.evidenceRefs?.length ?? 0}
+                contextCount={msg.promptContext?.nodes?.length ?? 0}
+                selected={selectedEvidenceMessageId === msg.id}
+                open={isEvidencePanelOpen}
+                onToggle={onOpenEvidence}
+              />
               {msg.usage && (
                 <div className="text-[9px] text-muted-foreground/60 mt-1">
                   {msg.usage.totalTokens} tokens ({msg.usage.promptTokens}→{msg.usage.completionTokens})
@@ -929,6 +1136,8 @@ function ChatMessages() {
               {msg.content}
             </div>
           )}
+          </>);
+          })()}
         </div>
       ))}
     </div>
@@ -1068,7 +1277,7 @@ function ChatInput() {
         <MentionAutocomplete
           query={mentionQuery}
           position={mentionPos}
-          onSelect={(mention) => {
+          onSelect={(selection) => {
             // Replace the @query with the selected mention
             const textarea = textareaRef.current;
             if (textarea) {
@@ -1076,10 +1285,16 @@ function ChatInput() {
               const textBefore = input.slice(0, cursorPos);
               const textAfter = input.slice(cursorPos);
               const atIdx = textBefore.lastIndexOf('@');
-              const newText = textBefore.slice(0, atIdx) + mention + ' ' + textAfter;
+              const suffix = selection.continueSelection ? '' : ' ';
+              const newText = textBefore.slice(0, atIdx) + selection.value + suffix + textAfter;
               setInput(newText);
+              requestAnimationFrame(() => {
+                textarea.focus();
+                const nextCursor = (textBefore.slice(0, atIdx) + selection.value).length;
+                textarea.setSelectionRange(nextCursor, nextCursor);
+              });
             }
-            setMentionQuery(null);
+            setMentionQuery(selection.continueSelection ? selection.nextQuery : null);
           }}
           onClose={() => setMentionQuery(null)}
         />

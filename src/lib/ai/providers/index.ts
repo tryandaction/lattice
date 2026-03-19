@@ -3,12 +3,20 @@ import { openaiProvider } from './openai';
 import { anthropicProvider } from './anthropic';
 import { googleProvider } from './google';
 import { ollamaProvider } from './ollama';
+import { deepseekProvider } from './deepseek';
+import { moonshotProvider } from './moonshot';
+import { zhipuProvider } from './zhipu';
+import { customProvider } from './custom';
 
 const providers = new Map<AiProviderId, AiProvider>([
   ['openai', openaiProvider],
   ['anthropic', anthropicProvider],
   ['google', googleProvider],
   ['ollama', ollamaProvider],
+  ['deepseek', deepseekProvider],
+  ['moonshot', moonshotProvider],
+  ['zhipu', zhipuProvider],
+  ['custom', customProvider],
 ]);
 
 export function getProvider(id: AiProviderId): AiProvider | null {

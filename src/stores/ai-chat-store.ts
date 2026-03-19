@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AiMessage, AiFollowUpAction, AiModelInfo, AiPromptContext, EvidenceRef } from '@/lib/ai/types';
+import type { AiMessage, AiFollowUpAction, AiModelInfo, AiPromptContext, EvidenceRef, SelectionAiOrigin } from '@/lib/ai/types';
 import { getStorageAdapter } from '@/lib/storage-adapter';
 
 const AI_CHAT_STORAGE_KEY = 'lattice-ai-chat';
@@ -25,6 +25,7 @@ export interface ChatMessage {
     type: string;
     title: string;
   };
+  origin?: SelectionAiOrigin;
 }
 
 export interface ChatConversation {
@@ -47,14 +48,14 @@ interface AiChatActions {
   setOpen: (open: boolean) => void;
   newConversation: () => string;
   setActiveConversation: (id: string) => void;
-  addUserMessage: (content: string) => void;
+  addUserMessage: (content: string, metadata?: Partial<Pick<ChatMessage, 'origin'>>) => void;
   startAssistantMessage: () => string;
   appendToAssistantMessage: (messageId: string, text: string) => void;
   finishAssistantMessage: (messageId: string) => void;
   setAssistantError: (messageId: string, error: string) => void;
   setAssistantMetadata: (
     messageId: string,
-    metadata: Partial<Pick<ChatMessage, 'model' | 'evidenceRefs' | 'promptContext' | 'followUpActions' | 'draftSuggestion'>>
+    metadata: Partial<Pick<ChatMessage, 'model' | 'evidenceRefs' | 'promptContext' | 'followUpActions' | 'draftSuggestion' | 'origin'>>
   ) => void;
   setGenerating: (generating: boolean, controller?: AbortController | null) => void;
   stopGenerating: () => void;
@@ -114,7 +115,7 @@ export const useAiChatStore = create<AiChatState & AiChatActions>((set, get) => 
 
   setActiveConversation: (id) => set({ activeConversationId: id }),
 
-  addUserMessage: (content) => {
+  addUserMessage: (content, metadata) => {
     const state = get();
     let convId = state.activeConversationId;
     if (!convId) {
@@ -125,6 +126,7 @@ export const useAiChatStore = create<AiChatState & AiChatActions>((set, get) => 
       role: 'user',
       content,
       timestamp: Date.now(),
+      ...metadata,
     };
     set((s) => ({
       conversations: s.conversations.map((c) => {

@@ -1,7 +1,7 @@
 "use client";
 
 import "katex/dist/katex.min.css";
-import { useState, useCallback, useEffect, useMemo, type ComponentPropsWithoutRef, type CSSProperties, type JSX } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type ComponentPropsWithoutRef, type CSSProperties, type JSX } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -12,11 +12,18 @@ import type { Components } from "react-markdown";
 import type { PluggableList } from "unified";
 import { Check, Copy } from "lucide-react";
 import { KATEX_MACROS } from "@/lib/katex-config";
+import type { PaneId } from "@/types/layout";
+import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
+import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
+import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
+import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
 
 interface MarkdownRendererProps {
   content: string;
   fileName?: string;
   className?: string;
+  paneId?: PaneId;
+  filePath?: string;
 }
 
 type MarkdownProps<T extends keyof JSX.IntrinsicElements> = ComponentPropsWithoutRef<T> & {
@@ -322,10 +329,30 @@ const katexOptions = {
  * Note: HTML content should be converted to Markdown before reaching this component
  * via normalizeScientificText() in universal-file-viewer.tsx
  */
-export function MarkdownRenderer({ content, fileName: _fileName, className = "" }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, fileName = "document.md", className = "", paneId, filePath }: MarkdownRendererProps) {
   // Content should already be normalized to Markdown by upstream (universal-file-viewer)
   // If HTML is still present, it will be handled by rehypeRaw plugin safely
   const [rehypeKatex, setRehypeKatex] = useState<RehypeKatexPlugin | null>(null);
+  const [selectionHubState, setSelectionHubState] = useState<{
+    context: SelectionContext;
+    mode: SelectionAiMode;
+    returnFocusTo?: HTMLElement | null;
+  } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
+    containerRef,
+    ({ text }) => {
+      if (!paneId) return null;
+      return createSelectionContext({
+        sourceKind: "markdown",
+        paneId,
+        fileName,
+        filePath,
+        selectedText: text,
+        documentText: content,
+      });
+    }
+  );
 
   useEffect(() => {
     let active = true;
@@ -350,7 +377,18 @@ export function MarkdownRenderer({ content, fileName: _fileName, className = "" 
   }, [rehypeKatex]);
   
   return (
-    <div className={`prose prose-lattice dark:prose-invert max-w-none ${className}`}>
+    <div ref={containerRef} className={`prose prose-lattice dark:prose-invert max-w-none ${className}`}>
+      <SelectionContextMenu
+        state={selectionMenuState}
+        onClose={closeSelectionMenu}
+        onOpenHub={(context, mode, returnFocusTo) => setSelectionHubState({ context, mode, returnFocusTo })}
+      />
+      <SelectionAiHub
+        context={selectionHubState?.context ?? null}
+        initialMode={selectionHubState?.mode ?? "chat"}
+        returnFocusTo={selectionHubState?.returnFocusTo}
+        onClose={() => setSelectionHubState(null)}
+      />
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={rehypePlugins}

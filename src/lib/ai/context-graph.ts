@@ -196,7 +196,7 @@ function workspaceNodes(query?: string): AiContextNode[] {
 function uniqEvidence(refs: EvidenceRef[]): EvidenceRef[] {
   const seen = new Set<string>();
   return refs.filter((ref) => {
-    const key = `${ref.kind}:${ref.locator}`;
+    const key = `${ref.kind}:${ref.locator}:${JSON.stringify(ref.anchor ?? {})}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

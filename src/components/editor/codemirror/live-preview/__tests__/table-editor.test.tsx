@@ -41,15 +41,17 @@ function renderTableEditor(overrides?: Partial<ComponentProps<typeof TableEditor
 }
 
 describe('TableEditor', () => {
-  it('does not render the legacy full-width column toolbar labels', () => {
+  it('does not render the legacy full-width column toolbar labels or default active cell state', () => {
     const { container } = renderTableEditor();
 
     expect(screen.queryByText('列 1')).toBeNull();
     expect(screen.queryByText('列 2')).toBeNull();
-    expect(container.querySelectorAll('.column-quick-actions.visible').length).toBe(1);
+    expect(container.querySelectorAll('.selected').length).toBe(0);
+    expect(container.querySelectorAll('.row-toolbar').length).toBe(0);
+    expect(screen.queryByRole('button', { name: '表格操作' })).toBeNull();
   });
 
-  it('starts editing immediately when typing on the selected cell', () => {
+  it('starts editing immediately when typing even without an initial selected cell', () => {
     renderTableEditor();
 
     fireEvent.keyDown(screen.getByRole('group', { name: 'Markdown table editor' }), {
@@ -60,13 +62,29 @@ describe('TableEditor', () => {
     expect(input.tagName).toBe('TEXTAREA');
   });
 
-  it('moves the floating column controls with the active column', () => {
+  it('opens an external perimeter action panel instead of rendering controls inside cells', () => {
     const { container } = renderTableEditor();
+    fireEvent.mouseEnter(screen.getByRole('group', { name: 'Markdown table editor' }));
 
-    fireEvent.click(screen.getByText('标题 B'));
+    fireEvent.click(screen.getByRole('button', { name: '表格操作' }));
 
-    expect(container.querySelectorAll('.column-quick-actions.visible').length).toBe(1);
-    expect(screen.getByText('标题 B').closest('th')?.className).toContain('column-control-anchor');
-    expect(screen.getByText('标题 A').closest('th')?.className).not.toContain('column-control-anchor');
+    expect(container.querySelector('.table-editor-perimeter-panel')).toBeTruthy();
+    expect(container.querySelectorAll('.column-quick-actions').length).toBe(0);
+    expect(screen.getByText('右侧插列')).toBeTruthy();
+    expect(screen.getByText('删除列')).toBeTruthy();
+  });
+
+  it('shows the perimeter handle on keyboard focus and opens the menu with Shift+F10', () => {
+    renderTableEditor();
+
+    const wrapper = screen.getByRole('group', { name: 'Markdown table editor' });
+    fireEvent.focus(wrapper);
+
+    expect(screen.getByRole('button', { name: '表格操作' })).toBeTruthy();
+
+    fireEvent.keyDown(wrapper, { key: 'F10', shiftKey: true });
+
+    expect(screen.getByRole('menu', { name: '表格操作菜单' })).toBeTruthy();
+    expect(screen.getByText('对齐：无')).toBeTruthy();
   });
 });

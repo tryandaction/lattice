@@ -18,6 +18,7 @@ interface ResizablePanelProps {
   minSize?: number;
   maxSize?: number;
   className?: string;
+  style?: React.CSSProperties;
   children: React.ReactNode;
 }
 
@@ -135,6 +136,7 @@ export function ResizablePanel({
   minSize = 10,
   maxSize = 90,
   className,
+  style,
   children,
 }: ResizablePanelProps) {
   const context = React.useContext(PanelContext);
@@ -172,6 +174,7 @@ export function ResizablePanel({
         flex: `${size} 1 0%`,
         minWidth: isHorizontal ? 0 : undefined,
         minHeight: !isHorizontal ? 0 : undefined,
+        ...style,
       }}
     >
       {children}

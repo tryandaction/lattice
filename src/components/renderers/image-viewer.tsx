@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { ZoomIn, ZoomOut, RotateCw, Maximize2, Download, Move, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAnnotationNavigation } from "../../hooks/use-annotation-navigation";
+import { useObjectUrl } from "@/hooks/use-object-url";
 
 interface ImageViewerProps {
   content: ArrayBuffer;
@@ -19,9 +20,8 @@ type FitMode = "fit" | "width" | "height" | "actual";
  * Optimized for large images and long images
  */
 export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
-  const imageUrl = useMemo(() => {
-    return URL.createObjectURL(new Blob([content], { type: mimeType }));
-  }, [content, mimeType]);
+  const imageBlob = useMemo(() => new Blob([content], { type: mimeType }), [content, mimeType]);
+  const imageUrl = useObjectUrl(imageBlob);
   const [manualZoom, setManualZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
@@ -40,12 +40,7 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
-
-  useEffect(() => {
-    return () => {
-      URL.revokeObjectURL(imageUrl);
-    };
-  }, [imageUrl]);
+  const highlightTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     const container = imageContainerRef.current;
@@ -95,10 +90,24 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
         }
         
         // Clear highlight after 3 seconds
-        setTimeout(() => setHighlightedRegion(null), 3000);
+        if (highlightTimeoutRef.current) {
+          window.clearTimeout(highlightTimeoutRef.current);
+        }
+        highlightTimeoutRef.current = window.setTimeout(() => {
+          setHighlightedRegion(null);
+          highlightTimeoutRef.current = null;
+        }, 3000);
       },
     },
   });
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) {
+        window.clearTimeout(highlightTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Calculate fit zoom based on container and image size
   const calculateFitZoom = useCallback(() => {
@@ -244,6 +253,14 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
   const isLargeImage = naturalSize.width > 2000 || naturalSize.height > 2000;
   const aspectRatio = naturalSize.height / naturalSize.width;
   const isUnusualAspect = aspectRatio > 1.5 || aspectRatio < 0.67;
+
+  if (!imageUrl) {
+    return (
+      <div className="flex h-full items-center justify-center bg-background">
+        <span className="text-sm text-muted-foreground">Loading image...</span>
+      </div>
+    );
+  }
 
   return (
     <div ref={containerRef} className="flex h-full flex-col bg-background">
