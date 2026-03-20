@@ -10,6 +10,7 @@ import {
   loadPublicAssetBuffer,
   writeArrayBufferFile,
 } from "./browser-regression-utils";
+import { deserializeAnnotationFile, ensureAnnotationsDirectory, generateFileId } from "@/lib/universal-annotation-storage";
 
 interface ImageWorkspaceState {
   rootHandle: FileSystemDirectoryHandle;
@@ -19,13 +20,30 @@ interface ImageWorkspaceState {
   mimeType: string;
 }
 
+interface ImageDiagnosticsSnapshot {
+  isReady: boolean;
+  shapeCount: number;
+  annotationId: string | null;
+}
+
 export function ImageAnnotationDiagnostics() {
   const imageViewerHref = resolveAppRoute("/diagnostics/image-viewer");
   const pdfRegressionHref = resolveAppRoute("/diagnostics/pdf-regression");
   const [workspace, setWorkspace] = useState<ImageWorkspaceState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [renderNonce, setRenderNonce] = useState(0);
+  const [sampleNonce, setSampleNonce] = useState(0);
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
+  const [adapterSnapshot, setAdapterSnapshot] = useState<ImageDiagnosticsSnapshot>({
+    isReady: false,
+    shapeCount: 0,
+    annotationId: null,
+  });
+  const [sidecarSummary, setSidecarSummary] = useState<{
+    fileId: string;
+    annotationCount: number;
+    hasImageAnnotation: boolean;
+  } | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -71,6 +89,28 @@ export function ImageAnnotationDiagnostics() {
     return <div className="p-6 text-sm text-muted-foreground">正在准备 image annotation diagnostics workspace…</div>;
   }
 
+  const readSidecarState = async () => {
+    const fileId = generateFileId(workspace.filePath);
+
+    try {
+      const annotationsDir = await ensureAnnotationsDirectory(workspace.rootHandle);
+      const sidecarHandle = await annotationsDir.getFileHandle(`${fileId}.json`);
+      const content = await (await sidecarHandle.getFile()).text();
+      const parsed = deserializeAnnotationFile(content);
+      setSidecarSummary({
+        fileId,
+        annotationCount: parsed?.annotations.length ?? 0,
+        hasImageAnnotation: !!parsed?.annotations.some((annotation) => annotation.target.type === "image"),
+      });
+    } catch {
+      setSidecarSummary({
+        fileId,
+        annotationCount: 0,
+        hasImageAnnotation: false,
+      });
+    }
+  };
+
   return (
     <div className="flex h-screen w-screen flex-col bg-background text-foreground" data-testid="image-annotation-ready">
       <header className="flex items-center gap-3 border-b border-border px-4 py-3">
@@ -84,11 +124,27 @@ export function ImageAnnotationDiagnostics() {
         <div className="ml-auto flex items-center gap-2 text-xs">
           <button
             type="button"
-            data-testid="force-image-annotation-rerender"
+            data-testid="create-image-sample-annotation"
+            onClick={() => setSampleNonce((value) => value + 1)}
+            className="rounded border border-border px-3 py-1 hover:bg-muted"
+          >
+            创建样例标注
+          </button>
+          <button
+            type="button"
+            data-testid="read-image-annotation-sidecar"
+            onClick={() => void readSidecarState()}
+            className="rounded border border-border px-3 py-1 hover:bg-muted"
+          >
+            读取 sidecar
+          </button>
+          <button
+            type="button"
+            data-testid="force-image-annotation-remount"
             onClick={() => setRenderNonce((value) => value + 1)}
             className="rounded border border-border px-3 py-1 hover:bg-muted"
           >
-            强制重渲染
+            重新挂载
           </button>
           <Link href={imageViewerHref} className="rounded border border-border px-3 py-1 hover:bg-muted">
             图片显示诊断
@@ -109,6 +165,8 @@ export function ImageAnnotationDiagnostics() {
             fileHandle={workspace.fileHandle}
             rootHandle={workspace.rootHandle}
             filePath={workspace.filePath}
+            diagnosticsSampleNonce={sampleNonce}
+            onDiagnosticsSnapshot={setAdapterSnapshot}
           />
         </section>
 
@@ -120,16 +178,31 @@ export function ImageAnnotationDiagnostics() {
             <br />
             已加载时间：{loadedAt ? new Date(loadedAt).toLocaleTimeString() : "未加载"}
             <br />
-            重渲染次数：<span data-testid="image-annotation-rerender-count">{renderNonce}</span>
+            重挂载次数：<span data-testid="image-annotation-rerender-count">{renderNonce}</span>
+            <br />
+            当前 shape 数：<span data-testid="image-annotation-shape-count">{adapterSnapshot.shapeCount}</span>
+            <br />
+            当前 annotationId：<span data-testid="image-annotation-current-id">{adapterSnapshot.annotationId ?? "无"}</span>
+            <br />
+            Adapter Ready：<span data-testid="image-annotation-adapter-ready">{adapterSnapshot.isReady ? "true" : "false"}</span>
           </div>
           <div className="rounded-lg border border-border p-3 leading-6">
             浏览器回归会验证：
             <br />
             1. 使用真实 workspace handle 成功加载
             <br />
-            2. 强制重渲染后仍保持稳定
+            2. 创建样例标注并触发 sidecar 保存
             <br />
-            3. 不出现图片/画布初始化错误
+            3. 强制重挂载后样例标注仍恢复
+            <br />
+            4. 不出现图片/画布初始化错误
+          </div>
+          <div className="rounded-lg border border-border p-3 leading-6">
+            Sidecar fileId：<span data-testid="image-annotation-sidecar-fileid">{sidecarSummary?.fileId ?? "未读取"}</span>
+            <br />
+            Sidecar annotation 数：<span data-testid="image-annotation-sidecar-count">{sidecarSummary?.annotationCount ?? 0}</span>
+            <br />
+            Sidecar 含 image target：<span data-testid="image-annotation-sidecar-has-image">{sidecarSummary?.hasImageAnnotation ? "true" : "false"}</span>
           </div>
         </aside>
       </main>

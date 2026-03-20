@@ -64,9 +64,12 @@ npm run tauri:build
 - 桌面端可以打开工作区并恢复最近工作目录
 - `.py` 文件可以在桌面端使用本地 Python 运行
 - Notebook 单元在桌面端可以连续运行并保留上一个单元的变量
+- 桌面端如果探测到本地 Python，Notebook 运行器默认不会继续停留在 Pyodide 回退项
+- 桌面端如果只能使用 Pyodide，会明确显示为“应急回退”，而不是伪装成本地主运行器
 - `/diagnostics/pdf-regression` 可以正常打开，并能完成 PDF 双分屏基础回归
 - `/diagnostics/image-annotation` 可以正常打开，并能完成真实 workspace handle 图片标注回归
-- `/diagnostics/selection-ai` 可以正常打开，并能完成 Chat / Agent / Plan 三种 mocked 主链路回归
+- `/diagnostics/selection-ai` 可以正常打开，并能完成 Chat / Agent / Plan 三种 diagnostics provider override 主链路回归
+- PDF 首次打开默认会以 `适宽` 填充阅读区
 - PDF 放大、缩小、适宽不会跳回第一页
 - 分屏打开两个 PDF 时，`Ctrl+滚轮` / 缩放快捷键只作用于当前 pane
 - 分屏收缩后，右侧 pane 内容不会超出屏幕边界

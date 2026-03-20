@@ -33,6 +33,13 @@ interface PaneSnapshot {
   scrollTop: number;
   scrollLeft: number;
   visiblePage: number | null;
+  anchorPage: number | null;
+  anchorTopRatio: number | null;
+  anchorLeftRatio: number | null;
+  restoreStatus: string | null;
+  restoreOk: string | null;
+  restoreDeltaTop: number | null;
+  restoreDeltaLeft: number | null;
 }
 
 function PaneStateCard({ title, snapshot, paneTestId }: { title: string; snapshot: PaneSnapshot | null; paneTestId: string }) {
@@ -43,6 +50,11 @@ function PaneStateCard({ title, snapshot, paneTestId }: { title: string; snapsho
       <div>ScrollTop: <span data-testid={`${paneTestId}-scroll-top`}>{Math.round(snapshot?.scrollTop ?? 0)}</span></div>
       <div>ScrollLeft: <span data-testid={`${paneTestId}-scroll-left`}>{Math.round(snapshot?.scrollLeft ?? 0)}</span></div>
       <div>Visible Page: <span data-testid={`${paneTestId}-visible-page`}>{snapshot?.visiblePage ?? 0}</span></div>
+      <div>Anchor Page: <span data-testid={`${paneTestId}-anchor-page`}>{snapshot?.anchorPage ?? 0}</span></div>
+      <div>Restore Status: <span data-testid={`${paneTestId}-restore-status`}>{snapshot?.restoreStatus ?? "未就绪"}</span></div>
+      <div>Restore OK: <span data-testid={`${paneTestId}-restore-ok`}>{snapshot?.restoreOk ?? "false"}</span></div>
+      <div>Anchor Delta Top: <span data-testid={`${paneTestId}-restore-delta-top`}>{snapshot?.restoreDeltaTop ?? -1}</span></div>
+      <div>Anchor Delta Left: <span data-testid={`${paneTestId}-restore-delta-left`}>{snapshot?.restoreDeltaLeft ?? -1}</span></div>
     </div>
   );
 }
@@ -53,6 +65,7 @@ export function PdfRegressionDiagnostics() {
   const [workspace, setWorkspace] = useState<DiagnosticsWorkspace | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rightVariant, setRightVariant] = useState<"a" | "b">("a");
+  const [compactLayout, setCompactLayout] = useState(false);
   const [leftSnapshot, setLeftSnapshot] = useState<PaneSnapshot | null>(null);
   const [rightSnapshot, setRightSnapshot] = useState<PaneSnapshot | null>(null);
 
@@ -132,6 +145,13 @@ export function PdfRegressionDiagnostics() {
         const scrollContainer = document.querySelector<HTMLElement>(`[data-testid="pdf-viewer-container-${paneId}"]`)
           ?? document.querySelector<HTMLElement>(`[data-testid="pdf-scroll-container-${paneId}"]`);
         const shell = document.querySelector<HTMLElement>(`[data-testid="${paneId === "pdf-left-pane" ? "pdf-left-shell" : "pdf-right-shell"}"]`);
+        const anchorPage = document.querySelector<HTMLElement>(`[data-testid="pdf-anchor-page-${paneId}"]`);
+        const anchorTopRatio = document.querySelector<HTMLElement>(`[data-testid="pdf-anchor-top-ratio-${paneId}"]`);
+        const anchorLeftRatio = document.querySelector<HTMLElement>(`[data-testid="pdf-anchor-left-ratio-${paneId}"]`);
+        const restoreStatus = document.querySelector<HTMLElement>(`[data-testid="pdf-restore-status-${paneId}"]`);
+        const restoreOk = document.querySelector<HTMLElement>(`[data-testid="pdf-restore-ok-${paneId}"]`);
+        const restoreDeltaTop = document.querySelector<HTMLElement>(`[data-testid="pdf-restore-delta-top-${paneId}"]`);
+        const restoreDeltaLeft = document.querySelector<HTMLElement>(`[data-testid="pdf-restore-delta-left-${paneId}"]`);
         if (!zoomLabel || !scrollContainer || !shell) {
           return null;
         }
@@ -147,6 +167,13 @@ export function PdfRegressionDiagnostics() {
           scrollTop: scrollContainer.scrollTop,
           scrollLeft: scrollContainer.scrollLeft,
           visiblePage: visiblePage?.dataset.pageNumber ? Number(visiblePage.dataset.pageNumber) : null,
+          anchorPage: anchorPage?.textContent ? Number(anchorPage.textContent) : null,
+          anchorTopRatio: anchorTopRatio?.textContent ? Number(anchorTopRatio.textContent) : null,
+          anchorLeftRatio: anchorLeftRatio?.textContent ? Number(anchorLeftRatio.textContent) : null,
+          restoreStatus: restoreStatus?.textContent ?? null,
+          restoreOk: restoreOk?.textContent ?? null,
+          restoreDeltaTop: restoreDeltaTop?.textContent ? Number(restoreDeltaTop.textContent) : null,
+          restoreDeltaLeft: restoreDeltaLeft?.textContent ? Number(restoreDeltaLeft.textContent) : null,
         };
       };
 
@@ -225,11 +252,19 @@ export function PdfRegressionDiagnostics() {
           </button>
           <button
             type="button"
-            data-testid="scroll-right-to-page-4"
-            onClick={() => scrollPaneToPage("pdf-right-shell", 4)}
+            data-testid="scroll-right-to-page-6"
+            onClick={() => scrollPaneToPage("pdf-right-shell", 6)}
             className="rounded border border-border px-3 py-1 hover:bg-muted"
           >
-            右侧跳到第 4 页
+            右侧跳到第 6 页
+          </button>
+          <button
+            type="button"
+            data-testid="toggle-pdf-compact-layout"
+            onClick={() => setCompactLayout((value) => !value)}
+            className="rounded border border-border px-3 py-1 hover:bg-muted"
+          >
+            切换紧凑布局
           </button>
           <Link href={imageHandleHref} className="rounded border border-border px-3 py-1 hover:bg-muted">
             图片句柄诊断
@@ -240,7 +275,7 @@ export function PdfRegressionDiagnostics() {
         </div>
       </header>
 
-      <main className="grid min-h-0 flex-1 grid-cols-[1fr_1fr_320px] gap-3 overflow-hidden p-3">
+      <main className={`grid min-h-0 flex-1 gap-3 overflow-hidden p-3 ${compactLayout ? "grid-cols-[1fr_0.82fr_320px]" : "grid-cols-[1fr_1fr_320px]"}`}>
         <section className="min-h-0 overflow-hidden rounded-xl border border-border" data-testid="pdf-left-shell">
           <PDFHighlighterAdapter
             content={workspace.left.content}
@@ -278,6 +313,8 @@ export function PdfRegressionDiagnostics() {
             3. 缩放与适宽后阅读位置保持
             <br />
             4. 切走再切回恢复进度
+            <br />
+            5. 紧凑布局切换后 anchor 不漂移
           </div>
           <PaneStateCard title="左侧 pane" snapshot={leftSnapshot} paneTestId="pdf-left-state" />
           <PaneStateCard title="右侧 pane" snapshot={rightSnapshot} paneTestId="pdf-right-state" />

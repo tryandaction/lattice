@@ -6,7 +6,7 @@ const mockCreatePersistentPythonSession = vi.hoisted(() => vi.fn());
 const mockCreateSession = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/storage-adapter', () => ({
-  isTauri: () => true,
+  isTauriHost: () => true,
 }));
 
 vi.mock('@/lib/runner/runner-manager', () => ({

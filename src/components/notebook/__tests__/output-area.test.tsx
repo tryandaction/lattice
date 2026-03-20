@@ -37,7 +37,7 @@ describe('OutputArea', () => {
       expect(textElement?.className).toContain('font-mono');
     });
 
-    it('should render multiple text outputs', () => {
+    it('should group consecutive text outputs from the same stream', () => {
       const outputs: ExecutionOutput[] = [
         { type: 'text', content: 'Line 1' },
         { type: 'text', content: 'Line 2' },
@@ -47,10 +47,8 @@ describe('OutputArea', () => {
       const { container } = render(<OutputArea outputs={outputs} />);
 
       const preElements = container.querySelectorAll('pre');
-      expect(preElements.length).toBe(3);
-      expect(preElements[0].textContent).toBe('Line 1');
-      expect(preElements[1].textContent).toBe('Line 2');
-      expect(preElements[2].textContent).toBe('Line 3');
+      expect(preElements.length).toBe(1);
+      expect(preElements[0].textContent).toContain('Line 1Line 2Line 3');
     });
 
     it('should preserve whitespace in text output', () => {
@@ -159,6 +157,35 @@ describe('OutputArea', () => {
 
       const firstChild = container.firstChild as HTMLElement | null;
       expect(firstChild?.className).toContain('custom-class');
+    });
+  });
+
+  describe('Meta information', () => {
+    it('should render runner origin and diagnostics', () => {
+      const { container } = render(
+        <OutputArea
+          outputs={[]}
+          meta={{
+            origin: {
+              runnerType: 'python-local',
+              mode: 'cell',
+              sourceLabel: '本地解释器',
+              detailLabel: 'C:/Python312/python.exe',
+            },
+            diagnostics: [
+              {
+                severity: 'warning',
+                title: '解释器已切换',
+                message: '已回退到当前可用解释器。',
+              },
+            ],
+          }}
+        />
+      );
+
+      expect(container.textContent).toContain('本地解释器');
+      expect(container.textContent).toContain('C:/Python312/python.exe');
+      expect(container.textContent).toContain('解释器已切换');
     });
   });
 });

@@ -75,6 +75,12 @@ interface ImageTldrawAdapterProps {
   fileHandle: FileSystemFileHandle;
   rootHandle: FileSystemDirectoryHandle;
   filePath?: string;
+  diagnosticsSampleNonce?: number;
+  onDiagnosticsSnapshot?: (snapshot: {
+    isReady: boolean;
+    shapeCount: number;
+    annotationId: string | null;
+  }) => void;
 }
 
 const SAVE_DEBOUNCE_MS = 500;
@@ -174,6 +180,8 @@ export function ImageTldrawAdapter({
   fileHandle,
   rootHandle,
   filePath,
+  diagnosticsSampleNonce = 0,
+  onDiagnosticsSnapshot,
 }: ImageTldrawAdapterProps) {
   const { t } = useI18n();
   const {
@@ -210,6 +218,7 @@ export function ImageTldrawAdapter({
   const prevContentRef = useRef<ArrayBuffer | null>(null);
   const checkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastDiagnosticsSampleNonceRef = useRef(0);
   const imageBlob = useMemo(() => new Blob([content], { type: mimeType }), [content, mimeType]);
   const imageUrl = useObjectUrl(imageBlob);
   const editorImageSrc = useDataUrl(imageBlob);
@@ -269,6 +278,36 @@ export function ImageTldrawAdapter({
   useEffect(() => {
     currentAnnotationIdRef.current = imageAnnotation?.id || null;
   }, [imageAnnotation]);
+
+  useEffect(() => {
+    if (!onDiagnosticsSnapshot) {
+      return;
+    }
+
+    onDiagnosticsSnapshot({
+      isReady,
+      shapeCount: editor ? editor.getCurrentPageShapes().filter((shape) => shape.type !== 'image').length : 0,
+      annotationId: currentAnnotationIdRef.current,
+    });
+  }, [editor, imageAnnotation?.id, isReady, onDiagnosticsSnapshot, allAnnotations.length]);
+
+  useEffect(() => {
+    if (!editor || !onDiagnosticsSnapshot) {
+      return;
+    }
+
+    const emitSnapshot = () => {
+      onDiagnosticsSnapshot({
+        isReady,
+        shapeCount: editor.getCurrentPageShapes().filter((shape) => shape.type !== 'image').length,
+        annotationId: currentAnnotationIdRef.current,
+      });
+    };
+
+    emitSnapshot();
+    const unsubscribe = editor.store.listen(emitSnapshot, { source: 'user', scope: 'document' });
+    return () => unsubscribe();
+  }, [editor, isReady, onDiagnosticsSnapshot]);
 
   // Handle editor mount
   const handleMount = useCallback((editorInstance: Editor) => {
@@ -493,6 +532,38 @@ export function ImageTldrawAdapter({
       if (checkTimeoutRef.current) clearTimeout(checkTimeoutRef.current);
     };
   }, [editor, isReady, editorImageSrc, imageSize, setupBackground]);
+
+  useEffect(() => {
+    if (!editor || !isReady) {
+      return;
+    }
+
+    if (diagnosticsSampleNonce <= 0 || diagnosticsSampleNonce === lastDiagnosticsSampleNonceRef.current) {
+      return;
+    }
+
+    lastDiagnosticsSampleNonceRef.current = diagnosticsSampleNonce;
+    const sampleId = createShapeId('diagnostic-sample');
+    if (editor.getShape(sampleId)) {
+      return;
+    }
+
+    editor.createShape({
+      id: sampleId,
+      type: 'geo',
+      x: Math.max(32, imageSize.width * 0.18),
+      y: Math.max(32, imageSize.height * 0.18),
+      props: {
+        w: Math.max(120, imageSize.width * 0.24),
+        h: Math.max(80, imageSize.height * 0.16),
+        geo: 'rectangle',
+        color: 'blue',
+        fill: 'none',
+        dash: 'draw',
+        size: 'm',
+      },
+    } as unknown as TLShape);
+  }, [diagnosticsSampleNonce, editor, imageSize.height, imageSize.width, isReady]);
 
   // Tool handlers
   const setTool = (toolId: string) => editor?.setCurrentTool(toolId);

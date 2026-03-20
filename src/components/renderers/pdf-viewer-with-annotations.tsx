@@ -95,7 +95,7 @@ export function PDFViewerWithAnnotations({
   const [hoverPosition, setHoverPosition] = useState<{ x: number; y: number } | null>(null);
   const [commentPopupPosition, setCommentPopupPosition] = useState<{ x: number; y: number } | null>(null);
   const [annotationMode, setAnnotationMode] = useState<AnnotationMode>('select');
-  const [fitMode, setFitMode] = useState<'manual' | 'width' | 'page'>('manual');
+  const [fitMode, setFitMode] = useState<'manual' | 'width' | 'page'>('width');
   const [textNotePickerInfo, setTextNotePickerInfo] = useState<{
     position: { x: number; y: number };
     rect: { x: number; y: number; width: number; height: number };

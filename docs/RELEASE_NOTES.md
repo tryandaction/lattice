@@ -4,6 +4,38 @@
 
 ## 本次重点
 
+### 2026-03-20 阶段性收敛补充
+
+- 桌面 Notebook / 代码运行链路继续收口：
+  - `KernelSelector` 现在会明确标出“桌面运行时 / 网页运行时”
+  - 桌面探测到本地 Python 后，会自动优先切到本地解释器
+  - `Pyodide` 在桌面端只再作为“应急回退”出现，不再伪装成默认主运行器
+  - 桌面 `python-local` 失败时不再无声掉回 Pyodide，而是显式报错
+  - 工作区运行器偏好会按 workspace 路径跨重启记住，Notebook / 代码文件 / Markdown 代码块共用同一套最近选择与默认解释器
+  - 外部命令与本地 Python 运行前会先给出环境诊断与修复提示
+- Notebook / Markdown 体验继续收口：
+  - `ipynb` Markdown Cell 已复用现有 Live Preview / Obsidian 级编辑内核，默认 `Live`，并支持切到 `Source`
+  - Markdown fenced code block 已支持直接运行，并接入统一执行反馈面板
+- 统一执行反馈已升级：
+  - 输出面板会明确标出 `本地解释器 / 浏览器回退 / 外部命令`
+  - 连续 `stdout/stderr` 会分组展示
+  - 错误会区分错误名、错误值和 traceback
+- PDF 默认打开体验已调整：
+  - PDF 首次打开默认 `适宽`
+  - 旧 PDF 查看器分支也同步改成默认自适应宽度填充
+  - 对应 PDF 单测和浏览器回归基线已同步切换
+- 本轮阶段性验证已完成：
+  - `npm run lint`
+  - `npm run typecheck`
+  - `npx vitest run src/components/notebook/__tests__/kernel-selector.test.tsx src/components/notebook/__tests__/output-area.test.tsx src/components/notebook/__tests__/markdown-cell.test.tsx src/lib/runner/__tests__/preferences.test.ts src/__tests__/use-notebook-executor.tauri.test.ts src/__tests__/use-notebook-executor.test.ts`
+
+### 当前阶段仍需继续收敛
+
+- 代码渲染与运行离 VS Code / IDE 级体验仍有明显差距：
+  - 代码编辑的 hover / 补全 / 诊断 / 调试器尚未接入
+  - 代码文件 / Notebook / Markdown 代码块虽然已统一到共享执行面板，但更完整的调试、任务面板和问题面板仍未到位
+  - 本地 Python 运行器已有基础环境诊断，但解释器切换、深入健康检查和修复自动化仍需继续补强
+
 ### 2026-03-19 阶段收口补充
 
 - 新增 `PDF Split Regression` diagnostics 页面：`/diagnostics/pdf-regression`

@@ -106,6 +106,7 @@ interface PdfAnnotationSidebarProps {
   annotations: AnnotationItem[];
   selectedId: string | null;
   onSelect: (annotation: AnnotationItem) => void;
+  onHoverChange?: (annotation: AnnotationItem | null) => void;
   onDelete: (id: string) => void;
   onUpdateColor?: (id: string, color: string) => void;
   onUpdateComment?: (id: string, comment: string) => void;
@@ -727,6 +728,7 @@ function AnnotationCard({
   isMultiSelected,
   isMultiSelectMode,
   onSelect,
+  onHoverChange,
   onToggleMultiSelect,
   onDelete,
   onUpdateColor,
@@ -739,6 +741,7 @@ function AnnotationCard({
   isMultiSelected: boolean;
   isMultiSelectMode: boolean;
   onSelect: () => void;
+  onHoverChange?: (annotation: AnnotationItem | null) => void;
   onToggleMultiSelect: () => void;
   onDelete: () => void;
   onUpdateColor?: (color: string) => void;
@@ -841,7 +844,10 @@ function AnnotationCard({
           isSelected ? 'bg-muted/80' : isMultiSelected ? 'bg-accent/30' : 'hover:bg-muted/40'
         }`}
         onClick={handleClick}
+        onMouseEnter={() => onHoverChange?.(annotation)}
+        onMouseLeave={() => onHoverChange?.(null)}
         onContextMenu={handleContextMenu}
+        data-annotation-id={annotation.id}
       >
         {/* Color bar (Zotero style) */}
         <div 
@@ -931,6 +937,18 @@ function AnnotationCard({
               }}
             >
               <span className="line-clamp-3">{getPreviewText()}</span>
+            </div>
+          )}
+
+          {annotation.style.type === 'area' && annotation.preview?.type === 'image' && (
+            <div className="mb-2 overflow-hidden rounded-md border border-border bg-muted/20">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={annotation.preview.dataUrl}
+                alt={`第 ${page} 页区域预览`}
+                className="block h-24 w-full object-cover"
+                loading="lazy"
+              />
             </div>
           )}
 
@@ -1065,6 +1083,7 @@ export function PdfAnnotationSidebar({
   annotations,
   selectedId,
   onSelect,
+  onHoverChange,
   onDelete,
   onUpdateColor,
   onUpdateComment,
@@ -1188,6 +1207,15 @@ export function PdfAnnotationSidebar({
     }
   }, [selectedIds, sortedAnnotations, onBatchExport]);
 
+  useEffect(() => {
+    if (!selectedId) {
+      return;
+    }
+
+    const card = document.querySelector<HTMLElement>(`[data-annotation-id="${selectedId}"]`);
+    card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [selectedId]);
+
   if (annotations.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-6 text-center">
@@ -1272,6 +1300,7 @@ export function PdfAnnotationSidebar({
                 isMultiSelected={selectedIds.has(ann.id)}
                 isMultiSelectMode={isMultiSelectMode}
                 onSelect={() => onSelect(ann)}
+                onHoverChange={onHoverChange}
                 onToggleMultiSelect={() => toggleSelection(ann.id)}
                 onDelete={() => onDelete(ann.id)}
                 onUpdateColor={onUpdateColor ? (color) => onUpdateColor(ann.id, color) : undefined}

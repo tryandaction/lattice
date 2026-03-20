@@ -18,17 +18,20 @@ import { useEffect, useRef, useState, memo, useCallback } from "react";
 import { CodeEditor } from "@/components/editor/codemirror/code-editor";
 import { highlightCode } from "@/lib/code-highlighter";
 import type { JupyterOutput } from "@/lib/notebook-utils";
-import { AnsiText } from "./ansi-text";
+import { jupyterOutputsToExecutionOutputs } from "@/lib/runner/output-utils";
 import { useExecutionRunner } from "@/hooks/use-execution-runner";
-import { OutputArea, HtmlOutput } from "./output-area";
+import { OutputArea } from "./output-area";
 import { KernelStatus } from "./kernel-status";
 import { NotebookAiAssist } from "@/components/ai/notebook-ai-assist";
 import type { KernelOption } from "./kernel-selector";
+import { isTauriHost } from "@/lib/storage-adapter";
+import type { ExecutionPanelMeta } from "@/lib/runner/types";
 
 interface CodeCellProps {
   source: string;
   outputs?: JupyterOutput[];
   executionCount?: number | null;
+  executionMeta?: ExecutionPanelMeta;
   isActive: boolean;
   onChange: (source: string) => void;
   onFocus: () => void;
@@ -36,93 +39,6 @@ interface CodeCellProps {
   onNavigateDown?: () => void;
   runner?: KernelOption | null;
   cwd?: string;
-}
-
-/**
- * Normalize text output to string
- */
-function normalizeText(text: string | string[] | undefined): string {
-  if (!text) return "";
-  return Array.isArray(text) ? text.join("") : text;
-}
-
-/**
- * Render a single cell output (for notebook file outputs)
- */
-function CellOutput({ output }: { output: JupyterOutput }) {
-  if (output.output_type === "stream") {
-    const text = normalizeText(output.text);
-    return (
-      <div className="rounded bg-muted p-3">
-        <AnsiText text={text} />
-      </div>
-    );
-  }
-
-  if (output.output_type === "execute_result" || output.output_type === "display_data") {
-    const data = output.data;
-    if (!data) return null;
-
-    // Image output
-    if (data["image/png"]) {
-      return (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={`data:image/png;base64,${data["image/png"]}`}
-          alt="Output"
-          className="max-w-full rounded"
-        />
-      );
-    }
-    if (data["image/jpeg"]) {
-      return (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={`data:image/jpeg;base64,${data["image/jpeg"]}`}
-          alt="Output"
-          className="max-w-full rounded"
-        />
-      );
-    }
-    if (data["image/svg+xml"]) {
-      const svg = normalizeText(data["image/svg+xml"] as string | string[]);
-      return (
-        <div
-          className="rounded bg-white dark:bg-gray-900 p-2 max-w-full overflow-x-auto"
-          dangerouslySetInnerHTML={{ __html: svg }}
-        />
-      );
-    }
-    if (data["text/html"]) {
-      const html = normalizeText(data["text/html"] as string | string[]);
-      return <HtmlOutput content={html} />;
-    }
-
-    // Text output
-    if (data["text/plain"]) {
-      const text = normalizeText(data["text/plain"]);
-      return (
-        <div className="rounded bg-muted p-3">
-          <AnsiText text={text} />
-        </div>
-      );
-    }
-  }
-
-  if (output.output_type === "error") {
-    const errorText = [
-      `${output.ename}: ${output.evalue}`,
-      ...(output.traceback || []),
-    ].join("\n");
-
-    return (
-      <div className="rounded bg-red-500/15 p-3 border border-red-500/30">
-        <AnsiText text={errorText} className="text-red-400" />
-      </div>
-    );
-  }
-
-  return null;
 }
 
 /**
@@ -163,6 +79,7 @@ export const CodeCell = memo(function CodeCell({
   source,
   outputs,
   executionCount,
+  executionMeta,
   onChange,
   onFocus,
   onNavigateUp,
@@ -178,6 +95,7 @@ export const CodeCell = memo(function CodeCell({
   const {
     status,
     outputs: executionOutputs,
+    panelMeta,
     error: kernelError,
     run,
     clearOutputs,
@@ -214,15 +132,18 @@ export const CodeCell = memo(function CodeCell({
   const handleRun = useCallback(async () => {
     const code = content.trim();
     if (!code) return;
+
+    const preferredRunnerType = runner?.runnerType ?? (isTauriHost() ? "python-local" : "python-pyodide");
+    const allowPyodideFallback = preferredRunnerType === "python-pyodide";
     
     clearOutputs();
     await run({
-      runnerType: runner?.runnerType ?? "python-local",
+      runnerType: preferredRunnerType,
       command: runner?.command,
       code,
       cwd,
       mode: "cell",
-      allowPyodideFallback: true,
+      allowPyodideFallback,
     });
   }, [clearOutputs, content, cwd, run, runner?.command, runner?.runnerType]);
 
@@ -311,16 +232,16 @@ export const CodeCell = memo(function CodeCell({
 
       {/* Execution outputs (from Python runner) */}
       {hasExecutionOutputs && (
-        <OutputArea outputs={executionOutputs} onClear={clearOutputs} />
+        <OutputArea outputs={executionOutputs} meta={panelMeta} variant="compact" onClear={clearOutputs} />
       )}
 
       {/* File outputs (from notebook file) - show only if no execution outputs */}
       {!hasExecutionOutputs && hasFileOutputs && (
-        <div className="space-y-2">
-          {outputs!.map((output, i) => (
-            <CellOutput key={i} output={output} />
-          ))}
-        </div>
+        <OutputArea
+          outputs={jupyterOutputsToExecutionOutputs(outputs)}
+          meta={executionMeta}
+          variant="compact"
+        />
       )}
 
       {/* AI Assist */}
@@ -330,7 +251,7 @@ export const CodeCell = memo(function CodeCell({
           hasExecutionOutputs
             ? executionOutputs.map(o => typeof o === 'string' ? o : JSON.stringify(o)).join("\n")
             : hasFileOutputs
-              ? outputs!.filter(o => o.output_type !== 'error').map(o => normalizeText(o.text) || normalizeText(o.data?.["text/plain"])).join("\n")
+              ? jupyterOutputsToExecutionOutputs(outputs).map((output) => output.content).join("\n")
               : undefined
         }
         cellError={

@@ -31,7 +31,7 @@ export function PDFViewer({ content, fileName }: PDFViewerProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
-  const [fitMode, setFitMode] = useState<'manual' | 'width' | 'page'>('manual');
+  const [fitMode, setFitMode] = useState<'manual' | 'width' | 'page'>('width');
   const [pageWidth, setPageWidth] = useState(612);
   const [pageHeight, setPageHeight] = useState(792);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());

@@ -5,6 +5,8 @@ import {
   runnerEventToTextOutputs,
   runnerManager,
 } from "@/lib/runner/runner-manager";
+import type { ExecutionDiagnostic, ExecutionOrigin, ExecutionPanelMeta } from "@/lib/runner/types";
+import { getExecutionOrigin } from "@/lib/runner/preferences";
 import type {
   ExecutionOutput,
   ExecutionRunResult,
@@ -27,12 +29,15 @@ export interface UseExecutionRunnerReturn {
   outputs: ExecutionOutput[];
   error: string | null;
   summary: ExecutionSummary;
+  panelMeta: ExecutionPanelMeta;
   isReady: boolean;
   isRunning: boolean;
   isLoading: boolean;
   run: (request: RunnerExecutionRequest) => Promise<ExecutionRunResult>;
   terminate: () => Promise<void>;
   clearOutputs: () => void;
+  setPanelMeta: (meta: ExecutionPanelMeta) => void;
+  setDiagnostics: (diagnostics: ExecutionDiagnostic[], origin?: ExecutionOrigin | null) => void;
   lastRequest: RunnerExecutionRequest | null;
 }
 
@@ -45,11 +50,17 @@ const EMPTY_SUMMARY: ExecutionSummary = {
   terminated: false,
 };
 
+const EMPTY_PANEL_META: ExecutionPanelMeta = {
+  origin: null,
+  diagnostics: [],
+};
+
 export function useExecutionRunner(): UseExecutionRunnerReturn {
   const [status, setStatus] = useState<RunnerStatus>("idle");
   const [outputs, setOutputs] = useState<ExecutionOutput[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<ExecutionSummary>(EMPTY_SUMMARY);
+  const [panelMeta, setPanelMetaState] = useState<ExecutionPanelMeta>(EMPTY_PANEL_META);
   const [session] = useState(() => runnerManager.createSession());
   const [lastRequest, setLastRequest] = useState<RunnerExecutionRequest | null>(null);
 
@@ -106,6 +117,7 @@ export function useExecutionRunner(): UseExecutionRunnerReturn {
     setOutputs([]);
     setError(null);
     setSummary(EMPTY_SUMMARY);
+    setPanelMetaState(EMPTY_PANEL_META);
   }, []);
 
   const run = useCallback(async (request: RunnerExecutionRequest) => {
@@ -113,6 +125,10 @@ export function useExecutionRunner(): UseExecutionRunnerReturn {
     setOutputs([]);
     setError(null);
     setSummary(EMPTY_SUMMARY);
+    setPanelMetaState((previous) => ({
+      origin: getExecutionOrigin(request),
+      diagnostics: previous.diagnostics,
+    }));
     return session.run(request);
   }, [session]);
 
@@ -120,17 +136,31 @@ export function useExecutionRunner(): UseExecutionRunnerReturn {
     await session.terminate();
   }, [session]);
 
+  const setPanelMeta = useCallback((meta: ExecutionPanelMeta) => {
+    setPanelMetaState(meta);
+  }, []);
+
+  const setDiagnostics = useCallback((diagnostics: ExecutionDiagnostic[], origin?: ExecutionOrigin | null) => {
+    setPanelMetaState((previous) => ({
+      origin: origin ?? previous.origin,
+      diagnostics,
+    }));
+  }, []);
+
   return {
     status,
     outputs,
     error,
     summary,
+    panelMeta,
     isReady: status === "ready",
     isRunning: status === "running",
     isLoading: status === "loading",
     run,
     terminate,
     clearOutputs,
+    setPanelMeta,
+    setDiagnostics,
     lastRequest,
   };
 }

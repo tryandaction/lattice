@@ -33,6 +33,7 @@ interface UseNotebookEditorReturn {
   // Output operations (for Run All)
   updateCellOutputs: (cellId: string, outputs: NotebookCell["outputs"]) => void;
   updateCellExecutionCount: (cellId: string, count: number) => void;
+  updateCellExecutionMeta: (cellId: string, meta: NotebookCell["execution_meta"]) => void;
   clearCellOutputs: (cellId: string) => void;
 
   // Navigation
@@ -137,13 +138,25 @@ export function useNotebookEditor(initialContent: string): UseNotebookEditorRetu
   }, []);
 
   /**
+   * Update a cell's transient execution metadata
+   */
+  const updateCellExecutionMeta = useCallback((cellId: string, meta: NotebookCell["execution_meta"]) => {
+    setState((prev) => ({
+      ...prev,
+      cells: prev.cells.map((cell) =>
+        cell.id === cellId ? { ...cell, execution_meta: meta } : cell
+      ),
+    }));
+  }, []);
+
+  /**
    * Clear a cell's outputs
    */
   const clearCellOutputs = useCallback((cellId: string) => {
     setState((prev) => ({
       ...prev,
       cells: prev.cells.map((cell) =>
-        cell.id === cellId ? { ...cell, outputs: [], execution_count: null } : cell
+        cell.id === cellId ? { ...cell, outputs: [], execution_count: null, execution_meta: undefined } : cell
       ),
     }));
   }, []);
@@ -248,6 +261,7 @@ export function useNotebookEditor(initialContent: string): UseNotebookEditorRetu
     changeType,
     updateCellOutputs,
     updateCellExecutionCount,
+    updateCellExecutionMeta,
     clearCellOutputs,
     activateNextCell,
     activatePrevCell,

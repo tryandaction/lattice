@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 改进 (2026-03-20)
+- **桌面 Notebook / 代码运行链路收口**
+  - ✅ `KernelSelector` 现在会明确区分“桌面运行时 / 网页运行时”，并在桌面端优先选择本地 Python，而不再默认停在 `Pyodide (Web Fallback)`
+  - ✅ 桌面端一旦探测到本地 Python，会自动把当前 Notebook 内核切回本地解释器；如果只剩 Pyodide，则会明确标注为“应急回退”
+  - ✅ `runner-manager` 已去掉 `python-local` 的无声浏览器降级语义：桌面端本地运行器失败时会报错，不再悄悄改走 Pyodide
+  - ✅ `use-notebook-executor` 与 `CodeCell` 现在只在用户明确选择 Pyodide 或网页环境下才允许 Pyodide 回退，桌面 Notebook 持续优先走本地持久 Python 会话
+  - ✅ 工作区运行器偏好现已跨重启持久化，Notebook / 代码文件 / Markdown 代码块会复用同一套最近选择与默认解释器
+  - ✅ 外部命令与本地 Python 运行前会先给出更明确的环境诊断与修复提示，不再只报一坨执行失败文本
+- **Notebook Markdown / Markdown 代码块体验收口**
+  - ✅ `ipynb` Markdown Cell 已切到同一套 Live Preview 内核，默认 `Live`，并支持显式切到 `Source`
+  - ✅ 非激活 Markdown Cell 保持只读预览，激活后直接进入可编辑状态，不再依赖旧的双击 textarea 二态
+  - ✅ `markdown-renderer` 里的支持语言 fenced code block 已可直接运行，并接入统一输出面板
+- **统一执行反馈面板**
+  - ✅ `OutputArea` 已升级为共享执行面板，统一展示运行来源、诊断、stdout/stderr 分组、结构化错误、图片与 HTML 输出
+  - ✅ 代码文件、Notebook code cell、只读 Jupyter renderer 现已复用同一套输出渲染模型
+- **PDF 默认打开体验收口**
+  - ✅ `pdf-highlighter-adapter` 默认打开改为 `fit-width`，首次进入 PDF 不再固定停在手动 `120%`
+  - ✅ 旧 `pdf-viewer` / `pdf-viewer-with-annotations` 分支也同步改为默认自适应宽度填充
+  - ✅ 对应 PDF 单测与浏览器回归基线已同步切换到“默认适宽”
+
+### QA 更新 (2026-03-20)
+- ✅ 新增 `KernelSelector` 回归测试，锁定“桌面优先本地 Python / 网页只暴露浏览器内核 / 桌面回退内核自动切回本地”的关键行为
+- ✅ `use-notebook-executor.tauri` 持久会话测试已跟随新的桌面环境判定更新
+- ✅ 新增 `runner preferences` 持久化测试、`markdown-cell` Live/Source 测试、共享 `OutputArea` 来源/诊断测试
+- ✅ `pdf-highlighter-adapter` 测试已同步覆盖“PDF 默认适宽打开”后的 pane 作用域缩放行为
+- ✅ 当前阶段性验证已通过：
+  - `npm run lint`
+  - `npm run typecheck`
+  - `npx vitest run src/components/notebook/__tests__/kernel-selector.test.tsx src/components/notebook/__tests__/output-area.test.tsx src/components/notebook/__tests__/markdown-cell.test.tsx src/lib/runner/__tests__/preferences.test.ts src/__tests__/use-notebook-executor.tauri.test.ts src/__tests__/use-notebook-executor.test.ts`
+
 ### 改进 (2026-03-19)
 - **PDF 双分屏回归与缩放状态收口**
   - ✅ 新增 `pdf-view-state` helper，统一收口 PDF pane 作用域判定、viewState 持久化和相对滚动恢复逻辑

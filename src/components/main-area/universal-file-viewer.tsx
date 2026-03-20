@@ -215,7 +215,16 @@ function FileViewer({
         );
       }
       // Fallback to read-only renderer if no onChange handler
-      return <MarkdownRenderer key={viewerKey} content={normalizedContent} fileName={fileName} paneId={paneId} filePath={filePath} />;
+      return (
+        <MarkdownRenderer
+          key={viewerKey}
+          content={normalizedContent}
+          fileName={fileName}
+          paneId={paneId}
+          filePath={filePath}
+          enableCodeExecution={Boolean(filePath)}
+        />
+      );
     }
     case "pdf":
       // Use PDFHighlighterAdapter if we have file handles for annotation support

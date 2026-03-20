@@ -141,6 +141,8 @@ export interface LivePreviewEditorProps {
   onSave?: () => void;
   /** Additional class name */
   className?: string;
+  /** Auto-height mode for embedded notebook cells */
+  autoHeight?: boolean;
   /** Unique file ID for memoization */
   fileId?: string;
   /** Available files for wiki link autocomplete */
@@ -185,6 +187,7 @@ function buildExtensions(
   showLineNumbers: boolean,
   showFoldGutter: boolean,
   readOnly: boolean,
+  autoHeight: boolean,
   aiEnabled: boolean,
   onChange: (content: string) => void,
   onOutlineChange?: (outline: OutlineItem[]) => void,
@@ -257,6 +260,26 @@ function buildExtensions(
     // Line wrapping
     EditorView.lineWrapping,
   ];
+
+  if (autoHeight) {
+    extensions.push(EditorView.theme({
+      "&": {
+        maxHeight: "none",
+      },
+      ".cm-scroller": {
+        overflow: "visible",
+      },
+    }));
+  } else {
+    extensions.push(EditorView.theme({
+      "&": {
+        height: "100%",
+      },
+      ".cm-scroller": {
+        overflow: "auto",
+      },
+    }));
+  }
   
   // Fold gutter FIRST (leftmost position)
   if (showFoldGutter && mode === 'live') {
@@ -333,6 +356,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     onLinkNavigate,
     onSave,
     className = '',
+    autoHeight = false,
     fileId,
     availableFiles = [],
     onImageUpload,
@@ -470,6 +494,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           showLineNumbers,
           showFoldGutter,
           readOnly,
+          autoHeight,
           aiCompletionEnabled,
           (c) => onChangeRef.current(c),
           onOutlineChangeRef.current,
@@ -656,7 +681,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         viewRef.current = null;
       }
     };
-  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, aiCompletionEnabled, fileId, onImageUpload, useWikiImageStyle, highContrast, applyEditorState, rootHandle, filePath]); // fileId triggers re-init on file switch, content is handled by separate useEffect
+  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, autoHeight, aiCompletionEnabled, fileId, onImageUpload, useWikiImageStyle, highContrast, applyEditorState, rootHandle, filePath]); // fileId triggers re-init on file switch, content is handled by separate useEffect
 
   // Update content when it changes externally (but fileId change triggers re-init above)
   useEffect(() => {
@@ -868,7 +893,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     <>
       <div
         ref={containerRef}
-        className={`live-preview-editor h-full ${className}`}
+        className={`live-preview-editor ${autoHeight ? "" : "h-full"} ${className}`}
         data-mode={mode}
         data-loading={isLoading}
       />
@@ -900,6 +925,7 @@ export const LivePreviewEditor = memo(LivePreviewEditorComponent, (prev, next) =
   if (prev.showLineNumbers !== next.showLineNumbers) return false;
   if (prev.showFoldGutter !== next.showFoldGutter) return false;
   if (prev.readOnly !== next.readOnly) return false;
+  if (prev.autoHeight !== next.autoHeight) return false;
   if (prev.className !== next.className) return false;
   if (prev.highContrast !== next.highContrast) return false;
   // Content changes are handled by the useEffect, so we can skip re-render

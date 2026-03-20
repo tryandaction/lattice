@@ -19,28 +19,51 @@ const providers = new Map<AiProviderId, AiProvider>([
   ['custom', customProvider],
 ]);
 
+const providerOverrides = new Map<AiProviderId, AiProvider>();
+
+function getResolvedProviderMap(): Map<AiProviderId, AiProvider> {
+  const resolved = new Map(providers);
+  providerOverrides.forEach((provider, id) => {
+    resolved.set(id, provider);
+  });
+  return resolved;
+}
+
 export function getProvider(id: AiProviderId): AiProvider | null {
-  return providers.get(id) ?? null;
+  return getResolvedProviderMap().get(id) ?? null;
 }
 
 export function getAllProviders(): AiProvider[] {
-  return Array.from(providers.values());
+  return Array.from(getResolvedProviderMap().values());
 }
 
 export function getConfiguredProviders(): AiProvider[] {
-  return Array.from(providers.values()).filter((p) => p.isConfigured());
+  return Array.from(getResolvedProviderMap().values()).filter((p) => p.isConfigured());
 }
 
 export function getDefaultProvider(): AiProvider | null {
+  const resolved = getResolvedProviderMap();
   // Check stored preference
   const preferred = localStorage.getItem('lattice-ai-provider') as AiProviderId | null;
   if (preferred) {
-    const p = providers.get(preferred);
+    const p = resolved.get(preferred);
     if (p?.isConfigured()) return p;
   }
   // Fall back to first configured provider
-  for (const p of providers.values()) {
+  for (const p of resolved.values()) {
     if (p.isConfigured()) return p;
   }
   return null;
+}
+
+export function setProviderOverride(id: AiProviderId, provider: AiProvider | null): void {
+  if (provider) {
+    providerOverrides.set(id, provider);
+    return;
+  }
+  providerOverrides.delete(id);
+}
+
+export function clearProviderOverrides(): void {
+  providerOverrides.clear();
 }

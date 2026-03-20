@@ -28,7 +28,8 @@ import { useLinkNavigationStore } from "@/stores/link-navigation-store";
 import { isSameWorkspacePath } from "@/lib/link-router/path-utils";
 import { getRunnerDefinition } from "@/lib/runner/extension-map";
 import { dirname, resolveWorkspaceFilePath } from "@/lib/runner/path-utils";
-import type { RunnerExecutionRequest } from "@/lib/runner/types";
+import type { ExecutionDiagnostic, ExecutionOrigin, RunnerExecutionRequest } from "@/lib/runner/types";
+import { getLanguagePreferenceKey, resolveRunnerExecutionRequest } from "@/lib/runner/preferences";
 import { useExecutionRunner } from "@/hooks/use-execution-runner";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
@@ -72,16 +73,20 @@ export function CodeEditorViewer({
   );
   const rootName = useWorkspaceStore((state) => state.rootHandle?.name ?? state.fileTree.root?.name ?? null);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
   const setRecentRunConfig = useWorkspaceStore((state) => state.setRecentRunConfig);
+  const setRunnerPreferences = useWorkspaceStore((state) => state.setRunnerPreferences);
 
   const {
     status: runnerStatus,
     outputs,
+    panelMeta,
     error: runnerError,
     summary,
     run,
     terminate,
     clearOutputs,
+    setPanelMeta,
     isRunning,
     isLoading,
     lastRequest,
@@ -207,55 +212,50 @@ export function CodeEditorViewer({
   const buildRunRequest = useCallback(async (
     mode: RunnerExecutionRequest["mode"],
     codeOverride?: string,
-  ): Promise<RunnerExecutionRequest | null> => {
+  ): Promise<{
+    request: RunnerExecutionRequest | null;
+    origin: ExecutionOrigin | null;
+    diagnostics: ExecutionDiagnostic[];
+  }> => {
     if (!runnerDefinition) {
-      return null;
+      return { request: null, origin: null, diagnostics: [] };
     }
 
     const cwd = absoluteFilePath ? dirname(absoluteFilePath) : workspaceRootPath ?? undefined;
     const code = codeOverride ?? currentContentRef.current;
+    const languageKey = getLanguagePreferenceKey(extension);
 
     if (mode === "file" && absoluteFilePath) {
       await onSave?.();
-
-      return {
-        runnerType: runnerDefinition.runnerType,
-        command: runnerDefinition.command,
-        filePath: absoluteFilePath,
-        cwd,
-        args: runnerDefinition.buildArgs({
-          filePath: absoluteFilePath,
-          mode,
-        }),
-        mode,
-        allowPyodideFallback: true,
-      };
     }
 
-    if (!runnerDefinition.supportsInlineCode || !code.trim()) {
-      return null;
-    }
+    const resolved = await resolveRunnerExecutionRequest({
+      runnerDefinition,
+      mode,
+      code,
+      cwd,
+      absoluteFilePath: absoluteFilePath ?? undefined,
+      fileKey: filePath,
+      language: languageKey,
+      preferences: runnerPreferences,
+    });
 
     return {
-      runnerType: runnerDefinition.runnerType,
-      command: runnerDefinition.command,
-      cwd,
-      code,
-      args: runnerDefinition.buildArgs({
-        code,
-        mode,
-      }),
-      mode,
-      allowPyodideFallback: true,
+      request: resolved.request,
+      origin: resolved.meta.origin,
+      diagnostics: resolved.meta.diagnostics,
     };
-  }, [absoluteFilePath, onSave, runnerDefinition, workspaceRootPath]);
+  }, [absoluteFilePath, extension, filePath, onSave, runnerDefinition, runnerPreferences, workspaceRootPath]);
 
   const handleRun = useCallback(async () => {
-    const request = await buildRunRequest("file");
-    if (!request) return;
-
+    const { request, origin, diagnostics } = await buildRunRequest("file");
     clearOutputs();
+    setPanelMeta({ origin, diagnostics });
     setShowOutput(true);
+    if (!request) {
+      return;
+    }
+
     const result = await run(request);
     if (result.success && runnerDefinition) {
       setRecentRunConfig(filePath, {
@@ -263,21 +263,31 @@ export function CodeEditorViewer({
         command: request.command,
         args: request.args,
       });
+      setRunnerPreferences({
+        defaultLanguageRunners: {
+          [getLanguagePreferenceKey(extension)]: request.runnerType,
+        },
+        defaultPythonPath: request.runnerType === "python-local" ? request.command ?? runnerPreferences.defaultPythonPath : runnerPreferences.defaultPythonPath,
+      });
     }
-  }, [buildRunRequest, clearOutputs, filePath, run, runnerDefinition, setRecentRunConfig]);
+  }, [buildRunRequest, clearOutputs, extension, filePath, run, runnerDefinition, runnerPreferences.defaultPythonPath, setPanelMeta, setRecentRunConfig, setRunnerPreferences]);
 
   const handleRunSelection = useCallback(async () => {
     const selection = editorRef.current?.getSelection();
     if (!selection?.trim()) return;
 
-    const request = await buildRunRequest("selection", selection);
-    if (!request) return;
-
+    const { request, origin, diagnostics } = await buildRunRequest("selection", selection);
     clearOutputs();
+    setPanelMeta({ origin, diagnostics });
     setShowOutput(true);
+    if (!request) {
+      closeSelectionMenu();
+      return;
+    }
+
     closeSelectionMenu();
     await run(request);
-  }, [buildRunRequest, clearOutputs, closeSelectionMenu, run]);
+  }, [buildRunRequest, clearOutputs, closeSelectionMenu, run, setPanelMeta]);
 
   const handleRerun = useCallback(async () => {
     if (!lastRequest) {
@@ -459,8 +469,8 @@ export function CodeEditorViewer({
           {showOutput && (
             <div className="h-[calc(100%-32px)] overflow-auto p-3">
               <KernelStatus status={runnerStatus} error={runnerError} />
-              <OutputArea outputs={outputs} />
-              {outputs.length === 0 && !runnerError && runnerStatus !== "loading" && runnerStatus !== "running" && (
+              <OutputArea outputs={outputs} meta={panelMeta} />
+              {outputs.length === 0 && !runnerError && panelMeta.diagnostics.length === 0 && runnerStatus !== "loading" && runnerStatus !== "running" && (
                 <p className="text-xs text-muted-foreground text-center py-4">
                   No output yet. Click Run or press Shift+Enter to execute.
                 </p>

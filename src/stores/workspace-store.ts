@@ -50,11 +50,13 @@ const initialFileTree: FileTree = {
   root: null,
 };
 
-const initialRunnerPreferences: WorkspaceRunnerPreferences = {
-  defaultPythonPath: null,
-  defaultLanguageRunners: {},
-  recentRunByFile: {},
-};
+export function createInitialRunnerPreferences(): WorkspaceRunnerPreferences {
+  return {
+    defaultPythonPath: null,
+    defaultLanguageRunners: {},
+    recentRunByFile: {},
+  };
+}
 
 /**
  * Helper to recursively toggle directory expansion
@@ -109,6 +111,7 @@ interface WorkspaceState {
   toggleDirectory: (path: string) => void;
   setSelectedDirectoryPath: (path: string | null) => void; // 新增：设置选中的文件夹
   setRunnerPreferences: (preferences: Partial<WorkspaceRunnerPreferences>) => void;
+  replaceRunnerPreferences: (preferences: WorkspaceRunnerPreferences) => void;
   setRecentRunConfig: (
     filePath: string,
     config: WorkspaceRunnerPreferences["recentRunByFile"][string],
@@ -161,7 +164,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   isLoading: false,
   error: null,
   selectedDirectoryPath: null,
-  runnerPreferences: initialRunnerPreferences,
+  runnerPreferences: createInitialRunnerPreferences(),
 
   // Initial layout state
   layout: createInitialLayout(),
@@ -191,7 +194,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       isLoading: false,
       error: null,
       layout: createInitialLayout(),
-      runnerPreferences: initialRunnerPreferences,
+      runnerPreferences: createInitialRunnerPreferences(),
     }),
 
   toggleDirectory: (path) =>
@@ -217,6 +220,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         },
       },
     })),
+  replaceRunnerPreferences: (preferences) =>
+    set({
+      runnerPreferences: {
+        defaultPythonPath: preferences.defaultPythonPath ?? null,
+        defaultLanguageRunners: { ...(preferences.defaultLanguageRunners ?? {}) },
+        recentRunByFile: { ...(preferences.recentRunByFile ?? {}) },
+      },
+    }),
   setRecentRunConfig: (filePath, config) =>
     set((state) => ({
       runnerPreferences: {

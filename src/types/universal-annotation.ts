@@ -141,6 +141,13 @@ export interface AnnotationStyle {
   textStyle?: TextAnnotationStyle;  // Optional text styling for text annotations
 }
 
+export interface ImageAnnotationPreview {
+  type: 'image';
+  dataUrl: string;
+  width: number;
+  height: number;
+}
+
 /**
  * Valid style types array for validation
  */
@@ -161,6 +168,7 @@ export interface AnnotationItem {
   style: AnnotationStyle;
   content?: string;              // Extracted text content
   comment?: string;              // User's note
+  preview?: ImageAnnotationPreview;
   author: string;                // Author identifier
   createdAt: number;             // Unix timestamp (ms)
 }
@@ -306,6 +314,21 @@ export function isAnnotationStyle(value: unknown): value is AnnotationStyle {
   );
 }
 
+export function isImageAnnotationPreview(value: unknown): value is ImageAnnotationPreview {
+  if (typeof value !== 'object' || value === null) return false;
+  const preview = value as Record<string, unknown>;
+
+  return (
+    preview.type === 'image' &&
+    typeof preview.dataUrl === 'string' &&
+    preview.dataUrl.length > 0 &&
+    typeof preview.width === 'number' &&
+    preview.width > 0 &&
+    typeof preview.height === 'number' &&
+    preview.height > 0
+  );
+}
+
 /**
  * Type guard for AnnotationItem
  * More lenient to handle various annotation types
@@ -324,6 +347,7 @@ export function isAnnotationItem(value: unknown): value is AnnotationItem {
   // Optional fields - allow undefined, null, or correct type
   if (item.content !== undefined && item.content !== null && typeof item.content !== 'string') return false;
   if (item.comment !== undefined && item.comment !== null && typeof item.comment !== 'string') return false;
+  if (item.preview !== undefined && item.preview !== null && !isImageAnnotationPreview(item.preview)) return false;
   
   return true;
 }
@@ -513,6 +537,10 @@ export function validateAnnotationItem(value: unknown): ValidationResult {
   
   if (item.comment !== undefined && item.comment !== null && typeof item.comment !== 'string') {
     errors.push('Annotation comment must be a string if provided');
+  }
+
+  if (item.preview !== undefined && item.preview !== null && !isImageAnnotationPreview(item.preview)) {
+    errors.push('Annotation preview must be a valid image preview if provided');
   }
   
   return { valid: errors.length === 0, errors };

@@ -9,6 +9,7 @@ import { LayoutRenderer } from "./layout-renderer";
 import { findPane } from "@/lib/layout-utils";
 import { getFileExtension, isEditableFile } from "@/lib/file-utils";
 import { fastSaveFile } from "@/lib/fast-save";
+import { useWorkspaceRunnerPreferencesPersistence } from "@/hooks/use-workspace-runner-preferences";
 
 /**
  * Welcome placeholder component - shown when no workspace is open
@@ -62,6 +63,8 @@ function WelcomePlaceholder() {
  * Main Area component with advanced layout system
  */
 export function MainArea() {
+  useWorkspaceRunnerPreferencesPersistence();
+
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
   const layout = useWorkspaceStore((state) => state.layout);
   const setTabDirty = useWorkspaceStore((state) => state.setTabDirty);

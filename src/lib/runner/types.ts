@@ -37,12 +37,31 @@ export interface ExecutionDisplayData {
   "image/svg+xml"?: string;
 }
 
+export interface ExecutionDiagnostic {
+  severity: "info" | "warning" | "error";
+  title: string;
+  message: string;
+  hint?: string;
+}
+
+export interface ExecutionOrigin {
+  runnerType: RunnerType;
+  mode: ExecutionMode;
+  sourceLabel: string;
+  detailLabel: string;
+}
+
+export interface ExecutionPanelMeta {
+  origin: ExecutionOrigin | null;
+  diagnostics: ExecutionDiagnostic[];
+}
+
 export type ExecutionOutput =
   | { type: "text"; content: string; channel?: "stdout" | "stderr" }
   | { type: "image"; content: string }
   | { type: "html"; content: string }
   | { type: "svg"; content: string }
-  | { type: "error"; content: string };
+  | { type: "error"; content: string; errorName?: string; errorValue?: string; traceback?: string[] };
 
 export type RunnerEvent =
   | { type: "started"; sessionId: string; payload: { cwd?: string; filePath?: string; mode: ExecutionMode; runnerType: RunnerType } }

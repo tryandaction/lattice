@@ -101,6 +101,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     resetState,
     updateCellOutputs,
     updateCellExecutionCount,
+    updateCellExecutionMeta,
     clearCellOutputs,
   } = useNotebookEditor(content);
 
@@ -119,6 +120,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   const pendingNavigation = useLinkNavigationStore((state) => state.pendingByPane[paneId]);
   const consumePendingNavigation = useLinkNavigationStore((state) => state.consumePendingNavigation);
   const rootName = useWorkspaceStore((workspace) => workspace.rootHandle?.name ?? workspace.fileTree.root?.name ?? null);
+  const workspaceRootHandle = useWorkspaceStore((workspace) => workspace.rootHandle);
   const workspaceRootPath = useWorkspaceStore((workspace) => workspace.workspaceRootPath);
   const notebookAbsolutePath = resolveWorkspaceFilePath(workspaceRootPath, filePath, rootName);
   const notebookCwd = notebookAbsolutePath ? dirname(notebookAbsolutePath) : workspaceRootPath ?? undefined;
@@ -170,6 +172,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     },
     onCellComplete: (cellId, result) => {
       updateCellExecutionCount(cellId, result.executionCount);
+      updateCellExecutionMeta(cellId, result.panelMeta);
     },
   });
   
@@ -412,6 +415,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
               currentKernel={currentKernel}
               onKernelChange={handleKernelChange}
               cwd={notebookCwd}
+              filePath={filePath}
             />
 
             <div className="w-px h-4 bg-border" />
@@ -568,6 +572,8 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
               onNavigateDown={index < state.cells.length - 1 ? activateNextCell : undefined}
               runner={currentKernel}
               cwd={notebookCwd}
+              rootHandle={workspaceRootHandle}
+              notebookFilePath={filePath}
             />
           </div>
         ))}

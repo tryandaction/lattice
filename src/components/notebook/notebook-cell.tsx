@@ -23,6 +23,8 @@ interface NotebookCellProps {
   onNavigateDown?: () => void;
   runner?: KernelOption | null;
   cwd?: string;
+  rootHandle?: FileSystemDirectoryHandle | null;
+  notebookFilePath?: string;
 }
 
 /**
@@ -169,6 +171,8 @@ export function NotebookCellComponent({
   onNavigateDown,
   runner,
   cwd,
+  rootHandle,
+  notebookFilePath,
 }: NotebookCellProps) {
   const [showControls, setShowControls] = useState(false);
 
@@ -271,6 +275,7 @@ export function NotebookCellComponent({
           source={cell.source}
           outputs={cell.outputs}
           executionCount={cell.execution_count}
+          executionMeta={cell.execution_meta}
           isActive={isActive}
           onChange={onSourceChange}
           onFocus={onActivate}
@@ -285,6 +290,9 @@ export function NotebookCellComponent({
           isActive={isActive}
           onChange={onSourceChange}
           onFocus={onActivate}
+          rootHandle={rootHandle}
+          filePath={notebookFilePath}
+          cellId={cell.id}
         />
       )}
     </div>

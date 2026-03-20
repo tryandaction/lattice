@@ -3,9 +3,10 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { runnerManager, type ExecutionSession, type PersistentPythonSession } from "@/lib/runner/runner-manager";
 import type { JupyterOutput } from "@/lib/notebook-utils";
-import type { RunnerEvent } from "@/lib/runner/types";
+import { getExecutionOrigin } from "@/lib/runner/preferences";
+import type { ExecutionPanelMeta, RunnerEvent } from "@/lib/runner/types";
 import type { KernelOption } from "@/components/notebook/kernel-selector";
-import { isTauri } from "@/lib/storage-adapter";
+import { isTauriHost } from "@/lib/storage-adapter";
 
 interface LegacyKernel {
   initialize?: () => Promise<void>;
@@ -28,6 +29,7 @@ export interface CellExecutionResult {
   executionCount: number;
   success: boolean;
   executionTime?: number;
+  panelMeta?: ExecutionPanelMeta;
 }
 
 interface UseNotebookExecutorOptions {
@@ -122,6 +124,10 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
         ],
         executionCount: 0,
         success: false,
+        panelMeta: {
+          origin: null,
+          diagnostics: [],
+        },
       };
     }
 
@@ -140,6 +146,10 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
           executionCount: result.executionCount ?? executionCount,
           success: result.status !== "error",
           executionTime: result.executionTime,
+          panelMeta: {
+            origin: null,
+            diagnostics: [],
+          },
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -157,11 +167,24 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
           ],
           executionCount,
           success: false,
+          panelMeta: {
+            origin: null,
+            diagnostics: [],
+          },
         };
       }
     }
 
-    if (isTauri() && activeKernel.runnerType === "python-local") {
+    const panelMeta: ExecutionPanelMeta = {
+      origin: getExecutionOrigin({
+        runnerType: activeKernel.runnerType,
+        mode: "cell",
+        command: activeKernel.command,
+      }),
+      diagnostics: [],
+    };
+
+    if (isTauriHost() && activeKernel.runnerType === "python-local") {
       const shouldRecreateSession =
         !notebookSessionRef.current ||
         interruptedRef.current;
@@ -196,6 +219,7 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
           ],
           executionCount,
           success: false,
+          panelMeta,
         };
       }
 
@@ -214,6 +238,7 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
           executionCount,
           success: result.success,
           executionTime: Date.now() - startedAt,
+          panelMeta,
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -230,6 +255,7 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
           outputs,
           executionCount,
           success: false,
+          panelMeta,
         };
       }
     }
@@ -250,13 +276,14 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
     });
 
     try {
+      const allowPyodideFallback = activeKernel.runnerType === "python-pyodide";
       const result = await session.run({
         runnerType: activeKernel.runnerType,
         command: activeKernel.command,
         code,
         cwd,
         mode: "cell",
-        allowPyodideFallback: true,
+        allowPyodideFallback,
       });
 
       const executionTime = Date.now() - startedAt;
@@ -266,6 +293,7 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
         executionCount,
         success: result.success,
         executionTime,
+        panelMeta,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -282,6 +310,7 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
         outputs,
         executionCount,
         success: false,
+        panelMeta,
       };
     } finally {
       session.dispose();

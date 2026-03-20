@@ -10,13 +10,18 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import type { Components } from "react-markdown";
 import type { PluggableList } from "unified";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Loader2, Play } from "lucide-react";
 import { KATEX_MACROS } from "@/lib/katex-config";
 import type { PaneId } from "@/types/layout";
 import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
+import { dirname, resolveWorkspaceFilePath } from "@/lib/runner/path-utils";
+import { getLanguagePreferenceKey, getRunnerDefinitionForLanguage, resolveRunnerExecutionRequest } from "@/lib/runner/preferences";
+import { useExecutionRunner } from "@/hooks/use-execution-runner";
+import { OutputArea } from "@/components/notebook/output-area";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 
 interface MarkdownRendererProps {
   content: string;
@@ -24,6 +29,7 @@ interface MarkdownRendererProps {
   className?: string;
   paneId?: PaneId;
   filePath?: string;
+  enableCodeExecution?: boolean;
 }
 
 type MarkdownProps<T extends keyof JSX.IntrinsicElements> = ComponentPropsWithoutRef<T> & {
@@ -61,6 +67,135 @@ function CopyButton({ text }: { text: string }) {
         <Copy className="h-4 w-4" />
       )}
     </button>
+  );
+}
+
+function RunnableCodeBlock({
+  language,
+  code,
+  enableExecution,
+  filePath,
+  blockKey,
+}: {
+  language: string;
+  code: string;
+  enableExecution: boolean;
+  filePath?: string;
+  blockKey: string;
+}) {
+  const runnerDefinition = useMemo(() => getRunnerDefinitionForLanguage(language), [language]);
+  const rootName = useWorkspaceStore((state) => state.rootHandle?.name ?? state.fileTree.root?.name ?? null);
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
+  const setRecentRunConfig = useWorkspaceStore((state) => state.setRecentRunConfig);
+  const setRunnerPreferences = useWorkspaceStore((state) => state.setRunnerPreferences);
+  const absoluteFilePath = useMemo(
+    () => (filePath ? resolveWorkspaceFilePath(workspaceRootPath, filePath, rootName) : null),
+    [workspaceRootPath, filePath, rootName],
+  );
+  const cwd = absoluteFilePath ? dirname(absoluteFilePath) : workspaceRootPath ?? undefined;
+  const {
+    outputs,
+    panelMeta,
+    run,
+    clearOutputs,
+    setPanelMeta,
+    isRunning,
+    isLoading,
+  } = useExecutionRunner();
+
+  const canExecute = enableExecution && Boolean(runnerDefinition?.supportsInlineCode);
+  const hasPanel = outputs.length > 0 || panelMeta.diagnostics.length > 0;
+
+  const handleRun = useCallback(async () => {
+    if (!runnerDefinition) {
+      return;
+    }
+
+    const resolved = await resolveRunnerExecutionRequest({
+      runnerDefinition,
+      mode: "inline",
+      code,
+      cwd,
+      absoluteFilePath: absoluteFilePath ?? undefined,
+      fileKey: blockKey,
+      language,
+      preferences: runnerPreferences,
+    });
+
+    clearOutputs();
+    setPanelMeta({
+      origin: resolved.meta.origin,
+      diagnostics: resolved.meta.diagnostics,
+    });
+
+    if (!resolved.request) {
+      return;
+    }
+
+    const result = await run(resolved.request);
+    if (result.success) {
+      setRecentRunConfig(blockKey, {
+        runnerType: resolved.request.runnerType,
+        command: resolved.request.command,
+        args: resolved.request.args,
+      });
+      setRunnerPreferences({
+        defaultLanguageRunners: {
+          [getLanguagePreferenceKey(language)]: resolved.request.runnerType,
+        },
+        defaultPythonPath: resolved.request.runnerType === "python-local"
+          ? resolved.request.command ?? runnerPreferences.defaultPythonPath
+          : runnerPreferences.defaultPythonPath,
+      });
+    }
+  }, [
+    absoluteFilePath,
+    blockKey,
+    clearOutputs,
+    code,
+    cwd,
+    language,
+    run,
+    runnerDefinition,
+    runnerPreferences,
+    setPanelMeta,
+    setRecentRunConfig,
+    setRunnerPreferences,
+  ]);
+
+  return (
+    <div className="relative group my-4">
+      <div className="absolute right-2 top-2 z-10 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        {canExecute ? (
+          <button
+            type="button"
+            onClick={() => void handleRun()}
+            className="inline-flex items-center gap-1 rounded bg-primary/90 px-2 py-1 text-[11px] text-primary-foreground hover:bg-primary"
+            title="Run code block"
+          >
+            {isRunning || isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+            <span>Run</span>
+          </button>
+        ) : null}
+        <CopyButton text={code} />
+      </div>
+
+      <SyntaxHighlighter
+        style={oneDark as Record<string, CSSProperties>}
+        language={language}
+        PreTag="div"
+        className="rounded-lg text-sm !mt-0 !mb-0"
+      >
+        {code}
+      </SyntaxHighlighter>
+
+      {hasPanel ? (
+        <div className="mt-2 not-prose">
+          <OutputArea outputs={outputs} meta={panelMeta} variant="compact" />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -329,7 +464,14 @@ const katexOptions = {
  * Note: HTML content should be converted to Markdown before reaching this component
  * via normalizeScientificText() in universal-file-viewer.tsx
  */
-export function MarkdownRenderer({ content, fileName = "document.md", className = "", paneId, filePath }: MarkdownRendererProps) {
+export function MarkdownRenderer({
+  content,
+  fileName = "document.md",
+  className = "",
+  paneId,
+  filePath,
+  enableCodeExecution = false,
+}: MarkdownRendererProps) {
   // Content should already be normalized to Markdown by upstream (universal-file-viewer)
   // If HTML is still present, it will be handled by rehypeRaw plugin safely
   const [rehypeKatex, setRehypeKatex] = useState<RehypeKatexPlugin | null>(null);
@@ -375,6 +517,49 @@ export function MarkdownRenderer({ content, fileName = "document.md", className 
     }
     return plugins;
   }, [rehypeKatex]);
+
+  let blockIndex = 0;
+  const markdownComponents: Components = {
+    ...components,
+    code({ inline, className, children, style: _style, node: _node, ...props }: MarkdownCodeProps) {
+      const match = /language-([^\s]+)/.exec(className || "");
+      const language = match ? match[1].toLowerCase() : "";
+      const codeString = String(children).replace(/\n$/, "");
+
+      if (!inline && language) {
+        const currentIndex = blockIndex;
+        blockIndex += 1;
+        return (
+          <RunnableCodeBlock
+            language={language}
+            code={codeString}
+            enableExecution={enableCodeExecution}
+            filePath={filePath}
+            blockKey={`${filePath ?? fileName}#block:${currentIndex}:${language}`}
+          />
+        );
+      }
+
+      if (!inline) {
+        return (
+          <div className="relative group my-4">
+            <pre className="bg-muted rounded-lg p-4 overflow-x-auto">
+              <code className={className} {...props}>
+                {children}
+              </code>
+            </pre>
+            <CopyButton text={codeString} />
+          </div>
+        );
+      }
+
+      return (
+        <code className="bg-muted rounded px-1.5 py-0.5 text-sm font-mono" {...props}>
+          {children}
+        </code>
+      );
+    },
+  };
   
   return (
     <div ref={containerRef} className={`prose prose-lattice dark:prose-invert max-w-none ${className}`}>
@@ -392,7 +577,7 @@ export function MarkdownRenderer({ content, fileName = "document.md", className 
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={rehypePlugins}
-        components={components}
+        components={markdownComponents}
       >
         {content}
       </ReactMarkdown>

@@ -6,10 +6,12 @@ import {
   pythonWorkerManager,
   type WorkerOutMessage,
 } from "@/lib/python-worker-manager";
-import { isTauri } from "@/lib/storage-adapter";
+import { runnerEventToExecutionOutputs } from "@/lib/runner/output-utils";
+import { isTauriHost } from "@/lib/storage-adapter";
 import type {
   CommandAvailability,
   ExecutionDisplayData,
+  ExecutionOutput,
   ExecutionRunResult,
   PythonEnvironmentInfo,
   PythonSessionExecuteRequest,
@@ -230,11 +232,12 @@ export class ExecutionSession {
     const sessionId = request.sessionId ?? randomSessionId();
     this.currentSessionId = sessionId;
     this.setStatus(request.runnerType === "python-pyodide" ? "loading" : "running");
+    const desktopHost = isTauriHost();
 
-    if (request.runnerType === "python-local" && isTauri()) {
+    if (request.runnerType === "python-local" && desktopHost) {
       const envs = await runnerManager.detectPythonEnvironments(request.cwd);
       if (envs.length === 0) {
-        if (request.allowPyodideFallback !== false) {
+        if (request.allowPyodideFallback !== false && !desktopHost) {
           return this.run({ ...request, sessionId, runnerType: "python-pyodide" });
         }
         const error = "未检测到本地 Python 解释器";
@@ -248,11 +251,28 @@ export class ExecutionSession {
       }
     }
 
-    if (isTauri() && request.runnerType !== "python-pyodide") {
+    if (desktopHost && request.runnerType !== "python-pyodide") {
       return this.runWithTauri(sessionId, request);
     }
 
-    if (request.runnerType === "python-local" || request.runnerType === "python-pyodide") {
+    if (request.runnerType === "python-local") {
+      if (request.allowPyodideFallback !== false && !desktopHost) {
+        return this.run({ ...request, sessionId, runnerType: "python-pyodide", allowPyodideFallback: false });
+      }
+
+      const error = desktopHost
+        ? "桌面运行时未能接通本地 Python 执行桥接"
+        : "当前网页环境不支持本地 Python 运行器";
+      this.emit({
+        type: "error",
+        sessionId,
+        payload: { message: error },
+      });
+      this.setStatus("error", error);
+      return { sessionId, success: false, exitCode: null, terminated: false };
+    }
+
+    if (request.runnerType === "python-pyodide") {
       return this.runWithPyodide(sessionId, request);
     }
 
@@ -271,7 +291,7 @@ export class ExecutionSession {
       return;
     }
 
-    if (isTauri()) {
+    if (isTauriHost()) {
       await invoke("terminate_local_execution", { session_id: this.currentSessionId });
     } else {
       pythonWorkerManager.terminate();
@@ -481,7 +501,7 @@ export class PersistentPythonSession {
     request: Omit<PythonSessionExecuteRequest, "sessionId">,
     onEvent?: EventListener,
   ): Promise<ExecutionRunResult> {
-    if (!isTauri()) {
+    if (!isTauriHost()) {
       throw new Error("Persistent Python session is only available in Tauri");
     }
     if (this.pendingExecution) {
@@ -507,7 +527,7 @@ export class PersistentPythonSession {
   }
 
   async stop(): Promise<void> {
-    if (!this.sessionId || !isTauri()) {
+    if (!this.sessionId || !isTauriHost()) {
       return;
     }
     await invoke("stop_python_session", { session_id: this.sessionId });
@@ -534,7 +554,7 @@ export class RunnerManager {
   }
 
   async detectPythonEnvironments(cwd?: string): Promise<PythonEnvironmentInfo[]> {
-    if (!isTauri()) {
+    if (!isTauriHost()) {
       return [];
     }
 
@@ -551,7 +571,7 @@ export class RunnerManager {
   }
 
   async probeCommandAvailability(command: string): Promise<CommandAvailability> {
-    if (!isTauri()) {
+    if (!isTauriHost()) {
       return {
         command,
         available: false,
@@ -572,42 +592,6 @@ export class RunnerManager {
 
 export const runnerManager = new RunnerManager();
 
-export function runnerEventToTextOutputs(event: RunnerEvent): Array<{
-  type: "text" | "image" | "html" | "svg" | "error";
-  content: string;
-  channel?: "stdout" | "stderr";
-}> {
-  switch (event.type) {
-    case "stdout":
-    case "stderr":
-      return [{ type: "text", content: event.payload.text, channel: event.payload.channel }];
-    case "display_data":
-      if (event.payload.data["image/png"]) {
-        return [{ type: "image", content: `data:image/png;base64,${event.payload.data["image/png"]}` }];
-      }
-      if (event.payload.data["image/jpeg"]) {
-        return [{ type: "image", content: `data:image/jpeg;base64,${event.payload.data["image/jpeg"]}` }];
-      }
-      if (event.payload.data["image/svg+xml"]) {
-        return [{ type: "svg", content: event.payload.data["image/svg+xml"] }];
-      }
-      if (event.payload.data["text/html"]) {
-        return [{ type: "html", content: event.payload.data["text/html"] }];
-      }
-      if (event.payload.data["text/plain"]) {
-        return [{ type: "text", content: event.payload.data["text/plain"] }];
-      }
-      return [];
-    case "error":
-      return [
-        {
-          type: "error",
-          content: event.payload.traceback?.length
-            ? `${event.payload.message}\n\n${event.payload.traceback.join("\n")}`
-            : event.payload.message,
-        },
-      ];
-    default:
-      return [];
-  }
+export function runnerEventToTextOutputs(event: RunnerEvent): ExecutionOutput[] {
+  return runnerEventToExecutionOutputs(event);
 }

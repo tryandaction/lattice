@@ -10,6 +10,17 @@ export interface RunnerDefinition {
 
 const FILE_ARG = (filePath?: string) => (filePath ? [filePath] : []);
 
+const RUNNER_ALIASES: Record<string, string> = {
+  python: "py",
+  py: "py",
+  javascript: "js",
+  js: "js",
+  node: "js",
+  julia: "jl",
+  jl: "jl",
+  r: "r",
+};
+
 export const RUNNER_DEFINITIONS: Record<string, RunnerDefinition> = {
   py: {
     runnerType: "python-local",
@@ -55,5 +66,14 @@ export const RUNNER_DEFINITIONS: Record<string, RunnerDefinition> = {
 };
 
 export function getRunnerDefinition(extension: string): RunnerDefinition | null {
-  return RUNNER_DEFINITIONS[extension.toLowerCase()] ?? null;
+  const normalized = normalizeRunnerLanguage(extension);
+  return normalized ? RUNNER_DEFINITIONS[normalized] ?? null : null;
+}
+
+export function normalizeRunnerLanguage(language: string | null | undefined): string | null {
+  if (!language) {
+    return null;
+  }
+  const normalized = language.trim().toLowerCase();
+  return RUNNER_ALIASES[normalized] ?? normalized;
 }

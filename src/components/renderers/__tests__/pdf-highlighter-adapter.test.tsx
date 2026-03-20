@@ -198,7 +198,7 @@ describe('PDFHighlighterAdapter', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId('pdf-zoom-label-pane-left').textContent).toBe('120%');
+      expect(screen.getByTestId('pdf-zoom-label-pane-left').textContent).toBe('适宽');
       expect(screen.getByTestId('pdf-zoom-label-pane-right').textContent).toBe('适宽');
     });
 
@@ -227,8 +227,8 @@ describe('PDFHighlighterAdapter', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId('pdf-zoom-label-pane-left').textContent).toBe('120%');
-      expect(screen.getByTestId('pdf-zoom-label-pane-right').textContent).toBe('120%');
+      expect(screen.getByTestId('pdf-zoom-label-pane-left').textContent).toBe('适宽');
+      expect(screen.getByTestId('pdf-zoom-label-pane-right').textContent).toBe('适宽');
     });
 
     fireEvent.wheel(screen.getByTestId('pdf-scroll-container-pane-right'), {
@@ -237,7 +237,7 @@ describe('PDFHighlighterAdapter', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('pdf-zoom-label-pane-left').textContent).toBe('120%');
+      expect(screen.getByTestId('pdf-zoom-label-pane-left').textContent).toBe('适宽');
       expect(screen.getByTestId('pdf-zoom-label-pane-right').textContent).toBe('145%');
     });
   });

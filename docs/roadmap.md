@@ -5,6 +5,11 @@
 ### 当前阶段已完成
 
 - 桌面端本地运行主链路已可用，Python / 外部命令运行、Notebook 连续执行、运行结果展示已跑通
+- 桌面运行器选择链路已进一步收口：桌面端现在会优先选择本地 Python，`Pyodide` 仅保留为应急回退而不再静默伪装主运行器
+- 工作区运行器偏好已进入主链路：按 workspace 路径跨重启记住默认解释器与最近选择
+- Notebook Markdown Cell 已复用现有 Live Preview / Obsidian 级编辑内核，默认 `Live` 并支持切到 `Source`
+- Markdown fenced code block 已具备真实运行入口，并复用统一执行反馈面板
+- PDF 首次打开默认改为自适应宽度填充，避免阅读入口停在固定手动缩放
 - QA 基线已收敛到 `lint` / `typecheck` / `test:run` / `build` / `tauri:build` 可稳定通过
 - Markdown 导出已产品化进入主界面，支持 `.docx` / `.pdf`、`clean` / `appendix` / `study-note` 和“当前渲染视图”导出
 - AI Workbench 已形成主闭环：
@@ -25,6 +30,38 @@
 - 复杂多步自治 Agent
 - 多人协作与云权限系统
 - 移动端与多平台桌面适配
+
+---
+
+## 下一阶段：IDE 级代码渲染与运行体验深化
+
+### 阶段目标
+
+把 Lattice 的代码文件与 Notebook 体验，从“已经能执行”继续推进到更接近 VS Code / 本地 IDE 的工作流质量。重点不是再补一条能跑的命令链，而是把 **运行器选择、运行反馈、Notebook Markdown Cell、编辑期渲染与环境诊断** 做成稳定、可预期、可恢复的产品体验。
+
+### 核心交付
+
+- 代码运行与 Notebook 内核链路继续专业化：
+  - 本地 Python 环境诊断页 / 健康探针
+  - 缺失解释器时的明确修复指引
+  - 不同工作区的运行器偏好持久化
+  - 运行失败后的更清晰错误分层与恢复动作
+- Notebook Markdown Cell 复用现有 Markdown / Live Preview / Obsidian 级编辑链路：
+  - 实时渲染
+  - 实时编辑
+  - 与普通 `.md` 文件尽可能一致的交互
+- 代码编辑体验继续向 IDE 靠拢：
+  - hover / 诊断 / 补全 / 执行入口统一
+  - 更强的输出面板结构
+  - 更可靠的 Notebook / code file / markdown code block 统一运行事件流
+
+### 完成定义
+
+- 桌面端不再把本地运行失败静默伪装成浏览器回退
+- 用户能明确知道当前运行的是本地解释器还是浏览器回退
+- Notebook Markdown Cell 体验明显接近 Obsidian / Live Preview，而不再只是静态 markdown 块
+- Markdown 代码块、代码文件、Notebook code cell 的运行反馈使用统一面板模型
+- 代码运行问题可通过产品内诊断信息定位，而不是只能靠猜测环境
 
 ---
 

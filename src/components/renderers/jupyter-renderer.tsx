@@ -9,6 +9,8 @@ import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
+import { OutputArea } from "@/components/notebook/output-area";
+import { jupyterOutputsToExecutionOutputs } from "@/lib/runner/output-utils";
 
 interface JupyterRendererProps {
   content: string;
@@ -53,74 +55,6 @@ function normalizeSource(source: string | string[]): string {
 }
 
 /**
- * Normalize text output to string
- */
-function normalizeText(text: string | string[] | undefined): string {
-  if (!text) return "";
-  return Array.isArray(text) ? text.join("") : text;
-}
-
-/**
- * Render a single cell output
- */
-function CellOutput({ output }: { output: JupyterOutput }) {
-  if (output.output_type === "stream") {
-    return (
-      <pre className="whitespace-pre-wrap rounded bg-muted p-3 text-sm font-mono">
-        {normalizeText(output.text)}
-      </pre>
-    );
-  }
-
-  if (output.output_type === "execute_result" || output.output_type === "display_data") {
-    const data = output.data;
-    if (!data) return null;
-
-    // Image output
-    if (data["image/png"]) {
-      return (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={`data:image/png;base64,${data["image/png"]}`}
-          alt="Output"
-          className="max-w-full"
-        />
-      );
-    }
-    if (data["image/jpeg"]) {
-      return (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={`data:image/jpeg;base64,${data["image/jpeg"]}`}
-          alt="Output"
-          className="max-w-full"
-        />
-      );
-    }
-
-    // Text output
-    if (data["text/plain"]) {
-      return (
-        <pre className="whitespace-pre-wrap rounded bg-muted p-3 text-sm font-mono">
-          {normalizeText(data["text/plain"])}
-        </pre>
-      );
-    }
-  }
-
-  if (output.output_type === "error") {
-    return (
-      <pre className="whitespace-pre-wrap rounded bg-destructive/10 p-3 text-sm font-mono text-destructive">
-        {output.ename}: {output.evalue}
-        {output.traceback && "\n" + output.traceback.join("\n")}
-      </pre>
-    );
-  }
-
-  return null;
-}
-
-/**
  * Render a single notebook cell
  */
 function NotebookCell({ cell, index }: { cell: JupyterCell; index: number }) {
@@ -159,10 +93,8 @@ function NotebookCell({ cell, index }: { cell: JupyterCell; index: number }) {
 
         {/* Outputs */}
         {cell.outputs && cell.outputs.length > 0 && (
-          <div className="ml-[3.5rem] space-y-2">
-            {cell.outputs.map((output, outputIndex) => (
-              <CellOutput key={outputIndex} output={output} />
-            ))}
+          <div className="ml-[3.5rem]">
+            <OutputArea outputs={jupyterOutputsToExecutionOutputs(cell.outputs)} variant="compact" />
           </div>
         )}
       </div>

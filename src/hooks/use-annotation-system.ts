@@ -40,6 +40,7 @@ export type AnnotationUpdates = {
   style?: Partial<AnnotationItem['style']>;
   content?: string;
   comment?: string;
+  preview?: AnnotationItem['preview'];
   author?: string;
   createdAt?: number;
 };
@@ -367,6 +368,7 @@ export function useAnnotationSystem({
         ...existingAnnotation,
         content: updates.content !== undefined ? updates.content : existingAnnotation.content,
         comment: updates.comment !== undefined ? updates.comment : existingAnnotation.comment,
+        preview: updates.preview !== undefined ? updates.preview : existingAnnotation.preview,
         author: updates.author !== undefined ? updates.author : existingAnnotation.author,
         createdAt: updates.createdAt !== undefined ? updates.createdAt : existingAnnotation.createdAt,
         style: mergedStyle as AnnotationItem['style'],

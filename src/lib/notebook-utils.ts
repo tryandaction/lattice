@@ -1,3 +1,5 @@
+import type { ExecutionPanelMeta } from "@/lib/runner/types";
+
 /**
  * Jupyter Notebook Utilities
  * 
@@ -73,6 +75,7 @@ export interface NotebookCell {
   metadata: Record<string, unknown>;
   outputs?: JupyterOutput[];
   execution_count?: number | null;
+  execution_meta?: ExecutionPanelMeta;
 }
 
 /**
