@@ -115,4 +115,43 @@ describe('SelectionAiHub', () => {
     expect(useSelectionAiStore.getState().recentPrompts[0]?.prompt).toBe(textarea.value);
     expect(useSelectionAiStore.getState().preferredMode).toBe('agent');
   });
+
+  it('shows plan-mode specific execution target and filters recent prompts by mode', async () => {
+    runSelectionAiMode.mockResolvedValue({
+      kind: 'proposal',
+      title: '整理计划',
+    });
+
+    useSelectionAiStore.setState({
+      preferredMode: 'plan',
+      recentPrompts: [
+        { mode: 'plan', prompt: '生成执行清单', createdAt: 3 },
+        { mode: 'agent', prompt: '找出风险', createdAt: 2 },
+      ],
+    });
+
+    render(
+      <SelectionAiHub
+        context={context}
+        initialMode="plan"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.queryByText('结果进入 AI Workbench Proposal，并优先展开目标草稿动作。')).not.toBeNull();
+    expect(screen.getAllByText('生成执行清单')).toHaveLength(2);
+    expect(screen.queryByText('找出风险')).toBeNull();
+
+    fireEvent.click(screen.getAllByRole('button', { name: '生成执行清单' })[1]);
+    fireEvent.keyDown(document, { ctrlKey: true, key: 'Enter' });
+
+    await waitFor(() => {
+      expect(runSelectionAiMode).toHaveBeenCalledWith(expect.objectContaining({
+        mode: 'plan',
+        prompt: '生成执行清单',
+      }));
+    });
+
+    expect(useSelectionAiStore.getState().preferredMode).toBe('plan');
+  });
 });

@@ -534,7 +534,6 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
 
         // Attach MathEditor event listener immediately after view creation
         const handleOpenMathEditor = (e: Event) => {
-          console.log('[LivePreviewEditor] Received open-math-editor event', e);
           const customEvent = e as CustomEvent<{
             latex: string;
             isBlock: boolean;
@@ -543,7 +542,6 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
             position: { top: number; left: number };
           }>;
           const detail = customEvent.detail;
-          console.log('[LivePreviewEditor] Event detail:', detail);
           // Clamp position so the overlay stays within the viewport
           const editorWidth = detail.isBlock ? 524 : 324; // approx overlay widths
           const clampedLeft = Math.min(detail.position.left, window.innerWidth - editorWidth - 16);
@@ -557,9 +555,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
               left: Math.max(8, clampedLeft),
             },
           });
-          console.log('[LivePreviewEditor] MathEditor state set');
         };
-        console.log('[LivePreviewEditor] Attaching open-math-editor listener to view.dom');
         view.dom.addEventListener('open-math-editor', handleOpenMathEditor);
 
         // Store handler for cleanup

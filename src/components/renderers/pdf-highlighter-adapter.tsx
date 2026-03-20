@@ -32,6 +32,7 @@ import {
   Square,
   Pencil,
   ChevronDown,
+  Maximize2,
   PanelRightOpen,
   PanelRightClose,
 } from "lucide-react";
@@ -58,6 +59,18 @@ import type { EvidenceAnchorRect } from "@/lib/ai/types";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useObjectUrl } from "@/hooks/use-object-url";
+import {
+  buildPdfEditorState,
+  clearScopedPdfPaneId,
+  captureRelativeScrollPosition,
+  clampPdfScale,
+  getPdfWheelZoomDelta,
+  isPdfInteractionActive,
+  readCachedPdfViewState,
+  restoreRelativeScrollPosition,
+  setScopedPdfPaneId,
+  type PdfZoomMode,
+} from "@/lib/pdf-view-state";
 
 import "react-pdf-highlighter/dist/style.css";
 import "./pdf-highlighter-adapter.css";
@@ -74,14 +87,6 @@ interface PDFHighlighterAdapterProps {
   paneId: PaneId;
   fileId: string;
   filePath: string;
-}
-
-type PdfZoomMode = 'manual' | 'fit-width' | 'fit-page';
-
-interface PdfViewState {
-  scale: number;
-  zoomMode: PdfZoomMode;
-  showSidebar: boolean;
 }
 
 function buildPdfSelectionRects(range: Range | undefined, pageElement: HTMLElement | null): EvidenceAnchorRect[] | undefined {
@@ -1319,8 +1324,7 @@ export function PDFHighlighterAdapter({
   filePath,
 }: PDFHighlighterAdapterProps) {
   const cachedPdfViewState = useMemo(() => {
-    const cached = useContentCacheStore.getState().getEditorState(fileId)?.viewState?.pdf;
-    return (cached as PdfViewState | undefined) ?? null;
+    return readCachedPdfViewState(useContentCacheStore.getState().getEditorState(fileId));
   }, [fileId]);
   const isPaneActive = useWorkspaceStore((state) => state.layout.activePaneId === paneId);
   const saveEditorState = useContentCacheStore((state) => state.saveEditorState);
@@ -1371,7 +1375,6 @@ export function PDFHighlighterAdapter({
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const hasRestoredScrollRef = useRef(false);
-  const isInteractionScopedRef = useRef(false);
   const timeoutIdsRef = useRef<number[]>([]);
   const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
     scrollContainerRef,
@@ -1400,6 +1403,68 @@ export function PDFHighlighterAdapter({
     return viewerContainer instanceof HTMLDivElement ? viewerContainer : scrollContainerRef.current;
   }, []);
 
+  const getVisiblePageNumber = useCallback((): number | null => {
+    const shell = scrollContainerRef.current;
+    if (!shell) {
+      return null;
+    }
+
+    const shellRect = shell.getBoundingClientRect();
+    const pages = Array.from(containerRef.current?.querySelectorAll<HTMLElement>("[data-page-number]") ?? []);
+    const visiblePage = pages.find((page) => {
+      const pageRect = page.getBoundingClientRect();
+      return pageRect.bottom > shellRect.top + 48 && pageRect.top < shellRect.bottom - 48;
+    });
+
+    return visiblePage?.dataset.pageNumber ? Number(visiblePage.dataset.pageNumber) : null;
+  }, []);
+
+  const restoreVisiblePage = useCallback((pageNumber: number | null) => {
+    if (!pageNumber) {
+      return false;
+    }
+
+    const page = containerRef.current?.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`);
+    if (!page) {
+      return false;
+    }
+
+    page.scrollIntoView({ behavior: "auto", block: "center" });
+    return true;
+  }, []);
+
+  const restoreScaleAnchor = useCallback((
+    viewerContainer: HTMLDivElement,
+    visiblePageNumber: number | null,
+    scrollState: ReturnType<typeof captureRelativeScrollPosition>,
+  ) => {
+    let frameId = 0;
+    let attemptsLeft = visiblePageNumber ? 240 : 0;
+
+    const restore = () => {
+      if (attemptsLeft > 0) {
+        attemptsLeft -= 1;
+        if (restoreVisiblePage(visiblePageNumber)) {
+          return;
+        }
+        frameId = window.requestAnimationFrame(restore);
+        return;
+      }
+
+      restoreRelativeScrollPosition(viewerContainer, scrollState);
+    };
+
+    frameId = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(restore);
+    });
+
+    return () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [restoreVisiblePage]);
+
   const scheduleTimeout = useCallback((callback: () => void, delay: number) => {
     const timeoutId = window.setTimeout(() => {
       timeoutIdsRef.current = timeoutIdsRef.current.filter((id) => id !== timeoutId);
@@ -1411,18 +1476,13 @@ export function PDFHighlighterAdapter({
 
   const persistPdfViewState = useCallback(() => {
     const viewerContainer = getViewerScrollContainer();
-    saveEditorState(fileId, {
-      cursorPosition: 0,
+    saveEditorState(fileId, buildPdfEditorState({
+      scale,
+      zoomMode,
+      showSidebar,
       scrollTop: viewerContainer?.scrollTop ?? 0,
       scrollLeft: viewerContainer?.scrollLeft ?? 0,
-      viewState: {
-        pdf: {
-          scale,
-          zoomMode,
-          showSidebar,
-        } satisfies PdfViewState,
-      },
-    });
+    }));
   }, [fileId, getViewerScrollContainer, saveEditorState, scale, showSidebar, zoomMode]);
 
   useEffect(() => {
@@ -1466,7 +1526,9 @@ export function PDFHighlighterAdapter({
       return;
     }
 
-    let attemptsLeft = 24;
+    const targetTop = cachedState.scrollTop ?? 0;
+    const targetLeft = cachedState.scrollLeft ?? 0;
+    let attemptsLeft = 240;
     let frameId = 0;
     const restoreScroll = () => {
       const viewerContainer = getViewerScrollContainer();
@@ -1479,10 +1541,19 @@ export function PDFHighlighterAdapter({
       }
 
       viewerContainer.scrollTo({
-        top: cachedState.scrollTop ?? 0,
-        left: cachedState.scrollLeft ?? 0,
+        top: targetTop,
+        left: targetLeft,
         behavior: 'auto',
       });
+      const needsRetry = (
+        (targetTop > 0 && viewerContainer.scrollTop === 0) ||
+        (targetLeft > 0 && viewerContainer.scrollLeft === 0)
+      );
+      if (needsRetry && attemptsLeft > 0) {
+        attemptsLeft -= 1;
+        frameId = window.requestAnimationFrame(restoreScroll);
+        return;
+      }
       hasRestoredScrollRef.current = true;
     };
 
@@ -1561,21 +1632,21 @@ export function PDFHighlighterAdapter({
     }
 
     const handlePointerEnter = () => {
-      isInteractionScopedRef.current = true;
+      setScopedPdfPaneId(paneId);
     };
 
     const handlePointerLeave = () => {
-      isInteractionScopedRef.current = false;
+      clearScopedPdfPaneId(paneId);
     };
 
     const handleFocusIn = () => {
-      isInteractionScopedRef.current = true;
+      setScopedPdfPaneId(paneId);
     };
 
     const handleFocusOut = (event: FocusEvent) => {
       const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
       if (!nextTarget || !container.contains(nextTarget)) {
-        isInteractionScopedRef.current = false;
+        clearScopedPdfPaneId(paneId);
       }
     };
 
@@ -1589,8 +1660,9 @@ export function PDFHighlighterAdapter({
       container.removeEventListener('pointerleave', handlePointerLeave);
       container.removeEventListener('focusin', handleFocusIn);
       container.removeEventListener('focusout', handleFocusOut);
+      clearScopedPdfPaneId(paneId);
     };
-  }, []);
+  }, [paneId]);
 
   useEffect(() => {
     return () => {
@@ -1602,8 +1674,7 @@ export function PDFHighlighterAdapter({
   // Keyboard shortcut: Ctrl+Shift+A to toggle sidebar
   useEffect(() => {
     const handleSidebarShortcut = (e: KeyboardEvent) => {
-      const shouldHandle = isInteractionScopedRef.current || isPaneActive;
-      if (!shouldHandle) {
+      if (!isPdfInteractionActive({ paneId, isPaneActive })) {
         return;
       }
 
@@ -1614,7 +1685,7 @@ export function PDFHighlighterAdapter({
     };
     window.addEventListener('keydown', handleSidebarShortcut);
     return () => window.removeEventListener('keydown', handleSidebarShortcut);
-  }, [isPaneActive]);
+  }, [isPaneActive, paneId]);
 
   // Zoom limits
   const ZOOM_MIN = 0.25;
@@ -1630,39 +1701,46 @@ export function PDFHighlighterAdapter({
   }, [scale, zoomMode]);
 
   useEffect(() => {
+    let attemptsLeft = 24;
+    let frameId = 0;
+
+    const attachViewerAttributes = () => {
+      const viewerContainer = getViewerScrollContainer();
+      if (viewerContainer) {
+        viewerContainer.setAttribute("data-pane-id", paneId);
+        viewerContainer.setAttribute("data-testid", `pdf-viewer-container-${paneId}`);
+        return;
+      }
+
+      attemptsLeft -= 1;
+      if (attemptsLeft > 0) {
+        frameId = window.requestAnimationFrame(attachViewerAttributes);
+      }
+    };
+
+    frameId = window.requestAnimationFrame(attachViewerAttributes);
+
+    return () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [getViewerScrollContainer, paneId, pdfScaleValue]);
+
+  useEffect(() => {
     const viewerContainer = getViewerScrollContainer();
     const pdfHighlighter = pdfHighlighterRef.current;
     if (!viewerContainer || !pdfHighlighter) {
       return;
     }
 
-    const maxScrollTop = Math.max(1, viewerContainer.scrollHeight - viewerContainer.clientHeight);
-    const maxScrollLeft = Math.max(1, viewerContainer.scrollWidth - viewerContainer.clientWidth);
-    const scrollState = {
-      topRatio: viewerContainer.scrollTop / maxScrollTop,
-      leftRatio: viewerContainer.scrollLeft / maxScrollLeft,
-    };
+    const visiblePageNumber = getVisiblePageNumber();
+    const scrollState = captureRelativeScrollPosition(viewerContainer);
 
     pdfHighlighter.handleScaleValue();
 
-    const restoreScroll = () => {
-      const nextMaxTop = Math.max(0, viewerContainer.scrollHeight - viewerContainer.clientHeight);
-      const nextMaxLeft = Math.max(0, viewerContainer.scrollWidth - viewerContainer.clientWidth);
-      viewerContainer.scrollTo({
-        top: scrollState.topRatio * nextMaxTop,
-        left: scrollState.leftRatio * nextMaxLeft,
-        behavior: "auto",
-      });
-    };
-
-    const frame1 = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(restoreScroll);
-    });
-
-    return () => {
-      window.cancelAnimationFrame(frame1);
-    };
-  }, [getViewerScrollContainer, pdfScaleValue]);
+    return restoreScaleAnchor(viewerContainer, visiblePageNumber, scrollState);
+  }, [getViewerScrollContainer, getVisiblePageNumber, pdfScaleValue, restoreScaleAnchor]);
 
   useEffect(() => {
     if (zoomMode === "manual") {
@@ -1676,29 +1754,14 @@ export function PDFHighlighterAdapter({
     }
 
     const observer = new ResizeObserver(() => {
-      const maxScrollTop = Math.max(1, viewerContainer.scrollHeight - viewerContainer.clientHeight);
-      const maxScrollLeft = Math.max(1, viewerContainer.scrollWidth - viewerContainer.clientWidth);
-      const scrollState = {
-        topRatio: viewerContainer.scrollTop / maxScrollTop,
-        leftRatio: viewerContainer.scrollLeft / maxScrollLeft,
-      };
-
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          const nextMaxTop = Math.max(0, viewerContainer.scrollHeight - viewerContainer.clientHeight);
-          const nextMaxLeft = Math.max(0, viewerContainer.scrollWidth - viewerContainer.clientWidth);
-          viewerContainer.scrollTo({
-            top: scrollState.topRatio * nextMaxTop,
-            left: scrollState.leftRatio * nextMaxLeft,
-            behavior: "auto",
-          });
-        });
-      });
+      const visiblePageNumber = getVisiblePageNumber();
+      const scrollState = captureRelativeScrollPosition(viewerContainer);
+      restoreScaleAnchor(viewerContainer, visiblePageNumber, scrollState);
     });
 
     observer.observe(container);
     return () => observer.disconnect();
-  }, [getViewerScrollContainer, zoomMode]);
+  }, [getViewerScrollContainer, getVisiblePageNumber, restoreScaleAnchor, zoomMode]);
 
   // Apply zoom mode
   const applyZoomMode = useCallback((mode: 'manual' | 'fit-width' | 'fit-page') => {
@@ -1708,12 +1771,12 @@ export function PDFHighlighterAdapter({
 
   // Simple zoom functions
   const zoomIn = useCallback(() => {
-    setScale(s => Math.min(s + ZOOM_STEP, ZOOM_MAX));
+    setScale((s) => clampPdfScale(s + ZOOM_STEP, ZOOM_MIN, ZOOM_MAX));
     setZoomMode('manual');
   }, []);
 
   const zoomOut = useCallback(() => {
-    setScale(s => Math.max(s - ZOOM_STEP, ZOOM_MIN));
+    setScale((s) => clampPdfScale(s - ZOOM_STEP, ZOOM_MIN, ZOOM_MAX));
     setZoomMode('manual');
   }, []);
 
@@ -1740,8 +1803,8 @@ export function PDFHighlighterAdapter({
       }
 
       e.preventDefault();
-      const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
-      setScale(s => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, s + delta)));
+      const delta = getPdfWheelZoomDelta(e.deltaY, ZOOM_STEP);
+      setScale((s) => clampPdfScale(s + delta, ZOOM_MIN, ZOOM_MAX));
       setZoomMode('manual');
     };
 
@@ -1755,8 +1818,7 @@ export function PDFHighlighterAdapter({
   // Handle keyboard shortcuts for zoom and tools
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const shouldHandle = isInteractionScopedRef.current || isPaneActive;
-      if (!shouldHandle) {
+      if (!isPdfInteractionActive({ paneId, isPaneActive })) {
         return;
       }
 
@@ -1829,7 +1891,7 @@ export function PDFHighlighterAdapter({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isPaneActive, zoomIn, zoomOut, resetZoom]);
+  }, [isPaneActive, paneId, zoomIn, zoomOut, resetZoom]);
 
   // Convert annotations to highlights
   const highlights = useMemo(() => {
@@ -2216,7 +2278,13 @@ export function PDFHighlighterAdapter({
   }
 
   return (
-    <div ref={containerRef} className="lattice-pdf-viewer flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+    <div
+      ref={containerRef}
+      className="lattice-pdf-viewer flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+      data-file-id={fileId}
+      data-pane-id={paneId}
+      data-testid={`pdf-pane-${paneId}`}
+    >
       <SelectionContextMenu
         state={selectionMenuState}
         onClose={closeSelectionMenu}
@@ -2394,7 +2462,10 @@ export function PDFHighlighterAdapter({
             <ZoomOut className="h-4 w-4" />
           </Button>
           
-          <span className="min-w-[3.5rem] text-center text-sm tabular-nums">
+          <span
+            className="min-w-[3.5rem] text-center text-sm tabular-nums"
+            data-testid={`pdf-zoom-label-${paneId}`}
+          >
             {zoomMode === 'fit-width' ? '适宽' : zoomMode === 'fit-page' ? '适页' : `${Math.round(scale * 100)}%`}
           </span>
           
@@ -2414,10 +2485,22 @@ export function PDFHighlighterAdapter({
             variant={zoomMode === 'fit-width' ? "secondary" : "ghost"}
             size="icon"
             className="h-8 w-8"
+            data-testid={`pdf-fit-width-${paneId}`}
             onClick={() => applyZoomMode(zoomMode === 'fit-width' ? 'manual' : 'fit-width')}
             title="适应宽度"
           >
             <FitWidthIcon className="h-4 w-4" />
+          </Button>
+
+          <Button
+            variant={zoomMode === 'fit-page' ? "secondary" : "ghost"}
+            size="icon"
+            className="h-8 w-8"
+            data-testid={`pdf-fit-page-${paneId}`}
+            onClick={() => applyZoomMode(zoomMode === 'fit-page' ? 'manual' : 'fit-page')}
+            title="适应整页"
+          >
+            <Maximize2 className="h-4 w-4" />
           </Button>
 
           <div className="mx-1 h-4 w-px bg-border" />
@@ -2514,6 +2597,7 @@ export function PDFHighlighterAdapter({
         <div
           ref={scrollContainerRef}
           className="relative flex-1 min-h-0 min-w-0 overflow-auto bg-muted/30"
+          data-testid={`pdf-scroll-container-${paneId}`}
           onClick={handlePdfClick}
           onMouseDown={handleInkMouseDown}
           onMouseMove={handleInkMouseMove}

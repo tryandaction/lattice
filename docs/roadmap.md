@@ -13,6 +13,11 @@
 - 当前 `@引用` 与 Evidence Panel 已进入产品化收口阶段：两段式浏览、消息切换、证据多选和后续动作链路都已具备可持续深化的基线
 - Selection AI Hub 已完成 Phase 2 收口：最近模式/轻量 prompt 历史、模式差异化、结果来源识别、SelectionContext 精细化已具备产品基线
 - 分屏 PDF 阅读稳定性已补强：pane 作用域缩放、阅读位置保持、切文件后恢复阅读进度、布局不再把右侧内容挤出屏幕
+- 当前 diagnostics / regression 基础设施已补齐：
+  - `/diagnostics/pdf-regression`
+  - `/diagnostics/image-annotation`
+  - `/diagnostics/selection-ai`
+- QA 基线已进一步收敛到 `lint` / `typecheck` / `test:run` / `test:browser-regression` / `build` / `tauri:build` 可稳定通过
 
 ### 当前阶段仍然刻意不做
 
@@ -153,6 +158,7 @@
 - 草稿沉淀已经模板化
 - 批量整理工作流从 proposal 到 writeback 可以稳定连续完成
 - `lint` / `typecheck` / `test:run` / `build` / `tauri:build` 继续全绿
+- `test:browser-regression` 继续可稳定通过
 
 ---
 

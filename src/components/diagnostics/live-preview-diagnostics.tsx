@@ -29,6 +29,9 @@ function isEscaped(text: string, index: number): boolean {
 export function LivePreviewDiagnostics() {
   const guideHref = resolveAppRoute("/guide");
   const imageDiagnosticsHref = resolveAppRoute("/diagnostics/image-viewer");
+  const imageAnnotationHref = resolveAppRoute("/diagnostics/image-annotation");
+  const pdfRegressionHref = resolveAppRoute("/diagnostics/pdf-regression");
+  const selectionAiHref = resolveAppRoute("/diagnostics/selection-ai");
   const [selectedId, setSelectedId] = useState(LIVE_PREVIEW_DIAGNOSTIC_FIXTURES[0].id);
   const selected = useMemo(
     () => LIVE_PREVIEW_DIAGNOSTIC_FIXTURES.find((file) => file.id === selectedId) ?? LIVE_PREVIEW_DIAGNOSTIC_FIXTURES[0],
@@ -148,6 +151,24 @@ export function LivePreviewDiagnostics() {
         </div>
 
         <div className="ml-auto flex items-center gap-2 text-xs">
+          <Link
+            href={pdfRegressionHref}
+            className="rounded border border-border px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          >
+            PDF 分屏回归
+          </Link>
+          <Link
+            href={imageAnnotationHref}
+            className="rounded border border-border px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          >
+            图片句柄诊断
+          </Link>
+          <Link
+            href={selectionAiHref}
+            className="rounded border border-border px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          >
+            Selection AI 诊断
+          </Link>
           <Link
             href={imageDiagnosticsHref}
             className="rounded border border-border px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"

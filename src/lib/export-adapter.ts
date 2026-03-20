@@ -140,7 +140,6 @@ class WebExportAdapter implements ExportAdapter {
 
   async showInFolder(_filePath: string): Promise<void> {
     // Not supported in web mode
-    console.log('[Export] showInFolder not supported in web mode');
   }
 }
 

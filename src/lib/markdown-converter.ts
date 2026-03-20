@@ -232,7 +232,6 @@ export function autoConvertToMarkdown(content: string): string {
     (content.includes('data-latex="') && content.includes('<span'));
 
   if (hasHtmlTags || hasMathHtml) {
-    console.log('[HTML Detected] Converting to Markdown...');
     return htmlToMarkdown(content);
   }
 

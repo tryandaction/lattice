@@ -579,7 +579,12 @@ function createContext(manifest: PluginManifest): PluginContext {
       platform: isTauri() ? 'desktop' : 'web',
     },
     log: (...args: unknown[]) => {
-      console.log(`[plugin:${pluginId}]`, ...args);
+      recordPluginAudit({
+        pluginId,
+        level: 'info',
+        action: 'log',
+        message: args.map((arg) => String(arg)).join(' '),
+      });
     },
     obsidian: {
       app: {
@@ -856,7 +861,12 @@ function createContext(manifest: PluginManifest): PluginContext {
             toast(message, { duration });
           })
           .catch(() => {
-            console.log(`[Notice] ${message}`);
+            recordPluginAudit({
+              pluginId,
+              level: 'info',
+              action: 'notice',
+              message,
+            });
           });
       },
     },
@@ -1244,7 +1254,12 @@ function createWorkerHost(
       registerCommand(manifest.id, command, (payload) => host.runCommand(command.id, payload)),
     onRegisterPanel: (panel) => registerPanel(manifest.id, panel),
     onLog: (...args) => {
-      console.log(`[plugin:${manifest.id}]`, ...args);
+      recordPluginAudit({
+        pluginId: manifest.id,
+        level: 'info',
+        action: 'worker-log',
+        message: args.map((arg) => String(arg)).join(' '),
+      });
     },
     onError: (error) => {
       const message = error instanceof Error ? error.message : String(error);

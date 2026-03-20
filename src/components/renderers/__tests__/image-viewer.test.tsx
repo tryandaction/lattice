@@ -72,4 +72,41 @@ describe('ImageViewer', () => {
 
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:image-2');
   });
+
+  it('keeps the same image visible across time and same-content rerenders', async () => {
+    const content = new Uint8Array([9, 8, 7]).buffer;
+    createObjectURL.mockReset();
+    createObjectURL.mockReturnValue('blob:image-stable');
+
+    const { rerender } = render(
+      <ImageViewer
+        content={content}
+        fileName="stable.png"
+        mimeType="image/png"
+      />,
+    );
+
+    await waitFor(() => {
+      const image = screen.getByRole('img', { name: 'stable.png' });
+      expect(image.getAttribute('src')).toBe('blob:image-stable');
+    });
+
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(10000);
+
+    rerender(
+      <ImageViewer
+        content={content}
+        fileName="stable.png"
+        mimeType="image/png"
+      />,
+    );
+
+    const image = screen.getByRole('img', { name: 'stable.png' });
+    expect(image.getAttribute('src')).toBe('blob:image-stable');
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
 });

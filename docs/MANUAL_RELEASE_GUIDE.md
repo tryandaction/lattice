@@ -13,6 +13,7 @@ npm install
 npm run lint
 npm run typecheck
 npm run test:run
+npm run test:browser-regression
 npm run build
 npm run tauri:build
 ```
@@ -63,6 +64,9 @@ npm run tauri:build
 - 桌面端可以打开工作区并恢复最近工作目录
 - `.py` 文件可以在桌面端使用本地 Python 运行
 - Notebook 单元在桌面端可以连续运行并保留上一个单元的变量
+- `/diagnostics/pdf-regression` 可以正常打开，并能完成 PDF 双分屏基础回归
+- `/diagnostics/image-annotation` 可以正常打开，并能完成真实 workspace handle 图片标注回归
+- `/diagnostics/selection-ai` 可以正常打开，并能完成 Chat / Agent / Plan 三种 mocked 主链路回归
 - PDF 放大、缩小、适宽不会跳回第一页
 - 分屏打开两个 PDF 时，`Ctrl+滚轮` / 缩放快捷键只作用于当前 pane
 - 分屏收缩后，右侧 pane 内容不会超出屏幕边界
@@ -86,3 +90,8 @@ Failed to add bundler type to the binary: __TAURI_BUNDLE_TYPE variable not found
 ```
 
 这不会阻塞本次构建或安装包生成，但如果后续要做自动更新链路，建议单独处理。
+
+额外说明：
+
+- 当前 browser regression 已覆盖 PDF 双分屏、图片 workspace handle 标注、Selection AI 三条主链路。
+- 对于 PDF 深页切文件切回后的可见页位置，发布前仍建议在 `/diagnostics/pdf-regression` 手工复检一次。

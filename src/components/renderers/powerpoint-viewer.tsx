@@ -96,28 +96,11 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
         try {
           const formulas = await extractFormulasFromPptx(contentForFormulas);
           setSlideFormulas(formulas);
-          const totalFormulas = formulas.reduce((sum, s) => sum + s.formulas.length, 0);
-          console.log(`[PPT] Extracted ${totalFormulas} formulas from ${formulas.length} slides`);
-
-          // Log details for each slide with formulas
-          formulas.forEach(sf => {
-            if (sf.formulas.length > 0) {
-              console.log(`[PPT] Slide ${sf.slideIndex}: ${sf.formulas.length} formulas`);
-              sf.formulas.forEach((f, i) => {
-                console.log(`  [${i}] LaTeX: ${f.latex?.substring(0, 80) || 'EMPTY'}`);
-              });
-            }
-          });
+          void formulas;
 
           // Also extract text content using separate buffer
           const texts = await extractTextFromPptx(contentForTexts);
           setSlideTexts(texts);
-          console.log(`[PPT] Extracted text from ${texts.length} slides`);
-          texts.forEach(st => {
-            if (st.paragraphs.length > 0) {
-              console.log(`[PPT] Slide ${st.slideIndex}: ${st.paragraphs.length} paragraphs`);
-            }
-          });
         } catch (formulaError) {
           console.warn('[PPT] Formula/text extraction failed:', formulaError);
           // Continue without formulas - don't block slide rendering
@@ -150,9 +133,6 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
           return;
         }
         
-        // Debug: Log the container structure
-        console.log('[PPT] Container HTML structure:', container.innerHTML?.substring(0, 500) || 'empty');
-        
         // pptx-preview renders slides - find the actual slide elements
         let slideDivs: Element[] = [];
         
@@ -160,15 +140,11 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
         const wrapper = container.querySelector('.pptx-wrapper') || container.firstElementChild;
         
         if (wrapper) {
-          console.log('[PPT] Found wrapper:', wrapper.tagName, wrapper.className);
-          console.log('[PPT] Wrapper children count:', wrapper.children.length);
-          
           // pptx-preview renders slides as section elements
           // Try to find section elements first
           const sections = wrapper.querySelectorAll('section');
           if (sections.length > 0) {
             slideDivs = Array.from(sections);
-            console.log('[PPT] Found sections:', sections.length);
           } else {
             // Fallback: Get direct children of wrapper, excluding style/script
             slideDivs = Array.from(wrapper.children).filter(child => {
@@ -191,13 +167,6 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
           }
         }
         
-        console.log('[PPT] Total slides found:', slideDivs.length);
-        if (slideDivs.length > 0) {
-          const firstSlide = slideDivs[0] as HTMLElement;
-          console.log('[PPT] First slide:', firstSlide.tagName, 'size:', firstSlide.offsetWidth, 'x', firstSlide.offsetHeight);
-          console.log('[PPT] First slide style:', firstSlide.style.cssText);
-        }
-
         setLoadingProgress(85);
 
         // Create slide data array

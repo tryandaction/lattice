@@ -17,6 +17,7 @@ interface SelectionAiHubProps {
   context: SelectionContext | null;
   initialMode?: SelectionAiMode | null;
   returnFocusTo?: HTMLElement | null;
+  runMode?: typeof runSelectionAiMode;
   onClose: () => void;
 }
 
@@ -40,7 +41,7 @@ function toRuntimeSettings(settings: ReturnType<typeof useSettingsStore.getState
   };
 }
 
-export function SelectionAiHub({ context, initialMode = null, returnFocusTo, onClose }: SelectionAiHubProps) {
+export function SelectionAiHub({ context, initialMode = null, returnFocusTo, runMode, onClose }: SelectionAiHubProps) {
   const settings = useSettingsStore((state) => state.settings);
   const preferredMode = useSelectionAiStore((state) => state.preferredMode);
   const recentPrompts = useSelectionAiStore((state) => state.recentPrompts);
@@ -103,7 +104,8 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, onC
     setIsRunning(true);
     try {
       const prompt = promptByMode[mode];
-      const result = await runSelectionAiMode({
+      const executeMode = runMode ?? runSelectionAiMode;
+      const result = await executeMode({
         context,
         mode,
         prompt,
@@ -138,6 +140,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, onC
     promptByMode,
     rememberPrompt,
     returnFocusTo,
+    runMode,
     setPreferredMode,
     settings,
   ]);

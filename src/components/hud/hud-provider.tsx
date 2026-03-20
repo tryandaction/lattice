@@ -66,7 +66,6 @@ export function setActiveMathField(mf: MathfieldElement | null): void {
   if (mf) {
     setActiveInputTargetFromElement(mf as unknown as HTMLElement);
   }
-  console.log('[HUD] 设置活动 math-field:', mf ? 'yes' : 'null');
 }
 
 // ============================================================================
@@ -95,7 +94,6 @@ function handleSelectionUpdate() {
   if (globalTiptapEditor && !globalTiptapEditor.isDestroyed) {
     const newPos = globalTiptapEditor.state.selection.from;
     currentInsertPosition = newPos;
-    console.log('[HUD] selectionUpdate 位置:', newPos);
   }
 }
 
@@ -105,7 +103,6 @@ function handleEditorMouseUp() {
     if (globalTiptapEditor && !globalTiptapEditor.isDestroyed) {
       const newPos = globalTiptapEditor.state.selection.from;
       currentInsertPosition = newPos;
-      console.log('[HUD] mouseup 位置:', newPos);
     }
   }, 0);
 }
@@ -129,7 +126,6 @@ export function savePositionOnFirstTab(): void {
   } else {
     positionSavedOnFirstTab = currentInsertPosition;
   }
-  console.log('[HUD] 第一次 Tab 保存位置:', positionSavedOnFirstTab);
 }
 
 function getAndClearSavedPosition(): number {
@@ -167,8 +163,6 @@ function createMathLiveAtPosition(editor: Editor, pos: number): Promise<Mathfiel
   
   const docSize = editor.state.doc.content.size;
   const safePos = Math.min(Math.max(1, pos), docSize);
-  
-  console.log('[HUD] 创建公式，位置:', safePos);
   
   const countBefore = document.querySelectorAll('math-field').length;
   
@@ -251,14 +245,12 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
       registeredMathFieldsRef.current.add(mathField);
 
       const handleFocus = () => {
-        console.log('[HUD] math-field 获得焦点');
         setActiveMathField(mathField as MathfieldElement);
         updateCursorPosition((mathField as HTMLElement).getBoundingClientRect());
       };
 
       const handleClick = (e: Event) => {
         e.stopPropagation();
-        console.log('[HUD] math-field 被点击');
         setActiveMathField(mathField as MathfieldElement);
         updateCursorPosition((mathField as HTMLElement).getBoundingClientRect());
       };
@@ -309,7 +301,6 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
       
       if (clickedMathField) {
         // 点击了已有的 math-field，切换到它
-        console.log('[HUD] 点击了已有公式，切换目标');
         setActiveMathField(clickedMathField);
         updateCursorPosition(clickedMathField.getBoundingClientRect());
       } else {
@@ -319,7 +310,6 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
         setTimeout(() => {
           if (globalTiptapEditor && !globalTiptapEditor.isDestroyed) {
             currentInsertPosition = globalTiptapEditor.state.selection.from;
-            console.log('[HUD] 点击新位置:', currentInsertPosition);
             // 清除活动 math-field，这样下次输入会创建新的
             setActiveMathField(null);
           }
@@ -441,7 +431,6 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
               changes: { from, to, insert: wrappedLatex },
               selection: { anchor: from + wrappedLatex.length },
             });
-            console.log('[HUD] CodeMirror 插入成功:', latex);
             return;
           } catch (e) {
             console.error('[HUD] CodeMirror 插入失败:', e);
@@ -469,7 +458,6 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
               changes: { from, to, insert: wrappedLatex },
               selection: { anchor: from + wrappedLatex.length },
             });
-            console.log('[HUD] CodeMirror (active) 插入成功:', latex);
             return;
           } catch (e) {
             console.error('[HUD] CodeMirror (active) 插入失败:', e);
@@ -481,7 +469,6 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
     // Priority 4: Tiptap editor - 在当前位置创建新的 math-field
     if (globalTiptapEditor && !globalTiptapEditor.isDestroyed) {
       const pos = currentInsertPosition;
-      console.log('[HUD] 在 Tiptap 新位置创建公式:', pos);
 
       createMathLiveAtPosition(globalTiptapEditor, pos).then((newMf) => {
         if (newMf) {

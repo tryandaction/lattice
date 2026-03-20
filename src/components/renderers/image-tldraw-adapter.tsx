@@ -55,6 +55,14 @@ import type { AnnotationItem, ImageTarget } from "@/types/universal-annotation";
 import { ImageViewer } from "./image-viewer";
 import { UniversalAnnotationSidebar } from "./universal-annotation-sidebar";
 import { useObjectUrl } from "@/hooks/use-object-url";
+import { useDataUrl } from "@/hooks/use-data-url";
+import {
+  buildImageAssetProps,
+  getImageRegionCenter,
+  hasBackgroundShape,
+  shouldRestoreImageBackground,
+  shouldUpdateImageAsset,
+} from "@/lib/image-tldraw-state";
 
 // ============================================================================
 // Types
@@ -204,6 +212,7 @@ export function ImageTldrawAdapter({
   const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const imageBlob = useMemo(() => new Blob([content], { type: mimeType }), [content, mimeType]);
   const imageUrl = useObjectUrl(imageBlob);
+  const editorImageSrc = useDataUrl(imageBlob);
 
   // Only re-probe image dimensions when the ArrayBuffer reference actually changes.
   useEffect(() => {
@@ -228,8 +237,10 @@ export function ImageTldrawAdapter({
       onImageNavigate: (x, y, width, height) => {
         setHighlightedRegion({ x, y, width, height });
         if (editor && imageSize.width > 0) {
-          const centerX = (x + width / 2) / 100 * imageSize.width;
-          const centerY = (y + height / 2) / 100 * imageSize.height;
+          const { x: centerX, y: centerY } = getImageRegionCenter(
+            { x, y, width, height },
+            imageSize,
+          );
           editor.centerOnPoint({ x: centerX, y: centerY });
         }
         if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
@@ -297,19 +308,16 @@ export function ImageTldrawAdapter({
 
   // Unified background setup — called both on initial mount and during recovery
   const setupBackground = useCallback(() => {
-    if (!editor || !imageUrl || imageSize.width === 0) return;
+    if (!editor || !editorImageSrc || imageSize.width === 0) return;
     try {
       const backgroundId = createShapeId('background');
       const assetId: TLAssetId = AssetRecordType.createId('background-image');
-
-      const assetProps = {
-        name: fileName,
-        src: imageUrl,
-        w: imageSize.width,
-        h: imageSize.height,
+      const assetProps = buildImageAssetProps({
+        fileName,
+        imageUrl: editorImageSrc,
+        imageSize,
         mimeType,
-        isAnimated: false,
-      };
+      });
       const existingAsset = editor.getAsset(assetId);
 
       if (!existingAsset) {
@@ -320,15 +328,7 @@ export function ImageTldrawAdapter({
           props: assetProps,
           meta: {},
         }]);
-      } else if (
-        existingAsset.type === 'image' &&
-        (
-          existingAsset.props.src !== imageUrl ||
-          existingAsset.props.w !== imageSize.width ||
-          existingAsset.props.h !== imageSize.height ||
-          existingAsset.props.mimeType !== mimeType
-        )
-      ) {
+      } else if (shouldUpdateImageAsset(existingAsset, assetProps)) {
         editor.updateAssets([{
           id: assetId,
           type: 'image',
@@ -368,15 +368,15 @@ export function ImageTldrawAdapter({
       console.error('Failed to set up Tldraw canvas:', err);
       setTldrawError(err instanceof Error ? err : new Error('Failed to initialize canvas'));
     }
-  }, [editor, imageUrl, imageSize, fileName, mimeType]);
+  }, [editor, editorImageSrc, imageSize, fileName, mimeType]);
 
   // Set up background image on initial load
   useEffect(() => {
-    if (!editor || !imageUrl || imageSize.width === 0 || imageSetupDoneRef.current) return;
+    if (!editor || !editorImageSrc || imageSize.width === 0 || imageSetupDoneRef.current) return;
 
     const timer = setTimeout(() => {
       const existingShapes = editor.getCurrentPageShapes();
-      const hasBackground = existingShapes.some(s => s.id === createShapeId('background'));
+      const hasBackground = hasBackgroundShape(existingShapes, createShapeId('background'));
       if (hasBackground) {
         imageSetupDoneRef.current = true;
         setIsReady(true);
@@ -387,7 +387,7 @@ export function ImageTldrawAdapter({
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [editor, imageUrl, imageSize, setupBackground]);
+  }, [editor, editorImageSrc, imageSize, setupBackground]);
 
   // Restore shapes from annotation
   useEffect(() => {
@@ -467,7 +467,7 @@ export function ImageTldrawAdapter({
   // Only listens to user-initiated document changes (not internal tldraw state),
   // with a debounce to avoid excessive checks. No interval polling needed.
   useEffect(() => {
-    if (!editor || !isReady || !imageUrl || imageSize.width === 0) return;
+    if (!editor || !isReady || !editorImageSrc || imageSize.width === 0) return;
 
     const unsubscribe = editor.store.listen(() => {
       if (checkTimeoutRef.current) clearTimeout(checkTimeoutRef.current);
@@ -477,7 +477,7 @@ export function ImageTldrawAdapter({
           const assetId: TLAssetId = AssetRecordType.createId('background-image');
           const backgroundShape = editor.getShape(backgroundId);
           const backgroundAsset = editor.getAsset(assetId);
-          if (!backgroundShape || !backgroundAsset) {
+          if (shouldRestoreImageBackground({ backgroundShape, backgroundAsset })) {
             console.warn('[ImageTldraw] Background image asset/shape lost, recreating...');
             imageSetupDoneRef.current = false;
             setupBackground();
@@ -492,7 +492,7 @@ export function ImageTldrawAdapter({
       unsubscribe();
       if (checkTimeoutRef.current) clearTimeout(checkTimeoutRef.current);
     };
-  }, [editor, isReady, imageUrl, imageSize, setupBackground]);
+  }, [editor, isReady, editorImageSrc, imageSize, setupBackground]);
 
   // Tool handlers
   const setTool = (toolId: string) => editor?.setCurrentTool(toolId);
@@ -521,8 +521,7 @@ export function ImageTldrawAdapter({
   const handleAnnotationClick = useCallback((annotation: AnnotationItem) => {
     if (annotation.target.type === 'image' && editor && imageSize.width > 0) {
       const target = annotation.target as ImageTarget;
-      const centerX = (target.x + target.width / 2) / 100 * imageSize.width;
-      const centerY = (target.y + target.height / 2) / 100 * imageSize.height;
+      const { x: centerX, y: centerY } = getImageRegionCenter(target, imageSize);
       editor.centerOnPoint({ x: centerX, y: centerY });
       setHighlightedRegion({ x: target.x, y: target.y, width: target.width, height: target.height });
       if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
@@ -580,7 +579,7 @@ export function ImageTldrawAdapter({
   }
 
   // Loading state
-  if (!imageUrl || imageSize.width === 0) {
+  if (!imageUrl || !editorImageSrc || imageSize.width === 0) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -590,9 +589,9 @@ export function ImageTldrawAdapter({
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col" data-file-path={filePath} data-testid="image-tldraw-adapter">
       {/* Unified Toolbar */}
-      <div className="flex items-center justify-between border-b border-border bg-muted/50 px-2 py-1.5 gap-2 flex-wrap">
+      <div className="flex items-center justify-between border-b border-border bg-muted/50 px-2 py-1.5 gap-2 flex-wrap" data-testid="image-tldraw-toolbar">
         {/* Left: File info */}
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-sm text-muted-foreground truncate max-w-[150px]">{fileName}</span>

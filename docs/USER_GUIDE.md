@@ -568,7 +568,14 @@ Lattice 现在将实时预览学习页与自检页同时纳入产品体验：用
 
 - 用户指南入口：`/guide`
 - 开发自检入口：`/diagnostics`
+- PDF 双分屏回归页：`/diagnostics/pdf-regression`
+- 图片 workspace handle 标注回归页：`/diagnostics/image-annotation`
+- Selection AI 主链路回归页：`/diagnostics/selection-ai`
 - 学习页与自检页共用同一套实时预览引擎与示例数据
 - 快捷键：`Ctrl+Shift+/`
 
-如果你在编辑过程中想快速理解某种语法的实时预览行为，优先打开 `/guide`；如果你需要排查渲染、点击定位和复杂块级交互问题，再进入 `/diagnostics`。
+如果你在编辑过程中想快速理解某种语法的实时预览行为，优先打开 `/guide`；如果你需要排查渲染、点击定位和复杂块级交互问题，再进入 `/diagnostics`。其中：
+
+- `/diagnostics/pdf-regression` 适合复检 PDF 双分屏缩放、布局和切文件恢复
+- `/diagnostics/image-annotation` 适合复检真实 workspace handle 的图片标注链路
+- `/diagnostics/selection-ai` 适合复检 Chat / Agent / Plan 三种 Selection AI 主链路

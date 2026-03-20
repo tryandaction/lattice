@@ -29,6 +29,8 @@ const ASSETS: AssetOption[] = [
 
 export function ImageRendererDiagnostics() {
   const guideHref = resolveAppRoute("/guide");
+  const imageAnnotationHref = resolveAppRoute("/diagnostics/image-annotation");
+  const pdfRegressionHref = resolveAppRoute("/diagnostics/pdf-regression");
   const [selectedId, setSelectedId] = useState(ASSETS[0].id);
   const [content, setContent] = useState<ArrayBuffer | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -128,6 +130,18 @@ export function ImageRendererDiagnostics() {
           >
             强制重渲染
           </button>
+          <Link
+            href={imageAnnotationHref}
+            className="rounded border border-border px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          >
+            图片句柄诊断
+          </Link>
+          <Link
+            href={pdfRegressionHref}
+            className="rounded border border-border px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          >
+            PDF 分屏诊断
+          </Link>
           <Link
             href={guideHref}
             className="rounded border border-border px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"

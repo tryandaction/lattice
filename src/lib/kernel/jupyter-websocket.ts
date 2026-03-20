@@ -69,7 +69,6 @@ class JupyterWebSocketChannel {
         this.ws = new WebSocket(this.url);
 
         this.ws.onopen = () => {
-          console.log(`[${this.channelType}] WebSocket connected`);
           this.setState('connected');
           this.reconnectAttempts = 0;
           this.startHeartbeat();
@@ -86,7 +85,6 @@ class JupyterWebSocketChannel {
         };
 
         this.ws.onclose = () => {
-          console.log(`[${this.channelType}] WebSocket closed`);
           this.setState('disconnected');
           this.stopHeartbeat();
           this.attemptReconnect();
@@ -203,10 +201,6 @@ class JupyterWebSocketChannel {
 
     this.reconnectAttempts++;
     const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
-
-    console.log(
-      `[${this.channelType}] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`
-    );
 
     setTimeout(() => {
       this.connect().catch((error) => {

@@ -153,8 +153,6 @@ export function MainSlideArea({
         ? contentHeight + OVERFLOW_PADDING 
         : declaredHeight;
       
-      console.log(`[PPT] Final dimensions: ${originalWidth}x${originalHeight}`);
-      console.log(`[PPT] Target container: ${slideWidth}x${slideHeight}`);
       
       // Calculate scale to fit container while preserving aspect ratio
       const scaleX = slideWidth / originalWidth;
@@ -167,7 +165,6 @@ export function MainSlideArea({
       const offsetX = (slideWidth - scaledWidth) / 2;
       const offsetY = (slideHeight - scaledHeight) / 2;
       
-      console.log(`[PPT] Scale: ${scale.toFixed(4)}, Offset: (${offsetX.toFixed(1)}, ${offsetY.toFixed(1)})`);
       
       // Create wrapper - this is the ONLY element we style
       // The clone keeps its original styles intact
@@ -269,7 +266,6 @@ export function MainSlideArea({
       nodesToProcess.push(currentNode as Text);
     }
     
-    console.log(`[PPT] Found ${nodesToProcess.length} potential formula text nodes`);
     
     for (const textNode of nodesToProcess) {
       const text = textNode.textContent?.trim() || '';
@@ -280,12 +276,10 @@ export function MainSlideArea({
       const latex = convertPlainTextToLatex(text);
       if (!latex) continue;
       
-      console.log(`[PPT] Converting: "${text}" -> "${latex}"`);
       
       // Render with KaTeX
       const html = renderLatex(latex, false);
       if (!html || !html.includes('katex')) {
-        console.log(`[PPT] KaTeX render failed for: "${latex}"`);
         continue;
       }
       
@@ -306,7 +300,6 @@ export function MainSlideArea({
       textNode.replaceWith(span);
       enhancedCount++;
       
-      console.log(`[PPT] Enhanced formula: "${text}"`);
     }
     
     return enhancedCount;
@@ -361,19 +354,16 @@ export function MainSlideArea({
       // Need at least 2 indicators to be considered a formula
       if (indicatorCount < 2) continue;
       
-      console.log(`[PPT] Found formula element: "${text}" (${indicatorCount} indicators)`);
       
       // Convert to LaTeX
       const latex = convertPlainTextToLatex(text);
       if (!latex) {
-        console.log(`[PPT] Could not convert to LaTeX: "${text}"`);
         continue;
       }
       
       // Render with KaTeX
       const html = renderLatex(latex, false);
       if (!html || !html.includes('katex')) {
-        console.log(`[PPT] KaTeX render failed for: "${latex}"`);
         continue;
       }
       
@@ -397,7 +387,6 @@ export function MainSlideArea({
       htmlElement.classList.add('formula-enhanced-container');
       
       enhancedCount++;
-      console.log(`[PPT] Enhanced element formula: "${text}"`);
     }
     
     return enhancedCount;
@@ -511,7 +500,6 @@ export function MainSlideArea({
     // Filter valid formulas
     const validFormulas = formulas.filter(f => f.html?.includes('katex'));
     
-    console.log('[PPT] injectTextContent called with', texts.length, 'texts and', validFormulas.length, 'valid formulas');
     
     // Get the slide's actual dimensions to calculate proportional font sizes
     const slideWidth = parseFloat(slideElement.style.width) || slideElement.offsetWidth || 2560;
@@ -532,7 +520,6 @@ export function MainSlideArea({
     const paragraphGap = Math.round((hasLotsOfContent ? 4 : 6) * scaleFactor);
     const padding = Math.round(16 * scaleFactor);
     
-    console.log(`[PPT] Slide dimensions: ${slideWidth}x${slideHeight}, scale factor: ${scaleFactor.toFixed(2)}, base font: ${baseFontSize}px, content count: ${contentCount}`);
     
     // Create a content container - NO background, compact layout
     const container = document.createElement('div');
@@ -581,7 +568,6 @@ export function MainSlideArea({
       // Skip short texts that already appear in the slide (likely titles/headers)
       // This catches titles that weren't marked as isTitle
       if (text.length < 20 && !text.includes('【公式】') && existingText.includes(text)) {
-        console.log(`[PPT] Skipping duplicate text: "${text}"`);
         continue;
       }
       
@@ -678,9 +664,6 @@ export function MainSlideArea({
     // Append container if we have content
     if (addedElements > 0) {
       slideElement.appendChild(container);
-      console.log(`[PPT] Injected overlay with ${addedElements} elements, used ${formulaIndex} formulas`);
-    } else {
-      console.log('[PPT] No elements to inject');
     }
   }
 
@@ -758,7 +741,6 @@ export function MainSlideArea({
         processedElements.add(element);
         replacedCount++;
         
-        console.log(`[PPT] Replaced formula text: "${text.substring(0, 50)}..." with KaTeX`);
       }
     }
     
@@ -790,13 +772,11 @@ export function MainSlideArea({
             htmlContainer.appendChild(formulaDiv);
             replacedCount++;
             
-            console.log(`[PPT] Appended formula to container with text: "${text.substring(0, 30)}..."`);
           }
         }
       }
     }
     
-    console.log(`[PPT] Replaced ${replacedCount} formulas with KaTeX`);
     return replacedCount > 0;
   }
 
@@ -893,7 +873,6 @@ export function MainSlideArea({
     // Filter to only valid KaTeX formulas
     const validFormulas = formulas.filter(f => f.html?.includes('katex'));
     
-    console.log(`[PPT] Valid formulas to inject: ${validFormulas.length} out of ${formulas.length}`);
     
     if (validFormulas.length === 0) {
       console.warn('[PPT] No valid KaTeX formulas to inject');
@@ -920,7 +899,6 @@ export function MainSlideArea({
         htmlBlock.classList.add('formula-injected');
         htmlBlock.style.overflow = 'visible';
         formulaIndex++;
-        console.log(`[PPT] Injected formula ${formulaIndex} into empty block`);
       }
     }
     
@@ -928,7 +906,6 @@ export function MainSlideArea({
     // that shows formulas without completely covering the slide
     if (formulaIndex < validFormulas.length) {
       const remainingFormulas = validFormulas.slice(formulaIndex);
-      console.log(`[PPT] ${remainingFormulas.length} formulas remaining, creating overlay`);
       
       const container = document.createElement('div');
       container.className = 'pptx-formula-container';
@@ -971,7 +948,6 @@ export function MainSlideArea({
       slideElement.appendChild(container);
     }
     
-    console.log(`[PPT] Successfully injected ${validFormulas.length} formulas`);
   }
 
   // Wheel navigation with improved debouncing

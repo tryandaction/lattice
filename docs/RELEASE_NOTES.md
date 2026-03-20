@@ -4,6 +4,32 @@
 
 ## 本次重点
 
+### 2026-03-19 阶段收口补充
+
+- 新增 `PDF Split Regression` diagnostics 页面：`/diagnostics/pdf-regression`
+- 新增 `Image Annotation Handle Diagnostics`：`/diagnostics/image-annotation`
+- 新增 `Selection AI Regression`：`/diagnostics/selection-ai`
+- 新增浏览器级门禁命令：`npm run test:browser-regression`
+- 本轮浏览器回归已覆盖：
+  - PDF 双分屏布局与 pane 作用域缩放
+  - 图片真实 workspace handle 标注与强制重渲染
+  - Selection AI 的 Chat / Agent / Plan 差异化主链路
+- PDF 回归逻辑新增 `pdf-view-state` helper，统一处理 pane 作用域、viewState 持久化和相对滚动恢复
+- `ImageTldrawAdapter` 背景资源改为 `data:` URL，修复真实 workspace handle 标注时 Tldraw 不接受 `blob:` 协议的问题
+- 主路径已继续清理一轮无条件调试输出，重点覆盖 HUD、live preview、PPT、export adapter、Jupyter websocket 与 plugin runtime
+- 当前完整测试基线更新为 `92` 个测试文件、`962` 个测试全绿
+- 本轮已顺序验证：
+  - `npm run lint`
+  - `npm run typecheck`
+  - `npm run test:run`
+  - `npm run test:browser-regression`
+  - `npm run build`
+  - `npm run tauri:build`
+
+### 已知残余风险
+
+- 在 `/diagnostics/pdf-regression` 中，右侧 PDF 深页切文件切回后的可见页快照仍建议做一次人工复检。当前缩放标签和会话恢复链路已稳定，但深页可见页探针在 diagnostics 环境下仍存在边界抖动。
+
 ### Selection AI Hub Phase 2
 
 - Selection AI Hub 现在不再只是基础弹层，而是明确区分：

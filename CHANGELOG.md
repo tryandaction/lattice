@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 改进 (2026-03-19)
+- **PDF 双分屏回归与缩放状态收口**
+  - ✅ 新增 `pdf-view-state` helper，统一收口 PDF pane 作用域判定、viewState 持久化和相对滚动恢复逻辑
+  - ✅ `pdf-highlighter-adapter` 已补稳定的 pane 级测试钩子与回归逻辑，锁住 `Ctrl+滚轮`、键盘缩放和按 pane 缓存的 zoom state
+  - ✅ PDF diagnostics 新增 `/diagnostics/pdf-regression`，可直接验证双分屏布局、缩放作用域、右侧文件切换和阅读进度诊断信息
+- **图片标注链路进一步产品化**
+  - ✅ 新增 `image-tldraw-state` helper，锁住背景 asset 更新、背景缺失修复判定和区域中心定位
+  - ✅ `ImageTldrawAdapter` 背景资源已从 `blob:` 切换为 `data:` URL，修复 Tldraw 对 blob 协议不接受导致的 workspace handle 标注失败
+  - ✅ 新增 `/diagnostics/image-annotation`，使用真实 OPFS / workspace handle 复现图片标注与强制重渲染链路
+- **Selection AI 回归主链路补齐**
+  - ✅ 新增 `selection-actions` 测试，覆盖 `chat / agent / plan` 三种分流、origin metadata、evidenceRefs 透传和 Workbench proposal 高亮
+  - ✅ `SelectionAiHub` 新增可注入 runner，支持 diagnostics 页面使用 mocked orchestrator 验证主链路
+  - ✅ 新增 `/diagnostics/selection-ai`，直接验证 Chat / Agent / Plan 三种模式进入 Chat / Evidence / Workbench 的差异化落点
+- **浏览器级回归门禁**
+  - ✅ 新增 `scripts/browser-regression.mjs` 与 `npm run test:browser-regression`
+  - ✅ 浏览器回归现已覆盖 `PDF 双分屏`、`图片 workspace handle 标注`、`Selection AI mocked 主链路`
+- **主路径调试输出清理**
+  - ✅ 清理 HUD、live preview、PPT、markdown/export、Jupyter websocket 和 plugin runtime 中一批无条件 `console.log/info/debug`
+
+### QA 更新 (2026-03-19)
+- ✅ 本轮新增 `pdf-view-state`、`pdf-highlighter-adapter`、`selection-actions`、`image-tldraw-state`、`ImageViewer` 扩展回归测试
+- ✅ `use-annotation-system` 已补图片 path sidecar 隔离测试
+- ✅ 新增浏览器级 `test:browser-regression`，当前覆盖 3 条高风险产品主链路
+- ✅ 本轮顺序验证 `lint` / `typecheck` / `test:run` / `test:browser-regression` / `build` / `tauri:build` 全绿
+- ✅ 当前测试基线已更新为 `92` 个测试文件、`962` 个测试全绿
+
+### 文档更新 (2026-03-19)
+- 更新 `docs/RELEASE_NOTES.md`，补充 diagnostics/regression 页面、浏览器回归门禁和本轮收口结论
+- 更新 `docs/roadmap.md`，同步当前基线已纳入 browser regression 与 diagnostics harness
+- 更新 `docs/USER_GUIDE.md`，补充新的 diagnostics 入口说明
+- 更新 `docs/DESKTOP_FEATURES.md`，补充桌面端 browser regression 门禁与 diagnostics 验证方式
+- 更新 `docs/MANUAL_RELEASE_GUIDE.md`，将 `test:browser-regression` 与 diagnostics 人工复检纳入发布检查
+- 更新根目录 `项目概况.md`，同步 Lattice 当前测试基线与发布收口状态
+
 ### 改进 (2026-03-18)
 - **Selection AI Hub Phase 2 产品化深化**
   - ✅ 新增独立 `selection-ai-store`，记住最近使用模式与轻量 prompt 历史
