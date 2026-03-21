@@ -12,11 +12,11 @@
 - Windows 推荐优先使用 NSIS 安装包
 - 本地发布准备完成后，桌面产物会同步到 `releases/vX.Y.Z/`
 
-当前 `v2.0.0` 的本地产物示例：
+当前 `v2.1.0` 的本地产物示例：
 
-- `releases/v2.0.0/Lattice_2.0.0_x64-setup.exe`
-- `releases/v2.0.0/Lattice_2.0.0_x64_en-US.msi`
-- `releases/v2.0.0/lattice.exe`
+- `releases/v2.1.0/Lattice_2.1.0_x64-setup.exe`
+- `releases/v2.1.0/Lattice_2.1.0_x64_en-US.msi`
+- `releases/v2.1.0/lattice.exe`
 
 ## 2. 开发环境要求
 

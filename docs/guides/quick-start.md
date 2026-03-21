@@ -11,8 +11,8 @@
 ### 桌面版
 
 - 优先从 GitHub Releases 下载最新安装包
-- 当前本地发布目录基线为 `releases/v2.0.0/`
-- Windows 推荐使用 `Lattice_2.0.0_x64-setup.exe`
+- 当前本地发布目录基线为 `releases/v2.1.0/`
+- Windows 推荐使用 `Lattice_2.1.0_x64-setup.exe`
 
 ## 2. 第一次打开后做什么
 

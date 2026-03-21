@@ -1,6 +1,6 @@
 # 手动发布指南
 
-适用版本：`v2.0.0`
+适用版本：`v2.1.0`
 
 ## 1. 最小本地发布闭环
 
@@ -17,7 +17,7 @@ npm run release:prepare
 1. 校验版本一致性
 2. 执行 `qa:gate`（其中已包含 `test:docs`）
 3. 生成桌面产物
-4. 同步到 `releases/v2.0.0/`
+4. 同步到 `releases/v2.1.0/`
 5. 生成：
    - `checksums.txt`
    - `release-manifest.json`
@@ -60,13 +60,13 @@ npm run release:prepare -- --upload
 
 本地发布事实来源固定为：
 
-- `releases/v2.0.0/`
+- `releases/v2.1.0/`
 
 其中至少应包含：
 
 - `lattice.exe`
-- `Lattice_2.0.0_x64_en-US.msi`
-- `Lattice_2.0.0_x64-setup.exe`
+- `Lattice_2.1.0_x64_en-US.msi`
+- `Lattice_2.1.0_x64-setup.exe`
 - `checksums.txt`
 - `release-manifest.json`
 - `RELEASE_SUMMARY.md`
@@ -81,7 +81,7 @@ npm run release:prepare -- --upload
 
 如果平台不可用或 billing 有问题：
 
-- 保留本地 `releases/v2.0.0/` 作为可交付结果
+- 保留本地 `releases/v2.1.0/` 作为可交付结果
 - 平台恢复后再执行 upload
 
 ## 7. 最低验收

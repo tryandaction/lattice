@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-03-21
+
+### 改进 (2026-03-21)
+- **知识组织产品化收口**
+  - ✅ assistant 结果统一进入 `AiResultViewModel`，稳定对齐 `Conclusion / Evidence / Next Actions`
+  - ✅ `@引用` 与 Evidence 浏览统一到共享 `ReferenceBrowser`
+  - ✅ Evidence Panel 去掉重复平铺引用区，收口为消息切换器 + 引用树 + 上下文分组
+  - ✅ Workbench 草稿支持 `templateId / originMessageId / originProposalId`，可区分独立草稿与 proposal-linked drafts
+- **发布工程闭环收口**
+  - ✅ 新增统一 `scripts/prepare-release.mjs`
+  - ✅ `release:prepare --dry-run` 现可输出 `manifest / checksums / summary` payload
+  - ✅ release 目录收集逻辑已过滤 Rust build helper exe 与无关安装辅助文件
+  - ✅ GitHub Pages / draft release workflow 已对齐统一元数据与 summary 输出
+- **仓库整洁性治理**
+  - ✅ 删除历史修复与重构总结文档，收口文档体系
+  - ✅ 重写 `README`、安装、桌面构建、Live Preview 等关键入口文档
+  - ✅ 新增 `npm run clean` 与 `npm run test:docs`
+  - ✅ `qa:gate` 现已纳入文档健康检查
+
 ### 改进 (2026-03-20)
 - **桌面 Notebook / 代码运行链路收口**
   - ✅ `KernelSelector` 现在会明确区分“桌面运行时 / 网页运行时”，并在桌面端优先选择本地 Python，而不再默认停在 `Pyodide (Web Fallback)`

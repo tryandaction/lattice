@@ -133,7 +133,7 @@ function isExcludedArtifactName(fileName) {
   );
 }
 
-function isReleaseArtifact(root, filePath) {
+function isReleaseArtifact(root, filePath, expectedVersion) {
   const fileName = path.basename(filePath);
   const lowerName = fileName.toLowerCase();
   const extension = path.extname(fileName).toLowerCase();
@@ -147,6 +147,10 @@ function isReleaseArtifact(root, filePath) {
     return relativePath === "lattice.exe" || relativePath.endsWith("/lattice.exe");
   }
 
+  if (expectedVersion && !fileName.includes(expectedVersion)) {
+    return false;
+  }
+
   if (extension === ".exe") {
     return /-setup\.exe$/i.test(fileName);
   }
@@ -154,7 +158,7 @@ function isReleaseArtifact(root, filePath) {
   return PACKAGE_ARTIFACT_EXTENSIONS.has(extension);
 }
 
-async function findArtifacts(directory) {
+async function findArtifacts(directory, expectedVersion) {
   const root = path.resolve(directory);
   const candidates = [];
 
@@ -167,7 +171,7 @@ async function findArtifacts(directory) {
         await walk(fullPath);
         continue;
       }
-      if (isReleaseArtifact(root, fullPath)) {
+      if (isReleaseArtifact(root, fullPath, expectedVersion)) {
         candidates.push(fullPath);
       }
     }
@@ -310,7 +314,7 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const version = await ensureVersionConsistency(options.version);
   const artifactsRoot = await ensureArtifacts(options);
-  const discoveredArtifacts = await findArtifacts(artifactsRoot);
+  const discoveredArtifacts = await findArtifacts(artifactsRoot, version);
 
   if (discoveredArtifacts.length === 0) {
     throw new Error(`No release artifacts found in ${artifactsRoot}`);

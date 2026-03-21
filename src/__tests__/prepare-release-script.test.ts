@@ -24,14 +24,14 @@ describe("prepare-release script", () => {
   it("supports dry-run metadata generation from an artifacts directory", async () => {
     const artifactsDir = await createTempDir();
     await writeFile(path.join(artifactsDir, "lattice.exe"), "binary");
-    await writeFile(path.join(artifactsDir, "Lattice_2.0.0_x64_en-US.msi"), "msi");
+    await writeFile(path.join(artifactsDir, "Lattice_2.1.0_x64_en-US.msi"), "msi");
 
     const result = spawnSync(
       process.execPath,
       [
         path.join(process.cwd(), "scripts", "prepare-release.mjs"),
         "--version",
-        "2.0.0",
+        "2.1.0",
         "--dry-run",
         "--artifacts-dir",
         artifactsDir,
@@ -44,16 +44,16 @@ describe("prepare-release script", () => {
 
     expect(result.status).toBe(0);
     const payload = JSON.parse(result.stdout);
-    expect(payload.version).toBe("2.0.0");
+    expect(payload.version).toBe("2.1.0");
     expect(payload.artifacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ fileName: "lattice.exe" }),
-        expect.objectContaining({ fileName: "Lattice_2.0.0_x64_en-US.msi" }),
+        expect.objectContaining({ fileName: "Lattice_2.1.0_x64_en-US.msi" }),
       ]),
     );
-    expect(payload.metadata.manifest.version).toBe("2.0.0");
+    expect(payload.metadata.manifest.version).toBe("2.1.0");
     expect(payload.metadata.checksums).toContain("lattice.exe");
-    expect(payload.metadata.summary).toContain("# Release Summary v2.0.0");
+    expect(payload.metadata.summary).toContain("# Release Summary v2.1.0");
   });
 
   it("filters helper executables when scanning a target release tree", async () => {
@@ -67,8 +67,8 @@ describe("prepare-release script", () => {
     const msiDir = path.join(artifactsDir, "bundle", "msi");
     await mkdir(nsisDir, { recursive: true });
     await mkdir(msiDir, { recursive: true });
-    await writeFile(path.join(nsisDir, "Lattice_2.0.0_x64-setup.exe"), "setup");
-    await writeFile(path.join(msiDir, "Lattice_2.0.0_x64_en-US.msi"), "msi");
+    await writeFile(path.join(nsisDir, "Lattice_2.1.0_x64-setup.exe"), "setup");
+    await writeFile(path.join(msiDir, "Lattice_2.1.0_x64_en-US.msi"), "msi");
     await writeFile(path.join(nsisDir, "MicrosoftEdgeWebview2Setup.exe"), "webview");
 
     const result = spawnSync(
@@ -76,7 +76,7 @@ describe("prepare-release script", () => {
       [
         path.join(process.cwd(), "scripts", "prepare-release.mjs"),
         "--version",
-        "2.0.0",
+        "2.1.0",
         "--dry-run",
         "--artifacts-dir",
         artifactsDir,
@@ -90,8 +90,8 @@ describe("prepare-release script", () => {
     expect(result.status).toBe(0);
     const payload = JSON.parse(result.stdout);
     expect(payload.artifacts.map((artifact: { fileName: string }) => artifact.fileName)).toEqual([
-      "Lattice_2.0.0_x64_en-US.msi",
-      "Lattice_2.0.0_x64-setup.exe",
+      "Lattice_2.1.0_x64_en-US.msi",
+      "Lattice_2.1.0_x64-setup.exe",
       "lattice.exe",
     ]);
   });

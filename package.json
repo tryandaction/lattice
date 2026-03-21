@@ -1,6 +1,6 @@
 {
   "name": "lattice",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "scripts": {
     "clean": "node scripts/clean-workspace.mjs",
