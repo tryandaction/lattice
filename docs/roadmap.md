@@ -7,8 +7,11 @@
 - 桌面端本地运行主链路已可用，Python / 外部命令运行、Notebook 连续执行、运行结果展示已跑通
 - 桌面运行器选择链路已进一步收口：桌面端现在会优先选择本地 Python，`Pyodide` 仅保留为应急回退而不再静默伪装主运行器
 - 工作区运行器偏好已进入主链路：按 workspace 路径跨重启记住默认解释器与最近选择
+- `Workspace Runner Manager` 已进入主链路：Notebook、代码文件和 Markdown 编辑主链路共用同一套解释器管理与恢复自动选择入口
 - Notebook Markdown Cell 已复用现有 Live Preview / Obsidian 级编辑内核，默认 `Live` 并支持切到 `Source`
 - Markdown fenced code block 已具备真实运行入口，并复用统一执行反馈面板
+- editable Markdown 主链路里的 Live Preview code block 已具备运行入口，并统一接到底部 `Run / Problems` dock
+- 代码文件、Notebook code cell、Markdown code block 已统一到 `ExecutionProblem` 问题模型与 runner health snapshot
 - PDF 首次打开默认改为自适应宽度填充，避免阅读入口停在固定手动缩放
 - QA 基线已收敛到 `lint` / `typecheck` / `test:run` / `build` / `tauri:build` 可稳定通过
 - Markdown 导出已产品化进入主界面，支持 `.docx` / `.pdf`、`clean` / `appendix` / `study-note` 和“当前渲染视图”导出
@@ -16,12 +19,27 @@
   - `Chat -> Proposal -> Target Draft Set -> Batch Writeback -> Workspace`
 - `@引用` 已升级到工作区级引用，并支持 heading / line / cell / page / annotation 片段选择
 - 当前 `@引用` 与 Evidence Panel 已进入产品化收口阶段：两段式浏览、消息切换、证据多选和后续动作链路都已具备可持续深化的基线
+- AI 结果视图已收口到统一派生层：
+  - `AiResultViewModel` 稳定提供 `Conclusion / Evidence / Next Actions`
+  - `AiChatPanel` 与 `EvidencePanel` 共用同一套结果结构
+- `ReferenceBrowser` 已成为共享引用浏览器：
+  - `@引用` 输入与 Evidence 浏览共用统一树节点模型
+  - 文件与片段浏览不再维护两套独立展示逻辑
+- Workbench 草稿已具备模板与来源分组：
+  - `templateId / originMessageId / originProposalId`
+  - proposal 卡片内可查看 `Linked Drafts`
+- 发布工程已形成可复用闭环：
+  - `scripts/prepare-release.mjs`
+  - `releases/vX.Y.Z/` 事实来源
+  - `checksums.txt / release-manifest.json / RELEASE_SUMMARY.md`
+  - GitHub Actions draft release 与本地手动 upload 双通路
 - Selection AI Hub 已完成 Phase 2 收口：最近模式/轻量 prompt 历史、模式差异化、结果来源识别、SelectionContext 精细化已具备产品基线
 - 分屏 PDF 阅读稳定性已补强：pane 作用域缩放、阅读位置保持、切文件后恢复阅读进度、布局不再把右侧内容挤出屏幕
 - 当前 diagnostics / regression 基础设施已补齐：
   - `/diagnostics/pdf-regression`
   - `/diagnostics/image-annotation`
   - `/diagnostics/selection-ai`
+  - `/diagnostics/runner`
 - QA 基线已进一步收敛到 `lint` / `typecheck` / `test:run` / `test:browser-regression` / `build` / `tauri:build` 可稳定通过
 
 ### 当前阶段仍然刻意不做
@@ -65,11 +83,11 @@
 
 ---
 
-## 下一阶段：知识组织与证据浏览产品化 v1
+## 下一阶段：知识组织与研究工作流深化
 
 ### 阶段目标
 
-把 Lattice 从“已经能运行的 AI 科研工作台”推进成“真正好用的科研知识组织产品”，重点不是继续堆单项 AI 功能，而是把 **引用、证据、笔记沉淀、跨文档整理** 做成统一体验。
+知识组织产品化 v1 已经进入主链路。下一步不再是从零补齐基础组件，而是继续深化 **跨会话知识浏览、批量整理恢复、模板复用与更强的研究工作流闭环**。
 
 这一阶段要直接对标 Notion 的知识组织体验，同时保留并强化 Lattice 在科研阅读、证据回链、Notebook / 代码 / PDF 混合工作流上的优势。
 
@@ -79,16 +97,13 @@
 
 ### 要解决的问题
 
-当前 `@引用` 已经支持工作区文件和片段，但仍然偏“搜索补全”交互。下一步要把它升级成真正可浏览、可理解的引用器，而不是只靠用户记路径。
+当前 `@引用` 与 Evidence Panel 已共用 `ReferenceBrowser`。下一步重点变成把这套浏览器继续扩到更多入口，并强化跨消息、跨草稿、跨 proposal 的连续浏览。
 
 ### 计划交付
 
-- 文件引用器支持两段式浏览：
-  - 先选文件
-  - 再选 heading / line / cell / page / annotation
-- 引用项展示预览文本，而不只是路径
-- Notebook / PDF / Markdown / 代码文件的引用候选统一样式
-- 在聊天、选区动作、Research 面板中复用同一套引用器
+- 在更多 AI 入口复用同一套引用浏览器
+- 增加更稳定的键盘导航与跨层级定位
+- 强化 proposal / draft / evidence 之间的回跳与联动
 
 ### 验收标准
 
@@ -102,20 +117,13 @@
 
 ### 要解决的问题
 
-当前 AI 结果已经有 evidence，但展示仍偏工程化，缺少稳定的产品视图结构。
+当前 AI 结果视图已经统一，但 Evidence 浏览、上下文切换和后续动作还可以继续深化。
 
 ### 计划交付
 
-- 把 AI 结果统一成三段式：
-  - `Conclusion`
-  - `Evidence`
-  - `Next Actions`
-- `Evidence` 区域支持折叠、跳转、来源分组
-- `Next Actions` 与 Workbench 联动：
-  - 保存为草稿
-  - 生成计划
-  - 打开目标笔记
-- 增加一个统一的 Evidence Panel，而不是分散在各个消息卡片里
+- 强化多条结果之间的并行比较与切换
+- 让 `Next Actions` 与更多 Workbench 动作直接联动
+- 继续减少消息卡片中的重复入口
 
 ### 验收标准
 
@@ -129,7 +137,7 @@
 
 ### 要解决的问题
 
-现在 draft/writeback 已可用，但沉淀形态仍然偏自由文本。下一步要让知识沉淀更结构化。
+现在 draft/writeback 已有模板基线。下一步重点是提高模板复用、一致性和批量整理恢复能力。
 
 ### 计划交付
 

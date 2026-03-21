@@ -99,7 +99,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     serialize,
     markClean,
     resetState,
-    updateCellOutputs,
+    appendCellOutput,
     updateCellExecutionCount,
     updateCellExecutionMeta,
     clearCellOutputs,
@@ -149,6 +149,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   // Notebook executor for Run All functionality
   const {
     executionState,
+    currentCellId,
     progress,
     runAll,
     runAllAbove,
@@ -156,6 +157,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     interrupt,
     restartKernel,
     switchKernel,
+    executeCell,
   } = useNotebookExecutor({
     runner: currentKernel,
     cwd: notebookCwd,
@@ -163,12 +165,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
       clearCellOutputs(cellId);
     },
     onCellOutput: (cellId, output) => {
-      const cell = state.cells.find(c => c.id === cellId);
-      if (cell) {
-        const newOutputs = [...(cell.outputs || [])];
-        newOutputs.push(output);
-        updateCellOutputs(cellId, newOutputs);
-      }
+      appendCellOutput(cellId, output);
     },
     onCellComplete: (cellId, result) => {
       updateCellExecutionCount(cellId, result.executionCount);
@@ -333,6 +330,14 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     }));
     await runAllBelow(cells, state.activeCellId);
   }, [state.cells, state.activeCellId, runAllBelow]);
+
+  const handleRunCell = useCallback(async (cellId: string, source: string) => {
+    clearCellOutputs(cellId);
+    const result = await executeCell(cellId, source);
+    updateCellExecutionCount(cellId, result.executionCount);
+    updateCellExecutionMeta(cellId, result.panelMeta);
+    return result;
+  }, [clearCellOutputs, executeCell, updateCellExecutionCount, updateCellExecutionMeta]);
 
   // Handle keyboard shortcuts
   useEffect(() => {
@@ -566,16 +571,16 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
               onAddAbove={(type) => addCellAbove(cell.id, type)}
               onAddBelow={(type) => addCellBelow(cell.id, type)}
               onDelete={() => removeCell(cell.id)}
-              onSourceChange={(source) => updateSource(cell.id, source)}
-              onTypeChange={(type) => changeType(cell.id, type)}
-              onNavigateUp={index > 0 ? activatePrevCell : undefined}
-              onNavigateDown={index < state.cells.length - 1 ? activateNextCell : undefined}
-              runner={currentKernel}
-              cwd={notebookCwd}
-              rootHandle={workspaceRootHandle}
-              notebookFilePath={filePath}
-            />
-          </div>
+                onSourceChange={(source) => updateSource(cell.id, source)}
+                onTypeChange={(type) => changeType(cell.id, type)}
+                onNavigateUp={index > 0 ? activatePrevCell : undefined}
+                onNavigateDown={index < state.cells.length - 1 ? activateNextCell : undefined}
+                rootHandle={workspaceRootHandle}
+                notebookFilePath={filePath}
+                onRunCell={handleRunCell}
+                isExecuting={executionState === "running" && currentCellId === cell.id}
+              />
+            </div>
         ))}
       </div>
 

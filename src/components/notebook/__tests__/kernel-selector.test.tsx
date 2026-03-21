@@ -8,11 +8,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { KernelSelector, type KernelOption } from "../kernel-selector";
 
 const detectPythonEnvironments = vi.hoisted(() => vi.fn());
+const probeCommandAvailability = vi.hoisted(() => vi.fn());
 const isTauriHostMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runner/runner-manager", () => ({
   runnerManager: {
     detectPythonEnvironments,
+    probeCommandAvailability,
   },
 }));
 
@@ -46,6 +48,12 @@ function Harness({
 describe("KernelSelector", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    probeCommandAvailability.mockResolvedValue({
+      command: "node",
+      available: true,
+      resolvedPath: "C:/Program Files/nodejs/node.exe",
+      version: "v20.0.0",
+    });
   });
 
   it("桌面端检测到本地 Python 时默认优先选择本地内核", async () => {
@@ -69,8 +77,12 @@ describe("KernelSelector", () => {
       }));
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Python 3.12.2/ }));
-    expect(screen.queryByText("Pyodide（应急回退）")).not.toBeNull();
+    await waitFor(() => {
+      expect(screen.queryByText("检测运行环境...")).toBeNull();
+      const button = screen.getAllByRole("button", { name: /Python 3.12.2/ })[0];
+      fireEvent.click(button);
+      expect(screen.queryByText("Pyodide（应急回退）")).not.toBeNull();
+    });
   });
 
   it("桌面端当前停留在 Pyodide 时，探测到本地 Python 后会自动切回本地内核", async () => {
@@ -117,6 +129,10 @@ describe("KernelSelector", () => {
       }));
     });
 
+    await waitFor(() => {
+      expect(screen.queryByText("检测运行环境...")).toBeNull();
+      expect(screen.getByRole("button", { name: /Pyodide（浏览器内核）/ })).toBeTruthy();
+    });
     fireEvent.click(screen.getByRole("button", { name: /Pyodide（浏览器内核）/ }));
     expect(screen.queryByText("当前环境：网页运行时")).not.toBeNull();
     expect(screen.queryByText("Browser")).not.toBeNull();

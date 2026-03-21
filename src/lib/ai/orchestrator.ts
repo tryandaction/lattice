@@ -3,6 +3,7 @@ import { routeModel } from './model-router';
 import type {
   AiChatRequest,
   AiDraftArtifactType,
+  AiDraftTemplateId,
   AiFollowUpAction,
   AiInlineActionRequest,
   AiMessage,
@@ -30,6 +31,22 @@ function draftTypeForTask(taskType: AiTaskType): AiDraftArtifactType {
       return 'paper_note';
     default:
       return 'paper_note';
+  }
+}
+
+function draftTemplateForTask(taskType: AiTaskType): AiDraftTemplateId {
+  switch (taskType) {
+    case 'code_explain':
+      return 'code-note';
+    case 'knowledge_organize':
+      return 'comparison-summary';
+    case 'task_proposal':
+      return 'task-plan';
+    case 'pdf_summary':
+    case 'research':
+      return 'research-summary';
+    default:
+      return 'reading-note';
   }
 }
 
@@ -140,6 +157,7 @@ async function runGeneric(
     followUpActions: createFollowUpActions(),
     draftSuggestion: {
       type: draftTypeForTask(taskType),
+      templateId: draftTemplateForTask(taskType),
       title: prompt.length > 64 ? `${prompt.slice(0, 64)}...` : prompt,
     },
   };

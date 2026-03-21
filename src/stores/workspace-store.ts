@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { FileTree, DirectoryNode, TreeNode } from "@/types/file-system";
-import type { WorkspaceRunnerPreferences } from "@/lib/runner/types";
+import type { RunnerHealthSnapshot, WorkspaceRunnerPreferences } from "@/lib/runner/types";
 import type {
   LayoutState,
   LayoutNode,
@@ -31,6 +31,7 @@ import {
   generatePaneId,
 } from "@/lib/layout-utils";
 import { emitFileOpen, emitFileClose, emitWorkspaceOpen, emitActiveFileChange } from "@/lib/plugins/runtime";
+import { createEmptyRunnerHealthSnapshot } from "@/lib/runner/health";
 
 /**
  * Create initial layout with a single empty pane
@@ -56,6 +57,10 @@ export function createInitialRunnerPreferences(): WorkspaceRunnerPreferences {
     defaultLanguageRunners: {},
     recentRunByFile: {},
   };
+}
+
+export function createInitialRunnerHealthSnapshot(): RunnerHealthSnapshot {
+  return createEmptyRunnerHealthSnapshot();
 }
 
 /**
@@ -96,6 +101,7 @@ interface WorkspaceState {
   error: string | null;
   selectedDirectoryPath: string | null; // 新增：当前选中的文件夹路径
   runnerPreferences: WorkspaceRunnerPreferences;
+  runnerHealthSnapshot: RunnerHealthSnapshot;
 
   // Layout state (new advanced layout system)
   layout: LayoutState;
@@ -116,6 +122,9 @@ interface WorkspaceState {
     filePath: string,
     config: WorkspaceRunnerPreferences["recentRunByFile"][string],
   ) => void;
+  clearRecentRunConfig: (filePath: string) => void;
+  setRunnerHealthSnapshot: (snapshot: RunnerHealthSnapshot) => void;
+  clearRunnerHealthSnapshot: () => void;
 
   // Layout actions
   splitPane: (paneId: PaneId, direction: SplitDirection) => PaneId | null;
@@ -165,6 +174,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   error: null,
   selectedDirectoryPath: null,
   runnerPreferences: createInitialRunnerPreferences(),
+  runnerHealthSnapshot: createInitialRunnerHealthSnapshot(),
 
   // Initial layout state
   layout: createInitialLayout(),
@@ -195,6 +205,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       error: null,
       layout: createInitialLayout(),
       runnerPreferences: createInitialRunnerPreferences(),
+      runnerHealthSnapshot: createInitialRunnerHealthSnapshot(),
     }),
 
   toggleDirectory: (path) =>
@@ -238,6 +249,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         },
       },
     })),
+  clearRecentRunConfig: (filePath) =>
+    set((state) => {
+      const nextRecentRunByFile = { ...state.runnerPreferences.recentRunByFile };
+      delete nextRecentRunByFile[filePath];
+      return {
+        runnerPreferences: {
+          ...state.runnerPreferences,
+          recentRunByFile: nextRecentRunByFile,
+        },
+      };
+    }),
+  setRunnerHealthSnapshot: (snapshot) =>
+    set({
+      runnerHealthSnapshot: snapshot,
+    }),
+  clearRunnerHealthSnapshot: () =>
+    set({
+      runnerHealthSnapshot: createInitialRunnerHealthSnapshot(),
+    }),
 
   // Layout actions
   splitPane: (paneId, direction) => {

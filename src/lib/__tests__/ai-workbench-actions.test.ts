@@ -161,9 +161,14 @@ describe('ai-workbench-actions', () => {
   });
 
   it('formats draft artifacts into markdown with evidence section', () => {
-    const markdown = formatDraftArtifactMarkdown(createDraft());
+    const markdown = formatDraftArtifactMarkdown(createDraft({
+      templateId: 'reading-note',
+      originMessageId: 'message-1',
+    }));
 
     expect(markdown).toContain('# Quantum Notes');
+    expect(markdown).toContain('- Template: Reading Note');
+    expect(markdown).toContain('- Origin Message: message-1');
     expect(markdown).toContain('## Content');
     expect(markdown).toContain('A concise summary of the paper.');
     expect(markdown).toContain('## Evidence');
@@ -204,6 +209,8 @@ describe('ai-workbench-actions', () => {
 
     expect(drafts).toEqual([
       expect.objectContaining({
+        templateId: 'task-plan',
+        originProposalId: 'proposal-1',
         title: 'method note Draft',
         targetPath: 'Research/method-note.md',
         writeMode: 'create',

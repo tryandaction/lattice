@@ -63,6 +63,16 @@ function getBuiltinCommands(language: string): CommandItem[] {
         }
       },
     },
+    {
+      id: "core.open-runner-diagnostics",
+      title: isZh ? "打开运行器诊断面板" : "Open Runner Diagnostics",
+      source: "core",
+      run: () => {
+        if (typeof window !== "undefined") {
+          window.location.assign(resolveAppRoute("/diagnostics/runner"));
+        }
+      },
+    },
   ];
 }
 

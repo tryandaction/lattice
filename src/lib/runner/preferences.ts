@@ -353,3 +353,41 @@ export function getRunnerDefinitionForLanguage(language: string): RunnerDefiniti
   const normalized = normalizeRunnerLanguage(language);
   return normalized ? getRunnerDefinition(normalized) : null;
 }
+
+export interface RunnerPreferenceCommitPayload {
+  fileKey: string;
+  language: string;
+  request: Pick<RunnerExecutionRequest, "runnerType" | "command" | "args">;
+  preferences: WorkspaceRunnerPreferences;
+}
+
+export interface RunnerPreferenceCommit {
+  fileKey: string;
+  recentRunConfig: WorkspaceRunnerPreferences["recentRunByFile"][string];
+  preferences: Partial<WorkspaceRunnerPreferences>;
+}
+
+export function buildRunnerPreferenceCommit({
+  fileKey,
+  language,
+  request,
+  preferences,
+}: RunnerPreferenceCommitPayload): RunnerPreferenceCommit {
+  return {
+    fileKey,
+    recentRunConfig: {
+      runnerType: request.runnerType,
+      command: request.command,
+      args: request.args,
+    },
+    preferences: {
+      defaultLanguageRunners: {
+        [getLanguagePreferenceKey(language)]: request.runnerType,
+      },
+      defaultPythonPath:
+        request.runnerType === "python-local"
+          ? request.command ?? preferences.defaultPythonPath
+          : preferences.defaultPythonPath,
+    },
+  };
+}

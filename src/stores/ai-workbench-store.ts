@@ -33,6 +33,8 @@ interface AiWorkbenchActions {
   clearHighlightedProposal: () => void;
   getDraft: (draftId: string) => AiDraftArtifact | null;
   getProposal: (proposalId: string) => AiTaskProposal | null;
+  getDraftsForProposal: (proposalId: string) => AiDraftArtifact[];
+  getStandaloneDrafts: () => AiDraftArtifact[];
   loadWorkbench: () => Promise<void>;
 }
 
@@ -246,6 +248,12 @@ export const useAiWorkbenchStore = create<AiWorkbenchState & AiWorkbenchActions>
   getDraft: (draftId) => get().drafts.find((draft) => draft.id === draftId) ?? null,
 
   getProposal: (proposalId) => get().proposals.find((proposal) => proposal.id === proposalId) ?? null,
+
+  getDraftsForProposal: (proposalId) =>
+    get().drafts.filter((draft) => draft.originProposalId === proposalId),
+
+  getStandaloneDrafts: () =>
+    get().drafts.filter((draft) => !draft.originProposalId),
 
   loadWorkbench: async () => {
     try {

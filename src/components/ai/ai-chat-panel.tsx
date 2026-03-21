@@ -1,7 +1,7 @@
 "use client";
 
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useAiChatStore } from "@/stores/ai-chat-store";
+import { useAiChatStore, type ChatMessage } from "@/stores/ai-chat-store";
 import { useAiWorkbenchStore } from "@/stores/ai-workbench-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -17,7 +17,6 @@ import { DiffPreview } from "./diff-preview";
 import { EvidencePanel } from "./evidence-panel";
 import { parseMentions, resolveMentions } from "@/lib/ai/mention-resolver";
 import { extractCodeBlocks } from "@/lib/ai/diff-utils";
-import { parseStructuredAiResponse } from "@/lib/ai/structured-response";
 import { deriveFileId } from "@/lib/annotation-storage";
 import { migrateLegacyAnnotation } from "@/lib/annotation-migration";
 import { navigateLink } from "@/lib/link-router/navigate-link";
@@ -31,13 +30,13 @@ import {
   writeDraftArtifactToTarget,
 } from "@/lib/ai/workbench-actions";
 import type {
-  AiDraftArtifactType,
   AiDraftWriteMode,
   AiRuntimeSettings,
   EvidenceRef,
   SelectionAiOrigin,
 } from "@/lib/ai/types";
 import { toast } from "sonner";
+import { buildAiResultViewModel } from "@/lib/ai/result-view-model";
 
 async function readWorkspaceFile(
   rootHandle: FileSystemDirectoryHandle,
@@ -329,7 +328,7 @@ function FollowUpActions({
   filePath?: string;
   contentForFile?: string;
   evidenceRefs: EvidenceRef[];
-  draftSuggestion?: { type: string; title: string };
+  draftSuggestion?: ChatMessage["draftSuggestion"];
 }) {
   const createDraft = useAiWorkbenchStore((state) => state.createDraft);
   const addProposal = useAiWorkbenchStore((state) => state.addProposal);
@@ -340,13 +339,15 @@ function FollowUpActions({
 
   const handleCreateDraft = useCallback(() => {
     createDraft({
-      type: (draftSuggestion?.type as AiDraftArtifactType | undefined) ?? "paper_note",
+      type: draftSuggestion?.type ?? "paper_note",
+      templateId: draftSuggestion?.templateId,
       title: draftSuggestion?.title || `AI Draft ${messageId}`,
       sourceRefs: evidenceRefs,
       content,
+      originMessageId: messageId,
     });
     setDraftSaved(true);
-  }, [content, createDraft, draftSuggestion?.title, draftSuggestion?.type, evidenceRefs, messageId]);
+  }, [content, createDraft, draftSuggestion?.templateId, draftSuggestion?.title, draftSuggestion?.type, evidenceRefs, messageId]);
 
   const handleProposeTask = useCallback(async () => {
     setProposalBusy(true);
@@ -472,6 +473,10 @@ function WorkbenchPanel() {
   const [busyProposalId, setBusyProposalId] = useState<string | null>(null);
   const [expandedProposalIds, setExpandedProposalIds] = useState<string[]>([]);
   const proposalCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const standaloneDrafts = useMemo(
+    () => drafts.filter((draft) => !draft.originProposalId),
+    [drafts],
+  );
 
   useEffect(() => {
     if (drafts.length > 0 || proposals.length > 0) {
@@ -571,10 +576,12 @@ function WorkbenchPanel() {
 
     createDraft({
       type: "task_plan",
+      templateId: "task-plan",
       title: `Plan - ${proposal.summary.slice(0, 80)}`,
       sourceRefs: proposal.sourceRefs,
       content: formatTaskProposalDraftContent(proposal),
       writeMode: "create",
+      originProposalId: proposal.id,
     });
     toast.success("计划已保存为草稿", {
       description: proposal.summary,
@@ -694,13 +701,13 @@ function WorkbenchPanel() {
       </button>
       {expanded && (
         <div className="max-h-64 space-y-3 overflow-y-auto border-t border-border/60 px-3 py-3">
-          {drafts.length > 0 && (
+          {standaloneDrafts.length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
                 <FileOutput className="h-3 w-3" />
-                Drafts
+                Standalone Drafts
               </div>
-              {drafts.map((draft) => (
+              {standaloneDrafts.map((draft) => (
                 <div key={draft.id} className="rounded border border-border/60 bg-background/60 p-2">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -710,7 +717,7 @@ function WorkbenchPanel() {
                       </div>
                     </div>
                     <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground">
-                      {draft.type}
+                      {draft.templateId ?? draft.type}
                     </span>
                   </div>
                   <div className="mt-2 line-clamp-3 text-[11px] text-muted-foreground">
@@ -806,6 +813,7 @@ function WorkbenchPanel() {
                 >
                   {(() => {
                     const draftSummary = summarizeProposalTargetDrafts(proposal, drafts);
+                    const linkedDrafts = drafts.filter((draft) => draft.originProposalId === proposal.id);
                     return (
                       <>
                   <div className="flex items-start justify-between gap-2">
@@ -825,6 +833,11 @@ function WorkbenchPanel() {
                       {draftSummary.total > 0 && (
                         <div className="mt-1 text-[10px] text-muted-foreground/80">
                           目标草稿：待写回 {draftSummary.ready} · 已写回 {draftSummary.applied} · 阻塞 {draftSummary.blocked}
+                        </div>
+                      )}
+                      {linkedDrafts.length > 0 && (
+                        <div className="mt-1 text-[10px] text-muted-foreground/80">
+                          关联草稿：{linkedDrafts.length}
                         </div>
                       )}
                     </div>
@@ -856,6 +869,29 @@ function WorkbenchPanel() {
                           ))}
                         </div>
                       </div>
+
+                      {linkedDrafts.length > 0 && (
+                        <div>
+                          <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">Linked Drafts</div>
+                          <div className="space-y-1">
+                            {linkedDrafts.map((draft) => (
+                              <div key={draft.id} className="rounded border border-border/50 px-2 py-1.5 text-[11px]">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="truncate font-medium text-foreground">{draft.title}</div>
+                                    <div className="truncate text-[10px] text-muted-foreground">
+                                      {draft.targetPath ?? buildDraftArtifactDefaultPath(draft)}
+                                    </div>
+                                  </div>
+                                  <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground">
+                                    {draftStatusLabel(draft.status)}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       <div>
                         <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">Required Approvals</div>
@@ -1034,7 +1070,7 @@ function ChatMessages({
           )}
         >
           {(() => {
-            const structured = msg.role === "assistant" ? parseStructuredAiResponse(msg.content) : null;
+            const resultView = msg.role === "assistant" ? buildAiResultViewModel(msg) : null;
             return (
               <>
           <div className="text-[10px] text-muted-foreground mb-1 uppercase">
@@ -1045,9 +1081,9 @@ function ChatMessages({
           )}
           {msg.role === "assistant" ? (
             <>
-              {structured ? (
+              {resultView ? (
                 <div className="space-y-2">
-                  {structured.sections.map((section) => (
+                  {resultView.sections.map((section) => (
                     <div
                       key={`${msg.id}:${section.kind}`}
                       className="rounded-md border border-border/60 bg-background/60 p-2"
@@ -1078,8 +1114,8 @@ function ChatMessages({
               )}
               <EvidenceSummaryButton
                 messageId={msg.id}
-                evidenceCount={msg.evidenceRefs?.length ?? 0}
-                contextCount={msg.promptContext?.nodes?.length ?? 0}
+                evidenceCount={resultView?.evidenceCount ?? 0}
+                contextCount={resultView?.contextCount ?? 0}
                 selected={selectedEvidenceMessageId === msg.id}
                 open={isEvidencePanelOpen}
                 onToggle={onOpenEvidence}

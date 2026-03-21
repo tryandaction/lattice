@@ -41,6 +41,7 @@ import { imageResolverFacet } from './image-resolver-facet';
 import { MarkdownErrorHandler } from '@/lib/markdown-error-handler';
 import { enterCodeBlockSourceMode, enterMathSourceMode } from './source-mode';
 import { TableEditor } from './table-editor';
+import type { LivePreviewCodeBlockRunRequest } from './types';
 export { tableToMarkdown, insertTableColumn, deleteTableColumn, insertTableDataRow, deleteTableDataRow, setTableColumnAlignment, type TableAlignment } from './table-editor';
 
 type KaTeXModule = typeof import('katex').default;
@@ -90,6 +91,15 @@ function dispatchExternalLinkClick(element: HTMLElement, url: string): void {
   element.dispatchEvent(
     new CustomEvent('external-link-click', {
       detail: { url },
+      bubbles: true,
+    })
+  );
+}
+
+function dispatchCodeBlockRun(element: HTMLElement, detail: LivePreviewCodeBlockRunRequest): void {
+  element.dispatchEvent(
+    new CustomEvent('run-code-block', {
+      detail,
       bubbles: true,
     })
   );
@@ -1792,7 +1802,11 @@ export class CodeBlockWidget extends WidgetType {
     private showLineNumbers: boolean = false, // Default: no line numbers (cleaner like Obsidian)
     private from: number = 0,
     private to: number = 0,
-    private context?: BlockContext
+    private context?: BlockContext,
+    private blockIndex: number = 0,
+    private filePath?: string,
+    private startLine: number = 0,
+    private endLine: number = 0,
   ) {
     super();
   }
@@ -1801,7 +1815,9 @@ export class CodeBlockWidget extends WidgetType {
     return (
       other.code === this.code &&
       other.language === this.language &&
-      other.showLineNumbers === this.showLineNumbers
+      other.showLineNumbers === this.showLineNumbers &&
+      other.blockIndex === this.blockIndex &&
+      other.filePath === this.filePath
     );
   }
 
@@ -1847,6 +1863,28 @@ export class CodeBlockWidget extends WidgetType {
       });
     });
     header.appendChild(copyBtn);
+
+    const runBtn = document.createElement('button');
+    runBtn.className = 'cm-code-block-copy';
+    runBtn.textContent = 'Run';
+    runBtn.title = 'Run code block';
+    runBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      dispatchCodeBlockRun(view.dom, {
+        blockKey: `${this.filePath ?? 'untitled.md'}#block:${this.blockIndex}:${this.language || 'text'}`,
+        language: this.language || 'text',
+        code: this.code,
+        filePath: this.filePath,
+        range: {
+          from: this.from,
+          to: this.to,
+          startLine: this.startLine,
+          endLine: this.endLine,
+        },
+      });
+    });
+    header.appendChild(runBtn);
 
     container.appendChild(header);
 

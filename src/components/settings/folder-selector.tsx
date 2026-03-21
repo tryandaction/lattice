@@ -32,7 +32,7 @@ export function FolderSelector({ compact = false, autoOpen = true, showNotFoundW
     if (showNotFoundWarning && defaultFolder && isTauri()) {
       // In Tauri, we can check if the folder exists
       window.__TAURI__?.core.invoke<boolean>('plugin:fs|exists', { path: defaultFolder })
-        .then((exists) => {
+        .then((exists: boolean) => {
           setFolderNotFound(!exists);
         })
         .catch(() => {

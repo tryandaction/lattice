@@ -4,6 +4,24 @@
 
 ## 本次重点
 
+### 2026-03-21 知识组织与发布工程收口补充
+
+- 知识组织主线继续收口为统一产品模型：
+  - assistant 结果现在通过统一的 `AiResultViewModel` 展示，稳定对齐 `Conclusion / Evidence / Next Actions`
+  - `@引用` 补全与 Evidence 浏览共用 `ReferenceBrowser`，文件与片段不再分裂成两套 UI 逻辑
+  - Evidence Panel 移除重复的底部 `References` 平铺块，统一为消息切换器 + `Reference Tree` + 上下文分组
+  - Workbench 草稿新增 `templateId / originMessageId / originProposalId`，可区分独立草稿与 proposal-linked drafts
+- 发布工程闭环继续收口：
+  - 新增统一脚本 `scripts/prepare-release.mjs`
+  - `prepare-release` 会统一执行版本校验、产物收集、`checksums.txt`、`release-manifest.json`、`RELEASE_SUMMARY.md` 生成
+  - `release:prepare --dry-run` 现在也会显式产出元数据 payload，便于本地检查 release manifest
+  - `deploy.yml` 与 `release.yml` 已对齐到 `web-dist/`、`draft release` 与统一 summary 输出
+- 发布文档与检查清单已同步更新到新闭环：
+  - `docs/MANUAL_RELEASE_GUIDE.md`
+  - `docs/guides/github-deploy.md`
+  - `.github/DEPLOYMENT_CHECKLIST.md`
+  - `.github/RELEASE_TEMPLATE.md`
+
 ### 2026-03-20 阶段性收敛补充
 
 - 桌面 Notebook / 代码运行链路继续收口：
@@ -13,13 +31,23 @@
   - 桌面 `python-local` 失败时不再无声掉回 Pyodide，而是显式报错
   - 工作区运行器偏好会按 workspace 路径跨重启记住，Notebook / 代码文件 / Markdown 代码块共用同一套最近选择与默认解释器
   - 外部命令与本地 Python 运行前会先给出环境诊断与修复提示
+- 代码渲染与运行体验继续向 IDE 靠拢：
+  - `CodeEditor` 现在支持基础 completion 与轻量 syntax diagnostics
+  - 代码文件底部改为 `Run / Problems` 双层 dock，而不是把问题和输出混在同一块
+  - Notebook code cell 也改成 `Problems / Output` 分层，并复用统一问题模型
+- Runner health 进入产品化：
+  - 新增 `Workspace Runner Manager`，统一服务 Notebook、代码文件与 Markdown 编辑主链路
+  - 新增 `/diagnostics/runner` 页面，复用同一份 runner health snapshot
+  - 本地 Python 缺失、默认解释器失效、外部命令缺失、`ModuleNotFoundError` 都会映射为结构化问题与修复建议
 - Notebook / Markdown 体验继续收口：
   - `ipynb` Markdown Cell 已复用现有 Live Preview / Obsidian 级编辑内核，默认 `Live`，并支持切到 `Source`
   - Markdown fenced code block 已支持直接运行，并接入统一执行反馈面板
+  - editable Markdown 主链路中的 Live Preview code block 现在也支持 `Run`，并把完整反馈接到底部 `Run / Problems` dock
 - 统一执行反馈已升级：
   - 输出面板会明确标出 `本地解释器 / 浏览器回退 / 外部命令`
   - 连续 `stdout/stderr` 会分组展示
   - 错误会区分错误名、错误值和 traceback
+  - markdown block / notebook cell / code file 的问题上下文现在都支持回跳定位
 - PDF 默认打开体验已调整：
   - PDF 首次打开默认 `适宽`
   - 旧 PDF 查看器分支也同步改成默认自适应宽度填充
@@ -27,7 +55,12 @@
 - 本轮阶段性验证已完成：
   - `npm run lint`
   - `npm run typecheck`
-  - `npx vitest run src/components/notebook/__tests__/kernel-selector.test.tsx src/components/notebook/__tests__/output-area.test.tsx src/components/notebook/__tests__/markdown-cell.test.tsx src/lib/runner/__tests__/preferences.test.ts src/__tests__/use-notebook-executor.tauri.test.ts src/__tests__/use-notebook-executor.test.ts`
+  - `npx vitest run src/lib/runner/__tests__/health.test.ts src/lib/runner/__tests__/problem-utils.test.ts src/components/notebook/__tests__/kernel-selector.test.tsx src/components/notebook/__tests__/output-area.test.tsx src/components/notebook/__tests__/markdown-cell.test.tsx src/components/notebook/__tests__/code-cell.test.ts src/components/notebook/__tests__/code-cell-python.test.tsx src/__tests__/use-notebook-executor.tauri.test.ts src/__tests__/use-notebook-executor.test.ts src/lib/runner/__tests__/preferences.test.ts src/components/editor/codemirror/__tests__/code-editor.test.tsx src/components/renderers/__tests__/code-editor-viewer.test.tsx`
+  - `npm run tauri:build`
+- 桌面打包链路额外收口：
+  - `@tauri-apps/cli` 已从漂移状态改为精确锁定 `2.9.5`
+  - `src-tauri/Cargo.toml` 的 release strip 策略调整为 `debuginfo`
+  - `tauri build` 中的 `__TAURI_BUNDLE_TYPE variable not found in binary` warning 已消失，bundler 现可正常 patch `msi / nsis` 类型
 
 ### 当前阶段仍需继续收敛
 
@@ -319,10 +352,7 @@
 - `npm run build` 通过
 - `npm run tauri:build` 通过
 
-已知非阻塞警告：
-
-- Tauri bundler 会提示 `__TAURI_BUNDLE_TYPE` 缺失
-- 该警告不影响本次 Windows 可执行文件和安装包生成
+Tauri bundler 的 `__TAURI_BUNDLE_TYPE` 缺失 warning 已在本阶段修复，不再作为已知问题保留。
 
 ## 升级建议
 

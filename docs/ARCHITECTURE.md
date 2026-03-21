@@ -2,7 +2,7 @@
 
 > **Source of Truth** for the Lattice project's technical decisions and component relationships.
 > 
-> Last Updated: March 2026 | Version: 1.1
+> Last Updated: 2026-03-21 | Version: 2.0
 
 ---
 
@@ -32,21 +32,30 @@ Lattice follows a **"Lightweight & High-Performance"** architecture principle. E
 
 This philosophy directly influenced our rejection of Monaco Editor (2MB+ bundle) in favor of CodeMirror 6 (~150KB), and our hybrid execution strategy: desktop shells prefer local runtimes, while the web app keeps Pyodide as an on-demand fallback.
 
+The current architecture is intentionally optimized around a **local-first research workbench**:
+
+- documents, code, notebooks, and AI evidence stay in the same workspace
+- execution surfaces share one runner/problem model
+- desktop and web builds share the same product shell, but diverge where local runtimes matter
+- release engineering is treated as part of the product, not as an afterthought
+
 ---
 
 ## Frontend Core
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| **Next.js** | 15+ | Framework with App Router |
-| **React** | 19 | UI library with concurrent features |
-| **Tailwind CSS** | 4+ | Utility-first styling |
+| **Next.js** | 16.x | Framework with App Router |
+| **React** | 19.x | UI library with concurrent features |
+| **Tailwind CSS** | 3.4.x | Utility-first styling |
+| **Tauri** | 2.x | Desktop shell and local runtime bridge |
 
 ### Why This Stack?
 
 - **Next.js App Router**: Server components, streaming, and file-based routing
 - **React 19**: Concurrent rendering for smooth editor interactions
-- **Tailwind**: Zero-runtime CSS, tree-shakeable, design system friendly
+- **Tailwind**: Utility-first styling without introducing a second UI framework
+- **Tauri 2**: Small desktop footprint with explicit local execution and filesystem access
 
 ---
 

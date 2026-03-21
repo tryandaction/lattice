@@ -2,6 +2,7 @@ import { generateUniqueName, sanitizeFileName } from '@/lib/file-operations';
 import { normalizeWorkspacePath } from '@/lib/link-router/path-utils';
 import type {
   AiDraftArtifact,
+  AiDraftTemplateId,
   AiDraftWriteMode,
   AiPlannedWrite,
   AiTaskProposal,
@@ -10,6 +11,35 @@ import type {
 
 const AI_DRAFTS_DIRECTORY = 'AI Drafts';
 const APPEND_SEPARATOR = '\n\n---\n\n';
+
+const DRAFT_TEMPLATE_LABELS: Record<AiDraftTemplateId, string> = {
+  'reading-note': 'Reading Note',
+  'comparison-summary': 'Comparison Summary',
+  'code-note': 'Code Note',
+  'research-summary': 'Research Summary',
+  'task-plan': 'Task Plan',
+};
+
+function resolveDraftTemplateId(
+  draft: Pick<AiDraftArtifact, 'type'> & Partial<Pick<AiDraftArtifact, 'templateId'>>
+): AiDraftTemplateId {
+  if (draft.templateId) {
+    return draft.templateId;
+  }
+
+  switch (draft.type) {
+    case 'comparison_summary':
+      return 'comparison-summary';
+    case 'code_explainer':
+      return 'code-note';
+    case 'research_summary':
+      return 'research-summary';
+    case 'task_plan':
+      return 'task-plan';
+    default:
+      return 'reading-note';
+  }
+}
 
 function formatEvidenceRefs(refs: EvidenceRef[]): string {
   if (refs.length === 0) {
@@ -25,21 +55,34 @@ function formatEvidenceRefs(refs: EvidenceRef[]): string {
 }
 
 export function formatDraftArtifactMarkdown(
-  draft: Pick<AiDraftArtifact, 'title' | 'content' | 'sourceRefs' | 'createdAt' | 'type'>,
+  draft: Pick<AiDraftArtifact, 'title' | 'content' | 'sourceRefs' | 'createdAt' | 'type'> & Partial<Pick<AiDraftArtifact, 'templateId' | 'originMessageId' | 'originProposalId'>>,
   options: { headingLevel?: 1 | 2 | 3 } = {}
 ): string {
   const createdAt = new Date(draft.createdAt).toISOString();
   const headingLevel = options.headingLevel ?? 1;
   const headingPrefix = '#'.repeat(headingLevel);
   const contentHeadingPrefix = '#'.repeat(Math.min(headingLevel + 1, 6));
+  const templateId = resolveDraftTemplateId(draft);
+  const templateLabel = DRAFT_TEMPLATE_LABELS[templateId];
+  const contentHeadingTitle = templateId === 'task-plan'
+    ? 'Plan'
+    : templateId === 'code-note'
+      ? 'Code Notes'
+      : templateId === 'comparison-summary'
+        ? 'Comparison'
+        : 'Content';
+  const nextActionsHeading = templateId === 'task-plan' ? 'Execution Notes' : 'Next Actions';
 
   return [
     `${headingPrefix} ${draft.title}`,
     '',
     `- Type: ${draft.type}`,
+    `- Template: ${templateLabel}`,
     `- Created: ${createdAt}`,
+    draft.originMessageId ? `- Origin Message: ${draft.originMessageId}` : null,
+    draft.originProposalId ? `- Origin Proposal: ${draft.originProposalId}` : null,
     '',
-    `${contentHeadingPrefix} Content`,
+    `${contentHeadingPrefix} ${contentHeadingTitle}`,
     '',
     draft.content.trim() || '_Empty draft content._',
     '',
@@ -47,7 +90,11 @@ export function formatDraftArtifactMarkdown(
     '',
     formatEvidenceRefs(draft.sourceRefs),
     '',
-  ].join('\n');
+    `${contentHeadingPrefix} ${nextActionsHeading}`,
+    '',
+    '_Pending review._',
+    '',
+  ].filter(Boolean).join('\n');
 }
 
 export function buildDraftArtifactDefaultPath(
@@ -156,9 +203,9 @@ function contentForPlannedWrite(
 export function buildDraftArtifactsFromProposal(
   proposal: Pick<
     AiTaskProposal,
-    'summary' | 'steps' | 'sourceRefs' | 'plannedWrites' | 'approvedWrites' | 'generatedDraftTargets'
+    'id' | 'summary' | 'steps' | 'sourceRefs' | 'plannedWrites' | 'approvedWrites' | 'generatedDraftTargets'
   >,
-): Array<Pick<AiDraftArtifact, 'type' | 'title' | 'sourceRefs' | 'content' | 'targetPath' | 'writeMode'>> {
+): Array<Pick<AiDraftArtifact, 'type' | 'title' | 'sourceRefs' | 'content' | 'targetPath' | 'writeMode' | 'templateId' | 'originProposalId'>> {
   const allowedTargets = new Set(proposal.approvedWrites);
   const existingTargets = new Set(proposal.generatedDraftTargets);
 
@@ -166,11 +213,13 @@ export function buildDraftArtifactsFromProposal(
     .filter((write) => allowedTargets.has(write.targetPath) && !existingTargets.has(write.targetPath))
     .map((write) => ({
       type: 'task_plan' as const,
+      templateId: 'task-plan' as const,
       title: `${titleFromTargetPath(write.targetPath, proposal.summary)} Draft`,
       sourceRefs: proposal.sourceRefs,
       content: contentForPlannedWrite(proposal, write),
       targetPath: write.targetPath,
       writeMode: writeModeForDraft(write),
+      originProposalId: proposal.id,
     }));
 }
 

@@ -15,6 +15,7 @@ interface OutputAreaProps {
   onClear?: () => void;
   variant?: "compact" | "full";
   meta?: ExecutionPanelMeta;
+  showDiagnosticsInline?: boolean;
 }
 
 const COLLAPSE_THRESHOLD = 20;
@@ -321,10 +322,11 @@ export const OutputArea = memo(function OutputArea({
   onClear,
   variant = "full",
   meta,
+  showDiagnosticsInline = true,
 }: OutputAreaProps) {
   const compact = variant === "compact";
   const normalizedOutputs = groupOutputs(outputs);
-  const hasDiagnostics = Boolean(meta?.diagnostics.length);
+  const hasDiagnostics = showDiagnosticsInline && Boolean(meta?.diagnostics.length);
 
   if (normalizedOutputs.length === 0 && !hasDiagnostics) {
     return null;
@@ -346,7 +348,7 @@ export const OutputArea = memo(function OutputArea({
         ) : null}
       </div>
 
-      {meta?.diagnostics.map((diagnostic, index) => (
+      {showDiagnosticsInline && meta?.diagnostics.map((diagnostic, index) => (
         <DiagnosticBanner key={`${diagnostic.title}-${index}`} diagnostic={diagnostic} />
       ))}
 

@@ -215,12 +215,20 @@ export type AiDraftArtifactType =
   | 'comparison_summary'
   | 'task_plan';
 
+export type AiDraftTemplateId =
+  | 'reading-note'
+  | 'comparison-summary'
+  | 'code-note'
+  | 'research-summary'
+  | 'task-plan';
+
 export type AiDraftArtifactStatus = 'draft' | 'approved' | 'applied' | 'discarded';
 export type AiDraftWriteMode = 'create' | 'append';
 
 export interface AiDraftArtifact {
   id: string;
   type: AiDraftArtifactType;
+  templateId?: AiDraftTemplateId;
   title: string;
   sourceRefs: EvidenceRef[];
   content: string;
@@ -228,6 +236,8 @@ export interface AiDraftArtifact {
   createdAt: number;
   targetPath?: string;
   writeMode?: AiDraftWriteMode;
+  originMessageId?: string;
+  originProposalId?: string;
 }
 
 export interface AiPlannedWrite {
@@ -382,6 +392,7 @@ export interface AiRunResult {
   followUpActions: AiFollowUpAction[];
   draftSuggestion?: {
     type: AiDraftArtifactType;
+    templateId?: AiDraftTemplateId;
     title: string;
   };
 }

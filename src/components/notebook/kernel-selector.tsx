@@ -3,10 +3,11 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { AlertTriangle, Check, ChevronDown, Loader2, RefreshCw } from "lucide-react";
 import { buildNotebookRuntimeMessage, getLanguagePreferenceKey, getNotebookKernelPreferenceOrigin } from "@/lib/runner/preferences";
-import { runnerManager } from "@/lib/runner/runner-manager";
 import { isTauriHost } from "@/lib/storage-adapter";
 import type { PythonEnvironmentInfo, RunnerType } from "@/lib/runner/types";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useRunnerHealth } from "@/hooks/use-runner-health";
+import { WorkspaceRunnerManager } from "@/components/runner/workspace-runner-manager";
 
 interface KernelOption {
   id: string;
@@ -63,6 +64,11 @@ export function KernelSelector({ currentKernel, onKernelChange, cwd, filePath }:
   const setRunnerPreferences = useWorkspaceStore((state) => state.setRunnerPreferences);
   const setRecentRunConfig = useWorkspaceStore((state) => state.setRecentRunConfig);
   const languageKey = getLanguagePreferenceKey("python");
+  const fileKey = filePath ?? "__notebook__";
+  const { refresh: refreshRunnerHealth } = useRunnerHealth({
+    cwd,
+    fileKey,
+  });
 
   const detectEnvironments = useCallback(async () => {
     setIsLoading(true);
@@ -72,10 +78,10 @@ export function KernelSelector({ currentKernel, onKernelChange, cwd, filePath }:
       const fallback = buildPyodideOption(isDesktopHost);
       let options: KernelOption[] = [fallback];
       let localOptions: KernelOption[] = [];
-      const fileKey = filePath ?? "__notebook__";
+      const snapshot = await refreshRunnerHealth();
+      const envs = snapshot.pythonEnvironments;
 
       if (isDesktopHost) {
-        const envs = await runnerManager.detectPythonEnvironments(cwd);
         localOptions = envs.map(buildLocalKernelOption);
 
         options = localOptions.length > 0
@@ -143,7 +149,7 @@ export function KernelSelector({ currentKernel, onKernelChange, cwd, filePath }:
     } finally {
       setIsLoading(false);
     }
-  }, [currentKernel, cwd, filePath, isDesktopHost, onKernelChange, runnerPreferences]);
+  }, [currentKernel, fileKey, isDesktopHost, onKernelChange, refreshRunnerHealth, runnerPreferences]);
 
   useEffect(() => {
     void detectEnvironments();
@@ -237,15 +243,22 @@ export function KernelSelector({ currentKernel, onKernelChange, cwd, filePath }:
                 </button>
               ))}
 
-              <div className="border-t border-border" />
-
-              <button
-                onClick={() => void detectEnvironments()}
-                className="w-full flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground hover:bg-muted transition-colors"
-              >
-                <RefreshCw className="h-4 w-4" />
-                <span>刷新运行器列表</span>
-              </button>
+              <div className="border-t border-border px-4 py-3 space-y-2">
+                <button
+                  onClick={() => void detectEnvironments()}
+                  className="w-full flex items-center gap-2 rounded px-3 py-2 text-sm text-muted-foreground hover:bg-muted transition-colors"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  <span>刷新运行器列表</span>
+                </button>
+                <WorkspaceRunnerManager
+                  cwd={cwd}
+                  fileKey={fileKey}
+                  title="Notebook Runner Manager"
+                  triggerLabel="打开运行器管理"
+                  triggerClassName="w-full justify-center rounded px-3 py-2 text-sm hover:bg-muted"
+                />
+              </div>
             </div>
           </div>
         </>

@@ -41,6 +41,24 @@ export interface LivePreviewConfig {
   onOpenExternalLink?: (url: string) => void;
 }
 
+export interface LivePreviewCodeBlockRunRequest {
+  blockKey: string;
+  language: string;
+  code: string;
+  filePath?: string;
+  range: {
+    from: number;
+    to: number;
+    startLine: number;
+    endLine: number;
+  };
+}
+
+export interface LivePreviewCodeBlockRevealRequest {
+  range: LivePreviewCodeBlockRunRequest["range"];
+  line?: number;
+}
+
 export interface FoldState {
   foldedRanges: Array<{ from: number; to: number }>;
 }

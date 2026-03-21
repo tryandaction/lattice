@@ -32,6 +32,7 @@ interface UseNotebookEditorReturn {
 
   // Output operations (for Run All)
   updateCellOutputs: (cellId: string, outputs: NotebookCell["outputs"]) => void;
+  appendCellOutput: (cellId: string, output: NonNullable<NotebookCell["outputs"]>[number]) => void;
   updateCellExecutionCount: (cellId: string, count: number) => void;
   updateCellExecutionMeta: (cellId: string, meta: NotebookCell["execution_meta"]) => void;
   clearCellOutputs: (cellId: string) => void;
@@ -119,6 +120,21 @@ export function useNotebookEditor(initialContent: string): UseNotebookEditorRetu
       ...prev,
       cells: prev.cells.map((cell) =>
         cell.id === cellId ? { ...cell, outputs } : cell
+      ),
+    }));
+    setIsDirty(true);
+  }, []);
+
+  /**
+   * Append a streamed output to a cell
+   */
+  const appendCellOutput = useCallback((cellId: string, output: NonNullable<NotebookCell["outputs"]>[number]) => {
+    setState((prev) => ({
+      ...prev,
+      cells: prev.cells.map((cell) =>
+        cell.id === cellId
+          ? { ...cell, outputs: [...(cell.outputs ?? []), output] }
+          : cell
       ),
     }));
     setIsDirty(true);
@@ -260,6 +276,7 @@ export function useNotebookEditor(initialContent: string): UseNotebookEditorRetu
     activateCell,
     changeType,
     updateCellOutputs,
+    appendCellOutput,
     updateCellExecutionCount,
     updateCellExecutionMeta,
     clearCellOutputs,

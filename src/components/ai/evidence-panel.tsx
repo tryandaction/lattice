@@ -1,20 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bot, ChevronDown, ChevronRight, Link2, ShieldCheck, X } from "lucide-react";
+import { Bot, ShieldCheck, X } from "lucide-react";
 import { navigateLink } from "@/lib/link-router/navigate-link";
 import { toEvidenceNavigationTarget } from "@/lib/ai/workbench-actions";
 import {
   buildEvidencePanelState,
-  buildEvidenceDraftSeedForGroup,
   buildEvidenceDraftSeedForLeaf,
   buildEvidenceDraftSeedForSelection,
-  buildEvidenceProposalPrompt,
   buildEvidenceProposalPromptForSelection,
 } from "@/lib/ai/evidence-panel";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import type { ChatMessage } from "@/stores/ai-chat-store";
 import { toast } from "sonner";
+import { buildAiResultViewModel } from "@/lib/ai/result-view-model";
+import { buildReferenceBrowserNodesFromEvidence, collectReferenceBrowserLeaves, type ReferenceBrowserNode } from "@/lib/ai/reference-browser";
+import { ReferenceBrowser } from "./reference-browser";
 
 export interface EvidencePanelProps {
   message: ChatMessage | null;
@@ -27,8 +28,7 @@ export interface EvidencePanelProps {
 }
 
 function messageLabel(message: ChatMessage): string {
-  const firstLine = message.content.split(/\r?\n/).find((line) => line.trim().length > 0) ?? "AI Response";
-  return firstLine.slice(0, 48);
+  return buildAiResultViewModel(message).summaryLabel;
 }
 
 export function EvidencePanel({
@@ -58,6 +58,10 @@ export function EvidencePanel({
     evidenceRefs: message?.evidenceRefs,
     contextNodes: message?.promptContext?.nodes,
   });
+  const referenceNodes = buildReferenceBrowserNodesFromEvidence(
+    message?.evidenceRefs,
+    message?.promptContext?.nodes,
+  );
 
   const handleNavigate = useCallback(async (locator: string) => {
     const success = await navigateLink(locator, {
@@ -90,9 +94,96 @@ export function EvidencePanel({
   const draftSaved = savedKeys[`message:${message.id}`] ?? false;
   const proposalBusy = proposalBusyKeys[`message:${message.id}`] ?? false;
   const proposalDone = proposalDoneKeys[`message:${message.id}`] ?? false;
-  const selectedLeaves = panelState.referenceGroups
-    .flatMap((group) => group.leaves)
-    .filter((leaf) => selectedLeafLocators[leaf.locator]);
+  const selectedLeaves = collectReferenceBrowserLeaves(referenceNodes)
+    .filter((leaf) => leaf.locator && selectedLeafLocators[leaf.locator]);
+
+  const renderReferenceNodeActions = (node: ReferenceBrowserNode) => {
+    if (node.kind === "group" && node.children?.length) {
+      const groupLeaves = collectReferenceBrowserLeaves([node]);
+      const groupDraftSaved = savedKeys[`group:${node.locator}`] ?? false;
+      const groupProposalBusy = proposalBusyKeys[`group:${node.locator}`] ?? false;
+      const groupProposalDone = proposalDoneKeys[`group:${node.locator}`] ?? false;
+
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              const seed = buildEvidenceDraftSeedForSelection(groupLeaves.map((leaf) => ({
+                id: leaf.id,
+                kind: leaf.evidenceRef!.kind,
+                label: leaf.label,
+                locator: leaf.locator!,
+                preview: leaf.preview,
+              })));
+              onCreateDraft?.(seed);
+              setSavedKeys((current) => ({ ...current, [`group:${node.locator}`]: true }));
+            }}
+            className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30 disabled:opacity-50"
+            disabled={groupDraftSaved || !onCreateDraft}
+          >
+            {groupDraftSaved ? "已保存" : "草稿"}
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              if (!onProposeTask) {
+                return;
+              }
+              setProposalBusyKeys((current) => ({ ...current, [`group:${node.locator}`]: true }));
+              try {
+                await onProposeTask({
+                  prompt: buildEvidenceProposalPromptForSelection(groupLeaves.map((leaf) => ({
+                    id: leaf.id,
+                    kind: leaf.evidenceRef!.kind,
+                    label: leaf.label,
+                    locator: leaf.locator!,
+                    preview: leaf.preview,
+                  }))),
+                  refs: groupLeaves.map((leaf) => leaf.evidenceRef!),
+                });
+                setProposalDoneKeys((current) => ({ ...current, [`group:${node.locator}`]: true }));
+              } finally {
+                setProposalBusyKeys((current) => ({ ...current, [`group:${node.locator}`]: false }));
+              }
+            }}
+            className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30 disabled:opacity-50"
+            disabled={groupProposalBusy || groupProposalDone || !onProposeTask}
+          >
+            {groupProposalDone ? "已生成" : groupProposalBusy ? "生成中..." : "计划"}
+          </button>
+        </>
+      );
+    }
+
+    if (node.evidenceRef) {
+      const draftSavedForLeaf = savedKeys[`leaf:${node.locator}`] ?? false;
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              const seed = buildEvidenceDraftSeedForLeaf({
+                id: node.id,
+                kind: node.evidenceRef!.kind,
+                label: node.label,
+                locator: node.locator!,
+                preview: node.preview,
+              });
+              onCreateDraft?.(seed);
+              setSavedKeys((current) => ({ ...current, [`leaf:${node.locator}`]: true }));
+            }}
+            className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30 disabled:opacity-50"
+            disabled={draftSavedForLeaf || !onCreateDraft}
+          >
+            {draftSavedForLeaf ? "已保存" : "保存草稿"}
+          </button>
+        </>
+      );
+    }
+
+    return null;
+  };
 
   return (
     <div className="border-b border-border bg-background/95 px-3 py-3">
@@ -193,7 +284,7 @@ export function EvidencePanel({
           </div>
         )}
 
-        {panelState.referenceGroups.length > 0 && (
+        {referenceNodes.length > 0 && (
           <div>
             <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
               Reference Tree
@@ -207,7 +298,13 @@ export function EvidencePanel({
                   <button
                     type="button"
                     onClick={() => {
-                      const seed = buildEvidenceDraftSeedForSelection(selectedLeaves);
+                      const seed = buildEvidenceDraftSeedForSelection(selectedLeaves.map((leaf) => ({
+                        id: leaf.id,
+                        kind: leaf.evidenceRef!.kind,
+                        label: leaf.label,
+                        locator: leaf.locator!,
+                        preview: leaf.preview,
+                      })));
                       onCreateDraft?.(seed);
                       setSavedKeys((current) => ({ ...current, "selection:multi": true }));
                     }}
@@ -225,13 +322,14 @@ export function EvidencePanel({
                       setProposalBusyKeys((current) => ({ ...current, "selection:multi": true }));
                       try {
                         await onProposeTask({
-                          prompt: buildEvidenceProposalPromptForSelection(selectedLeaves),
-                          refs: selectedLeaves.map((leaf) => ({
-                            kind: leaf.kind,
+                          prompt: buildEvidenceProposalPromptForSelection(selectedLeaves.map((leaf) => ({
+                            id: leaf.id,
+                            kind: leaf.evidenceRef!.kind,
                             label: leaf.label,
-                            locator: leaf.locator,
+                            locator: leaf.locator!,
                             preview: leaf.preview,
-                          })),
+                          }))),
+                          refs: selectedLeaves.map((leaf) => leaf.evidenceRef!),
                         });
                         setProposalDoneKeys((current) => ({ ...current, "selection:multi": true }));
                       } finally {
@@ -257,133 +355,29 @@ export function EvidencePanel({
                 </div>
               </div>
             )}
-            <div className="space-y-2">
-              {panelState.referenceGroups.map((group) => {
-                const isExpanded = expandedPaths[group.path] ?? true;
-                const groupDraftSaved = savedKeys[`group:${group.path}`] ?? false;
-                const groupProposalBusy = proposalBusyKeys[`group:${group.path}`] ?? false;
-                const groupProposalDone = proposalDoneKeys[`group:${group.path}`] ?? false;
-                return (
-                  <div key={group.path} className="rounded border border-border/50">
-                    <div className="flex items-center justify-between px-2 py-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setExpandedPaths((current) => ({
-                          ...current,
-                          [group.path]: !isExpanded,
-                        }))}
-                        className="flex min-w-0 flex-1 items-center justify-between text-left hover:text-foreground"
-                      >
-                        <div className="min-w-0">
-                          <div className="truncate text-[11px] font-medium text-foreground">{group.title}</div>
-                          <div className="truncate text-[10px] text-muted-foreground">{group.path}</div>
-                        </div>
-                        <div className="ml-2 flex items-center gap-2 text-[10px] text-muted-foreground">
-                          <span>{group.leaves.length}</span>
-                          {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                        </div>
-                      </button>
-                      <div className="ml-2 flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const seed = buildEvidenceDraftSeedForGroup(group);
-                            onCreateDraft?.(seed);
-                            setSavedKeys((current) => ({ ...current, [`group:${group.path}`]: true }));
-                          }}
-                          className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30 disabled:opacity-50"
-                          disabled={groupDraftSaved || !onCreateDraft}
-                        >
-                          {groupDraftSaved ? "已保存" : "草稿"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            if (!onProposeTask) {
-                              return;
-                            }
-                            setProposalBusyKeys((current) => ({ ...current, [`group:${group.path}`]: true }));
-                            try {
-                              await onProposeTask({
-                                prompt: buildEvidenceProposalPrompt(group),
-                                refs: group.leaves.map((leaf) => ({
-                                  kind: leaf.kind,
-                                  label: leaf.label,
-                                  locator: leaf.locator,
-                                  preview: leaf.preview,
-                                })),
-                              });
-                              setProposalDoneKeys((current) => ({ ...current, [`group:${group.path}`]: true }));
-                            } finally {
-                              setProposalBusyKeys((current) => ({ ...current, [`group:${group.path}`]: false }));
-                            }
-                          }}
-                          className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30 disabled:opacity-50"
-                          disabled={groupProposalBusy || groupProposalDone || !onProposeTask}
-                        >
-                          {groupProposalDone ? "已生成" : groupProposalBusy ? "生成中..." : "计划"}
-                        </button>
-                      </div>
-                    </div>
-                    {isExpanded && (
-                      <div className="space-y-1 border-t border-border/40 px-2 py-2">
-                        {group.leaves.map((leaf) => (
-                          <div key={leaf.id} className="rounded border border-border/40 px-2 py-1.5">
-                            <div className="mb-2 flex items-center justify-between">
-                              <label className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                                <input
-                                  type="checkbox"
-                                  checked={selectedLeafLocators[leaf.locator] ?? false}
-                                  onChange={() => setSelectedLeafLocators((current) => ({
-                                    ...current,
-                                    [leaf.locator]: !current[leaf.locator],
-                                  }))}
-                                  className="h-3.5 w-3.5 rounded border-border"
-                                />
-                                选择此证据
-                              </label>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => void handleNavigate(toEvidenceNavigationTarget({
-                                kind: leaf.kind,
-                                label: leaf.label,
-                                locator: leaf.locator,
-                                preview: leaf.preview,
-                              }))}
-                              className="w-full text-left hover:text-foreground"
-                            >
-                              <div className="flex items-center gap-1 text-[11px] font-medium text-foreground">
-                                <Link2 className="h-3 w-3 text-muted-foreground" />
-                                <span className="truncate">{leaf.label}</span>
-                              </div>
-                              <div className="truncate text-[10px] text-muted-foreground">{leaf.locator}</div>
-                              {leaf.preview && (
-                                <div className="mt-0.5 line-clamp-2 text-[10px] text-muted-foreground/80">{leaf.preview}</div>
-                              )}
-                            </button>
-                            <div className="mt-2 flex justify-end">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const seed = buildEvidenceDraftSeedForLeaf(leaf);
-                                  onCreateDraft?.(seed);
-                                  setSavedKeys((current) => ({ ...current, [`leaf:${leaf.locator}`]: true }));
-                                }}
-                                className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30 disabled:opacity-50"
-                                disabled={(savedKeys[`leaf:${leaf.locator}`] ?? false) || !onCreateDraft}
-                              >
-                                {(savedKeys[`leaf:${leaf.locator}`] ?? false) ? "已保存" : "保存草稿"}
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            <ReferenceBrowser
+              nodes={referenceNodes}
+              expandedNodeIds={expandedPaths}
+              onToggleNode={(nodeId) => setExpandedPaths((current) => ({
+                ...current,
+                [nodeId]: !(current[nodeId] ?? true),
+              }))}
+              onActivateNode={(node) => {
+                if (node.evidenceRef) {
+                  void handleNavigate(toEvidenceNavigationTarget(node.evidenceRef));
+                }
+              }}
+              renderNodeActions={renderReferenceNodeActions}
+              showSelectionCheckbox={true}
+              selectedLeafIds={selectedLeafLocators}
+              onToggleLeafSelection={(node) => {
+                const locator = node.locator ?? node.id;
+                setSelectedLeafLocators((current) => ({
+                  ...current,
+                  [locator]: !current[locator],
+                }));
+              }}
+            />
           </div>
         )}
 
@@ -426,33 +420,6 @@ export function EvidencePanel({
                 </div>
               </div>
             ))}
-          </div>
-        )}
-
-        {message.evidenceRefs && message.evidenceRefs.length > 0 && (
-          <div>
-            <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-              References
-            </div>
-            <div className="space-y-1">
-              {message.evidenceRefs.map((ref) => (
-                <button
-                  key={`${ref.kind}:${ref.locator}`}
-                  type="button"
-                  onClick={() => void handleNavigate(toEvidenceNavigationTarget(ref))}
-                  className="w-full rounded border border-border/50 px-2 py-1.5 text-left hover:bg-accent/40"
-                >
-                  <div className="flex items-center gap-1 text-[11px] font-medium text-foreground">
-                    <Link2 className="h-3 w-3 text-muted-foreground" />
-                    <span className="truncate">{ref.label}</span>
-                  </div>
-                  <div className="truncate text-[10px] text-muted-foreground">{ref.locator}</div>
-                  {ref.preview && (
-                    <div className="mt-0.5 line-clamp-2 text-[10px] text-muted-foreground/80">{ref.preview}</div>
-                  )}
-                </button>
-              ))}
-            </div>
           </div>
         )}
       </div>

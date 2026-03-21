@@ -38,6 +38,7 @@ import { EditorView, DecorationSet, Decoration } from '@codemirror/view';
 import { EditorState, StateField, StateEffect, Text } from '@codemirror/state';
 import { shouldRevealAt } from './cursor-context-plugin';
 import { codeBlockSourceModeField, isCodeBlockSourceMode, mathSourceModeField, isMathSourceMode } from './source-mode';
+import { codeBlockRunContextFacet } from './code-block-run-context';
 import { logger } from '@/lib/logger';
 import {
   FormattedTextWidget,
@@ -212,6 +213,7 @@ type DecorationData = Partial<{
   syntaxTo: number;
   // Code/Math/Table
   showLineNumbers: boolean;
+  blockIndex: number;
   rows: string[][];
   hasHeader: boolean;
   alignments: string[];
@@ -1604,6 +1606,7 @@ function parseDocument(
 
   // 用于标记已被块级元素占用的行
   const occupiedLines = new Set<number>();
+  let codeBlockIndex = 0;
 
   // 1. 先解析所有代码块（多行块级元素）
   debugLog('[parseDocument] Found', codeBlocks.length, 'code blocks');
@@ -1626,6 +1629,7 @@ function parseDocument(
         decorationData: {
           isMultiLine: block.startLine !== block.endLine,
           showLineNumbers: true,
+          blockIndex: codeBlockIndex,
         },
       });
 
@@ -1649,6 +1653,7 @@ function parseDocument(
         });
       }
     }
+    codeBlockIndex += 1;
   }
 
   // 2. 解析所有数学公式块（多行块级元素）
@@ -2043,6 +2048,7 @@ export function parseDocumentFromText(text: string): ParsedElement[] {
   const referenceDefMatches = referenceData.matches;
 
   const occupiedLines = new Set<number>();
+  let codeBlockIndex = 0;
 
   for (const block of codeBlocks) {
     elements.push({
@@ -2057,8 +2063,10 @@ export function parseDocumentFromText(text: string): ParsedElement[] {
       decorationData: {
         isMultiLine: block.startLine !== block.endLine,
         showLineNumbers: true,
+        blockIndex: codeBlockIndex,
       },
     });
+    codeBlockIndex += 1;
     for (let lineNum = block.startLine; lineNum <= block.endLine; lineNum++) {
       occupiedLines.add(lineNum);
     }
@@ -3386,6 +3394,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
         const doc = state.doc;
         const firstLine = doc.line(element.startLine);
         const context = getBlockContext(firstLine.text);
+        const runContext = state.facet(codeBlockRunContextFacet);
 
         // 1. 用 replace 覆盖首行源码，保留 widget 可见
         entries.push({
@@ -3398,7 +3407,11 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
               data.showLineNumbers === true, // Default: false (cleaner like Obsidian)
               element.from,
               element.to,
-              context ?? undefined
+              context ?? undefined,
+              data.blockIndex ?? 0,
+              runContext.filePath,
+              element.startLine,
+              element.endLine,
             ),
             block: true,
           }),
@@ -3420,6 +3433,7 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
       } else {
         // 单行代码块
         const lineContext = getBlockContext(state.doc.lineAt(element.from).text);
+        const runContext = state.facet(codeBlockRunContextFacet);
         entries.push({
           from: element.from,
           to: element.to,
@@ -3430,7 +3444,11 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
               data.showLineNumbers === true, // Default: false (cleaner like Obsidian)
               element.from,
               element.to,
-              lineContext ?? undefined
+              lineContext ?? undefined,
+              data.blockIndex ?? 0,
+              runContext.filePath,
+              element.startLine ?? state.doc.lineAt(element.from).number,
+              element.endLine ?? state.doc.lineAt(element.to).number,
             ),
             block: true,
           }),

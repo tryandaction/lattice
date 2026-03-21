@@ -12,7 +12,7 @@
  * - Keyboard shortcuts (Ctrl+E to cycle modes, Ctrl+S to save)
  */
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, startTransition } from "react";
 import {
   Eye,
   Save,
@@ -24,6 +24,9 @@ import {
   PanelLeft,
   Sparkles,
   Download,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { useTextSelection } from "@/hooks/use-text-selection";
 import { AiInlineMenu } from "@/components/ai/ai-inline-menu";
@@ -31,7 +34,11 @@ import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
-import type { ViewMode, OutlineItem } from "./codemirror/live-preview/types";
+import type {
+  ViewMode,
+  OutlineItem,
+  LivePreviewCodeBlockRunRequest,
+} from "./codemirror/live-preview/types";
 import type { LivePreviewEditorRef } from "./codemirror/live-preview/live-preview-editor";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { clearDecorationCache } from "./codemirror/live-preview/decoration-coordinator";
@@ -43,6 +50,18 @@ import type { PaneId } from "@/types/layout";
 import { MarkdownExportDialog } from "./markdown-export-dialog";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
 import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
+import { useExecutionRunner } from "@/hooks/use-execution-runner";
+import { OutputArea } from "@/components/notebook/output-area";
+import { ProblemsPanel } from "@/components/runner/problems-panel";
+import { KernelStatus } from "@/components/notebook/kernel-status";
+import { buildRunnerPreferenceCommit, getRunnerDefinitionForLanguage, resolveRunnerExecutionRequest } from "@/lib/runner/preferences";
+import { diagnosticsToExecutionProblems, mergeExecutionProblems, outputsToExecutionProblems, runnerHealthIssuesToExecutionProblems } from "@/lib/runner/problem-utils";
+import { dirname, resolveWorkspaceFilePath } from "@/lib/runner/path-utils";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useRunnerHealth } from "@/hooks/use-runner-health";
+import { buildRuntimeRunnerHealthIssues } from "@/lib/runner/health";
+import { WorkspaceRunnerManager } from "@/components/runner/workspace-runner-manager";
+import type { ExecutionProblem } from "@/lib/runner/types";
 
 // Lazy load components
 const LivePreviewEditor = dynamic(
@@ -56,6 +75,13 @@ const OutlinePanel = dynamic(
 );
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
+type DockTab = "run" | "problems";
+
+function formatDuration(durationMs: number | null): string | null {
+  if (durationMs === null) return null;
+  if (durationMs < 1000) return `${durationMs} ms`;
+  return `${(durationMs / 1000).toFixed(2)} s`;
+}
 
 function normalizeHeading(value: string): string {
   return value
@@ -196,6 +222,8 @@ export function ObsidianMarkdownViewer({
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [showOutline, setShowOutline] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [showRunDock, setShowRunDock] = useState(false);
+  const [activeDockTab, setActiveDockTab] = useState<DockTab>("run");
   const [selectionHubState, setSelectionHubState] = useState<{
     context: SelectionContext;
     mode: SelectionAiMode;
@@ -227,6 +255,45 @@ export function ObsidianMarkdownViewer({
   const getEditorState = useContentCacheStore((state) => state.getEditorState);
   const pendingNavigation = useLinkNavigationStore((state) => state.pendingByPane[paneId]);
   const consumePendingNavigation = useLinkNavigationStore((state) => state.consumePendingNavigation);
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const workspaceRootName = useWorkspaceStore((state) => state.rootHandle?.name ?? state.fileTree.root?.name ?? null);
+  const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
+  const setRecentRunConfig = useWorkspaceStore((state) => state.setRecentRunConfig);
+  const setRunnerPreferences = useWorkspaceStore((state) => state.setRunnerPreferences);
+  const absoluteFilePath = useMemo(
+    () => (filePath ? resolveWorkspaceFilePath(workspaceRootPath, filePath, workspaceRootName) : null),
+    [filePath, workspaceRootName, workspaceRootPath],
+  );
+  const runCwd = useMemo(
+    () => (absoluteFilePath ? dirname(absoluteFilePath) : workspaceRootPath ?? undefined),
+    [absoluteFilePath, workspaceRootPath],
+  );
+  const {
+    status: runnerStatus,
+    outputs,
+    panelMeta,
+    error: runnerError,
+    summary,
+    run,
+    clearOutputs,
+    setPanelMeta,
+    isRunning,
+    isLoading,
+  } = useExecutionRunner();
+  const currentDockFileKey = panelMeta.context?.blockKey ?? filePath ?? fileName;
+  const currentDockCommand = panelMeta.context?.language
+    ? getRunnerDefinitionForLanguage(panelMeta.context.language)?.command
+    : undefined;
+  const {
+    runnerHealthSnapshot,
+    refresh: refreshRunnerHealth,
+    mergeRuntimeIssues,
+  } = useRunnerHealth({
+    cwd: runCwd,
+    fileKey: currentDockFileKey,
+    commands: currentDockCommand ? [currentDockCommand] : [],
+    autoRefresh: Boolean(filePath),
+  });
 
   // CRITICAL: Force content update when file changes
   // Use fileId instead of fileName for more reliable detection
@@ -364,6 +431,128 @@ export function ObsidianMarkdownViewer({
     onNavigateToFile?.(target);
   }, [filePath, onNavigateToFile, paneId, rootHandle]);
 
+  useEffect(() => {
+    const runtimeIssues = buildRuntimeRunnerHealthIssues(
+      outputs,
+      runnerHealthSnapshot.selectedPythonPath,
+    );
+    if (runtimeIssues.length > 0) {
+      mergeRuntimeIssues(runtimeIssues);
+      startTransition(() => {
+        setShowRunDock(true);
+        setActiveDockTab("problems");
+      });
+    }
+  }, [mergeRuntimeIssues, outputs, runnerHealthSnapshot.selectedPythonPath]);
+
+  const problems = useMemo(
+    () =>
+      mergeExecutionProblems(
+        diagnosticsToExecutionProblems(panelMeta.diagnostics, "preflight", panelMeta.context ?? null),
+        outputsToExecutionProblems(outputs, panelMeta.context ?? null),
+        runnerHealthIssuesToExecutionProblems(runnerHealthSnapshot.issues, panelMeta.context ?? null),
+      ),
+    [outputs, panelMeta.context, panelMeta.diagnostics, runnerHealthSnapshot.issues],
+  );
+
+  const handleCodeBlockRun = useCallback(async (request: LivePreviewCodeBlockRunRequest) => {
+    const runnerDefinition = getRunnerDefinitionForLanguage(request.language);
+    if (!runnerDefinition) {
+      return;
+    }
+
+    await refreshRunnerHealth();
+    const context = {
+      kind: "markdown-block" as const,
+      filePath,
+      fileName,
+      language: request.language,
+      blockKey: request.blockKey,
+      label: `${request.language || "text"} block`,
+      range: request.range,
+    };
+    const resolved = await resolveRunnerExecutionRequest({
+      runnerDefinition,
+      mode: "inline",
+      code: request.code,
+      cwd: runCwd,
+      absoluteFilePath: absoluteFilePath ?? undefined,
+      fileKey: request.blockKey,
+      language: request.language,
+      preferences: runnerPreferences,
+    });
+
+    clearOutputs();
+    setPanelMeta({
+      origin: resolved.meta.origin,
+      diagnostics: resolved.meta.diagnostics,
+      context,
+    });
+    setShowRunDock(true);
+    setActiveDockTab(resolved.meta.diagnostics.length > 0 ? "problems" : "run");
+
+    if (!resolved.request) {
+      return;
+    }
+
+    const result = await run(resolved.request);
+    if (result.success) {
+      const commit = buildRunnerPreferenceCommit({
+        fileKey: request.blockKey,
+        language: request.language,
+        request: resolved.request,
+        preferences: runnerPreferences,
+      });
+      setRecentRunConfig(commit.fileKey, commit.recentRunConfig);
+      setRunnerPreferences(commit.preferences);
+    }
+  }, [
+    absoluteFilePath,
+    clearOutputs,
+    fileName,
+    filePath,
+    refreshRunnerHealth,
+    run,
+    runCwd,
+    runnerPreferences,
+    setPanelMeta,
+    setRecentRunConfig,
+    setRunnerPreferences,
+  ]);
+
+  const navigateToProblem = useCallback((problem: ExecutionProblem) => {
+    const context = problem.context;
+    if (!context) {
+      return;
+    }
+
+    if (context.kind === "markdown-block" && context.range) {
+      if (typeof context.range.startLine !== "number" || typeof context.range.endLine !== "number") {
+        return;
+      }
+      editorRef.current?.revealCodeBlockLine({
+        range: {
+          from: context.range.from,
+          to: context.range.to,
+          startLine: context.range.startLine,
+          endLine: context.range.endLine,
+        },
+        line: context.line,
+      });
+      return;
+    }
+
+    if (context.line) {
+      editorRef.current?.scrollToLine(context.line);
+      window.setTimeout(() => {
+        editorRef.current?.flashLine(context.line!);
+      }, 120);
+    }
+  }, []);
+
+  const durationLabel = formatDuration(summary.durationMs);
+  const shouldRenderRunDock = showRunDock || outputs.length > 0 || problems.length > 0 || isRunning || isLoading;
+
   return (
     <div ref={containerRef} className="h-full flex flex-col bg-background">
       {/* Toolbar */}
@@ -452,7 +641,7 @@ export function ObsidianMarkdownViewer({
       </div>
 
       {/* Content area */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className={`flex-1 flex overflow-hidden ${showRunDock ? "min-h-0" : ""}`}>
         {/* Outline panel */}
         {showOutline && (
           <div className="w-56 border-r border-border overflow-auto bg-muted/20 flex-shrink-0">
@@ -465,7 +654,7 @@ export function ObsidianMarkdownViewer({
         )}
         
         {/* Editor */}
-        <div className="flex-1 overflow-auto">
+        <div className={`flex-1 overflow-auto ${showRunDock ? "h-1/2" : ""}`}>
           <LivePreviewEditor
             key={fileId || fileName}
             ref={editorRef}
@@ -484,9 +673,107 @@ export function ObsidianMarkdownViewer({
             className="min-h-full"
             rootHandle={rootHandle}
             filePath={filePath}
+            onCodeBlockRun={handleCodeBlockRun}
           />
         </div>
       </div>
+
+      {shouldRenderRunDock ? (
+        <div className={`border-t border-border bg-background ${showRunDock ? "h-1/2" : ""}`}>
+          <div className="flex items-center justify-between border-b border-border bg-muted/50 px-3 py-1.5">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowRunDock((value) => !value)}
+                className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {showRunDock ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+                <span>{showRunDock ? "Hide Dock" : "Show Dock"}</span>
+              </button>
+              <div className="flex items-center rounded-md border border-border bg-background p-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveDockTab("run");
+                    setShowRunDock(true);
+                  }}
+                  className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "run" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  Run
+                  {outputs.length > 0 ? (
+                    <span className="ml-1 rounded bg-primary/10 px-1 py-0.5 text-[10px]">{outputs.length}</span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveDockTab("problems");
+                    setShowRunDock(true);
+                  }}
+                  className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "problems" ? "bg-destructive/10 text-destructive" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  Problems
+                  {problems.length > 0 ? (
+                    <span className="ml-1 rounded bg-destructive/10 px-1 py-0.5 text-[10px]">{problems.length}</span>
+                  ) : null}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+              {panelMeta.context?.language ? <span>{panelMeta.context.language}</span> : null}
+              {panelMeta.context?.range?.startLine ? (
+                <span>
+                  L{panelMeta.context.range.startLine}
+                  {panelMeta.context.range.endLine && panelMeta.context.range.endLine !== panelMeta.context.range.startLine
+                    ? `-L${panelMeta.context.range.endLine}`
+                    : ""}
+                </span>
+              ) : null}
+              {durationLabel ? <span>{durationLabel}</span> : null}
+              {summary.exitCode !== null ? <span>Exit {summary.exitCode}</span> : null}
+              {runnerHealthSnapshot.issues.length > 0 ? (
+                <span className="inline-flex items-center gap-1 text-yellow-700 dark:text-yellow-300">
+                  <AlertTriangle className="h-3 w-3" />
+                  <span>{runnerHealthSnapshot.issues.length} health</span>
+                </span>
+              ) : null}
+              <WorkspaceRunnerManager
+                cwd={runCwd}
+                fileKey={currentDockFileKey}
+                commands={currentDockCommand ? [currentDockCommand] : []}
+                title="Markdown Runner Manager"
+                triggerLabel="Runner"
+              />
+            </div>
+          </div>
+
+          {showRunDock ? (
+            <div className="h-[calc(100%-32px)] overflow-auto p-3">
+              <KernelStatus status={runnerStatus} error={runnerError} />
+              {activeDockTab === "run" ? (
+                <>
+                  <OutputArea outputs={outputs} meta={panelMeta} showDiagnosticsInline={false} />
+                  {outputs.length === 0 && !runnerError && runnerStatus !== "loading" && runnerStatus !== "running" ? (
+                    <p className="py-4 text-center text-xs text-muted-foreground">
+                      No output yet. Use the Run button on a fenced code block to execute.
+                    </p>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <ProblemsPanel problems={problems} onSelectProblem={navigateToProblem} />
+                  {problems.length === 0 ? (
+                    <p className="py-4 text-center text-xs text-muted-foreground">
+                      No problems detected.
+                    </p>
+                  ) : null}
+                </>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* AI Inline Menu */}
       {aiSelection && (

@@ -14,6 +14,7 @@ const storage = {
 
 vi.mock('@/lib/storage-adapter', () => ({
   getStorageAdapter: () => storage,
+  isTauriHost: () => false,
 }));
 
 vi.mock('@/hooks/use-i18n', () => ({
@@ -193,5 +194,69 @@ describe('AiChatPanel selection-origin flows', () => {
       expect(screen.queryByText('Selection AI · 计划生成')).not.toBeNull();
       expect(screen.getByRole('button', { name: '生成目标草稿' }).className).toContain('bg-primary/10');
     });
+  });
+
+  it('separates standalone drafts from proposal-linked drafts in the workbench', async () => {
+    useAiWorkbenchStore.setState({
+      drafts: [
+        {
+          id: 'draft-standalone',
+          type: 'paper_note',
+          templateId: 'reading-note',
+          title: 'Standalone note',
+          sourceRefs: [],
+          content: 'Standalone draft content',
+          status: 'draft',
+          createdAt: Date.now(),
+        },
+        {
+          id: 'draft-linked',
+          type: 'task_plan',
+          templateId: 'task-plan',
+          title: 'Linked plan draft',
+          sourceRefs: [],
+          content: 'Linked draft content',
+          status: 'draft',
+          createdAt: Date.now(),
+          originProposalId: 'proposal-1',
+          targetPath: 'AI Drafts/linked-plan.md',
+        },
+      ],
+      proposals: [
+        {
+          id: 'proposal-1',
+          summary: 'Plan linked drafts',
+          steps: [
+            { id: 'step-1', title: 'Review', description: 'Review linked drafts.' },
+          ],
+          requiredApprovals: [],
+          plannedWrites: [
+            {
+              targetPath: 'AI Drafts/linked-plan.md',
+              mode: 'create',
+              contentPreview: 'Linked draft content',
+            },
+          ],
+          sourceRefs: [],
+          status: 'approved',
+          confirmedApprovals: [],
+          approvedWrites: ['AI Drafts/linked-plan.md'],
+          generatedDraftTargets: ['AI Drafts/linked-plan.md'],
+          createdAt: Date.now(),
+        },
+      ],
+      highlightedProposalId: 'proposal-1',
+    });
+
+    render(<AiChatPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Standalone Drafts')).not.toBeNull();
+      expect(screen.getByText('Linked Drafts')).not.toBeNull();
+    });
+
+    expect(screen.getByText('Standalone note')).not.toBeNull();
+    expect(screen.getByText('Linked plan draft')).not.toBeNull();
+    expect(screen.getByText('关联草稿：1')).not.toBeNull();
   });
 });

@@ -1,5 +1,14 @@
 import { create } from 'zustand';
-import type { AiMessage, AiFollowUpAction, AiModelInfo, AiPromptContext, EvidenceRef, SelectionAiOrigin } from '@/lib/ai/types';
+import type {
+  AiDraftArtifactType,
+  AiDraftTemplateId,
+  AiFollowUpAction,
+  AiMessage,
+  AiModelInfo,
+  AiPromptContext,
+  EvidenceRef,
+  SelectionAiOrigin,
+} from '@/lib/ai/types';
 import { getStorageAdapter } from '@/lib/storage-adapter';
 
 const AI_CHAT_STORAGE_KEY = 'lattice-ai-chat';
@@ -22,7 +31,8 @@ export interface ChatMessage {
   promptContext?: AiPromptContext;
   followUpActions?: AiFollowUpAction[];
   draftSuggestion?: {
-    type: string;
+    type: AiDraftArtifactType;
+    templateId?: AiDraftTemplateId;
     title: string;
   };
   origin?: SelectionAiOrigin;

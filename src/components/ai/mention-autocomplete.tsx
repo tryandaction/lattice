@@ -7,7 +7,7 @@
  */
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { ArrowLeft, ChevronRight, FileText, Hash, TextSelect } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { deriveFileId } from "@/lib/annotation-storage";
 import {
   getAvailableFiles,
@@ -23,6 +23,8 @@ import {
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useAnnotationStore } from "@/stores/annotation-store";
+import { buildReferenceBrowserNodesFromMentionSuggestions } from "@/lib/ai/reference-browser";
+import { ReferenceBrowser } from "./reference-browser";
 
 interface MentionItem {
   type: MentionSuggestion["type"];
@@ -193,9 +195,14 @@ export function MentionAutocomplete({
 
   // Scroll selected item into view
   useEffect(() => {
-    const el = listRef.current?.querySelector<HTMLElement>(`[data-mention-index="${activeIndex}"]`);
+    const el = listRef.current?.querySelector<HTMLElement>(`[data-reference-browser-index="${activeIndex}"]`);
     el?.scrollIntoView({ block: 'nearest' });
   }, [activeIndex]);
+
+  const nodes = useMemo(
+    () => buildReferenceBrowserNodesFromMentionSuggestions(items),
+    [items],
+  );
 
   return (
     <div
@@ -205,65 +212,33 @@ export function MentionAutocomplete({
       )}
       style={{ bottom: position.top, left: position.left }}
     >
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <div className="min-w-0">
-          <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            {stage === 'files' ? '选择文件' : '选择片段'}
-          </div>
-          <div className="truncate text-xs text-foreground">
-            {stage === 'files' ? '输入 @ 后浏览工作区文件' : selectedFilePath}
-          </div>
-        </div>
-        {stage === 'fragments' && (
-          <button
-            type="button"
-            onClick={() => onSelect(createMentionBacktrackResult(query))}
-            className="inline-flex items-center gap-1 rounded border border-border/70 px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
-          >
-            <ArrowLeft className="h-3 w-3" />
-            返回文件
-          </button>
-        )}
-      </div>
-
-      {items.length === 0 ? (
-        <div className="px-3 py-4 text-xs text-muted-foreground">
-          当前没有匹配项。
-        </div>
-      ) : (
-        <div ref={listRef} className="max-h-56 overflow-auto py-1">
-          {items.map((item, i) => (
+      <div ref={listRef} className="max-h-72 overflow-auto py-1 px-2">
+        {stage === 'fragments' ? (
+          <div className="mb-2 flex justify-end">
             <button
-              key={item.value}
               type="button"
-              data-mention-index={i}
-              className={cn(
-                "w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-muted transition-colors",
-                i === activeIndex && "bg-muted"
-              )}
-              onClick={() => onSelect(createMentionSelectionResult(item, query))}
-              onMouseEnter={() => setSelectionState({ query, index: i })}
+              onClick={() => onSelect(createMentionBacktrackResult(query))}
+              className="inline-flex items-center gap-1 rounded border border-border/70 px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
             >
-              {item.type === 'selection' ? (
-                <TextSelect className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-              ) : item.type === 'heading' || item.type === 'code_line' || item.type === 'notebook_cell' || item.type === 'pdf_page' || item.type === 'pdf_annotation' ? (
-                <Hash className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-              ) : (
-                <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-              )}
-              <div className="min-w-0">
-                <div className="truncate">{item.label}</div>
-                {item.description && (
-                  <div className="truncate text-[11px] text-muted-foreground">{item.description}</div>
-                )}
-              </div>
-              {item.type === 'file' && (
-                <ChevronRight className="ml-auto h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              )}
+              <ArrowLeft className="h-3 w-3" />
+              返回文件
             </button>
-          ))}
-        </div>
-      )}
+          </div>
+        ) : null}
+        <ReferenceBrowser
+          nodes={nodes}
+          activeNodeId={nodes[activeIndex]?.id ?? null}
+          headerTitle={stage === 'files' ? '选择文件' : '选择片段'}
+          headerSubtitle={stage === 'files' ? '输入 @ 后浏览工作区文件' : selectedFilePath ?? undefined}
+          emptyLabel="当前没有匹配项。"
+          onActivateNode={(node) => {
+            const item = items.find((candidate) => candidate.value === node.value);
+            if (item) {
+              onSelect(createMentionSelectionResult(item, query));
+            }
+          }}
+        />
+      </div>
     </div>
   );
 }

@@ -1,31 +1,15 @@
 "use client";
 
-/**
- * Code Cell Component
- * 
- * Renders a Jupyter notebook code cell with:
- * - View mode: Syntax highlighted code (default)
- * - Edit mode: CodeEditor (activated by double-click)
- * - Run button: Execute Python code via Pyodide
- * - Output area: Display execution results
- * 
- * Uses the unified CodeEditor component and on-demand Python kernel.
- * 
- * Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 10.1-10.7
- */
-
-import { useEffect, useRef, useState, memo, useCallback } from "react";
-import { CodeEditor } from "@/components/editor/codemirror/code-editor";
-import { highlightCode } from "@/lib/code-highlighter";
+import { useEffect, useMemo, useRef, useState, memo, useCallback } from "react";
+import { CodeEditor, type CodeEditorRef } from "@/components/editor/codemirror/code-editor";
 import type { JupyterOutput } from "@/lib/notebook-utils";
 import { jupyterOutputsToExecutionOutputs } from "@/lib/runner/output-utils";
-import { useExecutionRunner } from "@/hooks/use-execution-runner";
 import { OutputArea } from "./output-area";
 import { KernelStatus } from "./kernel-status";
 import { NotebookAiAssist } from "@/components/ai/notebook-ai-assist";
-import type { KernelOption } from "./kernel-selector";
-import { isTauriHost } from "@/lib/storage-adapter";
-import type { ExecutionPanelMeta } from "@/lib/runner/types";
+import type { ExecutionProblem, ExecutionPanelMeta } from "@/lib/runner/types";
+import { ProblemsPanel } from "@/components/runner/problems-panel";
+import { diagnosticsToExecutionProblems, mergeExecutionProblems, outputsToExecutionProblems } from "@/lib/runner/problem-utils";
 
 interface CodeCellProps {
   source: string;
@@ -37,31 +21,19 @@ interface CodeCellProps {
   onFocus: () => void;
   onNavigateUp?: () => void;
   onNavigateDown?: () => void;
-  runner?: KernelOption | null;
-  cwd?: string;
+  cellId: string;
+  notebookFilePath?: string;
+  onRunCell?: (cellId: string, source: string) => Promise<unknown>;
+  isExecuting?: boolean;
 }
 
-/**
- * Rendered code view (read-only, syntax highlighted)
- */
-function RenderedCode({ source }: { source: string }) {
-  return (
-    <pre className="rounded-lg bg-muted p-4 overflow-x-auto text-sm font-mono">
-      <code dangerouslySetInnerHTML={{ __html: highlightCode(source, "python") }} />
-    </pre>
-  );
-}
-
-/**
- * Play icon for Run button
- */
 function PlayIcon({ className = "" }: { className?: string }) {
   return (
-    <svg 
+    <svg
       className={className}
-      width="16" 
-      height="16" 
-      viewBox="0 0 24 24" 
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
       fill="currentColor"
       xmlns="http://www.w3.org/2000/svg"
     >
@@ -70,127 +42,98 @@ function PlayIcon({ className = "" }: { className?: string }) {
   );
 }
 
-/**
- * Code Cell Component
- * 
- * Renders a code cell with editing, execution, and output display.
- */
 export const CodeCell = memo(function CodeCell({
   source,
   outputs,
   executionCount,
   executionMeta,
+  isActive,
   onChange,
   onFocus,
   onNavigateUp,
   onNavigateDown,
-  runner,
-  cwd,
+  cellId,
+  notebookFilePath,
+  onRunCell,
+  isExecuting = false,
 }: CodeCellProps) {
-  const [isEditing, setIsEditing] = useState(false);
   const [content, setContent] = useState(source);
-  const containerRef = useRef<HTMLDivElement>(null);
-  
-  // Python runner hook for code execution
-  const {
-    status,
-    outputs: executionOutputs,
-    panelMeta,
-    error: kernelError,
-    run,
-    clearOutputs,
-    isRunning,
-    isLoading,
-  } = useExecutionRunner();
-  
-  // Sync content when external source updates (skip while editing)
+  const [syntaxProblems, setSyntaxProblems] = useState<ExecutionProblem[]>([]);
+  const editorRef = useRef<CodeEditorRef | null>(null);
+
   useEffect(() => {
-    if (isEditing) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setContent(source);
-  }, [source, isEditing]);
+  }, [source]);
 
-  // Handle double-click to enter edit mode
-  const handleDoubleClick = useCallback(() => {
-    setContent(source);
-    setIsEditing(true);
-    onFocus();
-  }, [onFocus, source]);
-  
-  // Handle exiting edit mode
-  const exitEditMode = useCallback(() => {
-    setIsEditing(false);
-  }, []);
+  const executionContext = useMemo(
+    () => ({
+      kind: "notebook-cell" as const,
+      filePath: notebookFilePath,
+      cellId,
+      label: `Cell [${executionCount ?? " "}]`,
+      language: "python",
+    }),
+    [cellId, executionCount, notebookFilePath],
+  );
 
-  // Handle content changes - update ref and notify parent
+  const executionOutputs = useMemo(
+    () => jupyterOutputsToExecutionOutputs(outputs),
+    [outputs],
+  );
+
+  const problems = useMemo(
+    () =>
+      mergeExecutionProblems(
+        syntaxProblems,
+        diagnosticsToExecutionProblems(executionMeta?.diagnostics ?? [], "preflight", executionMeta?.context ?? executionContext),
+        outputsToExecutionProblems(executionOutputs, executionMeta?.context ?? executionContext),
+      ),
+    [executionContext, executionMeta?.context, executionMeta?.diagnostics, executionOutputs, syntaxProblems],
+  );
+
   const handleChange = useCallback((newContent: string) => {
     setContent(newContent);
     onChange(newContent);
   }, [onChange]);
 
-  // Handle Run button click
   const handleRun = useCallback(async () => {
     const code = content.trim();
-    if (!code) return;
+    if (!code || !onRunCell) {
+      return;
+    }
+    await onRunCell(cellId, code);
+  }, [cellId, content, onRunCell]);
 
-    const preferredRunnerType = runner?.runnerType ?? (isTauriHost() ? "python-local" : "python-pyodide");
-    const allowPyodideFallback = preferredRunnerType === "python-pyodide";
-    
-    clearOutputs();
-    await run({
-      runnerType: preferredRunnerType,
-      command: runner?.command,
-      code,
-      cwd,
-      mode: "cell",
-      allowPyodideFallback,
-    });
-  }, [clearOutputs, content, cwd, run, runner?.command, runner?.runnerType]);
-
-  // Handle Shift+Enter to run code
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.shiftKey && e.key === 'Enter') {
-      e.preventDefault();
-      handleRun();
+  const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
+    if (event.shiftKey && event.key === "Enter") {
+      event.preventDefault();
+      void handleRun();
     }
   }, [handleRun]);
 
-  // Handle click outside to exit edit mode
-  useEffect(() => {
-    if (!isEditing) return;
+  const navigateToProblem = useCallback((problem: ExecutionProblem) => {
+    onFocus();
+    const line = problem.context?.line;
+    if (!line) {
+      return;
+    }
 
-    const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        exitEditMode();
-      }
-    };
-
-    const timer = setTimeout(() => {
-      document.addEventListener("mousedown", handleClickOutside);
-    }, 100);
-
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [isEditing, exitEditMode]);
-
-  // Determine if we should show execution outputs or file outputs
-  const hasExecutionOutputs = executionOutputs.length > 0;
-  const hasFileOutputs = outputs && outputs.length > 0;
+    editorRef.current?.scrollToLine(line);
+    window.setTimeout(() => {
+      editorRef.current?.flashLine(line);
+    }, 120);
+  }, [onFocus]);
 
   return (
-    <div ref={containerRef} className="space-y-2" onKeyDown={handleKeyDown}>
-      {/* Toolbar with execution count and Run button */}
+    <div className="space-y-2" onKeyDown={handleKeyDown}>
       <div className="flex items-center justify-between">
         <div className="text-xs text-muted-foreground font-mono">
           [{executionCount ?? " "}]:
         </div>
-        
-        {/* Run button */}
+
         <button
-          onClick={handleRun}
-          disabled={isRunning || isLoading}
+          onClick={() => void handleRun()}
+          disabled={isExecuting || !onRunCell || !content.trim()}
           className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md
                      bg-primary/10 hover:bg-primary/20 text-primary
                      disabled:opacity-50 disabled:cursor-not-allowed
@@ -198,65 +141,53 @@ export const CodeCell = memo(function CodeCell({
           title="Run cell (Shift+Enter)"
         >
           <PlayIcon className="w-3 h-3" />
-          <span>Run</span>
+          <span>{isExecuting ? "Running" : "Run"}</span>
         </button>
       </div>
-      
-      {/* Code editor/viewer */}
-      <div>
-        {isEditing ? (
-          <div className="rounded-lg overflow-hidden border-2 border-primary">
-            <CodeEditor
-              initialValue={content}
-              language="python"
-              onChange={handleChange}
-              autoHeight={true}
-              onEscape={exitEditMode}
-              onNavigateUp={onNavigateUp}
-              onNavigateDown={onNavigateDown}
-            />
-          </div>
-        ) : (
-          <div
-            onDoubleClick={handleDoubleClick}
-            onClick={onFocus}
-            className="cursor-pointer rounded-lg border border-border hover:border-primary/50 transition-colors"
-          >
-            <RenderedCode source={content} />
-          </div>
-        )}
+
+      <div
+        className={`rounded-lg overflow-hidden border-2 transition-colors ${isActive ? "border-primary" : "border-border"}`}
+        onClick={onFocus}
+      >
+        <CodeEditor
+          initialValue={content}
+          language="python"
+          onChange={handleChange}
+          isReadOnly={!isActive}
+          autoHeight={true}
+          onNavigateUp={onNavigateUp}
+          onNavigateDown={onNavigateDown}
+          fileId={`${notebookFilePath ?? "notebook"}#${cellId}`}
+          editorRef={editorRef}
+          basicCompletion={true}
+          syntaxDiagnostics={true}
+          problemContext={executionContext}
+          onProblemsChange={setSyntaxProblems}
+        />
       </div>
 
-      {/* Kernel status indicator (loading/running/error) */}
-      <KernelStatus status={status} error={kernelError} />
+      <KernelStatus status={isExecuting ? "running" : "idle"} />
 
-      {/* Execution outputs (from Python runner) */}
-      {hasExecutionOutputs && (
-        <OutputArea outputs={executionOutputs} meta={panelMeta} variant="compact" onClear={clearOutputs} />
-      )}
+      {problems.length > 0 ? (
+        <div className="space-y-1">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Problems</div>
+          <ProblemsPanel problems={problems} variant="compact" onSelectProblem={navigateToProblem} />
+        </div>
+      ) : null}
 
-      {/* File outputs (from notebook file) - show only if no execution outputs */}
-      {!hasExecutionOutputs && hasFileOutputs && (
-        <OutputArea
-          outputs={jupyterOutputsToExecutionOutputs(outputs)}
-          meta={executionMeta}
-          variant="compact"
-        />
-      )}
+      {executionOutputs.length > 0 ? (
+        <div className="space-y-1">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Output</div>
+          <OutputArea outputs={executionOutputs} meta={executionMeta} variant="compact" showDiagnosticsInline={false} />
+        </div>
+      ) : null}
 
-      {/* AI Assist */}
       <NotebookAiAssist
         cellSource={content}
-        cellOutput={
-          hasExecutionOutputs
-            ? executionOutputs.map(o => typeof o === 'string' ? o : JSON.stringify(o)).join("\n")
-            : hasFileOutputs
-              ? jupyterOutputsToExecutionOutputs(outputs).map((output) => output.content).join("\n")
-              : undefined
-        }
+        cellOutput={executionOutputs.map((output) => output.content).join("\n")}
         cellError={
-          kernelError
-            ?? outputs?.find(o => o.output_type === 'error')?.evalue
+          executionOutputs.find((output) => output.type === "error")?.errorValue
+            ?? outputs?.find((output) => output.output_type === "error")?.evalue
             ?? undefined
         }
         onInsertCode={(code) => {

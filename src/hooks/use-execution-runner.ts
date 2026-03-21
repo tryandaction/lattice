@@ -53,6 +53,7 @@ const EMPTY_SUMMARY: ExecutionSummary = {
 const EMPTY_PANEL_META: ExecutionPanelMeta = {
   origin: null,
   diagnostics: [],
+  context: null,
 };
 
 export function useExecutionRunner(): UseExecutionRunnerReturn {
@@ -128,6 +129,7 @@ export function useExecutionRunner(): UseExecutionRunnerReturn {
     setPanelMetaState((previous) => ({
       origin: getExecutionOrigin(request),
       diagnostics: previous.diagnostics,
+      context: previous.context ?? null,
     }));
     return session.run(request);
   }, [session]);

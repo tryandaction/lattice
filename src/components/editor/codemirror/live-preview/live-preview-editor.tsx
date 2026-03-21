@@ -30,7 +30,12 @@ import { wikiLinkAutocomplete, updateAvailableFiles } from './wiki-link-autocomp
 import { createImageDropExtension, ImageUploadHandler } from './image-drop-plugin';
 import { createMathPasteExtension } from './math-paste-plugin';
 import { createAccessibilityExtension, addEditorDescription, announceChange } from './accessibility';
-import type { ViewMode, OutlineItem } from './types';
+import type {
+  ViewMode,
+  OutlineItem,
+  LivePreviewCodeBlockRevealRequest,
+  LivePreviewCodeBlockRunRequest,
+} from './types';
 import { parseHeadings, buildOutlineTree } from './markdown-parser';
 import { aiCompletionExtension } from './ai-completion-plugin';
 import { MathEditor } from '../../math-editor';
@@ -39,8 +44,9 @@ import { normalizeFormulaInput, wrapLatexForMarkdown } from '@/lib/formula-utils
 import { useSearchParams } from 'next/navigation';
 import { useSettingsStore } from '@/stores/settings-store';
 import { imageResolverFacet } from './image-resolver-facet';
-import { setCodeBlockSourceMode, setMathSourceMode } from './source-mode';
+import { enterCodeBlockSourceMode, setCodeBlockSourceMode, setMathSourceMode } from './source-mode';
 import { createLocalImageUrlCache, type LocalImageUrlCache } from './local-image-url-cache';
+import { codeBlockRunContextFacet } from './code-block-run-context';
 
 // Helper: resolve a relative image path against the current file's directory
 function resolveImagePath(currentFilePath: string, imageUrl: string): string {
@@ -157,6 +163,8 @@ export interface LivePreviewEditorProps {
   rootHandle?: FileSystemDirectoryHandle | null;
   /** File path relative to workspace root (for resolving relative image paths) */
   filePath?: string;
+  /** Run callback for live preview code blocks */
+  onCodeBlockRun?: (request: LivePreviewCodeBlockRunRequest) => void;
 }
 
 /** Ref handle for LivePreviewEditor */
@@ -177,6 +185,8 @@ export interface LivePreviewEditorRef {
   getEditorState: () => EditorStateSnapshot | null;
   /** Restore editor state (cursor/selection/scroll) */
   restoreEditorState: (state: EditorStateSnapshot) => void;
+  /** Reveal a code block and focus a target line inside it */
+  revealCodeBlockLine: (request: LivePreviewCodeBlockRevealRequest) => void;
 }
 
 /**
@@ -364,6 +374,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     highContrast = false,
     rootHandle,
     filePath,
+    onCodeBlockRun,
   }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -535,6 +546,8 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           };
           extensions.push(imageResolverFacet.of(resolver));
         }
+
+        extensions.push(codeBlockRunContextFacet.of({ filePath }));
 
         // Create state with the current content
         const state = EditorState.create({
@@ -712,7 +725,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
   // Handle link clicks emitted by live preview widgets and table editor
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || (!onWikiLinkClick && !onLinkNavigate)) return;
+    if (!container || (!onWikiLinkClick && !onLinkNavigate && !onCodeBlockRun)) return;
 
     const emitNavigate = (target: string) => {
       onLinkNavigate?.(target);
@@ -736,15 +749,22 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
       emitNavigate(customEvent.detail.url);
     };
 
+    const handleCodeBlockRun = (e: Event) => {
+      const customEvent = e as CustomEvent<LivePreviewCodeBlockRunRequest>;
+      onCodeBlockRun?.(customEvent.detail);
+    };
+
     container.addEventListener('wiki-link-click', handleWikiLinkClick);
     container.addEventListener('annotation-link-click', handleAnnotationLinkClick);
     container.addEventListener('external-link-click', handleExternalLinkClick);
+    container.addEventListener('run-code-block', handleCodeBlockRun);
     return () => {
       container.removeEventListener('wiki-link-click', handleWikiLinkClick);
       container.removeEventListener('annotation-link-click', handleAnnotationLinkClick);
       container.removeEventListener('external-link-click', handleExternalLinkClick);
+      container.removeEventListener('run-code-block', handleCodeBlockRun);
     };
-  }, [onLinkNavigate, onWikiLinkClick]);
+  }, [onCodeBlockRun, onLinkNavigate, onWikiLinkClick]);
 
   // Handle MathEditor open event - REMOVED (now handled in editor init)
 
@@ -855,6 +875,29 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
       console.warn('Failed to flash line:', lineNumber, e);
     }
   }, []);
+
+  const revealCodeBlockLine = useCallback((request: LivePreviewCodeBlockRevealRequest) => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+
+    enterCodeBlockSourceMode(view, request.range.from, request.range.to);
+    const lineNumber = request.line ?? request.range.startLine;
+    requestAnimationFrame(() => {
+      try {
+        const safeLine = Math.max(request.range.startLine, Math.min(lineNumber, request.range.endLine));
+        const line = view.state.doc.line(safeLine);
+        view.dispatch({
+          selection: { anchor: line.from },
+          effects: EditorView.scrollIntoView(line.from, { y: 'start' }),
+        });
+        view.focus();
+      } catch {
+        view.focus();
+      }
+    });
+  }, []);
   
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
@@ -863,7 +906,8 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     focus,
     getEditorState,
     restoreEditorState: applyEditorState,
-  }), [scrollToLine, flashLine, focus, getEditorState, applyEditorState]);
+    revealCodeBlockLine,
+  }), [scrollToLine, flashLine, focus, getEditorState, applyEditorState, revealCodeBlockLine]);
 
   if (!librariesLoaded) {
     return (
@@ -928,6 +972,7 @@ export const LivePreviewEditor = memo(LivePreviewEditorComponent, (prev, next) =
   if (prev.autoHeight !== next.autoHeight) return false;
   if (prev.className !== next.className) return false;
   if (prev.highContrast !== next.highContrast) return false;
+  if (prev.onCodeBlockRun !== next.onCodeBlockRun) return false;
   // Content changes are handled by the useEffect, so we can skip re-render
   // But we need to ensure the content prop is passed through
   return true;

@@ -14,10 +14,12 @@ import { useEffect, useRef, useState, useCallback, memo } from "react";
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter } from "@codemirror/view";
 import { EditorState, Extension } from "@codemirror/state";
 import { defaultKeymap, indentWithTab } from "@codemirror/commands";
-import { bracketMatching } from "@codemirror/language";
-import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+import { bracketMatching, syntaxTree } from "@codemirror/language";
+import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
+import { linter, type Diagnostic as CodeMirrorDiagnostic } from "@codemirror/lint";
 import { academicThemeExtension } from "./academic-theme";
 import { registerCodeMirrorView, unregisterCodeMirrorView, setActiveInputTargetFromElement } from "@/lib/unified-input-handler";
+import type { ExecutionContextRef, ExecutionProblem } from "@/lib/runner/types";
 
 type CodeMirrorViewWithHandler = EditorView & {
   _unifiedInputFocusHandler?: () => void;
@@ -84,6 +86,18 @@ export interface CodeEditorProps {
   
   /** Unique identifier for memoization */
   fileId?: string;
+
+  /** Enable built-in CodeMirror completion */
+  basicCompletion?: boolean;
+
+  /** Enable lightweight syntax diagnostics */
+  syntaxDiagnostics?: boolean;
+
+  /** Base context used when emitting syntax problems */
+  problemContext?: ExecutionContextRef | null;
+
+  /** Callback fired when syntax problems change */
+  onProblemsChange?: (problems: ExecutionProblem[]) => void;
   
   /** Keyboard event handlers for cell navigation */
   onNavigateUp?: () => void;
@@ -92,6 +106,65 @@ export interface CodeEditorProps {
   
   /** Ref for accessing editor methods */
   editorRef?: React.RefObject<CodeEditorRef | null>;
+}
+
+function buildSyntaxDiagnostics(state: EditorState): CodeMirrorDiagnostic[] {
+  const diagnostics: CodeMirrorDiagnostic[] = [];
+  const seen = new Set<string>();
+
+  syntaxTree(state).iterate({
+    enter(node) {
+      const isErrorNode = node.type.isError || node.name === "⚠";
+      if (!isErrorNode) {
+        return;
+      }
+
+      const from = node.from;
+      const to = Math.max(node.to, node.from + 1);
+      const key = `${from}:${to}`;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      diagnostics.push({
+        from,
+        to,
+        severity: "error",
+        message: "语法错误或不完整语句",
+      });
+    },
+  });
+
+  return diagnostics;
+}
+
+function diagnosticsToProblems(
+  diagnostics: CodeMirrorDiagnostic[],
+  state: EditorState,
+  problemContext?: ExecutionContextRef | null,
+): ExecutionProblem[] {
+  return diagnostics.map((diagnostic, index) => {
+    const localLine = state.doc.lineAt(diagnostic.from).number;
+    const line = problemContext?.kind === "markdown-block" && problemContext.range?.startLine
+      ? problemContext.range.startLine + localLine
+      : localLine;
+
+    const context: ExecutionContextRef = {
+      ...(problemContext ?? { kind: "file" }),
+      line:
+        line ??
+        problemContext?.line,
+    };
+
+    return {
+      id: `syntax:${index}:${diagnostic.from}:${diagnostic.to}:${problemContext?.filePath ?? ""}:${problemContext?.cellId ?? ""}`,
+      source: "syntax",
+      severity: diagnostic.severity === "warning" ? "warning" : diagnostic.severity === "info" ? "info" : "error",
+      title: "语法问题",
+      message: diagnostic.message,
+      context,
+    };
+  });
 }
 
 /**
@@ -151,6 +224,10 @@ function CodeEditorComponent({
   isReadOnly = false,
   autoHeight = false,
   className = "",
+  basicCompletion = false,
+  syntaxDiagnostics = false,
+  problemContext = null,
+  onProblemsChange,
   onNavigateUp,
   onNavigateDown,
   onEscape,
@@ -166,6 +243,8 @@ function CodeEditorComponent({
   const onNavigateUpRef = useRef(onNavigateUp);
   const onNavigateDownRef = useRef(onNavigateDown);
   const onEscapeRef = useRef(onEscape);
+  const onProblemsChangeRef = useRef(onProblemsChange);
+  const problemContextRef = useRef(problemContext);
   
   // Update refs when callbacks change
   useEffect(() => {
@@ -173,7 +252,9 @@ function CodeEditorComponent({
     onNavigateUpRef.current = onNavigateUp;
     onNavigateDownRef.current = onNavigateDown;
     onEscapeRef.current = onEscape;
-  }, [onChange, onNavigateUp, onNavigateDown, onEscape]);
+    onProblemsChangeRef.current = onProblemsChange;
+    problemContextRef.current = problemContext;
+  }, [onChange, onNavigateUp, onNavigateDown, onEscape, onProblemsChange, problemContext]);
 
   // Initialize CodeMirror
   useEffect(() => {
@@ -206,6 +287,13 @@ function CodeEditorComponent({
         const updateListener = EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             onChangeRef.current(update.state.doc.toString());
+          }
+
+          if (syntaxDiagnostics && (update.docChanged || update.viewportChanged)) {
+            const diagnostics = buildSyntaxDiagnostics(update.state);
+            onProblemsChangeRef.current?.(
+              diagnosticsToProblems(diagnostics, update.state, problemContextRef.current),
+            );
           }
         });
         
@@ -262,6 +350,7 @@ function CodeEditorComponent({
           // Keymaps
           keymap.of([
             ...closeBracketsKeymap,
+            ...(basicCompletion ? completionKeymap : []),
             ...defaultKeymap,
             indentWithTab,
           ]),
@@ -276,6 +365,16 @@ function CodeEditorComponent({
           // Update listener
           updateListener,
         ];
+
+        if (basicCompletion) {
+          extensions.push(autocompletion());
+        }
+
+        if (syntaxDiagnostics) {
+          extensions.push(
+            linter((view) => buildSyntaxDiagnostics(view.state)),
+          );
+        }
         
         // Add auto-height or scrollable mode
         if (autoHeight) {
@@ -327,6 +426,14 @@ function CodeEditorComponent({
         view.dom.addEventListener('focusin', focusHandler);
         (view as CodeMirrorViewWithHandler)._unifiedInputFocusHandler = focusHandler;
         setIsLoading(false);
+
+        if (syntaxDiagnostics) {
+          onProblemsChangeRef.current?.(
+            diagnosticsToProblems(buildSyntaxDiagnostics(view.state), view.state, problemContextRef.current),
+          );
+        } else {
+          onProblemsChangeRef.current?.([]);
+        }
         
       } catch (err) {
         console.error("Failed to initialize CodeMirror:", err);
@@ -350,8 +457,24 @@ function CodeEditorComponent({
         existingView.destroy();
         viewRef.current = null;
       }
+      onProblemsChangeRef.current?.([]);
     };
-  }, [language, isReadOnly, autoHeight, initialValue]);
+  }, [language, isReadOnly, autoHeight, initialValue, basicCompletion, syntaxDiagnostics]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+
+    if (!syntaxDiagnostics) {
+      onProblemsChange?.([]);
+      return;
+    }
+
+    const diagnostics = buildSyntaxDiagnostics(view.state);
+    onProblemsChange?.(diagnosticsToProblems(diagnostics, view.state, problemContext));
+  }, [onProblemsChange, problemContext, syntaxDiagnostics]);
 
   // Focus the editor
   const focus = useCallback(() => {
@@ -496,6 +619,10 @@ export const CodeEditor = memo(CodeEditorComponent, (prevProps, nextProps) => {
   
   // Re-render if className changes
   if (prevProps.className !== nextProps.className) return false;
+
+  // Re-render if editor capabilities change
+  if (prevProps.basicCompletion !== nextProps.basicCompletion) return false;
+  if (prevProps.syntaxDiagnostics !== nextProps.syntaxDiagnostics) return false;
   
   // Don't re-render for onChange, navigation callbacks, or initialValue changes
   // (these are handled via refs or internal state)

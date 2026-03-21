@@ -32,6 +32,7 @@ export function LivePreviewDiagnostics() {
   const imageAnnotationHref = resolveAppRoute("/diagnostics/image-annotation");
   const pdfRegressionHref = resolveAppRoute("/diagnostics/pdf-regression");
   const selectionAiHref = resolveAppRoute("/diagnostics/selection-ai");
+  const runnerDiagnosticsHref = resolveAppRoute("/diagnostics/runner");
   const [selectedId, setSelectedId] = useState(LIVE_PREVIEW_DIAGNOSTIC_FIXTURES[0].id);
   const selected = useMemo(
     () => LIVE_PREVIEW_DIAGNOSTIC_FIXTURES.find((file) => file.id === selectedId) ?? LIVE_PREVIEW_DIAGNOSTIC_FIXTURES[0],
@@ -168,6 +169,12 @@ export function LivePreviewDiagnostics() {
             className="rounded border border-border px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
           >
             Selection AI 诊断
+          </Link>
+          <Link
+            href={runnerDiagnosticsHref}
+            className="rounded border border-border px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          >
+            运行器诊断
           </Link>
           <Link
             href={imageDiagnosticsHref}

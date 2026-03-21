@@ -6,7 +6,6 @@ import { cn } from "@/lib/utils";
 import { CodeCell } from "./code-cell";
 import { MarkdownCell } from "./markdown-cell";
 import type { NotebookCell as NotebookCellType } from "@/lib/notebook-utils";
-import type { KernelOption } from "./kernel-selector";
 
 interface NotebookCellProps {
   cell: NotebookCellType;
@@ -21,10 +20,10 @@ interface NotebookCellProps {
   onTypeChange: (type: "markdown" | "code") => void;
   onNavigateUp?: () => void;
   onNavigateDown?: () => void;
-  runner?: KernelOption | null;
-  cwd?: string;
   rootHandle?: FileSystemDirectoryHandle | null;
   notebookFilePath?: string;
+  onRunCell?: (cellId: string, source: string) => Promise<unknown>;
+  isExecuting?: boolean;
 }
 
 /**
@@ -169,10 +168,10 @@ export function NotebookCellComponent({
   onTypeChange,
   onNavigateUp,
   onNavigateDown,
-  runner,
-  cwd,
   rootHandle,
   notebookFilePath,
+  onRunCell,
+  isExecuting = false,
 }: NotebookCellProps) {
   const [showControls, setShowControls] = useState(false);
 
@@ -281,8 +280,10 @@ export function NotebookCellComponent({
           onFocus={onActivate}
           onNavigateUp={onNavigateUp}
           onNavigateDown={onNavigateDown}
-          runner={runner}
-          cwd={cwd}
+          cellId={cell.id}
+          notebookFilePath={notebookFilePath}
+          onRunCell={onRunCell}
+          isExecuting={isExecuting}
         />
       ) : (
         <MarkdownCell

@@ -44,6 +44,28 @@ export interface ExecutionDiagnostic {
   hint?: string;
 }
 
+export type ExecutionContextKind = "file" | "notebook-cell" | "markdown-block";
+
+export interface ExecutionContextRange {
+  from: number;
+  to: number;
+  startLine?: number;
+  endLine?: number;
+}
+
+export interface ExecutionContextRef {
+  kind: ExecutionContextKind;
+  filePath?: string;
+  fileName?: string;
+  language?: string;
+  blockKey?: string;
+  cellId?: string;
+  label?: string;
+  line?: number;
+  column?: number;
+  range?: ExecutionContextRange;
+}
+
 export interface ExecutionOrigin {
   runnerType: RunnerType;
   mode: ExecutionMode;
@@ -54,6 +76,7 @@ export interface ExecutionOrigin {
 export interface ExecutionPanelMeta {
   origin: ExecutionOrigin | null;
   diagnostics: ExecutionDiagnostic[];
+  context?: ExecutionContextRef | null;
 }
 
 export type ExecutionOutput =
@@ -93,6 +116,55 @@ export interface CommandAvailability {
   resolvedPath?: string | null;
   version?: string | null;
   error?: string | null;
+}
+
+export interface RunnerHealthAction {
+  kind: "command" | "select-python" | "reset-python-selection" | "refresh";
+  label: string;
+  command?: string;
+  pythonPath?: string | null;
+}
+
+export type RunnerHealthIssueCode =
+  | "python_not_found"
+  | "preferred_python_missing"
+  | "command_not_found"
+  | "missing_dependency"
+  | "runtime_execution_error"
+  | "web_fallback_only";
+
+export interface RunnerHealthIssue {
+  code: RunnerHealthIssueCode;
+  severity: "info" | "warning" | "error";
+  title: string;
+  message: string;
+  hint?: string;
+  actions?: RunnerHealthAction[];
+}
+
+export interface RunnerHealthSnapshot {
+  hostKind: "desktop" | "web";
+  pythonEnvironments: PythonEnvironmentInfo[];
+  commandAvailabilityByName: Record<string, CommandAvailability>;
+  preferredPythonPath: string | null;
+  selectedPythonPath: string | null;
+  issues: RunnerHealthIssue[];
+  checkedAt: number;
+}
+
+export interface ExecutionProblem {
+  id: string;
+  severity: "info" | "warning" | "error";
+  source: "syntax" | "preflight" | "runtime" | "health";
+  title: string;
+  message: string;
+  hint?: string;
+  code?: string;
+  errorName?: string;
+  errorValue?: string;
+  traceback?: string[];
+  context?: ExecutionContextRef | null;
+  actions?: RunnerHealthAction[];
 }
 
 export interface WorkspaceRunnerPreferences {

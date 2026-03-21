@@ -25,9 +25,20 @@ jobs:
           cache: "npm"
       - run: npm ci
       - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
+      - name: Validate static export
+        run: test -f web-dist/index.html
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          path: ./out
+          path: ./web-dist
+      - name: Build summary
+        if: always()
+        run: |
+          {
+            echo "## GitHub Pages Build"
+            echo "- artifact path: \`web-dist\`"
+            echo "- index.html present: $(test -f web-dist/index.html && echo true || echo false)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     environment:
@@ -38,3 +49,11 @@ jobs:
     steps:
       - uses: actions/deploy-pages@v4
         id: deployment
+      - name: Deploy summary
+        if: always()
+        run: |
+          {
+            echo "## GitHub Pages Deploy"
+            echo "- page url: ${{ steps.deployment.outputs.page_url }}"
+            echo "- status: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"

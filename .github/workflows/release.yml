@@ -3,96 +3,148 @@ name: Release Desktop App
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 2.0.0 or v2.0.0)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
-  release:
+  workflow-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rhysd/actionlint@v1
+
+  preflight:
+    needs: workflow-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Lint
+        id: lint
+        run: npm run lint
+      - name: Typecheck
+        id: typecheck
+        run: npm run typecheck
+      - name: Browser regression
+        id: browser_regression
+        run: npm run test:browser-regression
+      - name: Unit and integration tests
+        id: test_run
+        run: npm run test:run
+      - name: Web build
+        id: build
+        run: npm run build
+      - name: Preflight summary
+        if: always()
+        run: |
+          {
+            echo "## Release Preflight"
+            echo "- lint: ${{ steps.lint.outcome }}"
+            echo "- typecheck: ${{ steps.typecheck.outcome }}"
+            echo "- browser regression: ${{ steps.browser_regression.outcome }}"
+            echo "- test:run: ${{ steps.test_run.outcome }}"
+            echo "- build: ${{ steps.build.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build-matrix:
+    needs: preflight
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-22.04, windows-latest]
+        include:
+          - platform: macos-latest
+            artifact_name: macos-artifacts
+            artifact_path: |
+              src-tauri/target/release/bundle/dmg/*.dmg
+          - platform: ubuntu-22.04
+            artifact_name: linux-artifacts
+            artifact_path: |
+              src-tauri/target/release/bundle/deb/*.deb
+              src-tauri/target/release/bundle/appimage/*.AppImage
+          - platform: windows-latest
+            artifact_name: windows-artifacts
+            artifact_path: |
+              src-tauri/target/release/lattice.exe
+              src-tauri/target/release/bundle/msi/*.msi
+              src-tauri/target/release/bundle/nsis/*.exe
 
     runs-on: ${{ matrix.platform }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-
+          node-version: "20"
+          cache: "npm"
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-
       - name: Install dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf
-
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - name: Install frontend dependencies
         run: npm ci
-
-      - name: Build the app
-        run: npm run tauri build
-
-      - name: Upload artifacts (Windows)
-        if: matrix.platform == 'windows-latest'
+      - name: Build desktop app
+        run: npm run tauri:build
+      - name: Upload platform artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-artifacts
-          path: |
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/nsis/*.exe
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+      - name: Matrix summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Matrix Build · ${{ matrix.platform }}"
+            echo "- artifact name: ${{ matrix.artifact_name }}"
+            echo "- status: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload artifacts (macOS)
-        if: matrix.platform == 'macos-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-artifacts
-          path: |
-            src-tauri/target/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/macos/*.app
-
-      - name: Upload artifacts (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-artifacts
-          path: |
-            src-tauri/target/release/bundle/deb/*.deb
-            src-tauri/target/release/bundle/appimage/*.AppImage
-
-  create-release:
-    needs: release
+  create-draft-release:
+    needs: build-matrix
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-
-      - name: Display structure of downloaded files
-        run: ls -R artifacts
-
-      - name: Create Release
+      - name: Generate release metadata
+        run: >
+          node scripts/prepare-release.mjs
+          --version "${{ github.event.inputs.version || github.ref_name }}"
+          --skip-qa
+          --artifacts-dir artifacts
+          --output-dir release-artifacts
+      - name: Release summary
+        run: cat release-artifacts/RELEASE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Create draft release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            artifacts/windows-artifacts/**/*
-            artifacts/macos-artifacts/**/*
-            artifacts/linux-artifacts/**/*
-          body_path: .github/RELEASE_TEMPLATE.md
+          files: release-artifacts/**/*
+          body_path: release-artifacts/RELEASE_SUMMARY.md
           draft: true
           prerelease: false
         env:

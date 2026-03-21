@@ -101,6 +101,37 @@ describe('ai-workbench-store', () => {
     expect(proposal?.generatedDraftTargets).toEqual(['Research/weekly.md']);
   });
 
+  it('exposes proposal-linked drafts and standalone drafts separately', () => {
+    useAiWorkbenchStore.setState({
+      drafts: [
+        {
+          id: 'draft-linked',
+          type: 'task_plan',
+          templateId: 'task-plan',
+          title: 'Linked Draft',
+          sourceRefs: [],
+          content: 'linked',
+          status: 'draft',
+          createdAt: Date.now(),
+          originProposalId: 'proposal-1',
+        },
+        {
+          id: 'draft-standalone',
+          type: 'paper_note',
+          templateId: 'reading-note',
+          title: 'Standalone Draft',
+          sourceRefs: [],
+          content: 'standalone',
+          status: 'draft',
+          createdAt: Date.now(),
+        },
+      ],
+    });
+
+    expect(useAiWorkbenchStore.getState().getDraftsForProposal('proposal-1').map((draft) => draft.id)).toEqual(['draft-linked']);
+    expect(useAiWorkbenchStore.getState().getStandaloneDrafts().map((draft) => draft.id)).toEqual(['draft-standalone']);
+  });
+
   it('persists drafts and proposals through storage adapter', async () => {
     storage.get.mockResolvedValue(null);
 

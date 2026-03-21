@@ -18,7 +18,7 @@ import { createSelectionContext, type SelectionAiMode, type SelectionContext } f
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
 import { dirname, resolveWorkspaceFilePath } from "@/lib/runner/path-utils";
-import { getLanguagePreferenceKey, getRunnerDefinitionForLanguage, resolveRunnerExecutionRequest } from "@/lib/runner/preferences";
+import { buildRunnerPreferenceCommit, getRunnerDefinitionForLanguage, resolveRunnerExecutionRequest } from "@/lib/runner/preferences";
 import { useExecutionRunner } from "@/hooks/use-execution-runner";
 import { OutputArea } from "@/components/notebook/output-area";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -135,19 +135,14 @@ function RunnableCodeBlock({
 
     const result = await run(resolved.request);
     if (result.success) {
-      setRecentRunConfig(blockKey, {
-        runnerType: resolved.request.runnerType,
-        command: resolved.request.command,
-        args: resolved.request.args,
+      const commit = buildRunnerPreferenceCommit({
+        fileKey: blockKey,
+        language,
+        request: resolved.request,
+        preferences: runnerPreferences,
       });
-      setRunnerPreferences({
-        defaultLanguageRunners: {
-          [getLanguagePreferenceKey(language)]: resolved.request.runnerType,
-        },
-        defaultPythonPath: resolved.request.runnerType === "python-local"
-          ? resolved.request.command ?? runnerPreferences.defaultPythonPath
-          : runnerPreferences.defaultPythonPath,
-      });
+      setRecentRunConfig(commit.fileKey, commit.recentRunConfig);
+      setRunnerPreferences(commit.preferences);
     }
   }, [
     absoluteFilePath,

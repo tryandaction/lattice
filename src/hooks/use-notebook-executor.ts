@@ -105,7 +105,7 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
     };
   }, []);
 
-  const executeCell = useCallback(async (
+  const executeCellInternal = useCallback(async (
     cellId: string,
     code: string,
   ): Promise<CellExecutionResult> => {
@@ -318,6 +318,22 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
     }
   }, [activeKernel, cwd, onCellOutput]);
 
+  const executeCell = useCallback(async (
+    cellId: string,
+    code: string,
+  ): Promise<CellExecutionResult> => {
+    interruptedRef.current = false;
+    setExecutionState("running");
+    setCurrentCellId(cellId);
+
+    try {
+      return await executeCellInternal(cellId, code);
+    } finally {
+      setExecutionState(interruptedRef.current ? "interrupted" : "idle");
+      setCurrentCellId(null);
+    }
+  }, [executeCellInternal]);
+
   const runCells = useCallback(async (
     cells: Array<{ id: string; source: string; type: string }>,
   ): Promise<CellExecutionResult[]> => {
@@ -345,7 +361,7 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
       setProgress({ current: index + 1, total: codeCells.length });
       onCellStart?.(cell.id);
 
-      const result = await executeCell(cell.id, cell.source);
+      const result = await executeCellInternal(cell.id, cell.source);
       results.push(result);
       onCellComplete?.(cell.id, result);
 
@@ -363,7 +379,7 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
     setProgress({ current: 0, total: 0 });
     onAllComplete?.(results);
     return results;
-  }, [executeCell, onAllComplete, onCellComplete, onCellStart]);
+  }, [executeCellInternal, onAllComplete, onCellComplete, onCellStart]);
 
   const runAll = useCallback(async (cells: Array<{ id: string; source: string; type: string }>) => {
     return runCells(cells);
