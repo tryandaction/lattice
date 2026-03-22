@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, RefreshCw, Settings2, X } from "lucide-react";
+import { CheckCircle2, ChevronRight, Loader2, RefreshCw, Settings2, X, XCircle } from "lucide-react";
 import { useRunnerHealth } from "@/hooks/use-runner-health";
 import { ProblemsPanel } from "@/components/runner/problems-panel";
 import { runnerHealthIssuesToExecutionProblems } from "@/lib/runner/problem-utils";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { cn } from "@/lib/utils";
 import type { ExecutionProblem, RunnerHealthAction } from "@/lib/runner/types";
+import { runnerManager } from "@/lib/runner/runner-manager";
 
 interface WorkspaceRunnerManagerProps {
   cwd?: string;
@@ -27,6 +28,13 @@ export function WorkspaceRunnerManager({
   triggerClassName,
 }: WorkspaceRunnerManagerProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [sessionValidation, setSessionValidation] = useState<{
+    status: "idle" | "running" | "success" | "error";
+    message: string | null;
+  }>({
+    status: "idle",
+    message: null,
+  });
   const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
   const setRunnerPreferences = useWorkspaceStore((state) => state.setRunnerPreferences);
   const setRecentRunConfig = useWorkspaceStore((state) => state.setRecentRunConfig);
@@ -39,6 +47,7 @@ export function WorkspaceRunnerManager({
     cwd,
     fileKey,
     commands,
+    checkPython: true,
   });
 
   useEffect(() => {
@@ -100,6 +109,45 @@ export function WorkspaceRunnerManager({
       } catch {
         // Ignore clipboard errors in the manager action row.
       }
+    }
+  };
+
+  const handleValidateNotebookSession = async () => {
+    if (runnerHealthSnapshot.hostKind !== "desktop") {
+      setSessionValidation({
+        status: "error",
+        message: "网页运行时不支持本地 Notebook 会话验证。",
+      });
+      return;
+    }
+
+    if (!runnerHealthSnapshot.selectedPythonPath) {
+      setSessionValidation({
+        status: "error",
+        message: "当前没有可用的本地 Python 解释器可供验证。",
+      });
+      return;
+    }
+
+    setSessionValidation({
+      status: "running",
+      message: "正在验证 Notebook 本地 Python 会话启动…",
+    });
+
+    try {
+      await runnerManager.validatePersistentPythonSession({
+        command: runnerHealthSnapshot.selectedPythonPath,
+        cwd,
+      });
+      setSessionValidation({
+        status: "success",
+        message: `Notebook 本地会话已成功启动并完成握手：${runnerHealthSnapshot.selectedPythonPath}`,
+      });
+    } catch (error) {
+      setSessionValidation({
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   };
 
@@ -243,6 +291,33 @@ export function WorkspaceRunnerManager({
                   {issueProblems.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
                       当前未发现运行器健康问题。
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mb-4">
+                  <div className="mb-2 text-sm font-medium">Notebook Session Startup</div>
+                  <button
+                    type="button"
+                    onClick={() => void handleValidateNotebookSession()}
+                    disabled={sessionValidation.status === "running"}
+                    className="inline-flex items-center gap-2 rounded border border-border px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                  >
+                    {sessionValidation.status === "running"
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : <CheckCircle2 className="h-4 w-4" />}
+                    <span>验证本地 Notebook 会话</span>
+                  </button>
+                  {sessionValidation.status !== "idle" ? (
+                    <div className={`mt-3 rounded-lg border p-3 text-xs ${sessionValidation.status === "error" ? "border-destructive/40 bg-destructive/10 text-destructive" : sessionValidation.status === "success" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-muted/20 text-muted-foreground"}`}>
+                      <div className="flex items-start gap-2">
+                        {sessionValidation.status === "error"
+                          ? <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                          : sessionValidation.status === "success"
+                            ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                            : <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />}
+                        <div className="whitespace-pre-wrap break-words">{sessionValidation.message}</div>
+                      </div>
                     </div>
                   ) : null}
                 </div>

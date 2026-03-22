@@ -1,14 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { appendRunnerHealthIssues, collectRunnerHealthSnapshot, createEmptyRunnerHealthSnapshot } from "@/lib/runner/health";
-import type { RunnerHealthIssue } from "@/lib/runner/types";
+import { collectRunnerHealthSnapshot, createEmptyRunnerHealthSnapshot } from "@/lib/runner/health";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 
 interface UseRunnerHealthOptions {
   cwd?: string;
   fileKey?: string;
   commands?: string[];
+  checkPython?: boolean;
   autoRefresh?: boolean;
 }
 
@@ -16,11 +16,11 @@ export function useRunnerHealth({
   cwd,
   fileKey,
   commands = [],
+  checkPython = false,
   autoRefresh = false,
 }: UseRunnerHealthOptions = {}) {
   const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
-  const runnerHealthSnapshot = useWorkspaceStore((state) => state.runnerHealthSnapshot);
-  const setRunnerHealthSnapshot = useWorkspaceStore((state) => state.setRunnerHealthSnapshot);
+  const [runnerHealthSnapshot, setRunnerHealthSnapshot] = useState(createEmptyRunnerHealthSnapshot);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const commandsKey = commands.join("||");
   const stableCommands = useMemo(
@@ -28,7 +28,7 @@ export function useRunnerHealth({
     [commandsKey],
   );
 
-  const refresh = useCallback(async (runtimeIssues: RunnerHealthIssue[] = []) => {
+  const refresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
       const snapshot = await collectRunnerHealthSnapshot({
@@ -36,21 +36,14 @@ export function useRunnerHealth({
         fileKey,
         preferences: runnerPreferences,
         commands: stableCommands,
-        runtimeIssues,
+        checkPython,
       });
       setRunnerHealthSnapshot(snapshot);
       return snapshot;
     } finally {
       setIsRefreshing(false);
     }
-  }, [cwd, fileKey, runnerPreferences, setRunnerHealthSnapshot, stableCommands]);
-
-  const mergeRuntimeIssues = useCallback((issues: RunnerHealthIssue[]) => {
-    const baseSnapshot = runnerHealthSnapshot.checkedAt > 0
-      ? runnerHealthSnapshot
-      : createEmptyRunnerHealthSnapshot();
-    setRunnerHealthSnapshot(appendRunnerHealthIssues(baseSnapshot, issues));
-  }, [runnerHealthSnapshot, setRunnerHealthSnapshot]);
+  }, [checkPython, cwd, fileKey, runnerPreferences, stableCommands]);
 
   useEffect(() => {
     if (!autoRefresh) {
@@ -63,6 +56,5 @@ export function useRunnerHealth({
     runnerHealthSnapshot,
     isRefreshing,
     refresh,
-    mergeRuntimeIssues,
   };
 }

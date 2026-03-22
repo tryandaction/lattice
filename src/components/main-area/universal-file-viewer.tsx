@@ -222,7 +222,7 @@ function FileViewer({
           fileName={fileName}
           paneId={paneId}
           filePath={filePath}
-          enableCodeExecution={Boolean(filePath)}
+          enableCodeExecution={false}
         />
       );
     }

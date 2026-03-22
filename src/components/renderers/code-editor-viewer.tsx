@@ -42,8 +42,9 @@ import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 import { ProblemsPanel } from "@/components/runner/problems-panel";
 import { diagnosticsToExecutionProblems, mergeExecutionProblems, outputsToExecutionProblems, runnerHealthIssuesToExecutionProblems } from "@/lib/runner/problem-utils";
 import { useRunnerHealth } from "@/hooks/use-runner-health";
-import { buildRuntimeRunnerHealthIssues } from "@/lib/runner/health";
 import { WorkspaceRunnerManager } from "@/components/runner/workspace-runner-manager";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { useExecutionDockLayout } from "@/hooks/use-execution-dock-layout";
 
 interface CodeEditorViewerProps {
   content: string;
@@ -56,7 +57,6 @@ interface CodeEditorViewerProps {
 }
 
 const DEBOUNCE_DELAY = 500;
-type DockTab = "run" | "problems";
 
 function formatDuration(durationMs: number | null): string | null {
   if (durationMs === null) return null;
@@ -103,8 +103,6 @@ export function CodeEditorViewer({
     lastRequest,
   } = useExecutionRunner();
 
-  const [showOutput, setShowOutput] = useState(false);
-  const [activeDockTab, setActiveDockTab] = useState<DockTab>("run");
   const [syntaxProblems, setSyntaxProblems] = useState<ExecutionProblem[]>([]);
   const currentContentRef = useRef(content);
   const editorRef = useRef<CodeEditorRef | null>(null);
@@ -155,6 +153,20 @@ export function CodeEditorViewer({
   const consumePendingNavigation = useLinkNavigationStore((state) => state.consumePendingNavigation);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const hasChangedRef = useRef(false);
+  const {
+    dockSize,
+    isDockOpen: showOutput,
+    activeDockTab,
+    setDockSize,
+    setIsDockOpen: setShowOutput,
+    setActiveDockTab,
+  } = useExecutionDockLayout({
+    paneId,
+    surfaceId: "code-execution",
+    defaultSize: 38,
+    defaultOpen: false,
+    defaultTab: "run",
+  });
 
   const absoluteFilePath = useMemo(
     () => resolveWorkspaceFilePath(workspaceRootPath, filePath, rootName),
@@ -174,13 +186,22 @@ export function CodeEditorViewer({
   const {
     runnerHealthSnapshot,
     refresh: refreshRunnerHealth,
-    mergeRuntimeIssues,
   } = useRunnerHealth({
     cwd: runCwd,
     fileKey: filePath,
     commands: runnerDefinition?.command ? [runnerDefinition.command] : [],
+    checkPython: runnerDefinition?.runnerType === "python-local",
     autoRefresh: Boolean(runnerDefinition),
   });
+  const healthContext = useMemo(
+    () => ({
+      kind: "workspace" as const,
+      filePath: absoluteFilePath ?? filePath,
+      fileName,
+      label: "当前文件运行环境",
+    }),
+    [absoluteFilePath, fileName, filePath],
+  );
 
   useAnnotationNavigation({
     handlers: {
@@ -215,18 +236,13 @@ export function CodeEditorViewer({
   }, [consumePendingNavigation, filePath, paneId, pendingNavigation]);
 
   useEffect(() => {
-    const runtimeIssues = buildRuntimeRunnerHealthIssues(
-      outputs,
-      runnerHealthSnapshot.selectedPythonPath,
-    );
-    if (runtimeIssues.length > 0) {
-      mergeRuntimeIssues(runtimeIssues);
+    if (outputs.some((output) => output.type === "error")) {
       startTransition(() => {
         setShowOutput(true);
         setActiveDockTab("problems");
       });
     }
-  }, [mergeRuntimeIssues, outputs, runnerHealthSnapshot.selectedPythonPath]);
+  }, [outputs, setActiveDockTab, setShowOutput]);
 
   useEffect(() => {
     if (syntaxProblems.length > 0) {
@@ -235,7 +251,7 @@ export function CodeEditorViewer({
         setActiveDockTab("problems");
       });
     }
-  }, [syntaxProblems.length]);
+  }, [setActiveDockTab, setShowOutput, syntaxProblems.length]);
 
   useEffect(() => {
     return () => {
@@ -327,7 +343,7 @@ export function CodeEditorViewer({
       setRecentRunConfig(commit.fileKey, commit.recentRunConfig);
       setRunnerPreferences(commit.preferences);
     }
-  }, [buildRunRequest, clearOutputs, extension, filePath, refreshRunnerHealth, run, runnerDefinition, runnerPreferences, setPanelMeta, setRecentRunConfig, setRunnerPreferences]);
+  }, [buildRunRequest, clearOutputs, extension, filePath, refreshRunnerHealth, run, runnerDefinition, runnerPreferences, setActiveDockTab, setPanelMeta, setRecentRunConfig, setRunnerPreferences, setShowOutput]);
 
   const handleRunSelection = useCallback(async () => {
     const selection = editorRef.current?.getSelection();
@@ -346,7 +362,7 @@ export function CodeEditorViewer({
 
     closeSelectionMenu();
     await run(request);
-  }, [buildRunRequest, clearOutputs, closeSelectionMenu, refreshRunnerHealth, run, setPanelMeta]);
+  }, [buildRunRequest, clearOutputs, closeSelectionMenu, refreshRunnerHealth, run, setActiveDockTab, setPanelMeta, setShowOutput]);
 
   const handleRerun = useCallback(async () => {
     if (!lastRequest) {
@@ -356,7 +372,7 @@ export function CodeEditorViewer({
     setShowOutput(true);
     setActiveDockTab("run");
     await run(lastRequest);
-  }, [clearOutputs, lastRequest, run]);
+  }, [clearOutputs, lastRequest, run, setActiveDockTab, setShowOutput]);
 
   const problems = useMemo(
     () =>
@@ -364,9 +380,9 @@ export function CodeEditorViewer({
         syntaxProblems,
         diagnosticsToExecutionProblems(panelMeta.diagnostics, "preflight", panelMeta.context ?? executionContext),
         outputsToExecutionProblems(outputs, panelMeta.context ?? executionContext),
-        runnerHealthIssuesToExecutionProblems(runnerHealthSnapshot.issues, panelMeta.context ?? executionContext),
+        runnerHealthIssuesToExecutionProblems(runnerHealthSnapshot.issues, healthContext),
       ),
-    [executionContext, outputs, panelMeta.context, panelMeta.diagnostics, runnerHealthSnapshot.issues, syntaxProblems],
+    [executionContext, healthContext, outputs, panelMeta.context, panelMeta.diagnostics, runnerHealthSnapshot.issues, syntaxProblems],
   );
 
   const navigateToProblem = useCallback((problem: ExecutionProblem) => {
@@ -405,6 +421,127 @@ export function CodeEditorViewer({
   const canRun = Boolean(runnerDefinition) && !isReadOnly;
   const durationLabel = formatDuration(summary.durationMs);
   const shouldRenderDock = showOutput || outputs.length > 0 || problems.length > 0 || isRunning || isLoading;
+  const runnerCommand = runnerDefinition?.command;
+
+  const renderDock = useCallback((expanded: boolean) => (
+    <div className={expanded ? "flex h-full min-h-0 flex-col border-t border-border bg-background" : "border-t border-border bg-background"}>
+      <div className="flex items-center justify-between border-b border-border bg-muted/50 px-3 py-1.5">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowOutput((value) => !value)}
+            className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {showOutput ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronUp className="h-3 w-3" />
+            )}
+            <span>{showOutput ? "Hide Dock" : "Show Dock"}</span>
+          </button>
+          <div className="flex items-center gap-1 rounded-md border border-border bg-background p-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveDockTab("run");
+                setShowOutput(true);
+              }}
+              className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "run" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              Run
+              {outputs.length > 0 ? (
+                <span className="ml-1 rounded bg-primary/10 px-1 py-0.5 text-[10px]">{outputs.length}</span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveDockTab("problems");
+                setShowOutput(true);
+              }}
+              className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "problems" ? "bg-destructive/10 text-destructive" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              Problems
+              {problems.length > 0 ? (
+                <span className="ml-1 rounded bg-destructive/10 px-1 py-0.5 text-[10px]">{problems.length}</span>
+              ) : null}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+          {summary.startedAt && <span>Started</span>}
+          {durationLabel && <span>{durationLabel}</span>}
+          {summary.exitCode !== null && <span>Exit {summary.exitCode}</span>}
+          {runnerHealthSnapshot.issues.length > 0 && (
+            <span className="inline-flex items-center gap-1 text-yellow-700 dark:text-yellow-300">
+              <AlertTriangle className="h-3 w-3" />
+              <span>{runnerHealthSnapshot.issues.length} health</span>
+            </span>
+          )}
+          <WorkspaceRunnerManager
+            cwd={runCwd}
+            fileKey={filePath}
+            commands={runnerCommand ? [runnerCommand] : []}
+            title="Code File Runner Manager"
+            triggerLabel="Runner"
+          />
+          {expanded && (outputs.length > 0 || problems.length > 0) && (
+            <button
+              onClick={clearOutputs}
+              className="p-1 text-muted-foreground transition-colors hover:text-foreground"
+              title="Clear execution feedback"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {expanded ? (
+        <div className="h-full min-h-0 overflow-auto p-3">
+          <KernelStatus status={runnerStatus} error={runnerError} />
+          {activeDockTab === "run" ? (
+            <>
+              <OutputArea outputs={outputs} meta={panelMeta} showDiagnosticsInline={false} />
+              {outputs.length === 0 && !runnerError && runnerStatus !== "loading" && runnerStatus !== "running" && (
+                <p className="py-4 text-center text-xs text-muted-foreground">
+                  No output yet. Click Run or press Shift+Enter to execute.
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              <ProblemsPanel problems={problems} onSelectProblem={navigateToProblem} />
+              {problems.length === 0 ? (
+                <p className="py-4 text-center text-xs text-muted-foreground">
+                  No problems detected.
+                </p>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  ), [
+    activeDockTab,
+    clearOutputs,
+    durationLabel,
+    filePath,
+    navigateToProblem,
+    outputs,
+    panelMeta,
+    problems,
+    runCwd,
+    runnerCommand,
+    runnerError,
+    runnerHealthSnapshot.issues.length,
+    runnerStatus,
+    setActiveDockTab,
+    setShowOutput,
+    showOutput,
+    summary.exitCode,
+    summary.startedAt,
+  ]);
 
   return (
     <div
@@ -501,122 +638,58 @@ export function CodeEditorViewer({
         </div>
       </div>
 
-      <div className={`flex-1 overflow-hidden ${showOutput && canRun ? "h-1/2" : ""}`}>
-        <CodeEditor
-          initialValue={content}
-          language={language}
-          onChange={handleChange}
-          isReadOnly={isReadOnly || !onContentChange}
-          autoHeight={false}
-          fileId={fileName}
-          className="h-full"
-          editorRef={editorRef}
-          basicCompletion={canRun}
-          syntaxDiagnostics={canRun}
-          problemContext={executionContext}
-          onProblemsChange={setSyntaxProblems}
-        />
-      </div>
-
-      {canRun && shouldRenderDock && (
-        <div className={`border-t border-border bg-background ${showOutput ? "h-1/2" : ""}`}>
-          <div className="flex items-center justify-between px-3 py-1.5 bg-muted/50 border-b border-border">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowOutput(!showOutput)}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {showOutput ? (
-                  <ChevronDown className="w-3 h-3" />
-                ) : (
-                  <ChevronUp className="w-3 h-3" />
-                )}
-                <span>{showOutput ? "Hide Dock" : "Show Dock"}</span>
-              </button>
-              <div className="flex items-center gap-1 rounded-md border border-border bg-background p-0.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveDockTab("run");
-                    setShowOutput(true);
-                  }}
-                  className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "run" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-                >
-                  Run
-                  {outputs.length > 0 ? (
-                    <span className="ml-1 rounded bg-primary/10 px-1 py-0.5 text-[10px]">{outputs.length}</span>
-                  ) : null}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveDockTab("problems");
-                    setShowOutput(true);
-                  }}
-                  className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "problems" ? "bg-destructive/10 text-destructive" : "text-muted-foreground hover:text-foreground"}`}
-                >
-                  Problems
-                  {problems.length > 0 ? (
-                    <span className="ml-1 rounded bg-destructive/10 px-1 py-0.5 text-[10px]">{problems.length}</span>
-                  ) : null}
-                </button>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-              {summary.startedAt && <span>Started</span>}
-              {durationLabel && <span>{durationLabel}</span>}
-              {summary.exitCode !== null && <span>Exit {summary.exitCode}</span>}
-              {runnerHealthSnapshot.issues.length > 0 && (
-                <span className="inline-flex items-center gap-1 text-yellow-700 dark:text-yellow-300">
-                  <AlertTriangle className="h-3 w-3" />
-                  <span>{runnerHealthSnapshot.issues.length} health</span>
-                </span>
-              )}
-              <WorkspaceRunnerManager
-                cwd={runCwd}
-                fileKey={filePath}
-                commands={runnerDefinition?.command ? [runnerDefinition.command] : []}
-                title="Code File Runner Manager"
-                triggerLabel="Runner"
-              />
-              {showOutput && (outputs.length > 0 || problems.length > 0) && (
-                <button
-                  onClick={clearOutputs}
-                  className="p-1 text-muted-foreground hover:text-foreground transition-colors"
-                  title="Clear execution feedback"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              )}
-            </div>
+      {canRun && shouldRenderDock && showOutput ? (
+        <ResizablePanelGroup
+          direction="vertical"
+          className="flex-1 min-h-0"
+          sizes={[100 - dockSize, dockSize]}
+          onSizesChange={(sizes) => {
+            if (sizes[1]) {
+              setDockSize(sizes[1]);
+            }
+          }}
+        >
+          <ResizablePanel index={0} defaultSize={100 - dockSize} minSize={30} className="min-h-0 overflow-hidden">
+            <CodeEditor
+              initialValue={content}
+              language={language}
+              onChange={handleChange}
+              isReadOnly={isReadOnly || !onContentChange}
+              autoHeight={false}
+              fileId={fileName}
+              className="h-full"
+              editorRef={editorRef}
+              basicCompletion={canRun}
+              syntaxDiagnostics={canRun}
+              problemContext={executionContext}
+              onProblemsChange={setSyntaxProblems}
+            />
+          </ResizablePanel>
+          <ResizableHandle withHandle index={0} />
+          <ResizablePanel index={1} defaultSize={dockSize} minSize={18} className="min-h-0 overflow-hidden">
+            {renderDock(true)}
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        <>
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <CodeEditor
+              initialValue={content}
+              language={language}
+              onChange={handleChange}
+              isReadOnly={isReadOnly || !onContentChange}
+              autoHeight={false}
+              fileId={fileName}
+              className="h-full"
+              editorRef={editorRef}
+              basicCompletion={canRun}
+              syntaxDiagnostics={canRun}
+              problemContext={executionContext}
+              onProblemsChange={setSyntaxProblems}
+            />
           </div>
-
-          {showOutput && (
-            <div className="h-[calc(100%-32px)] overflow-auto p-3">
-              <KernelStatus status={runnerStatus} error={runnerError} />
-              {activeDockTab === "run" ? (
-                <>
-                  <OutputArea outputs={outputs} meta={panelMeta} showDiagnosticsInline={false} />
-                  {outputs.length === 0 && !runnerError && runnerStatus !== "loading" && runnerStatus !== "running" && (
-                    <p className="text-xs text-muted-foreground text-center py-4">
-                      No output yet. Click Run or press Shift+Enter to execute.
-                    </p>
-                  )}
-                </>
-              ) : (
-                <>
-                  <ProblemsPanel problems={problems} onSelectProblem={navigateToProblem} />
-                  {problems.length === 0 ? (
-                    <p className="text-xs text-muted-foreground text-center py-4">
-                      No problems detected.
-                    </p>
-                  ) : null}
-                </>
-              )}
-            </div>
-          )}
-        </div>
+          {canRun && shouldRenderDock ? renderDock(false) : null}
+        </>
       )}
     </div>
   );

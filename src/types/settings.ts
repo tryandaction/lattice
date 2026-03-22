@@ -16,6 +16,12 @@ export interface WindowState {
   isMaximized: boolean;
 }
 
+export interface ExecutionDockLayout {
+  size: number;
+  open: boolean;
+  activeTab?: "run" | "problems";
+}
+
 export interface AppSettings {
   // General
   language: Locale;
@@ -41,6 +47,7 @@ export interface AppSettings {
   pluginPanelDockOpen: boolean;
   pluginPanelLastActiveId: string | null;
   pluginPanelRecentIds: string[];
+  executionDockLayouts: Record<string, ExecutionDockLayout>;
 
   // AI
   aiEnabled: boolean;
@@ -68,6 +75,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   pluginPanelDockOpen: false,
   pluginPanelLastActiveId: null,
   pluginPanelRecentIds: [],
+  executionDockLayouts: {},
   aiEnabled: false,
   aiProvider: null,
   aiModel: null,

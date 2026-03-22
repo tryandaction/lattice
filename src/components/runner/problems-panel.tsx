@@ -48,6 +48,10 @@ function contextLabel(problem: ExecutionProblem): string | null {
     return context.line ? `${cellLabel} · Line ${context.line}` : cellLabel;
   }
 
+  if (context.kind === "workspace") {
+    return context.label ?? context.filePath ?? context.fileName ?? "Workspace";
+  }
+
   const fileLabel = context.filePath ?? context.fileName ?? context.label ?? null;
   if (context.kind === "markdown-block" && context.range?.startLine) {
     return `${fileLabel ?? "Markdown"} · Block line ${context.range.startLine}${context.line ? ` · Error line ${context.line}` : ""}`;

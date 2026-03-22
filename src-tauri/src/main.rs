@@ -725,10 +725,6 @@ fn build_external_command(
         command.args(arguments);
     }
 
-    if let Some(file_path) = &request.file_path {
-        command.arg(file_path);
-    }
-
     Ok((command, None))
 }
 
@@ -1293,6 +1289,8 @@ globals_dict = {
     "__file__": "<lattice-notebook-session>",
     "display": display,
 }
+
+emit("ready", {"persistent": True})
 
 for raw_line in sys.stdin:
     raw_line = raw_line.strip()

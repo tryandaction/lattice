@@ -419,7 +419,9 @@ AI 设置页现在提供连接测试：
 - **无本地 Python 的桌面环境**：会明确提示当前只剩 Pyodide 应急回退，不再默认把浏览器内核伪装成本地主运行器
 - **工作区偏好记忆**：会按当前工作区记住最近选择的解释器与默认运行器偏好，重开后继续恢复
 - **运行器管理**：`KernelSelector`、代码文件运行区和 Markdown 代码块运行区都可以打开统一的 Workspace Runner Manager，查看解释器、切换工作区默认解释器、恢复自动选择
+- **来源标签**：运行面板会明确标出当前运行器来自“当前入口选择 / 工作区默认 / 自动探测 / 回退”
 - **问题分层**：代码文件、Notebook code cell、Markdown code block 现在会把 `Run` 输出与 `Problems` 分开展示；语法问题、运行前诊断、运行时错误和运行器健康问题会进入 `Problems`
+- **启动验证**：`/diagnostics/runner` 与 `Workspace Runner Manager` 都支持显式验证本地 Notebook Python 会话能否成功启动
 
 **快捷键**
 
@@ -566,6 +568,7 @@ AI 设置页现在提供连接测试：
   - 优先确认系统已安装 Python，或项目目录下存在 `.venv`
   - 如果使用 conda / venv，请先激活对应环境或在工作区中选择正确解释器
   - 无本地 Python 时，Lattice 会提示缺失，部分场景可回退到 Pyodide
+  - 可直接在 `/diagnostics/runner` 或 `Workspace Runner Manager` 中验证 Notebook 本地会话启动
 - **网页版**：
   - 首次运行需要加载 Pyodide 环境（约 20MB）
   - 检查网络连接

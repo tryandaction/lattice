@@ -103,6 +103,11 @@ function SourceBadge({ meta }: { meta: ExecutionPanelMeta | undefined }) {
         {meta.origin.sourceLabel}
       </span>
       <span className="truncate">{meta.origin.detailLabel}</span>
+      {meta.origin.selectionLabel ? (
+        <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5">
+          {meta.origin.selectionLabel}
+        </span>
+      ) : null}
     </div>
   );
 }

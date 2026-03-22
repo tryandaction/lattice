@@ -5,7 +5,12 @@
 ## 当前产品基线
 
 - Markdown、代码文件、Notebook code cell、editable Markdown code block 已统一到 `Run / Problems` 反馈模型
+- 代码文件与 editable Markdown 的 execution dock 已支持折叠、垂直拖拽调节高度，并按 pane 记忆打开状态与尺寸
 - 桌面端默认优先使用本地 Python / 外部命令运行器，Runner Manager 与 Runner Diagnostics 已进入主链路
+- 代码文件、editable Markdown 与 Notebook 现在都会明确标出运行器选择来源，例如 `当前入口选择 / 工作区默认 / 自动探测 / 回退`
+- Notebook 已改为真实的本地持久 Python session：先做 runtime 校验与 `ready` 握手，再允许运行；非 Python `.ipynb` 明确禁跑
+- `.ipynb` 现已保留 `raw` cell，不再伪装成 code cell
+- 只读 Markdown renderer 已关闭代码执行入口，避免保留半接通链路
 - AI Chat、Evidence Panel、Workbench 已形成 `Conclusion / Evidence / Next Actions -> Draft / Proposal -> Writeback` 主路径
 - Selection AI、diagnostics、browser regression、release prepare 脚本已形成阶段性工程闭环
 
@@ -86,6 +91,15 @@ releases/           本地发布产物与元数据事实来源
 - 使用 `npm run clean` 清理本地构建/回归产物
 - 使用 `npm run test:docs` 检查关键文档是否出现旧引用、乱码或失效结构
 - 关键能力变化时，同时更新 `README`、相关用户文档、发布说明与发布指南
+
+## 当前验证基线
+
+- `npm run typecheck`
+- `npm run test:run`
+- `npm run build`
+
+当前主线通过以上三项，作为执行链路与桌面运行能力的最低回归基线。
+`/diagnostics/runner` 还支持显式验证 Notebook 本地 Python 会话启动，而不只是静态展示 health snapshot。
 
 ## License
 

@@ -44,7 +44,7 @@ export interface ExecutionDiagnostic {
   hint?: string;
 }
 
-export type ExecutionContextKind = "file" | "notebook-cell" | "markdown-block";
+export type ExecutionContextKind = "file" | "notebook-cell" | "markdown-block" | "workspace";
 
 export interface ExecutionContextRange {
   from: number;
@@ -71,6 +71,7 @@ export interface ExecutionOrigin {
   mode: ExecutionMode;
   sourceLabel: string;
   detailLabel: string;
+  selectionLabel?: string;
 }
 
 export interface ExecutionPanelMeta {
@@ -88,12 +89,13 @@ export type ExecutionOutput =
 
 export type RunnerEvent =
   | { type: "started"; sessionId: string; payload: { cwd?: string; filePath?: string; mode: ExecutionMode; runnerType: RunnerType } }
+  | { type: "ready"; sessionId: string; payload: { persistent?: boolean } }
   | { type: "stdout"; sessionId: string; payload: { text: string; channel: "stdout" } }
   | { type: "stderr"; sessionId: string; payload: { text: string; channel: "stderr" } }
   | { type: "display_data"; sessionId: string; payload: { data: ExecutionDisplayData } }
   | { type: "error"; sessionId: string; payload: { message: string; ename?: string; evalue?: string; traceback?: string[] } }
-  | { type: "completed"; sessionId: string; payload: { success: boolean; exitCode: number | null; terminated?: boolean } }
-  | { type: "terminated"; sessionId: string; payload: { success: false; exitCode: number | null; terminated: true } };
+  | { type: "completed"; sessionId: string; payload: { success: boolean; exitCode: number | null; terminated?: boolean; persistent?: boolean } }
+  | { type: "terminated"; sessionId: string; payload: { success: false; exitCode: number | null; terminated: true; persistent?: boolean } };
 
 export interface ExecutionRunResult {
   sessionId: string;
@@ -129,9 +131,12 @@ export type RunnerHealthIssueCode =
   | "python_not_found"
   | "preferred_python_missing"
   | "command_not_found"
-  | "missing_dependency"
-  | "runtime_execution_error"
-  | "web_fallback_only";
+  | "web_fallback_only"
+  | "session_start_failed"
+  | "session_not_ready"
+  | "session_terminated"
+  | "invalid_cwd"
+  | "notebook_runtime_mismatch";
 
 export interface RunnerHealthIssue {
   code: RunnerHealthIssueCode;

@@ -142,6 +142,18 @@ export interface PreferredRunnerResolution {
   origin: ExecutionOrigin;
 }
 
+type RunnerSelectionSource =
+  | "current-entry"
+  | "workspace-default"
+  | "language-default"
+  | "detected"
+  | "fallback";
+
+interface RunnerSelectionMeta {
+  source: RunnerSelectionSource;
+  label: string;
+}
+
 interface ResolveRunnerExecutionRequestOptions {
   runnerDefinition: RunnerDefinition;
   mode: ExecutionMode;
@@ -159,6 +171,65 @@ function buildMissingCommandDiagnostic(command: string, availability: CommandAva
     title: `未找到命令 ${command}`,
     message: availability.error || `当前环境无法执行 ${command}。`,
     hint: "请安装对应运行时，或修正 PATH / 工作区解释器配置后再试。",
+  };
+}
+
+function resolveRunnerSelectionMeta(
+  runnerDefinition: RunnerDefinition,
+  runnerType: RunnerType,
+  preferences: WorkspaceRunnerPreferences,
+  fileKey: string,
+  language: string,
+  command?: string,
+): RunnerSelectionMeta {
+  const recent = preferences.recentRunByFile[fileKey];
+  if (
+    recent?.runnerType === runnerType &&
+    (
+      runnerType !== "python-local" ||
+      !command ||
+      !recent.command ||
+      recent.command === command
+    )
+  ) {
+    return {
+      source: "current-entry",
+      label: "当前入口选择",
+    };
+  }
+
+  if (runnerType === "python-local" && preferences.defaultPythonPath && command === preferences.defaultPythonPath) {
+    return {
+      source: "workspace-default",
+      label: "工作区默认",
+    };
+  }
+
+  const normalizedLanguage = normalizeRunnerLanguage(language) ?? language.toLowerCase();
+  if (preferences.defaultLanguageRunners[normalizedLanguage] === runnerType) {
+    return {
+      source: "language-default",
+      label: "语言默认",
+    };
+  }
+
+  if (!isTauriHost() && runnerDefinition.runnerType === "python-local" && runnerType === "python-pyodide") {
+    return {
+      source: "fallback",
+      label: "浏览器回退",
+    };
+  }
+
+  if (runnerType === "python-pyodide") {
+    return {
+      source: "fallback",
+      label: "Pyodide 回退",
+    };
+  }
+
+  return {
+    source: "detected",
+    label: runnerType === "python-local" ? "自动探测" : "运行器默认",
   };
 }
 
@@ -296,17 +367,29 @@ export async function resolveRunnerExecutionRequest(
     });
   }
 
+  const selectionMeta = resolveRunnerSelectionMeta(
+    runnerDefinition,
+    runnerType,
+    preferences,
+    fileKey,
+    language,
+    command,
+  );
+
   return {
     request,
     meta: {
       runnerType,
       command,
       diagnostics,
-      origin: getExecutionOrigin({
-        runnerType,
-        mode: request?.mode ?? mode,
-        command,
-      }),
+      origin: {
+        ...getExecutionOrigin({
+          runnerType,
+          mode: request?.mode ?? mode,
+          command,
+        }),
+        selectionLabel: selectionMeta.label,
+      },
     },
   };
 }

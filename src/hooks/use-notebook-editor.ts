@@ -23,12 +23,12 @@ interface UseNotebookEditorReturn {
   isDirty: boolean;
 
   // Cell operations
-  addCellAbove: (cellId: string, type: "markdown" | "code") => void;
-  addCellBelow: (cellId: string, type: "markdown" | "code") => void;
+  addCellAbove: (cellId: string, type: "markdown" | "code" | "raw") => void;
+  addCellBelow: (cellId: string, type: "markdown" | "code" | "raw") => void;
   removeCell: (cellId: string) => void;
   updateSource: (cellId: string, source: string) => void;
   activateCell: (cellId: string) => void;
-  changeType: (cellId: string, type: "markdown" | "code") => void;
+  changeType: (cellId: string, type: "markdown" | "code" | "raw") => void;
 
   // Output operations (for Run All)
   updateCellOutputs: (cellId: string, outputs: NotebookCell["outputs"]) => void;
@@ -40,8 +40,8 @@ interface UseNotebookEditorReturn {
   // Navigation
   activateNextCell: () => void;
   activatePrevCell: () => void;
-  addCellAboveActive: (type: "markdown" | "code") => void;
-  addCellBelowActive: (type: "markdown" | "code") => void;
+  addCellAboveActive: (type: "markdown" | "code" | "raw") => void;
+  addCellBelowActive: (type: "markdown" | "code" | "raw") => void;
   deleteActiveCell: () => void;
 
   // Serialization
@@ -68,7 +68,7 @@ export function useNotebookEditor(initialContent: string): UseNotebookEditorRetu
   /**
    * Add a cell above the specified cell
    */
-  const addCellAbove = useCallback((cellId: string, type: "markdown" | "code") => {
+  const addCellAbove = useCallback((cellId: string, type: "markdown" | "code" | "raw") => {
     setState((prev) => addCellBefore(prev, cellId, type));
     setIsDirty(true);
   }, []);
@@ -76,7 +76,7 @@ export function useNotebookEditor(initialContent: string): UseNotebookEditorRetu
   /**
    * Add a cell below the specified cell
    */
-  const addCellBelow = useCallback((cellId: string, type: "markdown" | "code") => {
+  const addCellBelow = useCallback((cellId: string, type: "markdown" | "code" | "raw") => {
     setState((prev) => addCellAfter(prev, cellId, type));
     setIsDirty(true);
   }, []);
@@ -107,7 +107,7 @@ export function useNotebookEditor(initialContent: string): UseNotebookEditorRetu
   /**
    * Change a cell's type
    */
-  const changeType = useCallback((cellId: string, type: "markdown" | "code") => {
+  const changeType = useCallback((cellId: string, type: "markdown" | "code" | "raw") => {
     setState((prev) => changeCellType(prev, cellId, type));
     setIsDirty(true);
   }, []);
@@ -212,7 +212,7 @@ export function useNotebookEditor(initialContent: string): UseNotebookEditorRetu
   /**
    * Add a cell above the active cell
    */
-  const addCellAboveActive = useCallback((type: "markdown" | "code") => {
+  const addCellAboveActive = useCallback((type: "markdown" | "code" | "raw") => {
     setState((prev) => {
       if (!prev.activeCellId) return prev;
       const newState = addCellBefore(prev, prev.activeCellId, type);
@@ -224,7 +224,7 @@ export function useNotebookEditor(initialContent: string): UseNotebookEditorRetu
   /**
    * Add a cell below the active cell
    */
-  const addCellBelowActive = useCallback((type: "markdown" | "code") => {
+  const addCellBelowActive = useCallback((type: "markdown" | "code" | "raw") => {
     setState((prev) => {
       if (!prev.activeCellId) return prev;
       const newState = addCellAfter(prev, prev.activeCellId, type);

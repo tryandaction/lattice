@@ -1,9 +1,7 @@
 import { isTauriHost } from "@/lib/storage-adapter";
-import { RUNNER_DEFINITIONS } from "@/lib/runner/extension-map";
 import { runnerManager } from "@/lib/runner/runner-manager";
 import { getPreferredPythonEnvironment } from "@/lib/runner/preferences";
 import type {
-  ExecutionOutput,
   RunnerHealthIssue,
   RunnerHealthSnapshot,
   WorkspaceRunnerPreferences,
@@ -14,25 +12,11 @@ interface CollectRunnerHealthSnapshotOptions {
   fileKey?: string;
   preferences: WorkspaceRunnerPreferences;
   commands?: string[];
-  runtimeIssues?: RunnerHealthIssue[];
+  checkPython?: boolean;
 }
 
 function uniqueCommands(commands: string[] = []): string[] {
-  const known = Object.values(RUNNER_DEFINITIONS)
-    .map((definition) => definition.command)
-    .filter((command): command is string => Boolean(command));
-  return Array.from(new Set([...known, ...commands]));
-}
-
-function mergeIssues(baseIssues: RunnerHealthIssue[], extraIssues: RunnerHealthIssue[]): RunnerHealthIssue[] {
-  const merged = new Map<string, RunnerHealthIssue>();
-  for (const issue of [...baseIssues, ...extraIssues]) {
-    const key = `${issue.code}:${issue.title}:${issue.message}`;
-    if (!merged.has(key)) {
-      merged.set(key, issue);
-    }
-  }
-  return Array.from(merged.values());
+  return Array.from(new Set(commands.filter(Boolean)));
 }
 
 export function createEmptyRunnerHealthSnapshot(): RunnerHealthSnapshot {
@@ -47,79 +31,18 @@ export function createEmptyRunnerHealthSnapshot(): RunnerHealthSnapshot {
   };
 }
 
-export function parseMissingPythonModule(errorValue?: string | null, traceback: string[] = []): string | null {
-  const haystacks = [errorValue ?? "", ...traceback];
-  for (const text of haystacks) {
-    const match = text.match(/No module named ['"]([^'"]+)['"]/);
-    if (match?.[1]) {
-      return match[1];
-    }
-  }
-  return null;
-}
-
-export function buildRuntimeRunnerHealthIssues(
-  outputs: ExecutionOutput[],
-  selectedPythonPath?: string | null,
-): RunnerHealthIssue[] {
-  const issues: RunnerHealthIssue[] = [];
-
-  for (const output of outputs) {
-    if (output.type !== "error") {
-      continue;
-    }
-
-    const missingModule = parseMissingPythonModule(output.errorValue, output.traceback);
-    if (missingModule) {
-      issues.push({
-        code: "missing_dependency",
-        severity: "error",
-        title: `缺少 Python 依赖：${missingModule}`,
-        message: `当前解释器缺少模块 ${missingModule}，执行无法继续。`,
-        hint: selectedPythonPath
-          ? `建议在 ${selectedPythonPath} 对应环境中执行：pip install ${missingModule}`
-          : `建议安装缺失依赖：pip install ${missingModule}`,
-        actions: [
-          {
-            kind: "command",
-            label: `pip install ${missingModule}`,
-            command: `pip install ${missingModule}`,
-          },
-        ],
-      });
-      continue;
-    }
-
-    issues.push({
-      code: "runtime_execution_error",
-      severity: "error",
-      title: output.errorName ?? "运行失败",
-      message: output.errorValue ?? output.content,
-      hint: "请检查 traceback、当前解释器和依赖环境后重试。",
-      actions: [
-        {
-          kind: "refresh",
-          label: "刷新运行器健康状态",
-        },
-      ],
-    });
-  }
-
-  return issues;
-}
-
 export async function collectRunnerHealthSnapshot({
   cwd,
   fileKey,
   preferences,
   commands = [],
-  runtimeIssues = [],
+  checkPython = false,
 }: CollectRunnerHealthSnapshotOptions): Promise<RunnerHealthSnapshot> {
   const desktopHost = isTauriHost();
   const checkedAt = Date.now();
   const hostKind: RunnerHealthSnapshot["hostKind"] = desktopHost ? "desktop" : "web";
 
-  const pythonEnvironments = desktopHost
+  const pythonEnvironments = desktopHost && checkPython
     ? await runnerManager.detectPythonEnvironments(cwd)
     : [];
 
@@ -143,10 +66,11 @@ export async function collectRunnerHealthSnapshot({
   const commandAvailabilityByName: RunnerHealthSnapshot["commandAvailabilityByName"] =
     Object.fromEntries(commandAvailabilityEntries);
   const preferredPythonPath = preferences.defaultPythonPath;
-  const selectedPythonPath =
-    getPreferredPythonEnvironment(pythonEnvironments, preferences, fileKey)?.path ??
-    preferredPythonPath ??
-    null;
+  const selectedPythonPath = checkPython
+    ? getPreferredPythonEnvironment(pythonEnvironments, preferences, fileKey)?.path ??
+      preferredPythonPath ??
+      null
+    : null;
 
   const issues: RunnerHealthIssue[] = [];
 
@@ -160,7 +84,7 @@ export async function collectRunnerHealthSnapshot({
     });
   }
 
-  if (desktopHost && pythonEnvironments.length === 0) {
+  if (desktopHost && checkPython && pythonEnvironments.length === 0) {
     issues.push({
       code: "python_not_found",
       severity: "error",
@@ -178,6 +102,7 @@ export async function collectRunnerHealthSnapshot({
 
   if (
     desktopHost &&
+    checkPython &&
     preferredPythonPath &&
     !pythonEnvironments.some((environment) => environment.path === preferredPythonPath)
   ) {
@@ -232,18 +157,7 @@ export async function collectRunnerHealthSnapshot({
     commandAvailabilityByName,
     preferredPythonPath,
     selectedPythonPath,
-    issues: mergeIssues(issues, runtimeIssues),
+    issues,
     checkedAt,
-  };
-}
-
-export function appendRunnerHealthIssues(
-  snapshot: RunnerHealthSnapshot,
-  runtimeIssues: RunnerHealthIssue[],
-): RunnerHealthSnapshot {
-  return {
-    ...snapshot,
-    issues: mergeIssues(snapshot.issues, runtimeIssues),
-    checkedAt: Date.now(),
   };
 }

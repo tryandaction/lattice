@@ -37,17 +37,22 @@
   - Notebook code cell 也改成 `Problems / Output` 分层，并复用统一问题模型
 - Runner health 进入产品化：
   - 新增 `Workspace Runner Manager`，统一服务 Notebook、代码文件与 Markdown 编辑主链路
-  - 新增 `/diagnostics/runner` 页面，复用同一份 runner health snapshot
-  - 本地 Python 缺失、默认解释器失效、外部命令缺失、`ModuleNotFoundError` 都会映射为结构化问题与修复建议
+  - 新增 `/diagnostics/runner` 页面，按当前探测目标 fresh probe，而不再复用全局 snapshot
+  - 本地 Python 缺失、默认解释器失效、外部命令缺失会进入结构化 health issues；`ModuleNotFoundError` 进入 runtime problems，不再污染 health
+  - `Runner Diagnostics` 与 `Workspace Runner Manager` 现在都支持显式验证 Notebook 本地 Python session 启动链路
 - Notebook / Markdown 体验继续收口：
   - `ipynb` Markdown Cell 已复用现有 Live Preview / Obsidian 级编辑内核，默认 `Live`，并支持切到 `Source`
-  - Markdown fenced code block 已支持直接运行，并接入统一执行反馈面板
+  - Notebook 现已改为真实的本地持久 Python session，运行前会先等待 runtime `ready`
+  - `.ipynb` 现保留 `raw` cell；非 Python Notebook 明确禁跑并给出说明
   - editable Markdown 主链路中的 Live Preview code block 现在也支持 `Run`，并把完整反馈接到底部 `Run / Problems` dock
+  - 只读 Markdown renderer 的代码执行入口已关闭，避免保留半接通路径
 - 统一执行反馈已升级：
   - 输出面板会明确标出 `本地解释器 / 浏览器回退 / 外部命令`
+  - 输出面板会附带运行器选择来源，例如 `当前入口选择 / 工作区默认 / 自动探测 / 回退`
   - 连续 `stdout/stderr` 会分组展示
   - 错误会区分错误名、错误值和 traceback
   - markdown block / notebook cell / code file 的问题上下文现在都支持回跳定位
+  - 代码文件与 editable Markdown 的 execution dock 已支持折叠、垂直拖拽调高，并按 pane 记忆状态
 - PDF 默认打开体验已调整：
   - PDF 首次打开默认 `适宽`
   - 旧 PDF 查看器分支也同步改成默认自适应宽度填充
@@ -66,7 +71,7 @@
 
 - 代码渲染与运行离 VS Code / IDE 级体验仍有明显差距：
   - 代码编辑的 hover / 补全 / 诊断 / 调试器尚未接入
-  - 代码文件 / Notebook / Markdown 代码块虽然已统一到共享执行面板，但更完整的调试、任务面板和问题面板仍未到位
+  - 代码文件 / Notebook / editable Markdown 代码块虽然已统一到共享执行模型，但更完整的调试、任务面板和问题面板仍未到位
   - 本地 Python 运行器已有基础环境诊断，但解释器切换、深入健康检查和修复自动化仍需继续补强
 
 ### 2026-03-19 阶段收口补充

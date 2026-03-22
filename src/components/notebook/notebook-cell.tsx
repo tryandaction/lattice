@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Trash2, Code, FileText, ChevronDown } from "lucide-react";
+import { Plus, Trash2, Code, FileText, ChevronDown, FileCode2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CodeCell } from "./code-cell";
 import { MarkdownCell } from "./markdown-cell";
+import { RawCell } from "./raw-cell";
 import type { NotebookCell as NotebookCellType } from "@/lib/notebook-utils";
 
 interface NotebookCellProps {
@@ -13,17 +14,18 @@ interface NotebookCellProps {
   isHighlighted?: boolean;
   canDelete: boolean;
   onActivate: () => void;
-  onAddAbove: (type: "markdown" | "code") => void;
-  onAddBelow: (type: "markdown" | "code") => void;
+  onAddAbove: (type: "markdown" | "code" | "raw") => void;
+  onAddBelow: (type: "markdown" | "code" | "raw") => void;
   onDelete: () => void;
   onSourceChange: (source: string) => void;
-  onTypeChange: (type: "markdown" | "code") => void;
+  onTypeChange: (type: "markdown" | "code" | "raw") => void;
   onNavigateUp?: () => void;
   onNavigateDown?: () => void;
   rootHandle?: FileSystemDirectoryHandle | null;
   notebookFilePath?: string;
   onRunCell?: (cellId: string, source: string) => Promise<unknown>;
   isExecuting?: boolean;
+  canRunCell?: boolean;
 }
 
 /**
@@ -33,8 +35,8 @@ function CellTypeSelector({
   currentType,
   onChange,
 }: {
-  currentType: "markdown" | "code";
-  onChange: (type: "markdown" | "code") => void;
+  currentType: "markdown" | "code" | "raw";
+  onChange: (type: "markdown" | "code" | "raw") => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -43,12 +45,14 @@ function CellTypeSelector({
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-1 rounded px-1.5 py-1 text-xs hover:bg-accent transition-colors"
-        title={currentType === "code" ? "Code cell" : "Markdown cell"}
+        title={currentType === "code" ? "Code cell" : currentType === "markdown" ? "Markdown cell" : "Raw cell"}
       >
         {currentType === "code" ? (
           <Code className="h-3 w-3" />
-        ) : (
+        ) : currentType === "markdown" ? (
           <FileText className="h-3 w-3" />
+        ) : (
+          <FileCode2 className="h-3 w-3" />
         )}
         <ChevronDown className="h-3 w-3 opacity-50" />
       </button>
@@ -86,6 +90,19 @@ function CellTypeSelector({
               <FileText className="h-3 w-3" />
               <span>Markdown</span>
             </button>
+            <button
+              onClick={() => {
+                onChange("raw");
+                setIsOpen(false);
+              }}
+              className={cn(
+                "flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs hover:bg-accent",
+                currentType === "raw" && "bg-accent"
+              )}
+            >
+              <FileCode2 className="h-3 w-3" />
+              <span>Raw</span>
+            </button>
           </div>
         </>
       )}
@@ -101,7 +118,7 @@ function AddCellButton({
   onAdd,
 }: {
   position: "above" | "below";
-  onAdd: (type: "markdown" | "code") => void;
+  onAdd: (type: "markdown" | "code" | "raw") => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -142,6 +159,16 @@ function AddCellButton({
               <FileText className="h-3 w-3" />
               <span>Markdown</span>
             </button>
+            <button
+              onClick={() => {
+                onAdd("raw");
+                setIsOpen(false);
+              }}
+              className="flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs hover:bg-accent"
+            >
+              <FileCode2 className="h-3 w-3" />
+              <span>Raw</span>
+            </button>
           </div>
         </>
       )}
@@ -172,6 +199,7 @@ export function NotebookCellComponent({
   notebookFilePath,
   onRunCell,
   isExecuting = false,
+  canRunCell = true,
 }: NotebookCellProps) {
   const [showControls, setShowControls] = useState(false);
 
@@ -224,6 +252,16 @@ export function NotebookCellComponent({
           !(e.target as HTMLElement).closest('.cm-editor')) {
         e.preventDefault();
         onTypeChange('code');
+      }
+    }
+
+    // R - Change to raw
+    if (e.key === 'r' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      if ((e.target as HTMLElement).tagName !== 'INPUT' &&
+          (e.target as HTMLElement).tagName !== 'TEXTAREA' &&
+          !(e.target as HTMLElement).closest('.cm-editor')) {
+        e.preventDefault();
+        onTypeChange('raw');
       }
     }
   };
@@ -284,8 +322,9 @@ export function NotebookCellComponent({
           notebookFilePath={notebookFilePath}
           onRunCell={onRunCell}
           isExecuting={isExecuting}
+          canRun={canRunCell}
         />
-      ) : (
+      ) : cell.cell_type === "markdown" ? (
         <MarkdownCell
           source={cell.source}
           isActive={isActive}
@@ -294,6 +333,17 @@ export function NotebookCellComponent({
           rootHandle={rootHandle}
           filePath={notebookFilePath}
           cellId={cell.id}
+        />
+      ) : (
+        <RawCell
+          source={cell.source}
+          isActive={isActive}
+          onChange={onSourceChange}
+          onFocus={onActivate}
+          onNavigateUp={onNavigateUp}
+          onNavigateDown={onNavigateDown}
+          cellId={cell.id}
+          notebookFilePath={notebookFilePath}
         />
       )}
     </div>

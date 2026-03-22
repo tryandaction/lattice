@@ -59,9 +59,10 @@ import { diagnosticsToExecutionProblems, mergeExecutionProblems, outputsToExecut
 import { dirname, resolveWorkspaceFilePath } from "@/lib/runner/path-utils";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useRunnerHealth } from "@/hooks/use-runner-health";
-import { buildRuntimeRunnerHealthIssues } from "@/lib/runner/health";
 import { WorkspaceRunnerManager } from "@/components/runner/workspace-runner-manager";
 import type { ExecutionProblem } from "@/lib/runner/types";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { useExecutionDockLayout } from "@/hooks/use-execution-dock-layout";
 
 // Lazy load components
 const LivePreviewEditor = dynamic(
@@ -75,7 +76,6 @@ const OutlinePanel = dynamic(
 );
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
-type DockTab = "run" | "problems";
 
 function formatDuration(durationMs: number | null): string | null {
   if (durationMs === null) return null;
@@ -222,8 +222,6 @@ export function ObsidianMarkdownViewer({
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [showOutline, setShowOutline] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
-  const [showRunDock, setShowRunDock] = useState(false);
-  const [activeDockTab, setActiveDockTab] = useState<DockTab>("run");
   const [selectionHubState, setSelectionHubState] = useState<{
     context: SelectionContext;
     mode: SelectionAiMode;
@@ -287,12 +285,37 @@ export function ObsidianMarkdownViewer({
   const {
     runnerHealthSnapshot,
     refresh: refreshRunnerHealth,
-    mergeRuntimeIssues,
   } = useRunnerHealth({
     cwd: runCwd,
     fileKey: currentDockFileKey,
     commands: currentDockCommand ? [currentDockCommand] : [],
+    checkPython: panelMeta.context?.language
+      ? getRunnerDefinitionForLanguage(panelMeta.context.language)?.runnerType === "python-local"
+      : false,
     autoRefresh: Boolean(filePath),
+  });
+  const healthContext = useMemo(
+    () => ({
+      kind: "workspace" as const,
+      filePath: absoluteFilePath ?? filePath,
+      fileName,
+      label: "当前文档运行环境",
+    }),
+    [absoluteFilePath, fileName, filePath],
+  );
+  const {
+    dockSize,
+    isDockOpen: showRunDock,
+    activeDockTab,
+    setDockSize,
+    setIsDockOpen: setShowRunDock,
+    setActiveDockTab,
+  } = useExecutionDockLayout({
+    paneId,
+    surfaceId: "markdown-execution",
+    defaultSize: 38,
+    defaultOpen: false,
+    defaultTab: "run",
   });
 
   // CRITICAL: Force content update when file changes
@@ -432,27 +455,22 @@ export function ObsidianMarkdownViewer({
   }, [filePath, onNavigateToFile, paneId, rootHandle]);
 
   useEffect(() => {
-    const runtimeIssues = buildRuntimeRunnerHealthIssues(
-      outputs,
-      runnerHealthSnapshot.selectedPythonPath,
-    );
-    if (runtimeIssues.length > 0) {
-      mergeRuntimeIssues(runtimeIssues);
+    if (outputs.some((output) => output.type === "error")) {
       startTransition(() => {
         setShowRunDock(true);
         setActiveDockTab("problems");
       });
     }
-  }, [mergeRuntimeIssues, outputs, runnerHealthSnapshot.selectedPythonPath]);
+  }, [outputs, setActiveDockTab, setShowRunDock]);
 
   const problems = useMemo(
     () =>
       mergeExecutionProblems(
         diagnosticsToExecutionProblems(panelMeta.diagnostics, "preflight", panelMeta.context ?? null),
         outputsToExecutionProblems(outputs, panelMeta.context ?? null),
-        runnerHealthIssuesToExecutionProblems(runnerHealthSnapshot.issues, panelMeta.context ?? null),
+        runnerHealthIssuesToExecutionProblems(runnerHealthSnapshot.issues, healthContext),
       ),
-    [outputs, panelMeta.context, panelMeta.diagnostics, runnerHealthSnapshot.issues],
+    [healthContext, outputs, panelMeta.context, panelMeta.diagnostics, runnerHealthSnapshot.issues],
   );
 
   const handleCodeBlockRun = useCallback(async (request: LivePreviewCodeBlockRunRequest) => {
@@ -515,9 +533,11 @@ export function ObsidianMarkdownViewer({
     run,
     runCwd,
     runnerPreferences,
+    setActiveDockTab,
     setPanelMeta,
     setRecentRunConfig,
     setRunnerPreferences,
+    setShowRunDock,
   ]);
 
   const navigateToProblem = useCallback((problem: ExecutionProblem) => {
@@ -552,6 +572,173 @@ export function ObsidianMarkdownViewer({
 
   const durationLabel = formatDuration(summary.durationMs);
   const shouldRenderRunDock = showRunDock || outputs.length > 0 || problems.length > 0 || isRunning || isLoading;
+  const renderEditorPane = useCallback(() => (
+    <div className="flex h-full min-h-0 overflow-hidden">
+      {showOutline && (
+        <div className="w-56 border-r border-border overflow-auto bg-muted/20 flex-shrink-0">
+          <OutlinePanel
+            items={outline}
+            onNavigate={handleOutlineNavigate}
+            activeHeading={activeHeading}
+          />
+        </div>
+      )}
+
+      <div className="flex-1 min-h-0 overflow-auto">
+        <LivePreviewEditor
+          key={fileId || fileName}
+          ref={editorRef}
+          content={localContent}
+          onChange={handleContentChange}
+          mode={mode}
+          onModeChange={handleModeChange}
+          showLineNumbers={mode === 'source'}
+          showFoldGutter={mode === 'live'}
+          readOnly={mode === 'reading'}
+          onOutlineChange={handleOutlineChange}
+          onWikiLinkClick={handleLinkNavigate}
+          onLinkNavigate={handleLinkNavigate}
+          onSave={handleSave}
+          fileId={fileId || fileName}
+          className="min-h-full"
+          rootHandle={rootHandle}
+          filePath={filePath}
+          onCodeBlockRun={handleCodeBlockRun}
+        />
+      </div>
+    </div>
+  ), [
+    activeHeading,
+    fileId,
+    fileName,
+    filePath,
+    handleCodeBlockRun,
+    handleContentChange,
+    handleLinkNavigate,
+    handleModeChange,
+    handleOutlineChange,
+    handleOutlineNavigate,
+    handleSave,
+    localContent,
+    mode,
+    outline,
+    rootHandle,
+    showOutline,
+  ]);
+
+  const renderRunDock = useCallback((expanded: boolean) => (
+    <div className={expanded ? "flex h-full min-h-0 flex-col border-t border-border bg-background" : "border-t border-border bg-background"}>
+      <div className="flex items-center justify-between border-b border-border bg-muted/50 px-3 py-1.5">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowRunDock((value) => !value)}
+            className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {showRunDock ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+            <span>{showRunDock ? "Hide Dock" : "Show Dock"}</span>
+          </button>
+          <div className="flex items-center rounded-md border border-border bg-background p-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveDockTab("run");
+                setShowRunDock(true);
+              }}
+              className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "run" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              Run
+              {outputs.length > 0 ? (
+                <span className="ml-1 rounded bg-primary/10 px-1 py-0.5 text-[10px]">{outputs.length}</span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveDockTab("problems");
+                setShowRunDock(true);
+              }}
+              className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "problems" ? "bg-destructive/10 text-destructive" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              Problems
+              {problems.length > 0 ? (
+                <span className="ml-1 rounded bg-destructive/10 px-1 py-0.5 text-[10px]">{problems.length}</span>
+              ) : null}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+          {panelMeta.context?.language ? <span>{panelMeta.context.language}</span> : null}
+          {panelMeta.context?.range?.startLine ? (
+            <span>
+              L{panelMeta.context.range.startLine}
+              {panelMeta.context.range.endLine && panelMeta.context.range.endLine !== panelMeta.context.range.startLine
+                ? `-L${panelMeta.context.range.endLine}`
+                : ""}
+            </span>
+          ) : null}
+          {durationLabel ? <span>{durationLabel}</span> : null}
+          {summary.exitCode !== null ? <span>Exit {summary.exitCode}</span> : null}
+          {runnerHealthSnapshot.issues.length > 0 ? (
+            <span className="inline-flex items-center gap-1 text-yellow-700 dark:text-yellow-300">
+              <AlertTriangle className="h-3 w-3" />
+              <span>{runnerHealthSnapshot.issues.length} health</span>
+            </span>
+          ) : null}
+          <WorkspaceRunnerManager
+            cwd={runCwd}
+            fileKey={currentDockFileKey}
+            commands={currentDockCommand ? [currentDockCommand] : []}
+            title="Markdown Runner Manager"
+            triggerLabel="Runner"
+          />
+        </div>
+      </div>
+
+      {expanded ? (
+        <div className="h-full min-h-0 overflow-auto p-3">
+          <KernelStatus status={runnerStatus} error={runnerError} />
+          {activeDockTab === "run" ? (
+            <>
+              <OutputArea outputs={outputs} meta={panelMeta} showDiagnosticsInline={false} />
+              {outputs.length === 0 && !runnerError && runnerStatus !== "loading" && runnerStatus !== "running" ? (
+                <p className="py-4 text-center text-xs text-muted-foreground">
+                  No output yet. Use the Run button on a fenced code block to execute.
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <ProblemsPanel problems={problems} onSelectProblem={navigateToProblem} />
+              {problems.length === 0 ? (
+                <p className="py-4 text-center text-xs text-muted-foreground">
+                  No problems detected.
+                </p>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  ), [
+    activeDockTab,
+    currentDockCommand,
+    currentDockFileKey,
+    durationLabel,
+    navigateToProblem,
+    outputs,
+    panelMeta,
+    problems,
+    runCwd,
+    runnerError,
+    runnerHealthSnapshot.issues.length,
+    runnerStatus,
+    setActiveDockTab,
+    setShowRunDock,
+    showRunDock,
+    summary.exitCode,
+  ]);
 
   return (
     <div ref={containerRef} className="h-full flex flex-col bg-background">
@@ -640,140 +827,33 @@ export function ObsidianMarkdownViewer({
         </div>
       </div>
 
-      {/* Content area */}
-      <div className={`flex-1 flex overflow-hidden ${showRunDock ? "min-h-0" : ""}`}>
-        {/* Outline panel */}
-        {showOutline && (
-          <div className="w-56 border-r border-border overflow-auto bg-muted/20 flex-shrink-0">
-            <OutlinePanel
-              items={outline}
-              onNavigate={handleOutlineNavigate}
-              activeHeading={activeHeading}
-            />
+      {shouldRenderRunDock && showRunDock ? (
+        <ResizablePanelGroup
+          direction="vertical"
+          className="flex-1 min-h-0"
+          sizes={[100 - dockSize, dockSize]}
+          onSizesChange={(sizes) => {
+            if (sizes[1]) {
+              setDockSize(sizes[1]);
+            }
+          }}
+        >
+          <ResizablePanel index={0} defaultSize={100 - dockSize} minSize={30} className="min-h-0 overflow-hidden">
+            {renderEditorPane()}
+          </ResizablePanel>
+          <ResizableHandle withHandle index={0} />
+          <ResizablePanel index={1} defaultSize={dockSize} minSize={18} className="min-h-0 overflow-hidden">
+            {renderRunDock(true)}
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {renderEditorPane()}
           </div>
-        )}
-        
-        {/* Editor */}
-        <div className={`flex-1 overflow-auto ${showRunDock ? "h-1/2" : ""}`}>
-          <LivePreviewEditor
-            key={fileId || fileName}
-            ref={editorRef}
-            content={localContent}
-            onChange={handleContentChange}
-            mode={mode}
-            onModeChange={handleModeChange}
-            showLineNumbers={mode === 'source'}
-            showFoldGutter={mode === 'live'}
-            readOnly={mode === 'reading'}
-            onOutlineChange={handleOutlineChange}
-            onWikiLinkClick={handleLinkNavigate}
-            onLinkNavigate={handleLinkNavigate}
-            onSave={handleSave}
-            fileId={fileId || fileName}
-            className="min-h-full"
-            rootHandle={rootHandle}
-            filePath={filePath}
-            onCodeBlockRun={handleCodeBlockRun}
-          />
+          {shouldRenderRunDock ? renderRunDock(false) : null}
         </div>
-      </div>
-
-      {shouldRenderRunDock ? (
-        <div className={`border-t border-border bg-background ${showRunDock ? "h-1/2" : ""}`}>
-          <div className="flex items-center justify-between border-b border-border bg-muted/50 px-3 py-1.5">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setShowRunDock((value) => !value)}
-                className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-              >
-                {showRunDock ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
-                <span>{showRunDock ? "Hide Dock" : "Show Dock"}</span>
-              </button>
-              <div className="flex items-center rounded-md border border-border bg-background p-0.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveDockTab("run");
-                    setShowRunDock(true);
-                  }}
-                  className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "run" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-                >
-                  Run
-                  {outputs.length > 0 ? (
-                    <span className="ml-1 rounded bg-primary/10 px-1 py-0.5 text-[10px]">{outputs.length}</span>
-                  ) : null}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveDockTab("problems");
-                    setShowRunDock(true);
-                  }}
-                  className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "problems" ? "bg-destructive/10 text-destructive" : "text-muted-foreground hover:text-foreground"}`}
-                >
-                  Problems
-                  {problems.length > 0 ? (
-                    <span className="ml-1 rounded bg-destructive/10 px-1 py-0.5 text-[10px]">{problems.length}</span>
-                  ) : null}
-                </button>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-              {panelMeta.context?.language ? <span>{panelMeta.context.language}</span> : null}
-              {panelMeta.context?.range?.startLine ? (
-                <span>
-                  L{panelMeta.context.range.startLine}
-                  {panelMeta.context.range.endLine && panelMeta.context.range.endLine !== panelMeta.context.range.startLine
-                    ? `-L${panelMeta.context.range.endLine}`
-                    : ""}
-                </span>
-              ) : null}
-              {durationLabel ? <span>{durationLabel}</span> : null}
-              {summary.exitCode !== null ? <span>Exit {summary.exitCode}</span> : null}
-              {runnerHealthSnapshot.issues.length > 0 ? (
-                <span className="inline-flex items-center gap-1 text-yellow-700 dark:text-yellow-300">
-                  <AlertTriangle className="h-3 w-3" />
-                  <span>{runnerHealthSnapshot.issues.length} health</span>
-                </span>
-              ) : null}
-              <WorkspaceRunnerManager
-                cwd={runCwd}
-                fileKey={currentDockFileKey}
-                commands={currentDockCommand ? [currentDockCommand] : []}
-                title="Markdown Runner Manager"
-                triggerLabel="Runner"
-              />
-            </div>
-          </div>
-
-          {showRunDock ? (
-            <div className="h-[calc(100%-32px)] overflow-auto p-3">
-              <KernelStatus status={runnerStatus} error={runnerError} />
-              {activeDockTab === "run" ? (
-                <>
-                  <OutputArea outputs={outputs} meta={panelMeta} showDiagnosticsInline={false} />
-                  {outputs.length === 0 && !runnerError && runnerStatus !== "loading" && runnerStatus !== "running" ? (
-                    <p className="py-4 text-center text-xs text-muted-foreground">
-                      No output yet. Use the Run button on a fenced code block to execute.
-                    </p>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <ProblemsPanel problems={problems} onSelectProblem={navigateToProblem} />
-                  {problems.length === 0 ? (
-                    <p className="py-4 text-center text-xs text-muted-foreground">
-                      No problems detected.
-                    </p>
-                  ) : null}
-                </>
-              )}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      )}
 
       {/* AI Inline Menu */}
       {aiSelection && (

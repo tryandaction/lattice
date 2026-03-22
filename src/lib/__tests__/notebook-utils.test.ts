@@ -82,7 +82,7 @@ describe("notebook-utils", () => {
       expect(state.cells[0].source).toBe("line1\nline2");
     });
 
-    it("should convert raw cells to code", () => {
+    it("should preserve raw cells as raw", () => {
       const json = JSON.stringify({
         cells: [
           { cell_type: "raw", source: "raw content", metadata: {} },
@@ -93,7 +93,7 @@ describe("notebook-utils", () => {
       });
 
       const state = parseNotebook(json);
-      expect(state.cells[0].cell_type).toBe("code");
+      expect(state.cells[0].cell_type).toBe("raw");
     });
 
     it("should create default cell for empty notebook", () => {
@@ -318,6 +318,15 @@ describe("notebook-utils", () => {
         expect(newState.cells[1].cell_type).toBe("code");
         expect(newState.cells[1].outputs).toEqual([]);
         expect(newState.cells[1].execution_count).toBeNull();
+      });
+
+      it("should change cell type to raw without execution fields", () => {
+        const state = createTestState();
+        const newState = changeCellType(state, "cell-1", "raw");
+
+        expect(newState.cells[0].cell_type).toBe("raw");
+        expect(newState.cells[0].outputs).toBeUndefined();
+        expect(newState.cells[0].execution_count).toBeUndefined();
       });
     });
   });

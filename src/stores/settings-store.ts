@@ -5,7 +5,7 @@
  */
 
 import { create } from 'zustand';
-import type { AppSettings, Locale, ThemeMode } from '@/types/settings';
+import type { AppSettings, ExecutionDockLayout, Locale, ThemeMode } from '@/types/settings';
 import { DEFAULT_SETTINGS, SETTINGS_STORAGE_KEY } from '@/types/settings';
 import { getStorageAdapter } from '@/lib/storage-adapter';
 
@@ -147,6 +147,22 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   const stringOrNull = (value: unknown) => (typeof value === 'string' ? value : value === null ? null : undefined);
   const stringArray = (value: unknown) =>
     Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : undefined;
+  const normalizeExecutionDockLayouts = (value: unknown): Record<string, ExecutionDockLayout> | undefined => {
+    if (!value || typeof value !== "object") return undefined;
+    const entries = Object.entries(value as Record<string, unknown>).flatMap<[string, ExecutionDockLayout]>(([key, layout]) => {
+      if (!layout || typeof layout !== "object") return [];
+      const candidate = layout as Record<string, unknown>;
+      const size = typeof candidate.size === "number" ? candidate.size : undefined;
+      const open = typeof candidate.open === "boolean" ? candidate.open : undefined;
+      const activeTab: ExecutionDockLayout["activeTab"] =
+        candidate.activeTab === "run" || candidate.activeTab === "problems"
+          ? candidate.activeTab
+          : undefined;
+      if (size === undefined || open === undefined) return [];
+      return [[key, { size, open, ...(activeTab ? { activeTab } : {}) }]];
+    });
+    return Object.fromEntries(entries);
+  };
 
   if (raw.language === 'zh-CN' || raw.language === 'en-US') normalized.language = raw.language;
   if (raw.theme === 'light' || raw.theme === 'dark' || raw.theme === 'system') normalized.theme = raw.theme;
@@ -163,6 +179,8 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   if (typeof raw.pluginPanelDockOpen === 'boolean') normalized.pluginPanelDockOpen = raw.pluginPanelDockOpen;
   normalized.pluginPanelLastActiveId = stringOrNull(raw.pluginPanelLastActiveId);
   normalized.pluginPanelRecentIds = stringArray(raw.pluginPanelRecentIds);
+  const executionDockLayouts = normalizeExecutionDockLayouts(raw.executionDockLayouts);
+  if (executionDockLayouts) normalized.executionDockLayouts = executionDockLayouts;
   if (typeof raw.aiEnabled === 'boolean') normalized.aiEnabled = raw.aiEnabled;
   normalized.aiProvider = stringOrNull(raw.aiProvider);
   normalized.aiModel = stringOrNull(raw.aiModel);

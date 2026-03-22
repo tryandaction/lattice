@@ -25,6 +25,7 @@ interface CodeCellProps {
   notebookFilePath?: string;
   onRunCell?: (cellId: string, source: string) => Promise<unknown>;
   isExecuting?: boolean;
+  canRun?: boolean;
 }
 
 function PlayIcon({ className = "" }: { className?: string }) {
@@ -56,6 +57,7 @@ export const CodeCell = memo(function CodeCell({
   notebookFilePath,
   onRunCell,
   isExecuting = false,
+  canRun = true,
 }: CodeCellProps) {
   const [content, setContent] = useState(source);
   const [syntaxProblems, setSyntaxProblems] = useState<ExecutionProblem[]>([]);
@@ -107,9 +109,11 @@ export const CodeCell = memo(function CodeCell({
   const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
     if (event.shiftKey && event.key === "Enter") {
       event.preventDefault();
-      void handleRun();
+      if (canRun) {
+        void handleRun();
+      }
     }
-  }, [handleRun]);
+  }, [canRun, handleRun]);
 
   const navigateToProblem = useCallback((problem: ExecutionProblem) => {
     onFocus();
@@ -133,12 +137,12 @@ export const CodeCell = memo(function CodeCell({
 
         <button
           onClick={() => void handleRun()}
-          disabled={isExecuting || !onRunCell || !content.trim()}
+          disabled={isExecuting || !canRun || !onRunCell || !content.trim()}
           className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md
                      bg-primary/10 hover:bg-primary/20 text-primary
                      disabled:opacity-50 disabled:cursor-not-allowed
                      transition-colors"
-          title="Run cell (Shift+Enter)"
+          title={canRun ? "Run cell (Shift+Enter)" : "当前运行环境未就绪"}
         >
           <PlayIcon className="w-3 h-3" />
           <span>{isExecuting ? "Running" : "Run"}</span>

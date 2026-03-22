@@ -3,6 +3,7 @@ import type {
   ExecutionDiagnostic,
   ExecutionOutput,
   ExecutionProblem,
+  RunnerHealthAction,
   RunnerHealthIssue,
 } from "@/lib/runner/types";
 
@@ -72,6 +73,44 @@ function parseTracebackLocation(
   return null;
 }
 
+function parseMissingPythonModule(errorValue?: string | null, traceback: string[] = []): string | null {
+  const haystacks = [errorValue ?? "", ...traceback];
+  for (const text of haystacks) {
+    const match = text.match(/No module named ['"]([^'"]+)['"]/);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+function buildRuntimeProblemActions(
+  output: Extract<ExecutionOutput, { type: "error" }>,
+  context?: ExecutionContextRef | null,
+): { hint?: string; code?: string; actions?: RunnerHealthAction[] } {
+  const missingModule = parseMissingPythonModule(output.errorValue, output.traceback);
+  if (!missingModule) {
+    return {};
+  }
+
+  const actionCommand =
+    context?.kind === "file" && context.filePath
+      ? `pip install ${missingModule}`
+      : `pip install ${missingModule}`;
+
+  return {
+    code: "missing_dependency",
+    hint: `当前解释器缺少模块 ${missingModule}。请安装依赖后重试。`,
+    actions: [
+      {
+        kind: "command",
+        label: `pip install ${missingModule}`,
+        command: actionCommand,
+      },
+    ],
+  };
+}
+
 export function diagnosticsToExecutionProblems(
   diagnostics: ExecutionDiagnostic[],
   source: ExecutionProblem["source"],
@@ -101,6 +140,7 @@ export function outputsToExecutionProblems(
     const resolvedContext = cloneContext(context, location ?? undefined);
     const title = output.errorName ?? "运行失败";
     const message = output.errorValue ?? output.content;
+    const runtimeMeta = buildRuntimeProblemActions(output, resolvedContext);
 
     return [
       {
@@ -109,10 +149,13 @@ export function outputsToExecutionProblems(
         severity: "error",
         title,
         message,
+        hint: runtimeMeta.hint,
+        code: runtimeMeta.code,
         errorName: output.errorName,
         errorValue: output.errorValue,
         traceback: output.traceback,
         context: resolvedContext,
+        actions: runtimeMeta.actions,
       },
     ];
   });

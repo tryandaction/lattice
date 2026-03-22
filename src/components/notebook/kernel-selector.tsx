@@ -16,6 +16,11 @@ interface KernelOption {
   description: string;
   command?: string;
   pythonEnv?: PythonEnvironmentInfo;
+  language?: string;
+  selectionSource?: "manual" | "current-entry" | "workspace-default" | "metadata" | "detected" | "fallback";
+  sourceLabel?: string;
+  supported?: boolean;
+  unsupportedReason?: string | null;
 }
 
 export type { KernelOption };
@@ -25,6 +30,8 @@ interface KernelSelectorProps {
   onKernelChange: (kernel: KernelOption) => void;
   cwd?: string;
   filePath?: string;
+  notebookLanguage?: string | null;
+  notebookKernelLabel?: string | null;
 }
 
 function buildPyodideOption(isDesktopHost: boolean): KernelOption {
@@ -53,7 +60,28 @@ function buildLocalKernelOption(env: PythonEnvironmentInfo, index: number): Kern
   };
 }
 
-export function KernelSelector({ currentKernel, onKernelChange, cwd, filePath }: KernelSelectorProps) {
+function decorateKernelOption(
+  kernel: KernelOption,
+  selectionSource: NonNullable<KernelOption["selectionSource"]>,
+  sourceLabel: string,
+): KernelOption {
+  return {
+    ...kernel,
+    selectionSource,
+    sourceLabel,
+    supported: true,
+    unsupportedReason: null,
+  };
+}
+
+export function KernelSelector({
+  currentKernel,
+  onKernelChange,
+  cwd,
+  filePath,
+  notebookLanguage,
+  notebookKernelLabel,
+}: KernelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [kernelOptions, setKernelOptions] = useState<KernelOption[]>([]);
@@ -65,12 +93,24 @@ export function KernelSelector({ currentKernel, onKernelChange, cwd, filePath }:
   const setRecentRunConfig = useWorkspaceStore((state) => state.setRecentRunConfig);
   const languageKey = getLanguagePreferenceKey("python");
   const fileKey = filePath ?? "__notebook__";
+  const normalizedNotebookLanguage = notebookLanguage?.trim().toLowerCase() ?? "python";
+  const isNotebookLanguageSupported = normalizedNotebookLanguage === "python";
   const { refresh: refreshRunnerHealth } = useRunnerHealth({
     cwd,
     fileKey,
+    checkPython: true,
   });
 
   const detectEnvironments = useCallback(async () => {
+    if (!isNotebookLanguageSupported) {
+      setKernelOptions([]);
+      setRuntimeMessage(
+        `当前 Notebook 内核为 ${notebookKernelLabel ?? notebookLanguage ?? "unknown"}，本轮仅支持 Python Notebook 执行。`,
+      );
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     setRuntimeMessage(null);
 
@@ -115,7 +155,7 @@ export function KernelSelector({ currentKernel, onKernelChange, cwd, filePath }:
           const preferredOption = preferredEnvironment
             ? localOptions.find((option) => option.command === preferredEnvironment.path) ?? options[0]
             : options[0];
-          onKernelChange(preferredOption);
+          onKernelChange(decorateKernelOption(preferredOption, "detected", "自动探测"));
           return;
         }
         if (matchedCurrent.id !== currentKernel?.id) {
@@ -124,12 +164,21 @@ export function KernelSelector({ currentKernel, onKernelChange, cwd, filePath }:
         return;
       }
 
-      const preferredOption =
-        recent?.runnerType === "python-pyodide"
-          ? fallback
-          : preferredEnvironment
-            ? localOptions.find((option) => option.command === preferredEnvironment.path) ?? options[0]
-            : options[0];
+      const preferredOption = recent?.runnerType === "python-pyodide"
+        ? decorateKernelOption(fallback, "fallback", "当前入口回退")
+        : preferredEnvironment
+          ? decorateKernelOption(
+              localOptions.find((option) => option.command === preferredEnvironment.path) ?? options[0],
+              recent?.command === preferredEnvironment.path ? "current-entry" : runnerPreferences.defaultPythonPath === preferredEnvironment.path ? "workspace-default" : notebookKernelLabel ? "metadata" : "detected",
+              recent?.command === preferredEnvironment.path
+                ? "当前 Notebook 选择"
+                : runnerPreferences.defaultPythonPath === preferredEnvironment.path
+                  ? "工作区默认"
+                  : notebookKernelLabel
+                    ? `Notebook 元数据 (${notebookKernelLabel})`
+                    : "自动探测",
+            )
+          : decorateKernelOption(options[0], options[0].runnerType === "python-pyodide" ? "fallback" : "detected", options[0].runnerType === "python-pyodide" ? "Pyodide 回退" : "自动探测");
 
       if (!currentKernel || preferredOption.id !== currentKernel.id) {
         onKernelChange(preferredOption);
@@ -144,12 +193,12 @@ export function KernelSelector({ currentKernel, onKernelChange, cwd, filePath }:
           : "网页环境下仅提供 Pyodide 浏览器内核。",
       );
       if (!currentKernel) {
-        onKernelChange(fallback);
+        onKernelChange(decorateKernelOption(fallback, "fallback", "Pyodide 回退"));
       }
     } finally {
       setIsLoading(false);
     }
-  }, [currentKernel, fileKey, isDesktopHost, onKernelChange, refreshRunnerHealth, runnerPreferences]);
+  }, [currentKernel, fileKey, isDesktopHost, isNotebookLanguageSupported, notebookKernelLabel, notebookLanguage, onKernelChange, refreshRunnerHealth, runnerPreferences]);
 
   useEffect(() => {
     void detectEnvironments();
@@ -157,6 +206,7 @@ export function KernelSelector({ currentKernel, onKernelChange, cwd, filePath }:
 
   const handleSelect = (kernel: KernelOption) => {
     const recentKey = filePath ?? "__notebook__";
+    const nextKernel = decorateKernelOption(kernel, "manual", "手动选择");
     setRecentRunConfig(recentKey, {
       runnerType: kernel.runnerType,
       command: kernel.command,
@@ -167,16 +217,21 @@ export function KernelSelector({ currentKernel, onKernelChange, cwd, filePath }:
       },
       defaultPythonPath: kernel.runnerType === "python-local" ? kernel.command ?? null : runnerPreferences.defaultPythonPath,
     });
-    onKernelChange(kernel);
+    onKernelChange(nextKernel);
     setIsOpen(false);
   };
 
   return (
     <div className="relative">
       <button
-        onClick={() => setIsOpen((open) => !open)}
+        onClick={() => {
+          if (!isNotebookLanguageSupported) {
+            return;
+          }
+          setIsOpen((open) => !open);
+        }}
         className="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded hover:bg-muted transition-colors"
-        disabled={isLoading}
+        disabled={isLoading || !isNotebookLanguageSupported}
       >
         {isLoading ? (
           <>
@@ -186,14 +241,16 @@ export function KernelSelector({ currentKernel, onKernelChange, cwd, filePath }:
         ) : (
           <>
             <span className="font-medium">
-              {currentKernel?.displayName || "选择运行器"}
+              {isNotebookLanguageSupported
+                ? currentKernel?.displayName || "选择运行器"
+                : `不支持的内核：${notebookKernelLabel ?? notebookLanguage ?? "unknown"}`}
             </span>
             <ChevronDown className="h-3.5 w-3.5" />
           </>
         )}
       </button>
 
-      {isOpen && !isLoading && (
+      {isOpen && !isLoading && isNotebookLanguageSupported && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
           <div className="absolute top-full left-0 mt-1 w-[28rem] bg-card border border-border rounded-lg shadow-lg z-50 overflow-hidden">

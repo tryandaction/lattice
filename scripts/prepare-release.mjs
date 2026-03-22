@@ -111,6 +111,10 @@ async function ensureArtifacts(options) {
     return path.resolve(ROOT_DIR, options.artifactsDir);
   }
 
+  if (options.dryRun) {
+    return DEFAULT_ARTIFACT_SEARCH_ROOT;
+  }
+
   if (options.skipQa) {
     await runCommand("npm", ["run", "tauri:build"], "tauri:build");
   } else {

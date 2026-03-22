@@ -155,6 +155,14 @@ function mapTauriEvent(
         sessionId,
         payload: { text: String(payload.text ?? ""), channel: "stderr" },
       };
+    case "ready":
+      return {
+        type: "ready",
+        sessionId,
+        payload: {
+          persistent: Boolean(payload.persistent),
+        },
+      };
     case "display_data":
       return {
         type: "display_data",
@@ -182,6 +190,7 @@ function mapTauriEvent(
           success: Boolean(payload.success),
           exitCode: typeof payload.exitCode === "number" ? payload.exitCode : null,
           terminated: Boolean(payload.terminated),
+          persistent: Boolean(payload.persistent),
         },
       };
     case "terminated":
@@ -192,6 +201,7 @@ function mapTauriEvent(
           success: false,
           exitCode: typeof payload.exitCode === "number" ? payload.exitCode : null,
           terminated: true,
+          persistent: Boolean(payload.persistent),
         },
       };
     default:
@@ -421,6 +431,7 @@ export class PersistentPythonSession {
   private unlisten?: UnlistenFn;
   private pendingExecution: PendingPythonExecution | null = null;
   private startPromise: Promise<string> | null = null;
+  private ready = false;
 
   constructor(
     private readonly options: Omit<PythonSessionStartRequest, "sessionId"> = {},
@@ -434,16 +445,38 @@ export class PersistentPythonSession {
   }
 
   async start(): Promise<string> {
-    if (this.sessionId) {
+    if (this.sessionId && this.ready) {
       return this.sessionId;
     }
     if (this.startPromise) {
       return this.startPromise;
     }
+    if (this.unlisten) {
+      this.unlisten();
+      this.unlisten = undefined;
+    }
 
     this.startPromise = (async () => {
       const sessionId = randomSessionId();
       this.sessionId = sessionId;
+      let resolveReady: ((value: string) => void) | null = null;
+      let rejectReady: ((reason?: unknown) => void) | null = null;
+      const startupErrors: string[] = [];
+      const startupPromise = new Promise<string>((resolve, reject) => {
+        resolveReady = resolve;
+        rejectReady = reject;
+      });
+      const startupTimeout = window.setTimeout(() => {
+        rejectReady?.(new Error("Notebook Python 会话启动超时"));
+      }, 10000);
+
+      const settleStartup = (fn: (() => void) | null) => {
+        window.clearTimeout(startupTimeout);
+        fn?.();
+        resolveReady = null;
+        rejectReady = null;
+      };
+
       this.unlisten = await listen<TauriRunnerEventEnvelope>("runner://event", (event) => {
         const mapped = mapTauriEvent(sessionId, event.payload);
         if (!mapped) {
@@ -451,6 +484,17 @@ export class PersistentPythonSession {
         }
 
         this.eventListeners.forEach((listener) => listener(mapped));
+
+        if (!this.ready && mapped.type === "stderr" && mapped.payload.text.trim()) {
+          startupErrors.push(mapped.payload.text.trim());
+        }
+
+        if (mapped.type === "ready") {
+          this.ready = true;
+          settleStartup(() => resolveReady?.(sessionId));
+          return;
+        }
+
         this.pendingExecution?.onEvent?.(mapped);
 
         if (mapped.type === "completed" || mapped.type === "terminated") {
@@ -461,7 +505,19 @@ export class PersistentPythonSession {
             terminated: Boolean(mapped.payload.terminated),
           });
           this.pendingExecution = null;
+
+          if (mapped.payload.persistent) {
+            const startupMessage = startupErrors[startupErrors.length - 1];
+            this.handleSessionEnded(
+              startupMessage || "Notebook Python 会话已终止",
+              !this.ready,
+              rejectReady,
+              startupTimeout,
+              sessionId,
+            );
+          }
         } else if (mapped.type === "error") {
+          const message = mapped.payload.message || "Notebook Python 会话执行失败";
           this.pendingExecution?.resolve({
             sessionId: mapped.sessionId,
             success: false,
@@ -469,6 +525,10 @@ export class PersistentPythonSession {
             terminated: false,
           });
           this.pendingExecution = null;
+
+          if (!this.ready) {
+            this.handleSessionEnded(message, true, rejectReady, startupTimeout, sessionId);
+          }
         }
       });
 
@@ -481,11 +541,10 @@ export class PersistentPythonSession {
             env: this.options.env,
           },
         });
-        return sessionId;
+        return await startupPromise;
       } catch (error) {
-        this.unlisten?.();
-        this.unlisten = undefined;
-        this.sessionId = null;
+        window.clearTimeout(startupTimeout);
+        this.cleanupSession(sessionId);
         throw error;
       }
     })();
@@ -531,14 +590,43 @@ export class PersistentPythonSession {
       return;
     }
     await invoke("stop_python_session", { session_id: this.sessionId });
-    this.pendingExecution = null;
+    this.ready = false;
+    this.sessionId = null;
   }
 
   async dispose(): Promise<void> {
     await this.stop();
+    this.cleanupSession();
+  }
+
+  isReady(): boolean {
+    return this.ready;
+  }
+
+  private handleSessionEnded(
+    message: string,
+    rejectStartup: boolean,
+    rejectReady: ((reason?: unknown) => void) | null,
+    startupTimeout: number,
+    sessionId: string,
+  ): void {
+    if (rejectStartup) {
+      window.clearTimeout(startupTimeout);
+      rejectReady?.(new Error(message));
+    }
+    this.cleanupSession(sessionId);
+  }
+
+  private cleanupSession(expectedSessionId?: string): void {
+    if (expectedSessionId && this.sessionId && this.sessionId !== expectedSessionId) {
+      return;
+    }
+    this.ready = false;
+    this.pendingExecution = null;
+    this.startPromise = null;
+    this.sessionId = null;
     this.unlisten?.();
     this.unlisten = undefined;
-    this.sessionId = null;
   }
 }
 
@@ -551,6 +639,21 @@ export class RunnerManager {
     options: Omit<PythonSessionStartRequest, "sessionId"> = {},
   ): PersistentPythonSession {
     return new PersistentPythonSession(options);
+  }
+
+  async validatePersistentPythonSession(
+    options: Omit<PythonSessionStartRequest, "sessionId"> = {},
+  ): Promise<void> {
+    if (!isTauriHost()) {
+      throw new Error("Persistent Python session validation is only available in Tauri");
+    }
+
+    const session = this.createPersistentPythonSession(options);
+    try {
+      await session.start();
+    } finally {
+      await session.dispose();
+    }
   }
 
   async detectPythonEnvironments(cwd?: string): Promise<PythonEnvironmentInfo[]> {

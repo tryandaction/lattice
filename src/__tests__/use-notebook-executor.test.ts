@@ -180,7 +180,7 @@ describe('useNotebookExecutor', () => {
 
       expect(executionResult).not.toBeNull();
       expect(executionResult!.success).toBe(false);
-      expect((executionResult!.outputs[0] as any).type).toBe('error');
+      expect((executionResult!.outputs[0] as any).output_type).toBe('error');
     });
   });
 

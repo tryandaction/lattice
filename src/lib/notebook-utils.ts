@@ -70,7 +70,7 @@ export interface JupyterNotebook {
  */
 export interface NotebookCell {
   id: string;
-  cell_type: "markdown" | "code";
+  cell_type: "markdown" | "code" | "raw";
   source: string;
   metadata: Record<string, unknown>;
   outputs?: JupyterOutput[];
@@ -125,7 +125,7 @@ export function parseNotebook(jsonString: string): NotebookEditorState {
     
     const cells: NotebookCell[] = notebook.cells.map((cell) => ({
       id: cell.id || generateCellId(),
-      cell_type: cell.cell_type === "raw" ? "code" : cell.cell_type,
+      cell_type: cell.cell_type,
       source: normalizeSource(cell.source),
       metadata: cell.metadata || {},
       outputs: cell.outputs,
@@ -243,7 +243,7 @@ export function createEmptyNotebookState(): NotebookEditorState {
 export function addCellAfter(
   state: NotebookEditorState,
   afterCellId: string,
-  cellType: "markdown" | "code"
+  cellType: "markdown" | "code" | "raw"
 ): NotebookEditorState {
   const index = state.cells.findIndex((c) => c.id === afterCellId);
   if (index === -1) return state;
@@ -275,7 +275,7 @@ export function addCellAfter(
 export function addCellBefore(
   state: NotebookEditorState,
   beforeCellId: string,
-  cellType: "markdown" | "code"
+  cellType: "markdown" | "code" | "raw"
 ): NotebookEditorState {
   const index = state.cells.findIndex((c) => c.id === beforeCellId);
   if (index === -1) return state;
@@ -365,7 +365,7 @@ export function setActiveCell(
 export function changeCellType(
   state: NotebookEditorState,
   cellId: string,
-  newType: "markdown" | "code"
+  newType: "markdown" | "code" | "raw"
 ): NotebookEditorState {
   return {
     ...state,

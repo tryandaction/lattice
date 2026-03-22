@@ -15,7 +15,8 @@ vi.mock("@/lib/runner/runner-manager", () => ({
   },
 }));
 
-import { buildRuntimeRunnerHealthIssues, collectRunnerHealthSnapshot } from "@/lib/runner/health";
+import { collectRunnerHealthSnapshot } from "@/lib/runner/health";
+import { outputsToExecutionProblems } from "@/lib/runner/problem-utils";
 import type { WorkspaceRunnerPreferences } from "@/lib/runner/types";
 
 const emptyPreferences: WorkspaceRunnerPreferences = {
@@ -44,6 +45,7 @@ describe("runner health helpers", () => {
       cwd: "C:/workspace",
       fileKey: "demo.py",
       preferences: emptyPreferences,
+      checkPython: true,
     });
 
     expect(snapshot.hostKind).toBe("desktop");
@@ -76,13 +78,14 @@ describe("runner health helpers", () => {
         ...emptyPreferences,
         defaultPythonPath: "C:/Missing/python.exe",
       },
+      checkPython: true,
     });
 
     expect(snapshot.issues.some((issue) => issue.code === "preferred_python_missing")).toBe(true);
   });
 
-  it("将 ModuleNotFoundError 映射为 missing_dependency issue", () => {
-    const issues = buildRuntimeRunnerHealthIssues([
+  it("将 ModuleNotFoundError 映射为带安装动作的 runtime problem", () => {
+    const problems = outputsToExecutionProblems([
       {
         type: "error",
         content: "ModuleNotFoundError: No module named 'pandas'",
@@ -90,10 +93,13 @@ describe("runner health helpers", () => {
         errorValue: "No module named 'pandas'",
         traceback: ['File "<lattice-inline>", line 1', "ModuleNotFoundError: No module named 'pandas'"],
       },
-    ], "C:/Workspace/.venv/Scripts/python.exe");
+    ], {
+      kind: "workspace",
+      label: "Notebook Runtime",
+    });
 
-    expect(issues).toHaveLength(1);
-    expect(issues[0].code).toBe("missing_dependency");
-    expect(issues[0].actions?.[0]?.command).toBe("pip install pandas");
+    expect(problems).toHaveLength(1);
+    expect(problems[0].code).toBe("missing_dependency");
+    expect(problems[0].actions?.[0]?.command).toBe("pip install pandas");
   });
 });

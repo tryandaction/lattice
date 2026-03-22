@@ -8,10 +8,15 @@
 - 桌面运行器选择链路已进一步收口：桌面端现在会优先选择本地 Python，`Pyodide` 仅保留为应急回退而不再静默伪装主运行器
 - 工作区运行器偏好已进入主链路：按 workspace 路径跨重启记住默认解释器与最近选择
 - `Workspace Runner Manager` 已进入主链路：Notebook、代码文件和 Markdown 编辑主链路共用同一套解释器管理与恢复自动选择入口
+- 代码文件与 editable Markdown 的 execution dock 已支持折叠、拖拽调整高度与 pane 级记忆
 - Notebook Markdown Cell 已复用现有 Live Preview / Obsidian 级编辑内核，默认 `Live` 并支持切到 `Source`
-- Markdown fenced code block 已具备真实运行入口，并复用统一执行反馈面板
+- Notebook 已收口到真实的本地持久 Python session，运行前先做 runtime 校验与 `ready` 握手
+- `.ipynb` 已保留 `raw` cell，非 Python Notebook 明确禁跑
 - editable Markdown 主链路里的 Live Preview code block 已具备运行入口，并统一接到底部 `Run / Problems` dock
-- 代码文件、Notebook code cell、Markdown code block 已统一到 `ExecutionProblem` 问题模型与 runner health snapshot
+- 代码文件、Notebook code cell、editable Markdown code block 已统一到 `ExecutionProblem` 问题模型与 surface-local runner health
+- 当前主链路已能显式表达运行器选择来源，而不是只显示解释器/命令本身
+- `Runner Diagnostics` 已支持主动验证 Notebook 本地 Python 会话启动，不再只是静态健康信息页
+- 只读 Markdown renderer 的代码执行入口已关闭，避免继续维护半接通路径
 - PDF 首次打开默认改为自适应宽度填充，避免阅读入口停在固定手动缩放
 - QA 基线已收敛到 `lint` / `typecheck` / `test:run` / `build` / `tauri:build` 可稳定通过
 - Markdown 导出已产品化进入主界面，支持 `.docx` / `.pdf`、`clean` / `appendix` / `study-note` 和“当前渲染视图”导出

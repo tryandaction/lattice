@@ -70,6 +70,8 @@
 - **外部命令运行**：支持通过外部命令运行 `.js/.mjs/.cjs`、`.jl`、`.R`
 - **运行诊断**：外部命令缺失或本地 Python 未检测到时，会直接显示诊断与修复提示
 - **Runner Manager**：Notebook、代码文件和 Markdown 编辑主链路现在都可以打开统一的 Workspace Runner Manager，查看解释器、切换工作区默认、恢复自动选择
+- **来源标签**：执行反馈会标出当前运行器来自“当前入口选择 / 工作区默认 / 自动探测 / 回退”
+- **Notebook 启动验证**：`Runner Diagnostics` 和 `Workspace Runner Manager` 都支持显式验证本地 Notebook Python 会话启动链路
 - **Problems 分层**：代码文件、Notebook code cell、Markdown code block 现在把 Run 输出与 Problems 拆层展示，语法问题、运行前诊断、运行时错误和 runner health 使用同一问题模型
 - **降级策略**：桌面端无本地 Python 时，只会把 Pyodide 作为“应急回退”显式展示；网页版继续以 Pyodide 为主
 

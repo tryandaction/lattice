@@ -281,7 +281,7 @@ Lattice now exposes a single runner event model across code files, notebook cell
 **Runner types in the current phase**:
 - **`python-local`**: Preferred on desktop. Runs local Python with real process execution and streamed events.
 - **`external-command`**: Minimal support for Node, Julia, and Rscript through explicit command templates.
-- **`python-pyodide`**: Web and desktop fallback when no local Python is available.
+- **`python-pyodide`**: Primary browser runtime and explicit desktop fallback for constrained environments.
 
 **Current scope boundary**:
 - We do support local execution, streamed stdout/stderr, stop/rerun, and rich outputs such as images and HTML tables.
@@ -311,6 +311,7 @@ In the current desktop phase, notebook cells running on `python-local` reuse a p
 - variables persist across cells
 - rerun/interrupt/restart operate on the same local session lifecycle
 - notebook output still flows through the same unified runner event model
+- notebook execution is gated by a `ready` handshake instead of assuming session startup succeeded
 
 This is intentionally narrower than a full kernel gateway or remote Jupyter management layer. The current goal is reliable local execution for real desktop work, not multi-kernel orchestration.
 

@@ -127,7 +127,7 @@ export function useExecutionRunner(): UseExecutionRunnerReturn {
     setError(null);
     setSummary(EMPTY_SUMMARY);
     setPanelMetaState((previous) => ({
-      origin: getExecutionOrigin(request),
+      origin: previous.origin ?? getExecutionOrigin(request),
       diagnostics: previous.diagnostics,
       context: previous.context ?? null,
     }));
