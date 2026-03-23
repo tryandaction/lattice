@@ -45,6 +45,7 @@ import { useRunnerHealth } from "@/hooks/use-runner-health";
 import { WorkspaceRunnerManager } from "@/components/runner/workspace-runner-manager";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useExecutionDockLayout } from "@/hooks/use-execution-dock-layout";
+import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
 
 interface CodeEditorViewerProps {
   content: string;
@@ -57,6 +58,7 @@ interface CodeEditorViewerProps {
 }
 
 const DEBOUNCE_DELAY = 500;
+const HEAVY_EDITOR_FEATURE_CHAR_LIMIT = 150_000;
 
 function formatDuration(durationMs: number | null): string | null {
   if (durationMs === null) return null;
@@ -191,7 +193,7 @@ export function CodeEditorViewer({
     fileKey: filePath,
     commands: runnerDefinition?.command ? [runnerDefinition.command] : [],
     checkPython: runnerDefinition?.runnerType === "python-local",
-    autoRefresh: Boolean(runnerDefinition),
+    autoRefresh: false,
   });
   const healthContext = useMemo(
     () => ({
@@ -419,14 +421,20 @@ export function CodeEditorViewer({
   }, [handleRun, runnerDefinition]);
 
   const canRun = Boolean(runnerDefinition) && !isReadOnly;
+  const enableHeavyEditorFeatures = canRun && content.length <= HEAVY_EDITOR_FEATURE_CHAR_LIMIT;
   const durationLabel = formatDuration(summary.durationMs);
   const shouldRenderDock = showOutput || outputs.length > 0 || problems.length > 0 || isRunning || isLoading;
   const runnerCommand = runnerDefinition?.command;
 
   const renderDock = useCallback((expanded: boolean) => (
     <div className={expanded ? "flex h-full min-h-0 flex-col border-t border-border bg-background" : "border-t border-border bg-background"}>
-      <div className="flex items-center justify-between border-b border-border bg-muted/50 px-3 py-1.5">
-        <div className="flex items-center gap-2">
+      <HorizontalScrollStrip
+        className="border-b border-border bg-muted/50"
+        viewportClassName="px-3 py-1.5"
+        contentClassName="min-w-full w-max justify-between gap-3"
+        ariaLabel="代码执行停靠栏"
+      >
+        <div className="flex shrink-0 items-center gap-2">
           <button
             onClick={() => setShowOutput((value) => !value)}
             className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
@@ -468,7 +476,7 @@ export function CodeEditorViewer({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+        <div className="flex shrink-0 items-center gap-2 text-[10px] text-muted-foreground">
           {summary.startedAt && <span>Started</span>}
           {durationLabel && <span>{durationLabel}</span>}
           {summary.exitCode !== null && <span>Exit {summary.exitCode}</span>}
@@ -495,7 +503,7 @@ export function CodeEditorViewer({
             </button>
           )}
         </div>
-      </div>
+      </HorizontalScrollStrip>
 
       {expanded ? (
         <div className="h-full min-h-0 overflow-auto p-3">
@@ -579,24 +587,29 @@ export function CodeEditorViewer({
         onClose={() => setSelectionHubState(null)}
       />
 
-      <div className="sticky top-0 z-10 border-b border-border bg-muted/90 px-4 py-2 backdrop-blur flex items-center justify-between">
-        <div>
-          <span className="text-sm font-medium text-foreground">{fileName}</span>
-          <span className="ml-2 text-xs text-muted-foreground">({language})</span>
+      <HorizontalScrollStrip
+        className="sticky top-0 z-10 border-b border-border bg-muted/90 backdrop-blur"
+        viewportClassName="px-4 py-2"
+        contentClassName="min-w-full w-max justify-between gap-3"
+        ariaLabel={`${fileName} 工具栏`}
+      >
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="max-w-[24rem] truncate text-sm font-medium text-foreground">{fileName}</span>
+          <span className="text-xs text-muted-foreground">({language})</span>
           {runnerDefinition && (
-            <span className="ml-2 text-xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               Runner: {runnerDefinition.displayName}
             </span>
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           {canRun && (
             <>
               {isRunning ? (
                 <button
                   onClick={() => void terminate()}
-                  className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md bg-destructive/10 hover:bg-destructive/20 text-destructive transition-colors"
+                  className="flex items-center gap-1.5 rounded-md bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
                   title="Stop current run"
                 >
                   <Square className="w-3 h-3" />
@@ -606,7 +619,7 @@ export function CodeEditorViewer({
                 <button
                   onClick={() => void handleRun()}
                   disabled={isLoading}
-                  className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md bg-primary/10 hover:bg-primary/20 text-primary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="flex items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
                   title="Run file (Shift+Enter)"
                 >
                   {isLoading ? (
@@ -621,7 +634,7 @@ export function CodeEditorViewer({
               <button
                 onClick={() => void handleRerun()}
                 disabled={!lastRequest || isRunning || isLoading}
-                className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                 title="Rerun last task"
               >
                 <RotateCcw className="w-3 h-3" />
@@ -631,12 +644,12 @@ export function CodeEditorViewer({
           )}
 
           {isReadOnly && (
-            <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
+            <span className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground">
               Read-only
             </span>
           )}
         </div>
-      </div>
+      </HorizontalScrollStrip>
 
       {canRun && shouldRenderDock && showOutput ? (
         <ResizablePanelGroup
@@ -659,8 +672,8 @@ export function CodeEditorViewer({
               fileId={fileName}
               className="h-full"
               editorRef={editorRef}
-              basicCompletion={canRun}
-              syntaxDiagnostics={canRun}
+              basicCompletion={enableHeavyEditorFeatures}
+              syntaxDiagnostics={enableHeavyEditorFeatures}
               problemContext={executionContext}
               onProblemsChange={setSyntaxProblems}
             />
@@ -682,8 +695,8 @@ export function CodeEditorViewer({
               fileId={fileName}
               className="h-full"
               editorRef={editorRef}
-              basicCompletion={canRun}
-              syntaxDiagnostics={canRun}
+              basicCompletion={enableHeavyEditorFeatures}
+              syntaxDiagnostics={enableHeavyEditorFeatures}
               problemContext={executionContext}
               onProblemsChange={setSyntaxProblems}
             />

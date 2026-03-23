@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useCallback } from "react";
 import {
   SortableContext,
   horizontalListSortingStrategy,
@@ -9,6 +9,7 @@ import { useDroppable } from "@dnd-kit/core";
 import type { TabState, PaneId } from "@/types/layout";
 import { Tab } from "./tab";
 import { cn } from "@/lib/utils";
+import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
 
 export interface TabBarProps {
   paneId: PaneId;
@@ -51,12 +52,20 @@ export function TabBar({
   useEffect(() => {
     if (scrollContainerRef.current && safeActiveIndex >= 0) {
       const container = scrollContainerRef.current;
-      const activeTab = container.children[safeActiveIndex] as HTMLElement;
+      const activeTabId = tabs[safeActiveIndex]?.id;
+      const activeTab = activeTabId
+        ? container.querySelector<HTMLElement>(`[data-tab-id="${activeTabId}"]`)
+        : null;
       if (activeTab) {
         activeTab.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
       }
     }
-  }, [safeActiveIndex]);
+  }, [safeActiveIndex, tabs]);
+
+  const handleViewportRef = useCallback((node: HTMLDivElement | null) => {
+    setNodeRef(node);
+    scrollContainerRef.current = node;
+  }, [setNodeRef]);
 
   if (tabs.length === 0) {
     return (
@@ -78,20 +87,13 @@ export function TabBar({
   const tabIds = tabs.map(tab => tab.id);
 
   return (
-    <div
-      ref={(node) => {
-        setNodeRef(node);
-        // Also set the scroll container ref
-        if (scrollContainerRef.current !== node) {
-          (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
-        }
-      }}
-      className={cn(
-        "flex h-9 items-end gap-0 overflow-x-auto border-b border-border bg-muted/30",
-        "scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent",
-        isOver && "bg-blue-500/10"
-      )}
-      data-pane-id={paneId}
+    <HorizontalScrollStrip
+      viewportRef={handleViewportRef}
+      className={cn("h-9", isOver && "bg-blue-500/10")}
+      viewportClassName={cn("h-9", isOver && "bg-blue-500/10")}
+      contentClassName="h-9 min-w-full w-max items-end gap-0"
+      viewportProps={{ "data-pane-id": paneId }}
+      ariaLabel="打开的文件标签"
     >
       <SortableContext items={tabIds} strategy={horizontalListSortingStrategy}>
         {tabs.map((tab, index) => (
@@ -107,6 +109,6 @@ export function TabBar({
           />
         ))}
       </SortableContext>
-    </div>
+    </HorizontalScrollStrip>
   );
 }

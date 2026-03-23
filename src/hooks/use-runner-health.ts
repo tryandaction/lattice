@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { collectRunnerHealthSnapshot, createEmptyRunnerHealthSnapshot } from "@/lib/runner/health";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 
@@ -22,14 +22,27 @@ export function useRunnerHealth({
   const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
   const [runnerHealthSnapshot, setRunnerHealthSnapshot] = useState(createEmptyRunnerHealthSnapshot);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const requestIdRef = useRef(0);
+  const mountedRef = useRef(true);
   const commandsKey = commands.join("||");
   const stableCommands = useMemo(
     () => (commandsKey ? commandsKey.split("||").filter(Boolean) : []),
     [commandsKey],
   );
 
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const refresh = useCallback(async () => {
-    setIsRefreshing(true);
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    if (mountedRef.current) {
+      setIsRefreshing(true);
+    }
+
     try {
       const snapshot = await collectRunnerHealthSnapshot({
         cwd,
@@ -38,10 +51,15 @@ export function useRunnerHealth({
         commands: stableCommands,
         checkPython,
       });
-      setRunnerHealthSnapshot(snapshot);
+
+      if (mountedRef.current && requestIdRef.current === requestId) {
+        setRunnerHealthSnapshot(snapshot);
+      }
       return snapshot;
     } finally {
-      setIsRefreshing(false);
+      if (mountedRef.current && requestIdRef.current === requestId) {
+        setIsRefreshing(false);
+      }
     }
   }, [checkPython, cwd, fileKey, runnerPreferences, stableCommands]);
 

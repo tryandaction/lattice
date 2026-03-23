@@ -245,6 +245,7 @@ function CodeEditorComponent({
   const onEscapeRef = useRef(onEscape);
   const onProblemsChangeRef = useRef(onProblemsChange);
   const problemContextRef = useRef(problemContext);
+  const diagnosticsFrameRef = useRef<number | null>(null);
   
   // Update refs when callbacks change
   useEffect(() => {
@@ -255,6 +256,20 @@ function CodeEditorComponent({
     onProblemsChangeRef.current = onProblemsChange;
     problemContextRef.current = problemContext;
   }, [onChange, onNavigateUp, onNavigateDown, onEscape, onProblemsChange, problemContext]);
+
+  const scheduleSyntaxProblemUpdate = useCallback((state: EditorState) => {
+    if (diagnosticsFrameRef.current !== null) {
+      window.cancelAnimationFrame(diagnosticsFrameRef.current);
+    }
+
+    diagnosticsFrameRef.current = window.requestAnimationFrame(() => {
+      diagnosticsFrameRef.current = null;
+      const diagnostics = buildSyntaxDiagnostics(state);
+      onProblemsChangeRef.current?.(
+        diagnosticsToProblems(diagnostics, state, problemContextRef.current),
+      );
+    });
+  }, []);
 
   // Initialize CodeMirror
   useEffect(() => {
@@ -289,11 +304,8 @@ function CodeEditorComponent({
             onChangeRef.current(update.state.doc.toString());
           }
 
-          if (syntaxDiagnostics && (update.docChanged || update.viewportChanged)) {
-            const diagnostics = buildSyntaxDiagnostics(update.state);
-            onProblemsChangeRef.current?.(
-              diagnosticsToProblems(diagnostics, update.state, problemContextRef.current),
-            );
+          if (syntaxDiagnostics && update.docChanged) {
+            scheduleSyntaxProblemUpdate(update.state);
           }
         });
         
@@ -428,9 +440,7 @@ function CodeEditorComponent({
         setIsLoading(false);
 
         if (syntaxDiagnostics) {
-          onProblemsChangeRef.current?.(
-            diagnosticsToProblems(buildSyntaxDiagnostics(view.state), view.state, problemContextRef.current),
-          );
+          scheduleSyntaxProblemUpdate(view.state);
         } else {
           onProblemsChangeRef.current?.([]);
         }
@@ -457,9 +467,13 @@ function CodeEditorComponent({
         existingView.destroy();
         viewRef.current = null;
       }
+      if (diagnosticsFrameRef.current !== null) {
+        window.cancelAnimationFrame(diagnosticsFrameRef.current);
+        diagnosticsFrameRef.current = null;
+      }
       onProblemsChangeRef.current?.([]);
     };
-  }, [language, isReadOnly, autoHeight, initialValue, basicCompletion, syntaxDiagnostics]);
+  }, [autoHeight, basicCompletion, initialValue, isReadOnly, language, scheduleSyntaxProblemUpdate, syntaxDiagnostics]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -472,9 +486,8 @@ function CodeEditorComponent({
       return;
     }
 
-    const diagnostics = buildSyntaxDiagnostics(view.state);
-    onProblemsChange?.(diagnosticsToProblems(diagnostics, view.state, problemContext));
-  }, [onProblemsChange, problemContext, syntaxDiagnostics]);
+    scheduleSyntaxProblemUpdate(view.state);
+  }, [onProblemsChange, problemContext, scheduleSyntaxProblemUpdate, syntaxDiagnostics]);
 
   // Focus the editor
   const focus = useCallback(() => {

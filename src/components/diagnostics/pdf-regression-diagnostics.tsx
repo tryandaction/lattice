@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { PDFHighlighterAdapter } from "@/components/renderers/pdf-highlighter-adapter";
 import { resolveAppRoute } from "@/lib/app-route";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -12,6 +12,8 @@ import {
   getDiagnosticsWorkspaceHandle,
   writeArrayBufferFile,
 } from "./browser-regression-utils";
+import { useContentCacheStore } from "@/stores/content-cache-store";
+import { buildPdfEditorState, DEFAULT_PDF_VIEWPORT_ANCHOR } from "@/lib/pdf-view-state";
 
 interface PdfFixture {
   fileId: string;
@@ -40,6 +42,36 @@ interface PaneSnapshot {
   restoreOk: string | null;
   restoreDeltaTop: number | null;
   restoreDeltaLeft: number | null;
+}
+
+function resolveZoomState(zoomLabel: string | null): { zoomMode: "manual" | "fit-width" | "fit-page"; scale: number } {
+  if (zoomLabel === "适宽") {
+    return { zoomMode: "fit-width", scale: 1 };
+  }
+  if (zoomLabel === "适页") {
+    return { zoomMode: "fit-page", scale: 1 };
+  }
+
+  const numeric = Number((zoomLabel ?? "").replace("%", ""));
+  return {
+    zoomMode: "manual",
+    scale: Number.isFinite(numeric) && numeric > 0 ? numeric / 100 : 1,
+  };
+}
+
+function findMostScrollableElement(scope: ParentNode | null): HTMLElement | null {
+  if (!scope) {
+    return null;
+  }
+
+  const candidates = Array.from(scope.querySelectorAll<HTMLElement>("*"));
+  candidates.sort((left, right) => {
+    const leftOverflow = (left.scrollHeight - left.clientHeight) + (left.scrollWidth - left.clientWidth);
+    const rightOverflow = (right.scrollHeight - right.clientHeight) + (right.scrollWidth - right.clientWidth);
+    return rightOverflow - leftOverflow;
+  });
+
+  return candidates[0] ?? null;
 }
 
 function PaneStateCard({ title, snapshot, paneTestId }: { title: string; snapshot: PaneSnapshot | null; paneTestId: string }) {
@@ -142,9 +174,10 @@ export function PdfRegressionDiagnostics() {
     const timer = window.setInterval(() => {
       const readSnapshot = (paneId: string): PaneSnapshot | null => {
         const zoomLabel = document.querySelector<HTMLElement>(`[data-testid="pdf-zoom-label-${paneId}"]`);
-        const scrollContainer = document.querySelector<HTMLElement>(`[data-testid="pdf-viewer-container-${paneId}"]`)
-          ?? document.querySelector<HTMLElement>(`[data-testid="pdf-scroll-container-${paneId}"]`);
         const shell = document.querySelector<HTMLElement>(`[data-testid="${paneId === "pdf-left-pane" ? "pdf-left-shell" : "pdf-right-shell"}"]`);
+        const scrollContainer = findMostScrollableElement(shell)
+          ?? document.querySelector<HTMLElement>(`[data-testid="pdf-viewer-container-${paneId}"]`)
+          ?? document.querySelector<HTMLElement>(`[data-testid="pdf-scroll-container-${paneId}"]`);
         const anchorPage = document.querySelector<HTMLElement>(`[data-testid="pdf-anchor-page-${paneId}"]`);
         const anchorTopRatio = document.querySelector<HTMLElement>(`[data-testid="pdf-anchor-top-ratio-${paneId}"]`);
         const anchorLeftRatio = document.querySelector<HTMLElement>(`[data-testid="pdf-anchor-left-ratio-${paneId}"]`);
@@ -192,10 +225,78 @@ export function PdfRegressionDiagnostics() {
   }, [rightVariant, workspace]);
 
   const scrollPaneToPage = (shellTestId: string, pageNumber: number) => {
-    const shell = document.querySelector<HTMLElement>(`[data-testid="${shellTestId}"]`);
-    const page = shell?.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`);
-    page?.scrollIntoView({ behavior: "auto", block: "center" });
+    let attemptsLeft = 120;
+
+    const attemptScroll = () => {
+      const shell = document.querySelector<HTMLElement>(`[data-testid="${shellTestId}"]`);
+      const scrollContainer = findMostScrollableElement(shell);
+      const page = shell?.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`);
+      if (page) {
+        page.scrollIntoView({ behavior: "auto", block: "center" });
+        return;
+      }
+
+      const firstPage = shell?.querySelector<HTMLElement>('[data-page-number="1"]');
+      if (scrollContainer && firstPage) {
+        const estimatedPageHeight = firstPage.getBoundingClientRect().height + 24;
+        scrollContainer.scrollTo({
+          top: Math.max(0, estimatedPageHeight * (pageNumber - 1)),
+          behavior: "auto",
+        });
+      }
+
+      attemptsLeft -= 1;
+      if (attemptsLeft > 0) {
+        window.requestAnimationFrame(attemptScroll);
+      }
+    };
+
+    void window.requestAnimationFrame(attemptScroll);
   };
+
+  const persistRightSnapshot = useCallback(() => {
+    const currentFixture = rightVariant === "a" ? workspace?.rightA : workspace?.rightB;
+    if (!currentFixture) {
+      return;
+    }
+
+    const readValue = (testId: string) => document.querySelector<HTMLElement>(`[data-testid="${testId}"]`)?.textContent?.trim() ?? null;
+    const domSnapshot: PaneSnapshot = {
+      zoom: readValue("pdf-right-state-zoom"),
+      scrollTop: Number(readValue("pdf-right-state-scroll-top") ?? "0"),
+      scrollLeft: Number(readValue("pdf-right-state-scroll-left") ?? "0"),
+      visiblePage: Number(readValue("pdf-right-state-visible-page") ?? "0") || null,
+      anchorPage: Number(readValue("pdf-right-state-anchor-page") ?? "0") || null,
+      anchorTopRatio: null,
+      anchorLeftRatio: null,
+      restoreStatus: readValue("pdf-right-state-restore-status"),
+      restoreOk: readValue("pdf-right-state-restore-ok"),
+      restoreDeltaTop: Number(readValue("pdf-right-state-restore-delta-top") ?? "-1"),
+      restoreDeltaLeft: Number(readValue("pdf-right-state-restore-delta-left") ?? "-1"),
+    };
+
+    const snapshot = domSnapshot.anchorPage ? domSnapshot : rightSnapshot;
+    if (!snapshot?.anchorPage) {
+      return;
+    }
+
+    const { zoomMode, scale } = resolveZoomState(snapshot.zoom);
+    useContentCacheStore.getState().saveEditorState(currentFixture.fileId, buildPdfEditorState({
+      scale,
+      zoomMode,
+      showSidebar: false,
+      anchor: {
+        pageNumber: snapshot.anchorPage,
+        pageOffsetTopRatio: snapshot.anchorTopRatio ?? 0,
+        pageOffsetLeftRatio: snapshot.anchorLeftRatio ?? 0,
+        viewportAnchorX: DEFAULT_PDF_VIEWPORT_ANCHOR.x,
+        viewportAnchorY: DEFAULT_PDF_VIEWPORT_ANCHOR.y,
+        captureRevision: 0,
+      },
+      scrollTop: snapshot.scrollTop,
+      scrollLeft: snapshot.scrollLeft,
+    }));
+  }, [rightSnapshot, rightVariant, workspace]);
 
   if (error) {
     return <div className="p-6 text-sm text-destructive">{error}</div>;
@@ -245,7 +346,10 @@ export function PdfRegressionDiagnostics() {
           <button
             type="button"
             data-testid="toggle-right-file"
-            onClick={() => setRightVariant((value) => value === "a" ? "b" : "a")}
+            onClick={() => {
+              persistRightSnapshot();
+              setRightVariant((value) => value === "a" ? "b" : "a");
+            }}
             className="rounded border border-border px-3 py-1 hover:bg-muted"
           >
             切换右侧文件
@@ -278,6 +382,7 @@ export function PdfRegressionDiagnostics() {
       <main className={`grid min-h-0 flex-1 gap-3 overflow-hidden p-3 ${compactLayout ? "grid-cols-[1fr_0.82fr_320px]" : "grid-cols-[1fr_1fr_320px]"}`}>
         <section className="min-h-0 overflow-hidden rounded-xl border border-border" data-testid="pdf-left-shell">
           <PDFHighlighterAdapter
+            key={workspace.left.fileId}
             content={workspace.left.content}
             fileName={workspace.left.fileName}
             fileHandle={workspace.left.fileHandle}
@@ -290,6 +395,7 @@ export function PdfRegressionDiagnostics() {
 
         <section className="min-h-0 overflow-hidden rounded-xl border border-border" data-testid="pdf-right-shell">
           <PDFHighlighterAdapter
+            key={rightFixture.fileId}
             content={rightFixture.content}
             fileName={rightFixture.fileName}
             fileHandle={rightFixture.fileHandle}

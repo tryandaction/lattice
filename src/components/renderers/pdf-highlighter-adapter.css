@@ -4,6 +4,27 @@
   mix-blend-mode: normal;
 }
 
+.lattice-pdf-viewer[data-transient-selection-active="true"] .textLayer ::selection,
+.lattice-pdf-viewer[data-transient-selection-active="true"] .textLayer ::-moz-selection {
+  background: transparent !important;
+}
+
+.lattice-pdf-viewer .textLayer {
+  display: block;
+  mix-blend-mode: normal;
+}
+
+.lattice-pdf-viewer .textLayer > div:not(.PdfHighlighter__highlight-layer):not(.Highlight):not(.Highlight__emoji) {
+  mix-blend-mode: normal;
+}
+
+.lattice-pdf-viewer .textLayer .endOfContent,
+.lattice-pdf-viewer .textLayer .endOfContent.active,
+.lattice-pdf-viewer .textLayer.selecting .endOfContent {
+  top: 100% !important;
+  pointer-events: none;
+}
+
 .dark .lattice-pdf-viewer .textLayer ::selection,
 .dark .lattice-pdf-viewer .textLayer ::-moz-selection {
   background: rgba(123, 185, 255, 0.34);

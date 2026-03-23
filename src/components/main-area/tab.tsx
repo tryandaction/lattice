@@ -118,6 +118,7 @@ export function Tab({
   return (
     <div
       ref={setNodeRef}
+      data-tab-id={tab.id}
       style={style}
       {...attributes}
       {...listeners}

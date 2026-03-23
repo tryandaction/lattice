@@ -8,8 +8,11 @@
 - 代码文件与 editable Markdown 的 execution dock 已支持折叠、垂直拖拽调节高度，并按 pane 记忆打开状态与尺寸
 - 桌面端默认优先使用本地 Python / 外部命令运行器，Runner Manager 与 Runner Diagnostics 已进入主链路
 - 代码文件、editable Markdown 与 Notebook 现在都会明确标出运行器选择来源，例如 `当前入口选择 / 工作区默认 / 自动探测 / 回退`
-- Notebook 已改为真实的本地持久 Python session：先做 runtime 校验与 `ready` 握手，再允许运行；非 Python `.ipynb` 明确禁跑
+- Notebook 已改为真实的本地持久 Python session：默认惰性启动，打开文件不自动起会话；只有用户点击 `Run` 或 `验证环境` 时才进行 runtime 校验与 `ready` 握手。非 Python `.ipynb` 明确禁跑
 - `.ipynb` 现已保留 `raw` cell，不再伪装成 code cell
+- PDF 现在具备条目工作区基线：每个 PDF 可建立 companion item folder，并直接创建关联 `Markdown` 阅读笔记、`Notebook (.ipynb)` 与批注 Markdown
+- PDF 批注已支持同步到独立 Markdown 文件并直接打开，不再只能困在侧栏里浏览
+- PDF 文本选择已经开始从浏览器原生蓝选区收口到 Lattice 自己的临时 overlay，并明确接管 `Ctrl+C / Cmd+C` 文本复制优先级
 - 只读 Markdown renderer 已关闭代码执行入口，避免保留半接通链路
 - AI Chat、Evidence Panel、Workbench 已形成 `Conclusion / Evidence / Next Actions -> Draft / Proposal -> Writeback` 主路径
 - Selection AI、diagnostics、browser regression、release prepare 脚本已形成阶段性工程闭环
@@ -100,6 +103,9 @@ releases/           本地发布产物与元数据事实来源
 
 当前主线通过以上三项，作为执行链路与桌面运行能力的最低回归基线。
 `/diagnostics/runner` 还支持显式验证 Notebook 本地 Python 会话启动，而不只是静态展示 health snapshot。
+
+补充说明：
+- `test:browser-regression` 已覆盖 PDF / 图片标注 / Selection AI / 性能基线，但 PDF 深页切文件恢复仍在继续收口，当前不把它误报成“完全无风险”。
 
 ## License
 

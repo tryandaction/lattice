@@ -39,6 +39,7 @@ import { jupyterOutputsToExecutionOutputs } from "@/lib/runner/output-utils";
 import { diagnosticsToExecutionProblems, mergeExecutionProblems, outputsToExecutionProblems, runnerHealthIssuesToExecutionProblems } from "@/lib/runner/problem-utils";
 import { ProblemsPanel } from "@/components/runner/problems-panel";
 import { WorkspaceRunnerManager } from "@/components/runner/workspace-runner-manager";
+import { isTauriHost } from "@/lib/storage-adapter";
 
 interface NotebookEditorProps {
   content: string;
@@ -123,7 +124,10 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [runMenuOpen, setRunMenuOpen] = useState(false);
-  const [currentKernel, setCurrentKernel] = useState<KernelOption | null>(null);
+  const [manualKernelState, setManualKernelState] = useState<{ filePath: string; kernel: KernelOption | null }>({
+    filePath,
+    kernel: null,
+  });
   const [selectionHubState, setSelectionHubState] = useState<{
     context: SelectionContext;
     mode: SelectionAiMode;
@@ -138,11 +142,18 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   const rootName = useWorkspaceStore((workspace) => workspace.rootHandle?.name ?? workspace.fileTree.root?.name ?? null);
   const workspaceRootHandle = useWorkspaceStore((workspace) => workspace.rootHandle);
   const workspaceRootPath = useWorkspaceStore((workspace) => workspace.workspaceRootPath);
+  const runnerPreferences = useWorkspaceStore((workspace) => workspace.runnerPreferences);
   const notebookAbsolutePath = resolveWorkspaceFilePath(workspaceRootPath, filePath, rootName);
   const notebookCwd = notebookAbsolutePath ? dirname(notebookAbsolutePath) : workspaceRootPath ?? undefined;
   const notebookLanguage = useMemo(() => resolveNotebookLanguage(state.metadata), [state.metadata]);
   const notebookKernelLabel = useMemo(() => resolveNotebookKernelLabel(state.metadata), [state.metadata]);
   const isPythonNotebook = notebookLanguage.trim().toLowerCase() === "python";
+  const isDesktopHost = useMemo(() => isTauriHost(), []);
+  const [notebookProblemsState, setNotebookProblemsState] = useState<{ filePath: string; open: boolean }>({
+    filePath,
+    open: false,
+  });
+  const showNotebookProblems = notebookProblemsState.filePath === filePath && notebookProblemsState.open;
   const healthContext = useMemo(
     () => ({
       kind: "workspace" as const,
@@ -173,13 +184,84 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     },
   );
 
+  const preferredKernel = useMemo<KernelOption | null>(() => {
+    const fileKey = filePath ?? "__notebook__";
+    const recent = runnerPreferences.recentRunByFile[fileKey];
+
+    if (recent?.runnerType === "python-pyodide") {
+      return {
+        id: "pyodide",
+        runnerType: "python-pyodide",
+        displayName: isDesktopHost ? "Pyodide（应急回退）" : "Pyodide（浏览器内核）",
+        description: isDesktopHost
+          ? "仅在本地解释器不可用或临时排障时使用。"
+          : "浏览器内 Python。",
+        selectionSource: "current-entry",
+        sourceLabel: "当前 Notebook 选择",
+        supported: true,
+        unsupportedReason: null,
+      };
+    }
+
+    if (recent?.runnerType === "python-local" && recent.command) {
+      const displayName = notebookKernelLabel ?? `Python (${recent.command.split(/[\\/]/).pop() ?? "local"})`;
+      return {
+        id: `python-local:recent:${recent.command}`,
+        runnerType: "python-local",
+        displayName,
+        description: recent.command,
+        command: recent.command,
+        selectionSource: "current-entry",
+        sourceLabel: "当前 Notebook 选择",
+        supported: true,
+        unsupportedReason: null,
+      };
+    }
+
+    if (!isPythonNotebook) {
+      return null;
+    }
+
+    if (isDesktopHost) {
+      const defaultPythonPath = runnerPreferences.defaultPythonPath;
+      return {
+        id: defaultPythonPath ? `python-local:workspace:${defaultPythonPath}` : "python-local:metadata",
+        runnerType: "python-local",
+        displayName: notebookKernelLabel ?? "Python 3",
+        description: defaultPythonPath ?? "未验证，点击运行或验证环境后再启动本地会话。",
+        command: defaultPythonPath ?? undefined,
+        selectionSource: defaultPythonPath ? "workspace-default" : "metadata",
+        sourceLabel: defaultPythonPath ? "工作区默认" : `Notebook 元数据 (${notebookKernelLabel ?? "Python"})`,
+        supported: true,
+        unsupportedReason: null,
+      };
+    }
+
+    return {
+      id: "pyodide:web-default",
+      runnerType: "python-pyodide",
+      displayName: "Pyodide（浏览器内核）",
+      description: "浏览器内 Python，适合网页环境下的轻量执行。",
+      selectionSource: "fallback",
+      sourceLabel: "浏览器内核",
+      supported: true,
+      unsupportedReason: null,
+    };
+  }, [filePath, isDesktopHost, isPythonNotebook, notebookKernelLabel, runnerPreferences]);
+
+  const currentKernel = manualKernelState.filePath === filePath && manualKernelState.kernel
+    ? manualKernelState.kernel
+    : preferredKernel;
+
   const {
     executionState,
     currentCellId,
     progress,
     runtimeStatus,
+    runtimeAvailability,
     runtimeError,
     runtimeProblems,
+    hasValidatedRuntime,
     prepareRuntime,
     runAll,
     runAllAbove,
@@ -212,7 +294,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     cwd: notebookCwd,
     fileKey: filePath,
     checkPython: currentKernel?.runnerType === "python-local",
-    autoRefresh: Boolean(currentKernel && isPythonNotebook),
+    autoRefresh: false,
   });
 
   const currentFileRef = useRef(fileName);
@@ -295,9 +377,16 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   }, [state, serialize, isDirty, onContentChange]);
 
   const handleKernelChange = useCallback(async (kernel: KernelOption) => {
-    setCurrentKernel(kernel);
+    setManualKernelState({
+      filePath,
+      kernel,
+    });
+    setNotebookProblemsState({
+      filePath,
+      open: false,
+    });
     await switchKernel(kernel);
-  }, [switchKernel]);
+  }, [filePath, switchKernel]);
 
   const handleSave = useCallback(async () => {
     if (!onSave) return;
@@ -315,46 +404,78 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   }, [onSave, markClean]);
 
   const handleVerifyRuntime = useCallback(async () => {
+    setNotebookProblemsState({
+      filePath,
+      open: false,
+    });
     await refreshRunnerHealth();
-    await prepareRuntime();
-  }, [prepareRuntime, refreshRunnerHealth]);
+    const ok = await prepareRuntime();
+    if (!ok) {
+      setNotebookProblemsState({
+        filePath,
+        open: true,
+      });
+    }
+  }, [filePath, prepareRuntime, refreshRunnerHealth]);
 
   const handleRunAll = useCallback(async () => {
+    setNotebookProblemsState({
+      filePath,
+      open: false,
+    });
     const cells = state.cells.map((cell) => ({
       id: cell.id,
       source: cell.source,
       type: cell.cell_type,
     }));
     await runAll(cells);
-  }, [state.cells, runAll]);
+  }, [filePath, state.cells, runAll]);
 
   const handleRunAllAbove = useCallback(async () => {
     if (!state.activeCellId) return;
+    setNotebookProblemsState({
+      filePath,
+      open: false,
+    });
     const cells = state.cells.map((cell) => ({
       id: cell.id,
       source: cell.source,
       type: cell.cell_type,
     }));
     await runAllAbove(cells, state.activeCellId);
-  }, [state.cells, state.activeCellId, runAllAbove]);
+  }, [filePath, state.cells, state.activeCellId, runAllAbove]);
 
   const handleRunAllBelow = useCallback(async () => {
     if (!state.activeCellId) return;
+    setNotebookProblemsState({
+      filePath,
+      open: false,
+    });
     const cells = state.cells.map((cell) => ({
       id: cell.id,
       source: cell.source,
       type: cell.cell_type,
     }));
     await runAllBelow(cells, state.activeCellId);
-  }, [state.cells, state.activeCellId, runAllBelow]);
+  }, [filePath, state.cells, state.activeCellId, runAllBelow]);
 
   const handleRunCell = useCallback(async (cellId: string, source: string) => {
+    setNotebookProblemsState({
+      filePath,
+      open: false,
+    });
     clearCellOutputs(cellId);
     const result = await executeCell(cellId, source);
     updateCellExecutionCount(cellId, result.executionCount);
     updateCellExecutionMeta(cellId, result.panelMeta);
+    if (!result.success) {
+      setNotebookProblemsState({
+        filePath,
+        open: true,
+      });
+    }
     return result;
-  }, [clearCellOutputs, executeCell, updateCellExecutionCount, updateCellExecutionMeta]);
+  }, [clearCellOutputs, executeCell, filePath, updateCellExecutionCount, updateCellExecutionMeta]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -440,11 +561,27 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
 
   const canExecuteNotebook = isPythonNotebook
     && Boolean(currentKernel)
-    && (
-      currentKernel?.runnerType === "python-pyodide"
-      || runtimeStatus === "ready"
-      || executionState === "running"
-    );
+    && runtimeStatus !== "loading";
+
+  const runtimeStatusLabel = runtimeAvailability === "ready"
+    ? "可运行"
+    : runtimeAvailability === "checking"
+      ? "验证中"
+      : runtimeAvailability === "error"
+        ? "不可运行"
+        : runtimeAvailability === "unsupported"
+          ? "不支持"
+          : "未验证";
+
+  const runtimeStatusTone = runtimeAvailability === "ready"
+    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+    : runtimeAvailability === "checking"
+      ? "bg-blue-500/10 text-blue-700 dark:text-blue-300"
+      : runtimeAvailability === "error"
+        ? "bg-destructive/10 text-destructive"
+        : runtimeAvailability === "unsupported"
+          ? "bg-yellow-500/10 text-yellow-700 dark:text-yellow-300"
+          : "bg-muted text-muted-foreground";
 
   return (
     <div ref={containerRef} className="h-full overflow-auto bg-background">
@@ -629,6 +766,9 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
                   {currentKernel.sourceLabel}
                 </span>
               ) : null}
+              <span className={`rounded-full px-2 py-0.5 ${runtimeStatusTone}`}>
+                {runtimeStatusLabel}
+              </span>
               {runnerHealthSnapshot.selectedPythonPath ? (
                 <span className="truncate">{runnerHealthSnapshot.selectedPythonPath}</span>
               ) : null}
@@ -638,7 +778,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
                 当前 Notebook 内核为 {notebookKernelLabel ?? notebookLanguage}，本轮仅支持 Python Notebook 执行。
               </div>
             ) : null}
-            {runtimeError ? (
+            {hasValidatedRuntime && runtimeError ? (
               <div className="mt-2 text-sm text-destructive">{runtimeError}</div>
             ) : null}
           </div>
@@ -662,7 +802,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
           </div>
         </div>
 
-        {notebookProblems.length > 0 ? (
+        {showNotebookProblems && notebookProblems.length > 0 ? (
           <div className="mx-auto max-w-4xl px-6 pb-3">
             <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
               <AlertTriangle className="h-3.5 w-3.5" />

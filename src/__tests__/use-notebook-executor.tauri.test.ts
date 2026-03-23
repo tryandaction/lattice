@@ -44,6 +44,21 @@ describe('useNotebookExecutor (Tauri persistent session)', () => {
     });
   });
 
+  it('挂载后不会自动启动持久会话，只有运行或验证时才启动', () => {
+    const session = createPersistentSessionMock();
+    mockCreatePersistentPythonSession.mockReturnValue(session);
+
+    renderHook(() =>
+      useNotebookExecutor({
+        runner: pythonLocalRunner,
+        cwd: '/workspace',
+      })
+    );
+
+    expect(mockCreatePersistentPythonSession).not.toHaveBeenCalled();
+    expect(session.start).not.toHaveBeenCalled();
+  });
+
   it('应该在运行多个单元格时复用同一个持久会话', async () => {
     const session = createPersistentSessionMock();
     session.execute.mockImplementation(async ({ code }: { code: string }, onEvent?: (event: RunnerEvent) => void) => {

@@ -86,6 +86,7 @@ export function KernelSelector({
   const [isLoading, setIsLoading] = useState(false);
   const [kernelOptions, setKernelOptions] = useState<KernelOption[]>([]);
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
+  const [hasLoadedOptions, setHasLoadedOptions] = useState(false);
 
   const isDesktopHost = useMemo(() => isTauriHost(), []);
   const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
@@ -132,6 +133,7 @@ export function KernelSelector({
       }
 
       setKernelOptions(options);
+      setHasLoadedOptions(true);
 
       const recent = runnerPreferences.recentRunByFile[fileKey];
       const preferredEnvironment = getNotebookKernelPreferenceOrigin(
@@ -201,8 +203,13 @@ export function KernelSelector({
   }, [currentKernel, fileKey, isDesktopHost, isNotebookLanguageSupported, notebookKernelLabel, notebookLanguage, onKernelChange, refreshRunnerHealth, runnerPreferences]);
 
   useEffect(() => {
-    void detectEnvironments();
-  }, [detectEnvironments]);
+    if (!isNotebookLanguageSupported) {
+      setRuntimeMessage(
+        `当前 Notebook 内核为 ${notebookKernelLabel ?? notebookLanguage ?? "unknown"}，本轮仅支持 Python Notebook 执行。`,
+      );
+      setKernelOptions([]);
+    }
+  }, [isNotebookLanguageSupported, notebookKernelLabel, notebookLanguage]);
 
   const handleSelect = (kernel: KernelOption) => {
     const recentKey = filePath ?? "__notebook__";
@@ -227,6 +234,9 @@ export function KernelSelector({
         onClick={() => {
           if (!isNotebookLanguageSupported) {
             return;
+          }
+          if (!isOpen && !hasLoadedOptions) {
+            void detectEnvironments();
           }
           setIsOpen((open) => !open);
         }}

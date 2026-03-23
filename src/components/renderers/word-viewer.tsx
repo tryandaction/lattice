@@ -13,6 +13,7 @@ import { createSelectionContext, type SelectionAiMode, type SelectionContext } f
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
 import { buildBlockSelectionContext } from "@/lib/ai/selection-dom";
+import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
 
 interface WordViewerProps {
   content: ArrayBuffer;
@@ -198,14 +199,20 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
         onClose={() => setSelectionHubState(null)}
       />
       {/* File header */}
-      <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-muted/90 px-4 py-2 backdrop-blur">
-        <span className="text-sm font-medium text-foreground">{fileName}</span>
+      <HorizontalScrollStrip
+        className="sticky top-0 z-10 border-b border-border bg-muted/90 backdrop-blur"
+        viewportClassName="px-4 py-2"
+        contentClassName="min-w-full w-max justify-between gap-3"
+        ariaLabel={`${fileName} Word 工具栏`}
+      >
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="max-w-[24rem] truncate text-sm font-medium text-foreground">{fileName}</span>
+        </div>
         
-        {/* Import as Note button */}
         <button
           onClick={handleImportAsNote}
           disabled={isImporting || !htmlContent}
-          className="flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex shrink-0 items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isImporting ? (
             <>
@@ -219,7 +226,7 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
             </>
           )}
         </button>
-      </div>
+      </HorizontalScrollStrip>
 
       {/* Read-only notice */}
       <div className="mx-auto max-w-4xl px-8 pt-4">

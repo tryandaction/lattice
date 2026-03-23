@@ -46,10 +46,17 @@ vi.mock('react-pdf-highlighter', async () => {
     ),
     Popup: ({ children }: { children: React.ReactNode }) => <>{children}</>,
     PdfHighlighter: ReactModule.forwardRef(function MockPdfHighlighter(
-      { pdfScaleValue }: { pdfScaleValue: string },
+      {
+        pdfScaleValue,
+        onSelectionFinished,
+      }: {
+        pdfScaleValue: string;
+        onSelectionFinished?: (...args: any[]) => React.ReactNode;
+      },
       ref: React.ForwardedRef<{ viewer: { container: HTMLDivElement | null }; handleScaleValue: () => void }>,
     ) {
       const viewerRef = ReactModule.useRef<HTMLDivElement>(null);
+      const [selectionUi, setSelectionUi] = ReactModule.useState<React.ReactNode>(null);
       const apiRef = ReactModule.useRef({
         viewer: { container: null as HTMLDivElement | null },
         handleScaleValue: vi.fn(),
@@ -74,8 +81,49 @@ vi.mock('react-pdf-highlighter', async () => {
 
       ReactModule.useImperativeHandle(ref, () => apiRef.current, []);
 
+      const triggerSelection = () => {
+        if (!onSelectionFinished) {
+          return;
+        }
+
+        const hideTipAndSelection = () => setSelectionUi(null);
+        const rendered = onSelectionFinished(
+          {
+            boundingRect: {
+              x1: 12,
+              y1: 24,
+              x2: 172,
+              y2: 46,
+              left: 12,
+              top: 24,
+              width: 160,
+              height: 22,
+              pageNumber: 1,
+            },
+            rects: [
+              { x1: 12, y1: 24, x2: 132, y2: 46, left: 12, top: 24, width: 120, height: 22, pageNumber: 1 },
+              { x1: 12, y1: 52, x2: 100, y2: 74, left: 12, top: 52, width: 88, height: 22, pageNumber: 1 },
+            ],
+            pageNumber: 1,
+          },
+          {
+            text: 'Selected PDF text',
+          },
+          hideTipAndSelection,
+          vi.fn(),
+        );
+
+        setSelectionUi(rendered);
+      };
+
       return (
         <div ref={viewerRef} data-testid="mock-pdf-highlighter" data-scale={pdfScaleValue}>
+          <div data-page-number="1" style={{ position: 'relative', width: '640px', height: '960px' }}>
+            <button type="button" data-testid="mock-pdf-selection-trigger" onClick={triggerSelection}>
+              Trigger selection
+            </button>
+          </div>
+          {selectionUi}
           {pdfScaleValue}
         </div>
       );
@@ -239,6 +287,80 @@ describe('PDFHighlighterAdapter', () => {
     await waitFor(() => {
       expect(screen.getByTestId('pdf-zoom-label-pane-left').textContent).toBe('适宽');
       expect(screen.getByTestId('pdf-zoom-label-pane-right').textContent).toBe('145%');
+    });
+  });
+
+  it('shows transient selection overlay and clears it on cancel', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    fireEvent.click(screen.getByTestId('mock-pdf-selection-trigger'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-transient-selection-pane-left-page-1')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('pdf-transient-selection-pane-left-page-1')).toBeNull();
+    });
+  });
+
+  it('creates highlight from transient selection and clears overlay', async () => {
+    const addAnnotation = vi.fn();
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [],
+      error: null,
+      addAnnotation,
+      updateAnnotation: vi.fn(),
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    fireEvent.click(screen.getByTestId('mock-pdf-selection-trigger'));
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-transient-selection-pane-left-page-1')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '黄色' }));
+
+    await waitFor(() => {
+      expect(addAnnotation).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId('pdf-transient-selection-pane-left-page-1')).toBeNull();
+    });
+  });
+
+  it('copies transient selection text on copy event and ctrl+c', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText,
+      },
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    fireEvent.click(screen.getByTestId('mock-pdf-selection-trigger'));
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-transient-selection-pane-left-page-1')).toBeTruthy();
+    });
+
+    const clipboardData = { setData: vi.fn() };
+    const copyEvent = new Event('copy', { bubbles: true, cancelable: true });
+    Object.defineProperty(copyEvent, 'clipboardData', {
+      configurable: true,
+      value: clipboardData,
+    });
+
+    document.dispatchEvent(copyEvent);
+    expect(clipboardData.setData).toHaveBeenCalledWith('text/plain', 'Selected PDF text');
+    expect(copyEvent.defaultPrevented).toBe(true);
+
+    fireEvent.keyDown(document, { ctrlKey: true, key: 'c' });
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('Selected PDF text');
     });
   });
 });

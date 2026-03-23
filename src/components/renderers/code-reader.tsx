@@ -9,6 +9,7 @@ import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
+import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
 
 interface CodeReaderProps {
   content: string;
@@ -59,10 +60,17 @@ export function CodeReader({ content, fileName, paneId, filePath }: CodeReaderPr
         onClose={() => setSelectionHubState(null)}
       />
       {/* File header */}
-      <div className="sticky top-0 z-10 border-b border-border bg-muted/90 px-4 py-2 backdrop-blur">
-        <span className="text-sm font-medium text-foreground">{fileName}</span>
-        <span className="ml-2 text-xs text-muted-foreground">({language})</span>
-      </div>
+      <HorizontalScrollStrip
+        className="sticky top-0 z-10 border-b border-border bg-muted/90 backdrop-blur"
+        viewportClassName="px-4 py-2"
+        contentClassName="min-w-full w-max justify-between gap-3"
+        ariaLabel={`${fileName} 只读代码栏`}
+      >
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="max-w-[24rem] truncate text-sm font-medium text-foreground">{fileName}</span>
+          <span className="text-xs text-muted-foreground">({language})</span>
+        </div>
+      </HorizontalScrollStrip>
 
       {/* Code content */}
       <div className="p-4">

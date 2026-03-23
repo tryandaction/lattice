@@ -404,7 +404,7 @@ export function PaneWrapper({
       />
 
       {/* Pane Header with Tabs and Actions */}
-      <div className="flex items-center border-b border-border bg-muted/30">
+      <div className="flex min-w-0 items-center border-b border-border bg-muted/30">
         {/* Tab Bar */}
         <div className="flex-1 min-w-0 overflow-hidden">
           <TabBar
@@ -418,7 +418,7 @@ export function PaneWrapper({
         </div>
         
         {/* Pane Actions */}
-        <div className="flex items-center gap-0.5 px-1 border-l border-border">
+        <div className="flex shrink-0 items-center gap-0.5 border-l border-border px-1">
           <button
             onClick={(e) => { e.stopPropagation(); onSplitRight(); }}
             className="p-1 rounded hover:bg-accent transition-colors"

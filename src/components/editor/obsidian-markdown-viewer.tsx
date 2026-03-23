@@ -63,6 +63,7 @@ import { WorkspaceRunnerManager } from "@/components/runner/workspace-runner-man
 import type { ExecutionProblem } from "@/lib/runner/types";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useExecutionDockLayout } from "@/hooks/use-execution-dock-layout";
+import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
 
 // Lazy load components
 const LivePreviewEditor = dynamic(
@@ -292,7 +293,7 @@ export function ObsidianMarkdownViewer({
     checkPython: panelMeta.context?.language
       ? getRunnerDefinitionForLanguage(panelMeta.context.language)?.runnerType === "python-local"
       : false,
-    autoRefresh: Boolean(filePath),
+    autoRefresh: false,
   });
   const healthContext = useMemo(
     () => ({
@@ -628,8 +629,13 @@ export function ObsidianMarkdownViewer({
 
   const renderRunDock = useCallback((expanded: boolean) => (
     <div className={expanded ? "flex h-full min-h-0 flex-col border-t border-border bg-background" : "border-t border-border bg-background"}>
-      <div className="flex items-center justify-between border-b border-border bg-muted/50 px-3 py-1.5">
-        <div className="flex items-center gap-2">
+      <HorizontalScrollStrip
+        className="border-b border-border bg-muted/50"
+        viewportClassName="px-3 py-1.5"
+        contentClassName="min-w-full w-max justify-between gap-3"
+        ariaLabel="Markdown 执行停靠栏"
+      >
+        <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
             onClick={() => setShowRunDock((value) => !value)}
@@ -668,7 +674,7 @@ export function ObsidianMarkdownViewer({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+        <div className="flex shrink-0 items-center gap-2 text-[10px] text-muted-foreground">
           {panelMeta.context?.language ? <span>{panelMeta.context.language}</span> : null}
           {panelMeta.context?.range?.startLine ? (
             <span>
@@ -694,7 +700,7 @@ export function ObsidianMarkdownViewer({
             triggerLabel="Runner"
           />
         </div>
-      </div>
+      </HorizontalScrollStrip>
 
       {expanded ? (
         <div className="h-full min-h-0 overflow-auto p-3">
@@ -743,9 +749,14 @@ export function ObsidianMarkdownViewer({
   return (
     <div ref={containerRef} className="h-full flex flex-col bg-background">
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-background/95 backdrop-blur sticky top-0 z-10">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground truncate max-w-[200px]">
+      <HorizontalScrollStrip
+        className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur"
+        viewportClassName="px-4 py-2"
+        contentClassName="min-w-full w-max justify-between gap-3"
+        ariaLabel={`${fileName} Markdown 工具栏`}
+      >
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="max-w-[18rem] truncate text-sm font-medium text-foreground">
             {fileName}
           </span>
           {isDirty && (
@@ -754,12 +765,11 @@ export function ObsidianMarkdownViewer({
           <SaveIndicator status={saveStatus} />
         </div>
         
-        <div className="flex items-center gap-1">
-          {/* Outline toggle */}
+        <div className="flex shrink-0 items-center gap-1">
           <button
             onClick={() => setShowOutline(!showOutline)}
             className={cn(
-              "p-1.5 rounded transition-colors",
+              "rounded p-1.5 transition-colors",
               showOutline ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"
             )}
             title={showOutline ? "Hide outline" : "Show outline"}
@@ -771,9 +781,8 @@ export function ObsidianMarkdownViewer({
             )}
           </button>
           
-          <div className="w-px h-4 bg-border mx-1" />
+          <div className="mx-1 h-4 w-px bg-border" />
           
-          {/* Mode toggle buttons */}
           <div className="flex items-center rounded-md border border-border bg-muted/30 p-0.5">
             <ModeButton
               mode="live"
@@ -799,15 +808,14 @@ export function ObsidianMarkdownViewer({
             />
           </div>
           
-          {/* Save button */}
           {onSave && (
             <button
               onClick={handleSave}
               disabled={saveStatus === "saving" || !isDirty}
               className={cn(
-                "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors ml-2",
+                "ml-2 flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors",
                 "hover:bg-accent",
-                (saveStatus === "saving" || !isDirty) && "opacity-50 cursor-not-allowed"
+                (saveStatus === "saving" || !isDirty) && "cursor-not-allowed opacity-50"
               )}
               title="Save (Ctrl+S)"
             >
@@ -818,14 +826,14 @@ export function ObsidianMarkdownViewer({
 
           <button
             onClick={() => setShowExportDialog(true)}
-            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors ml-1 hover:bg-accent"
+            className="ml-1 flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors hover:bg-accent"
             title="导出 Markdown"
           >
             <Download className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Export</span>
           </button>
         </div>
-      </div>
+      </HorizontalScrollStrip>
 
       {shouldRenderRunDock && showRunDock ? (
         <ResizablePanelGroup

@@ -39,6 +39,8 @@ export interface CellExecutionResult {
   panelMeta?: ExecutionPanelMeta;
 }
 
+export type NotebookRuntimeAvailability = "unknown" | "checking" | "ready" | "error" | "unsupported";
+
 interface UseNotebookExecutorOptions {
   kernel?: LegacyKernel | null;
   runner?: KernelOption | null;
@@ -135,6 +137,7 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
   const [runtimeStatus, setRuntimeStatus] = useState<RunnerStatus>("idle");
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [runtimeProblems, setRuntimeProblems] = useState<ExecutionProblem[]>([]);
+  const [hasValidatedRuntime, setHasValidatedRuntime] = useState(false);
   const [runtimeMeta, setRuntimeMeta] = useState<ExecutionPanelMeta>({
     origin: null,
     diagnostics: [],
@@ -175,6 +178,7 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
     setRuntimeStatus(nextStatus);
     setRuntimeError(null);
     setRuntimeProblems([]);
+    setHasValidatedRuntime(!activeKernel ? false : !isLegacyKernel(activeKernel) && activeKernel.runnerType === "python-pyodide");
     setRuntimeMeta((previous) => ({
       ...previous,
       origin,
@@ -221,6 +225,7 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
     setRuntimeStatus("error");
     setRuntimeError(message);
     setRuntimeProblems(problems);
+    setHasValidatedRuntime(true);
     setRuntimeMeta((previous) => ({
       ...previous,
       diagnostics: [diagnostic],
@@ -231,6 +236,7 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
   const clearRuntimeFailure = useCallback(() => {
     setRuntimeError(null);
     setRuntimeProblems([]);
+    setHasValidatedRuntime(true);
     setRuntimeMeta((previous) => ({
       ...previous,
       diagnostics: [],
@@ -365,16 +371,6 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
     notebookLanguage,
     setRuntimeFailure,
   ]);
-
-  useEffect(() => {
-    if (!activeKernel || isLegacyKernel(activeKernel)) {
-      return;
-    }
-
-    if (activeKernel.runnerType === "python-local") {
-      void prepareRuntime();
-    }
-  }, [activeKernel, prepareRuntime]);
 
   const executeCellInternal = useCallback(async (
     cellId: string,
@@ -691,15 +687,31 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
     setActiveKernel(newKernel);
   }, [clearRuntimeFailure]);
 
+  const runtimeAvailability: NotebookRuntimeAvailability = !activeKernel
+    ? "unknown"
+    : notebookLanguage && notebookLanguage.toLowerCase() !== "python"
+      ? "unsupported"
+      : runtimeStatus === "loading"
+        ? "checking"
+        : runtimeStatus === "ready"
+          ? "ready"
+          : runtimeStatus === "error"
+            ? "error"
+            : hasValidatedRuntime
+              ? "error"
+              : "unknown";
+
   return {
     executionState,
     currentCellId,
     progress,
     kernel: activeKernel,
     runtimeStatus,
+    runtimeAvailability,
     runtimeError,
     runtimeProblems,
     runtimeMeta,
+    hasValidatedRuntime,
     prepareRuntime,
     runAll,
     runAllAbove,

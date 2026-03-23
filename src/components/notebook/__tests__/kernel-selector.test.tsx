@@ -56,6 +56,23 @@ describe("KernelSelector", () => {
     });
   });
 
+  it("挂载时不会自动探测运行环境，只有用户打开下拉时才探测", async () => {
+    isTauriHostMock.mockReturnValue(true);
+    detectPythonEnvironments.mockResolvedValue([]);
+
+    const onKernelChange = vi.fn();
+    render(<Harness initialKernel={null} onKernelChange={onKernelChange} cwd="C:/workspace" />);
+
+    expect(detectPythonEnvironments).not.toHaveBeenCalled();
+    expect(onKernelChange).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /选择运行器/ }));
+
+    await waitFor(() => {
+      expect(detectPythonEnvironments).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("桌面端检测到本地 Python 时默认优先选择本地内核", async () => {
     isTauriHostMock.mockReturnValue(true);
     detectPythonEnvironments.mockResolvedValue([
@@ -69,6 +86,8 @@ describe("KernelSelector", () => {
 
     const onKernelChange = vi.fn();
     render(<Harness initialKernel={null} onKernelChange={onKernelChange} cwd="C:/workspace" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /选择运行器/ }));
 
     await waitFor(() => {
       expect(onKernelChange).toHaveBeenCalledWith(expect.objectContaining({
@@ -107,6 +126,8 @@ describe("KernelSelector", () => {
 
     render(<Harness initialKernel={currentKernel} onKernelChange={onKernelChange} cwd="D:/workspace" />);
 
+    fireEvent.click(screen.getByRole("button", { name: /Pyodide（应急回退）/ }));
+
     await waitFor(() => {
       expect(onKernelChange).toHaveBeenCalledWith(expect.objectContaining({
         runnerType: "python-local",
@@ -122,6 +143,8 @@ describe("KernelSelector", () => {
     const onKernelChange = vi.fn();
     render(<Harness initialKernel={null} onKernelChange={onKernelChange} />);
 
+    fireEvent.click(screen.getByRole("button", { name: /选择运行器/ }));
+
     await waitFor(() => {
       expect(onKernelChange).toHaveBeenCalledWith(expect.objectContaining({
         runnerType: "python-pyodide",
@@ -131,9 +154,8 @@ describe("KernelSelector", () => {
 
     await waitFor(() => {
       expect(screen.queryByText("检测运行环境...")).toBeNull();
-      expect(screen.getByRole("button", { name: /Pyodide（浏览器内核）/ })).toBeTruthy();
+      expect(screen.getAllByRole("button", { name: /Pyodide（浏览器内核）/ }).length).toBeGreaterThan(0);
     });
-    fireEvent.click(screen.getByRole("button", { name: /Pyodide（浏览器内核）/ }));
     expect(screen.queryByText("当前环境：网页运行时")).not.toBeNull();
     expect(screen.queryByText("Browser")).not.toBeNull();
   });

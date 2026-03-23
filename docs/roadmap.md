@@ -11,6 +11,7 @@
 - 代码文件与 editable Markdown 的 execution dock 已支持折叠、拖拽调整高度与 pane 级记忆
 - Notebook Markdown Cell 已复用现有 Live Preview / Obsidian 级编辑内核，默认 `Live` 并支持切到 `Source`
 - Notebook 已收口到真实的本地持久 Python session，运行前先做 runtime 校验与 `ready` 握手
+- Notebook 首屏已调整为惰性启动：打开 `.ipynb` 只恢复已知运行器状态，不自动探测/起会话/抢占主界面报错
 - `.ipynb` 已保留 `raw` cell，非 Python Notebook 明确禁跑
 - editable Markdown 主链路里的 Live Preview code block 已具备运行入口，并统一接到底部 `Run / Problems` dock
 - 代码文件、Notebook code cell、editable Markdown code block 已统一到 `ExecutionProblem` 问题模型与 surface-local runner health
@@ -18,6 +19,9 @@
 - `Runner Diagnostics` 已支持主动验证 Notebook 本地 Python 会话启动，不再只是静态健康信息页
 - 只读 Markdown renderer 的代码执行入口已关闭，避免继续维护半接通路径
 - PDF 首次打开默认改为自适应宽度填充，避免阅读入口停在固定手动缩放
+- PDF 已进入条目工作区阶段：单个 PDF 可建立 companion item folder，并直接创建关联 `Markdown` 阅读笔记、`Notebook (.ipynb)` 与批注 Markdown
+- PDF 批注已支持同步成独立 Markdown 文件并从条目区直接打开
+- PDF 文本选区与复制链已开始产品化收口：临时 overlay 与 `Ctrl+C / Cmd+C` 文本复制优先级已进入主链
 - QA 基线已收敛到 `lint` / `typecheck` / `test:run` / `build` / `tauri:build` 可稳定通过
 - Markdown 导出已产品化进入主界面，支持 `.docx` / `.pdf`、`clean` / `appendix` / `study-note` 和“当前渲染视图”导出
 - AI Workbench 已形成主闭环：
@@ -45,7 +49,7 @@
   - `/diagnostics/image-annotation`
   - `/diagnostics/selection-ai`
   - `/diagnostics/runner`
-- QA 基线已进一步收敛到 `lint` / `typecheck` / `test:run` / `test:browser-regression` / `build` / `tauri:build` 可稳定通过
+- QA 基线已进一步收敛到 `lint` / `typecheck` / `test:run` / `build` / `tauri:build`；`test:browser-regression` 中 PDF 深页切文件恢复仍在继续收口
 
 ### 当前阶段仍然刻意不做
 
@@ -208,7 +212,7 @@
 - 草稿沉淀已经模板化
 - 批量整理工作流从 proposal 到 writeback 可以稳定连续完成
 - `lint` / `typecheck` / `test:run` / `build` / `tauri:build` 继续全绿
-- `test:browser-regression` 继续可稳定通过
+- `test:browser-regression` 重新回到稳定通过，尤其是 PDF 深页切文件恢复不再受 `react-pdf-highlighter / pdfjs` teardown race 影响
 
 ---
 

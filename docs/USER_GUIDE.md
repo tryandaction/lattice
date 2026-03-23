@@ -108,6 +108,11 @@
 3. 选择高亮颜色
 4. 点击高亮区域可添加评论
 
+补充说明：
+- 选中文本后，Lattice 会尽量用自己的临时高亮反馈替代浏览器原生蓝选区
+- 颜色菜单弹出后，会清理原生蓝选区，避免论文双栏版式里出现超出文本范围的长蓝块
+- `Ctrl+C / Cmd+C` 会优先复制当前 PDF 文本选区，而不是误复制之前选中的批注内容
+
 ### 区域选择
 
 1. 切换到「区域」模式（或按住 Alt 键）
@@ -137,6 +142,27 @@
 - 文字选择高亮使用更自然的淡蓝色，并适配浅色/深色主题
 - 在分屏模式下，鼠标位于哪个 PDF pane，`Ctrl+滚轮` 与缩放快捷键就只作用于哪个 pane
 - 只要窗口未关闭，切换到其他已打开文件再切回，PDF 会尽量恢复之前的阅读进度与缩放状态
+
+### PDF 条目工作区
+
+Lattice 现在把单个 PDF 提升成一个可扩展的“条目工作区”，而不是只把它当成一个孤立阅读文件。
+
+你现在可以直接在 PDF 左侧条目区执行这些动作：
+
+- 建立 PDF 对应的 companion item folder
+- 新建 `Markdown` 阅读笔记
+- 新建 `Notebook (.ipynb)`
+- 把当前 PDF 批注同步到独立 `Markdown` 文件
+- 直接打开这些关联文件
+- 在 Explorer 中定位当前 PDF 的条目目录
+
+当前实现约定：
+
+- companion item folder 默认建立在 PDF 同级目录下，例如 `papers/rydberg-review.item`
+- 条目元数据保存在 `.lattice/pdf-items/<fileId>.json`
+- 批注 Markdown 默认写入 companion item folder 下的 `_annotations.md`
+
+这意味着 PDF 不再只是“被阅读”，而是可以像文献条目一样挂接阅读笔记、实验 notebook 和批注沉淀文件。
 
 ---
 
@@ -403,8 +429,9 @@ AI 设置页现在提供连接测试：
 **运行代码**
 
 1. 打开 `.ipynb` 文件
-2. 点击代码单元格的「运行」按钮
-3. 桌面版会优先使用本地 Python；网页版会加载 Pyodide
+2. 默认只恢复上次已知运行器状态，不会在打开瞬间自动启动本地会话
+3. 点击代码单元格的「运行」按钮或顶部「验证环境」
+4. 桌面版会优先使用本地 Python；网页版会加载 Pyodide
 
 **Markdown 单元格**
 
@@ -417,6 +444,7 @@ AI 设置页现在提供连接测试：
 - **桌面版**：优先发现系统 Python、`.venv`、`venv`、`conda`，并复用同一个本地 Python 会话运行 Notebook 单元
 - **网页版**：继续使用 Pyodide 作为浏览器内 Python 运行时
 - **无本地 Python 的桌面环境**：会明确提示当前只剩 Pyodide 应急回退，不再默认把浏览器内核伪装成本地主运行器
+- **打开文件时**：Notebook 默认不会自动起本地 Python 会话，也不会一上来用大面积错误污染首屏
 - **工作区偏好记忆**：会按当前工作区记住最近选择的解释器与默认运行器偏好，重开后继续恢复
 - **运行器管理**：`KernelSelector`、代码文件运行区和 Markdown 代码块运行区都可以打开统一的 Workspace Runner Manager，查看解释器、切换工作区默认解释器、恢复自动选择
 - **来源标签**：运行面板会明确标出当前运行器来自“当前入口选择 / 工作区默认 / 自动探测 / 回退”
@@ -561,6 +589,12 @@ AI 设置页现在提供连接测试：
 - 批注保存在 `.lattice/annotations/` 目录
 - 确保有写入权限
 - 检查是否在正确的文件夹中打开
+
+### PDF 条目文件在哪里
+
+- PDF 原始批注仍保存在 `.lattice/annotations/`
+- PDF 条目 manifest 保存在 `.lattice/pdf-items/`
+- 与 PDF 关联的 `Markdown / Notebook / 批注 Markdown` 默认保存在 PDF 同级的 `.item` 目录
 
 ### Python 代码无法运行
 
