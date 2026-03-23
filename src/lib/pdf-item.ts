@@ -28,6 +28,7 @@ export interface PdfItemNoteSummary {
   path: string;
   fileName: string;
   type: "note" | "notebook" | "annotation-note";
+  handle?: FileSystemFileHandle;
 }
 
 function isPdfItemManifest(value: unknown): value is PdfItemManifest {
@@ -362,10 +363,14 @@ export async function listPdfItemNotes(
     const fileName = entry.name;
     if (fileName.toLowerCase().endsWith(".md")) {
       const path = joinPath(manifest.itemFolderPath, fileName);
+      const isAnnotationNote =
+        manifest.annotationNotePath === path ||
+        fileName === DEFAULT_ANNOTATIONS_NOTE_NAME;
       notes.push({
         path,
         fileName,
-        type: manifest.annotationNotePath === path ? "annotation-note" : "note",
+        type: isAnnotationNote ? "annotation-note" : "note",
+        handle: entry as FileSystemFileHandle,
       });
       continue;
     }
@@ -375,6 +380,7 @@ export async function listPdfItemNotes(
         path: joinPath(manifest.itemFolderPath, fileName),
         fileName,
         type: "notebook",
+        handle: entry as FileSystemFileHandle,
       });
     }
   }

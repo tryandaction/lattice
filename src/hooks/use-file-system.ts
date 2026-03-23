@@ -28,6 +28,8 @@ import {
   type DirectoryOperationResult,
   type EntryOperationResult,
 } from "@/lib/file-operations";
+import { generateFileId } from "@/lib/universal-annotation-storage";
+import { listPdfItemNotes, loadPdfItemManifest } from "@/lib/pdf-item";
 import { emitVaultChange, emitVaultDelete, emitVaultRename } from "@/lib/plugins/runtime";
 
 /**
@@ -139,13 +141,82 @@ async function ensureQaFixtures(dir: FileSystemDirectoryHandle): Promise<void> {
   }
 }
 
+function isPdfCompanionDirectoryName(name: string): boolean {
+  return name.toLowerCase().endsWith(".item");
+}
+
+function buildPdfVirtualChildNode(summary: Awaited<ReturnType<typeof listPdfItemNotes>>[number], parentPdfPath: string): FileNode | null {
+  if (!summary.handle) {
+    return null;
+  }
+
+  const extension = getExtension(summary.fileName);
+  return {
+    name: summary.fileName,
+    kind: "file",
+    handle: summary.handle,
+    extension,
+    path: summary.path,
+    isVirtual: true,
+    parentPdfPath,
+    entryRole: summary.type === "annotation-note"
+      ? "pdf-annotations"
+      : summary.type === "notebook"
+        ? "pdf-notebook"
+        : "pdf-note",
+    badgeLabel: summary.type === "annotation-note"
+      ? "批注"
+      : summary.type === "notebook"
+        ? "Notebook"
+        : "Markdown",
+  };
+}
+
+async function attachPdfItemChildren(
+  rootHandle: FileSystemDirectoryHandle,
+  node: FileNode,
+): Promise<FileNode> {
+  if (node.extension !== "pdf" || node.isVirtual) {
+    return node;
+  }
+
+  try {
+    const manifest = await loadPdfItemManifest(rootHandle, generateFileId(node.path), node.path);
+    const notes = await listPdfItemNotes(rootHandle, manifest);
+    const children = notes
+      .map((summary) => buildPdfVirtualChildNode(summary, node.path))
+      .filter((child): child is FileNode => child !== null);
+
+    if (children.length === 0) {
+      return {
+        ...node,
+        children: [],
+        isExpanded: false,
+      };
+    }
+
+    return {
+      ...node,
+      children,
+      isExpanded: node.isExpanded ?? false,
+    };
+  } catch {
+    return {
+      ...node,
+      children: [],
+      isExpanded: false,
+    };
+  }
+}
+
 /**
  * Recursively read a directory and build a tree structure
  * Filters files by allowed extensions and excludes ignored directories
  */
 async function readDirectoryRecursive(
   handle: FileSystemDirectoryHandle,
-  parentPath: string = ""
+  parentPath: string = "",
+  rootHandle: FileSystemDirectoryHandle = handle,
 ): Promise<TreeNode[]> {
   const children: TreeNode[] = [];
   const currentPath = parentPath ? `${parentPath}/${handle.name}` : handle.name;
@@ -153,12 +224,12 @@ async function readDirectoryRecursive(
   for await (const entry of handle.values()) {
     if (entry.kind === "directory") {
       // Skip ignored directories
-      if (isIgnoredDirectory(entry.name)) {
+      if (isIgnoredDirectory(entry.name) || isPdfCompanionDirectoryName(entry.name)) {
         continue;
       }
 
       const dirHandle = entry as FileSystemDirectoryHandle;
-      const dirChildren = await readDirectoryRecursive(dirHandle, currentPath);
+      const dirChildren = await readDirectoryRecursive(dirHandle, currentPath, rootHandle);
 
       // Only include directories that have allowed files
       if (dirChildren.length > 0) {
@@ -184,14 +255,23 @@ async function readDirectoryRecursive(
           handle: entry as FileSystemFileHandle,
           extension,
           path: `${currentPath}/${entry.name}`,
+          children: [],
+          isExpanded: false,
         };
         children.push(fileNode);
       }
     }
   }
 
+  const projectedChildren = await Promise.all(children.map(async (child) => {
+    if (child.kind === "file") {
+      return attachPdfItemChildren(rootHandle, child);
+    }
+    return child;
+  }));
+
   // Sort: directories first, then files, alphabetically
-  return children.sort((a, b) => {
+  return projectedChildren.sort((a, b) => {
     if (a.kind !== b.kind) {
       return a.kind === "directory" ? -1 : 1;
     }
@@ -204,6 +284,9 @@ function collectExpandedDirectoryPaths(node: DirectoryNode | null): Set<string> 
 
   const visit = (current: TreeNode) => {
     if (current.kind === "file") {
+      if (current.children?.length && current.isExpanded) {
+        expandedPaths.add(current.path);
+      }
       return;
     }
 
@@ -224,7 +307,12 @@ function collectExpandedDirectoryPaths(node: DirectoryNode | null): Set<string> 
 function applyExpandedState(children: TreeNode[], expandedPaths: Set<string>): TreeNode[] {
   return children.map((child) => {
     if (child.kind === "file") {
-      return child;
+      return child.children?.length
+        ? {
+            ...child,
+            isExpanded: expandedPaths.has(child.path),
+          }
+        : child;
     }
 
     return {

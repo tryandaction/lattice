@@ -167,6 +167,7 @@ interface FileNodeProps {
 }
 
 function FileNodeComponent({ node, depth }: FileNodeProps) {
+  const toggleDirectory = useWorkspaceStore((state) => state.toggleDirectory);
   const openFileInPane = useWorkspaceStore((state) => state.openFileInPane);
   const closeTabsByPath = useWorkspaceStore((state) => state.closeTabsByPath);
   const updateTabPath = useWorkspaceStore((state) => state.updateTabPath);
@@ -190,6 +191,8 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   const isRenaming = renamingPath === node.path;
   const isSelected = selectedPath === node.path;
   const isCutItem = clipboard?.mode === "cut" && clipboard.path === node.path;
+  const hasChildren = Boolean(node.children?.length);
+  const ChevronIcon = node.isExpanded ? ChevronDown : ChevronRight;
 
   const { openCount, isActiveFile } = useMemo(() => {
     const paneIds = getAllPaneIds(layout.root);
@@ -284,6 +287,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
           <div className="flex items-center gap-2">
+            <span className="w-4 shrink-0" />
             <FileIcon
               extension={node.extension}
               className="h-4 w-4 shrink-0 text-muted-foreground"
@@ -310,34 +314,73 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
           )}
         </div>
       ) : (
-        <button
-          draggable
-          onClick={() => {
-            setSelection(node.path, "file");
-            openFileInPane(layout.activePaneId, node.handle, node.path);
-          }}
-          onContextMenu={handleContextMenu}
-          onDragStart={handleDragStart}
-          onDragEnd={() => setDragOverPath(null)}
+        <div
           className={cn(
             "flex w-full items-center gap-2 px-2 py-1 text-left text-sm transition-colors",
-            "hover:bg-accent/50 focus:bg-accent focus:outline-none",
             (isSelected || isActiveFile) && "bg-accent",
             dragOverPath === node.path && "ring-1 ring-primary/50",
             isCutItem && "opacity-55"
           )}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
-          <FileIcon
-            extension={node.extension}
-            className="h-4 w-4 shrink-0 text-muted-foreground"
-          />
-          <span className="truncate">{node.name}</span>
-          {openCount > 1 && (
-            <span className="ml-auto text-xs text-muted-foreground">{openCount}</span>
+          {hasChildren ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                toggleDirectory(node.path);
+              }}
+              className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
+              title={node.isExpanded ? "折叠条目子项" : "展开条目子项"}
+            >
+              <ChevronIcon className="h-4 w-4 shrink-0" />
+            </button>
+          ) : (
+            <span className="w-4 shrink-0" />
           )}
-        </button>
+          <button
+            draggable
+            onClick={() => {
+              setSelection(node.path, "file");
+              openFileInPane(layout.activePaneId, node.handle, node.path);
+            }}
+            onContextMenu={handleContextMenu}
+            onDragStart={handleDragStart}
+            onDragEnd={() => setDragOverPath(null)}
+            className={cn(
+              "flex min-w-0 flex-1 items-center gap-2 rounded px-0 py-0 text-left transition-colors",
+              "hover:bg-accent/50 focus:bg-accent focus:outline-none"
+            )}
+          >
+            <FileIcon
+              extension={node.extension}
+              className="h-4 w-4 shrink-0 text-muted-foreground"
+            />
+            <span className="truncate">{node.name}</span>
+            {node.badgeLabel ? (
+              <span className="ml-2 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                {node.badgeLabel}
+              </span>
+            ) : null}
+            {openCount > 1 && (
+              <span className="ml-auto text-xs text-muted-foreground">{openCount}</span>
+            )}
+          </button>
+        </div>
       )}
+
+      {hasChildren && node.isExpanded ? (
+        <div className="animate-in fade-in-0 slide-in-from-top-1 duration-150">
+          {node.children!.map((child) => (
+            <TreeNodeComponent
+              key={`${node.path}::${child.path}`}
+              node={child}
+              depth={depth + 1}
+            />
+          ))}
+        </div>
+      ) : null}
 
       {contextMenu && (
         <FileContextMenu

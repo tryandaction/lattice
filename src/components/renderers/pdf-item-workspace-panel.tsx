@@ -17,8 +17,9 @@ import {
   type PdfItemManifest,
   type PdfItemNoteSummary,
 } from "@/lib/pdf-item";
-import { resolveEntry, resolveDirectoryHandle } from "@/lib/file-operations";
+import { getParentPath, resolveEntry, resolveDirectoryHandle } from "@/lib/file-operations";
 import type { AnnotationItem } from "@/types/universal-annotation";
+import type { FileNode, TreeNode } from "@/types/file-system";
 
 interface PdfItemWorkspacePanelProps {
   rootHandle: FileSystemDirectoryHandle;
@@ -53,6 +54,7 @@ export function PdfItemWorkspacePanel({
   const activePaneId = useWorkspaceStore((state) => state.layout.activePaneId);
   const splitPane = useWorkspaceStore((state) => state.splitPane);
   const openFileInPane = useWorkspaceStore((state) => state.openFileInPane);
+  const toggleDirectory = useWorkspaceStore((state) => state.toggleDirectory);
   const setSelectedDirectoryPath = useWorkspaceStore((state) => state.setSelectedDirectoryPath);
   const [manifest, setManifest] = useState<PdfItemManifest | null>(null);
   const [notes, setNotes] = useState<PdfItemNoteSummary[]>([]);
@@ -83,6 +85,48 @@ export function PdfItemWorkspacePanel({
     }
   }, [fileId, filePath, rootHandle]);
 
+  const findTreeNodeByPath = useCallback((node: TreeNode | null, targetPath: string): TreeNode | null => {
+    if (!node) {
+      return null;
+    }
+
+    if (node.path === targetPath) {
+      return node;
+    }
+
+    if (node.kind === "directory") {
+      for (const child of node.children) {
+        const match = findTreeNodeByPath(child, targetPath);
+        if (match) {
+          return match;
+        }
+      }
+      return null;
+    }
+
+    if (node.children?.length) {
+      for (const child of node.children) {
+        const match = findTreeNodeByPath(child, targetPath);
+        if (match) {
+          return match;
+        }
+      }
+    }
+
+    return null;
+  }, []);
+
+  const revealPdfEntry = useCallback((expandChildren = false) => {
+    useExplorerStore.getState().setSelection(filePath, "file");
+    setSelectedDirectoryPath(getParentPath(filePath));
+
+    const latestFileTree = useWorkspaceStore.getState().fileTree;
+    const pdfNode = findTreeNodeByPath(latestFileTree.root, filePath) as FileNode | null;
+    if (expandChildren && pdfNode?.children?.length && !pdfNode.isExpanded) {
+      toggleDirectory(filePath);
+    }
+  }, [filePath, findTreeNodeByPath, setSelectedDirectoryPath, toggleDirectory]);
+
   useEffect(() => {
     void loadItemState();
   }, [loadItemState]);
@@ -111,12 +155,13 @@ export function PdfItemWorkspacePanel({
       const resolvedManifest = await ensureWorkspace();
       await task(resolvedManifest);
       await loadItemState();
+      revealPdfEntry(true);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : String(actionError));
     } finally {
       setBusyAction(null);
     }
-  }, [ensureWorkspace, loadItemState]);
+  }, [ensureWorkspace, loadItemState, revealPdfEntry]);
 
   const handleCreateNote = useCallback((type: "note" | "notebook") => {
     const baseName = type === "note" ? "Reading Note" : "Lab Notebook";
@@ -158,9 +203,8 @@ export function PdfItemWorkspacePanel({
     if (!manifest) {
       return;
     }
-    setSelectedDirectoryPath(manifest.itemFolderPath);
-    useExplorerStore.getState().setSelection(manifest.itemFolderPath, "directory");
-  }, [manifest, setSelectedDirectoryPath]);
+    revealPdfEntry(true);
+  }, [manifest, revealPdfEntry]);
 
   const actionsDisabled = Boolean(busyAction);
 

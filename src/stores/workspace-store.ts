@@ -66,6 +66,12 @@ function toggleNodeExpansion(
   targetPath: string
 ): TreeNode {
   if (node.kind === "file") {
+    if (node.path === targetPath && node.children?.length) {
+      return {
+        ...node,
+        isExpanded: !node.isExpanded,
+      };
+    }
     return node;
   }
 

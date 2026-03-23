@@ -14,6 +14,12 @@ export interface FileNode {
   handle: FileSystemFileHandle;
   extension: string;
   path: string;
+  children?: TreeNode[];
+  isExpanded?: boolean;
+  isVirtual?: boolean;
+  parentPdfPath?: string;
+  entryRole?: "pdf-note" | "pdf-notebook" | "pdf-annotations";
+  badgeLabel?: string;
 }
 
 /**
