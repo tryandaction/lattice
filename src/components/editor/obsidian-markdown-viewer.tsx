@@ -64,6 +64,7 @@ import type { ExecutionProblem } from "@/lib/runner/types";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useExecutionDockLayout } from "@/hooks/use-execution-dock-layout";
 import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
+import { stripLeadingFrontmatter } from "@/lib/markdown-reading";
 
 // Lazy load components
 const LivePreviewEditor = dynamic(
@@ -73,6 +74,11 @@ const LivePreviewEditor = dynamic(
 
 const OutlinePanel = dynamic(
   () => import("./codemirror/live-preview/outline-panel").then((mod) => mod.OutlinePanel),
+  { ssr: false }
+);
+
+const MarkdownRenderer = dynamic(
+  () => import("@/components/renderers/markdown-renderer").then((mod) => mod.MarkdownRenderer),
   { ssr: false }
 );
 
@@ -125,6 +131,8 @@ interface ObsidianMarkdownViewerProps {
   rootHandle?: FileSystemDirectoryHandle | null;
   /** File path relative to workspace root (for resolving relative image paths) */
   filePath?: string;
+  /** Render behavior variant for system-managed markdown */
+  variant?: "document" | "system-index";
 }
 
 /**
@@ -215,6 +223,7 @@ export function ObsidianMarkdownViewer({
   fileId, // Unique file identifier
   rootHandle,
   filePath,
+  variant = "document",
 }: ObsidianMarkdownViewerProps) {
   const [mode, setMode] = useState<ViewMode>(initialMode);
   const [localContent, setLocalContent] = useState(content);
@@ -431,14 +440,19 @@ export function ObsidianMarkdownViewer({
   useEffect(() => {
     if (!filePath || !pendingNavigation) return;
     if (pendingNavigation.filePath !== filePath) return;
-    if (pendingNavigation.target.type !== "workspace_heading") return;
+    let line: number | undefined;
+    if (pendingNavigation.target.type === "workspace_heading") {
+      const headingOutline = outline.length > 0
+        ? outline
+        : buildOutlineTree(parseHeadings(localContent));
+      line = findHeadingLine(headingOutline, pendingNavigation.target.heading);
+    } else if (pendingNavigation.target.type === "code_line") {
+      line = pendingNavigation.target.line;
+    } else {
+      return;
+    }
 
-    const headingOutline = outline.length > 0
-      ? outline
-      : buildOutlineTree(parseHeadings(localContent));
-    const line = findHeadingLine(headingOutline, pendingNavigation.target.heading);
     if (!line) return;
-
     editorRef.current?.scrollToLine(line);
     window.setTimeout(() => {
       editorRef.current?.flashLine(line);
@@ -571,6 +585,8 @@ export function ObsidianMarkdownViewer({
     }
   }, []);
 
+  const readingModeContent = useMemo(() => stripLeadingFrontmatter(localContent), [localContent]);
+
   const durationLabel = formatDuration(summary.durationMs);
   const shouldRenderRunDock = showRunDock || outputs.length > 0 || problems.length > 0 || isRunning || isLoading;
   const renderEditorPane = useCallback(() => (
@@ -586,26 +602,39 @@ export function ObsidianMarkdownViewer({
       )}
 
       <div className="flex-1 min-h-0 overflow-auto">
-        <LivePreviewEditor
-          key={fileId || fileName}
-          ref={editorRef}
-          content={localContent}
-          onChange={handleContentChange}
-          mode={mode}
-          onModeChange={handleModeChange}
-          showLineNumbers={mode === 'source'}
-          showFoldGutter={mode === 'live'}
-          readOnly={mode === 'reading'}
-          onOutlineChange={handleOutlineChange}
-          onWikiLinkClick={handleLinkNavigate}
-          onLinkNavigate={handleLinkNavigate}
-          onSave={handleSave}
-          fileId={fileId || fileName}
-          className="min-h-full"
-          rootHandle={rootHandle}
-          filePath={filePath}
-          onCodeBlockRun={handleCodeBlockRun}
-        />
+        {mode === "reading" || (variant === "system-index" && mode !== "source") ? (
+          <div className="h-full overflow-auto px-6 py-4">
+            <MarkdownRenderer
+              content={readingModeContent}
+              fileName={fileName}
+              paneId={paneId}
+              filePath={filePath}
+              rootHandle={rootHandle}
+              variant="system-index"
+            />
+          </div>
+        ) : (
+          <LivePreviewEditor
+            key={fileId || fileName}
+            ref={editorRef}
+            content={localContent}
+            onChange={handleContentChange}
+            mode={mode}
+            onModeChange={handleModeChange}
+            showLineNumbers={mode === 'source'}
+            showFoldGutter={mode === 'live'}
+            readOnly={variant === "system-index" && mode === "live"}
+            onOutlineChange={handleOutlineChange}
+            onWikiLinkClick={handleLinkNavigate}
+            onLinkNavigate={handleLinkNavigate}
+            onSave={handleSave}
+            fileId={fileId || fileName}
+            className="min-h-full"
+            rootHandle={rootHandle}
+            filePath={filePath}
+            onCodeBlockRun={handleCodeBlockRun}
+          />
+        )}
       </div>
     </div>
   ), [
@@ -623,8 +652,11 @@ export function ObsidianMarkdownViewer({
     localContent,
     mode,
     outline,
+    paneId,
+    readingModeContent,
     rootHandle,
     showOutline,
+    variant,
   ]);
 
   const renderRunDock = useCallback((expanded: boolean) => (

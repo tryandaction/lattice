@@ -830,3 +830,45 @@ export function updateTabsPathPrefix(
 
   return transform(root);
 }
+
+export function updateTabsFile(
+  root: LayoutNode,
+  oldPath: string,
+  newPath: string,
+  fileHandle: FileSystemFileHandle
+): LayoutNode {
+  const newFileName = newPath.split('/').pop() || newPath;
+
+  function transform(node: LayoutNode): LayoutNode {
+    if (isPaneNode(node)) {
+      const newTabs = node.tabs.map((tab) => {
+        if (tab.filePath === oldPath) {
+          return {
+            ...tab,
+            filePath: newPath,
+            fileName: newFileName,
+            fileHandle,
+          };
+        }
+        return tab;
+      });
+
+      const hasChanges = newTabs.some((tab, index) => tab !== node.tabs[index]);
+      if (!hasChanges) {
+        return node;
+      }
+
+      return {
+        ...node,
+        tabs: newTabs,
+      };
+    }
+
+    return {
+      ...node,
+      children: node.children.map((child) => transform(child)),
+    };
+  }
+
+  return transform(root);
+}

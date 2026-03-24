@@ -449,7 +449,35 @@ async function testPerformanceBaseline(page, baseUrl) {
   await runWithRetries("performance-baseline", 2, async () => {
     await page.goto(`${baseUrl}/performance-test`, { waitUntil: "domcontentloaded" });
     await page.getByTestId("performance-test-ready").waitFor({ timeout: 120000 });
-    await page.getByTestId("run-performance-baseline").click();
+    const runButton = page.getByTestId("run-performance-baseline");
+    await runButton.waitFor({ timeout: 120000 });
+
+    let started = false;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await runButton.click({ force: true });
+      try {
+        await page.waitForFunction((id) => {
+          const value = document.querySelector(`[data-testid="${id}"]`)?.textContent?.trim();
+          return value === "running" || value === "completed" || value === "failed";
+        }, "performance-baseline-status", { timeout: 15000 });
+        started = true;
+        break;
+      } catch {
+        if (attempt === 2) {
+          throw new Error("Performance baseline did not start after repeated click attempts.");
+        }
+      }
+    }
+
+    if (!started) {
+      throw new Error("Performance baseline did not start.");
+    }
+
+    await page.waitForFunction((id) => {
+      const value = document.querySelector(`[data-testid="${id}"]`)?.textContent?.trim();
+      return value === "completed" || value === "failed";
+    }, "performance-baseline-status", { timeout: 180000 });
+
     await waitForExactText(page, "performance-baseline-status", "completed", "Performance baseline overall status");
     await expectText(page.getByTestId("performance-baseline-failures"), "0", "Performance baseline failure count");
     await expectText(page.getByTestId("performance-baseline-count"), "3", "Performance baseline result count");

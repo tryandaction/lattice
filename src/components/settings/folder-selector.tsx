@@ -3,6 +3,8 @@
 import { FolderOpen, Trash2, AlertCircle, RefreshCw } from 'lucide-react';
 import { useState, useCallback, useEffect } from 'react';
 import { useI18n } from '@/hooks/use-i18n';
+import { readDirectoryRecursive } from '@/hooks/use-file-system';
+import { createDesktopDirectoryHandle } from '@/lib/desktop-file-system';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 import { isTauri } from '@/lib/storage-adapter';
@@ -19,9 +21,11 @@ export function FolderSelector({ compact = false, autoOpen = true, showNotFoundW
   const { t } = useI18n();
   const defaultFolder = useSettingsStore((state) => state.settings.defaultFolder);
   const setDefaultFolder = useSettingsStore((state) => state.setDefaultFolder);
+  const updateSetting = useSettingsStore((state) => state.updateSetting);
   const setRootHandle = useWorkspaceStore((state) => state.setRootHandle);
   const setFileTree = useWorkspaceStore((state) => state.setFileTree);
   const setLoading = useWorkspaceStore((state) => state.setLoading);
+  const setWorkspaceRootPath = useWorkspaceStore((state) => state.setWorkspaceRootPath);
   
   const [error, setError] = useState<string | null>(null);
   const [isSelecting, setIsSelecting] = useState(false);
@@ -46,52 +50,6 @@ export function FolderSelector({ compact = false, autoOpen = true, showNotFoundW
 
   // Build file tree from directory handle
   const buildFileTree = useCallback(async (handle: FileSystemDirectoryHandle) => {
-    const { isAllowedExtension, isIgnoredDirectory, getExtension } = await import('@/lib/constants');
-    
-    async function readDirectoryRecursive(
-      dirHandle: FileSystemDirectoryHandle,
-      parentPath: string = ""
-    ): Promise<import('@/types/file-system').TreeNode[]> {
-      const children: import('@/types/file-system').TreeNode[] = [];
-      const currentPath = parentPath ? `${parentPath}/${dirHandle.name}` : dirHandle.name;
-
-      for await (const entry of dirHandle.values()) {
-        if (entry.kind === "directory") {
-          if (isIgnoredDirectory(entry.name)) continue;
-
-          const childHandle = entry as FileSystemDirectoryHandle;
-          const dirChildren = await readDirectoryRecursive(childHandle, currentPath);
-
-          if (dirChildren.length > 0) {
-            children.push({
-              name: entry.name,
-              kind: "directory",
-              handle: childHandle,
-              children: dirChildren,
-              path: `${currentPath}/${entry.name}`,
-              isExpanded: false,
-            });
-          }
-        } else {
-          const extension = getExtension(entry.name);
-          if (isAllowedExtension(extension)) {
-            children.push({
-              name: entry.name,
-              kind: "file",
-              handle: entry as FileSystemFileHandle,
-              extension,
-              path: `${currentPath}/${entry.name}`,
-            });
-          }
-        }
-      }
-
-      return children.sort((a, b) => {
-        if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
-    }
-
     const children = await readDirectoryRecursive(handle);
     return {
       root: {
@@ -123,8 +81,19 @@ export function FolderSelector({ compact = false, autoOpen = true, showNotFoundW
         );
         if (selected) {
           await setDefaultFolder(selected);
-          // Note: In Tauri, we can't directly open the folder in the web view
-          // The folder will be opened on next app start
+          if (autoOpen) {
+            setLoading(true);
+            try {
+              const handle = createDesktopDirectoryHandle(selected);
+              setRootHandle(handle);
+              setWorkspaceRootPath(selected);
+              const fileTree = await buildFileTree(handle);
+              setFileTree(fileTree);
+              await updateSetting('lastOpenedFolder', selected);
+            } finally {
+              setLoading(false);
+            }
+          }
         }
       } else {
         // Web: Use File System Access API
@@ -141,8 +110,10 @@ export function FolderSelector({ compact = false, autoOpen = true, showNotFoundW
             setLoading(true);
             try {
               setRootHandle(handle);
+              setWorkspaceRootPath(handle.name);
               const fileTree = await buildFileTree(handle);
               setFileTree(fileTree);
+              await updateSetting('lastOpenedFolder', handle.name);
             } finally {
               setLoading(false);
             }

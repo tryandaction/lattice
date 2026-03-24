@@ -4,8 +4,8 @@ import { buildPdfAnnotationsMarkdown, getDefaultPdfItemFolderPath } from "@/lib/
 
 describe("pdf-item utils", () => {
   it("derives a visible companion item folder next to the pdf", () => {
-    expect(getDefaultPdfItemFolderPath("papers/rydberg-review.pdf")).toBe("papers/rydberg-review.item");
-    expect(getDefaultPdfItemFolderPath("rydberg review.pdf")).toBe("rydberg review.item");
+    expect(getDefaultPdfItemFolderPath("papers/rydberg-review.pdf")).toBe("papers/.rydberg-review.lattice");
+    expect(getDefaultPdfItemFolderPath("rydberg review.pdf")).toBe(".rydberg review.lattice");
   });
 
   it("builds markdown output for pdf annotations", () => {
@@ -45,15 +45,25 @@ describe("pdf-item utils", () => {
 
     const markdown = buildPdfAnnotationsMarkdown({
       fileName: "rydberg-review.pdf",
-      pdfPath: "papers/rydberg-review.pdf",
+      manifest: {
+        version: 2,
+        itemId: "papers-rydberg-review.pdf",
+        pdfPath: "papers/rydberg-review.pdf",
+        itemFolderPath: "papers/.rydberg-review.lattice",
+        overviewPath: "papers/.rydberg-review.lattice/_overview.md",
+        annotationIndexPath: "papers/.rydberg-review.lattice/_annotations.md",
+        createdAt: 1710000000000,
+        updatedAt: 1710000000000,
+      },
       annotations,
     });
 
     expect(markdown).toContain("# rydberg-review.pdf Annotations");
-    expect(markdown).toContain("Source PDF: [[rydberg-review.pdf]]");
+    expect(markdown).toContain("Source PDF: [rydberg-review.pdf](../rydberg-review.pdf)");
     expect(markdown).toContain("## Page 2");
     expect(markdown).toContain("## Page 4");
     expect(markdown).toContain("Move this into the reading note.");
-    expect(markdown).toContain("papers/rydberg-review.pdf#page=2");
+    expect(markdown).toContain("../rydberg-review.pdf#page=2");
+    expect(markdown).toContain("../rydberg-review.pdf#annotation=ann-1");
   });
 });

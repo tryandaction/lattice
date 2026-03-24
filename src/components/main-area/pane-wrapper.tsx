@@ -9,14 +9,32 @@ import { DropZones } from "./drop-zone";
 import { UniversalFileViewer } from "./universal-file-viewer";
 import { SaveReminderDialog } from "@/components/ui/save-reminder-dialog";
 import { useWorkspaceStore, type PaneId } from "@/stores/workspace-store";
+import { useExplorerStore } from "@/stores/explorer-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
+import { useFileSystem } from "@/hooks/use-file-system";
 import { findPane } from "@/lib/layout-utils";
 import { getFileExtension, isBinaryFile, isEditableFile } from "@/lib/file-utils";
 import { fastSaveFile } from "@/lib/fast-save";
-import { emitVaultChange } from "@/lib/plugins/runtime";
+import { emitVaultChange, emitVaultRename } from "@/lib/plugins/runtime";
+import { generateUniqueName, resolveEntry, renameFile as renameFileUtil } from "@/lib/file-operations";
 import type { TabState } from "@/types/layout";
 
 const EMPTY_TABS: TabState[] = [];
+
+const UNTITLED_MARKDOWN_PATTERN = /^Untitled(?:-\d+)?\.md$/i;
+
+function extractMarkdownTitle(content: string): string | null {
+  const normalized = content.startsWith("---\n")
+    ? (() => {
+        const endIndex = content.indexOf("\n---", 4);
+        return endIndex >= 0 ? content.slice(endIndex + 4) : content;
+      })()
+    : content;
+
+  const headingMatch = normalized.match(/^#\s+(.+?)\s*$/m);
+  const title = headingMatch?.[1]?.trim();
+  return title ? title : null;
+}
 
 export interface PaneWrapperProps {
   paneId: PaneId;
@@ -50,6 +68,10 @@ export function PaneWrapper({
   const setActiveTab = useWorkspaceStore((state) => state.setActiveTab);
   const closeTab = useWorkspaceStore((state) => state.closeTab);
   const setTabDirty = useWorkspaceStore((state) => state.setTabDirty);
+  const updateTabFile = useWorkspaceStore((state) => state.updateTabFile);
+  const selectedPath = useExplorerStore((state) => state.selectedPath);
+  const setExplorerSelection = useExplorerStore((state) => state.setSelection);
+  const { refreshDirectory } = useFileSystem();
 
   // Get pane data from layout
   const pane = findPane(layout.root, paneId);
@@ -335,6 +357,55 @@ export function PaneWrapper({
     };
   }, [paneId, setTabDirty]);
 
+  const maybeAutoRenameMarkdownFromTitle = useCallback(async (
+    tab: TabState,
+    nextContent: string,
+  ): Promise<TabState> => {
+    if (!rootHandle) {
+      return tab;
+    }
+
+    if (getFileExtension(tab.fileName) !== "md" || !UNTITLED_MARKDOWN_PATTERN.test(tab.fileName)) {
+      return tab;
+    }
+
+    const title = extractMarkdownTitle(nextContent);
+    if (!title) {
+      return tab;
+    }
+
+    const resolvedEntry = await resolveEntry(rootHandle, tab.filePath);
+    if (!resolvedEntry || resolvedEntry.kind !== "file") {
+      return tab;
+    }
+
+    const parentHandle = resolvedEntry.parentHandle;
+    const uniqueName = await generateUniqueName(parentHandle, title, ".md");
+    if (uniqueName === tab.fileName) {
+      return tab;
+    }
+
+    const renameResult = await renameFileUtil(parentHandle, resolvedEntry.name, uniqueName);
+    if (!renameResult.success || !renameResult.handle || !renameResult.path) {
+      return tab;
+    }
+
+    const nextPath = `${tab.filePath.slice(0, Math.max(0, tab.filePath.length - tab.fileName.length))}${uniqueName}`;
+    updateTabFile(tab.filePath, nextPath, renameResult.handle);
+    if (selectedPath === tab.filePath) {
+      setExplorerSelection(nextPath, "file");
+    }
+    emitVaultRename(tab.filePath, nextPath);
+    await refreshDirectory({ silent: true });
+
+    return {
+      ...tab,
+      fileHandle: renameResult.handle,
+      fileName: uniqueName,
+      filePath: nextPath,
+    };
+  }, [refreshDirectory, rootHandle, selectedPath, setExplorerSelection, updateTabFile]);
+
   // Handle file save - optimized with fast save
   const handleSave = useCallback(async () => {
     if (!activeTab || typeof content !== 'string') return;
@@ -342,10 +413,12 @@ export function PaneWrapper({
     try {
       // Use optimized save function
       await fastSaveFile(activeTab.fileHandle, content);
-      emitVaultChange(activeTab.filePath);
+      let persistedTab = activeTab;
+      persistedTab = await maybeAutoRenameMarkdownFromTitle(persistedTab, content);
+      emitVaultChange(persistedTab.filePath);
       
       // Update cache - mark as saved with new original content
-      useContentCacheStore.getState().markAsSaved(activeTab.id, content);
+      useContentCacheStore.getState().markAsSaved(persistedTab.id, content);
       originalContentRef.current = content;
 
       // Clear dirty state
@@ -354,7 +427,7 @@ export function PaneWrapper({
       console.error('Failed to save file:', err);
       throw err;
     }
-  }, [activeTab, content, paneId, activeTabIndex, setTabDirty]);
+  }, [activeTab, activeTabIndex, content, maybeAutoRenameMarkdownFromTitle, paneId, setTabDirty]);
 
   // Handle pane click to activate
   const handlePaneClick = useCallback(() => {

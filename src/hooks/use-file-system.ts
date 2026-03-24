@@ -2,6 +2,7 @@
 
 import { useCallback, useState, useEffect } from "react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import type { FileTree, DirectoryNode, FileNode, TreeNode } from "@/types/file-system";
 import {
   isAllowedExtension,
@@ -29,7 +30,15 @@ import {
   type EntryOperationResult,
 } from "@/lib/file-operations";
 import { generateFileId } from "@/lib/universal-annotation-storage";
-import { listPdfItemNotes, loadPdfItemManifest } from "@/lib/pdf-item";
+import {
+  copyPdfItemWorkspace,
+  deletePdfItemWorkspace,
+  listPdfItemNotes,
+  loadPdfItemManifest,
+  movePdfItemWorkspace,
+} from "@/lib/pdf-item";
+import { createDesktopDirectoryHandle } from "@/lib/desktop-file-system";
+import { isTauri } from "@/lib/storage-adapter";
 import { emitVaultChange, emitVaultDelete, emitVaultRename } from "@/lib/plugins/runtime";
 
 /**
@@ -142,7 +151,12 @@ async function ensureQaFixtures(dir: FileSystemDirectoryHandle): Promise<void> {
 }
 
 function isPdfCompanionDirectoryName(name: string): boolean {
-  return name.toLowerCase().endsWith(".item");
+  const normalized = name.toLowerCase();
+  return normalized.endsWith(".item") || (normalized.startsWith(".") && normalized.endsWith(".lattice"));
+}
+
+function isPdfPath(path: string): boolean {
+  return getExtension(path) === "pdf";
 }
 
 function buildPdfVirtualChildNode(summary: Awaited<ReturnType<typeof listPdfItemNotes>>[number], parentPdfPath: string): FileNode | null {
@@ -151,24 +165,34 @@ function buildPdfVirtualChildNode(summary: Awaited<ReturnType<typeof listPdfItem
   }
 
   const extension = getExtension(summary.fileName);
+  const displayName = summary.type === "overview"
+    ? "条目概览"
+    : summary.type === "annotation-note"
+      ? "批注索引"
+      : summary.fileName;
   return {
     name: summary.fileName,
+    displayName,
     kind: "file",
     handle: summary.handle,
     extension,
     path: summary.path,
     isVirtual: true,
     parentPdfPath,
-    entryRole: summary.type === "annotation-note"
-      ? "pdf-annotations"
-      : summary.type === "notebook"
-        ? "pdf-notebook"
-        : "pdf-note",
-    badgeLabel: summary.type === "annotation-note"
-      ? "批注"
-      : summary.type === "notebook"
-        ? "Notebook"
-        : "Markdown",
+    entryRole: summary.type === "overview"
+      ? "pdf-overview"
+      : summary.type === "annotation-note"
+        ? "pdf-annotations"
+        : summary.type === "notebook"
+          ? "pdf-notebook"
+          : "pdf-note",
+    badgeLabel: summary.type === "overview"
+      ? "概览"
+      : summary.type === "annotation-note"
+        ? "批注"
+        : summary.type === "notebook"
+          ? "Notebook"
+          : "Markdown",
   };
 }
 
@@ -339,6 +363,7 @@ export function useFileSystem(): UseFileSystemReturn {
     setLoading,
     setError,
   } = useWorkspaceStore();
+  const updateSetting = useSettingsStore((state) => state.updateSetting);
 
   // Use state with useEffect to avoid hydration mismatch
   // Server always renders false, client updates after mount
@@ -346,9 +371,32 @@ export function useFileSystem(): UseFileSystemReturn {
   const [isCheckingSupport, setIsCheckingSupport] = useState(true);
 
   useEffect(() => {
-    setIsSupported("showDirectoryPicker" in window);
+    setIsSupported("showDirectoryPicker" in window || isTauri());
     setIsCheckingSupport(false);
   }, []);
+
+  const applyWorkspaceHandle = useCallback(async (
+    handle: FileSystemDirectoryHandle,
+    workspaceRootPath: string | null,
+  ) => {
+    const children = await readDirectoryRecursive(handle);
+    const rootNode: DirectoryNode = {
+      name: handle.name,
+      kind: "directory",
+      handle,
+      children,
+      path: handle.name,
+      isExpanded: true,
+    };
+
+    setRootHandle(handle);
+    setWorkspaceRootPath(workspaceRootPath);
+    setFileTree({ root: rootNode });
+
+    if (workspaceRootPath) {
+      await updateSetting("lastOpenedFolder", workspaceRootPath);
+    }
+  }, [setFileTree, setRootHandle, setWorkspaceRootPath, updateSetting]);
 
   /**
    * Refresh the file tree from the current root handle
@@ -391,7 +439,7 @@ export function useFileSystem(): UseFileSystemReturn {
    */
   const openDirectory = useCallback(async () => {
     if (!isSupported) {
-      setError("File System Access API is not supported in this browser. Please use Chrome or Edge.");
+      setError("This environment does not support opening local folders.");
       return;
     }
 
@@ -399,27 +447,29 @@ export function useFileSystem(): UseFileSystemReturn {
       setLoading(true);
       setError(null);
 
-      // Request directory access from user with readwrite mode for file operations
+      if (isTauri()) {
+        const selected = await window.__TAURI__!.core.invoke<string | null>(
+          "plugin:dialog|open",
+          {
+            directory: true,
+            multiple: false,
+            title: "Open Folder",
+          },
+        );
+        if (!selected) {
+          return;
+        }
+
+        const handle = createDesktopDirectoryHandle(selected);
+        await applyWorkspaceHandle(handle, selected);
+        return;
+      }
+
       const handle = await window.showDirectoryPicker({
         mode: "readwrite",
       });
 
-      setRootHandle(handle);
-      setWorkspaceRootPath(null);
-
-      // Build the file tree
-      const children = await readDirectoryRecursive(handle);
-
-      const rootNode: DirectoryNode = {
-        name: handle.name,
-        kind: "directory",
-        handle,
-        children,
-        path: handle.name,
-        isExpanded: true, // Root is expanded by default
-      };
-
-      setFileTree({ root: rootNode });
+      await applyWorkspaceHandle(handle, handle.name);
     } catch (err) {
       // User cancelled the picker - not an error
       if (err instanceof DOMException && err.name === "AbortError") {
@@ -432,7 +482,7 @@ export function useFileSystem(): UseFileSystemReturn {
     } finally {
       setLoading(false);
     }
-  }, [isSupported, setRootHandle, setWorkspaceRootPath, setFileTree, setLoading, setError]);
+  }, [applyWorkspaceHandle, isSupported, setLoading, setError]);
 
   /**
    * Open a QA workspace in OPFS (dev-only helper)
@@ -451,27 +501,14 @@ export function useFileSystem(): UseFileSystemReturn {
       const workspaceHandle = await opfsRoot.getDirectoryHandle(QA_WORKSPACE_NAME, { create: true });
       await ensureQaFixtures(workspaceHandle);
 
-      setRootHandle(workspaceHandle);
-      setWorkspaceRootPath(null);
-
-      const children = await readDirectoryRecursive(workspaceHandle);
-      const rootNode: DirectoryNode = {
-        name: workspaceHandle.name,
-        kind: "directory",
-        handle: workspaceHandle,
-        children,
-        path: workspaceHandle.name,
-        isExpanded: true,
-      };
-
-      setFileTree({ root: rootNode });
+      await applyWorkspaceHandle(workspaceHandle, workspaceHandle.name);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to open QA workspace";
       setError(message);
     } finally {
       setLoading(false);
     }
-  }, [setRootHandle, setWorkspaceRootPath, setFileTree, setLoading, setError]);
+  }, [applyWorkspaceHandle, setLoading, setError]);
 
   /**
    * Create a new file in the workspace
@@ -650,6 +687,13 @@ export function useFileSystem(): UseFileSystemReturn {
         : await deleteEntryUtil(resolvedEntry.parentHandle, resolvedEntry.name, resolvedEntry.kind);
     
     if (result.success) {
+      if (resolvedEntry.kind === "file" && isPdfPath(path)) {
+        try {
+          await deletePdfItemWorkspace(rootHandle, path);
+        } catch (cleanupError) {
+          console.error("Failed to delete PDF companion workspace:", cleanupError);
+        }
+      }
       // Refresh the file tree to reflect the deletion
       await refreshDirectory({ silent: true });
       emitVaultDelete(path);
@@ -689,6 +733,13 @@ export function useFileSystem(): UseFileSystemReturn {
     if (result.success) {
       const renamedName = result.handle?.name || result.path?.split("/").pop() || newName;
       const fullPath = joinPath(getParentPath(path), renamedName);
+      if (resolvedEntry.kind === "file" && isPdfPath(path) && fullPath) {
+        try {
+          await movePdfItemWorkspace(rootHandle, path, fullPath);
+        } catch (companionError) {
+          console.error("Failed to rename PDF companion workspace:", companionError);
+        }
+      }
       // Refresh the file tree to reflect the rename
       await refreshDirectory({ silent: true });
       if (fullPath) {
@@ -734,6 +785,13 @@ export function useFileSystem(): UseFileSystemReturn {
     if (result.success) {
       const copiedName = result.handle?.name || result.path?.split("/").pop() || resolvedEntry.name;
       const fullPath = joinPath(targetDirectoryPath, copiedName);
+      if (resolvedEntry.kind === "file" && isPdfPath(sourcePath)) {
+        try {
+          await copyPdfItemWorkspace(rootHandle, sourcePath, fullPath);
+        } catch (companionError) {
+          console.error("Failed to copy PDF companion workspace:", companionError);
+        }
+      }
       await refreshDirectory({ silent: true });
       emitVaultChange(fullPath);
       result.path = fullPath;
@@ -791,6 +849,13 @@ export function useFileSystem(): UseFileSystemReturn {
     if (result.success) {
       const movedName = result.handle?.name || result.path?.split("/").pop() || resolvedEntry.name;
       const fullPath = joinPath(targetDirectoryPath, movedName);
+      if (resolvedEntry.kind === "file" && isPdfPath(sourcePath)) {
+        try {
+          await movePdfItemWorkspace(rootHandle, sourcePath, fullPath);
+        } catch (companionError) {
+          console.error("Failed to move PDF companion workspace:", companionError);
+        }
+      }
       await refreshDirectory({ silent: true });
       emitVaultRename(sourcePath, fullPath);
       result.path = fullPath;

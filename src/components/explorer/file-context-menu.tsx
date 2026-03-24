@@ -17,6 +17,11 @@ interface FileContextMenuProps {
   onPaste?: () => void;
   canPaste?: boolean;
   isDirectory?: boolean;
+  actions?: Array<{
+    label: string;
+    onSelect: () => void;
+    tone?: "default" | "destructive";
+  }>;
 }
 
 /**
@@ -36,6 +41,7 @@ export function FileContextMenu({
   onPaste,
   canPaste = false,
   isDirectory,
+  actions = [],
 }: FileContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -187,6 +193,27 @@ export function FileContextMenu({
         </button>
       )}
       {(onCopy || onCut) && (
+        <div className="my-1 h-px bg-border" />
+      )}
+      {actions.map((action) => (
+        <button
+          key={action.label}
+          onClick={() => {
+            action.onSelect();
+            onClose();
+          }}
+          className={cn(
+            "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors",
+            action.tone === "destructive"
+              ? "hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive"
+              : "hover:bg-accent focus:bg-accent",
+            "focus:outline-none"
+          )}
+        >
+          <span>{action.label}</span>
+        </button>
+      ))}
+      {actions.length > 0 && (
         <div className="my-1 h-px bg-border" />
       )}
       <button

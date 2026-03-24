@@ -22,7 +22,15 @@ import { useFileSystem } from "@/hooks/use-file-system";
 import { getAllPaneIds, findPane } from "@/lib/layout-utils";
 import { cn } from "@/lib/utils";
 import { FileContextMenu, DeleteConfirmDialog } from "./file-context-menu";
-import { type EntryKind } from "@/lib/file-operations";
+import { resolveEntry, type EntryKind } from "@/lib/file-operations";
+import {
+  createPdfItemNote,
+  ensurePdfItemWorkspace,
+  syncPdfAnnotationsMarkdown,
+  syncPdfOverviewMarkdown,
+} from "@/lib/pdf-item";
+import { generateFileId, loadAnnotationsFromDisk } from "@/lib/universal-annotation-storage";
+import { getBacklinksForAnnotation, scanWorkspaceMarkdownBacklinks } from "@/lib/annotation-backlinks";
 
 interface TreeNodeProps {
   node: TreeNode;
@@ -172,7 +180,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   const closeTabsByPath = useWorkspaceStore((state) => state.closeTabsByPath);
   const updateTabPath = useWorkspaceStore((state) => state.updateTabPath);
   const layout = useWorkspaceStore((state) => state.layout);
-  const { deleteFile, renameFile } = useFileSystem();
+  const { deleteFile, renameFile, refreshDirectory, rootHandle } = useFileSystem();
   const selectedPath = useExplorerStore((state) => state.selectedPath);
   const renamingPath = useExplorerStore((state) => state.renamingPath);
   const clipboard = useExplorerStore((state) => state.clipboard);
@@ -253,6 +261,102 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
     }
     console.error("Failed to delete file:", result.error);
   }, [closeTabsByPath, deleteFile, node.path]);
+
+  const ensurePdfWorkspace = useCallback(async () => {
+    if (!rootHandle || node.extension !== "pdf" || node.isVirtual) {
+      return null;
+    }
+
+    const manifest = await ensurePdfItemWorkspace(rootHandle, generateFileId(node.path), node.path);
+    await refreshDirectory({ silent: true });
+    const latestTree = useWorkspaceStore.getState().fileTree;
+    const latestNode = (function findPdfEntry(current: TreeNode | null): FileNode | null {
+      if (!current) return null;
+      if (current.kind === "file" && current.path === node.path) {
+        return current;
+      }
+      if (current.kind === "directory") {
+        for (const child of current.children) {
+          const match = findPdfEntry(child);
+          if (match) return match;
+        }
+      } else if (current.children?.length) {
+        for (const child of current.children) {
+          const match = findPdfEntry(child);
+          if (match) return match;
+        }
+      }
+      return null;
+    })(latestTree.root);
+
+    if (latestNode?.children?.length && !latestNode.isExpanded) {
+      toggleDirectory(node.path);
+    }
+
+    return manifest;
+  }, [node.extension, node.isVirtual, node.path, refreshDirectory, rootHandle, toggleDirectory]);
+
+  const handleOpenPdfOverview = useCallback(async () => {
+    if (!rootHandle) {
+      return;
+    }
+
+    const manifest = await ensurePdfWorkspace();
+    if (!manifest) {
+      return;
+    }
+
+    const entry = await resolveEntry(rootHandle, manifest.overviewPath);
+    if (entry?.kind === "file") {
+      openFileInPane(layout.activePaneId, entry.handle as FileSystemFileHandle, manifest.overviewPath);
+    }
+  }, [ensurePdfWorkspace, layout.activePaneId, openFileInPane, rootHandle]);
+
+  const handleCreatePdfNote = useCallback(async (type: "note" | "notebook") => {
+    if (!rootHandle) {
+      return;
+    }
+
+    const manifest = await ensurePdfWorkspace();
+    if (!manifest) {
+      return;
+    }
+
+    const baseName = type === "note" ? "Reading Note" : "Lab Notebook";
+    const created = await createPdfItemNote(rootHandle, manifest, type, baseName);
+    const annotationsFile = await loadAnnotationsFromDisk(manifest.itemId, rootHandle, "pdf");
+    await syncPdfOverviewMarkdown(rootHandle, manifest, node.name, annotationsFile.annotations);
+    await refreshDirectory({ silent: true });
+    openFileInPane(layout.activePaneId, created.handle, created.path);
+  }, [ensurePdfWorkspace, layout.activePaneId, node.name, openFileInPane, refreshDirectory, rootHandle]);
+
+  const handleRebuildPdfAnnotationIndex = useCallback(async () => {
+    if (!rootHandle) {
+      return;
+    }
+
+    const manifest = await ensurePdfWorkspace();
+    if (!manifest) {
+      return;
+    }
+
+    const annotationsFile = await loadAnnotationsFromDisk(manifest.itemId, rootHandle, "pdf");
+    await scanWorkspaceMarkdownBacklinks(rootHandle);
+    const backlinksByAnnotation = Object.fromEntries(
+      annotationsFile.annotations
+        .filter((annotation) => annotation.target.type === "pdf")
+        .map((annotation) => [annotation.id, getBacklinksForAnnotation(annotation.id)]),
+    );
+    const annotationResult = await syncPdfAnnotationsMarkdown(
+      rootHandle,
+      manifest,
+      node.name,
+      annotationsFile.annotations,
+      backlinksByAnnotation,
+    );
+    await syncPdfOverviewMarkdown(rootHandle, annotationResult.manifest, node.name, annotationsFile.annotations);
+    await refreshDirectory({ silent: true });
+  }, [ensurePdfWorkspace, node.name, refreshDirectory, rootHandle]);
 
   const handleRenameKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
@@ -357,7 +461,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
               extension={node.extension}
               className="h-4 w-4 shrink-0 text-muted-foreground"
             />
-            <span className="truncate">{node.name}</span>
+            <span className="truncate">{node.displayName ?? node.name}</span>
             {node.badgeLabel ? (
               <span className="ml-2 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
                 {node.badgeLabel}
@@ -386,6 +490,12 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
         <FileContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
+          actions={node.extension === "pdf" && !node.isVirtual ? [
+            { label: "打开 PDF 概览", onSelect: () => void handleOpenPdfOverview() },
+            { label: "新建阅读笔记", onSelect: () => void handleCreatePdfNote("note") },
+            { label: "新建 Notebook", onSelect: () => void handleCreatePdfNote("notebook") },
+            { label: "重建批注索引", onSelect: () => void handleRebuildPdfAnnotationIndex() },
+          ] : undefined}
           onCopy={() => setExplorerClipboardForPath(node.path, "file", "copy")}
           onCut={() => setExplorerClipboardForPath(node.path, "file", "cut")}
           onRename={() => {

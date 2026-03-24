@@ -87,7 +87,7 @@ vi.mock('react-pdf-highlighter', async () => {
         }
 
         const hideTipAndSelection = () => setSelectionUi(null);
-        const rendered = onSelectionFinished(
+        return onSelectionFinished(
           {
             boundingRect: {
               x1: 12,
@@ -112,15 +112,27 @@ vi.mock('react-pdf-highlighter', async () => {
           hideTipAndSelection,
           vi.fn(),
         );
+      };
 
-        setSelectionUi(rendered);
+      const handleTriggerSelection = () => {
+        setSelectionUi(triggerSelection());
+      };
+
+      const handleDuplicateSelection = () => {
+        const first = triggerSelection();
+        const second = triggerSelection();
+        setSelectionUi(second ?? first);
       };
 
       return (
         <div ref={viewerRef} data-testid="mock-pdf-highlighter" data-scale={pdfScaleValue}>
           <div data-page-number="1" style={{ position: 'relative', width: '640px', height: '960px' }}>
-            <button type="button" data-testid="mock-pdf-selection-trigger" onClick={triggerSelection}>
+            <span data-testid="mock-native-selection-source">Native PDF text</span>
+            <button type="button" data-testid="mock-pdf-selection-trigger" onClick={handleTriggerSelection}>
               Trigger selection
+            </button>
+            <button type="button" data-testid="mock-pdf-duplicate-selection-trigger" onClick={handleDuplicateSelection}>
+              Trigger duplicate selection
             </button>
           </div>
           {selectionUi}
@@ -203,6 +215,19 @@ function renderPdfPane(props: { paneId: 'pane-left' | 'pane-right'; fileId: stri
       />
     </div>
   );
+}
+
+function selectNativePdfText() {
+  const textNode = screen.getByTestId('mock-native-selection-source').firstChild;
+  if (!textNode) {
+    throw new Error('Missing native selection text node');
+  }
+
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  const range = document.createRange();
+  range.selectNodeContents(textNode);
+  selection?.addRange(range);
 }
 
 describe('PDFHighlighterAdapter', () => {
@@ -361,6 +386,52 @@ describe('PDFHighlighterAdapter', () => {
     fireEvent.keyDown(document, { ctrlKey: true, key: 'c' });
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith('Selected PDF text');
+    });
+  });
+
+  it('prefers native pdf selection text when copying and clears it on cancel', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    fireEvent.click(screen.getByTestId('mock-pdf-selection-trigger'));
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-transient-selection-pane-left-page-1')).toBeTruthy();
+    });
+
+    selectNativePdfText();
+
+    const clipboardData = { setData: vi.fn() };
+    const copyEvent = new Event('copy', { bubbles: true, cancelable: true });
+    Object.defineProperty(copyEvent, 'clipboardData', {
+      configurable: true,
+      value: clipboardData,
+    });
+
+    document.dispatchEvent(copyEvent);
+    expect(clipboardData.setData).toHaveBeenCalledWith('text/plain', 'Native PDF text');
+
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    await waitFor(() => {
+      expect(window.getSelection()?.toString()).toBe('');
+      expect(screen.queryByTestId('pdf-transient-selection-pane-left-page-1')).toBeNull();
+    });
+  });
+
+  it('suppresses duplicate replay events but allows a new selection with the same signature', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    fireEvent.click(screen.getByTestId('mock-pdf-duplicate-selection-trigger'));
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '取消' })).toHaveLength(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    await waitFor(() => {
+      expect(screen.queryByTestId('pdf-transient-selection-pane-left-page-1')).toBeNull();
+    });
+
+    fireEvent.click(screen.getByTestId('mock-pdf-selection-trigger'));
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-transient-selection-pane-left-page-1')).toBeTruthy();
     });
   });
 });

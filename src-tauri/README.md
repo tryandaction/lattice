@@ -2,10 +2,18 @@
 
 This directory contains the Tauri 2.x backend for the Lattice desktop application.
 
+Current desktop baseline:
+
+- desktop prefers local runtimes over browser fallback
+- desktop restores the most recently opened workspace on startup and falls back to the configured default folder
+- PDF item workspace v2 is part of the main desktop UX
+- release facts are synchronized into `releases/vX.Y.Z/`
+- web static export is still produced from the shared frontend and can be deployed to Cloudflare Pages / GitHub Pages
+
 ## Prerequisites
 
 - [Rust](https://rustup.rs/) (latest stable)
-- [Node.js](https://nodejs.org/) 18+
+- [Node.js](https://nodejs.org/) 20+
 - Platform-specific dependencies:
   - **Windows**: WebView2 (bundled automatically)
   - **macOS**: Xcode Command Line Tools
@@ -64,11 +72,25 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
+For a local release-ready bundle with copied artifacts and metadata:
+
+```bash
+# From project root
+npm run release:prepare
+```
+
 Output locations:
 - Windows MSI: `target/release/bundle/msi/`
 - Windows NSIS: `target/release/bundle/nsis/`
 - macOS DMG: `target/release/bundle/dmg/`
 - Linux AppImage: `target/release/bundle/appimage/`
+
+Release-ready copies and metadata:
+
+- `../releases/vX.Y.Z/`
+- `../releases/vX.Y.Z/checksums.txt`
+- `../releases/vX.Y.Z/release-manifest.json`
+- `../releases/vX.Y.Z/RELEASE_SUMMARY.md`
 
 ## Troubleshooting
 

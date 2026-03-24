@@ -17,6 +17,7 @@ interface JupyterRendererProps {
   fileName: string;
   paneId?: PaneId;
   filePath?: string;
+  rootHandle?: FileSystemDirectoryHandle | null;
 }
 
 interface JupyterOutput {
@@ -57,13 +58,31 @@ function normalizeSource(source: string | string[]): string {
 /**
  * Render a single notebook cell
  */
-function NotebookCell({ cell, index }: { cell: JupyterCell; index: number }) {
+function NotebookCell({
+  cell,
+  index,
+  paneId,
+  filePath,
+  rootHandle,
+}: {
+  cell: JupyterCell;
+  index: number;
+  paneId?: PaneId;
+  filePath?: string;
+  rootHandle?: FileSystemDirectoryHandle | null;
+}) {
   const source = normalizeSource(cell.source);
 
   if (cell.cell_type === "markdown") {
     return (
       <div className="border-l-2 border-primary/20 pl-4">
-        <MarkdownRenderer content={source} fileName={`cell-${index}.md`} />
+        <MarkdownRenderer
+          content={source}
+          fileName={`cell-${index}.md`}
+          paneId={paneId}
+          filePath={filePath}
+          rootHandle={rootHandle}
+        />
       </div>
     );
   }
@@ -113,7 +132,7 @@ function NotebookCell({ cell, index }: { cell: JupyterCell; index: number }) {
  * Jupyter Notebook Renderer component
  * Renders .ipynb notebook files in read-only mode
  */
-export function JupyterRenderer({ content, fileName, paneId, filePath }: JupyterRendererProps) {
+export function JupyterRenderer({ content, fileName, paneId, filePath, rootHandle = null }: JupyterRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectionHubState, setSelectionHubState] = useState<{
     context: SelectionContext;
@@ -191,7 +210,13 @@ export function JupyterRenderer({ content, fileName, paneId, filePath }: Jupyter
             data-cell-id={cell.id ?? `cell-${index}`}
             data-cell-index={String(index)}
           >
-            <NotebookCell cell={cell} index={index} />
+            <NotebookCell
+              cell={cell}
+              index={index}
+              paneId={paneId}
+              filePath={filePath}
+              rootHandle={rootHandle}
+            />
           </div>
         ))}
       </div>

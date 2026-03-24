@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Command, RefreshCcw, X } from "lucide-react";
 import { useI18n } from "@/hooks/use-i18n";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -39,7 +40,7 @@ function readRecentCommandIds(): string[] {
   }
 }
 
-function getBuiltinCommands(language: string): CommandItem[] {
+function getBuiltinCommands(language: string, navigate: (path: string) => void): CommandItem[] {
   const isZh = language !== "en-US";
   return [
     {
@@ -47,31 +48,19 @@ function getBuiltinCommands(language: string): CommandItem[] {
       title: isZh ? "打开实时预览指南" : "Open Live Preview Guide",
       shortcut: "Ctrl+Shift+/",
       source: "core",
-      run: () => {
-        if (typeof window !== "undefined") {
-          window.location.assign(resolveAppRoute("/guide"));
-        }
-      },
+      run: () => navigate(resolveAppRoute("/guide")),
     },
     {
       id: "core.open-live-preview-diagnostics",
       title: isZh ? "打开 Live Preview 自检面板" : "Open Live Preview Diagnostics",
       source: "core",
-      run: () => {
-        if (typeof window !== "undefined") {
-          window.location.assign(resolveAppRoute("/diagnostics"));
-        }
-      },
+      run: () => navigate(resolveAppRoute("/diagnostics")),
     },
     {
       id: "core.open-runner-diagnostics",
       title: isZh ? "打开运行器诊断面板" : "Open Runner Diagnostics",
       source: "core",
-      run: () => {
-        if (typeof window !== "undefined") {
-          window.location.assign(resolveAppRoute("/diagnostics/runner"));
-        }
-      },
+      run: () => navigate(resolveAppRoute("/diagnostics/runner")),
     },
   ];
 }
@@ -103,6 +92,7 @@ function getRunCommandAriaLabel(language: string, title: string): string {
 
 export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProps) {
   const { t } = useI18n();
+  const router = useRouter();
   const settings = useSettingsStore((state) => state.settings);
   const language = settings.language || "zh-CN";
   const [pluginCommands, setPluginCommands] = useState<PluginCommand[]>([]);
@@ -111,7 +101,10 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
   const [recentIds, setRecentIds] = useState<string[]>(() => readRecentCommandIds());
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const builtinCommands = useMemo(() => getBuiltinCommands(language), [language]);
+  const builtinCommands = useMemo(
+    () => getBuiltinCommands(language, (path) => router.push(path)),
+    [language, router],
+  );
   const allCommands = useMemo<CommandItem[]>(() => {
     const plugins = pluginCommands.map((command) => ({ ...command, source: "plugin" as const }));
     return [...builtinCommands, ...plugins];

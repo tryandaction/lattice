@@ -22,6 +22,9 @@ import { buildRunnerPreferenceCommit, getRunnerDefinitionForLanguage, resolveRun
 import { useExecutionRunner } from "@/hooks/use-execution-runner";
 import { OutputArea } from "@/components/notebook/output-area";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { AppMarkdownLink } from "./app-markdown-link";
+import { stripLeadingFrontmatter } from "@/lib/markdown-reading";
+import { convertWikiLinksToMarkdown } from "@/lib/markdown-links";
 
 interface MarkdownRendererProps {
   content: string;
@@ -29,6 +32,8 @@ interface MarkdownRendererProps {
   className?: string;
   paneId?: PaneId;
   filePath?: string;
+  rootHandle?: FileSystemDirectoryHandle | null;
+  variant?: "document" | "system-index";
   enableCodeExecution?: boolean;
 }
 
@@ -279,7 +284,7 @@ const components: Components = {
   // Headings with proper styling
   h1({ children, ...props }: MarkdownProps<"h1">) {
     return (
-      <h1 className="text-3xl font-bold mt-8 mb-4 pb-2 border-b border-border" {...props}>
+      <h1 className="text-[1.6rem] font-semibold mt-5 mb-2 pb-1.5 border-b border-border" {...props}>
         {children}
       </h1>
     );
@@ -287,7 +292,7 @@ const components: Components = {
   
   h2({ children, ...props }: MarkdownProps<"h2">) {
     return (
-      <h2 className="text-2xl font-bold mt-6 mb-3 pb-1 border-b border-border/50" {...props}>
+      <h2 className="text-[1.22rem] font-semibold mt-4 mb-2 pb-1 border-b border-border/50" {...props}>
         {children}
       </h2>
     );
@@ -295,7 +300,7 @@ const components: Components = {
   
   h3({ children, ...props }: MarkdownProps<"h3">) {
     return (
-      <h3 className="text-xl font-semibold mt-5 mb-2" {...props}>
+      <h3 className="text-[1.05rem] font-semibold mt-3.5 mb-1.5" {...props}>
         {children}
       </h3>
     );
@@ -303,7 +308,7 @@ const components: Components = {
   
   h4({ children, ...props }: MarkdownProps<"h4">) {
     return (
-      <h4 className="text-lg font-semibold mt-4 mb-2" {...props}>
+      <h4 className="text-[0.98rem] font-semibold mt-3 mb-1" {...props}>
         {children}
       </h4>
     );
@@ -311,7 +316,7 @@ const components: Components = {
 
   h5({ children, ...props }: MarkdownProps<"h5">) {
     return (
-      <h5 className="text-base font-semibold mt-3 mb-1" {...props}>
+      <h5 className="text-[0.92rem] font-semibold mt-2.5 mb-1" {...props}>
         {children}
       </h5>
     );
@@ -319,7 +324,7 @@ const components: Components = {
 
   h6({ children, ...props }: MarkdownProps<"h6">) {
     return (
-      <h6 className="text-sm font-semibold mt-3 mb-1 text-muted-foreground" {...props}>
+      <h6 className="text-[0.82rem] font-semibold mt-2.5 mb-1 text-muted-foreground" {...props}>
         {children}
       </h6>
     );
@@ -365,7 +370,7 @@ const components: Components = {
   // Paragraphs
   p({ children, ...props }: MarkdownProps<"p">) {
     return (
-      <p className="my-3 leading-relaxed" {...props}>
+      <p className="my-2 leading-6 text-[0.92rem]" {...props}>
         {children}
       </p>
     );
@@ -465,6 +470,8 @@ export function MarkdownRenderer({
   className = "",
   paneId,
   filePath,
+  rootHandle = null,
+  variant = "document",
   enableCodeExecution = false,
 }: MarkdownRendererProps) {
   // Content should already be normalized to Markdown by upstream (universal-file-viewer)
@@ -513,9 +520,84 @@ export function MarkdownRenderer({
     return plugins;
   }, [rehypeKatex]);
 
+  const renderedContent = useMemo(() => {
+    const normalized = convertWikiLinksToMarkdown(content);
+    return stripLeadingFrontmatter(normalized);
+  }, [content]);
+
   let blockIndex = 0;
   const markdownComponents: Components = {
     ...components,
+    ...(variant === "system-index"
+      ? {
+          h1({ children, ...props }: MarkdownProps<"h1">) {
+            return (
+              <h1 className="text-lg font-semibold mt-2.5 mb-1.5 pb-1 border-b border-border/60" {...props}>
+                {children}
+              </h1>
+            );
+          },
+          h2({ children, ...props }: MarkdownProps<"h2">) {
+            return (
+              <h2 className="text-[0.98rem] font-semibold mt-3 mb-1.5" {...props}>
+                {children}
+              </h2>
+            );
+          },
+          h3({ children, ...props }: MarkdownProps<"h3">) {
+            return (
+              <h3 className="text-sm font-semibold mt-2.5 mb-1" {...props}>
+                {children}
+              </h3>
+            );
+          },
+          p({ children, ...props }: MarkdownProps<"p">) {
+            return (
+              <p className="my-1.5 leading-5 text-[0.88rem]" {...props}>
+                {children}
+              </p>
+            );
+          },
+          ul({ children, ...props }: MarkdownProps<"ul">) {
+            return (
+              <ul className="list-disc pl-5 my-1.5 space-y-0.5" {...props}>
+                {children}
+              </ul>
+            );
+          },
+          ol({ children, ...props }: MarkdownProps<"ol">) {
+            return (
+              <ol className="list-decimal pl-5 my-1.5 space-y-0.5" {...props}>
+                {children}
+              </ol>
+            );
+          },
+          li({ children, ...props }: MarkdownProps<"li">) {
+            return (
+              <li className="leading-5" {...props}>
+                {children}
+              </li>
+            );
+          },
+          hr({ ...props }: MarkdownProps<"hr">) {
+            return <hr className="my-4 border-0 border-t border-border/70" {...props} />;
+          },
+        }
+      : {}),
+    a({ children, href, ...props }: MarkdownProps<"a">) {
+      return (
+        <AppMarkdownLink
+          href={href}
+          paneId={paneId}
+          rootHandle={rootHandle}
+          currentFilePath={filePath}
+          className="text-primary underline underline-offset-2 hover:text-primary/80"
+          {...props}
+        >
+          {children}
+        </AppMarkdownLink>
+      );
+    },
     code({ inline, className, children, style: _style, node: _node, ...props }: MarkdownCodeProps) {
       const match = /language-([^\s]+)/.exec(className || "");
       const language = match ? match[1].toLowerCase() : "";
@@ -557,7 +639,10 @@ export function MarkdownRenderer({
   };
   
   return (
-    <div ref={containerRef} className={`prose prose-lattice dark:prose-invert max-w-none ${className}`}>
+    <div
+      ref={containerRef}
+      className={`prose ${variant === "system-index" ? "prose-system-index" : "prose-lattice"} dark:prose-invert max-w-none ${className}`}
+    >
       <SelectionContextMenu
         state={selectionMenuState}
         onClose={closeSelectionMenu}
@@ -574,7 +659,7 @@ export function MarkdownRenderer({
         rehypePlugins={rehypePlugins}
         components={markdownComponents}
       >
-        {content}
+        {renderedContent}
       </ReactMarkdown>
     </div>
   );

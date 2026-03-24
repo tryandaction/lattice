@@ -87,6 +87,15 @@ function dispatchWikiLinkClick(element: HTMLElement, target: string): void {
   );
 }
 
+function dispatchWorkspaceLinkClick(element: HTMLElement, target: string): void {
+  element.dispatchEvent(
+    new CustomEvent('workspace-link-click', {
+      detail: { target },
+      bubbles: true,
+    })
+  );
+}
+
 function dispatchExternalLinkClick(element: HTMLElement, url: string): void {
   element.dispatchEvent(
     new CustomEvent('external-link-click', {
@@ -217,8 +226,10 @@ export class FormattedTextWidget extends WidgetType {
           }
 
           if (e.ctrlKey || e.metaKey) {
-            if (isWikiLink || !isExternalUrl(linkTarget)) {
+            if (isWikiLink) {
               dispatchWikiLinkClick(span, linkTarget);
+            } else if (!isExternalUrl(linkTarget)) {
+              dispatchWorkspaceLinkClick(span, linkTarget);
             } else {
               dispatchExternalLinkClick(span, linkTarget);
             }
@@ -227,8 +238,10 @@ export class FormattedTextWidget extends WidgetType {
 
           (span as unknown as { _linkClickTimer?: number })._linkClickTimer = window.setTimeout(() => {
             (span as unknown as { _linkClickTimer?: number })._linkClickTimer = undefined;
-            if (isWikiLink || !isExternalUrl(linkTarget)) {
+            if (isWikiLink) {
               dispatchWikiLinkClick(span, linkTarget);
+            } else if (!isExternalUrl(linkTarget)) {
+              dispatchWorkspaceLinkClick(span, linkTarget);
             } else {
               dispatchExternalLinkClick(span, linkTarget);
             }
@@ -244,6 +257,14 @@ export class FormattedTextWidget extends WidgetType {
         const visibleText = widget.textContent ?? '';
         return this.mapVisibleOffsetToSourceOffset(visibleText, visibleOffset);
       });
+    });
+
+    span.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.tagName === 'A') {
+        e.preventDefault();
+        e.stopPropagation();
+      }
     });
 
     return span;
@@ -447,6 +468,7 @@ export class FormattedTextWidget extends WidgetType {
         container.appendChild(document.createTextNode(part));
       }
     });
+
   }
 
   ignoreEvent(event: Event) {
@@ -515,8 +537,12 @@ export class LinkWidget extends WidgetType {
     // 导航到链接
     const navigateToLink = () => {
       const target = decodeLinkTarget(this.url);
-      if (this.isWikiLink || !isExternalUrl(target)) {
+      if (this.isWikiLink) {
         dispatchWikiLinkClick(view.dom, target);
+        return;
+      }
+      if (!isExternalUrl(target)) {
+        dispatchWorkspaceLinkClick(view.dom, target);
         return;
       }
       dispatchExternalLinkClick(view.dom, target);
@@ -552,11 +578,16 @@ export class LinkWidget extends WidgetType {
       }, DOUBLE_CLICK_DELAY);
     });
 
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
     return link;
   }
 
   ignoreEvent(e: Event) {
-    return e.type !== 'mousedown';
+    return e.type !== 'mousedown' && e.type !== 'click';
   }
 }
 
@@ -656,11 +687,16 @@ export class AnnotationLinkWidget extends WidgetType {
       }, DOUBLE_CLICK_DELAY);
     });
 
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
     return link;
   }
 
   ignoreEvent(e: Event) {
-    return e.type !== 'mousedown';
+    return e.type !== 'mousedown' && e.type !== 'click';
   }
 }
 

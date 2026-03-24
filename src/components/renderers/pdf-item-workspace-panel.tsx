@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpenText, FilePlus2, FolderOpen, NotebookPen, RefreshCw, ScrollText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFileSystem } from "@/hooks/use-file-system";
@@ -9,14 +9,15 @@ import { useExplorerStore } from "@/stores/explorer-store";
 import { emitVaultChange } from "@/lib/plugins/runtime";
 import {
   createPdfItemNote,
-  ensurePdfItemFolder,
+  ensurePdfItemWorkspace,
   listPdfItemNotes,
   loadPdfItemManifest,
-  savePdfItemManifest,
   syncPdfAnnotationsMarkdown,
+  syncPdfOverviewMarkdown,
   type PdfItemManifest,
   type PdfItemNoteSummary,
 } from "@/lib/pdf-item";
+import { getBacklinksForAnnotation, scanWorkspaceMarkdownBacklinks } from "@/lib/annotation-backlinks";
 import { getParentPath, resolveEntry, resolveDirectoryHandle } from "@/lib/file-operations";
 import type { AnnotationItem } from "@/types/universal-annotation";
 import type { FileNode, TreeNode } from "@/types/file-system";
@@ -32,6 +33,8 @@ interface PdfItemWorkspacePanelProps {
 
 function noteLabel(type: PdfItemNoteSummary["type"]) {
   switch (type) {
+    case "overview":
+      return "概览";
     case "annotation-note":
       return "批注";
     case "notebook":
@@ -40,6 +43,33 @@ function noteLabel(type: PdfItemNoteSummary["type"]) {
     default:
       return "Markdown";
   }
+}
+
+function ActionIconButton({
+  title,
+  onClick,
+  disabled,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="h-8 w-8 rounded-md border border-border bg-background/90"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+    >
+      {children}
+    </Button>
+  );
 }
 
 export function PdfItemWorkspacePanel({
@@ -139,14 +169,12 @@ export function PdfItemWorkspacePanel({
   }, [activePaneId, openFileInPane, paneId, splitPane]);
 
   const ensureWorkspace = useCallback(async () => {
-    const currentManifest = manifest ?? await loadPdfItemManifest(rootHandle, fileId, filePath);
-    await ensurePdfItemFolder(rootHandle, currentManifest);
-    await savePdfItemManifest(rootHandle, currentManifest);
+    const currentManifest = await ensurePdfItemWorkspace(rootHandle, fileId, filePath);
     setManifest(currentManifest);
     setItemFolderExists(true);
     await refreshDirectory({ silent: true });
     return currentManifest;
-  }, [fileId, filePath, manifest, refreshDirectory, rootHandle]);
+  }, [fileId, filePath, refreshDirectory, rootHandle]);
 
   const runAction = useCallback(async (actionId: string, task: (resolvedManifest: PdfItemManifest) => Promise<void>) => {
     setBusyAction(actionId);
@@ -167,17 +195,32 @@ export function PdfItemWorkspacePanel({
     const baseName = type === "note" ? "Reading Note" : "Lab Notebook";
     void runAction(type === "note" ? "create-note" : "create-notebook", async (resolvedManifest) => {
       const result = await createPdfItemNote(rootHandle, resolvedManifest, type, baseName);
+      const overviewResult = await syncPdfOverviewMarkdown(rootHandle, resolvedManifest, fileName, pdfAnnotations);
       emitVaultChange(result.path);
+      emitVaultChange(overviewResult.path);
+      setManifest(overviewResult.manifest);
       await refreshDirectory({ silent: true });
       openHandleNearPdf(result.handle, result.path);
     });
-  }, [openHandleNearPdf, refreshDirectory, rootHandle, runAction]);
+  }, [fileName, openHandleNearPdf, pdfAnnotations, refreshDirectory, rootHandle, runAction]);
 
   const handleSyncAnnotations = useCallback(() => {
     void runAction("sync-annotations", async (resolvedManifest) => {
-      const result = await syncPdfAnnotationsMarkdown(rootHandle, resolvedManifest, fileName, pdfAnnotations);
+      await scanWorkspaceMarkdownBacklinks(rootHandle);
+      const backlinksByAnnotation = Object.fromEntries(
+        pdfAnnotations.map((annotation) => [annotation.id, getBacklinksForAnnotation(annotation.id)]),
+      );
+      const result = await syncPdfAnnotationsMarkdown(
+        rootHandle,
+        resolvedManifest,
+        fileName,
+        pdfAnnotations,
+        backlinksByAnnotation,
+      );
+      const overviewResult = await syncPdfOverviewMarkdown(rootHandle, result.manifest, fileName, pdfAnnotations);
       emitVaultChange(result.path);
-      setManifest(result.manifest);
+      emitVaultChange(overviewResult.path);
+      setManifest(overviewResult.manifest);
       await refreshDirectory({ silent: true });
       openHandleNearPdf(result.handle, result.path);
     });
@@ -206,124 +249,112 @@ export function PdfItemWorkspacePanel({
     revealPdfEntry(true);
   }, [manifest, revealPdfEntry]);
 
+  const handleOpenOverview = useCallback(() => {
+    const overview = notes.find((note) => note.type === "overview");
+    if (overview) {
+      void handleOpenNote(overview.path);
+    }
+  }, [handleOpenNote, notes]);
+
   const actionsDisabled = Boolean(busyAction);
 
   return (
-    <section className="border-b border-border bg-muted/20 p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-sm font-medium text-foreground">条目工作区</div>
-          <div className="mt-1 text-[11px] text-muted-foreground">
-            将 PDF 作为条目管理，关联阅读笔记、Notebook 和批注 Markdown。
+    <section className="shrink-0 border-b border-border bg-background px-2.5 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            PDF Workspace
           </div>
+          <div className="truncate text-[11px] text-foreground">{fileName}</div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          onClick={() => void loadItemState()}
-          disabled={actionsDisabled}
-          title="刷新条目状态"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${busyAction === "refresh" ? "animate-spin" : ""}`} />
-        </Button>
+        <div className="flex items-center gap-1">
+          <ActionIconButton
+            title={itemFolderExists ? "刷新条目工作区" : "创建条目目录"}
+            onClick={() => void runAction("ensure-item", async () => {})}
+            disabled={actionsDisabled}
+          >
+            <RefreshCw className={`h-4 w-4 ${busyAction === "ensure-item" ? "animate-spin" : ""}`} />
+          </ActionIconButton>
+          <ActionIconButton
+            title="打开概览"
+            onClick={handleOpenOverview}
+            disabled={!notes.some((note) => note.type === "overview") || actionsDisabled}
+          >
+            <BookOpenText className="h-4 w-4" />
+          </ActionIconButton>
+          <ActionIconButton
+            title="新建阅读笔记"
+            onClick={() => handleCreateNote("note")}
+            disabled={actionsDisabled}
+          >
+            <FilePlus2 className="h-4 w-4" />
+          </ActionIconButton>
+          <ActionIconButton
+            title="新建 Notebook"
+            onClick={() => handleCreateNote("notebook")}
+            disabled={actionsDisabled}
+          >
+            <NotebookPen className="h-4 w-4" />
+          </ActionIconButton>
+          <ActionIconButton
+            title="重建批注索引"
+            onClick={handleSyncAnnotations}
+            disabled={actionsDisabled}
+          >
+            <ScrollText className="h-4 w-4" />
+          </ActionIconButton>
+          <ActionIconButton
+            title="在 Explorer 定位"
+            onClick={handleRevealFolder}
+            disabled={!manifest || actionsDisabled}
+          >
+            <FolderOpen className="h-4 w-4" />
+          </ActionIconButton>
+        </div>
       </div>
 
-      <div className="mt-3 rounded-lg border border-border bg-background/80 p-2 text-xs">
-        <div className="font-medium text-foreground">{fileName}</div>
-        <div className="mt-1 break-all text-muted-foreground">{manifest?.itemFolderPath ?? "正在准备条目目录..."}</div>
-        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-          <span>{itemFolderExists ? "条目目录已建立" : "条目目录未建立"}</span>
-          <span>{pdfAnnotations.length} 条 PDF 批注</span>
-          <span>{notes.length} 个关联文件</span>
-        </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+        <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5">
+          {itemFolderExists ? "条目目录已建立" : "条目目录未建立"}
+        </span>
+        <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5">
+          {pdfAnnotations.length} 条批注
+        </span>
+        <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5">
+          {notes.length} 个关联文件
+        </span>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 text-xs"
-          onClick={() => void runAction("ensure-item", async () => {})}
-          disabled={actionsDisabled}
-        >
-          <BookOpenText className="mr-1.5 h-3.5 w-3.5" />
-          {itemFolderExists ? "条目已就绪" : "创建条目目录"}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 text-xs"
-          onClick={() => handleCreateNote("note")}
-          disabled={actionsDisabled}
-        >
-          <FilePlus2 className="mr-1.5 h-3.5 w-3.5" />
-          新建 Markdown 笔记
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 text-xs"
-          onClick={() => handleCreateNote("notebook")}
-          disabled={actionsDisabled}
-        >
-          <NotebookPen className="mr-1.5 h-3.5 w-3.5" />
-          新建 Notebook
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 text-xs"
-          onClick={handleSyncAnnotations}
-          disabled={actionsDisabled}
-        >
-          <ScrollText className="mr-1.5 h-3.5 w-3.5" />
-          同步批注 Markdown
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 text-xs"
-          onClick={handleRevealFolder}
-          disabled={!manifest || actionsDisabled}
-        >
-          <FolderOpen className="mr-1.5 h-3.5 w-3.5" />
-          在 Explorer 定位
-        </Button>
+      <div className="mt-1 truncate text-[10px] text-muted-foreground" title={manifest?.itemFolderPath ?? undefined}>
+        {manifest?.itemFolderPath ?? "正在准备条目目录..."}
       </div>
 
       {error ? (
-        <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        <div className="mt-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
           {error}
         </div>
       ) : null}
 
-      <div className="mt-3 space-y-2">
-        {isLoading ? (
-          <div className="text-xs text-muted-foreground">正在读取条目文件...</div>
-        ) : notes.length === 0 ? (
-          <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-            还没有关联文件。可以直接在此创建 Markdown 阅读笔记、Notebook，或同步批注为 Markdown。
-          </div>
-        ) : (
-          notes.map((note) => (
+      {isLoading ? (
+        <div className="mt-1 text-[10px] text-muted-foreground">正在读取条目文件...</div>
+      ) : null}
+
+      {!isLoading && notes.length > 0 ? (
+        <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
+          {notes.slice(0, 3).map((note) => (
             <button
               key={note.path}
               type="button"
               onClick={() => void handleOpenNote(note.path)}
-              className="flex w-full items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-left transition-colors hover:bg-muted/40"
+              className="rounded border border-border bg-muted/30 px-1.5 py-0.5 transition-colors hover:bg-muted"
+              title={`${noteLabel(note.type)} · ${note.path}`}
             >
-              <div className="min-w-0">
-                <div className="truncate text-xs font-medium text-foreground">{note.fileName}</div>
-                <div className="truncate text-[11px] text-muted-foreground">{note.path}</div>
-              </div>
-              <span className="ml-3 shrink-0 rounded bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
-                {noteLabel(note.type)}
-              </span>
+              {noteLabel(note.type)}
             </button>
-          ))
-        )}
-      </div>
+          ))}
+          {notes.length > 3 ? <span className="px-1 py-0.5">+{notes.length - 3}</span> : null}
+        </div>
+      ) : null}
     </section>
   );
 }

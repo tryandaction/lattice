@@ -21,6 +21,7 @@ interface NotebookCellProps {
   onTypeChange: (type: "markdown" | "code" | "raw") => void;
   onNavigateUp?: () => void;
   onNavigateDown?: () => void;
+  onLinkNavigate?: (target: string) => void;
   rootHandle?: FileSystemDirectoryHandle | null;
   notebookFilePath?: string;
   onRunCell?: (cellId: string, source: string) => Promise<unknown>;
@@ -195,6 +196,7 @@ export function NotebookCellComponent({
   onTypeChange,
   onNavigateUp,
   onNavigateDown,
+  onLinkNavigate,
   rootHandle,
   notebookFilePath,
   onRunCell,
@@ -330,6 +332,7 @@ export function NotebookCellComponent({
           isActive={isActive}
           onChange={onSourceChange}
           onFocus={onActivate}
+          onLinkNavigate={onLinkNavigate}
           rootHandle={rootHandle}
           filePath={notebookFilePath}
           cellId={cell.id}

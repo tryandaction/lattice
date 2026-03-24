@@ -21,6 +21,9 @@ import type { PluggableList } from "unified";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { KATEX_MACROS } from "@/lib/katex-config";
+import type { PaneId } from "@/types/layout";
+import { AppMarkdownLink } from "./app-markdown-link";
+import { convertWikiLinksToMarkdown } from "@/lib/markdown-links";
 
 type RehypeKatexPlugin = typeof import("rehype-katex").default;
 type MarkdownProps<T extends keyof JSX.IntrinsicElements> = ComponentPropsWithoutRef<T> & { node?: unknown };
@@ -29,13 +32,22 @@ type MarkdownCodeProps = MarkdownProps<"code"> & { inline?: boolean };
 interface AnnotationMarkdownRendererProps {
   content: string;
   className?: string;
+  paneId?: PaneId;
+  rootHandle?: FileSystemDirectoryHandle | null;
+  currentFilePath?: string;
 }
 
 // Stable outside component — never recreated
 const REMARK_PLUGINS: PluggableList = [remarkGfm, remarkMath];
 const KATEX_OPTIONS = { macros: KATEX_MACROS, throwOnError: false, strict: false, trust: true };
 
-export function AnnotationMarkdownRenderer({ content, className }: AnnotationMarkdownRendererProps) {
+export function AnnotationMarkdownRenderer({
+  content,
+  className,
+  paneId,
+  rootHandle,
+  currentFilePath,
+}: AnnotationMarkdownRendererProps) {
   const [rehypeKatex, setRehypeKatex] = useState<RehypeKatexPlugin | null>(null);
 
   useEffect(() => {
@@ -120,9 +132,15 @@ export function AnnotationMarkdownRenderer({ content, className }: AnnotationMar
     td: ({ children }: MarkdownProps<"td">) => <td className="px-2 py-1">{children}</td>,
 
     a: ({ href, children }: MarkdownProps<"a">) => (
-      <a href={href} className="text-primary underline decoration-primary/40 hover:decoration-primary" target="_blank" rel="noopener noreferrer">
+      <AppMarkdownLink
+        href={href}
+        paneId={paneId}
+        rootHandle={rootHandle}
+        currentFilePath={currentFilePath}
+        className="text-primary underline decoration-primary/40 hover:decoration-primary"
+      >
         {children}
-      </a>
+      </AppMarkdownLink>
     ),
 
     hr: () => <hr className="my-1 border-0 border-t border-border" />,
@@ -136,7 +154,7 @@ export function AnnotationMarkdownRenderer({ content, className }: AnnotationMar
       }
       return <input type={type} {...props} />;
     },
-  }), []);
+  }), [currentFilePath, paneId, rootHandle]);
 
   return (
     <div className={`annotation-md text-xs leading-relaxed wrap-break-word ${className ?? ""}`}>
@@ -145,7 +163,7 @@ export function AnnotationMarkdownRenderer({ content, className }: AnnotationMar
         rehypePlugins={rehypePlugins}
         components={components}
       >
-        {content}
+        {convertWikiLinksToMarkdown(content)}
       </ReactMarkdown>
     </div>
   );

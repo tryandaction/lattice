@@ -39,6 +39,15 @@ pub struct AppSettings {
     pub last_opened_folder: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopDirEntry {
+    name: String,
+    is_directory: bool,
+    is_file: bool,
+    is_symlink: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "kebab-case")]
 enum RunnerType {
@@ -216,6 +225,68 @@ fn clear_default_folder(app: tauri::AppHandle) -> Result<(), String> {
     let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
     store.delete("default_folder");
     store.save().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn desktop_read_dir(path: String) -> Result<Vec<DesktopDirEntry>, String> {
+    let normalized = PathBuf::from(path);
+    let entries = fs::read_dir(&normalized).map_err(|error| error.to_string())?;
+    let mut results = Vec::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        results.push(DesktopDirEntry {
+            name: entry.file_name().to_string_lossy().to_string(),
+            is_directory: file_type.is_dir(),
+            is_file: file_type.is_file(),
+            is_symlink: file_type.is_symlink(),
+        });
+    }
+
+    Ok(results)
+}
+
+#[tauri::command]
+fn desktop_read_file_bytes(path: String) -> Result<Vec<u8>, String> {
+    fs::read(PathBuf::from(path)).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn desktop_write_file_bytes(path: String, data: Vec<u8>) -> Result<(), String> {
+    fs::write(PathBuf::from(path), data).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn desktop_exists_path(path: String) -> Result<bool, String> {
+    Ok(PathBuf::from(path).exists())
+}
+
+#[tauri::command]
+fn desktop_create_dir(path: String, recursive: bool) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    if recursive {
+        fs::create_dir_all(target).map_err(|error| error.to_string())?;
+    } else {
+        fs::create_dir(target).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn desktop_remove_path(path: String, recursive: bool) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    let metadata = fs::symlink_metadata(&target).map_err(|error| error.to_string())?;
+    if metadata.is_dir() {
+        if recursive {
+            fs::remove_dir_all(target).map_err(|error| error.to_string())?;
+        } else {
+            fs::remove_dir(target).map_err(|error| error.to_string())?;
+        }
+    } else {
+        fs::remove_file(target).map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 
@@ -608,6 +679,12 @@ fn main() {
             get_last_opened_folder,
             set_last_opened_folder,
             clear_default_folder,
+            desktop_read_dir,
+            desktop_read_file_bytes,
+            desktop_write_file_bytes,
+            desktop_exists_path,
+            desktop_create_dir,
+            desktop_remove_path,
             detect_python_environments,
             probe_command_availability,
             start_local_execution,

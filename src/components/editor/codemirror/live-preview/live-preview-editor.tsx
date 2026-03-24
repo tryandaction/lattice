@@ -739,9 +739,14 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
       emitNavigate(customEvent.detail.target);
     };
 
+    const handleWorkspaceLinkClick = (e: Event) => {
+      const customEvent = e as CustomEvent<{ target: string }>;
+      emitNavigate(customEvent.detail.target);
+    };
+
     const handleAnnotationLinkClick = (e: Event) => {
       const customEvent = e as CustomEvent<{ filePath: string; annotationId: string }>;
-      emitNavigate(`${customEvent.detail.filePath}#${customEvent.detail.annotationId}`);
+      emitNavigate(`${customEvent.detail.filePath}#annotation=${customEvent.detail.annotationId}`);
     };
 
     const handleExternalLinkClick = (e: Event) => {
@@ -755,11 +760,13 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     };
 
     container.addEventListener('wiki-link-click', handleWikiLinkClick);
+    container.addEventListener('workspace-link-click', handleWorkspaceLinkClick);
     container.addEventListener('annotation-link-click', handleAnnotationLinkClick);
     container.addEventListener('external-link-click', handleExternalLinkClick);
     container.addEventListener('run-code-block', handleCodeBlockRun);
     return () => {
       container.removeEventListener('wiki-link-click', handleWikiLinkClick);
+      container.removeEventListener('workspace-link-click', handleWorkspaceLinkClick);
       container.removeEventListener('annotation-link-click', handleAnnotationLinkClick);
       container.removeEventListener('external-link-click', handleExternalLinkClick);
       container.removeEventListener('run-code-block', handleCodeBlockRun);

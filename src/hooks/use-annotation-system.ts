@@ -50,6 +50,10 @@ export interface UseAnnotationSystemOptions {
   fileHandle: FileSystemFileHandle;
   /** Full path relative to workspace root, used for stable fileId derivation */
   filePath?: string;
+  /** Preferred stable storage id, used before path-derived fallback ids */
+  storageFileId?: string | null;
+  /** Delay loading until prerequisite metadata is ready */
+  deferLoad?: boolean;
   /** Root directory handle for storage */
   rootHandle: FileSystemDirectoryHandle;
   /** Optional file type override */
@@ -83,16 +87,18 @@ export interface UseAnnotationSystemReturn {
   ) => AnnotationItem[];
 }
 
-export function resolveAnnotationFileCandidates(fileHandleName: string, filePath?: string): string[] {
+export function resolveAnnotationFileCandidates(
+  fileHandleName: string,
+  filePath?: string,
+  preferredFileId?: string | null,
+): string[] {
   const preferredPath = (filePath && filePath.trim()) ? filePath : fileHandleName;
   const preferredId = generateFileId(preferredPath);
   const legacyId = generateFileId(fileHandleName);
+  const candidates = [preferredFileId ?? null, preferredId, legacyId]
+    .filter((candidate): candidate is string => Boolean(candidate));
 
-  if (legacyId === preferredId) {
-    return [preferredId];
-  }
-
-  return [preferredId, legacyId];
+  return Array.from(new Set(candidates));
 }
 
 // ============================================================================
@@ -103,11 +109,12 @@ export function resolveAnnotationFileCandidates(fileHandleName: string, filePath
  * Generates a UUID v4
  */
 function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+  const uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
+  return `ann-${uuid}`;
 }
 
 /**
@@ -152,6 +159,8 @@ function emitNavigationEvent(annotation: AnnotationItem): void {
 export function useAnnotationSystem({
   fileHandle,
   filePath,
+  storageFileId = null,
+  deferLoad = false,
   rootHandle,
   fileType: fileTypeOverride,
   saveDelay = 1000,
@@ -174,13 +183,23 @@ export function useAnnotationSystem({
     let cancelled = false;
     
     async function loadAnnotations() {
+      if (deferLoad) {
+        setIsLoading(false);
+        setError(null);
+        return;
+      }
+
       setIsLoading(true);
       setError(null);
       
       try {
         const fileName = filePath || fileHandle.name;
-        const [derivedFileId, legacyFileId] = resolveAnnotationFileCandidates(fileHandle.name, filePath);
-        setFileId(derivedFileId);
+        const candidateIds = resolveAnnotationFileCandidates(fileHandle.name, filePath, storageFileId);
+        const preferredFileId = storageFileId ?? candidateIds[0];
+        if (!preferredFileId) {
+          throw new Error("Unable to derive annotation storage id");
+        }
+        setFileId(preferredFileId);
         
         // Detect file type
         const detected = detectFileType(fileName);
@@ -188,7 +207,6 @@ export function useAnnotationSystem({
         
         // Try to load existing annotations
         const annotationsDir = await ensureAnnotationsDirectory(rootHandle);
-        const candidateIds = legacyFileId ? [derivedFileId, legacyFileId] : [derivedFileId];
         let loadedExistingFile = false;
 
         for (const candidateFileId of candidateIds) {
@@ -211,7 +229,7 @@ export function useAnnotationSystem({
               const migrated = migrateLegacyAnnotationFile(parsed);
               const normalizedMigrated = {
                 ...migrated,
-                fileId: derivedFileId,
+                fileId: preferredFileId,
                 fileType: fileTypeOverride || detected,
               };
 
@@ -228,13 +246,13 @@ export function useAnnotationSystem({
             if (universalFile && !cancelled) {
               const normalizedFile = {
                 ...universalFile,
-                fileId: derivedFileId,
+                fileId: preferredFileId,
                 fileType: fileTypeOverride || detected,
               };
               annotationFileRef.current = normalizedFile;
               setAnnotations(normalizedFile.annotations);
 
-              if (candidateFileId !== derivedFileId || universalFile.fileId !== derivedFileId) {
+              if (candidateFileId !== preferredFileId || universalFile.fileId !== preferredFileId) {
                 await saveWithRetry(normalizedFile, rootHandle);
               }
               loadedExistingFile = true;
@@ -246,7 +264,7 @@ export function useAnnotationSystem({
         }
 
         if (!loadedExistingFile && !cancelled) {
-          const newFile = createUniversalAnnotationFile(derivedFileId, fileTypeOverride || detected);
+          const newFile = createUniversalAnnotationFile(preferredFileId, fileTypeOverride || detected);
           annotationFileRef.current = newFile;
           setAnnotations([]);
         }
@@ -266,7 +284,7 @@ export function useAnnotationSystem({
     return () => {
       cancelled = true;
     };
-  }, [fileHandle, filePath, rootHandle, fileTypeOverride]);
+  }, [deferLoad, fileHandle, filePath, rootHandle, fileTypeOverride, storageFileId]);
 
   // Debounced save function
   const scheduleSave = useCallback((newAnnotations: AnnotationItem[]) => {

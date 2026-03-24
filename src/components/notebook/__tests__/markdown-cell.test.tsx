@@ -84,4 +84,22 @@ describe("MarkdownCell", () => {
     fireEvent.click(preview);
     expect(onFocus).toHaveBeenCalled();
   });
+
+  it("passes notebook link navigation through to the live preview editor", () => {
+    const onLinkNavigate = vi.fn();
+    render(
+      <MarkdownCell
+        source="[[Target]]"
+        isActive={true}
+        onChange={vi.fn()}
+        onFocus={vi.fn()}
+        onLinkNavigate={onLinkNavigate}
+      />,
+    );
+
+    const latestProps = livePreviewPropsSpy.mock.calls.at(-1)?.[0] as { onLinkNavigate?: (target: string) => void } | undefined;
+    latestProps?.onLinkNavigate?.("notes/target.md#cell=abc");
+
+    expect(onLinkNavigate).toHaveBeenCalledWith("notes/target.md#cell=abc");
+  });
 });

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 改进 (2026-03-24 本轮体验收口)
+- **PDF 选区 / 复制 / 侧栏体验**
+  - ✅ PDF 文本选择已改为原生选区阶段与 Lattice transient overlay 阶段分离，不再过早清空原生选区
+  - ✅ `Ctrl+C / Cmd+C` 现优先复制当前 PDF 原生选中文本，其次才回退到 transient selection
+  - ✅ PDF 选区重复回调去重已改为阶段感知会话，不再误杀用户重新拖出的合法连续选区
+  - ✅ PDF 左栏已收紧为可拖拽宽度的紧凑工具头 + 主批注工作区，批注列表重新占据主要高度
+- **Markdown 阅读态收紧**
+  - ✅ 普通 Markdown 阅读态字号和标题继续收紧，进一步靠近 Obsidian 分屏密度
+  - ✅ 系统索引页 `_overview.md / _annotations.md` 继续比普通文档更紧凑
+  - ✅ frontmatter 在默认阅读渲染中隐藏，不再混入正文显示
+- **工作区恢复与命名收口**
+  - ✅ 桌面端现可恢复最近打开的工作区，不再每次重启都重新选文件夹
+  - ✅ Web 与桌面端都开始写入 `lastOpenedFolder`，runner preference scope 会跟随工作区路径恢复
+  - ✅ `Untitled*.md` 首次保存时若存在首个 H1，会自动按标题重命名，并同步 tab / Explorer / 文件路径
+
+### 改进 (2026-03-24)
+- **PDF Item System v2**
+  - ✅ PDF 首次打开会自动建立同级隐藏兄弟目录 `.basename.lattice/`
+  - ✅ PDF 条目目录固定包含 `manifest.json`、`_overview.md`、`_annotations.md`
+  - ✅ Explorer 隐藏真实目录，并把系统文件/用户笔记投影为 PDF 子条目
+  - ✅ PDF 批注 sidecar 已改为稳定 `itemId` 存储，rename / move / copy / delete 时伴随迁移
+  - ✅ `_annotations.md` 已改为自动去抖镜像，同步 `#page=` / `#annotation=` 深链与反链摘要
+  - ✅ 批注评论、只读 Markdown、Notebook 只读 Markdown、Notebook 编辑态 Markdown Cell 已统一到应用内链接路由
+  - ✅ PDF 批注侧栏支持显示反链并跳回来源笔记行
+  - ✅ Explorer 右键 PDF 新增：打开概览 / 新建阅读笔记 / 新建 Notebook / 重建批注索引
+- **部署链路收口**
+  - ✅ 新增 `npm run deploy:cloudflare`
+  - ✅ 新增 `npm run deploy:web`
+  - ✅ 发布文档已统一为 `web-dist -> Cloudflare Pages (主站) / GitHub Pages (备用)`
+
 ## [2.1.0] - 2026-03-21
 
 ### 改进 (2026-03-21)

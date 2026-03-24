@@ -15,7 +15,13 @@
 - [ ] `src-tauri/tauri.conf.json`
 - [ ] `src-tauri/Cargo.toml`
 
-## Pages Deploy
+## Cloudflare Pages Deploy
+
+- [ ] `web-dist/index.html` exists
+- [ ] `deploy-cloudflare-pages.yml` deploys `web-dist/` to project `lattice`
+- [ ] Cloudflare workflow summary shows target URL `https://lattice-apq.pages.dev`
+
+## GitHub Pages Deploy
 
 - [ ] `web-dist/index.html` exists
 - [ ] `deploy.yml` uploads `web-dist/`

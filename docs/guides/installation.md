@@ -49,6 +49,12 @@ npm run tauri:dev
 npm run build
 ```
 
+验证后应至少确认：
+
+- `web-dist/index.html` 存在
+- `web-dist/guide/index.html` 存在
+- `web-dist/diagnostics/index.html` 存在
+
 ### Desktop 构建
 
 ```bash
@@ -73,6 +79,13 @@ npm run release:prepare
 npm run release:prepare -- --dry-run
 npm run release:prepare -- --skip-qa
 npm run release:prepare -- --upload
+```
+
+如需直接把当前静态站点发布到 Cloudflare Pages：
+
+```bash
+npm run build
+npx wrangler pages deploy web-dist --project-name lattice
 ```
 
 ## 6. 故障排查

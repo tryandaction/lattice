@@ -1,12 +1,21 @@
 import type { Content, ScaledPosition } from 'react-pdf-highlighter';
 import type { ImageAnnotationPreview } from '@/types/universal-annotation';
 
+export type PdfSelectionPhase =
+  | 'native_dragging'
+  | 'native_settled'
+  | 'transient_overlay'
+  | 'committed'
+  | 'cancelled';
+
 export interface PdfSelectionSessionState {
-  signature: string;
+  token: number;
+  phase: PdfSelectionPhase;
+  signature: string | null;
   timestamp: number;
 }
 
-const DEFAULT_DUPLICATE_WINDOW_MS = 1500;
+const DEFAULT_REPLAY_WINDOW_MS = 450;
 
 function round(value: number, precision = 4): string {
   return value.toFixed(precision);
@@ -39,15 +48,53 @@ export function buildPdfSelectionSignature(input: {
   ].join('::');
 }
 
+export function beginPdfSelectionSession(
+  previous: PdfSelectionSessionState | null,
+  now = Date.now(),
+): PdfSelectionSessionState {
+  return {
+    token: (previous?.token ?? 0) + 1,
+    phase: 'native_dragging',
+    signature: null,
+    timestamp: now,
+  };
+}
+
+export function updatePdfSelectionSession(
+  previous: PdfSelectionSessionState | null,
+  input: {
+    phase: PdfSelectionPhase;
+    signature?: string | null;
+    token?: number;
+    now?: number;
+  },
+): PdfSelectionSessionState {
+  return {
+    token: input.token ?? previous?.token ?? 0,
+    phase: input.phase,
+    signature: input.signature ?? previous?.signature ?? null,
+    timestamp: input.now ?? Date.now(),
+  };
+}
+
 export function isDuplicatePdfSelection(
   previous: PdfSelectionSessionState | null,
-  nextSignature: string,
-  now = Date.now(),
-  duplicateWindowMs = DEFAULT_DUPLICATE_WINDOW_MS,
+  nextSelection: {
+    signature: string;
+    token: number;
+    now?: number;
+    replayWindowMs?: number;
+  },
 ): boolean {
+  const now = nextSelection.now ?? Date.now();
+  const replayWindowMs = nextSelection.replayWindowMs ?? DEFAULT_REPLAY_WINDOW_MS;
+
   return !!previous &&
-    previous.signature === nextSignature &&
-    now - previous.timestamp <= duplicateWindowMs;
+    previous.token === nextSelection.token &&
+    previous.signature === nextSelection.signature &&
+    previous.phase !== 'native_dragging' &&
+    previous.phase !== 'cancelled' &&
+    now - previous.timestamp <= replayWindowMs;
 }
 
 export function buildPdfAreaPreview(input: {

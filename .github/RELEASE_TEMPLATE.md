@@ -3,6 +3,8 @@
 ## Summary
 
 - Web export built from `web-dist/`
+- Cloudflare Pages primary site: `https://lattice-apq.pages.dev`
+- GitHub Pages kept as backup/mirror static deploy path
 - Desktop artifacts generated through `tauri build`
 - Local release directory synchronized through `scripts/prepare-release.mjs`
 

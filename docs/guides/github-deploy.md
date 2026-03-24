@@ -2,9 +2,10 @@
 
 ## Summary
 
-Lattice 现在有两条发布路径：
+Lattice 现在有三条可并行维护的发布路径：
 
-- **GitHub Pages**：发布 `web-dist/`
+- **Cloudflare Pages**：当前线上主站，发布 `web-dist/` 到 `lattice-apq.pages.dev`
+- **GitHub Pages**：备用/镜像静态站点链路，同样发布 `web-dist/`
 - **Desktop Release**：发布 `releases/vX.Y.Z/` 中的桌面产物与元数据
 
 平台侧如果出现 GitHub billing / Actions 不启动，不视为仓库内缺陷；仓库内的目标是保证：
@@ -12,7 +13,27 @@ Lattice 现在有两条发布路径：
 1. 本地能独立完成完整发布闭环
 2. GitHub Actions 恢复后可以复用同一套构建与元数据逻辑
 
-## Pages Deploy
+## Static Site Deploy
+
+### Cloudflare Pages（当前主站）
+
+当前 Pages 项目名：`lattice`
+
+本地发布：
+
+```bash
+npm install
+npm run clean
+npm run deploy:web
+```
+
+验收项：
+
+- `web-dist/index.html` 存在
+- Pages 项目 URL 为 `https://lattice-apq.pages.dev/`
+- diagnostics 与 guide 相关静态路由能正常访问
+
+### GitHub Pages（备用/镜像）
 
 ### 触发
 
@@ -89,6 +110,7 @@ npm run release:prepare -- --upload
 - GitHub billing issue
 - GitHub Pages / Releases 服务端不可用
 - GitHub-hosted runner 资源波动
+- Cloudflare Pages 平台不可用或鉴权失效
 
 ### 仓库内问题
 
@@ -105,3 +127,4 @@ npm run release:prepare -- --upload
 - `releases/vX.Y.Z/` 中有完整产物和元数据
 - `release.yml` 能创建带元数据文件的 draft release
 - `deploy.yml` 能基于 `web-dist/` 部署 Pages
+- `npm run deploy:web` 能重新构建并成功发布 Cloudflare Pages

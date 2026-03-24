@@ -19,7 +19,7 @@ function parseFragmentTarget(path: string, fragment: string): LinkTarget {
     return { type: "pdf_annotation", path, annotationId: fragment };
   }
 
-  if (annotationId && annotationId.startsWith("ann-")) {
+  if (annotationId?.trim()) {
     return { type: "pdf_annotation", path, annotationId };
   }
 

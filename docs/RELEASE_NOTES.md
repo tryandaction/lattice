@@ -4,6 +4,59 @@
 
 ## 本次重点
 
+### 2026-03-24 本轮体验收口
+
+- PDF 选区链路继续收口：
+  - 文本拖选现在会区分“浏览器原生选区阶段”和“Lattice transient overlay 阶段”
+  - 不再在拖选刚结束时立刻清空原生选区，减少蓝块闪烁、错位和复制手感断裂
+  - `Ctrl+C / Cmd+C` 现优先复制当前 PDF 原生选中文本，只有在没有原生选区时才回退到 transient selection
+  - PDF 选区去重逻辑已改为带 phase/token 的短生命周期会话，只抑制同一次回放，不误伤用户重新拖出的合法选区
+- PDF 左栏布局继续收紧：
+  - 条目工具头已改成一排图标按钮并补齐 tooltip / title
+  - 左栏保持可拖拽宽度
+  - 批注列表重新成为主空间，顶部工具区改为紧凑头部
+- Markdown 阅读体验继续向 Obsidian 靠拢：
+  - 普通文档标题、段落与列表密度继续缩小
+  - 系统索引页 `_overview.md / _annotations.md` 再紧一档
+  - frontmatter 在阅读渲染中默认隐藏
+- 工作区恢复补齐：
+  - Web 与桌面端现在都会记录 `lastOpenedFolder`
+  - 桌面端启动后会优先恢复最近工作区，不再每次都重新选目录
+  - 工作区路径恢复后，runner preference scope 也会跟随恢复
+- 新建 Markdown 命名继续收口：
+  - 新文件仍先以 `Untitled*.md` 创建
+  - 首次保存时若正文首个 H1 存在，会自动按标题重命名并同步 tab / Explorer / 路径
+
+### 2026-03-24 PDF Item System v2 收口
+
+- PDF 已从“可加批注的阅读文件”升级为一等条目：
+  - 首次打开 PDF 会自动建立同级隐藏兄弟目录 `.basename.lattice/`
+  - 默认包含 `manifest.json`、`_overview.md`、`_annotations.md`
+  - Explorer 不再暴露真实隐藏目录，而是把这些内容投影为 PDF 下的系统子条目
+- PDF 批注 sidecar 已改为稳定 `itemId` 存储：
+  - PDF rename / move / copy / delete 时，条目目录和批注 sidecar 会伴随迁移
+  - 不再继续依赖“当前路径派生 fileId”作为唯一绑定方式
+- `_annotations.md` 已改为自动去抖镜像，而不再只是手动导出：
+  - 生成相对路径深链
+  - 支持 `#page=` 与 `#annotation=` 定位
+  - 同步写入反链摘要
+- 批注反链主链路已接入：
+  - 工作区 Markdown 与 PDF item Markdown 会被扫描
+  - PDF 批注侧栏现可显示“哪些笔记引用了该批注”
+  - 可直接跳回来源笔记与行号
+- 内部链接路由继续统一化：
+  - 只读 Markdown、批注评论、Notebook 只读 Markdown、Notebook 编辑态 Markdown Cell 现都可直接在应用内跳 PDF / heading / line / cell / annotation
+  - 外部网页链接仍交由系统浏览器处理
+- Explorer 右键 PDF 现在支持：
+  - 打开概览
+  - 新建阅读笔记
+  - 新建 Notebook
+  - 重建批注索引
+- 当前线上部署口径已统一为：
+  - `web-dist/` 是统一静态导出产物
+  - Cloudflare Pages (`lattice-apq.pages.dev`) 是当前主站
+  - GitHub Pages 保留为备用/镜像链路
+
 ### 2026-03-21 知识组织与发布工程收口补充
 
 - 知识组织主线继续收口为统一产品模型：

@@ -270,6 +270,29 @@ The PDF annotation system is designed to match Zotero's professional annotation 
 6. **Persistent Storage**: Annotations saved to `.lattice/annotations/` directory
 7. **Annotation Sidebar**: Navigate between annotations with preview
 
+### PDF Item Workspace v2
+
+PDF is now treated as a first-class workspace item rather than a standalone binary document.
+
+Current model:
+
+- `paper.pdf` maps to a hidden sibling directory `.paper.lattice/`
+- the hidden directory stores:
+  - `manifest.json`
+  - `_overview.md`
+  - `_annotations.md`
+  - user-created `*.md` and `*.ipynb`
+- Explorer hides the real directory and projects these files under the PDF node as virtual children
+- PDF annotations remain the source of truth; `_annotations.md` is an auto-generated mirror for reading, linking, and backlink browsing
+- PDF annotation storage is keyed by stable `itemId`, not only by current file path, so rename/move/copy/delete can migrate companion state
+
+This architecture intentionally separates:
+
+- **annotation truth**: `.lattice/annotations/<itemId>.json`
+- **document workspace**: `.basename.lattice/`
+- **UI projection**: virtual children under the PDF node in Explorer
+- **navigation**: internal links route through one shared link router (`#page=`, `#annotation=`, `#line=`, `#cell=`, headings)
+
 ---
 
 ## Execution Engine
@@ -479,6 +502,23 @@ graph LR
 - Recently opened files
 
 **NOT Cached**: File contents (always read from disk)
+
+### PDF Item Storage Split
+
+For PDF research workflows, the storage layer now explicitly splits into two persistent areas:
+
+- `.lattice/annotations/`
+  - stores structured annotation JSON sidecars
+  - keyed by stable `itemId`
+- `.basename.lattice/`
+  - stores PDF item workspace content
+  - overview note, annotation mirror, reading notes, notebooks, and manifest
+
+This split is deliberate:
+
+- annotation JSON stays machine-owned and migration-safe
+- markdown/ipynb artifacts stay human-readable and colocated with the PDF
+- Explorer can hide system layout while still projecting a Zotero-like PDF item hierarchy
 
 ---
 

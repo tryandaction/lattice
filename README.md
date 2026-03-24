@@ -10,9 +10,13 @@
 - 代码文件、editable Markdown 与 Notebook 现在都会明确标出运行器选择来源，例如 `当前入口选择 / 工作区默认 / 自动探测 / 回退`
 - Notebook 已改为真实的本地持久 Python session：默认惰性启动，打开文件不自动起会话；只有用户点击 `Run` 或 `验证环境` 时才进行 runtime 校验与 `ready` 握手。非 Python `.ipynb` 明确禁跑
 - `.ipynb` 现已保留 `raw` cell，不再伪装成 code cell
-- PDF 现在具备条目工作区基线：每个 PDF 可建立 companion item folder，并直接创建关联 `Markdown` 阅读笔记、`Notebook (.ipynb)` 与批注 Markdown
-- PDF 批注已支持同步到独立 Markdown 文件并直接打开，不再只能困在侧栏里浏览
-- PDF 文本选择已经开始从浏览器原生蓝选区收口到 Lattice 自己的临时 overlay，并明确接管 `Ctrl+C / Cmd+C` 文本复制优先级
+- PDF 现已升级为一等条目：首次打开会自动建立同级隐藏兄弟目录 `.basename.lattice/`，并投影为 PDF 下的系统子条目
+- PDF 条目默认包含 `条目概览`、`批注索引`、阅读笔记与 Notebook 工作区，批注 Markdown 会自动去抖镜像同步
+- PDF 批注支持相对路径深链、反链索引与从批注回跳到研究笔记，不再只是侧栏孤岛
+- PDF 文本选择已改为“原生拖选 -> transient overlay”双阶段，复制优先取当前 PDF 原生选中文本，减少拖选闪烁与手感断裂
+- PDF 左栏已改为可拖拽宽度的紧凑工具头 + 主批注工作区，批注列表重新占据主要高度
+- Markdown 阅读态与系统索引页已继续收紧，frontmatter 在阅读渲染中默认隐藏
+- 桌面端现在会恢复最近打开的工作区，不再每次重启都重新选择文件夹
 - 只读 Markdown renderer 已关闭代码执行入口，避免保留半接通链路
 - AI Chat、Evidence Panel、Workbench 已形成 `Conclusion / Evidence / Next Actions -> Draft / Proposal -> Writeback` 主路径
 - Selection AI、diagnostics、browser regression、release prepare 脚本已形成阶段性工程闭环
@@ -82,10 +86,12 @@ releases/           本地发布产物与元数据事实来源
 
 ## 发布与部署
 
-- GitHub Pages 使用 `web-dist/` 作为静态导出产物
+- `web-dist/` 是统一的静态导出产物
+- 线上站点当前发布到 Cloudflare Pages：<https://lattice-apq.pages.dev/>
+- GitHub Pages workflow 仍保留为备用/镜像发布链路
 - 桌面发布使用 `releases/vX.Y.Z/` 作为本地事实来源
 - GitHub Actions 只创建 draft release，不自动 publish
-- 平台侧若出现 GitHub billing / Actions 不可用，仍可通过本地 `release:prepare` 完成闭环
+- 平台侧若出现 GitHub billing / Actions 不可用，仍可通过本地 `release:prepare` 与 Cloudflare Pages CLI 完成闭环
 
 ## 项目整洁约定
 
@@ -105,7 +111,7 @@ releases/           本地发布产物与元数据事实来源
 `/diagnostics/runner` 还支持显式验证 Notebook 本地 Python 会话启动，而不只是静态展示 health snapshot。
 
 补充说明：
-- `test:browser-regression` 已覆盖 PDF / 图片标注 / Selection AI / 性能基线，但 PDF 深页切文件恢复仍在继续收口，当前不把它误报成“完全无风险”。
+- `test:browser-regression` 当前已覆盖并跑通 PDF / 图片标注 / Selection AI / 性能基线四条浏览器级主链路。
 
 ## License
 

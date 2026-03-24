@@ -19,8 +19,9 @@
 - `Runner Diagnostics` 已支持主动验证 Notebook 本地 Python 会话启动，不再只是静态健康信息页
 - 只读 Markdown renderer 的代码执行入口已关闭，避免继续维护半接通路径
 - PDF 首次打开默认改为自适应宽度填充，避免阅读入口停在固定手动缩放
-- PDF 已进入条目工作区阶段：单个 PDF 可建立 companion item folder，并直接创建关联 `Markdown` 阅读笔记、`Notebook (.ipynb)` 与批注 Markdown
-- PDF 批注已支持同步成独立 Markdown 文件并从条目区直接打开
+- PDF 已进入条目工作区阶段：单个 PDF 首次打开会自动建立同级隐藏兄弟目录，并直接创建关联 `Markdown` 阅读笔记、`Notebook (.ipynb)` 与批注 Markdown
+- PDF 批注已支持自动镜像成独立 Markdown 文件并从条目区直接打开
+- PDF 条目工作区已升级到 v2：同级隐藏兄弟目录 `.basename.lattice/`、稳定 `itemId`、Explorer 虚拟子条目、批注反链与应用内深链都已进入主链路
 - PDF 文本选区与复制链已开始产品化收口：临时 overlay 与 `Ctrl+C / Cmd+C` 文本复制优先级已进入主链
 - QA 基线已收敛到 `lint` / `typecheck` / `test:run` / `build` / `tauri:build` 可稳定通过
 - Markdown 导出已产品化进入主界面，支持 `.docx` / `.pdf`、`clean` / `appendix` / `study-note` 和“当前渲染视图”导出
@@ -49,7 +50,8 @@
   - `/diagnostics/image-annotation`
   - `/diagnostics/selection-ai`
   - `/diagnostics/runner`
-- QA 基线已进一步收敛到 `lint` / `typecheck` / `test:run` / `build` / `tauri:build`；`test:browser-regression` 中 PDF 深页切文件恢复仍在继续收口
+- QA 基线已进一步收敛到 `lint` / `typecheck` / `test:run` / `build` / `tauri:build`；`test:browser-regression` 当前已稳定覆盖 PDF / 图片标注 / Selection AI / 性能基线
+- 当前线上 Web 发布链路已明确收口为：`web-dist -> Cloudflare Pages (主站) / GitHub Pages (备用)`
 
 ### 当前阶段仍然刻意不做
 

@@ -155,6 +155,7 @@ function FileViewer({
 }) {
   const extension = getFileExtension(fileName);
   const viewerKey = fileId || fileName;
+  const isSystemIndexFile = fileName === "_annotations.md" || fileName === "_overview.md";
   
   switch (rendererType) {
     case "markdown": {
@@ -211,6 +212,8 @@ function FileViewer({
             paneId={paneId}
             rootHandle={rootHandle}
             filePath={filePath}
+            variant={isSystemIndexFile ? "system-index" : "document"}
+            initialMode={isSystemIndexFile ? "reading" : undefined}
           />
         );
       }
@@ -222,6 +225,8 @@ function FileViewer({
           fileName={fileName}
           paneId={paneId}
           filePath={filePath}
+          rootHandle={rootHandle}
+          variant={isSystemIndexFile ? "system-index" : "document"}
           enableCodeExecution={false}
         />
       );
@@ -272,7 +277,15 @@ function FileViewer({
         );
       }
       // Fallback to read-only renderer
-      return <JupyterRenderer content={notebookContent} fileName={fileName} paneId={paneId} filePath={filePath ?? fileName} />;
+      return (
+        <JupyterRenderer
+          content={notebookContent}
+          fileName={fileName}
+          paneId={paneId}
+          filePath={filePath ?? fileName}
+          rootHandle={rootHandle}
+        />
+      );
     }
     case "code": {
       // Ensure content is a string for code editors

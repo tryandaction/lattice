@@ -42,6 +42,31 @@ export function resolveRelativeWorkspacePath(basePath: string, targetPath: strin
   return resolvedParts.join("/");
 }
 
+export function buildRelativeWorkspacePath(fromPath: string, toPath: string): string {
+  const fromParts = normalizeWorkspacePath(fromPath).split("/").filter(Boolean);
+  const toParts = normalizeWorkspacePath(toPath).split("/").filter(Boolean);
+
+  if (fromParts.length === 0) {
+    return toParts.join("/");
+  }
+
+  fromParts.pop();
+
+  let commonLength = 0;
+  while (
+    commonLength < fromParts.length &&
+    commonLength < toParts.length &&
+    fromParts[commonLength] === toParts[commonLength]
+  ) {
+    commonLength += 1;
+  }
+
+  const upSegments = fromParts.slice(commonLength).map(() => "..");
+  const downSegments = toParts.slice(commonLength);
+  const relativeParts = [...upSegments, ...downSegments];
+  return relativeParts.length > 0 ? relativeParts.join("/") : ".";
+}
+
 export function hasFileExtension(path: string): boolean {
   return /\.[^/.]+$/.test(path);
 }

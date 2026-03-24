@@ -533,16 +533,16 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     event.preventDefault();
     event.stopPropagation();
     if (isWikiLink || !isExternalLinkTarget(linkTarget)) {
-      if (linkTarget) {
-        link.dispatchEvent(
-          new CustomEvent('wiki-link-click', {
-            detail: { target: linkTarget },
-            bubbles: true,
-          })
-        );
-      }
-      return;
+    if (linkTarget) {
+      link.dispatchEvent(
+        new CustomEvent(isWikiLink ? 'wiki-link-click' : 'workspace-link-click', {
+          detail: { target: linkTarget },
+          bubbles: true,
+        })
+      );
     }
+    return;
+  }
 
     if (linkTarget) {
       link.dispatchEvent(

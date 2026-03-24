@@ -179,36 +179,36 @@
 /* Prose Lattice - Obsidian-like Markdown Rendering */
 .prose-lattice {
   @apply text-foreground;
-  font-size: 1rem;
-  line-height: 1.75;
+  font-size: 0.92rem;
+  line-height: 1.58;
 }
 
 .prose-lattice h1 {
-  @apply text-3xl font-bold mt-8 mb-4 pb-2 border-b border-border;
+  @apply text-[1.6rem] font-semibold mt-5 mb-2 pb-1.5 border-b border-border;
 }
 
 .prose-lattice h2 {
-  @apply text-2xl font-bold mt-6 mb-3 pb-1 border-b border-border/50;
+  @apply text-[1.22rem] font-semibold mt-4 mb-2 pb-1 border-b border-border/50;
 }
 
 .prose-lattice h3 {
-  @apply text-xl font-semibold mt-5 mb-2;
+  @apply text-[1.05rem] font-semibold mt-3.5 mb-1.5;
 }
 
 .prose-lattice h4 {
-  @apply text-lg font-semibold mt-4 mb-2;
+  @apply text-[0.98rem] font-semibold mt-3 mb-1;
 }
 
 .prose-lattice h5 {
-  @apply text-base font-semibold mt-3 mb-1;
+  @apply text-[0.92rem] font-semibold mt-2.5 mb-1;
 }
 
 .prose-lattice h6 {
-  @apply text-sm font-semibold mt-3 mb-1 text-muted-foreground;
+  @apply text-[0.82rem] font-semibold mt-2.5 mb-1 text-muted-foreground;
 }
 
 .prose-lattice p {
-  @apply my-3;
+  @apply my-2;
 }
 
 .prose-lattice strong {
@@ -224,15 +224,15 @@
 }
 
 .prose-lattice ul {
-  @apply list-disc pl-6 my-3;
+  @apply list-disc pl-6 my-2;
 }
 
 .prose-lattice ol {
-  @apply list-decimal pl-6 my-3;
+  @apply list-decimal pl-6 my-2;
 }
 
 .prose-lattice li {
-  @apply my-1;
+  @apply my-0.5;
 }
 
 .prose-lattice li > ul,
@@ -290,6 +290,33 @@
   height: 2px;
   background-color: hsl(var(--border));
   opacity: 0.85;
+}
+
+.prose-system-index {
+  @apply text-foreground;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.prose-system-index h1,
+.prose-system-index h2,
+.prose-system-index h3,
+.prose-system-index h4,
+.prose-system-index h5,
+.prose-system-index h6 {
+  scroll-margin-top: 4rem;
+}
+
+.prose-system-index a {
+  @apply text-primary underline underline-offset-2 hover:text-primary/80;
+}
+
+.prose-system-index code {
+  @apply bg-muted rounded px-1 py-0.5 text-[0.82rem] font-mono;
+}
+
+.prose-system-index pre {
+  @apply bg-muted rounded-lg p-3 my-2 overflow-x-auto;
 }
 
 /* Table styles for prose-lattice */
@@ -3587,19 +3614,19 @@ math-field.quantum-keyboard-active {
 }
 
 .live-preview-editor .cm-heading-1.cm-line {
-  font-size: 2em;
-  line-height: 1.4;
+  font-size: 1.65em;
+  line-height: 1.35;
   border-bottom: 1px solid hsl(var(--border));
 }
 
 .live-preview-editor .cm-heading-2.cm-line {
-  font-size: 1.5em;
-  line-height: 1.4;
+  font-size: 1.35em;
+  line-height: 1.35;
 }
 
 .live-preview-editor .cm-heading-3.cm-line {
-  font-size: 1.25em;
-  line-height: 1.4;
+  font-size: 1.15em;
+  line-height: 1.35;
 }
 
 /* Heading content widget styles */
@@ -3609,21 +3636,21 @@ math-field.quantum-keyboard-active {
 }
 
 .live-preview-editor .cm-heading-1-content {
-  font-size: 2em;
+  font-size: 1.65em;
   font-weight: 700;
-  line-height: 1.4;
+  line-height: 1.35;
 }
 
 .live-preview-editor .cm-heading-2-content {
-  font-size: 1.5em;
+  font-size: 1.35em;
   font-weight: 700;
-  line-height: 1.4;
+  line-height: 1.35;
 }
 
 .live-preview-editor .cm-heading-3-content {
-  font-size: 1.25em;
+  font-size: 1.15em;
   font-weight: 700;
-  line-height: 1.4;
+  line-height: 1.35;
 }
 
 .live-preview-editor .cm-heading-4-content {

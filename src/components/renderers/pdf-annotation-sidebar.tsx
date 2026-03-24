@@ -42,6 +42,8 @@ import { Button } from "@/components/ui/button";
 import { HIGHLIGHT_COLORS, BACKGROUND_COLORS, TEXT_COLORS, TEXT_FONT_SIZES, DEFAULT_TEXT_STYLE } from "@/lib/annotation-colors";
 import type { AnnotationItem, PdfTarget } from "@/types/universal-annotation";
 import { cn } from "@/lib/utils";
+import type { PaneId } from "@/types/layout";
+import type { AnnotationBacklink } from "@/lib/annotation-backlinks";
 
 // Helper function to export annotations to Markdown format
 function exportAnnotationsToMarkdown(annotations: AnnotationItem[]): string {
@@ -107,6 +109,11 @@ interface PdfAnnotationSidebarProps {
   selectedId: string | null;
   onSelect: (annotation: AnnotationItem) => void;
   onHoverChange?: (annotation: AnnotationItem | null) => void;
+  paneId?: PaneId;
+  rootHandle?: FileSystemDirectoryHandle | null;
+  currentFilePath?: string;
+  backlinksById?: Record<string, AnnotationBacklink[]>;
+  onNavigateBacklink?: (backlink: AnnotationBacklink) => void;
   onDelete: (id: string) => void;
   onUpdateColor?: (id: string, color: string) => void;
   onUpdateComment?: (id: string, comment: string) => void;
@@ -151,7 +158,7 @@ function BatchSelectionToolbar({
   if (selectedCount === 0) return null;
 
   return (
-    <div className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border px-2 py-1.5 flex items-center gap-1.5">
+    <div className="border-b border-border px-2 py-1.5 flex items-center gap-1.5 bg-background/95 backdrop-blur">
       <span className="text-xs font-medium text-muted-foreground">
         已选 {selectedCount}/{totalCount}
       </span>
@@ -727,6 +734,11 @@ function AnnotationCard({
   isSelected,
   isMultiSelected,
   isMultiSelectMode,
+  paneId,
+  rootHandle,
+  currentFilePath,
+  backlinks,
+  onNavigateBacklink,
   onSelect,
   onHoverChange,
   onToggleMultiSelect,
@@ -740,6 +752,11 @@ function AnnotationCard({
   isSelected: boolean;
   isMultiSelected: boolean;
   isMultiSelectMode: boolean;
+  paneId?: PaneId;
+  rootHandle?: FileSystemDirectoryHandle | null;
+  currentFilePath?: string;
+  backlinks?: AnnotationBacklink[];
+  onNavigateBacklink?: (backlink: AnnotationBacklink) => void;
   onSelect: () => void;
   onHoverChange?: (annotation: AnnotationItem | null) => void;
   onToggleMultiSelect: () => void;
@@ -752,6 +769,7 @@ function AnnotationCard({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [showBacklinks, setShowBacklinks] = useState(false);
   const [editComment, setEditComment] = useState(annotation.comment || '');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -759,6 +777,7 @@ function AnnotationCard({
   const page = target.page;
   const isTextAnnotation = annotation.style.type === 'text';
   const textStyle = annotation.style.textStyle || { textColor: '#000000', fontSize: 14 };
+  const resolvedBacklinks = backlinks ?? [];
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -980,7 +999,12 @@ function AnnotationCard({
                   {showPreview ? (
                     <div className="min-h-[48px] max-h-40 overflow-y-auto rounded border border-border bg-background px-2 py-1.5">
                       {editComment.trim() ? (
-                        <AnnotationMarkdownRenderer content={editComment} />
+                        <AnnotationMarkdownRenderer
+                          content={editComment}
+                          paneId={paneId}
+                          rootHandle={rootHandle}
+                          currentFilePath={currentFilePath}
+                        />
                       ) : (
                         <span className="text-xs text-muted-foreground italic">（空）</span>
                       )}
@@ -1039,7 +1063,12 @@ function AnnotationCard({
                 >
                   <MessageSquare className="h-3 w-3 mt-0.5 flex-shrink-0 text-muted-foreground" />
                   <div className="flex-1 min-w-0 max-h-24 overflow-y-auto">
-                    <AnnotationMarkdownRenderer content={annotation.comment} />
+                    <AnnotationMarkdownRenderer
+                      content={annotation.comment}
+                      paneId={paneId}
+                      rootHandle={rootHandle}
+                      currentFilePath={currentFilePath}
+                    />
                   </div>
                 </div>
               ) : (
@@ -1057,6 +1086,42 @@ function AnnotationCard({
               )}
             </>
           )}
+
+          {resolvedBacklinks.length > 0 ? (
+            <div className="mt-2 rounded-md border border-border/60 bg-muted/20 px-2 py-1.5">
+              <button
+                type="button"
+                className="flex w-full items-center justify-between text-[11px] text-muted-foreground"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setShowBacklinks((value) => !value);
+                }}
+              >
+                <span>反链 {resolvedBacklinks.length}</span>
+                <span>{showBacklinks ? "收起" : "展开"}</span>
+              </button>
+              {showBacklinks ? (
+                <div className="mt-1 space-y-1">
+                  {resolvedBacklinks.map((backlink) => (
+                    <button
+                      key={`${backlink.sourceFile}:${backlink.lineNumber}:${backlink.annotationId}`}
+                      type="button"
+                      className="block w-full rounded px-1.5 py-1 text-left text-[11px] text-primary transition-colors hover:bg-primary/10"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onNavigateBacklink?.(backlink);
+                      }}
+                    >
+                      <div className="truncate">{backlink.displayText?.trim() || backlink.sourceFile}</div>
+                      <div className="truncate text-[10px] text-muted-foreground">
+                        {backlink.sourceFile} · L{backlink.lineNumber}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -1084,6 +1149,11 @@ export function PdfAnnotationSidebar({
   selectedId,
   onSelect,
   onHoverChange,
+  paneId,
+  rootHandle,
+  currentFilePath,
+  backlinksById,
+  onNavigateBacklink,
   onDelete,
   onUpdateColor,
   onUpdateComment,
@@ -1231,56 +1301,53 @@ export function PdfAnnotationSidebar({
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="px-3 py-2.5 border-b border-border flex items-center justify-between">
-        <h3 className="text-sm font-medium">批注</h3>
-        <div className="flex items-center gap-2">
-          {/* Multi-select toggle button */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            onClick={() => isMultiSelectMode ? clearSelection() : selectAll()}
-            title={isMultiSelectMode ? "退出多选" : "多选模式"}
-          >
-            {isMultiSelectMode ? (
-              <CheckSquare className="h-3.5 w-3.5 text-primary" />
-            ) : (
-              <SquareIcon className="h-3.5 w-3.5" />
-            )}
-          </Button>
-          <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-            {annotations.length}
-          </span>
+    <div className="h-full min-h-0 overflow-y-auto">
+      <div className="sticky top-0 z-20 bg-background/95 backdrop-blur">
+        <div className="px-3 py-2 border-b border-border flex items-center justify-between">
+          <h3 className="text-sm font-medium">批注</h3>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => isMultiSelectMode ? clearSelection() : selectAll()}
+              title={isMultiSelectMode ? "退出多选" : "多选模式"}
+            >
+              {isMultiSelectMode ? (
+                <CheckSquare className="h-3.5 w-3.5 text-primary" />
+              ) : (
+                <SquareIcon className="h-3.5 w-3.5" />
+              )}
+            </Button>
+            <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+              {annotations.length}
+            </span>
+          </div>
         </div>
+
+        <SearchFilterToolbar
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          typeFilter={typeFilter}
+          onTypeFilterChange={setTypeFilter}
+          colorFilter={colorFilter}
+          onColorFilterChange={setColorFilter}
+          resultCount={sortedAnnotations.length}
+          totalCount={annotations.filter(a => a.target.type === 'pdf').length}
+        />
+
+        <BatchSelectionToolbar
+          selectedCount={selectedIds.size}
+          totalCount={sortedAnnotations.length}
+          onSelectAll={selectAll}
+          onClearSelection={clearSelection}
+          onDelete={handleBatchDelete}
+          onChangeColor={handleBatchColorChange}
+          onExport={handleBatchExport}
+        />
       </div>
 
-      {/* Search and filter toolbar */}
-      <SearchFilterToolbar
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        typeFilter={typeFilter}
-        onTypeFilterChange={setTypeFilter}
-        colorFilter={colorFilter}
-        onColorFilterChange={setColorFilter}
-        resultCount={sortedAnnotations.length}
-        totalCount={annotations.filter(a => a.target.type === 'pdf').length}
-      />
-
-      {/* Batch selection toolbar */}
-      <BatchSelectionToolbar
-        selectedCount={selectedIds.size}
-        totalCount={sortedAnnotations.length}
-        onSelectAll={selectAll}
-        onClearSelection={clearSelection}
-        onDelete={handleBatchDelete}
-        onChangeColor={handleBatchColorChange}
-        onExport={handleBatchExport}
-      />
-      
-      {/* Annotation list */}
-      <div className="flex-1 overflow-auto">
+      <div>
         {sortedAnnotations.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32 p-4 text-center">
             <Search className="h-6 w-6 text-muted-foreground mb-2" />
@@ -1299,6 +1366,11 @@ export function PdfAnnotationSidebar({
                 isSelected={selectedId === ann.id}
                 isMultiSelected={selectedIds.has(ann.id)}
                 isMultiSelectMode={isMultiSelectMode}
+                paneId={paneId}
+                rootHandle={rootHandle}
+                currentFilePath={currentFilePath}
+                backlinks={backlinksById?.[ann.id] ?? []}
+                onNavigateBacklink={onNavigateBacklink}
                 onSelect={() => onSelect(ann)}
                 onHoverChange={onHoverChange}
                 onToggleMultiSelect={() => toggleSelection(ann.id)}

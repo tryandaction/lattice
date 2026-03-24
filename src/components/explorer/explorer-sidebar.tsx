@@ -55,10 +55,9 @@ export function ExplorerSidebar() {
     const result = await createFile("Untitled", "note", getCreationTargetPath());
     if (result.success && result.handle && result.path) {
       setSelection(result.path, "file");
-      startRenaming(result.path);
       openFileInActivePane(result.handle, result.path);
     }
-  }, [createFile, getCreationTargetPath, openFileInActivePane, setSelection, startRenaming]);
+  }, [createFile, getCreationTargetPath, openFileInActivePane, setSelection]);
 
   /**
    * Create a new notebook and open it in the active pane
@@ -67,10 +66,9 @@ export function ExplorerSidebar() {
     const result = await createFile("Untitled", "notebook", getCreationTargetPath());
     if (result.success && result.handle && result.path) {
       setSelection(result.path, "file");
-      startRenaming(result.path);
       openFileInActivePane(result.handle, result.path);
     }
-  }, [createFile, getCreationTargetPath, openFileInActivePane, setSelection, startRenaming]);
+  }, [createFile, getCreationTargetPath, openFileInActivePane, setSelection]);
 
   /**
    * Create a new folder in the root directory or selected directory

@@ -23,6 +23,12 @@ npm run release:prepare
    - `release-manifest.json`
    - `RELEASE_SUMMARY.md`
 
+如果还要同步当前 Web 站点到 Cloudflare Pages，直接执行：
+
+```bash
+npm run deploy:web
+```
+
 ## 2. 常用模式
 
 ```bash
@@ -90,4 +96,7 @@ npm run release:prepare -- --upload
 - `/diagnostics/image-annotation` 可通过
 - `/diagnostics/selection-ai` 可通过
 - `/diagnostics/runner` 可打开并展示解释器/命令探测结果
+- `npm run test:browser-regression` 全绿
 - 代码文件、Notebook code cell、Markdown code block 都能看到 `Run / Problems` 分层反馈
+- 打开任意 PDF 后，Explorer 中能看到 `条目概览` 与 `批注索引`
+- 新增一条 PDF 批注后，`.basename.lattice/_annotations.md` 会自动同步

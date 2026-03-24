@@ -40,6 +40,7 @@ import { diagnosticsToExecutionProblems, mergeExecutionProblems, outputsToExecut
 import { ProblemsPanel } from "@/components/runner/problems-panel";
 import { WorkspaceRunnerManager } from "@/components/runner/workspace-runner-manager";
 import { isTauriHost } from "@/lib/storage-adapter";
+import { navigateLink } from "@/lib/link-router/navigate-link";
 
 interface NotebookEditorProps {
   content: string;
@@ -477,6 +478,14 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     return result;
   }, [clearCellOutputs, executeCell, filePath, updateCellExecutionCount, updateCellExecutionMeta]);
 
+  const handleLinkNavigate = useCallback((target: string) => {
+    void navigateLink(target, {
+      paneId,
+      rootHandle: workspaceRootHandle,
+      currentFilePath: filePath,
+    });
+  }, [filePath, paneId, workspaceRootHandle]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
@@ -836,6 +845,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
               onTypeChange={(type) => changeType(cell.id, type)}
               onNavigateUp={index > 0 ? activatePrevCell : undefined}
               onNavigateDown={index < state.cells.length - 1 ? activateNextCell : undefined}
+              onLinkNavigate={handleLinkNavigate}
               rootHandle={workspaceRootHandle}
               notebookFilePath={filePath}
               onRunCell={isPythonNotebook ? handleRunCell : undefined}

@@ -11,6 +11,7 @@ interface MarkdownCellProps {
   isActive: boolean;
   onChange: (source: string) => void;
   onFocus: () => void;
+  onLinkNavigate?: (target: string) => void;
   rootHandle?: FileSystemDirectoryHandle | null;
   filePath?: string;
   cellId?: string;
@@ -51,6 +52,7 @@ export function MarkdownCell({
   isActive,
   onChange,
   onFocus,
+  onLinkNavigate,
   rootHandle = null,
   filePath,
   cellId,
@@ -107,6 +109,7 @@ export function MarkdownCell({
           fileId={cellId ? `${filePath ?? "notebook"}#${cellId}` : filePath}
           rootHandle={rootHandle}
           filePath={filePath}
+          onLinkNavigate={onLinkNavigate}
         />
       </div>
     </div>

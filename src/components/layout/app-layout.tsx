@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import {
   ResizablePanelGroup,
@@ -175,11 +176,11 @@ function AppLayoutContent() {
   const aiChatOpen = useAiChatStore((state) => state.isOpen);
   const { toggleTheme } = useTheme();
   const { t } = useI18n();
+  const router = useRouter();
   const isDesktopLayout = !isMobile && !isTablet;
   const openGuide = useCallback(() => {
-    if (typeof window === "undefined") return;
-    window.location.assign(resolveAppRoute("/guide"));
-  }, []);
+    router.push(resolveAppRoute("/guide"));
+  }, [router]);
 
   useAutoOpenFolder();
 

@@ -20,6 +20,7 @@ import {
   removeTabsByPath as removeTabsByPathUtil,
   removeTabsByPrefix as removeTabsByPrefixUtil,
   updateTabsPath as updateTabsPathUtil,
+  updateTabsFile as updateTabsFileUtil,
   updateTabsPathPrefix as updateTabsPathPrefixUtil,
   reorderTabsInPane,
   moveTabBetweenPanes,
@@ -137,6 +138,7 @@ interface WorkspaceState {
   closeTabsByPath: (path: string) => void;
   closeTabsByPrefix: (pathPrefix: string) => void;
   updateTabPath: (oldPath: string, newPath: string) => void;
+  updateTabFile: (oldPath: string, newPath: string, handle: FileSystemFileHandle) => void;
   updateTabPathPrefix: (oldPathPrefix: string, newPathPrefix: string) => void;
   setActiveTab: (paneId: PaneId, tabIndex: number) => void;
   reorderTabs: (paneId: PaneId, fromIndex: number, toIndex: number) => void;
@@ -379,6 +381,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       layout: {
         ...state.layout,
         root: updateTabsPathUtil(state.layout.root, oldPath, newPath),
+      },
+    })),
+
+  updateTabFile: (oldPath, newPath, handle) =>
+    set((state) => ({
+      layout: {
+        ...state.layout,
+        root: updateTabsFileUtil(state.layout.root, oldPath, newPath, handle),
       },
     })),
 

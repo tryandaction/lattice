@@ -12,8 +12,12 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useWorkspaceStore } from '@/stores/workspace-store';
-import { isTauri } from '@/lib/storage-adapter';
+import { readDirectoryRecursive } from '@/hooks/use-file-system';
+import { createDesktopDirectoryHandle, getDesktopHandlePath } from '@/lib/desktop-file-system';
 import { logger } from '@/lib/logger';
+import { isTauri } from '@/lib/storage-adapter';
+import type { DirectoryNode } from '@/types/file-system';
+import type { AppSettings } from '@/types/settings';
 
 const DB_NAME = 'lattice-handles';
 const STORE_NAME = 'directory-handles';
@@ -58,24 +62,61 @@ async function loadHandleFromDB(): Promise<FileSystemDirectoryHandle | null> {
 // Hook
 // ============================================================================
 
+export function resolveAutoOpenWorkspacePath(settings: Pick<AppSettings, 'lastOpenedFolder' | 'defaultFolder'>): string | null {
+  return settings.lastOpenedFolder ?? settings.defaultFolder ?? null;
+}
+
 export function useAutoOpenFolder() {
   const isInitialized = useSettingsStore((state) => state.isInitialized);
   const settings = useSettingsStore((state) => state.settings);
+  const updateSetting = useSettingsStore((state) => state.updateSetting);
 
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
   const setRootHandle = useWorkspaceStore((state) => state.setRootHandle);
+  const setFileTree = useWorkspaceStore((state) => state.setFileTree);
+  const setLoading = useWorkspaceStore((state) => state.setLoading);
+  const setError = useWorkspaceStore((state) => state.setError);
   const setWorkspaceRootPath = useWorkspaceStore((state) => state.setWorkspaceRootPath);
 
   const hasAttemptedAutoOpen = useRef(false);
 
-  // Persist handle whenever rootHandle changes (web mode only)
+  // Persist handle whenever rootHandle changes
   useEffect(() => {
-    if (!isTauri() && rootHandle) {
+    if (rootHandle && !isTauri() && !getDesktopHandlePath(rootHandle)) {
       saveHandleToDB(rootHandle).catch((err) =>
         logger.warn('[AutoOpen] Failed to persist folder handle:', err)
       );
     }
   }, [rootHandle]);
+
+  const restoreWorkspaceFromHandle = useCallback(async (
+    handle: FileSystemDirectoryHandle,
+    workspaceRootPath: string | null,
+  ) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const children = await readDirectoryRecursive(handle);
+      const rootNode: DirectoryNode = {
+        name: handle.name,
+        kind: "directory",
+        handle,
+        children,
+        path: handle.name,
+        isExpanded: true,
+      };
+      setRootHandle(handle);
+      setWorkspaceRootPath(workspaceRootPath ?? handle.name);
+      setFileTree({ root: rootNode });
+      await updateSetting('lastOpenedFolder', workspaceRootPath ?? handle.name);
+      logger.info('[AutoOpen] Restored workspace tree:', handle.name);
+    } catch (err) {
+      logger.warn('[AutoOpen] Failed to rebuild workspace tree:', err);
+      setError(err instanceof Error ? err.message : 'Failed to restore workspace');
+    } finally {
+      setLoading(false);
+    }
+  }, [setError, setFileTree, setLoading, setRootHandle, setWorkspaceRootPath, updateSetting]);
 
   const openDefaultFolder = useCallback(async () => {
     if (hasAttemptedAutoOpen.current) return;
@@ -84,28 +125,26 @@ export function useAutoOpenFolder() {
     if (!settings.onboardingCompleted) return;
     if (rootHandle) return;
 
-    if (isTauri()) {
-      // Tauri mode: use Tauri dialog to open saved path
-      try {
-        const { open } = await import('@tauri-apps/plugin-dialog');
-        const path = settings.defaultFolder;
-        if (!path) return;
-        setWorkspaceRootPath(path);
-        // In Tauri, we can programmatically access the filesystem
-        // but still need to set the root handle through the workspace store
-        logger.info('[AutoOpen] Tauri mode - attempting to open:', path);
-        const selected = await open({ directory: true, defaultPath: path });
-        if (selected) {
-          logger.info('[AutoOpen] Tauri folder opened:', selected);
-        }
-      } catch (err) {
-        logger.warn('[AutoOpen] Tauri auto-open failed:', err);
-      }
-      return;
-    }
-
-    // Web mode: try to restore handle from IndexedDB
     try {
+      if (isTauri()) {
+        const candidates = [settings.lastOpenedFolder, settings.defaultFolder]
+          .filter((value, index, list): value is string => Boolean(value) && list.indexOf(value) === index);
+
+        for (const candidatePath of candidates) {
+          try {
+            const desktopHandle = createDesktopDirectoryHandle(candidatePath);
+            await restoreWorkspaceFromHandle(desktopHandle, candidatePath);
+            return;
+          } catch (err) {
+            logger.warn('[AutoOpen] Failed to restore desktop workspace path:', candidatePath, err);
+            if (candidatePath === settings.lastOpenedFolder) {
+              await updateSetting('lastOpenedFolder', null);
+            }
+          }
+        }
+        return;
+      }
+
       const savedHandle = await loadHandleFromDB();
       if (!savedHandle) {
         logger.debug('[AutoOpen] No saved folder handle found');
@@ -115,8 +154,7 @@ export function useAutoOpenFolder() {
       // Request permission to access the saved handle
       const permission = await savedHandle.queryPermission({ mode: 'readwrite' });
       if (permission === 'granted') {
-        setRootHandle(savedHandle);
-        logger.info('[AutoOpen] Restored folder:', savedHandle.name);
+        await restoreWorkspaceFromHandle(savedHandle, resolveAutoOpenWorkspacePath(settings) ?? savedHandle.name);
         return;
       }
 
@@ -124,15 +162,19 @@ export function useAutoOpenFolder() {
       // We can't auto-request without user interaction, but we can try
       const requested = await savedHandle.requestPermission({ mode: 'readwrite' });
       if (requested === 'granted') {
-        setRootHandle(savedHandle);
-        logger.info('[AutoOpen] Permission granted, restored folder:', savedHandle.name);
+        await restoreWorkspaceFromHandle(savedHandle, resolveAutoOpenWorkspacePath(settings) ?? savedHandle.name);
       } else {
         logger.debug('[AutoOpen] Permission denied for saved folder');
       }
     } catch (err) {
       logger.warn('[AutoOpen] Failed to restore folder handle:', err);
     }
-  }, [rootHandle, setRootHandle, setWorkspaceRootPath, settings.defaultFolder, settings.onboardingCompleted]);
+  }, [
+    restoreWorkspaceFromHandle,
+    rootHandle,
+    settings,
+    updateSetting,
+  ]);
 
   useEffect(() => {
     if (isInitialized) {
