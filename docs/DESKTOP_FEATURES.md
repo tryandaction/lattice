@@ -150,16 +150,15 @@
 #### 当前能力
 
 - 首次在 Lattice 中打开 PDF 时，会自动建立同级隐藏兄弟目录 `.basename.lattice/`
-- 隐藏目录内固定包含：
+- 隐藏目录内容包括：
   - `manifest.json`
-  - `_overview.md`
-  - `_annotations.md`
-- Explorer 会隐藏真实目录，并把这些文件投影到 PDF 条目下面
+  - 用户创建的 `*.md` / `*.ipynb`
+  - `_annotations.md`（仅在产生第一条 PDF 批注后惰性生成）
+- Explorer 会隐藏真实目录，并把真实用户文件与惰性 `_annotations.md` 投影到 PDF 条目下面
 - PDF 条目右键可直接：
-  - 打开概览
-  - 新建阅读笔记
+  - 新建笔记
   - 新建 Notebook
-  - 重建批注索引
+  - 在 Explorer 定位
 - PDF 批注 sidecar 已改为稳定 `itemId` 存储，PDF 重命名/移动/复制/删除时会伴随处理
 - `_annotations.md` 会自动镜像 PDF 批注，并支持 `#page=`、`#annotation=` 深链
 - 批注评论、阅读笔记、Notebook Markdown 中的内部链接会继续在应用内打开

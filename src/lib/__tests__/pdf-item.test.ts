@@ -46,11 +46,10 @@ describe("pdf-item utils", () => {
     const markdown = buildPdfAnnotationsMarkdown({
       fileName: "rydberg-review.pdf",
       manifest: {
-        version: 2,
+        version: 3,
         itemId: "papers-rydberg-review.pdf",
         pdfPath: "papers/rydberg-review.pdf",
         itemFolderPath: "papers/.rydberg-review.lattice",
-        overviewPath: "papers/.rydberg-review.lattice/_overview.md",
         annotationIndexPath: "papers/.rydberg-review.lattice/_annotations.md",
         createdAt: 1710000000000,
         updatedAt: 1710000000000,

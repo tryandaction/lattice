@@ -64,7 +64,8 @@ import type { ExecutionProblem } from "@/lib/runner/types";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useExecutionDockLayout } from "@/hooks/use-execution-dock-layout";
 import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
-import { stripLeadingFrontmatter } from "@/lib/markdown-reading";
+import { prepareMarkdownForReading } from "@/lib/markdown-reading";
+import { useI18n } from "@/hooks/use-i18n";
 
 // Lazy load components
 const LivePreviewEditor = dynamic(
@@ -225,6 +226,7 @@ export function ObsidianMarkdownViewer({
   filePath,
   variant = "document",
 }: ObsidianMarkdownViewerProps) {
+  const { t } = useI18n();
   const [mode, setMode] = useState<ViewMode>(initialMode);
   const [localContent, setLocalContent] = useState(content);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
@@ -268,6 +270,8 @@ export function ObsidianMarkdownViewer({
   const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
   const setRecentRunConfig = useWorkspaceStore((state) => state.setRecentRunConfig);
   const setRunnerPreferences = useWorkspaceStore((state) => state.setRunnerPreferences);
+  const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
+  const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
   const absoluteFilePath = useMemo(
     () => (filePath ? resolveWorkspaceFilePath(workspaceRootPath, filePath, workspaceRootName) : null),
     [filePath, workspaceRootName, workspaceRootPath],
@@ -470,6 +474,67 @@ export function ObsidianMarkdownViewer({
   }, [filePath, onNavigateToFile, paneId, rootHandle]);
 
   useEffect(() => {
+    const breadcrumbs = (filePath ?? fileName)
+      .split("/")
+      .filter(Boolean)
+      .map((segment) => ({ label: segment }));
+    setCommandBarState(paneId, {
+      breadcrumbs,
+      actions: [
+        {
+          id: "save",
+          label: t("common.save"),
+          disabled: !onSave || saveStatus === "saving" || !isDirty,
+          onTrigger: () => { void handleSave(); },
+        },
+        {
+          id: "export",
+          label: t("workbench.commandBar.export"),
+          onTrigger: () => setShowExportDialog(true),
+        },
+        {
+          id: "outline",
+          label: showOutline ? t("workbench.commandBar.hideOutline") : t("workbench.commandBar.showOutline"),
+          onTrigger: () => setShowOutline((value) => !value),
+        },
+        {
+          id: "mode-live",
+          label: t("workbench.commandBar.live"),
+          disabled: mode === "live",
+          onTrigger: () => setMode("live"),
+        },
+        {
+          id: "mode-source",
+          label: t("workbench.commandBar.source"),
+          disabled: mode === "source",
+          onTrigger: () => setMode("source"),
+        },
+        {
+          id: "mode-reading",
+          label: t("workbench.commandBar.read"),
+          disabled: mode === "reading",
+          onTrigger: () => setMode("reading"),
+        },
+      ],
+    });
+
+    return () => clearCommandBarState(paneId);
+  }, [
+    clearCommandBarState,
+    fileName,
+    filePath,
+    handleSave,
+    isDirty,
+    mode,
+    onSave,
+    paneId,
+    saveStatus,
+    setCommandBarState,
+    showOutline,
+    t,
+  ]);
+
+  useEffect(() => {
     if (outputs.some((output) => output.type === "error")) {
       startTransition(() => {
         setShowRunDock(true);
@@ -585,7 +650,7 @@ export function ObsidianMarkdownViewer({
     }
   }, []);
 
-  const readingModeContent = useMemo(() => stripLeadingFrontmatter(localContent), [localContent]);
+  const readingModeContent = useMemo(() => prepareMarkdownForReading(localContent), [localContent]);
 
   const durationLabel = formatDuration(summary.durationMs);
   const shouldRenderRunDock = showRunDock || outputs.length > 0 || problems.length > 0 || isRunning || isLoading;

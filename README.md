@@ -11,7 +11,7 @@
 - Notebook 已改为真实的本地持久 Python session：默认惰性启动，打开文件不自动起会话；只有用户点击 `Run` 或 `验证环境` 时才进行 runtime 校验与 `ready` 握手。非 Python `.ipynb` 明确禁跑
 - `.ipynb` 现已保留 `raw` cell，不再伪装成 code cell
 - PDF 现已升级为一等条目：首次打开会自动建立同级隐藏兄弟目录 `.basename.lattice/`，并投影为 PDF 下的系统子条目
-- PDF 条目默认包含 `条目概览`、`批注索引`、阅读笔记与 Notebook 工作区，批注 Markdown 会自动去抖镜像同步
+- PDF 条目会建立同级隐藏兄弟目录 `.basename.lattice/`，其中保留 `manifest.json`、用户笔记、Notebook，以及按需惰性生成的 `_annotations.md`
 - PDF 批注支持相对路径深链、反链索引与从批注回跳到研究笔记，不再只是侧栏孤岛
 - PDF 文本选择已改为“原生拖选 -> transient overlay”双阶段，复制优先取当前 PDF 原生选中文本，减少拖选闪烁与手感断裂
 - PDF 左栏已改为可拖拽宽度的紧凑工具头 + 主批注工作区，批注列表重新占据主要高度

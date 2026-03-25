@@ -2,13 +2,9 @@
 
 import { useCallback, useMemo, useRef, useEffect, useState, startTransition } from "react";
 import {
-  Play,
-  Loader2,
   Trash2,
   ChevronDown,
   ChevronUp,
-  Square,
-  RotateCcw,
   AlertTriangle,
 } from "lucide-react";
 import {
@@ -46,6 +42,7 @@ import { WorkspaceRunnerManager } from "@/components/runner/workspace-runner-man
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useExecutionDockLayout } from "@/hooks/use-execution-dock-layout";
 import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface CodeEditorViewerProps {
   content: string;
@@ -75,6 +72,7 @@ export function CodeEditorViewer({
   paneId,
   filePath,
 }: CodeEditorViewerProps) {
+  const { t } = useI18n();
   const extension = getFileExtension(fileName);
   const language = useMemo<CodeEditorLanguage>(
     () => getCodeEditorLanguage(extension),
@@ -89,6 +87,8 @@ export function CodeEditorViewer({
   const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
   const setRecentRunConfig = useWorkspaceStore((state) => state.setRecentRunConfig);
   const setRunnerPreferences = useWorkspaceStore((state) => state.setRunnerPreferences);
+  const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
+  const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
 
   const {
     status: runnerStatus,
@@ -426,6 +426,50 @@ export function CodeEditorViewer({
   const shouldRenderDock = showOutput || outputs.length > 0 || problems.length > 0 || isRunning || isLoading;
   const runnerCommand = runnerDefinition?.command;
 
+  useEffect(() => {
+    const breadcrumbs = filePath.split("/").filter(Boolean).map((segment) => ({ label: segment }));
+    setCommandBarState(paneId, {
+      breadcrumbs,
+      actions: [
+        {
+          id: "save",
+          label: t("common.save"),
+          disabled: !onSave || isReadOnly,
+          onTrigger: () => { void onSave?.(); },
+        },
+        {
+          id: isRunning ? "stop" : "run",
+          label: isRunning ? t("workbench.commandBar.stop") : t("workbench.commandBar.run"),
+          disabled: !canRun,
+          onTrigger: isRunning ? () => { void terminate(); } : () => { void handleRun(); },
+        },
+        {
+          id: "rerun",
+          label: t("workbench.commandBar.rerun"),
+          disabled: !lastRequest || isRunning || isLoading,
+          onTrigger: () => { void handleRerun(); },
+        },
+      ],
+    });
+
+    return () => clearCommandBarState(paneId);
+  }, [
+    canRun,
+    clearCommandBarState,
+    filePath,
+    handleRerun,
+    handleRun,
+    isLoading,
+    isReadOnly,
+    isRunning,
+    lastRequest,
+    onSave,
+    paneId,
+    setCommandBarState,
+    t,
+    terminate,
+  ]);
+
   const renderDock = useCallback((expanded: boolean) => (
     <div className={expanded ? "flex h-full min-h-0 flex-col border-t border-border bg-background" : "border-t border-border bg-background"}>
       <HorizontalScrollStrip
@@ -477,21 +521,21 @@ export function CodeEditorViewer({
         </div>
 
         <div className="flex shrink-0 items-center gap-2 text-[10px] text-muted-foreground">
-          {summary.startedAt && <span>Started</span>}
+          {summary.startedAt && <span>{t("workbench.runner.started")}</span>}
           {durationLabel && <span>{durationLabel}</span>}
-          {summary.exitCode !== null && <span>Exit {summary.exitCode}</span>}
+          {summary.exitCode !== null && <span>{t("workbench.runner.exit", { code: summary.exitCode })}</span>}
           {runnerHealthSnapshot.issues.length > 0 && (
             <span className="inline-flex items-center gap-1 text-yellow-700 dark:text-yellow-300">
               <AlertTriangle className="h-3 w-3" />
-              <span>{runnerHealthSnapshot.issues.length} health</span>
+              <span>{t("workbench.runner.health", { count: runnerHealthSnapshot.issues.length })}</span>
             </span>
           )}
           <WorkspaceRunnerManager
             cwd={runCwd}
             fileKey={filePath}
             commands={runnerCommand ? [runnerCommand] : []}
-            title="Code File Runner Manager"
-            triggerLabel="Runner"
+            title={t("workbench.runner.managerCode")}
+            triggerLabel={t("workbench.runner.trigger")}
           />
           {expanded && (outputs.length > 0 || problems.length > 0) && (
             <button
@@ -513,7 +557,7 @@ export function CodeEditorViewer({
               <OutputArea outputs={outputs} meta={panelMeta} showDiagnosticsInline={false} />
               {outputs.length === 0 && !runnerError && runnerStatus !== "loading" && runnerStatus !== "running" && (
                 <p className="py-4 text-center text-xs text-muted-foreground">
-                  No output yet. Click Run or press Shift+Enter to execute.
+                  {t("workbench.runner.noOutput")}
                 </p>
               )}
             </>
@@ -522,7 +566,7 @@ export function CodeEditorViewer({
               <ProblemsPanel problems={problems} onSelectProblem={navigateToProblem} />
               {problems.length === 0 ? (
                 <p className="py-4 text-center text-xs text-muted-foreground">
-                  No problems detected.
+                  {t("workbench.runner.noProblems")}
                 </p>
               ) : null}
             </>
@@ -573,7 +617,7 @@ export function CodeEditorViewer({
         onOpenHub={(context, mode, returnFocusTo) => setSelectionHubState({ context, mode, returnFocusTo })}
         extraActions={runnerDefinition?.supportsInlineCode ? [{
           id: "run-selection",
-          label: "Run Selection",
+          label: t("workbench.runner.runSelection"),
           onSelect: () => {
             void handleRunSelection();
           },
@@ -598,54 +642,21 @@ export function CodeEditorViewer({
           <span className="text-xs text-muted-foreground">({language})</span>
           {runnerDefinition && (
             <span className="text-xs text-muted-foreground">
-              Runner: {runnerDefinition.displayName}
+              {t("workbench.code.runnerPrefix")}: {runnerDefinition.displayName}
             </span>
           )}
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          {canRun && (
-            <>
-              {isRunning ? (
-                <button
-                  onClick={() => void terminate()}
-                  className="flex items-center gap-1.5 rounded-md bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
-                  title="Stop current run"
-                >
-                  <Square className="w-3 h-3" />
-                  <span>Stop</span>
-                </button>
-              ) : (
-                <button
-                  onClick={() => void handleRun()}
-                  disabled={isLoading}
-                  className="flex items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Run file (Shift+Enter)"
-                >
-                  {isLoading ? (
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                  ) : (
-                    <Play className="w-3 h-3" />
-                  )}
-                  <span>Run</span>
-                </button>
-              )}
-
-              <button
-                onClick={() => void handleRerun()}
-                disabled={!lastRequest || isRunning || isLoading}
-                className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-                title="Rerun last task"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span>Rerun</span>
-              </button>
-            </>
-          )}
+          {canRun ? (
+            <span className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground">
+              {isRunning ? t("workbench.code.status.running") : isLoading ? t("workbench.code.status.preparing") : t("workbench.code.status.ready")}
+            </span>
+          ) : null}
 
           {isReadOnly && (
             <span className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground">
-              Read-only
+              {t("workbench.code.readonly")}
             </span>
           )}
         </div>

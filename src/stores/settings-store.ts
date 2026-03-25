@@ -9,6 +9,8 @@ import type { AppSettings, ExecutionDockLayout, Locale, ThemeMode } from '@/type
 import { DEFAULT_SETTINGS, SETTINGS_STORAGE_KEY } from '@/types/settings';
 import { getStorageAdapter } from '@/lib/storage-adapter';
 
+const MAX_RECENT_WORKSPACES = 12;
+
 interface SettingsState {
   settings: AppSettings;
   isLoading: boolean;
@@ -25,6 +27,8 @@ interface SettingsActions {
   setLanguage: (language: Locale) => Promise<void>;
   setTheme: (theme: ThemeMode) => Promise<void>;
   setDefaultFolder: (folder: string | null) => Promise<void>;
+  rememberWorkspacePath: (path: string) => Promise<void>;
+  removeRecentWorkspacePath: (path: string) => Promise<void>;
 }
 
 export type SettingsStore = SettingsState & SettingsActions;
@@ -126,6 +130,38 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   setDefaultFolder: async (folder) => {
     await get().updateSetting('defaultFolder', folder);
   },
+
+  rememberWorkspacePath: async (path) => {
+    const trimmed = path.trim();
+    if (!trimmed) return;
+    const { settings, updateSettings } = get();
+    const recentWorkspacePaths = [
+      trimmed,
+      ...settings.recentWorkspacePaths.filter((item) => item !== trimmed),
+    ].slice(0, MAX_RECENT_WORKSPACES);
+    await updateSettings({
+      lastWorkspacePath: trimmed,
+      lastOpenedFolder: trimmed,
+      recentWorkspacePaths,
+    });
+  },
+
+  removeRecentWorkspacePath: async (path) => {
+    const trimmed = path.trim();
+    const { settings, updateSettings } = get();
+    const recentWorkspacePaths = settings.recentWorkspacePaths.filter((item) => item !== trimmed);
+    const nextLastWorkspacePath = settings.lastWorkspacePath === trimmed
+      ? recentWorkspacePaths[0] ?? null
+      : settings.lastWorkspacePath;
+    const nextLastOpenedFolder = settings.lastOpenedFolder === trimmed
+      ? recentWorkspacePaths[0] ?? null
+      : settings.lastOpenedFolder;
+    await updateSettings({
+      recentWorkspacePaths,
+      lastWorkspacePath: nextLastWorkspacePath,
+      lastOpenedFolder: nextLastOpenedFolder,
+    });
+  },
 }));
 
 /**
@@ -168,7 +204,21 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   if (raw.theme === 'light' || raw.theme === 'dark' || raw.theme === 'system') normalized.theme = raw.theme;
   normalized.defaultFolder = stringOrNull(raw.defaultFolder);
   normalized.lastOpenedFolder = stringOrNull(raw.lastOpenedFolder);
+  normalized.lastWorkspacePath = stringOrNull(raw.lastWorkspacePath);
+  normalized.recentWorkspacePaths = stringArray(raw.recentWorkspacePaths)?.slice(0, MAX_RECENT_WORKSPACES);
   if (typeof raw.rememberWindowState === 'boolean') normalized.rememberWindowState = raw.rememberWindowState;
+  if (raw.activityView === 'files' || raw.activityView === 'annotations' || raw.activityView === 'search') {
+    normalized.activityView = raw.activityView;
+  }
+  if (typeof raw.sidePanelWidth === 'number') normalized.sidePanelWidth = raw.sidePanelWidth;
+  if (typeof raw.sidePanelCollapsed === 'boolean') normalized.sidePanelCollapsed = raw.sidePanelCollapsed;
+  if (raw.searchPanelScope === 'all' || raw.searchPanelScope === 'current') normalized.searchPanelScope = raw.searchPanelScope;
+  if (raw.searchPanelMode === 'name_and_content' || raw.searchPanelMode === 'file_name_only') normalized.searchPanelMode = raw.searchPanelMode;
+  if (raw.searchPanelSort === 'relevance' || raw.searchPanelSort === 'name') normalized.searchPanelSort = raw.searchPanelSort;
+  if (raw.annotationsPanelScope === 'all' || raw.annotationsPanelScope === 'current') normalized.annotationsPanelScope = raw.annotationsPanelScope;
+  if (raw.annotationsPanelSort === 'latest' || raw.annotationsPanelSort === 'count' || raw.annotationsPanelSort === 'name') {
+    normalized.annotationsPanelSort = raw.annotationsPanelSort;
+  }
   if (typeof raw.onboardingCompleted === 'boolean') normalized.onboardingCompleted = raw.onboardingCompleted;
   if (raw.windowState && typeof raw.windowState === 'object') normalized.windowState = raw.windowState;
   if (typeof raw.pluginsEnabled === 'boolean') normalized.pluginsEnabled = raw.pluginsEnabled;

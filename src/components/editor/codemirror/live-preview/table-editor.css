@@ -35,7 +35,7 @@
   border-spacing: 0;
   font-size: 14px;
   font-family: inherit;
-  table-layout: fixed;
+  table-layout: auto;
 }
 
 .table-editor tbody td,
@@ -44,8 +44,7 @@
   border-right: 1px solid var(--table-border);
   border-bottom: 1px solid var(--table-border);
   position: relative;
-  min-width: 96px;
-  max-width: 420px;
+  min-width: 72px;
   vertical-align: top;
   color: var(--table-text);
   background: var(--table-surface);
@@ -95,6 +94,9 @@
   color: var(--table-text);
   caret-color: var(--table-text);
   white-space: pre-wrap;
+  overflow: hidden;
+  resize: none;
+  box-sizing: border-box;
 }
 
 .cell-content {

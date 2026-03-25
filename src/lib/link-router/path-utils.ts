@@ -98,7 +98,20 @@ export function buildWorkspaceCandidatePaths(path: string): string[] {
   const normalized = normalizeWorkspacePath(path);
   if (!normalized) return [];
   if (hasFileExtension(normalized)) return [normalized];
-  return [normalized, `${normalized}.md`, `${normalized}.ipynb`];
+  return [
+    normalized,
+    `${normalized}.md`,
+    `${normalized}.ipynb`,
+    `${normalized}.pdf`,
+    `${normalized}.docx`,
+    `${normalized}.pptx`,
+    `${normalized}.html`,
+    `${normalized}.txt`,
+    `${normalized}.png`,
+    `${normalized}.jpg`,
+    `${normalized}.jpeg`,
+    `${normalized}.gif`,
+  ];
 }
 
 export function isSameWorkspacePath(left: string | undefined, right: string | undefined): boolean {

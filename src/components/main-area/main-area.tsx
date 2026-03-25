@@ -8,7 +8,8 @@ import { useContentCacheStore } from "@/stores/content-cache-store";
 import { LayoutRenderer } from "./layout-renderer";
 import { findPane } from "@/lib/layout-utils";
 import { getFileExtension, isEditableFile } from "@/lib/file-utils";
-import { fastSaveFile } from "@/lib/fast-save";
+import { useFileSystem } from "@/hooks/use-file-system";
+import { saveWorkspaceTabContent } from "@/lib/workspace-save";
 import { useWorkspaceRunnerPreferencesPersistence } from "@/hooks/use-workspace-runner-preferences";
 
 /**
@@ -68,6 +69,7 @@ export function MainArea() {
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
   const layout = useWorkspaceStore((state) => state.layout);
   const setTabDirty = useWorkspaceStore((state) => state.setTabDirty);
+  const { refreshDirectory } = useFileSystem();
 
   // Keyboard shortcut handler for Ctrl+S
   useEffect(() => {
@@ -117,17 +119,21 @@ export function MainArea() {
         }
 
         try {
-          // Save using the fast save function
-          await fastSaveFile(activeTab.fileHandle, cached.content);
+          const persistedTab = await saveWorkspaceTabContent({
+            tab: activeTab,
+            content: cached.content,
+            rootHandle,
+            refreshDirectory,
+          });
 
           // Mark as saved in cache
-          useContentCacheStore.getState().markAsSaved(activeTab.id, cached.content);
+          useContentCacheStore.getState().markAsSaved(persistedTab.id, cached.content);
 
           // Clear dirty state in layout
           setTabDirty(layout.activePaneId, activePane.activeTabIndex, false);
 
           toast.success('Saved', {
-            description: `${activeTab.fileName} saved successfully.`,
+            description: `${persistedTab.fileName} saved successfully.`,
           });
         } catch (err) {
           toast.error('Save Failed', {
@@ -206,7 +212,7 @@ export function MainArea() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setTabDirty]);
+  }, [refreshDirectory, rootHandle, setTabDirty]);
 
   // Show welcome placeholder if no workspace is open
   if (!rootHandle) {

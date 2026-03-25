@@ -18,6 +18,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -32,11 +35,32 @@ use uuid::Uuid;
 const SETTINGS_STORE: &str = "settings.json";
 const RUNNER_EVENT_NAME: &str = "runner://event";
 const PYTHON_EVENT_PREFIX: &str = "__LATTICE_EVENT__";
+const DEFAULT_FOLDER_KEY: &str = "default_folder";
+const LAST_OPENED_FOLDER_KEY: &str = "last_opened_folder";
+const LAST_WORKSPACE_PATH_KEY: &str = "last_workspace_path";
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW_FLAG: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppSettings {
     pub default_folder: Option<String>,
     pub last_opened_folder: Option<String>,
+    pub last_workspace_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StartupWorkspaceSource {
+    LastWorkspacePath,
+    DefaultFolder,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StartupWorkspaceResolution {
+    path: Option<String>,
+    source: Option<StartupWorkspaceSource>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -182,7 +206,7 @@ struct PythonProbe {
 fn get_default_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
     let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
 
-    if let Some(value) = store.get("default_folder") {
+    if let Some(value) = store.get(DEFAULT_FOLDER_KEY) {
         if let Some(folder) = value.as_str() {
             return Ok(Some(folder.to_string()));
         }
@@ -194,7 +218,7 @@ fn get_default_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
 #[tauri::command]
 fn set_default_folder(app: tauri::AppHandle, folder: String) -> Result<(), String> {
     let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
-    store.set("default_folder", json!(folder));
+    store.set(DEFAULT_FOLDER_KEY, json!(folder));
     store.save().map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -203,7 +227,7 @@ fn set_default_folder(app: tauri::AppHandle, folder: String) -> Result<(), Strin
 fn get_last_opened_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
     let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
 
-    if let Some(value) = store.get("last_opened_folder") {
+    if let Some(value) = store.get(LAST_OPENED_FOLDER_KEY) {
         if let Some(folder) = value.as_str() {
             return Ok(Some(folder.to_string()));
         }
@@ -215,7 +239,7 @@ fn get_last_opened_folder(app: tauri::AppHandle) -> Result<Option<String>, Strin
 #[tauri::command]
 fn set_last_opened_folder(app: tauri::AppHandle, folder: String) -> Result<(), String> {
     let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
-    store.set("last_opened_folder", json!(folder));
+    store.set(LAST_OPENED_FOLDER_KEY, json!(folder));
     store.save().map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -223,9 +247,92 @@ fn set_last_opened_folder(app: tauri::AppHandle, folder: String) -> Result<(), S
 #[tauri::command]
 fn clear_default_folder(app: tauri::AppHandle) -> Result<(), String> {
     let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
-    store.delete("default_folder");
+    store.delete(DEFAULT_FOLDER_KEY);
     store.save().map_err(|error| error.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+fn set_last_workspace_path(app: tauri::AppHandle, path: Option<String>) -> Result<(), String> {
+    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
+    match path.as_deref().filter(|value| !value.trim().is_empty()) {
+        Some(value) => {
+            store.set(LAST_WORKSPACE_PATH_KEY, json!(value));
+            // Compatibility write for one migration cycle.
+            store.set(LAST_OPENED_FOLDER_KEY, json!(value));
+        }
+        None => {
+            store.delete(LAST_WORKSPACE_PATH_KEY);
+            store.delete(LAST_OPENED_FOLDER_KEY);
+        }
+    }
+    store.save().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn resolve_startup_workspace(app: tauri::AppHandle) -> Result<StartupWorkspaceResolution, String> {
+    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
+    let last_workspace_path = store
+        .get(LAST_WORKSPACE_PATH_KEY)
+        .and_then(|value| value.as_str().map(str::to_string))
+        .filter(|value| !value.trim().is_empty());
+    let legacy_last_opened = store
+        .get(LAST_OPENED_FOLDER_KEY)
+        .and_then(|value| value.as_str().map(str::to_string))
+        .filter(|value| !value.trim().is_empty());
+    let default_folder = store
+        .get(DEFAULT_FOLDER_KEY)
+        .and_then(|value| value.as_str().map(str::to_string))
+        .filter(|value| !value.trim().is_empty());
+
+    if let Some(valid_path) = last_workspace_path
+        .as_deref()
+        .and_then(resolve_existing_directory_path)
+    {
+        if legacy_last_opened.as_deref() != Some(valid_path.as_str()) {
+            store.set(LAST_OPENED_FOLDER_KEY, json!(valid_path));
+            store.save().map_err(|error| error.to_string())?;
+        }
+        return Ok(StartupWorkspaceResolution {
+            path: Some(valid_path),
+            source: Some(StartupWorkspaceSource::LastWorkspacePath),
+        });
+    }
+
+    if let Some(valid_path) = legacy_last_opened
+        .as_deref()
+        .and_then(resolve_existing_directory_path)
+    {
+        store.set(LAST_WORKSPACE_PATH_KEY, json!(valid_path));
+        store.set(LAST_OPENED_FOLDER_KEY, json!(valid_path));
+        store.save().map_err(|error| error.to_string())?;
+        return Ok(StartupWorkspaceResolution {
+            path: Some(valid_path),
+            source: Some(StartupWorkspaceSource::LastWorkspacePath),
+        });
+    }
+
+    if let Some(valid_path) = default_folder
+        .as_deref()
+        .and_then(resolve_existing_directory_path)
+    {
+        return Ok(StartupWorkspaceResolution {
+            path: Some(valid_path),
+            source: Some(StartupWorkspaceSource::DefaultFolder),
+        });
+    }
+
+    if last_workspace_path.is_some() || legacy_last_opened.is_some() {
+        store.delete(LAST_WORKSPACE_PATH_KEY);
+        store.delete(LAST_OPENED_FOLDER_KEY);
+        store.save().map_err(|error| error.to_string())?;
+    }
+
+    Ok(StartupWorkspaceResolution {
+        path: None,
+        source: None,
+    })
 }
 
 #[tauri::command]
@@ -492,6 +599,7 @@ async fn start_python_session(
 
     let cleanup = create_python_session_artifacts()?;
     let mut command = Command::new(&python);
+    configure_tokio_command(&mut command);
     command.arg("-u").arg(&cleanup.bootstrap_path);
 
     if let Some(cwd) = &cwd_path {
@@ -678,6 +786,8 @@ fn main() {
             set_default_folder,
             get_last_opened_folder,
             set_last_opened_folder,
+            set_last_workspace_path,
+            resolve_startup_workspace,
             clear_default_folder,
             desktop_read_dir,
             desktop_read_file_bytes,
@@ -696,7 +806,6 @@ fn main() {
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.maximize();
-                let _ = window.clear_all_browsing_data();
             }
             Ok(())
         })
@@ -798,6 +907,7 @@ fn build_external_command(
     }
 
     let mut command = Command::new(&command_name);
+    configure_tokio_command(&mut command);
     if let Some(arguments) = &request.args {
         command.args(arguments);
     }
@@ -832,6 +942,7 @@ fn build_python_command(
         .clone()
         .ok_or_else(|| "Missing Python runner payload".to_string())?;
     let mut command = Command::new(&python);
+    configure_tokio_command(&mut command);
     command
         .arg("-u")
         .arg(&artifacts.bootstrap_path)
@@ -968,7 +1079,9 @@ fn python_from_env_root(root: &Path) -> PathBuf {
 }
 
 fn discover_conda_environments() -> Option<Vec<PathBuf>> {
-    let output = StdCommand::new("conda")
+    let mut command = StdCommand::new("conda");
+    configure_std_command(&mut command);
+    let output = command
         .args(["info", "--envs", "--json"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -1054,6 +1167,7 @@ print(json.dumps({
 }))"#;
 
     let mut command = StdCommand::new(executable);
+    configure_std_command(&mut command);
     command.args(prefix_args);
     command.arg("-c").arg(probe_script);
     let output = command.output().ok()?;
@@ -1116,11 +1230,15 @@ fn probe_command(command: &str) -> CommandAvailability {
         };
     };
 
-    let version = StdCommand::new(&path)
-        .arg("--version")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
+    let version = {
+        let mut command = StdCommand::new(&path);
+        configure_std_command(&mut command);
+        command
+            .arg("--version")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+    }
         .ok()
         .map(|output| {
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -1144,7 +1262,9 @@ fn probe_command(command: &str) -> CommandAvailability {
 
 fn resolve_command_path(command: &str) -> Option<String> {
     let tool = if cfg!(target_os = "windows") { "where" } else { "which" };
-    let output = StdCommand::new(tool)
+    let mut process = StdCommand::new(tool);
+    configure_std_command(&mut process);
+    let output = process
         .arg(command)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -1281,6 +1401,35 @@ def main():
 if __name__ == "__main__":
     main()
 "#
+}
+
+fn resolve_existing_directory_path(path: &str) -> Option<String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let candidate = PathBuf::from(trimmed);
+    let metadata = fs::metadata(&candidate).ok()?;
+    if !metadata.is_dir() {
+        return None;
+    }
+
+    Some(candidate.to_string_lossy().to_string())
+}
+
+fn configure_tokio_command(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW_FLAG);
+    }
+}
+
+fn configure_std_command(command: &mut StdCommand) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW_FLAG);
+    }
 }
 
 fn python_session_bootstrap() -> &'static str {

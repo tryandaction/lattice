@@ -19,7 +19,7 @@ export interface FileNode {
   isExpanded?: boolean;
   isVirtual?: boolean;
   parentPdfPath?: string;
-  entryRole?: "pdf-overview" | "pdf-note" | "pdf-notebook" | "pdf-annotations";
+  entryRole?: "pdf-note" | "pdf-notebook" | "pdf-annotations";
   badgeLabel?: string;
 }
 

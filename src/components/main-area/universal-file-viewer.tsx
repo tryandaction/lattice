@@ -350,6 +350,7 @@ function FileViewer({
             fileHandle={fileHandle}
             rootHandle={rootHandle}
             filePath={filePath}
+            paneId={paneId}
           />
         );
       }

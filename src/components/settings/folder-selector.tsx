@@ -1,6 +1,6 @@
 'use client';
 
-import { FolderOpen, Trash2, AlertCircle, RefreshCw } from 'lucide-react';
+import { FolderOpen, Trash2, AlertCircle, RefreshCw, X } from 'lucide-react';
 import { useState, useCallback, useEffect } from 'react';
 import { useI18n } from '@/hooks/use-i18n';
 import { readDirectoryRecursive } from '@/hooks/use-file-system';
@@ -8,6 +8,7 @@ import { createDesktopDirectoryHandle } from '@/lib/desktop-file-system';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 import { isTauri } from '@/lib/storage-adapter';
+import { useFileSystem } from '@/hooks/use-file-system';
 
 interface FolderSelectorProps {
   compact?: boolean;
@@ -20,12 +21,15 @@ interface FolderSelectorProps {
 export function FolderSelector({ compact = false, autoOpen = true, showNotFoundWarning = false }: FolderSelectorProps) {
   const { t } = useI18n();
   const defaultFolder = useSettingsStore((state) => state.settings.defaultFolder);
+  const recentWorkspaces = useSettingsStore((state) => state.settings.recentWorkspacePaths);
   const setDefaultFolder = useSettingsStore((state) => state.setDefaultFolder);
-  const updateSetting = useSettingsStore((state) => state.updateSetting);
+  const rememberWorkspacePath = useSettingsStore((state) => state.rememberWorkspacePath);
+  const removeRecentWorkspacePath = useSettingsStore((state) => state.removeRecentWorkspacePath);
   const setRootHandle = useWorkspaceStore((state) => state.setRootHandle);
   const setFileTree = useWorkspaceStore((state) => state.setFileTree);
   const setLoading = useWorkspaceStore((state) => state.setLoading);
   const setWorkspaceRootPath = useWorkspaceStore((state) => state.setWorkspaceRootPath);
+  const { openWorkspacePath } = useFileSystem();
   
   const [error, setError] = useState<string | null>(null);
   const [isSelecting, setIsSelecting] = useState(false);
@@ -89,7 +93,7 @@ export function FolderSelector({ compact = false, autoOpen = true, showNotFoundW
               setWorkspaceRootPath(selected);
               const fileTree = await buildFileTree(handle);
               setFileTree(fileTree);
-              await updateSetting('lastOpenedFolder', selected);
+              await rememberWorkspacePath(selected);
             } finally {
               setLoading(false);
             }
@@ -113,7 +117,7 @@ export function FolderSelector({ compact = false, autoOpen = true, showNotFoundW
               setWorkspaceRootPath(handle.name);
               const fileTree = await buildFileTree(handle);
               setFileTree(fileTree);
-              await updateSetting('lastOpenedFolder', handle.name);
+              await rememberWorkspacePath(handle.name);
             } finally {
               setLoading(false);
             }
@@ -240,6 +244,40 @@ export function FolderSelector({ compact = false, autoOpen = true, showNotFoundW
           {error}
         </div>
       )}
+
+      <div className="space-y-2 pt-2">
+        <div className="text-xs font-medium text-muted-foreground">
+          {t('settings.recentWorkspaces')}
+        </div>
+        {recentWorkspaces.length > 0 ? (
+          <div className="space-y-1">
+            {recentWorkspaces.map((workspacePath) => (
+              <div key={workspacePath} className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void openWorkspacePath(workspacePath)}
+                  className="flex-1 truncate rounded-lg border border-border bg-muted/40 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
+                  title={workspacePath}
+                >
+                  {workspacePath}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void removeRecentWorkspacePath(workspacePath)}
+                  className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  title={t('explorer.empty.removeRecent')}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
+            {t('settings.recentWorkspaces.empty')}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

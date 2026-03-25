@@ -20,13 +20,9 @@ import {
 } from "@tldraw/tldraw";
 import "@tldraw/tldraw/tldraw.css";
 import {
-  ZoomIn,
-  ZoomOut,
   Loader2,
   Undo2,
   Redo2,
-  Trash2,
-  Download,
   AlertCircle,
   MousePointer2,
   Pencil,
@@ -36,14 +32,13 @@ import {
   ArrowRight,
   Eraser,
   Hand,
-  PanelLeftOpen,
-  PanelLeftClose,
-  ImageDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAnnotationSystem } from "@/hooks/use-annotation-system";
 import { useAnnotationNavigation } from "@/hooks/use-annotation-navigation";
 import { useI18n } from "@/hooks/use-i18n";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import type { PaneId } from "@/types/layout";
 import {
   serializeShapes,
   deserializeShapes,
@@ -75,6 +70,7 @@ interface ImageTldrawAdapterProps {
   fileHandle: FileSystemFileHandle;
   rootHandle: FileSystemDirectoryHandle;
   filePath?: string;
+  paneId?: PaneId;
   diagnosticsSampleNonce?: number;
   onDiagnosticsSnapshot?: (snapshot: {
     isReady: boolean;
@@ -180,10 +176,13 @@ export function ImageTldrawAdapter({
   fileHandle,
   rootHandle,
   filePath,
+  paneId,
   diagnosticsSampleNonce = 0,
   onDiagnosticsSnapshot,
 }: ImageTldrawAdapterProps) {
   const { t } = useI18n();
+  const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
+  const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
   const {
     annotations: allAnnotations,
     isLoading: annotationsLoading,
@@ -636,13 +635,73 @@ export function ImageTldrawAdapter({
     }
   }, [editor, imageSize, fileName]);
 
+  useEffect(() => {
+    if (!paneId) {
+      return;
+    }
+
+    const breadcrumbSource = filePath ?? fileName;
+    const breadcrumbs = breadcrumbSource.split("/").filter(Boolean).map((segment) => ({ label: segment }));
+
+    setCommandBarState(paneId, {
+      breadcrumbs,
+      actions: [
+        {
+          id: "toggle-sidebar",
+          label: t(showSidebar ? "image.annotations.hide" : "image.annotations.show"),
+          onTrigger: () => setShowSidebar((value) => !value),
+        },
+        {
+          id: "zoom-out",
+          label: t("pdf.zoomOut"),
+          onTrigger: handleZoomOut,
+        },
+        {
+          id: "zoom-in",
+          label: t("pdf.zoomIn"),
+          onTrigger: handleZoomIn,
+        },
+        {
+          id: "clear",
+          label: t("image.clearAll"),
+          onTrigger: handleClearAll,
+        },
+        {
+          id: "download",
+          label: t("image.download"),
+          onTrigger: handleDownload,
+        },
+        {
+          id: "export",
+          label: t("image.export.withAnnotations"),
+          onTrigger: () => { void handleExportWithAnnotations(); },
+        },
+      ],
+    });
+
+    return () => clearCommandBarState(paneId);
+  }, [
+    clearCommandBarState,
+    fileName,
+    filePath,
+    handleClearAll,
+    handleDownload,
+    handleExportWithAnnotations,
+    handleZoomIn,
+    handleZoomOut,
+    paneId,
+    setCommandBarState,
+    showSidebar,
+    t,
+  ]);
+
   // Error fallback
   if (tldrawError) {
     return (
       <div className="flex flex-col h-full">
         <div className="bg-red-50 dark:bg-red-950 border-b border-red-200 dark:border-red-800 px-4 py-2 text-sm text-red-700 dark:text-red-300 flex items-center gap-2">
           <AlertCircle className="h-4 w-4" />
-          Drawing tools unavailable: {tldrawError.message}
+          {t("image.drawingUnavailable")}: {tldrawError.message}
         </div>
         <ImageViewer content={content} fileName={fileName} mimeType={mimeType} />
       </div>
@@ -654,7 +713,7 @@ export function ImageTldrawAdapter({
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        <span className="ml-2 text-muted-foreground">Loading image...</span>
+        <span className="ml-2 text-muted-foreground">{t("image.loading")}</span>
       </div>
     );
   }
@@ -705,32 +764,11 @@ export function ImageTldrawAdapter({
 
         {/* Right: Actions */}
         <div className="flex items-center gap-0.5">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleUndo} title="Undo">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleUndo} title={t("image.undo")}>
             <Undo2 className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleRedo} title="Redo">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleRedo} title={t("image.redo")}>
             <Redo2 className="h-4 w-4" />
-          </Button>
-          <div className="mx-1 h-4 w-px bg-border" />
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleZoomOut} title={t('pdf.zoomOut')}>
-            <ZoomOut className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleZoomIn} title={t('pdf.zoomIn')}>
-            <ZoomIn className="h-4 w-4" />
-          </Button>
-          <div className="mx-1 h-4 w-px bg-border" />
-          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={handleClearAll} title={t('image.clearAll')}>
-            <Trash2 className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleDownload} title={t('image.download')}>
-            <Download className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleExportWithAnnotations} title={t('image.export.withAnnotations')}>
-            <ImageDown className="h-4 w-4" />
-          </Button>
-          <div className="mx-1 h-4 w-px bg-border" />
-          <Button variant={showSidebar ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setShowSidebar(p => !p)} title={showSidebar ? t('image.annotations.hide') : t('image.annotations.show')}>
-            {showSidebar ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
           </Button>
         </div>
       </div>

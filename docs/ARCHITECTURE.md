@@ -279,11 +279,10 @@ Current model:
 - `paper.pdf` maps to a hidden sibling directory `.paper.lattice/`
 - the hidden directory stores:
   - `manifest.json`
-  - `_overview.md`
-  - `_annotations.md`
   - user-created `*.md` and `*.ipynb`
-- Explorer hides the real directory and projects these files under the PDF node as virtual children
-- PDF annotations remain the source of truth; `_annotations.md` is an auto-generated mirror for reading, linking, and backlink browsing
+  - `_annotations.md` only after the first PDF annotation exists
+- Explorer hides the real directory and projects only real user files plus lazy `_annotations.md` under the PDF node as virtual children
+- PDF annotations remain the source of truth; `_annotations.md` is a lazy-generated mirror for reading, linking, and backlink browsing
 - PDF annotation storage is keyed by stable `itemId`, not only by current file path, so rename/move/copy/delete can migrate companion state
 
 This architecture intentionally separates:

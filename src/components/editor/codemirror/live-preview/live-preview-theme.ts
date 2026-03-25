@@ -408,25 +408,26 @@ export const livePreviewTheme = EditorView.theme({
   // === Horizontal Rule ===
   
   '.cm-horizontal-rule-container': {
-    display: 'flex',
-    alignItems: 'center',
+    display: 'block',
     boxSizing: 'border-box',
     position: 'relative',
     width: 'calc(100% + var(--cm-content-padding-x-double, 0px))',
-    height: '40px',
-    minHeight: '40px',
-    paddingLeft: 'var(--cm-content-padding-x-neg, 0px)',
-    paddingRight: 'var(--cm-content-padding-x-neg, 0px)',
+    minHeight: '0',
+    paddingTop: '12px',
+    paddingBottom: '12px',
+    marginLeft: 'var(--cm-content-padding-x-neg, 0px)',
+    marginRight: 'var(--cm-content-padding-x-neg, 0px)',
+    lineHeight: '0',
     cursor: 'pointer',
   },
   
   '.cm-horizontal-rule': {
     border: 'none',
-    borderTop: `2px solid ${colors.border}`,
+    borderTop: `1px solid ${colors.border}`,
     margin: '0',
     width: '100%',
-    height: '2px',
-    backgroundColor: colors.border,
+    height: '0',
+    backgroundColor: 'transparent',
     opacity: 0.85,
   },
   

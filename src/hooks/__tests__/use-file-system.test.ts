@@ -110,12 +110,10 @@ describe("readDirectoryRecursive", () => {
       itemId: "workspace-paper.pdf",
       pdfPath: "workspace/paper.pdf",
       itemFolderPath: "workspace/.paper.lattice",
-      overviewPath: "workspace/.paper.lattice/_overview.md",
       annotationIndexPath: "workspace/.paper.lattice/_annotations.md",
       createdAt: 1710000000000,
       updatedAt: 1710000000000,
     })));
-    itemDir.addFile(new FakeFileHandle("_overview.md"));
     itemDir.addFile(new FakeFileHandle("Reading Note.md"));
     itemDir.addFile(new FakeFileHandle("Lab Notebook.ipynb"));
     itemDir.addFile(new FakeFileHandle("_annotations.md"));
@@ -127,16 +125,14 @@ describe("readDirectoryRecursive", () => {
     expect(hiddenItemDir).toBeUndefined();
     expect(pdfNode && isFileNode(pdfNode)).toBe(true);
     expect(pdfNode?.children?.map((child) => child.name)).toEqual([
-      "_overview.md",
-      "_annotations.md",
       "Reading Note.md",
       "Lab Notebook.ipynb",
+      "_annotations.md",
     ]);
     expect(pdfNode?.children?.map((child) => isFileNode(child) ? child.entryRole : null)).toEqual([
-      "pdf-overview",
-      "pdf-annotations",
       "pdf-note",
       "pdf-notebook",
+      "pdf-annotations",
     ]);
   });
 

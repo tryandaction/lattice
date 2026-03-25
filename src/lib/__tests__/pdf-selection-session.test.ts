@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   beginPdfSelectionSession,
   isDuplicatePdfSelection,
+  projectPdfSelectionRectsToPages,
   updatePdfSelectionSession,
 } from "../pdf-selection-session";
 
@@ -61,5 +62,25 @@ describe("pdf-selection-session", () => {
       token: 1,
       now: 60,
     })).toBe(false);
+  });
+
+  it("clips client rects to page bounds and sorts them by page and position", () => {
+    const rects = projectPdfSelectionRectsToPages({
+      clientRects: [
+        { left: 12, right: 120, top: 24, bottom: 48 },
+        { left: 10, right: 160, top: 1010, bottom: 1040 },
+        { left: -50, right: 50, top: 20, bottom: 40 },
+      ],
+      pages: [
+        { pageNumber: 2, left: 0, top: 1000, width: 640, height: 960 },
+        { pageNumber: 1, left: 0, top: 0, width: 100, height: 80 },
+      ],
+    });
+
+    expect(rects).toEqual([
+      { left: 0, top: 20, width: 50, height: 20, pageNumber: 1 },
+      { left: 12, top: 24, width: 88, height: 24, pageNumber: 1 },
+      { left: 10, top: 10, width: 150, height: 30, pageNumber: 2 },
+    ]);
   });
 });

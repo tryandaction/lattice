@@ -50,4 +50,19 @@ describe("MarkdownRenderer", () => {
     expect(screen.getByRole("heading", { name: "Overview" })).toBeTruthy();
     expect(container.querySelector(".prose-system-index")).toBeTruthy();
   });
+
+  it("renders standalone --- as a horizontal rule without relying on blank lines", () => {
+    const { container } = render(
+      <MarkdownRenderer
+        content={`Paragraph above\n---\nParagraph below`}
+        fileName="demo.md"
+        variant="document"
+      />,
+    );
+
+    expect(screen.getByText("Paragraph above")).toBeTruthy();
+    expect(screen.getByText("Paragraph below")).toBeTruthy();
+    expect(container.querySelector("hr")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Paragraph above" })).toBeNull();
+  });
 });

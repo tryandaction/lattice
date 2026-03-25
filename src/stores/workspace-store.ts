@@ -6,6 +6,7 @@ import type {
   LayoutNode,
   PaneId,
   PaneNode,
+  CommandBarState,
   SplitDirection,
   TabState,
 } from "@/types/layout";
@@ -107,6 +108,7 @@ interface WorkspaceState {
   // Layout state (new advanced layout system)
   layout: LayoutState;
   sidebarCollapsed: boolean;
+  commandBarByPane: Record<PaneId, CommandBarState>;
 
   // File system actions
   setRootHandle: (handle: FileSystemDirectoryHandle | null) => void;
@@ -130,6 +132,8 @@ interface WorkspaceState {
   closePane: (paneId: PaneId) => boolean;
   setActivePaneId: (paneId: PaneId) => void;
   resizePanes: (splitId: string, sizes: number[]) => void;
+  setCommandBarState: (paneId: PaneId, state: CommandBarState) => void;
+  clearCommandBarState: (paneId: PaneId) => void;
 
   // Tab actions
   openFileInPane: (paneId: PaneId, handle: FileSystemFileHandle, path: string) => void;
@@ -178,6 +182,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   // Initial layout state
   layout: createInitialLayout(),
   sidebarCollapsed: false,
+  commandBarByPane: {},
 
   // File system actions
   setRootHandle: (handle) => {
@@ -204,6 +209,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       error: null,
       layout: createInitialLayout(),
       runnerPreferences: createInitialRunnerPreferences(),
+      commandBarByPane: {},
     }),
 
   toggleDirectory: (path) =>
@@ -296,6 +302,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         root: newRoot,
         activePaneId: newActivePaneId,
       },
+      commandBarByPane: Object.fromEntries(
+        Object.entries(state.commandBarByPane).filter(([key]) => key !== paneId)
+      ),
     });
     return true;
   },
@@ -321,6 +330,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         root: updateSizesUtil(state.layout.root, splitId, sizes),
       },
     })),
+
+  setCommandBarState: (paneId, commandBarState) =>
+    set((state) => ({
+      commandBarByPane: {
+        ...state.commandBarByPane,
+        [paneId]: commandBarState,
+      },
+    })),
+
+  clearCommandBarState: (paneId) =>
+    set((state) => {
+      if (!(paneId in state.commandBarByPane)) {
+        return state;
+      }
+      const next = { ...state.commandBarByPane };
+      delete next[paneId];
+      return { commandBarByPane: next };
+    }),
 
   // Tab actions
   openFileInPane: (paneId, handle, path) => {

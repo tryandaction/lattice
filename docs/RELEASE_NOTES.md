@@ -17,10 +17,10 @@
   - 批注列表重新成为主空间，顶部工具区改为紧凑头部
 - Markdown 阅读体验继续向 Obsidian 靠拢：
   - 普通文档标题、段落与列表密度继续缩小
-  - 系统索引页 `_overview.md / _annotations.md` 再紧一档
+  - 系统索引页（例如 `_annotations.md`）再紧一档
   - frontmatter 在阅读渲染中默认隐藏
 - 工作区恢复补齐：
-  - Web 与桌面端现在都会记录 `lastOpenedFolder`
+  - 兼容保留 `lastOpenedFolder` 读取，但桌面端现在以 `lastWorkspacePath` + 最近工作区历史作为主恢复链路
   - 桌面端启动后会优先恢复最近工作区，不再每次都重新选目录
   - 工作区路径恢复后，runner preference scope 也会跟随恢复
 - 新建 Markdown 命名继续收口：
@@ -31,8 +31,8 @@
 
 - PDF 已从“可加批注的阅读文件”升级为一等条目：
   - 首次打开 PDF 会自动建立同级隐藏兄弟目录 `.basename.lattice/`
-  - 默认包含 `manifest.json`、`_overview.md`、`_annotations.md`
-  - Explorer 不再暴露真实隐藏目录，而是把这些内容投影为 PDF 下的系统子条目
+  - 默认只保留 `manifest.json` 与用户创建的笔记 / Notebook；`_annotations.md` 只在出现第一条批注后惰性生成
+  - Explorer 不再暴露真实隐藏目录，而是把真实用户文件与惰性 `_annotations.md` 投影为 PDF 下的系统子条目
 - PDF 批注 sidecar 已改为稳定 `itemId` 存储：
   - PDF rename / move / copy / delete 时，条目目录和批注 sidecar 会伴随迁移
   - 不再继续依赖“当前路径派生 fileId”作为唯一绑定方式
@@ -48,10 +48,9 @@
   - 只读 Markdown、批注评论、Notebook 只读 Markdown、Notebook 编辑态 Markdown Cell 现都可直接在应用内跳 PDF / heading / line / cell / annotation
   - 外部网页链接仍交由系统浏览器处理
 - Explorer 右键 PDF 现在支持：
-  - 打开概览
-  - 新建阅读笔记
+  - 新建笔记
   - 新建 Notebook
-  - 重建批注索引
+  - 在 Explorer 定位
 - 当前线上部署口径已统一为：
   - `web-dist/` 是统一静态导出产物
   - Cloudflare Pages (`lattice-apq.pages.dev`) 是当前主站
@@ -384,9 +383,10 @@
 ### Markdown 表格编辑体验
 
 - 表格不再默认让首格处于激活/高亮状态
-- 行列操作控件已移到表格外围，不再侵入表格内容区域
-- 现在外围句柄支持键盘聚焦显现，并可通过 `Shift+F10` / 菜单键打开外围操作面板
-- 现在通过外部句柄打开操作菜单，避免遮挡文字或压缩单元格空间
+- 不再显示行列外框句柄、上下滑块或外围操作面板
+- 双击单元格会直接进入源码编辑
+- 点击表格外部会提交并恢复渲染
+- 单元格输入框会自动增高，表格列宽按内容自适应
 
 ## 发布产物
 

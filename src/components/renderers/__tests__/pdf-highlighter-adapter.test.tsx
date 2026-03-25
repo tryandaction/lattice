@@ -77,6 +77,24 @@ vi.mock('react-pdf-highlighter', async () => {
           scrollTo: { value: vi.fn(), configurable: true },
         });
         apiRef.current.viewer.container = viewerRef.current;
+
+        const pages = viewerRef.current.querySelectorAll<HTMLElement>("[data-page-number]");
+        pages.forEach((page, index) => {
+          Object.defineProperty(page, "getBoundingClientRect", {
+            configurable: true,
+            value: () => ({
+              left: 0,
+              top: index * 1000,
+              right: 640,
+              bottom: index * 1000 + 960,
+              width: 640,
+              height: 960,
+              x: 0,
+              y: index * 1000,
+              toJSON: () => ({}),
+            }),
+          });
+        });
       }, []);
 
       ReactModule.useImperativeHandle(ref, () => apiRef.current, []);
@@ -128,12 +146,25 @@ vi.mock('react-pdf-highlighter', async () => {
         <div ref={viewerRef} data-testid="mock-pdf-highlighter" data-scale={pdfScaleValue}>
           <div data-page-number="1" style={{ position: 'relative', width: '640px', height: '960px' }}>
             <span data-testid="mock-native-selection-source">Native PDF text</span>
-            <button type="button" data-testid="mock-pdf-selection-trigger" onClick={handleTriggerSelection}>
+            <button
+              type="button"
+              data-testid="mock-pdf-selection-trigger"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={handleTriggerSelection}
+            >
               Trigger selection
             </button>
-            <button type="button" data-testid="mock-pdf-duplicate-selection-trigger" onClick={handleDuplicateSelection}>
+            <button
+              type="button"
+              data-testid="mock-pdf-duplicate-selection-trigger"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={handleDuplicateSelection}
+            >
               Trigger duplicate selection
             </button>
+          </div>
+          <div data-page-number="2" style={{ position: 'relative', width: '640px', height: '960px' }}>
+            <span data-testid="mock-native-selection-source-page-2">Second page text</span>
           </div>
           {selectionUi}
           {pdfScaleValue}
@@ -434,4 +465,5 @@ describe('PDFHighlighterAdapter', () => {
       expect(screen.getByTestId('pdf-transient-selection-pane-left-page-1')).toBeTruthy();
     });
   });
+
 });

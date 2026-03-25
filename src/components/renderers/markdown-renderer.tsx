@@ -23,7 +23,7 @@ import { useExecutionRunner } from "@/hooks/use-execution-runner";
 import { OutputArea } from "@/components/notebook/output-area";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { AppMarkdownLink } from "./app-markdown-link";
-import { stripLeadingFrontmatter } from "@/lib/markdown-reading";
+import { prepareMarkdownForReading } from "@/lib/markdown-reading";
 import { convertWikiLinksToMarkdown } from "@/lib/markdown-links";
 
 interface MarkdownRendererProps {
@@ -522,7 +522,7 @@ export function MarkdownRenderer({
 
   const renderedContent = useMemo(() => {
     const normalized = convertWikiLinksToMarkdown(content);
-    return stripLeadingFrontmatter(normalized);
+    return prepareMarkdownForReading(normalized);
   }, [content]);
 
   let blockIndex = 0;

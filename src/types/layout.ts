@@ -86,6 +86,24 @@ export interface LayoutState {
   activePaneId: PaneId;
 }
 
+export interface CommandBarBreadcrumb {
+  label: string;
+  target?: string;
+}
+
+export interface CommandBarAction {
+  id: string;
+  label: string;
+  icon?: string;
+  disabled?: boolean;
+  onTrigger?: () => void;
+}
+
+export interface CommandBarState {
+  breadcrumbs: CommandBarBreadcrumb[];
+  actions: CommandBarAction[];
+}
+
 /**
  * Type guard to check if a node is a PaneNode
  */

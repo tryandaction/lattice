@@ -24,10 +24,6 @@ interface TableMutationResult {
   alignments: TableAlignment[];
 }
 
-type PanelPlacement = 'left' | 'right';
-
-const ALIGNMENT_SEQUENCE: TableAlignment[] = [null, 'left', 'center', 'right'];
-
 function isDirectTypingKey(event: React.KeyboardEvent): boolean {
   return !event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1;
 }
@@ -155,13 +151,6 @@ function getCellPositionFromTarget(target: EventTarget | null): CellPosition | n
   }
 
   return { row, col };
-}
-
-function resolvePanelPlacement(rect: DOMRect | null | undefined): PanelPlacement {
-  if (!rect) {
-    return 'left';
-  }
-  return rect.left < 240 ? 'right' : 'left';
 }
 
 export function tableToMarkdown(rows: string[][], alignments: TableAlignment[], hasHeader: boolean): string {
@@ -325,10 +314,6 @@ export const TableEditor: React.FC<TableEditorProps> = ({
   const [selectedCell, setSelectedCell] = useState<CellPosition | null>(null);
   const [editingCell, setEditingCell] = useState<CellPosition | null>(null);
   const [draftValue, setDraftValue] = useState('');
-  const [isHovered, setIsHovered] = useState(false);
-  const [isFocused, setIsFocused] = useState(false);
-  const [isToolsOpen, setIsToolsOpen] = useState(false);
-  const [panelPlacement, setPanelPlacement] = useState<PanelPlacement>('left');
   const wrapperRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isMountedRef = useRef(true);
@@ -350,22 +335,11 @@ export const TableEditor: React.FC<TableEditorProps> = ({
       inputRef.current.focus();
       inputRef.current.select();
     }
-  }, [editingCell]);
-
-  useEffect(() => {
-    if (!isToolsOpen) {
-      return;
+    if (editingCell && inputRef.current) {
+      inputRef.current.style.height = '0px';
+      inputRef.current.style.height = `${inputRef.current.scrollHeight}px`;
     }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!wrapperRef.current?.contains(event.target as Node)) {
-        setIsToolsOpen(false);
-      }
-    };
-
-    document.addEventListener('pointerdown', handlePointerDown);
-    return () => document.removeEventListener('pointerdown', handlePointerDown);
-  }, [isToolsOpen]);
+  }, [draftValue, editingCell]);
 
   const columnCount = useMemo(() => getColumnCount(rows, alignments), [rows, alignments]);
   const dataRowStart = hasHeader ? 1 : 0;
@@ -377,11 +351,6 @@ export const TableEditor: React.FC<TableEditorProps> = ({
 
   const focusWrapper = useCallback(() => {
     wrapperRef.current?.focus();
-  }, []);
-
-  const prepareToolsPanel = useCallback(() => {
-    setPanelPlacement(resolvePanelPlacement(wrapperRef.current?.getBoundingClientRect()));
-    setIsToolsOpen(true);
   }, []);
 
   const updateEditor = useCallback((nextRows: string[][], nextAlignments: TableAlignment[]) => {
@@ -415,17 +384,8 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     }, 0);
   }, [from, hasHeader, onUpdate, to, view]);
 
-  const getWorkingRows = useCallback(() => {
-    const nextRows = cloneRows(rows);
-    if (editingCell) {
-      nextRows[editingCell.row][editingCell.col] = draftValue;
-    }
-    return nextRows;
-  }, [draftValue, editingCell, rows]);
-
   const selectCell = useCallback((cell: CellPosition | null) => {
     setSelectedCell(clampCellPosition(cell, rows, alignments));
-    setIsToolsOpen(false);
     focusWrapper();
   }, [alignments, focusWrapper, rows]);
 
@@ -435,7 +395,6 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     setSelectedCell(normalized);
     setEditingCell(normalized);
     setDraftValue(rows[normalized.row]?.[normalized.col] ?? '');
-    setIsToolsOpen(false);
   }, [alignments, rows]);
 
   const beginTypingInCell = useCallback((cell: CellPosition, nextValue: string) => {
@@ -444,7 +403,6 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     setSelectedCell(normalized);
     setEditingCell(normalized);
     setDraftValue(nextValue);
-    setIsToolsOpen(false);
   }, [alignments, rows]);
 
   const moveCell = useCallback((cell: CellPosition, rowDelta: number, colDelta: number): CellPosition => {
@@ -464,7 +422,6 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     setEditingCell(null);
     setDraftValue('');
     setSelectedCell(clampCellPosition(nextSelection ?? selectedCell, nextState.rows, nextState.alignments));
-    setIsToolsOpen(false);
     updateEditor(nextState.rows, nextState.alignments);
     window.setTimeout(() => {
       if (isMountedRef.current) {
@@ -554,27 +511,6 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     }
   }, [selectCell]);
 
-  const handleTableMutation = useCallback((
-    mutator: (workingRows: string[][], workingAlignments: TableAlignment[]) => TableMutationResult,
-    nextSelection?: CellPosition | null
-  ) => {
-    const workingRows = getWorkingRows();
-    const result = mutator(workingRows, alignments);
-    applyTableState(result.rows, result.alignments, nextSelection);
-  }, [alignments, applyTableState, getWorkingRows]);
-
-  const cycleAlignment = useCallback((columnIndex: number) => {
-    const current = alignments[columnIndex] ?? null;
-    const nextIndex = (ALIGNMENT_SEQUENCE.indexOf(current) + 1) % ALIGNMENT_SEQUENCE.length;
-    const nextAlignment = ALIGNMENT_SEQUENCE[nextIndex];
-
-    handleTableMutation(
-      (workingRows, workingAlignments) =>
-        setTableColumnAlignment(workingRows, workingAlignments, hasHeader, columnIndex, nextAlignment),
-      activeCell ? { row: activeCell.row, col: Math.min(columnIndex, columnCount - 1) } : { row: 0, col: columnIndex }
-    );
-  }, [activeCell, alignments, columnCount, handleTableMutation, hasHeader]);
-
   const handleWrapperKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (editingCell || columnCount === 0 || rows.length === 0 || !activeCell) {
       return;
@@ -630,21 +566,9 @@ export const TableEditor: React.FC<TableEditorProps> = ({
           return;
         }
 
-        if (event.key === 'Escape') {
-          setIsToolsOpen(false);
-          return;
-        }
-
-        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-          event.preventDefault();
-          setSelectedCell(activeCell);
-          prepareToolsPanel();
-          return;
-        }
-
         return;
     }
-  }, [activeCell, beginTypingInCell, columnCount, editingCell, moveCell, prepareToolsPanel, rows.length, startEditingCell]);
+  }, [activeCell, beginTypingInCell, columnCount, editingCell, moveCell, rows.length, startEditingCell]);
 
   const handleInputKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (!editingCell) {
@@ -687,128 +611,28 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     }
   }, [cancelEditing, columnCount, commitEditing, editingCell, rows.length]);
 
-  const getRowLabel = useCallback((rowIndex: number) => {
-    if (hasHeader && rowIndex === 0) {
-      return 'H';
-    }
-    return String(rowIndex - dataRowStart + 1);
-  }, [dataRowStart, hasHeader]);
-
-  const handleInsertRow = useCallback((position: 'above' | 'below') => {
-    if (!activeCell) return;
-    handleTableMutation(
-      (workingRows, workingAlignments) =>
-        insertTableDataRow(workingRows, workingAlignments, hasHeader, activeCell.row, position),
-      { row: position === 'above' ? activeCell.row : Math.min(rows.length, activeCell.row + 1), col: activeCell.col }
-    );
-  }, [activeCell, handleTableMutation, hasHeader, rows.length]);
-
-  const handleDeleteRow = useCallback(() => {
-    if (!activeCell) return;
-    handleTableMutation(
-      (workingRows, workingAlignments) =>
-        deleteTableDataRow(workingRows, workingAlignments, hasHeader, activeCell.row),
-      { row: Math.max(dataRowStart, activeCell.row - 1), col: activeCell.col }
-    );
-  }, [activeCell, dataRowStart, handleTableMutation, hasHeader]);
-
-  const handleInsertColumn = useCallback(() => {
-    if (!activeCell) return;
-    handleTableMutation(
-      (workingRows, workingAlignments) =>
-        insertTableColumn(workingRows, workingAlignments, hasHeader, activeCell.col),
-      { row: activeCell.row, col: Math.min(activeCell.col + 1, columnCount) }
-    );
-  }, [activeCell, columnCount, handleTableMutation, hasHeader]);
-
-  const handleDeleteColumn = useCallback(() => {
-    if (!activeCell) return;
-    handleTableMutation(
-      (workingRows, workingAlignments) =>
-        deleteTableColumn(workingRows, workingAlignments, hasHeader, activeCell.col),
-      { row: activeCell.row, col: Math.max(0, Math.min(activeCell.col - 1, columnCount - 2)) }
-    );
-  }, [activeCell, columnCount, handleTableMutation, hasHeader]);
-
-  const showPerimeterHandle = isHovered || isFocused || isToolsOpen || editingCell !== null || selectedCell !== null;
-
   return (
     <div
       ref={wrapperRef}
       className="table-editor-wrapper"
       tabIndex={0}
       onKeyDown={handleWrapperKeyDown}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      onFocus={() => setIsFocused(true)}
       onBlur={(event) => {
         if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
           return;
         }
-        setIsFocused(false);
       }}
       onContextMenu={(event) => {
-        event.preventDefault();
-        const contextCell = getCellPositionFromTarget(event.target) ?? activeCell;
+        const contextCell = getCellPositionFromTarget(event.target);
         if (contextCell) {
+          event.preventDefault();
           setSelectedCell(contextCell);
+          focusWrapper();
         }
-        prepareToolsPanel();
-        focusWrapper();
       }}
       role="group"
       aria-label="Markdown table editor"
     >
-      {showPerimeterHandle ? (
-        <button
-          type="button"
-          className="table-editor-perimeter-handle"
-          title="表格操作"
-          aria-label="表格操作"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            if (activeCell) {
-              setSelectedCell(activeCell);
-            }
-            setPanelPlacement(resolvePanelPlacement(wrapperRef.current?.getBoundingClientRect()));
-            setIsToolsOpen((value) => !value);
-            focusWrapper();
-          }}
-        >
-          •
-        </button>
-      ) : null}
-      {isToolsOpen && activeCell && (
-        <div
-          className={`table-editor-perimeter-panel table-editor-perimeter-panel--${panelPlacement}`}
-          role="menu"
-          aria-label="表格操作菜单"
-        >
-          <div className="table-editor-panel-meta">
-            行 {getRowLabel(activeCell.row)} · 列 {activeCell.col + 1}
-          </div>
-          {activeCell.row >= dataRowStart && (
-            <div className="table-editor-panel-group">
-              <div className="table-editor-panel-label">行</div>
-              <div className="table-editor-panel-actions">
-                <button type="button" className="btn-icon btn-icon--menu" onClick={() => handleInsertRow('above')}>上方插入</button>
-                <button type="button" className="btn-icon btn-icon--menu" onClick={() => handleInsertRow('below')}>下方插入</button>
-                <button type="button" className="btn-icon btn-icon--menu" onClick={handleDeleteRow}>删除行</button>
-              </div>
-            </div>
-          )}
-          <div className="table-editor-panel-group">
-            <div className="table-editor-panel-label">列</div>
-            <div className="table-editor-panel-actions">
-              <button type="button" className="btn-icon btn-icon--menu" onClick={() => cycleAlignment(activeCell.col)}>
-                对齐：{alignments[activeCell.col] === 'left' ? '左' : alignments[activeCell.col] === 'center' ? '中' : alignments[activeCell.col] === 'right' ? '右' : '无'}
-              </button>
-              <button type="button" className="btn-icon btn-icon--menu" onClick={handleInsertColumn}>右侧插列</button>
-              <button type="button" className="btn-icon btn-icon--menu" onClick={handleDeleteColumn}>删除列</button>
-            </div>
-          </div>
-        </div>
-      )}
       <div className="table-editor-viewport">
         <table className="table-editor">
           <tbody>

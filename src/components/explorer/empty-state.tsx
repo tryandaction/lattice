@@ -1,13 +1,17 @@
 "use client";
 
-import { FolderOpen, AlertTriangle } from "lucide-react";
+import { FolderOpen, AlertTriangle, X } from "lucide-react";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface EmptyStateProps {
   onOpenFolder: () => void;
+  onOpenRecentWorkspace?: (path: string) => void;
+  onDismissRecentWorkspace?: (path: string) => void;
   onOpenQaWorkspace?: () => void;
   showQaWorkspace?: boolean;
   isSupported: boolean;
   isCheckingSupport?: boolean;
+  recentWorkspaces?: string[];
 }
 
 /**
@@ -16,11 +20,15 @@ interface EmptyStateProps {
  */
 export function EmptyState({
   onOpenFolder,
+  onOpenRecentWorkspace,
+  onDismissRecentWorkspace,
   onOpenQaWorkspace,
   showQaWorkspace,
   isSupported,
   isCheckingSupport,
+  recentWorkspaces = [],
 }: EmptyStateProps) {
+  const { t } = useI18n();
   // Don't show unsupported message while still checking
   // This prevents the flash of "Browser Not Supported" on initial load
   if (!isSupported && !isCheckingSupport) {
@@ -74,6 +82,39 @@ export function EmptyState({
           Supported: PDF, MD, TXT, PY, IPYNB, PPT, PNG, JPG
         </p>
       </div>
+
+      {recentWorkspaces.length > 0 && onOpenRecentWorkspace ? (
+        <div className="w-full max-w-xl rounded-lg border border-border bg-card/70 p-3">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            {t('explorer.empty.recent')}
+          </div>
+          <div className="space-y-1.5">
+            {recentWorkspaces.map((workspacePath) => (
+              <div key={workspacePath} className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onOpenRecentWorkspace(workspacePath)}
+                  className="flex-1 truncate rounded-md border border-border bg-background px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent"
+                  title={workspacePath}
+                >
+                  {workspacePath}
+                </button>
+                {onDismissRecentWorkspace ? (
+                  <button
+                    type="button"
+                    onClick={() => onDismissRecentWorkspace(workspacePath)}
+                    className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    title={t('explorer.empty.removeRecent')}
+                    aria-label={t('explorer.empty.removeRecent')}
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

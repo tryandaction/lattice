@@ -63,10 +63,11 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { useFileSystem } from "@/hooks/use-file-system";
+import { useI18n } from "@/hooks/use-i18n";
 import {
   ensurePdfItemWorkspace,
+  loadPdfItemManifest,
   syncPdfAnnotationsMarkdown,
-  syncPdfOverviewMarkdown,
   type PdfItemManifest,
 } from "@/lib/pdf-item";
 import { generateFileId } from "@/lib/universal-annotation-storage";
@@ -104,7 +105,9 @@ import {
   buildPdfAreaPreview,
   buildPdfSelectionSignature,
   isDuplicatePdfSelection,
+  projectPdfSelectionRectsToPages,
   type PdfSelectionSessionState,
+  type PdfTransientSelectionRect,
   updatePdfSelectionSession,
 } from "@/lib/pdf-selection-session";
 
@@ -133,14 +136,6 @@ interface PdfRestoreDebugState {
   deltaTopRatio: number | null;
   deltaLeftRatio: number | null;
   captureRevision: number | null;
-}
-
-interface PdfTransientSelectionRect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-  pageNumber: number;
 }
 
 interface PdfTransientSelection {
@@ -237,26 +232,77 @@ function buildPdfSelectionRects(range: Range | undefined, pageElement: HTMLEleme
   return rects.length > 0 ? rects : undefined;
 }
 
+function findPdfPageElementInScope(
+  scopeRoot: ParentNode | null | undefined,
+  pageNumber: number,
+): HTMLElement | null {
+  if (!scopeRoot || !Number.isInteger(pageNumber) || pageNumber < 1) {
+    return null;
+  }
+
+  return scopeRoot.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`);
+}
+
+function buildPdfTransientSelectionRectsFromRange(
+  range: Range | undefined,
+  scopeRoot: ParentNode | null | undefined,
+): PdfTransientSelectionRect[] | undefined {
+  if (!range) {
+    return undefined;
+  }
+
+  const pages = Array.from(scopeRoot?.querySelectorAll<HTMLElement>("[data-page-number]") ?? []);
+  if (pages.length === 0) {
+    return undefined;
+  }
+
+  const rects = projectPdfSelectionRectsToPages({
+    clientRects: Array.from(range.getClientRects()).map((rect) => ({
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      bottom: rect.bottom,
+    })),
+    pages: pages.map((pageElement) => {
+      const pageRect = pageElement.getBoundingClientRect();
+      return {
+        pageNumber: Number(pageElement.dataset.pageNumber ?? ""),
+        left: pageRect.left,
+        top: pageRect.top,
+        width: pageRect.width,
+        height: pageRect.height,
+      };
+    }),
+  });
+
+  if (rects.length === 0) {
+    return undefined;
+  }
+
+  return rects;
+}
+
 function buildPdfTransientSelection(input: {
   position: ViewportPosition;
   text: string;
   signature: string;
   color: string;
   styleType: 'highlight' | 'underline';
+  nativeRects?: PdfTransientSelectionRect[];
 }): PdfTransientSelection | null {
   const text = input.text.trim();
   if (!text) {
     return null;
   }
 
-  const rects = input.position.rects
+  const rects = (input.nativeRects ?? input.position.rects
     .map((rect) => ({
       left: rect.left,
       top: rect.top,
       width: rect.width,
       height: rect.height,
       pageNumber: rect.pageNumber ?? input.position.pageNumber,
-    }))
+    })))
     .filter((rect) => (
       Number.isInteger(rect.pageNumber) &&
       rect.pageNumber > 0 &&
@@ -638,6 +684,7 @@ function ColorPicker({
   onAddComment,
   currentColor 
 }: ColorPickerProps) {
+  const { t } = useI18n();
   return (
     <div className="pdf-selection-color-picker bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[160px] text-sm">
       {/* Selected text preview */}
@@ -654,7 +701,7 @@ function ColorPicker({
           className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
         >
           <StickyNote className="h-4 w-4 text-amber-500" />
-          <span>添加笔记</span>
+          <span>{t("pdf.note.add")}</span>
         </button>
       )}
       
@@ -665,7 +712,7 @@ function ColorPicker({
           className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
         >
           <MessageSquare className="h-4 w-4" />
-          <span>添加评论</span>
+          <span>{t("pdf.comment.add")}</span>
         </button>
       )}
       
@@ -697,7 +744,7 @@ function ColorPicker({
         onClick={onCancel}
         className="w-full px-3 py-1.5 text-left hover:bg-muted text-muted-foreground"
       >
-        取消
+        {t("common.cancel")}
       </button>
     </div>
   );
@@ -728,6 +775,7 @@ function HighlightPopupContent({
   styleType = 'highlight',
   highlightText,
 }: HighlightPopupProps) {
+  const { t } = useI18n();
   const [showCommentInput, setShowCommentInput] = useState(false);
   const [commentText, setCommentText] = useState(comment.text || "");
   const [showColorPicker, setShowColorPicker] = useState(false);
@@ -741,21 +789,21 @@ function HighlightPopupContent({
   if (showCommentInput) {
     return (
       <div className="bg-popover border border-border rounded-lg shadow-xl p-3 min-w-[280px]">
-        <div className="text-xs font-medium mb-2 text-muted-foreground">添加评论</div>
+        <div className="text-xs font-medium mb-2 text-muted-foreground">{t("pdf.comment.add")}</div>
         <textarea
           value={commentText}
           onChange={(e) => setCommentText(e.target.value)}
-          placeholder="输入评论..."
+          placeholder={t("pdf.comment.placeholder")}
           className="w-full p-2 text-sm border border-border rounded bg-background resize-none focus:outline-none focus:ring-1 focus:ring-primary"
           rows={3}
           autoFocus
         />
         <div className="flex justify-end gap-2 mt-2">
           <Button size="sm" variant="ghost" onClick={() => setShowCommentInput(false)}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button size="sm" onClick={handleSaveComment}>
-            保存
+            {t("common.save")}
           </Button>
         </div>
       </div>
@@ -767,7 +815,7 @@ function HighlightPopupContent({
     return (
       <div className="bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[160px]">
         <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground border-b border-border">
-          选择颜色
+          {t("pdf.color.change")}
         </div>
         {/* Transparent option */}
         <button
@@ -790,7 +838,7 @@ function HighlightPopupContent({
               <Check className="absolute -top-0.5 -right-0.5 h-3 w-3 text-foreground" />
             )}
           </div>
-          <span>无背景</span>
+          <span>{t("pdf.noBackground")}</span>
         </button>
         <div className="h-px bg-border mx-2 my-1" />
         {HIGHLIGHT_COLORS.map((color) => (
@@ -819,7 +867,7 @@ function HighlightPopupContent({
           onClick={() => setShowColorPicker(false)}
           className="w-full px-3 py-1.5 text-left hover:bg-muted text-sm text-muted-foreground"
         >
-          返回
+          {t("pdf.back")}
         </button>
       </div>
     );
@@ -851,7 +899,7 @@ function HighlightPopupContent({
         className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
       >
         <MessageSquare className="h-4 w-4" />
-        <span>{comment.text ? '编辑评论' : '添加评论'}</span>
+        <span>{comment.text ? t("pdf.comment.edit") : t("pdf.comment.add")}</span>
       </button>
       
       {/* Change color */}
@@ -869,7 +917,7 @@ function HighlightPopupContent({
               backgroundPosition: '0 0, 0 2px, 2px -2px, -2px 0px'
             }}
           />
-          <span>更改颜色</span>
+          <span>{t("pdf.color.change")}</span>
           <ChevronDown className="h-3 w-3 ml-auto" />
         </button>
       )}
@@ -881,7 +929,7 @@ function HighlightPopupContent({
           className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
         >
           <Underline className="h-4 w-4" />
-          <span>转换为下划线</span>
+          <span>{t("pdf.convert.underline")}</span>
         </button>
       )}
       
@@ -892,7 +940,7 @@ function HighlightPopupContent({
           className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
         >
           <Highlighter className="h-4 w-4" />
-          <span>转换为高亮</span>
+          <span>{t("pdf.convert.highlight")}</span>
         </button>
       )}
       
@@ -904,7 +952,7 @@ function HighlightPopupContent({
         className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2 text-destructive"
       >
         <X className="h-4 w-4" />
-        <span>删除</span>
+        <span>{t("pdf.delete")}</span>
       </button>
     </div>
   );
@@ -920,6 +968,7 @@ interface PinCommentPopupProps {
  * Zotero-style sticky note popup
  */
 function PinCommentPopup({ position, onSave, onCancel }: PinCommentPopupProps) {
+  const { t } = useI18n();
   const [comment, setComment] = useState("");
   
   // Use coordinate adapter to adjust popup position
@@ -933,22 +982,22 @@ function PinCommentPopup({ position, onSave, onCancel }: PinCommentPopupProps) {
     >
       <div className="flex items-center gap-2 mb-2">
         <StickyNote className="h-4 w-4 text-amber-500" />
-        <span className="text-sm font-medium">添加笔记</span>
+        <span className="text-sm font-medium">{t("pdf.note.add")}</span>
       </div>
       <textarea
         value={comment}
         onChange={(e) => setComment(e.target.value)}
-        placeholder="输入笔记内容..."
+        placeholder={t("pdf.note.placeholder")}
         className="w-full p-2 text-sm border border-border rounded bg-background resize-none focus:outline-none focus:ring-1 focus:ring-primary"
         rows={4}
         autoFocus
       />
       <div className="flex justify-end gap-2 mt-2">
         <Button size="sm" variant="ghost" onClick={onCancel}>
-          取消
+          {t("common.cancel")}
         </Button>
         <Button size="sm" onClick={() => onSave(comment)}>
-          保存
+          {t("common.save")}
         </Button>
       </div>
     </div>
@@ -969,6 +1018,7 @@ interface TextAnnotationPopupProps {
  * Zotero-style text annotation popup with color and size options
  */
 function TextAnnotationPopup({ position, onSave, onCancel, initialColor, initialText, initialTextColor, initialFontSize }: TextAnnotationPopupProps) {
+  const { t } = useI18n();
   const [text, setText] = useState(initialText || "");
   const [textColor, setTextColor] = useState<string>(initialTextColor || DEFAULT_TEXT_STYLE.textColor);
   const [fontSize, setFontSize] = useState<number>(initialFontSize || DEFAULT_TEXT_STYLE.fontSize);
@@ -988,7 +1038,7 @@ function TextAnnotationPopup({ position, onSave, onCancel, initialColor, initial
     >
       <div className="flex items-center gap-2 mb-2">
         <Type className="h-4 w-4" />
-        <span className="text-sm font-medium">{initialText ? '编辑文本' : '添加文本'}</span>
+        <span className="text-sm font-medium">{initialText ? t("pdf.text.edit") : t("pdf.text.add")}</span>
       </div>
       
       {/* Style options row */}
@@ -1002,10 +1052,10 @@ function TextAnnotationPopup({ position, onSave, onCancel, initialColor, initial
               setShowSizePicker(false);
             }}
             className="flex items-center gap-1 px-2 py-1 text-xs border border-border rounded hover:bg-muted"
-            title="文字颜色"
+            title={t("pdf.textColor")}
           >
             <span className="w-3 h-3 rounded-sm border border-black/20" style={{ backgroundColor: textColor }} />
-            <span>文字</span>
+            <span>{t("pdf.textColor")}</span>
             <ChevronDown className="h-3 w-3" />
           </button>
           {showTextColorPicker && (
@@ -1044,7 +1094,7 @@ function TextAnnotationPopup({ position, onSave, onCancel, initialColor, initial
               setShowSizePicker(false);
             }}
             className="flex items-center gap-1 px-2 py-1 text-xs border border-border rounded hover:bg-muted"
-            title="背景颜色"
+            title={t("pdf.backgroundColor")}
           >
             <span 
               className="w-3 h-3 rounded-sm border border-black/20" 
@@ -1055,7 +1105,7 @@ function TextAnnotationPopup({ position, onSave, onCancel, initialColor, initial
                 backgroundPosition: '0 0, 0 2px, 2px -2px, -2px 0px'
               }} 
             />
-            <span>背景</span>
+            <span>{t("pdf.backgroundColor")}</span>
             <ChevronDown className="h-3 w-3" />
           </button>
           {showBgColorPicker && (
@@ -1099,7 +1149,7 @@ function TextAnnotationPopup({ position, onSave, onCancel, initialColor, initial
               setShowBgColorPicker(false);
             }}
             className="flex items-center gap-1 px-2 py-1 text-xs border border-border rounded hover:bg-muted"
-            title="字体大小"
+            title={t("pdf.fontSize")}
           >
             <span>{fontSize}px</span>
             <ChevronDown className="h-3 w-3" />
@@ -1138,24 +1188,24 @@ function TextAnnotationPopup({ position, onSave, onCancel, initialColor, initial
             lineHeight: 1.4
           }}
         >
-          {text || '预览文字...'}
+          {text || `${t("pdf.text.add")}...`}
         </span>
       </div>
 
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder="输入文本..."
+        placeholder={t("pdf.text.placeholder")}
         className="w-full p-2 text-sm border border-border rounded bg-background resize-none focus:outline-none focus:ring-1 focus:ring-primary"
         rows={3}
         autoFocus
       />
       <div className="flex justify-end gap-2 mt-2">
         <Button size="sm" variant="ghost" onClick={onCancel}>
-          取消
+          {t("common.cancel")}
         </Button>
         <Button size="sm" onClick={() => onSave(text, textColor, fontSize, bgColor)} disabled={!text.trim()}>
-          {initialText ? '保存' : '添加'}
+          {initialText ? t("common.save") : t("pdf.text.add")}
         </Button>
       </div>
     </div>
@@ -1182,6 +1232,7 @@ interface TextAnnotationOverlayProps {
 }
 
 function TextAnnotationOverlay({ annotation, scale, onClick, isHighlighted }: TextAnnotationOverlayProps) {
+  const { t } = useI18n();
   if (annotation.style.type !== 'text' || annotation.target.type !== 'pdf') {
     return null;
   }
@@ -1213,7 +1264,7 @@ function TextAnnotationOverlay({ annotation, scale, onClick, isHighlighted }: Te
         e.stopPropagation();
         onClick?.();
       }}
-      title="点击编辑文字批注"
+      title={t("pdf.text.editTitle")}
     >
       <span
         style={{
@@ -1239,15 +1290,16 @@ interface TextAnnotationPortalProps {
   annotation: AnnotationItem;
   page: number;
   scale: number;
+  paneRootRef: React.RefObject<HTMLElement | null>;
   onClick?: () => void;
   isHighlighted?: boolean;
 }
 
-function TextAnnotationPortal({ annotation, page, scale, onClick, isHighlighted }: TextAnnotationPortalProps) {
+function TextAnnotationPortal({ annotation, page, scale, paneRootRef, onClick, isHighlighted }: TextAnnotationPortalProps) {
   const [container, setContainer] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
-    const pageElement = document.querySelector(`[data-page-number="${page}"]`) as HTMLElement;
+    const pageElement = findPdfPageElementInScope(paneRootRef.current, page);
     if (!pageElement) return;
 
     // Ensure the page element has relative positioning
@@ -1275,7 +1327,7 @@ function TextAnnotationPortal({ annotation, page, scale, onClick, isHighlighted 
         overlay.parentNode.removeChild(overlay);
       }
     };
-  }, [page, annotation.id]);
+  }, [annotation.id, page, paneRootRef]);
 
   if (!container) return null;
 
@@ -1358,14 +1410,15 @@ interface InkAnnotationPortalProps {
   annotation: AnnotationItem;
   page: number;
   scale: number;
+  paneRootRef: React.RefObject<HTMLElement | null>;
 }
 
-function InkAnnotationPortal({ annotation, page, scale }: InkAnnotationPortalProps) {
+function InkAnnotationPortal({ annotation, page, scale, paneRootRef }: InkAnnotationPortalProps) {
   const [container, setContainer] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     // Find the page element and create/find overlay container
-    const pageElement = document.querySelector(`[data-page-number="${page}"]`) as HTMLElement;
+    const pageElement = findPdfPageElementInScope(paneRootRef.current, page);
     if (!pageElement) return;
 
     // Ensure the page element has relative positioning for absolute children
@@ -1392,7 +1445,7 @@ function InkAnnotationPortal({ annotation, page, scale }: InkAnnotationPortalPro
         overlay.parentNode.removeChild(overlay);
       }
     };
-  }, [page, annotation.id]);
+  }, [annotation.id, page, paneRootRef]);
 
   if (!container) return null;
 
@@ -1447,13 +1500,14 @@ interface CurrentInkPathPortalProps {
   page: number;
   color: string;
   scale: number;
+  paneRootRef: React.RefObject<HTMLElement | null>;
 }
 
-function CurrentInkPathPortal({ path, page, color, scale }: CurrentInkPathPortalProps) {
+function CurrentInkPathPortal({ path, page, color, scale, paneRootRef }: CurrentInkPathPortalProps) {
   const [container, setContainer] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
-    const pageElement = document.querySelector(`[data-page-number="${page}"]`) as HTMLElement;
+    const pageElement = findPdfPageElementInScope(paneRootRef.current, page);
     if (!pageElement) return;
 
     // Ensure the page element has relative positioning
@@ -1479,7 +1533,7 @@ function CurrentInkPathPortal({ path, page, color, scale }: CurrentInkPathPortal
         overlay.parentNode.removeChild(overlay);
       }
     };
-  }, [page]);
+  }, [page, paneRootRef]);
 
   if (!container) return null;
 
@@ -1541,13 +1595,14 @@ interface PdfTransientSelectionPortalProps {
   selection: PdfTransientSelection;
   paneId: PaneId;
   page: number;
+  paneRootRef: React.RefObject<HTMLElement | null>;
 }
 
-function PdfTransientSelectionPortal({ selection, paneId, page }: PdfTransientSelectionPortalProps) {
+function PdfTransientSelectionPortal({ selection, paneId, page, paneRootRef }: PdfTransientSelectionPortalProps) {
   const [container, setContainer] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
-    const pageElement = document.querySelector(`[data-page-number="${page}"]`) as HTMLElement | null;
+    const pageElement = findPdfPageElementInScope(paneRootRef.current, page);
     if (!pageElement) {
       return;
     }
@@ -1575,7 +1630,7 @@ function PdfTransientSelectionPortal({ selection, paneId, page }: PdfTransientSe
         overlay.parentNode.removeChild(overlay);
       }
     };
-  }, [page, paneId, selection.signature]);
+  }, [page, paneId, paneRootRef, selection.signature]);
 
   if (!container) {
     return null;
@@ -1600,11 +1655,14 @@ export function PDFHighlighterAdapter({
   fileId,
   filePath,
 }: PDFHighlighterAdapterProps) {
+  const { t } = useI18n();
   const cachedPdfViewState = useMemo(() => {
     return readCachedPdfViewState(useContentCacheStore.getState().getEditorState(fileId));
   }, [fileId]);
   const { refreshDirectory } = useFileSystem();
   const isPaneActive = useWorkspaceStore((state) => state.layout.activePaneId === paneId);
+  const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
+  const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
   const saveEditorState = useContentCacheStore((state) => state.saveEditorState);
   const getEditorState = useContentCacheStore((state) => state.getEditorState);
   const [pdfItemManifest, setPdfItemManifest] = useState<PdfItemManifest | null>(null);
@@ -1669,15 +1727,14 @@ export function PDFHighlighterAdapter({
 
     let cancelled = false;
 
-    const ensureWorkspace = async () => {
+    const loadWorkspaceManifest = async () => {
       try {
         setPdfItemError(null);
-        const manifest = await ensurePdfItemWorkspace(rootHandle, manifestSeedId, filePath);
+        const manifest = await loadPdfItemManifest(rootHandle, manifestSeedId, filePath);
         if (cancelled) {
           return;
         }
         setPdfItemManifest(manifest);
-        await refreshDirectory({ silent: true });
       } catch (error) {
         if (!cancelled) {
           setPdfItemError(error instanceof Error ? error.message : String(error));
@@ -1685,12 +1742,12 @@ export function PDFHighlighterAdapter({
       }
     };
 
-    void ensureWorkspace();
+    void loadWorkspaceManifest();
 
     return () => {
       cancelled = true;
     };
-  }, [canManagePdfItemWorkspace, filePath, manifestSeedId, refreshDirectory, rootHandle]);
+  }, [canManagePdfItemWorkspace, filePath, manifestSeedId, rootHandle]);
 
   useEffect(() => {
     if (!showSidebar || !pdfItemManifest || !canManagePdfItemWorkspace) {
@@ -1720,19 +1777,18 @@ export function PDFHighlighterAdapter({
     annotationMirrorTimeoutRef.current = window.setTimeout(() => {
       void (async () => {
         const nextBacklinks = await refreshAnnotationBacklinks();
+        const resolvedManifest = annotations.some((annotation) => annotation.target.type === "pdf")
+          ? await ensurePdfItemWorkspace(rootHandle, manifestSeedId, filePath)
+          : pdfItemManifest;
         const annotationResult = await syncPdfAnnotationsMarkdown(
           rootHandle,
-          pdfItemManifest,
+          resolvedManifest,
           fileName,
           annotations,
           nextBacklinks,
         );
-        await syncPdfOverviewMarkdown(
-          rootHandle,
-          annotationResult.manifest,
-          fileName,
-          annotations,
-        );
+        setPdfItemManifest(annotationResult.manifest);
+        await refreshDirectory({ silent: true });
       })();
     }, 450);
 
@@ -1742,7 +1798,7 @@ export function PDFHighlighterAdapter({
         annotationMirrorTimeoutRef.current = null;
       }
     };
-  }, [annotations, canManagePdfItemWorkspace, fileName, pdfItemManifest, refreshAnnotationBacklinks, rootHandle]);
+  }, [annotations, canManagePdfItemWorkspace, fileName, filePath, manifestSeedId, pdfItemManifest, refreshAnnotationBacklinks, refreshDirectory, rootHandle]);
   const [restoreDebugState, setRestoreDebugState] = useState<PdfRestoreDebugState>(createIdleRestoreDebugState);
   
   // Ink style from store
@@ -1880,6 +1936,23 @@ export function PDFHighlighterAdapter({
     }
 
     return text;
+  }, []);
+
+  const getNativePdfSelectionRange = useCallback((): Range | null => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      return null;
+    }
+
+    const range = selection.getRangeAt(0);
+    const container = containerRef.current;
+    const ancestor = range.commonAncestorContainer;
+    const ancestorElement = ancestor instanceof Element ? ancestor : ancestor.parentElement;
+    if (!container || !ancestorElement || !container.contains(ancestorElement)) {
+      return null;
+    }
+
+    return range;
   }, []);
 
   const getActivePdfSelectionText = useCallback(() => {
@@ -2720,6 +2793,48 @@ export function PDFHighlighterAdapter({
     setZoomMode('manual');
   }, []);
 
+  useEffect(() => {
+    const breadcrumbs = filePath.split("/").filter(Boolean).map((segment) => ({ label: segment }));
+    setCommandBarState(paneId, {
+      breadcrumbs,
+      actions: [
+        {
+          id: "toggle-sidebar",
+          label: t("workbench.commandBar.sidebar"),
+          onTrigger: () => setShowSidebar((value) => !value),
+        },
+        {
+          id: "fit-width",
+          label: t("pdf.fitWidth"),
+          disabled: zoomMode === "fit-width",
+          onTrigger: () => applyZoomMode("fit-width"),
+        },
+        {
+          id: "zoom-in",
+          label: t("pdf.zoomIn"),
+          onTrigger: zoomIn,
+        },
+        {
+          id: "zoom-out",
+          label: t("pdf.zoomOut"),
+          onTrigger: zoomOut,
+        },
+      ],
+    });
+
+    return () => clearCommandBarState(paneId);
+  }, [
+    applyZoomMode,
+    clearCommandBarState,
+    filePath,
+    paneId,
+    setCommandBarState,
+    t,
+    zoomIn,
+    zoomMode,
+    zoomOut,
+  ]);
+
   const annotationById = useMemo(() => {
     return new Map(annotations.map((annotation) => [annotation.id, annotation] as const));
   }, [annotations]);
@@ -2855,6 +2970,25 @@ export function PDFHighlighterAdapter({
     hideTipAndSelection: () => void,
   ) => {
     const normalizedPosition = position as ViewportPosition;
+    const nativeSelectionRange = getNativePdfSelectionRange();
+    const nativeSelectionText = getNativePdfSelectionText();
+    const selectionText = nativeSelectionText || rawContent.text || "";
+    const nativeSelectionPageElement = nativeSelectionRange
+      ? ((nativeSelectionRange.commonAncestorContainer instanceof Element
+          ? nativeSelectionRange.commonAncestorContainer
+          : nativeSelectionRange.commonAncestorContainer.parentElement
+        )?.closest<HTMLElement>("[data-page-number]") ?? null)
+      : null;
+    const nativeSelectionRects = nativeSelectionRange
+      ? buildPdfSelectionRects(nativeSelectionRange, nativeSelectionPageElement)
+      : undefined;
+    const nativeTransientRects = nativeSelectionRange
+      ? buildPdfTransientSelectionRectsFromRange(nativeSelectionRange, containerRef.current)
+      : undefined;
+    const normalizedContent: PdfHighlightContent = {
+      ...rawContent,
+      text: selectionText,
+    };
     const normalizedTool = activeTool === 'underline'
       ? 'underline'
       : activeTool === 'area'
@@ -2865,9 +2999,22 @@ export function PDFHighlighterAdapter({
     const signature = buildPdfSelectionSignature({
       tool: normalizedTool,
       position: position as Parameters<typeof buildPdfSelectionSignature>[0]["position"],
-      content: rawContent,
+      content: normalizedContent,
     });
     const selectionToken = lastSelectionSessionRef.current?.token ?? 0;
+    const isAreaSelection = Boolean(rawContent.image && !selectionText.trim());
+
+    if (nativeSelectionText && (!nativeSelectionRange || !nativeSelectionPageElement || !nativeSelectionRects?.length)) {
+      hideTipAndSelection();
+      clearTransientSelection({ nextPhase: 'cancelled' });
+      return null;
+    }
+
+    if (!isAreaSelection && !selectionText.trim()) {
+      hideTipAndSelection();
+      clearTransientSelection({ nextPhase: 'cancelled' });
+      return null;
+    }
 
     if (isDuplicatePdfSelection(lastSelectionSessionRef.current, {
       signature,
@@ -2886,17 +3033,17 @@ export function PDFHighlighterAdapter({
     const selectionStyleType = activeTool === 'underline' ? 'underline' : 'highlight';
     const nextTransientSelection = buildPdfTransientSelection({
       position: normalizedPosition,
-      text: rawContent.text ?? '',
+      text: selectionText,
       signature,
       color: activeTool === 'highlight' || activeTool === 'underline' ? activeColor : '#3B82F6',
       styleType: selectionStyleType,
+      nativeRects: nativeTransientRects,
     });
     const newHighlight: NewHighlight = {
       position: position as NewHighlight["position"],
-      content: rawContent,
+      content: normalizedContent,
       comment: { text: '', emoji: '' },
     };
-    const isAreaSelection = rawContent.image && !rawContent.text;
 
     if (activeTool === 'area' || isAreaSelection) {
       dismissTransientSelectionTip();
@@ -2930,9 +3077,9 @@ export function PDFHighlighterAdapter({
       clearNativePdfSelectionLater(2);
     }
 
-    return (
+      return (
       <ColorPicker
-        selectedText={rawContent.text}
+        selectedText={selectionText}
         onColorSelect={(color) => {
           const annotationData = highlightToAnnotationData(newHighlight, color, 'user', 'highlight');
           addAnnotation(annotationData);
@@ -2949,6 +3096,8 @@ export function PDFHighlighterAdapter({
     clearNativePdfSelectionLater,
     clearTransientSelection,
     dismissTransientSelectionTip,
+    getNativePdfSelectionRange,
+    getNativePdfSelectionText,
   ]);
 
   // Convert annotations to highlights
@@ -3122,7 +3271,7 @@ export function PDFHighlighterAdapter({
       return;
     }
 
-    const pageElement = document.querySelector(`[data-page-number="${textAnnotationPosition.page}"]`);
+    const pageElement = findPdfPageElementInScope(containerRef.current, textAnnotationPosition.page);
     if (!pageElement) {
       setTextAnnotationPosition(null);
       return;
@@ -3185,7 +3334,7 @@ export function PDFHighlighterAdapter({
     (comment: string) => {
       if (!pendingPin) return;
 
-      const pageElement = document.querySelector(`[data-page-number="${pendingPin.page}"]`);
+      const pageElement = findPdfPageElementInScope(containerRef.current, pendingPin.page);
       if (!pageElement) {
         setPendingPin(null);
         return;
@@ -3217,13 +3366,13 @@ export function PDFHighlighterAdapter({
 
     if (annotation.target.type === 'pdf') {
       const target = annotation.target as PdfTarget;
-      const pageElement = document.querySelector(`[data-page-number="${target.page}"]`);
+      const pageElement = findPdfPageElementInScope(containerRef.current, target.page);
       const container = getViewerScrollContainer();
 
       if (!pageElement || !container) {
         // Fallback: try scrolling to page later
         scheduleTimeout(() => {
-          const retryPage = document.querySelector(`[data-page-number="${target.page}"]`);
+          const retryPage = findPdfPageElementInScope(containerRef.current, target.page);
           if (retryPage) {
             retryPage.scrollIntoView({ behavior: 'smooth', block: 'center' });
           }
@@ -3304,7 +3453,7 @@ export function PDFHighlighterAdapter({
           return;
         }
 
-        const pageElement = document.querySelector(`[data-page-number="${page}"]`) as HTMLElement | null;
+        const pageElement = findPdfPageElementInScope(containerRef.current, page);
         if (pageElement) {
           setSelectedAnnotationId(annotationId);
           setHighlightedId(annotationId);
@@ -3325,7 +3474,7 @@ export function PDFHighlighterAdapter({
       const pendingTarget = pendingNavigation.target;
 
       if (pendingTarget.type === "pdf_page") {
-        const pageElement = document.querySelector(`[data-page-number="${pendingTarget.page}"]`) as HTMLElement | null;
+        const pageElement = findPdfPageElementInScope(containerRef.current, pendingTarget.page);
         if (!pageElement) return false;
         pageElement.scrollIntoView({ behavior: "smooth", block: "center" });
         scheduleTimeout(() => flashPdfElement(pageElement), 120);
@@ -3398,7 +3547,7 @@ export function PDFHighlighterAdapter({
       {/* Error banner */}
       {annotationsError && (
         <div className="bg-red-50 dark:bg-red-950 border-b border-red-200 dark:border-red-800 px-4 py-2 text-sm text-red-700 dark:text-red-300">
-          错误: {annotationsError}
+          {t("common.error")}: {annotationsError}
         </div>
       )}
       
@@ -3417,7 +3566,7 @@ export function PDFHighlighterAdapter({
             size="icon"
             className="h-8 w-8 relative"
             onClick={() => setShowSidebar(!showSidebar)}
-            title={showSidebar ? "隐藏批注面板 (Ctrl+Shift+A)" : "显示批注面板 (Ctrl+Shift+A)"}
+            title={showSidebar ? t("pdf.sidebar.hide") : t("pdf.sidebar.show")}
           >
             {showSidebar ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
             {/* Badge showing annotation count when sidebar is closed */}
@@ -3441,7 +3590,7 @@ export function PDFHighlighterAdapter({
               size="icon"
               className="h-8 w-8"
               onClick={() => setActiveTool(activeTool === 'highlight' ? 'select' : 'highlight')}
-              title="高亮 (H)"
+              title={t("pdf.tool.highlight")}
             >
               <Highlighter className="h-4 w-4" style={{ color: activeColor }} />
             </Button>
@@ -3486,7 +3635,7 @@ export function PDFHighlighterAdapter({
             size="icon"
             className="h-8 w-8"
             onClick={() => setActiveTool(activeTool === 'underline' ? 'select' : 'underline')}
-            title="下划线 (U)"
+            title={t("pdf.tool.underline")}
           >
             <Underline className="h-4 w-4" style={{ color: activeTool === 'underline' ? activeColor : undefined }} />
           </Button>
@@ -3497,7 +3646,7 @@ export function PDFHighlighterAdapter({
             size="icon"
             className="h-8 w-8"
             onClick={() => setActiveTool(activeTool === 'note' ? 'select' : 'note')}
-            title="便签 (N)"
+            title={t("pdf.tool.note")}
           >
             <StickyNote className="h-4 w-4 text-amber-500" />
           </Button>
@@ -3508,7 +3657,7 @@ export function PDFHighlighterAdapter({
             size="icon"
             className="h-8 w-8"
             onClick={() => setActiveTool(activeTool === 'text' ? 'select' : 'text')}
-            title="文本 (T)"
+            title={t("pdf.tool.text")}
           >
             <Type className="h-4 w-4" />
           </Button>
@@ -3519,7 +3668,7 @@ export function PDFHighlighterAdapter({
             size="icon"
             className="h-8 w-8"
             onClick={() => setActiveTool(activeTool === 'area' ? 'select' : 'area')}
-            title="区域选择 (A)"
+            title={t("pdf.tool.area")}
           >
             <Square className="h-4 w-4" />
           </Button>
@@ -3531,7 +3680,7 @@ export function PDFHighlighterAdapter({
               size="icon"
               className="h-8 w-8"
               onClick={() => setActiveTool(activeTool === 'ink' ? 'select' : 'ink')}
-              title="绘图 (D)"
+              title={t("pdf.tool.draw")}
             >
               <Pencil className="h-4 w-4" style={{ color: activeTool === 'ink' ? inkStyle.color : undefined }} />
             </Button>
@@ -3559,7 +3708,7 @@ export function PDFHighlighterAdapter({
             className="h-8 w-8"
             onClick={zoomOut}
             disabled={scale <= ZOOM_MIN}
-            title="缩小 (Ctrl+-)"
+            title={t("pdf.zoomOutShortcut")}
           >
             <ZoomOut className="h-4 w-4" />
           </Button>
@@ -3568,7 +3717,7 @@ export function PDFHighlighterAdapter({
             className="min-w-[3.5rem] text-center text-sm tabular-nums"
             data-testid={`pdf-zoom-label-${paneId}`}
           >
-            {zoomMode === 'fit-width' ? '适宽' : zoomMode === 'fit-page' ? '适页' : `${Math.round(scale * 100)}%`}
+            {zoomMode === 'fit-width' ? t("pdf.fitWidth") : zoomMode === 'fit-page' ? t("pdf.fitPage") : `${Math.round(scale * 100)}%`}
           </span>
           
           <Button
@@ -3577,7 +3726,7 @@ export function PDFHighlighterAdapter({
             className="h-8 w-8"
             onClick={zoomIn}
             disabled={scale >= ZOOM_MAX}
-            title="放大 (Ctrl++)"
+            title={t("pdf.zoomInShortcut")}
           >
             <ZoomIn className="h-4 w-4" />
           </Button>
@@ -3589,7 +3738,7 @@ export function PDFHighlighterAdapter({
             className="h-8 w-8"
             data-testid={`pdf-fit-width-${paneId}`}
             onClick={() => applyZoomMode(zoomMode === 'fit-width' ? 'manual' : 'fit-width')}
-            title="适应宽度"
+            title={t("pdf.fitWidth")}
           >
             <FitWidthIcon className="h-4 w-4" />
           </Button>
@@ -3600,7 +3749,7 @@ export function PDFHighlighterAdapter({
             className="h-8 w-8"
             data-testid={`pdf-fit-page-${paneId}`}
             onClick={() => applyZoomMode(zoomMode === 'fit-page' ? 'manual' : 'fit-page')}
-            title="适应整页"
+            title={t("pdf.fitPage")}
           >
             <Maximize2 className="h-4 w-4" />
           </Button>
@@ -3621,37 +3770,37 @@ export function PDFHighlighterAdapter({
           {activeTool === 'highlight' && (
             <>
               <Highlighter className="h-3 w-3" />
-              选择文本以添加高亮
+              {t("pdf.highlightHint")}
             </>
           )}
           {activeTool === 'underline' && (
             <>
               <Underline className="h-3 w-3" />
-              选择文本以添加下划线
+              {t("pdf.underlineHint")}
             </>
           )}
           {activeTool === 'note' && (
             <>
               <StickyNote className="h-3 w-3" />
-              点击任意位置添加便签
+              {t("pdf.noteHint")}
             </>
           )}
           {activeTool === 'text' && (
             <>
               <Type className="h-3 w-3" />
-              点击添加文本批注
+              {t("pdf.textAnnotation.addTitle")}
             </>
           )}
           {activeTool === 'area' && (
             <>
               <Square className="h-3 w-3" />
-              拖动选择区域
+              {t("pdf.areaHint")}
             </>
           )}
           {activeTool === 'ink' && (
             <>
               <Pencil className="h-3 w-3" />
-              在PDF上绘制
+              {t("pdf.drawHint")}
             </>
           )}
           <button 
@@ -3767,7 +3916,7 @@ export function PDFHighlighterAdapter({
             beforeLoad={
               <div className="flex items-center justify-center gap-2 py-8">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm text-muted-foreground">正在加载PDF...</span>
+                <span className="text-sm text-muted-foreground">{t("pdf.loading")}</span>
               </div>
             }
           >
@@ -3963,7 +4112,7 @@ export function PDFHighlighterAdapter({
         ) : (
           <div className="flex items-center justify-center gap-2 py-8">
             <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="text-sm text-muted-foreground">正在加载PDF...</span>
+            <span className="text-sm text-muted-foreground">{t("pdf.loading")}</span>
           </div>
         )}
 
@@ -3973,6 +4122,7 @@ export function PDFHighlighterAdapter({
                     selection={transientSelection}
                     paneId={paneId}
                     page={page}
+                    paneRootRef={containerRef}
                   />
                 ))}
 
@@ -3986,6 +4136,7 @@ export function PDFHighlighterAdapter({
                       annotation={ann}
                       page={target.page}
                       scale={scale}
+                      paneRootRef={containerRef}
                     />
                   );
                 })}
@@ -4000,10 +4151,11 @@ export function PDFHighlighterAdapter({
                       annotation={ann}
                       page={target.page}
                       scale={scale}
+                      paneRootRef={containerRef}
                       isHighlighted={highlightedId === ann.id || hoveredAnnotationId === ann.id || selectedAnnotationId === ann.id}
                       onClick={() => {
                         // Open text annotation editor
-                        const pageElement = document.querySelector(`[data-page-number="${target.page}"]`);
+                        const pageElement = findPdfPageElementInScope(containerRef.current, target.page);
                         if (pageElement && target.rects.length > 0) {
                           const pageRect = pageElement.getBoundingClientRect();
                           const rect = target.rects[0];
@@ -4030,6 +4182,7 @@ export function PDFHighlighterAdapter({
                     page={currentInkPage}
                     color={activeColor}
                     scale={scale}
+                    paneRootRef={containerRef}
                   />
                 )}
 
@@ -4067,7 +4220,7 @@ export function PDFHighlighterAdapter({
             beforeLoad={
               <div className="flex items-center justify-center gap-2 py-8">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm text-muted-foreground">正在加载PDF...</span>
+                <span className="text-sm text-muted-foreground">{t("pdf.loading")}</span>
               </div>
             }
           >
@@ -4263,7 +4416,7 @@ export function PDFHighlighterAdapter({
         ) : (
           <div className="flex items-center justify-center gap-2 py-8">
             <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="text-sm text-muted-foreground">正在加载PDF...</span>
+            <span className="text-sm text-muted-foreground">{t("pdf.loading")}</span>
           </div>
         )}
 
@@ -4273,6 +4426,7 @@ export function PDFHighlighterAdapter({
               selection={transientSelection}
               paneId={paneId}
               page={page}
+              paneRootRef={containerRef}
             />
           ))}
 
@@ -4286,6 +4440,7 @@ export function PDFHighlighterAdapter({
                 annotation={ann}
                 page={target.page}
                 scale={scale}
+                paneRootRef={containerRef}
               />
             );
           })}
@@ -4300,10 +4455,11 @@ export function PDFHighlighterAdapter({
                 annotation={ann}
                 page={target.page}
                 scale={scale}
+                paneRootRef={containerRef}
                 isHighlighted={highlightedId === ann.id || hoveredAnnotationId === ann.id || selectedAnnotationId === ann.id}
                 onClick={() => {
                   // Open text annotation editor
-                  const pageElement = document.querySelector(`[data-page-number="${target.page}"]`);
+                  const pageElement = findPdfPageElementInScope(containerRef.current, target.page);
                   if (pageElement && target.rects.length > 0) {
                     const pageRect = pageElement.getBoundingClientRect();
                     const rect = target.rects[0];
@@ -4330,6 +4486,7 @@ export function PDFHighlighterAdapter({
               page={currentInkPage}
               color={activeColor}
               scale={scale}
+              paneRootRef={containerRef}
             />
           )}
 

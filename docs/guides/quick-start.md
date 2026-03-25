@@ -44,7 +44,7 @@
 ### PDF / 文献工作流
 
 - 打开一个 PDF
-- 确认 Explorer 中该 PDF 下出现 `条目概览` 与 `批注索引`
+- 确认 Explorer 中该 PDF 下只显示你创建的笔记 / Notebook；未产生批注前不会默认出现 `_annotations.md`
 - 在 PDF 侧栏创建阅读笔记或 Notebook
 - 添加一条批注，确认 `_annotations.md` 会自动同步
 - 在阅读笔记里引用批注后，再回到 PDF 侧栏确认反链可见

@@ -189,19 +189,20 @@
 /* 分隔线 - 必须占据完整的一行高度 */
 .live-preview-editor .cm-horizontal-rule-container {
   display: block !important;
-  height: 1.6em !important;
-  line-height: 1.6 !important;
-  padding: 0 !important;
-  margin: 0 !important;
+  min-height: 0 !important;
+  line-height: 0 !important;
+  padding: 12px 0 !important;
+  margin: 0 var(--cm-content-padding-x-neg, 0px) !important;
   overflow: hidden !important;
 }
 
 .live-preview-editor .cm-horizontal-rule {
-  margin: 1em 0 !important;
+  margin: 0 !important;
   padding: 0 !important;
   border: none !important;
-  border-top: 2px solid currentColor !important;
+  border-top: 1px solid currentColor !important;
   height: 0 !important;
+  background: transparent !important;
 }
 
 /* Block widgets - 统一的间距和行高 */
@@ -242,6 +243,10 @@
   line-height: 1.6 !important;
   padding: 0 !important;
   margin: 0 !important;
+}
+
+.live-preview-editor .cm-line:has(.cm-horizontal-rule-container) {
+  line-height: 0 !important;
 }
 
 /* 图片容器 */

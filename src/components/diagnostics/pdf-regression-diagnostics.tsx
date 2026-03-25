@@ -421,6 +421,14 @@ export function PdfRegressionDiagnostics() {
             4. 切走再切回恢复进度
             <br />
             5. 紧凑布局切换后 anchor 不漂移
+            <br />
+            6. 原生拖选后 transient overlay 不整页染蓝
+            <br />
+            7. 取消/提交 transient selection 后残影会清掉
+            <br />
+            8. 复制优先使用原生选区文本
+            <br />
+            9. 暗色模式下 PDF 页面与 chrome 对比正常
           </div>
           <PaneStateCard title="左侧 pane" snapshot={leftSnapshot} paneTestId="pdf-left-state" />
           <PaneStateCard title="右侧 pane" snapshot={rightSnapshot} paneTestId="pdf-right-state" />

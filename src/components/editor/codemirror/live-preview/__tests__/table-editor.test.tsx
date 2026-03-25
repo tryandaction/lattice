@@ -62,29 +62,27 @@ describe('TableEditor', () => {
     expect(input.tagName).toBe('TEXTAREA');
   });
 
-  it('opens an external perimeter action panel instead of rendering controls inside cells', () => {
-    const { container } = renderTableEditor();
-    fireEvent.mouseEnter(screen.getByRole('group', { name: 'Markdown table editor' }));
+  it('enters source editing on double click and commits when focus leaves the cell', () => {
+    const onUpdate = vi.fn();
+    renderTableEditor({ onUpdate });
 
-    fireEvent.click(screen.getByRole('button', { name: '表格操作' }));
+    fireEvent.doubleClick(screen.getByText('A1'));
 
-    expect(container.querySelector('.table-editor-perimeter-panel')).toBeTruthy();
-    expect(container.querySelectorAll('.column-quick-actions').length).toBe(0);
-    expect(screen.getByText('右侧插列')).toBeTruthy();
-    expect(screen.getByText('删除列')).toBeTruthy();
+    const input = screen.getByDisplayValue('A1');
+    fireEvent.change(input, { target: { value: 'A1 updated' } });
+    fireEvent.blur(input);
+
+    expect(onUpdate).toHaveBeenCalledWith('| 标题 A | 标题 B |\n| --- | --- |\n| A1 updated | B1 |');
+    expect(screen.queryByDisplayValue('A1 updated')).toBeNull();
   });
 
-  it('shows the perimeter handle on keyboard focus and opens the menu with Shift+F10', () => {
-    renderTableEditor();
-
+  it('removes the perimeter handle and action menu in the simplified editing mode', () => {
+    const { container } = renderTableEditor();
     const wrapper = screen.getByRole('group', { name: 'Markdown table editor' });
+
     fireEvent.focus(wrapper);
 
-    expect(screen.getByRole('button', { name: '表格操作' })).toBeTruthy();
-
-    fireEvent.keyDown(wrapper, { key: 'F10', shiftKey: true });
-
-    expect(screen.getByRole('menu', { name: '表格操作菜单' })).toBeTruthy();
-    expect(screen.getByText('对齐：无')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '表格操作' })).toBeNull();
+    expect(container.querySelector('.table-editor-perimeter-panel')).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { BookOpenText, FilePlus2, FolderOpen, NotebookPen, RefreshCw, ScrollText } from "lucide-react";
+import { FilePlus2, FolderOpen, NotebookPen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useWorkspaceStore, type PaneId } from "@/stores/workspace-store";
@@ -12,15 +12,13 @@ import {
   ensurePdfItemWorkspace,
   listPdfItemNotes,
   loadPdfItemManifest,
-  syncPdfAnnotationsMarkdown,
-  syncPdfOverviewMarkdown,
   type PdfItemManifest,
   type PdfItemNoteSummary,
 } from "@/lib/pdf-item";
-import { getBacklinksForAnnotation, scanWorkspaceMarkdownBacklinks } from "@/lib/annotation-backlinks";
 import { getParentPath, resolveEntry, resolveDirectoryHandle } from "@/lib/file-operations";
 import type { AnnotationItem } from "@/types/universal-annotation";
 import type { FileNode, TreeNode } from "@/types/file-system";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface PdfItemWorkspacePanelProps {
   rootHandle: FileSystemDirectoryHandle;
@@ -31,17 +29,15 @@ interface PdfItemWorkspacePanelProps {
   annotations: AnnotationItem[];
 }
 
-function noteLabel(type: PdfItemNoteSummary["type"]) {
+function noteLabel(type: PdfItemNoteSummary["type"], t: ReturnType<typeof useI18n>["t"]) {
   switch (type) {
-    case "overview":
-      return "概览";
     case "annotation-note":
-      return "批注";
+      return t("pdf.workspace.note.annotation");
     case "notebook":
-      return "Notebook";
+      return t("pdf.workspace.note.notebook");
     case "note":
     default:
-      return "Markdown";
+      return t("pdf.workspace.note.markdown");
   }
 }
 
@@ -80,6 +76,7 @@ export function PdfItemWorkspacePanel({
   paneId,
   annotations,
 }: PdfItemWorkspacePanelProps) {
+  const { t } = useI18n();
   const { refreshDirectory } = useFileSystem();
   const activePaneId = useWorkspaceStore((state) => state.layout.activePaneId);
   const splitPane = useWorkspaceStore((state) => state.splitPane);
@@ -192,39 +189,14 @@ export function PdfItemWorkspacePanel({
   }, [ensureWorkspace, loadItemState, revealPdfEntry]);
 
   const handleCreateNote = useCallback((type: "note" | "notebook") => {
-    const baseName = type === "note" ? "Reading Note" : "Lab Notebook";
+    const baseName = type === "note" ? "Untitled" : "Lab Notebook";
     void runAction(type === "note" ? "create-note" : "create-notebook", async (resolvedManifest) => {
       const result = await createPdfItemNote(rootHandle, resolvedManifest, type, baseName);
-      const overviewResult = await syncPdfOverviewMarkdown(rootHandle, resolvedManifest, fileName, pdfAnnotations);
       emitVaultChange(result.path);
-      emitVaultChange(overviewResult.path);
-      setManifest(overviewResult.manifest);
       await refreshDirectory({ silent: true });
       openHandleNearPdf(result.handle, result.path);
     });
-  }, [fileName, openHandleNearPdf, pdfAnnotations, refreshDirectory, rootHandle, runAction]);
-
-  const handleSyncAnnotations = useCallback(() => {
-    void runAction("sync-annotations", async (resolvedManifest) => {
-      await scanWorkspaceMarkdownBacklinks(rootHandle);
-      const backlinksByAnnotation = Object.fromEntries(
-        pdfAnnotations.map((annotation) => [annotation.id, getBacklinksForAnnotation(annotation.id)]),
-      );
-      const result = await syncPdfAnnotationsMarkdown(
-        rootHandle,
-        resolvedManifest,
-        fileName,
-        pdfAnnotations,
-        backlinksByAnnotation,
-      );
-      const overviewResult = await syncPdfOverviewMarkdown(rootHandle, result.manifest, fileName, pdfAnnotations);
-      emitVaultChange(result.path);
-      emitVaultChange(overviewResult.path);
-      setManifest(overviewResult.manifest);
-      await refreshDirectory({ silent: true });
-      openHandleNearPdf(result.handle, result.path);
-    });
-  }, [fileName, openHandleNearPdf, pdfAnnotations, refreshDirectory, rootHandle, runAction]);
+  }, [openHandleNearPdf, refreshDirectory, rootHandle, runAction]);
 
   const handleOpenNote = useCallback(async (notePath: string) => {
     setBusyAction(`open:${notePath}`);
@@ -232,7 +204,7 @@ export function PdfItemWorkspacePanel({
     try {
       const entry = await resolveEntry(rootHandle, notePath);
       if (!entry || entry.kind !== "file") {
-        throw new Error(`无法打开文件：${notePath}`);
+        throw new Error(t("pdf.workspace.error.open", { path: notePath }));
       }
       openHandleNearPdf(entry.handle as FileSystemFileHandle, notePath);
     } catch (openError) {
@@ -240,7 +212,7 @@ export function PdfItemWorkspacePanel({
     } finally {
       setBusyAction(null);
     }
-  }, [openHandleNearPdf, rootHandle]);
+  }, [openHandleNearPdf, rootHandle, t]);
 
   const handleRevealFolder = useCallback(() => {
     if (!manifest) {
@@ -249,13 +221,6 @@ export function PdfItemWorkspacePanel({
     revealPdfEntry(true);
   }, [manifest, revealPdfEntry]);
 
-  const handleOpenOverview = useCallback(() => {
-    const overview = notes.find((note) => note.type === "overview");
-    if (overview) {
-      void handleOpenNote(overview.path);
-    }
-  }, [handleOpenNote, notes]);
-
   const actionsDisabled = Boolean(busyAction);
 
   return (
@@ -263,48 +228,27 @@ export function PdfItemWorkspacePanel({
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="truncate text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            PDF Workspace
+            {t("pdf.workspace.title")}
           </div>
           <div className="truncate text-[11px] text-foreground">{fileName}</div>
         </div>
         <div className="flex items-center gap-1">
           <ActionIconButton
-            title={itemFolderExists ? "刷新条目工作区" : "创建条目目录"}
-            onClick={() => void runAction("ensure-item", async () => {})}
-            disabled={actionsDisabled}
-          >
-            <RefreshCw className={`h-4 w-4 ${busyAction === "ensure-item" ? "animate-spin" : ""}`} />
-          </ActionIconButton>
-          <ActionIconButton
-            title="打开概览"
-            onClick={handleOpenOverview}
-            disabled={!notes.some((note) => note.type === "overview") || actionsDisabled}
-          >
-            <BookOpenText className="h-4 w-4" />
-          </ActionIconButton>
-          <ActionIconButton
-            title="新建阅读笔记"
+            title={t("pdf.workspace.action.newNote")}
             onClick={() => handleCreateNote("note")}
             disabled={actionsDisabled}
           >
             <FilePlus2 className="h-4 w-4" />
           </ActionIconButton>
           <ActionIconButton
-            title="新建 Notebook"
+            title={t("pdf.workspace.action.newNotebook")}
             onClick={() => handleCreateNote("notebook")}
             disabled={actionsDisabled}
           >
             <NotebookPen className="h-4 w-4" />
           </ActionIconButton>
           <ActionIconButton
-            title="重建批注索引"
-            onClick={handleSyncAnnotations}
-            disabled={actionsDisabled}
-          >
-            <ScrollText className="h-4 w-4" />
-          </ActionIconButton>
-          <ActionIconButton
-            title="在 Explorer 定位"
+            title={t("pdf.workspace.action.reveal")}
             onClick={handleRevealFolder}
             disabled={!manifest || actionsDisabled}
           >
@@ -315,18 +259,18 @@ export function PdfItemWorkspacePanel({
 
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
         <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5">
-          {itemFolderExists ? "条目目录已建立" : "条目目录未建立"}
+          {itemFolderExists ? t("pdf.workspace.state.ready") : t("pdf.workspace.state.pending")}
         </span>
         <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5">
-          {pdfAnnotations.length} 条批注
+          {t("pdf.workspace.count.annotations", { count: pdfAnnotations.length })}
         </span>
         <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5">
-          {notes.length} 个关联文件
+          {t("pdf.workspace.count.notes", { count: notes.length })}
         </span>
       </div>
 
       <div className="mt-1 truncate text-[10px] text-muted-foreground" title={manifest?.itemFolderPath ?? undefined}>
-        {manifest?.itemFolderPath ?? "正在准备条目目录..."}
+        {manifest?.itemFolderPath ?? t("pdf.workspace.preparing")}
       </div>
 
       {error ? (
@@ -336,7 +280,7 @@ export function PdfItemWorkspacePanel({
       ) : null}
 
       {isLoading ? (
-        <div className="mt-1 text-[10px] text-muted-foreground">正在读取条目文件...</div>
+        <div className="mt-1 text-[10px] text-muted-foreground">{t("pdf.workspace.loading")}</div>
       ) : null}
 
       {!isLoading && notes.length > 0 ? (
@@ -347,9 +291,9 @@ export function PdfItemWorkspacePanel({
               type="button"
               onClick={() => void handleOpenNote(note.path)}
               className="rounded border border-border bg-muted/30 px-1.5 py-0.5 transition-colors hover:bg-muted"
-              title={`${noteLabel(note.type)} · ${note.path}`}
+              title={`${noteLabel(note.type, t)} · ${note.path}`}
             >
-              {noteLabel(note.type)}
+              {noteLabel(note.type, t)}
             </button>
           ))}
           {notes.length > 3 ? <span className="px-1 py-0.5">+{notes.length - 3}</span> : null}

@@ -9,6 +9,7 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { cn } from "@/lib/utils";
 import type { ExecutionProblem, RunnerHealthAction } from "@/lib/runner/types";
 import { runnerManager } from "@/lib/runner/runner-manager";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface WorkspaceRunnerManagerProps {
   cwd?: string;
@@ -23,10 +24,11 @@ export function WorkspaceRunnerManager({
   cwd,
   fileKey,
   commands = [],
-  title = "Workspace Runner Manager",
-  triggerLabel = "运行器管理",
+  title,
+  triggerLabel,
   triggerClassName,
 }: WorkspaceRunnerManagerProps) {
+  const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
   const [sessionValidation, setSessionValidation] = useState<{
     status: "idle" | "running" | "success" | "error";
@@ -116,7 +118,7 @@ export function WorkspaceRunnerManager({
     if (runnerHealthSnapshot.hostKind !== "desktop") {
       setSessionValidation({
         status: "error",
-        message: "网页运行时不支持本地 Notebook 会话验证。",
+        message: t("workbench.runner.manager.sessionUnsupported"),
       });
       return;
     }
@@ -124,14 +126,14 @@ export function WorkspaceRunnerManager({
     if (!runnerHealthSnapshot.selectedPythonPath) {
       setSessionValidation({
         status: "error",
-        message: "当前没有可用的本地 Python 解释器可供验证。",
+        message: t("workbench.runner.manager.sessionMissingPython"),
       });
       return;
     }
 
     setSessionValidation({
       status: "running",
-      message: "正在验证 Notebook 本地 Python 会话启动…",
+      message: t("workbench.runner.manager.sessionChecking"),
     });
 
     try {
@@ -141,7 +143,7 @@ export function WorkspaceRunnerManager({
       });
       setSessionValidation({
         status: "success",
-        message: `Notebook 本地会话已成功启动并完成握手：${runnerHealthSnapshot.selectedPythonPath}`,
+        message: t("workbench.runner.manager.sessionSuccess", { path: runnerHealthSnapshot.selectedPythonPath }),
       });
     } catch (error) {
       setSessionValidation({
@@ -162,7 +164,7 @@ export function WorkspaceRunnerManager({
         )}
       >
         <Settings2 className="h-3.5 w-3.5" />
-        <span>{triggerLabel}</span>
+        <span>{triggerLabel ?? t("workbench.runner.trigger")}</span>
       </button>
 
       {isOpen ? (
@@ -170,9 +172,9 @@ export function WorkspaceRunnerManager({
           <div className="relative max-h-[85vh] w-full max-w-4xl overflow-hidden rounded-lg border border-border bg-background shadow-2xl">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <div>
-                <div className="text-sm font-medium">{title}</div>
+                <div className="text-sm font-medium">{title ?? t("workbench.runner.managerCode")}</div>
                 <div className="text-xs text-muted-foreground">
-                  Host: {runnerHealthSnapshot.hostKind === "desktop" ? "desktop" : "web"}
+                  {t("workbench.runner.manager.host")}: {runnerHealthSnapshot.hostKind === "desktop" ? t("workbench.runner.manager.desktop") : t("workbench.runner.manager.web")}
                   {cwd ? ` · cwd: ${cwd}` : ""}
                 </div>
               </div>
@@ -183,7 +185,7 @@ export function WorkspaceRunnerManager({
                   className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
-                  <span>刷新</span>
+                  <span>{t("workbench.runner.manager.refresh")}</span>
                 </button>
                 <button
                   type="button"
@@ -199,13 +201,13 @@ export function WorkspaceRunnerManager({
               <div className="overflow-auto border-r border-border p-4">
                 <div className="mb-4 flex items-center justify-between">
                   <div>
-                    <div className="text-sm font-medium">Python Interpreters</div>
+                    <div className="text-sm font-medium">{t("workbench.runner.manager.pythonInterpreters")}</div>
                     <div className="text-xs text-muted-foreground">
-                      默认解释器：{runnerHealthSnapshot.preferredPythonPath ?? "自动选择"}
+                      {t("workbench.runner.manager.workspaceDefault")}：{runnerHealthSnapshot.preferredPythonPath ?? t("workbench.runner.manager.autoSelect")}
                     </div>
                     {fileKey ? (
                       <div className="text-xs text-muted-foreground">
-                        当前入口选择：{fileScopedSelection?.command ?? "自动选择"}
+                        {t("workbench.runner.manager.currentEntry")}：{fileScopedSelection?.command ?? t("workbench.runner.manager.autoSelect")}
                       </div>
                     ) : null}
                   </div>
@@ -216,7 +218,7 @@ export function WorkspaceRunnerManager({
                         onClick={() => void applyEntrySelection(null)}
                         className="rounded border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                       >
-                        恢复当前入口自动选择
+                        {t("workbench.runner.manager.resetEntry")}
                       </button>
                     ) : null}
                     <button
@@ -224,7 +226,7 @@ export function WorkspaceRunnerManager({
                       onClick={() => void applyWorkspaceDefault(null)}
                       className="rounded border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     >
-                      清空工作区默认
+                      {t("workbench.runner.manager.clearWorkspaceDefault")}
                     </button>
                   </div>
                 </div>
@@ -243,16 +245,16 @@ export function WorkspaceRunnerManager({
                             {environment.name ? ` (${environment.envType}: ${environment.name})` : ` (${environment.envType})`}
                           </div>
                           {isPreferred ? (
-                            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">Workspace Default</span>
+                            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">{t("workbench.runner.manager.workspaceDefault")}</span>
                           ) : null}
                           {isSelected ? (
-                            <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">Active</span>
+                            <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">{t("workbench.runner.manager.active")}</span>
                           ) : null}
                           {isEntrySelected ? (
-                            <span className="rounded bg-yellow-500/10 px-1.5 py-0.5 text-[10px] text-yellow-700 dark:text-yellow-300">Current Entry</span>
+                            <span className="rounded bg-yellow-500/10 px-1.5 py-0.5 text-[10px] text-yellow-700 dark:text-yellow-300">{t("workbench.runner.manager.currentEntry")}</span>
                           ) : null}
                         </div>
-                        <div className="mt-1 text-xs text-muted-foreground">Source: {environment.source}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{t("workbench.runner.manager.source")}: {environment.source}</div>
                         <div className="mt-1 break-all font-mono text-[11px] text-muted-foreground">{environment.path}</div>
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button
@@ -260,7 +262,7 @@ export function WorkspaceRunnerManager({
                             onClick={() => void applyWorkspaceDefault(environment.path)}
                             className="rounded border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                           >
-                            设为工作区默认
+                            {t("workbench.runner.manager.setWorkspaceDefault")}
                           </button>
                           {fileKey ? (
                             <button
@@ -268,7 +270,7 @@ export function WorkspaceRunnerManager({
                               onClick={() => void applyEntrySelection(environment.path)}
                               className="rounded border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                             >
-                              仅当前入口使用
+                              {t("workbench.runner.manager.useForEntry")}
                             </button>
                           ) : null}
                         </div>
@@ -278,7 +280,7 @@ export function WorkspaceRunnerManager({
 
                   {runnerHealthSnapshot.pythonEnvironments.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-                      当前未检测到本地 Python 解释器。
+                      {t("workbench.runner.manager.noPython")}
                     </div>
                   ) : null}
                 </div>
@@ -286,17 +288,17 @@ export function WorkspaceRunnerManager({
 
               <div className="overflow-auto p-4">
                 <div className="mb-4">
-                  <div className="mb-2 text-sm font-medium">Runner Health</div>
+                  <div className="mb-2 text-sm font-medium">{t("workbench.runner.manager.healthTitle")}</div>
                   <ProblemsPanel problems={issueProblems} onAction={handleProblemAction} />
                   {issueProblems.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-                      当前未发现运行器健康问题。
+                      {t("workbench.runner.manager.noHealthIssues")}
                     </div>
                   ) : null}
                 </div>
 
                 <div className="mb-4">
-                  <div className="mb-2 text-sm font-medium">Notebook Session Startup</div>
+                  <div className="mb-2 text-sm font-medium">{t("workbench.runner.manager.sessionTitle")}</div>
                   <button
                     type="button"
                     onClick={() => void handleValidateNotebookSession()}
@@ -306,7 +308,7 @@ export function WorkspaceRunnerManager({
                     {sessionValidation.status === "running"
                       ? <Loader2 className="h-4 w-4 animate-spin" />
                       : <CheckCircle2 className="h-4 w-4" />}
-                    <span>验证本地 Notebook 会话</span>
+                    <span>{t("workbench.runner.manager.validateSession")}</span>
                   </button>
                   {sessionValidation.status !== "idle" ? (
                     <div className={`mt-3 rounded-lg border p-3 text-xs ${sessionValidation.status === "error" ? "border-destructive/40 bg-destructive/10 text-destructive" : sessionValidation.status === "success" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-muted/20 text-muted-foreground"}`}>
@@ -323,18 +325,18 @@ export function WorkspaceRunnerManager({
                 </div>
 
                 <div>
-                  <div className="mb-2 text-sm font-medium">External Commands</div>
+                  <div className="mb-2 text-sm font-medium">{t("workbench.runner.manager.commandsTitle")}</div>
                   <div className="space-y-2">
                     {Object.values(runnerHealthSnapshot.commandAvailabilityByName).map((availability) => (
                       <div key={availability.command} className="rounded-lg border border-border bg-muted/20 p-3">
                         <div className="flex items-center gap-2">
                           <div className="text-sm font-medium">{availability.command}</div>
                           <span className={`rounded px-1.5 py-0.5 text-[10px] ${availability.available ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-destructive/10 text-destructive"}`}>
-                            {availability.available ? "Available" : "Missing"}
+                            {availability.available ? t("workbench.runner.manager.commandAvailable") : t("workbench.runner.manager.commandMissing")}
                           </span>
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">
-                          {availability.resolvedPath ?? availability.error ?? "未解析到命令路径"}
+                          {availability.resolvedPath ?? availability.error ?? t("workbench.runner.manager.commandUnresolved")}
                         </div>
                         {availability.version ? (
                           <div className="mt-1 text-[11px] text-muted-foreground">{availability.version}</div>
@@ -343,25 +345,25 @@ export function WorkspaceRunnerManager({
                     ))}
                     {Object.keys(runnerHealthSnapshot.commandAvailabilityByName).length === 0 ? (
                       <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-                        当前没有需要探测的外部命令。
+                        {t("workbench.runner.manager.noCommands")}
                       </div>
                     ) : null}
                   </div>
                 </div>
 
                 <div className="mt-4 rounded-lg border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
-                  <div className="font-medium text-foreground">Selection Rules</div>
+                  <div className="font-medium text-foreground">{t("workbench.runner.manager.selectionRules")}</div>
                   <div className="mt-2 flex items-start gap-2">
                     <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>工作区默认解释器优先于自动探测结果。</span>
+                    <span>{t("workbench.runner.manager.ruleDefault")}</span>
                   </div>
                   <div className="mt-1 flex items-start gap-2">
                     <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>当前入口“仅当前使用”会覆盖工作区默认，但只作用于当前文件 / block / notebook。</span>
+                    <span>{t("workbench.runner.manager.ruleEntry")}</span>
                   </div>
                   <div className="mt-1 flex items-start gap-2">
                     <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>恢复自动选择后，将重新按工作区默认与可用环境排序决定解释器。</span>
+                    <span>{t("workbench.runner.manager.ruleAuto")}</span>
                   </div>
                 </div>
               </div>

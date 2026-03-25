@@ -53,6 +53,7 @@ interface UseFileSystemReturn {
 
   // Actions
   openDirectory: () => Promise<void>;
+  openWorkspacePath: (path: string) => Promise<void>;
   openQaWorkspace?: () => Promise<void>;
   createFile: (name: string, type: FileType | 'file', parentPath?: string) => Promise<FileOperationResult>;
   createDirectory: (name: string, parentPath?: string) => Promise<DirectoryOperationResult>;
@@ -165,11 +166,9 @@ function buildPdfVirtualChildNode(summary: Awaited<ReturnType<typeof listPdfItem
   }
 
   const extension = getExtension(summary.fileName);
-  const displayName = summary.type === "overview"
-    ? "条目概览"
-    : summary.type === "annotation-note"
-      ? "批注索引"
-      : summary.fileName;
+  const displayName = summary.type === "annotation-note"
+    ? "_annotations.md"
+    : summary.fileName;
   return {
     name: summary.fileName,
     displayName,
@@ -179,20 +178,16 @@ function buildPdfVirtualChildNode(summary: Awaited<ReturnType<typeof listPdfItem
     path: summary.path,
     isVirtual: true,
     parentPdfPath,
-    entryRole: summary.type === "overview"
-      ? "pdf-overview"
-      : summary.type === "annotation-note"
-        ? "pdf-annotations"
-        : summary.type === "notebook"
-          ? "pdf-notebook"
-          : "pdf-note",
-    badgeLabel: summary.type === "overview"
-      ? "概览"
-      : summary.type === "annotation-note"
-        ? "批注"
-        : summary.type === "notebook"
-          ? "Notebook"
-          : "Markdown",
+    entryRole: summary.type === "annotation-note"
+      ? "pdf-annotations"
+      : summary.type === "notebook"
+        ? "pdf-notebook"
+        : "pdf-note",
+    badgeLabel: summary.type === "annotation-note"
+      ? "批注"
+      : summary.type === "notebook"
+        ? "Notebook"
+        : "Markdown",
   };
 }
 
@@ -363,7 +358,7 @@ export function useFileSystem(): UseFileSystemReturn {
     setLoading,
     setError,
   } = useWorkspaceStore();
-  const updateSetting = useSettingsStore((state) => state.updateSetting);
+  const rememberWorkspacePath = useSettingsStore((state) => state.rememberWorkspacePath);
 
   // Use state with useEffect to avoid hydration mismatch
   // Server always renders false, client updates after mount
@@ -393,10 +388,8 @@ export function useFileSystem(): UseFileSystemReturn {
     setWorkspaceRootPath(workspaceRootPath);
     setFileTree({ root: rootNode });
 
-    if (workspaceRootPath) {
-      await updateSetting("lastOpenedFolder", workspaceRootPath);
-    }
-  }, [setFileTree, setRootHandle, setWorkspaceRootPath, updateSetting]);
+    await rememberWorkspacePath(workspaceRootPath ?? handle.name);
+  }, [rememberWorkspacePath, setFileTree, setRootHandle, setWorkspaceRootPath]);
 
   /**
    * Refresh the file tree from the current root handle
@@ -483,6 +476,31 @@ export function useFileSystem(): UseFileSystemReturn {
       setLoading(false);
     }
   }, [applyWorkspaceHandle, isSupported, setLoading, setError]);
+
+  const openWorkspacePath = useCallback(async (path: string) => {
+    const trimmed = path.trim();
+    if (!trimmed) {
+      setError("Workspace path is empty.");
+      return;
+    }
+
+    if (!isTauri()) {
+      setError("Recent workspace reopening is only available in the desktop app.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+      const handle = createDesktopDirectoryHandle(trimmed);
+      await applyWorkspaceHandle(handle, trimmed);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to open workspace";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  }, [applyWorkspaceHandle, setError, setLoading]);
 
   /**
    * Open a QA workspace in OPFS (dev-only helper)
@@ -871,6 +889,7 @@ export function useFileSystem(): UseFileSystemReturn {
     isLoading,
     error,
     openDirectory,
+    openWorkspacePath,
     openQaWorkspace,
     createFile,
     createDirectory,

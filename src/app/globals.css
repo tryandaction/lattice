@@ -3151,26 +3151,31 @@ math-field.quantum-keyboard-active {
 
 /* Horizontal rule */
 .live-preview-editor .cm-horizontal-rule-container {
-  display: flex;
-  align-items: center;
+  display: block;
   position: relative;
   width: calc(100% + var(--cm-content-padding-x-double));
-  height: 40px;
-  min-height: 40px;
+  min-height: 0;
   margin: 0 var(--cm-content-padding-x-neg);
-  padding: 0;
+  padding: 12px 0;
+  line-height: 0;
   cursor: pointer;
   box-sizing: border-box;
 }
 
 .live-preview-editor .cm-horizontal-rule {
   border: none;
-  border-top: 2px solid hsl(var(--border));
+  border-top: 1px solid hsl(var(--border));
   margin: 0;
   width: 100%;
-  height: 2px;
-  background-color: hsl(var(--border));
+  height: 0;
+  background-color: transparent;
   opacity: 0.85;
+}
+
+.live-preview-editor .cm-line:has(.cm-horizontal-rule-container) {
+  line-height: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
 }
 
 /* Code block widget */

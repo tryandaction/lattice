@@ -26,11 +26,8 @@ import { resolveEntry, type EntryKind } from "@/lib/file-operations";
 import {
   createPdfItemNote,
   ensurePdfItemWorkspace,
-  syncPdfAnnotationsMarkdown,
-  syncPdfOverviewMarkdown,
 } from "@/lib/pdf-item";
-import { generateFileId, loadAnnotationsFromDisk } from "@/lib/universal-annotation-storage";
-import { getBacklinksForAnnotation, scanWorkspaceMarkdownBacklinks } from "@/lib/annotation-backlinks";
+import { generateFileId } from "@/lib/universal-annotation-storage";
 
 interface TreeNodeProps {
   node: TreeNode;
@@ -296,22 +293,6 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
     return manifest;
   }, [node.extension, node.isVirtual, node.path, refreshDirectory, rootHandle, toggleDirectory]);
 
-  const handleOpenPdfOverview = useCallback(async () => {
-    if (!rootHandle) {
-      return;
-    }
-
-    const manifest = await ensurePdfWorkspace();
-    if (!manifest) {
-      return;
-    }
-
-    const entry = await resolveEntry(rootHandle, manifest.overviewPath);
-    if (entry?.kind === "file") {
-      openFileInPane(layout.activePaneId, entry.handle as FileSystemFileHandle, manifest.overviewPath);
-    }
-  }, [ensurePdfWorkspace, layout.activePaneId, openFileInPane, rootHandle]);
-
   const handleCreatePdfNote = useCallback(async (type: "note" | "notebook") => {
     if (!rootHandle) {
       return;
@@ -322,41 +303,11 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
       return;
     }
 
-    const baseName = type === "note" ? "Reading Note" : "Lab Notebook";
+    const baseName = type === "note" ? "Untitled" : "Lab Notebook";
     const created = await createPdfItemNote(rootHandle, manifest, type, baseName);
-    const annotationsFile = await loadAnnotationsFromDisk(manifest.itemId, rootHandle, "pdf");
-    await syncPdfOverviewMarkdown(rootHandle, manifest, node.name, annotationsFile.annotations);
     await refreshDirectory({ silent: true });
     openFileInPane(layout.activePaneId, created.handle, created.path);
-  }, [ensurePdfWorkspace, layout.activePaneId, node.name, openFileInPane, refreshDirectory, rootHandle]);
-
-  const handleRebuildPdfAnnotationIndex = useCallback(async () => {
-    if (!rootHandle) {
-      return;
-    }
-
-    const manifest = await ensurePdfWorkspace();
-    if (!manifest) {
-      return;
-    }
-
-    const annotationsFile = await loadAnnotationsFromDisk(manifest.itemId, rootHandle, "pdf");
-    await scanWorkspaceMarkdownBacklinks(rootHandle);
-    const backlinksByAnnotation = Object.fromEntries(
-      annotationsFile.annotations
-        .filter((annotation) => annotation.target.type === "pdf")
-        .map((annotation) => [annotation.id, getBacklinksForAnnotation(annotation.id)]),
-    );
-    const annotationResult = await syncPdfAnnotationsMarkdown(
-      rootHandle,
-      manifest,
-      node.name,
-      annotationsFile.annotations,
-      backlinksByAnnotation,
-    );
-    await syncPdfOverviewMarkdown(rootHandle, annotationResult.manifest, node.name, annotationsFile.annotations);
-    await refreshDirectory({ silent: true });
-  }, [ensurePdfWorkspace, node.name, refreshDirectory, rootHandle]);
+  }, [ensurePdfWorkspace, layout.activePaneId, openFileInPane, refreshDirectory, rootHandle]);
 
   const handleRenameKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
@@ -491,10 +442,8 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
           x={contextMenu.x}
           y={contextMenu.y}
           actions={node.extension === "pdf" && !node.isVirtual ? [
-            { label: "打开 PDF 概览", onSelect: () => void handleOpenPdfOverview() },
             { label: "新建阅读笔记", onSelect: () => void handleCreatePdfNote("note") },
             { label: "新建 Notebook", onSelect: () => void handleCreatePdfNote("notebook") },
-            { label: "重建批注索引", onSelect: () => void handleRebuildPdfAnnotationIndex() },
           ] : undefined}
           onCopy={() => setExplorerClipboardForPath(node.path, "file", "copy")}
           onCut={() => setExplorerClipboardForPath(node.path, "file", "cut")}

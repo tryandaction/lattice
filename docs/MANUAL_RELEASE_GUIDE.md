@@ -98,5 +98,5 @@ npm run release:prepare -- --upload
 - `/diagnostics/runner` 可打开并展示解释器/命令探测结果
 - `npm run test:browser-regression` 全绿
 - 代码文件、Notebook code cell、Markdown code block 都能看到 `Run / Problems` 分层反馈
-- 打开任意 PDF 后，Explorer 中能看到 `条目概览` 与 `批注索引`
-- 新增一条 PDF 批注后，`.basename.lattice/_annotations.md` 会自动同步
+- 打开任意 PDF 后，Explorer 中只投影真实用户笔记 / Notebook；未产生批注前不应默认出现 `_annotations.md`
+- 新增一条 PDF 批注后，`.basename.lattice/_annotations.md` 会惰性生成并自动同步

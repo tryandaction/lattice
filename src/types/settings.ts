@@ -7,6 +7,11 @@
 
 export type Locale = 'zh-CN' | 'en-US';
 export type ThemeMode = 'light' | 'dark' | 'system';
+export type ActivityView = 'files' | 'annotations' | 'search';
+export type WorkbenchPanelScope = 'all' | 'current';
+export type AnnotationPanelSort = 'latest' | 'count' | 'name';
+export type SearchPanelMode = 'name_and_content' | 'file_name_only';
+export type SearchPanelSort = 'relevance' | 'name';
 
 export interface WindowState {
   width: number;
@@ -30,7 +35,19 @@ export interface AppSettings {
   // Files
   defaultFolder: string | null;
   lastOpenedFolder: string | null;
+  lastWorkspacePath: string | null;
+  recentWorkspacePaths: string[];
   rememberWindowState: boolean;
+
+  // Workbench
+  activityView: ActivityView;
+  sidePanelWidth: number;
+  sidePanelCollapsed: boolean;
+  searchPanelScope: WorkbenchPanelScope;
+  searchPanelMode: SearchPanelMode;
+  searchPanelSort: SearchPanelSort;
+  annotationsPanelScope: WorkbenchPanelScope;
+  annotationsPanelSort: AnnotationPanelSort;
   
   // Onboarding
   onboardingCompleted: boolean;
@@ -64,7 +81,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
   defaultFolder: null,
   lastOpenedFolder: null,
+  lastWorkspacePath: null,
+  recentWorkspacePaths: [],
   rememberWindowState: true,
+  activityView: 'files',
+  sidePanelWidth: 22,
+  sidePanelCollapsed: false,
+  searchPanelScope: 'all',
+  searchPanelMode: 'name_and_content',
+  searchPanelSort: 'relevance',
+  annotationsPanelScope: 'all',
+  annotationsPanelSort: 'latest',
   onboardingCompleted: false,
   windowState: undefined,
   pluginsEnabled: false,

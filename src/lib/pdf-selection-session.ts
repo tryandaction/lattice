@@ -15,6 +15,29 @@ export interface PdfSelectionSessionState {
   timestamp: number;
 }
 
+export interface PdfSelectionClientRect {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+export interface PdfSelectionPageGeometry {
+  pageNumber: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export interface PdfTransientSelectionRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  pageNumber: number;
+}
+
 const DEFAULT_REPLAY_WINDOW_MS = 450;
 
 function round(value: number, precision = 4): string {
@@ -121,4 +144,44 @@ export function buildPdfAreaPreview(input: {
     width: input.width,
     height: input.height,
   };
+}
+
+export function projectPdfSelectionRectsToPages(input: {
+  clientRects: PdfSelectionClientRect[];
+  pages: PdfSelectionPageGeometry[];
+}): PdfTransientSelectionRect[] {
+  const rects: PdfTransientSelectionRect[] = [];
+
+  for (const clientRect of input.clientRects) {
+    for (const page of input.pages) {
+      if (page.pageNumber < 1 || page.width <= 0 || page.height <= 0) {
+        continue;
+      }
+
+      const left = Math.max(clientRect.left, page.left);
+      const right = Math.min(clientRect.right, page.left + page.width);
+      const top = Math.max(clientRect.top, page.top);
+      const bottom = Math.min(clientRect.bottom, page.top + page.height);
+
+      if (right - left <= 0 || bottom - top <= 0) {
+        continue;
+      }
+
+      rects.push({
+        left: left - page.left,
+        top: top - page.top,
+        width: right - left,
+        height: bottom - top,
+        pageNumber: page.pageNumber,
+      });
+    }
+  }
+
+  rects.sort((left, right) => (
+    left.pageNumber - right.pageNumber ||
+    left.top - right.top ||
+    left.left - right.left
+  ));
+
+  return rects;
 }

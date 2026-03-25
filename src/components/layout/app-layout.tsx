@@ -23,7 +23,7 @@ import { TOUCH_TARGET_MIN } from "@/lib/responsive";
 import { syncPlugins, updatePluginNetworkAllowlist } from "@/lib/plugins/runtime";
 import { resolveAppRoute } from "@/lib/app-route";
 import { getCollapsedSidebarPercent, getCollapsedSidebarPixelWidth } from "@/lib/layout-sidebar";
-import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot } from "lucide-react";
+import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot, Search as SearchIcon, MessageSquareText } from "lucide-react";
 import { AiContextDialog } from "@/components/ui/ai-context-dialog";
 import { PluginCommandDialog } from "@/components/ui/plugin-command-dialog";
 import { PluginPanelDialog } from "@/components/ui/plugin-panel-dialog";
@@ -71,6 +71,21 @@ const MobileSidebarTrigger = dynamic(
 
 const PluginPanelDock = dynamic(
   () => import("@/components/ui/plugin-panel-dock").then((mod) => mod.PluginPanelDock),
+  { ssr: false }
+);
+
+const WorkspaceSearchPanel = dynamic(
+  () => import("@/components/layout/workspace-search-panel").then((mod) => mod.WorkspaceSearchPanel),
+  { ssr: false }
+);
+
+const AnnotationsActivityPanel = dynamic(
+  () => import("@/components/layout/annotations-activity-panel").then((mod) => mod.AnnotationsActivityPanel),
+  { ssr: false }
+);
+
+const CommandBar = dynamic(
+  () => import("@/components/layout/command-bar").then((mod) => mod.CommandBar),
   { ssr: false }
 );
 
@@ -160,6 +175,9 @@ function AppLayoutContent() {
   );
   const [desktopPanelSize, setDesktopPanelSize] = useState(DESKTOP_PANEL_DEFAULT);
   const [panelOpenInitialized, setPanelOpenInitialized] = useState(false);
+  const [activityView, setActivityView] = useState<"files" | "annotations" | "search">("files");
+  const [activityViewInitialized, setActivityViewInitialized] = useState(false);
+  const [sidePanelStateInitialized, setSidePanelStateInitialized] = useState(false);
   const [tabletSizes, setTabletSizes] = useState(() => [
     TABLET_SIDEBAR_DEFAULT,
     100 - TABLET_SIDEBAR_DEFAULT,
@@ -245,6 +263,25 @@ function AppLayoutContent() {
     setShowPluginPanels(Boolean(settings.pluginPanelDockOpen));
     setPanelOpenInitialized(true);
   }, [isInitialized, panelOpenInitialized, settings.pluginPanelDockOpen, isDesktopLayout]);
+
+  useEffect(() => {
+    if (!isInitialized || activityViewInitialized) return;
+    const nextView =
+      settings.activityView === "annotations" || settings.activityView === "search"
+        ? settings.activityView
+        : "files";
+    setActivityView(nextView);
+    setActivityViewInitialized(true);
+  }, [activityViewInitialized, isInitialized, settings.activityView]);
+
+  useEffect(() => {
+    if (!isInitialized || sidePanelStateInitialized) return;
+    if (typeof settings.sidePanelWidth === "number") {
+      setDesktopSidebarSize(Math.min(42, Math.max(14, settings.sidePanelWidth)));
+    }
+    setSidebarCollapsed(Boolean(settings.sidePanelCollapsed));
+    setSidePanelStateInitialized(true);
+  }, [isInitialized, setSidebarCollapsed, settings.sidePanelCollapsed, settings.sidePanelWidth, sidePanelStateInitialized]);
 
   useEffect(() => {
     if (isDesktopLayout) return;
@@ -335,6 +372,25 @@ function AppLayoutContent() {
     showPluginPanels,
     updateSetting,
   ]);
+
+  useEffect(() => {
+    if (!isInitialized || !activityViewInitialized) return;
+    if (settings.activityView === activityView) return;
+    void updateSetting("activityView", activityView);
+  }, [activityView, activityViewInitialized, isInitialized, settings.activityView, updateSetting]);
+
+  useEffect(() => {
+    if (!isInitialized || !sidePanelStateInitialized || !isDesktopLayout) return;
+    if (settings.sidePanelCollapsed !== sidebarCollapsed) {
+      void updateSetting("sidePanelCollapsed", sidebarCollapsed);
+    }
+  }, [isDesktopLayout, isInitialized, settings.sidePanelCollapsed, sidePanelStateInitialized, sidebarCollapsed, updateSetting]);
+
+  useEffect(() => {
+    if (!isInitialized || !sidePanelStateInitialized || !isDesktopLayout || sidebarCollapsed) return;
+    if (Math.abs(settings.sidePanelWidth - desktopSidebarSize) < 0.1) return;
+    void updateSetting("sidePanelWidth", desktopSidebarSize);
+  }, [desktopSidebarSize, isDesktopLayout, isInitialized, settings.sidePanelWidth, sidePanelStateInitialized, sidebarCollapsed, updateSetting]);
 
   useEffect(() => {
     if (isMobile) return;
@@ -455,6 +511,26 @@ function AppLayoutContent() {
       </div>
     </>
   );
+
+  const desktopWorkbenchSizes = useMemo(() => {
+    if (sidebarCollapsed) {
+      return showPluginPanels ? [100 - desktopPanelSize, desktopPanelSize] : [100];
+    }
+    if (showPluginPanels) {
+      return [desktopSidebarSize, Math.max(24, 100 - desktopSidebarSize - desktopPanelSize), desktopPanelSize];
+    }
+    return [desktopSidebarSize, 100 - desktopSidebarSize];
+  }, [desktopPanelSize, desktopSidebarSize, showPluginPanels, sidebarCollapsed]);
+
+  const renderDesktopSidePanel = () => {
+    if (activityView === "annotations") {
+      return <AnnotationsActivityPanel />;
+    }
+    if (activityView === "search") {
+      return <WorkspaceSearchPanel />;
+    }
+    return <ExplorerSidebar />;
+  };
 
   // Prevent hydration mismatch - wait for client-side mount
   if (!mounted) {
@@ -649,134 +725,135 @@ function AppLayoutContent() {
   // Desktop Layout
   return (
     <div className="h-screen w-screen overflow-hidden bg-background flex flex-col">
-      <ResizablePanelGroup
-        direction="horizontal"
-        className="flex-1"
-        sizes={desktopGroupSizes}
-        onSizesChange={(sizes) => {
+      <CommandBar
+        onOpenCommands={() => setShowCommands(true)}
+        onOpenPanels={() => setShowPluginPanels(true)}
+        onOpenSettings={() => setShowSettings(true)}
+      />
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        <div className="flex w-12 shrink-0 flex-col items-center justify-between border-r border-border bg-card/90 px-1 py-2">
+          <div className="flex w-full flex-col items-center gap-2">
+            <CollapsedRailButton
+              icon={PanelLeft}
+              label={t("explorer.title")}
+              title={t("explorer.title")}
+              active={activityView === "files" && !sidebarCollapsed}
+              onClick={() => {
+                setActivityView("files");
+                setSidebarCollapsed(activityView === "files" ? !sidebarCollapsed : false);
+              }}
+            />
+            <CollapsedRailButton
+              icon={MessageSquareText}
+              label={t("annotations.title")}
+              title={t("annotations.title")}
+              active={activityView === "annotations" && !sidebarCollapsed}
+              onClick={() => {
+                setActivityView("annotations");
+                setSidebarCollapsed(activityView === "annotations" ? !sidebarCollapsed : false);
+              }}
+            />
+            <CollapsedRailButton
+              icon={SearchIcon}
+              label={t("workbench.activity.search")}
+              title={t("workbench.activity.search")}
+              active={activityView === "search" && !sidebarCollapsed}
+              onClick={() => {
+                setActivityView("search");
+                setSidebarCollapsed(activityView === "search" ? !sidebarCollapsed : false);
+              }}
+            />
+          </div>
+
+          <div className="flex w-full flex-col items-center gap-2 border-t border-border pt-2">
+            <CollapsedRailButton
+              icon={Bot}
+              label="AI Chat"
+              title="AI Chat"
+              active={aiChatOpen}
+              onClick={() => useAiChatStore.getState().toggleOpen()}
+            />
+            <CollapsedRailButton
+              icon={HelpCircle}
+              label="实时预览指南"
+              title="实时预览指南 (Ctrl+Shift+/)"
+              onClick={openGuide}
+            />
+            <CollapsedRailButton
+              icon={Settings}
+              label={t("settings.title")}
+              title={`${t("settings.title")} (Ctrl+,)`}
+              active={showSettings}
+              onClick={() => setShowSettings(true)}
+            />
+          </div>
+        </div>
+
+        <ResizablePanelGroup
+          direction="horizontal"
+          className="flex-1 min-h-0"
+          sizes={desktopWorkbenchSizes}
+          onSizesChange={(sizes) => {
             if (sidebarCollapsed) {
-              if (showPluginPanels && sizes[2]) {
-                const next = clampPanelSize(sizes[2]);
+              if (showPluginPanels && sizes[1]) {
+                const next = clampPanelSize(sizes[1]);
                 setDesktopPanelSize(next);
                 persistPanelSize(next);
               }
               return;
             }
+
             if (showPluginPanels && sizes.length >= 3) {
-              setDesktopSidebarSize(sizes[0]);
+              setDesktopSidebarSize(Math.min(42, Math.max(14, sizes[0])));
               const next = clampPanelSize(sizes[2]);
               setDesktopPanelSize(next);
               persistPanelSize(next);
               return;
             }
-          if (sizes.length >= 2) {
-            setDesktopSidebarSize(sizes[0]);
-          }
-        }}
-      >
-        {sidebarCollapsed ? (
-          <ResizablePanel
-            index={0}
-            defaultSize={desktopCollapsedSidebarSize}
-            minSize={desktopCollapsedSidebarSize}
-            maxSize={desktopCollapsedSidebarSize}
-            className="bg-card/90 backdrop-blur-sm border-r border-border"
-            style={{ width: `${getCollapsedSidebarPixelWidth()}px` }}
-          >
-            <div className="flex h-full w-full flex-col items-center justify-between px-2 py-3">
-              <div className="flex w-full flex-col items-center gap-3">
-                <button
-                  onClick={toggleSidebar}
-                  className={cn(
-                    "flex h-10 w-10 items-center justify-center rounded-xl border border-border/70 bg-background/70",
-                    "text-muted-foreground hover:bg-accent hover:text-foreground transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-                  )}
-                  title={`${t("explorer.title")} (Ctrl+B)`}
-                  aria-label={t("explorer.title")}
-                >
-                  <PanelLeft className="h-4 w-4" />
-                </button>
-                <div className="flex min-h-[160px] flex-1 items-center justify-center rounded-xl border border-dashed border-border/70 bg-background/40 px-1">
-                  <span className="rotate-90 text-[11px] font-semibold tracking-[0.24em] text-muted-foreground/85">
-                    EXPLORER
-                  </span>
-                </div>
-              </div>
 
-              <div className="flex w-full flex-col items-center gap-2 border-t border-border pt-3">
-                <CollapsedRailButton
-                  icon={Command}
-                  label={t("commands.open")}
-                  title={t("commands.open")}
-                  active={showCommands}
-                  onClick={() => setShowCommands(true)}
-                />
-                <CollapsedRailButton
-                  icon={PanelLeft}
-                  label={t("panels.open")}
-                  title={t("panels.open")}
-                  active={showPluginPanels}
-                  onClick={() => setShowPluginPanels(true)}
-                />
-                <CollapsedRailButton
-                  icon={Bot}
-                  label="AI Chat"
-                  title="AI Chat"
-                  active={aiChatOpen}
-                  onClick={() => useAiChatStore.getState().toggleOpen()}
-                />
-                <CollapsedRailButton
-                  icon={HelpCircle}
-                  label="实时预览指南"
-                  title="实时预览指南 (Ctrl+Shift+/)"
-                  onClick={openGuide}
-                />
-                <CollapsedRailButton
-                  icon={Settings}
-                  label={t("settings.title")}
-                  title={`${t("settings.title")} (Ctrl+,)`}
-                  active={showSettings}
-                  onClick={() => setShowSettings(true)}
-                />
-              </div>
-            </div>
-          </ResizablePanel>
-        ) : (
-          <>
-            <ResizablePanel
-              index={0}
-              defaultSize={DESKTOP_SIDEBAR_DEFAULT}
-              minSize={8}
-              maxSize={80}
-              className="bg-card flex flex-col"
-            >
-              {SidebarContent}
-            </ResizablePanel>
-            <ResizableHandle withHandle index={0} />
-          </>
-        )}
-        <ResizablePanel
-          index={1}
-          defaultSize={sidebarCollapsed ? 100 - desktopCollapsedSidebarSize : 100 - DESKTOP_SIDEBAR_DEFAULT}
-          minSize={40}
+            if (sizes.length >= 2) {
+              setDesktopSidebarSize(Math.min(42, Math.max(14, sizes[0])));
+            }
+          }}
         >
-          <MainArea />
-        </ResizablePanel>
-        {showPluginPanels && (
-          <>
-            <ResizableHandle withHandle index={1} />
-            <ResizablePanel
-              index={2}
-              defaultSize={desktopPanelSize}
-              minSize={DESKTOP_PANEL_MIN}
-              maxSize={DESKTOP_PANEL_MAX}
-            >
-              <PluginPanelDock onClose={() => setShowPluginPanels(false)} />
-            </ResizablePanel>
-          </>
-        )}
-      </ResizablePanelGroup>
+          {!sidebarCollapsed && (
+            <>
+              <ResizablePanel
+                index={0}
+                defaultSize={DESKTOP_SIDEBAR_DEFAULT}
+                minSize={14}
+                maxSize={42}
+                className="bg-card flex flex-col"
+              >
+                {renderDesktopSidePanel()}
+              </ResizablePanel>
+              <ResizableHandle withHandle index={0} />
+            </>
+          )}
+
+          <ResizablePanel
+            index={sidebarCollapsed ? 0 : 1}
+            defaultSize={sidebarCollapsed ? 100 : 100 - DESKTOP_SIDEBAR_DEFAULT}
+            minSize={40}
+          >
+            <MainArea />
+          </ResizablePanel>
+
+          {showPluginPanels && (
+            <>
+              <ResizableHandle withHandle index={sidebarCollapsed ? 0 : 1} />
+              <ResizablePanel
+                index={sidebarCollapsed ? 1 : 2}
+                defaultSize={desktopPanelSize}
+                minSize={DESKTOP_PANEL_MIN}
+                maxSize={DESKTOP_PANEL_MAX}
+              >
+                <PluginPanelDock onClose={() => setShowPluginPanels(false)} />
+              </ResizablePanel>
+            </>
+          )}
+        </ResizablePanelGroup>
+      </div>
       {aiChatOpen && <AiChatPanel />}
       <PluginStatusBarSlot />
       <Dialogs
