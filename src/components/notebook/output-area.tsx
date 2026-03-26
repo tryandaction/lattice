@@ -8,6 +8,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, ChevronDown, ChevronRight, Copy, Info, Terminal, Trash2 } from "lucide-react";
 import type { ExecutionDiagnostic, ExecutionOutput, ExecutionPanelMeta } from "@/lib/runner/types";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface OutputAreaProps {
   outputs: ExecutionOutput[];
@@ -21,6 +22,7 @@ interface OutputAreaProps {
 const COLLAPSE_THRESHOLD = 20;
 
 function CopyButton({ content }: { content: string }) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -38,7 +40,7 @@ function CopyButton({ content }: { content: string }) {
       type="button"
       onClick={handleCopy}
       className="rounded p-1 hover:bg-background/60 transition-colors"
-      title="Copy output"
+      title={t("workbench.output.copy")}
     >
       {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
     </button>
@@ -113,6 +115,7 @@ function SourceBadge({ meta }: { meta: ExecutionPanelMeta | undefined }) {
 }
 
 function DiagnosticBanner({ diagnostic }: { diagnostic: ExecutionDiagnostic }) {
+  const { t } = useI18n();
   const tone =
     diagnostic.severity === "error"
       ? "border-destructive/40 bg-destructive/10 text-destructive"
@@ -127,7 +130,7 @@ function DiagnosticBanner({ diagnostic }: { diagnostic: ExecutionDiagnostic }) {
         <div className="min-w-0">
           <div className="font-medium">{diagnostic.title}</div>
           <div className="mt-0.5 whitespace-pre-wrap break-words">{diagnostic.message}</div>
-          {diagnostic.hint ? <div className="mt-1 opacity-90">建议：{diagnostic.hint}</div> : null}
+          {diagnostic.hint ? <div className="mt-1 opacity-90">{t("workbench.output.hint", { hint: diagnostic.hint })}</div> : null}
         </div>
       </div>
     </div>
@@ -135,6 +138,7 @@ function DiagnosticBanner({ diagnostic }: { diagnostic: ExecutionDiagnostic }) {
 }
 
 function TextOutput({ content, channel, compact }: { content: string; channel?: "stdout" | "stderr"; compact: boolean }) {
+  const { t } = useI18n();
   const [isCollapsed, setIsCollapsed] = useState(true);
   const lines = content.split("\n");
   const isLong = lines.length > COLLAPSE_THRESHOLD;
@@ -151,7 +155,7 @@ function TextOutput({ content, channel, compact }: { content: string; channel?: 
             channel === "stderr" ? "text-yellow-700 dark:text-yellow-300" : "text-muted-foreground",
           )}
         >
-          {channel || "output"}
+          {channel || t("workbench.output.output")}
         </span>
       </div>
       <pre
@@ -173,7 +177,7 @@ function TextOutput({ content, channel, compact }: { content: string; channel?: 
           className="mt-1 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
           {isCollapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          <span>{isCollapsed ? `Show ${lines.length - COLLAPSE_THRESHOLD} more lines` : "Collapse"}</span>
+          <span>{isCollapsed ? t("workbench.output.showMore", { count: lines.length - COLLAPSE_THRESHOLD }) : t("workbench.output.collapse")}</span>
         </button>
       ) : null}
     </div>
@@ -181,6 +185,7 @@ function TextOutput({ content, channel, compact }: { content: string; channel?: 
 }
 
 function ImageOutput({ src, compact }: { src: string; compact: boolean }) {
+  const { t } = useI18n();
   const [isExpanded, setIsExpanded] = useState(false);
 
   return (
@@ -194,7 +199,7 @@ function ImageOutput({ src, compact }: { src: string; compact: boolean }) {
           isExpanded ? "" : compact ? "max-h-[240px] object-contain" : "max-h-[400px] object-contain",
         )}
         onClick={() => setIsExpanded((value) => !value)}
-        title={isExpanded ? "Click to collapse" : "Click to expand"}
+        title={isExpanded ? t("workbench.output.imageCollapse") : t("workbench.output.imageExpand")}
       />
     </div>
   );
@@ -268,6 +273,7 @@ function SvgOutput({ content }: { content: string }) {
 }
 
 function ErrorOutput({ output, compact }: { output: ExecutionOutput & { type: "error" }; compact: boolean }) {
+  const { t } = useI18n();
   const [showTraceback, setShowTraceback] = useState(false);
   const { type, message, traceback } = parseError(output);
   const hasTraceback = traceback.length > 0;
@@ -291,7 +297,7 @@ function ErrorOutput({ output, compact }: { output: ExecutionOutput & { type: "e
             className="flex w-full items-center gap-1 border-t border-destructive/30 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 transition-colors"
           >
             {showTraceback ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            <span>{showTraceback ? "Hide" : "Show"} traceback ({traceback.length} lines)</span>
+            <span>{showTraceback ? t("workbench.output.hideTraceback") : t("workbench.output.showTraceback", { count: traceback.length })}</span>
           </button>
           {showTraceback ? (
             <pre className={cn("max-h-[300px] overflow-auto whitespace-pre-wrap break-words border-t border-destructive/30 bg-muted/30 font-mono text-destructive/80", compact ? "p-2.5 text-[11px]" : "p-3 text-xs")}>
@@ -329,6 +335,7 @@ export const OutputArea = memo(function OutputArea({
   meta,
   showDiagnosticsInline = true,
 }: OutputAreaProps) {
+  const { t } = useI18n();
   const compact = variant === "compact";
   const normalizedOutputs = groupOutputs(outputs);
   const hasDiagnostics = showDiagnosticsInline && Boolean(meta?.diagnostics.length);
@@ -348,7 +355,7 @@ export const OutputArea = memo(function OutputArea({
             className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <Trash2 className="h-3 w-3" />
-            <span>Clear</span>
+            <span>{t("common.clear")}</span>
           </button>
         ) : null}
       </div>

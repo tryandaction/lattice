@@ -10,6 +10,7 @@ import type { TabState, PaneId } from "@/types/layout";
 import { Tab } from "./tab";
 import { cn } from "@/lib/utils";
 import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
+import { useI18n } from "@/hooks/use-i18n";
 
 export interface TabBarProps {
   paneId: PaneId;
@@ -34,6 +35,7 @@ export function TabBar({
   onTabClick,
   onTabClose,
 }: TabBarProps) {
+  const { t } = useI18n();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const safeActiveIndex =
     activeTabIndex >= 0 && activeTabIndex < tabs.length ? activeTabIndex : -1;
@@ -72,12 +74,12 @@ export function TabBar({
       <div 
         ref={setNodeRef}
         className={cn(
-          "flex h-9 items-center border-b border-border bg-muted/30 px-2",
+          "flex h-9 items-center bg-muted/30 px-2",
           isOver && "bg-blue-500/10 border-blue-500/50"
         )}
       >
         <span className="text-xs text-muted-foreground">
-          {isOver ? "Drop here" : "No files open"}
+          {isOver ? t("tab.dropHere") : t("tab.empty")}
         </span>
       </div>
     );

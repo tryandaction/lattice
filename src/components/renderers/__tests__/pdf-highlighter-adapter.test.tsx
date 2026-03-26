@@ -264,6 +264,7 @@ function selectNativePdfText() {
 describe('PDFHighlighterAdapter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     useContentCacheStore.getState().clearCache();
     useWorkspaceStore.setState((state) => ({
       layout: {

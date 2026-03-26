@@ -15,6 +15,7 @@ import { findPane } from "@/lib/layout-utils";
 import { getFileExtension, isBinaryFile, isEditableFile } from "@/lib/file-utils";
 import { saveWorkspaceTabContent } from "@/lib/workspace-save";
 import type { TabState } from "@/types/layout";
+import { useI18n } from "@/hooks/use-i18n";
 
 const EMPTY_TABS: TabState[] = [];
 
@@ -45,6 +46,7 @@ export function PaneWrapper({
   onSplitDown,
   onClose,
 }: PaneWrapperProps) {
+  const { t } = useI18n();
   const layout = useWorkspaceStore((state) => state.layout);
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
   const setActiveTab = useWorkspaceStore((state) => state.setActiveTab);
@@ -391,7 +393,7 @@ export function PaneWrapper({
   return (
     <div
       className={cn(
-        "flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-sm border transition-all duration-150",
+        "group/pane flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-sm border transition-all duration-150",
         isActive
           ? "border-blue-500/50 ring-2 ring-blue-500/30"
           : "border-border"
@@ -423,25 +425,30 @@ export function PaneWrapper({
         </div>
         
         {/* Pane Actions */}
-        <div className="flex shrink-0 items-center gap-0.5 border-l border-border px-1">
+        <div
+          className={cn(
+            "flex shrink-0 items-center gap-0.5 border-l border-border px-1 transition-opacity",
+            isActive ? "opacity-100" : "opacity-0 group-hover/pane:opacity-100"
+          )}
+        >
           <button
             onClick={(e) => { e.stopPropagation(); onSplitRight(); }}
             className="p-1 rounded hover:bg-accent transition-colors"
-            title="Split Right"
+            title={t("pane.splitRight")}
           >
             <SplitSquareHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); onSplitDown(); }}
             className="p-1 rounded hover:bg-accent transition-colors"
-            title="Split Down"
+            title={t("pane.splitDown")}
           >
             <SplitSquareVertical className="h-3.5 w-3.5 text-muted-foreground" />
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); onClose(); }}
             className="p-1 rounded hover:bg-accent transition-colors"
-            title="Close Pane"
+            title={t("pane.close")}
           >
             <X className="h-3.5 w-3.5 text-muted-foreground" />
           </button>
@@ -480,11 +487,12 @@ export function PaneWrapper({
  * Shown when no files are open in the pane
  */
 function EmptyPaneState() {
+  const { t } = useI18n();
   return (
     <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
       <FileText className="h-12 w-12 mb-2 opacity-20" />
-      <p className="text-sm">No file open</p>
-      <p className="text-xs mt-1">Click a file in the explorer to open it</p>
+      <p className="text-sm">{t("pane.empty.title")}</p>
+      <p className="text-xs mt-1">{t("pane.empty.description")}</p>
     </div>
   );
 }

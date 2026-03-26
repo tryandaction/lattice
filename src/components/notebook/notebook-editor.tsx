@@ -5,12 +5,7 @@ import {
   Loader2,
   Check,
   AlertCircle,
-  Plus,
-  Code,
-  FileText,
-  RefreshCw,
   AlertTriangle,
-  FileCode2,
 } from "lucide-react";
 import { useNotebookEditor } from "@/hooks/use-notebook-editor";
 import { useNotebookExecutor } from "@/hooks/use-notebook-executor";
@@ -37,6 +32,8 @@ import { WorkspaceRunnerManager } from "@/components/runner/workspace-runner-man
 import { isTauriHost } from "@/lib/storage-adapter";
 import { navigateLink } from "@/lib/link-router/navigate-link";
 import { useI18n } from "@/hooks/use-i18n";
+import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
+import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
 
 interface NotebookEditorProps {
   content: string;
@@ -152,6 +149,15 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   const runnerPreferences = useWorkspaceStore((workspace) => workspace.runnerPreferences);
   const setCommandBarState = useWorkspaceStore((workspace) => workspace.setCommandBarState);
   const clearCommandBarState = useWorkspaceStore((workspace) => workspace.clearCommandBarState);
+  const persistedViewStateKey = useMemo(
+    () => buildPersistedFileViewStateKey({
+      kind: "notebook",
+      workspaceRootPath,
+      filePath,
+      fallbackName: fileName,
+    }),
+    [fileName, filePath, workspaceRootPath],
+  );
   const notebookAbsolutePath = resolveWorkspaceFilePath(workspaceRootPath, filePath, rootName);
   const notebookCwd = notebookAbsolutePath ? dirname(notebookAbsolutePath) : workspaceRootPath ?? undefined;
   const notebookLanguage = useMemo(() => resolveNotebookLanguage(state.metadata), [state.metadata]);
@@ -167,9 +173,9 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     () => ({
       kind: "workspace" as const,
       filePath,
-      label: "Notebook Runtime",
+      label: t("workbench.runner.currentNotebookEnv"),
     }),
-    [filePath],
+    [filePath, t],
   );
   const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
     containerRef,
@@ -265,7 +271,6 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   const {
     executionState,
     currentCellId,
-    progress,
     runtimeStatus,
     runtimeAvailability,
     runtimeError,
@@ -375,6 +380,19 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
       }
     };
   }, []);
+
+  usePersistedViewState({
+    storageKey: persistedViewStateKey,
+    containerRef,
+    viewState: {
+      activeCellId: state.activeCellId,
+    },
+    applyViewState: (persisted) => {
+      if (typeof persisted?.activeCellId === "string") {
+        activateCell(persisted.activeCellId);
+      }
+    },
+  });
 
   useEffect(() => {
     if (!onContentChange || !isDirty) return;
@@ -557,12 +575,16 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
         {
           id: "save",
           label: t("common.save"),
+          priority: 10,
+          group: "primary",
           disabled: !onSave || saveStatus === "saving",
           onTrigger: () => { void handleSave(); },
         },
         {
           id: executionState === "running" ? "stop" : "verify",
           label: executionState === "running" ? t("workbench.commandBar.stop") : t("workbench.commandBar.verify"),
+          priority: 20,
+          group: "primary",
           disabled: executionState !== "running" && (!isPythonNotebook || isRefreshingRunnerHealth || runtimeStatus === "loading"),
           onTrigger: executionState === "running"
             ? () => { void interrupt(); }
@@ -571,8 +593,31 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
         {
           id: "run-all",
           label: t("workbench.commandBar.runAll"),
+          priority: 21,
+          group: "primary",
           disabled: !canExecuteNotebook || executionState === "running",
           onTrigger: () => { void handleRunAll(); },
+        },
+        {
+          id: "add-code-cell",
+          label: t("workbench.notebook.command.newCode"),
+          priority: 30,
+          group: "secondary",
+          onTrigger: () => addCellBelowActive("code"),
+        },
+        {
+          id: "add-markdown-cell",
+          label: t("workbench.notebook.command.newMarkdown"),
+          priority: 31,
+          group: "secondary",
+          onTrigger: () => addCellBelowActive("markdown"),
+        },
+        {
+          id: "add-raw-cell",
+          label: t("workbench.notebook.command.newRaw"),
+          priority: 32,
+          group: "secondary",
+          onTrigger: () => addCellBelowActive("raw"),
         },
       ],
     });
@@ -587,6 +632,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     handleSave,
     handleVerifyRuntime,
     interrupt,
+    addCellBelowActive,
     isPythonNotebook,
     isRefreshingRunnerHealth,
     onSave,
@@ -632,16 +678,9 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
         onClose={() => setSelectionHubState(null)}
       />
 
-      <div className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur">
-        <div className="flex items-center justify-between px-6 py-3">
-          <div>
-            <h1 className="font-semibold text-foreground">{fileName}</h1>
-            <p className="text-xs text-muted-foreground">
-              {state.cells.length} cell{state.cells.length !== 1 ? "s" : ""} · {notebookKernelLabel ?? notebookLanguage}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
+      <div className="mx-auto max-w-4xl border-b border-border px-6 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 flex flex-1 flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <KernelSelector
               currentKernel={currentKernel}
               onKernelChange={handleKernelChange}
@@ -650,76 +689,24 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
               notebookLanguage={notebookLanguage}
               notebookKernelLabel={notebookKernelLabel}
             />
-
-            <div className="h-4 w-px bg-border" />
-
-            <button
-              onClick={() => addCellBelowActive("code")}
-              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors hover:bg-accent"
-              title="Add code cell (Ctrl+Shift+B)"
-            >
-              <Plus className="h-3 w-3" />
-              <Code className="h-3 w-3" />
-            </button>
-            <button
-              onClick={() => addCellBelowActive("markdown")}
-              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors hover:bg-accent"
-              title="Add markdown cell (Ctrl+Shift+M)"
-            >
-              <Plus className="h-3 w-3" />
-              <FileText className="h-3 w-3" />
-            </button>
-            <button
-              onClick={() => addCellBelowActive("raw")}
-              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors hover:bg-accent"
-              title="Add raw cell (Ctrl+Shift+R)"
-            >
-              <Plus className="h-3 w-3" />
-              <FileCode2 className="h-3 w-3" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="sticky top-[61px] z-10 border-b border-border bg-muted/40 backdrop-blur">
-        <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3 px-6 py-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span className="rounded-full bg-background px-2 py-0.5 font-medium text-foreground">
-                {currentKernel?.displayName ?? (isPythonNotebook ? t("workbench.notebook.runtime.unselected") : t("workbench.notebook.runtime.unsupportedShort"))}
+            <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">
+              {currentKernel?.displayName ?? (isPythonNotebook ? t("workbench.notebook.runtime.unselected") : t("workbench.notebook.runtime.unsupportedShort"))}
+            </span>
+            {currentKernel?.sourceLabel ? (
+              <span className="rounded-full border border-border px-2 py-0.5">
+                {currentKernel.sourceLabel}
               </span>
-              {currentKernel?.sourceLabel ? (
-                <span className="rounded-full border border-border px-2 py-0.5">
-                  {currentKernel.sourceLabel}
-                </span>
-              ) : null}
-              <span className={`rounded-full px-2 py-0.5 ${runtimeStatusTone}`}>
-                {runtimeStatusLabel}
-              </span>
-              {runnerHealthSnapshot.selectedPythonPath ? (
-                <span className="truncate">{runnerHealthSnapshot.selectedPythonPath}</span>
-              ) : null}
-            </div>
-            {!isPythonNotebook ? (
-              <div className="mt-2 text-sm text-yellow-700 dark:text-yellow-300">
-                {t("workbench.notebook.runtime.unsupported", { kernel: notebookKernelLabel ?? notebookLanguage })}
-              </div>
             ) : null}
-            {hasValidatedRuntime && runtimeError ? (
-              <div className="mt-2 text-sm text-destructive">{runtimeError}</div>
-            ) : null}
+            <span className={`rounded-full px-2 py-0.5 ${runtimeStatusTone}`}>
+              {runtimeStatusLabel}
+            </span>
+            <span className="rounded-full border border-border px-2 py-0.5">
+              {state.cells.length} cell{state.cells.length !== 1 ? "s" : ""}
+            </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <KernelStatus status={runtimeStatus} error={runtimeError} />
-            <button
-              onClick={() => void handleVerifyRuntime()}
-              disabled={!isPythonNotebook || isRefreshingRunnerHealth || runtimeStatus === "loading"}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", (isRefreshingRunnerHealth || runtimeStatus === "loading") && "animate-spin")} />
-              <span>{t("workbench.notebook.runtime.verify")}</span>
-            </button>
             <WorkspaceRunnerManager
               cwd={notebookCwd}
               fileKey={filePath}
@@ -729,8 +716,16 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
           </div>
         </div>
 
+        {!isPythonNotebook ? (
+          <div className="mt-2 text-sm text-yellow-700 dark:text-yellow-300">
+            {t("workbench.notebook.runtime.unsupported", { kernel: notebookKernelLabel ?? notebookLanguage })}
+          </div>
+        ) : null}
+        {hasValidatedRuntime && runtimeError ? (
+          <div className="mt-2 text-sm text-destructive">{runtimeError}</div>
+        ) : null}
         {showNotebookProblems && notebookProblems.length > 0 ? (
-          <div className="mx-auto max-w-4xl px-6 pb-3">
+          <div className="mt-3">
             <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
               <AlertTriangle className="h-3.5 w-3.5" />
               <span>{t("workbench.notebook.problems")}</span>

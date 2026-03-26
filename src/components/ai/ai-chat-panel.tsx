@@ -291,6 +291,7 @@ function EvidenceSummaryButton({
   open: boolean;
   onToggle: (messageId: string) => void;
 }) {
+  const { t } = useI18n();
   if (evidenceCount === 0 && contextCount === 0) {
     return null;
   }
@@ -307,9 +308,9 @@ function EvidenceSummaryButton({
       )}
     >
       <ShieldCheck className="h-3 w-3" />
-      <span>{evidenceCount} 证据</span>
+      <span>{t("chat.evidenceCount", { count: evidenceCount })}</span>
       <span>·</span>
-      <span>{contextCount} 上下文</span>
+      <span>{t("chat.contextCount", { count: contextCount })}</span>
       {open && selected ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
     </button>
   );
@@ -333,6 +334,7 @@ function FollowUpActions({
   const createDraft = useAiWorkbenchStore((state) => state.createDraft);
   const addProposal = useAiWorkbenchStore((state) => state.addProposal);
   const settings = useSettingsStore((state) => state.settings);
+  const { t } = useI18n();
   const [draftSaved, setDraftSaved] = useState(false);
   const [proposalBusy, setProposalBusy] = useState(false);
   const [proposalDone, setProposalDone] = useState(false);
@@ -374,7 +376,7 @@ function FollowUpActions({
         disabled={draftSaved}
       >
         <FileText className="h-3 w-3" />
-        {draftSaved ? "已保存草稿" : "保存为草稿"}
+        {draftSaved ? t("chat.workbench.draftSaved") : t("chat.workbench.saveDraft")}
       </button>
       <button
         onClick={() => void handleProposeTask()}
@@ -382,44 +384,44 @@ function FollowUpActions({
         disabled={proposalBusy || proposalDone}
       >
         <Wand2 className="h-3 w-3" />
-        {proposalDone ? "已生成计划" : proposalBusy ? "生成中..." : "生成整理计划"}
+        {proposalDone ? t("chat.workbench.proposalReady") : proposalBusy ? t("chat.workbench.generating") : t("chat.workbench.generateProposal")}
       </button>
     </div>
   );
 }
 
-function draftStatusLabel(status: string): string {
+function draftStatusLabel(status: string, t: ReturnType<typeof useI18n>["t"]): string {
   switch (status) {
     case "applied":
-      return "已写回";
+      return t("chat.workbench.status.applied");
     case "approved":
-      return "已批准";
+      return t("chat.workbench.status.approved");
     case "discarded":
-      return "已丢弃";
+      return t("chat.workbench.status.discarded");
     default:
-      return "草稿";
+      return t("chat.workbench.status.draft");
   }
 }
 
-function proposalStatusLabel(status: string): string {
+function proposalStatusLabel(status: string, t: ReturnType<typeof useI18n>["t"]): string {
   switch (status) {
     case "approved":
-      return "已批准";
+      return t("chat.workbench.status.approved");
     case "discarded":
-      return "已拒绝";
+      return t("chat.workbench.status.rejected");
     default:
-      return "待审批";
+      return t("chat.workbench.status.pending");
   }
 }
 
-function selectionOriginModeLabel(mode: SelectionAiOrigin["mode"]): string {
+function selectionOriginModeLabel(mode: SelectionAiOrigin["mode"], t: ReturnType<typeof useI18n>["t"]): string {
   switch (mode) {
     case "agent":
-      return "深度分析";
+      return t("chat.selection.agent");
     case "plan":
-      return "计划生成";
+      return t("chat.selection.plan");
     default:
-      return "快速问答";
+      return t("chat.selection.quick");
   }
 }
 
@@ -430,6 +432,7 @@ function SelectionOriginBadge({
   origin: SelectionAiOrigin;
   compact?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div className={cn(
       "mt-1 rounded border border-primary/20 bg-primary/5 px-2 py-1.5 text-[11px]",
@@ -437,13 +440,13 @@ function SelectionOriginBadge({
     )}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] font-medium text-primary">
-          Selection AI · {selectionOriginModeLabel(origin.mode)}
+          Selection AI · {selectionOriginModeLabel(origin.mode, t)}
         </span>
         <span className="text-foreground">{origin.sourceLabel}</span>
       </div>
       {!compact && (
         <div className="mt-1 text-muted-foreground">
-          选区：{origin.selectionPreview}
+          {t("chat.selection.preview", { preview: origin.selectionPreview })}
         </div>
       )}
     </div>
@@ -451,6 +454,7 @@ function SelectionOriginBadge({
 }
 
 function WorkbenchPanel() {
+  const { t } = useI18n();
   const drafts = useAiWorkbenchStore((state) => state.drafts);
   const proposals = useAiWorkbenchStore((state) => state.proposals);
   const highlightedProposalId = useAiWorkbenchStore((state) => state.highlightedProposalId);
@@ -520,8 +524,8 @@ function WorkbenchPanel() {
   const handleApplyDraft = useCallback(async (draftId: string) => {
     const draft = drafts.find((item) => item.id === draftId);
     if (!draft || !rootHandle) {
-      toast.error("无法写回草稿", {
-        description: "当前工作区不可写或草稿不存在。",
+      toast.error(t("chat.workbench.toast.applyDraftUnavailable"), {
+        description: t("chat.workbench.toast.workspaceUnavailable"),
       });
       return;
     }
@@ -536,17 +540,17 @@ function WorkbenchPanel() {
       });
       openFileInPane(activePaneId, result.handle, result.path);
       markDraftApplied(draftId, result.path, writeMode);
-      toast.success("草稿已写回工作区", {
+      toast.success(t("chat.workbench.toast.applyDraftSuccess"), {
         description: result.path,
       });
     } catch (error) {
-      toast.error("草稿写回失败", {
-        description: error instanceof Error ? error.message : "未知错误",
+      toast.error(t("chat.workbench.toast.applyDraftFailed"), {
+        description: error instanceof Error ? error.message : t("common.unknownError"),
       });
     } finally {
       setBusyDraftId(null);
     }
-  }, [activePaneId, drafts, markDraftApplied, openFileInPane, rootHandle]);
+  }, [activePaneId, drafts, markDraftApplied, openFileInPane, rootHandle, t]);
 
   const handleOpenDraftTarget = useCallback(async (targetPath: string) => {
     const success = await navigateLink(targetPath, {
@@ -554,11 +558,11 @@ function WorkbenchPanel() {
       rootHandle,
     });
     if (!success) {
-      toast.error("无法打开草稿目标", {
+      toast.error(t("chat.workbench.toast.openDraftFailed"), {
         description: targetPath,
       });
     }
-  }, [activePaneId, rootHandle]);
+  }, [activePaneId, rootHandle, t]);
 
   const toggleProposalExpanded = useCallback((proposalId: string) => {
     setExpandedProposalIds((current) =>
@@ -583,20 +587,20 @@ function WorkbenchPanel() {
       writeMode: "create",
       originProposalId: proposal.id,
     });
-    toast.success("计划已保存为草稿", {
+    toast.success(t("chat.workbench.toast.proposalDraftSaved"), {
       description: proposal.summary,
     });
-  }, [createDraft, proposals]);
+  }, [createDraft, proposals, t]);
 
   const handleApproveProposal = useCallback((proposalId: string) => {
     updateProposalStatus(proposalId, "approved");
-    toast.success("计划已批准");
-  }, [updateProposalStatus]);
+    toast.success(t("chat.workbench.toast.proposalApproved"));
+  }, [t, updateProposalStatus]);
 
   const handleDiscardProposal = useCallback((proposalId: string) => {
     updateProposalStatus(proposalId, "discarded");
-    toast("计划已标记为拒绝");
-  }, [updateProposalStatus]);
+    toast(t("chat.workbench.toast.proposalRejected"));
+  }, [t, updateProposalStatus]);
 
   const handleCreateTargetDrafts = useCallback((proposalId: string) => {
     const proposal = proposals.find((item) => item.id === proposalId);
@@ -606,8 +610,8 @@ function WorkbenchPanel() {
 
     const draftsToCreate = buildDraftArtifactsFromProposal(proposal);
     if (draftsToCreate.length === 0) {
-      toast("没有新的目标草稿可生成", {
-        description: "请先勾选 planned writes，或已生成过对应草稿。",
+      toast(t("chat.workbench.toast.noTargetDrafts"), {
+        description: t("chat.workbench.toast.noTargetDraftsDescription"),
       });
       return;
     }
@@ -624,23 +628,23 @@ function WorkbenchPanel() {
       updateProposalStatus(proposalId, "approved");
     }
     markProposalDraftTargets(proposalId, generatedTargets);
-    toast.success(`已生成 ${draftsToCreate.length} 份目标草稿`, {
+    toast.success(t("chat.workbench.toast.generatedDrafts", { count: draftsToCreate.length }), {
       description: proposal.summary,
     });
-  }, [createDraft, markProposalDraftTargets, proposals, updateProposalStatus]);
+  }, [createDraft, markProposalDraftTargets, proposals, t, updateProposalStatus]);
 
   const handleApplyProposalDrafts = useCallback(async (proposalId: string) => {
     const proposal = proposals.find((item) => item.id === proposalId);
     if (!proposal || !rootHandle) {
-      toast.error("无法批量写回目标草稿", {
-        description: "当前工作区不可写或计划不存在。",
+      toast.error(t("chat.workbench.toast.applyDraftsUnavailable"), {
+        description: t("chat.workbench.toast.workspaceUnavailable"),
       });
       return;
     }
 
     const targetDrafts = getProposalTargetDrafts(proposal, drafts);
     if (targetDrafts.length === 0) {
-      toast("当前计划还没有生成目标草稿");
+      toast(t("chat.workbench.toast.noProposalDrafts"));
       return;
     }
 
@@ -663,20 +667,20 @@ function WorkbenchPanel() {
       }
 
       if (successes.length > 0) {
-        toast.success(`已写回 ${successes.length} 份目标草稿`, {
+        toast.success(t("chat.workbench.toast.appliedDrafts", { count: successes.length }), {
           description: failures.length > 0
-            ? `${failures.length} 份草稿写回失败，请逐条检查。`
+            ? t("chat.workbench.toast.partialFailure", { count: failures.length })
             : proposal.summary,
         });
       } else {
-        toast.error("目标草稿批量写回失败", {
-          description: failures[0]?.error ?? "未知错误",
+        toast.error(t("chat.workbench.toast.applyDraftsFailed"), {
+          description: failures[0]?.error ?? t("common.unknownError"),
         });
       }
     } finally {
       setBusyProposalId(null);
     }
-  }, [activePaneId, drafts, markDraftApplied, openFileInPane, proposals, rootHandle]);
+  }, [activePaneId, drafts, markDraftApplied, openFileInPane, proposals, rootHandle, t]);
 
   if (drafts.length === 0 && proposals.length === 0) {
     return null;
@@ -691,11 +695,11 @@ function WorkbenchPanel() {
       >
         <div className="flex items-center gap-2 text-xs font-medium text-foreground">
           <FolderPen className="h-3.5 w-3.5 text-muted-foreground" />
-          <span>AI Workbench</span>
+          <span>{t("chat.workbench.title")}</span>
         </div>
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-          <span>{drafts.length} 草稿</span>
-          <span>{proposals.length} 计划</span>
+          <span>{t("chat.workbench.drafts", { count: drafts.length })}</span>
+          <span>{t("chat.workbench.proposals", { count: proposals.length })}</span>
           {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
         </div>
       </button>
@@ -705,7 +709,7 @@ function WorkbenchPanel() {
             <div className="space-y-2">
               <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
                 <FileOutput className="h-3 w-3" />
-                Standalone Drafts
+                {t("chat.workbench.standaloneDrafts")}
               </div>
               {standaloneDrafts.map((draft) => (
                 <div key={draft.id} className="rounded border border-border/60 bg-background/60 p-2">
@@ -713,7 +717,7 @@ function WorkbenchPanel() {
                     <div className="min-w-0">
                       <div className="truncate text-xs font-medium text-foreground">{draft.title}</div>
                       <div className="mt-1 text-[10px] text-muted-foreground">
-                        {draftStatusLabel(draft.status)} · {draft.sourceRefs.length} 证据
+                        {draftStatusLabel(draft.status, t)} · {t("chat.evidenceCount", { count: draft.sourceRefs.length })}
                       </div>
                     </div>
                     <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground">
@@ -752,8 +756,8 @@ function WorkbenchPanel() {
                       </div>
                       <div className="text-[10px] text-muted-foreground">
                         {(draft.writeMode ?? "create") === "append"
-                          ? "append 需要填写现有 Markdown 目标路径。"
-                          : `留空将自动写入 ${buildDraftArtifactDefaultPath(draft)}。`}
+                          ? t("chat.workbench.appendHint")
+                          : t("chat.workbench.defaultPathHint", { path: buildDraftArtifactDefaultPath(draft) })}
                       </div>
                     </div>
                   )}
@@ -768,7 +772,7 @@ function WorkbenchPanel() {
                         }
                         className="rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-foreground hover:bg-accent disabled:opacity-50"
                       >
-                        {busyDraftId === draft.id ? "写回中..." : "批准并写回"}
+                        {busyDraftId === draft.id ? t("chat.workbench.applying") : t("chat.workbench.approveAndApply")}
                       </button>
                     )}
                     {draft.status === "applied" && draft.targetPath && (
@@ -777,7 +781,7 @@ function WorkbenchPanel() {
                         onClick={() => void handleOpenDraftTarget(draft.targetPath!)}
                         className="rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-foreground hover:bg-accent"
                       >
-                        打开目标
+                        {t("chat.workbench.openTarget")}
                       </button>
                     )}
                     {draft.status !== "discarded" && (
@@ -786,7 +790,7 @@ function WorkbenchPanel() {
                         onClick={() => updateDraftStatus(draft.id, "discarded")}
                         className="rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent"
                       >
-                        丢弃
+                        {t("chat.workbench.discard")}
                       </button>
                     )}
                   </div>
@@ -798,7 +802,7 @@ function WorkbenchPanel() {
             <div className="space-y-2">
               <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
                 <ListTodo className="h-3 w-3" />
-                Proposals
+                {t("chat.workbench.proposalSection")}
               </div>
               {proposals.map((proposal) => (
                 <div
@@ -820,11 +824,15 @@ function WorkbenchPanel() {
                     <div className="min-w-0">
                       <div className="text-xs font-medium text-foreground">{proposal.summary}</div>
                       <div className="mt-1 text-[11px] text-muted-foreground">
-                        {proposal.steps.length} steps · {proposal.plannedWrites.length} planned writes · {proposal.sourceRefs.length} 证据
+                        {t("chat.workbench.proposalMeta", {
+                          steps: proposal.steps.length,
+                          writes: proposal.plannedWrites.length,
+                          evidence: proposal.sourceRefs.length,
+                        })}
                       </div>
                       {proposal.generatedDraftTargets.length > 0 && (
                         <div className="mt-1 text-[10px] text-muted-foreground/80">
-                          已生成 {proposal.generatedDraftTargets.length} 份目标草稿
+                          {t("chat.workbench.generatedDrafts", { count: proposal.generatedDraftTargets.length })}
                         </div>
                       )}
                       {proposal.origin && (
@@ -832,18 +840,22 @@ function WorkbenchPanel() {
                       )}
                       {draftSummary.total > 0 && (
                         <div className="mt-1 text-[10px] text-muted-foreground/80">
-                          目标草稿：待写回 {draftSummary.ready} · 已写回 {draftSummary.applied} · 阻塞 {draftSummary.blocked}
+                          {t("chat.workbench.draftSummary", {
+                            ready: draftSummary.ready,
+                            applied: draftSummary.applied,
+                            blocked: draftSummary.blocked,
+                          })}
                         </div>
                       )}
                       {linkedDrafts.length > 0 && (
                         <div className="mt-1 text-[10px] text-muted-foreground/80">
-                          关联草稿：{linkedDrafts.length}
+                          {t("chat.workbench.linkedDrafts", { count: linkedDrafts.length })}
                         </div>
                       )}
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground">
-                        {proposalStatusLabel(proposal.status)}
+                        {proposalStatusLabel(proposal.status, t)}
                       </span>
                       <button
                         type="button"
@@ -859,7 +871,7 @@ function WorkbenchPanel() {
                   {expandedProposalIds.includes(proposal.id) && (
                     <div className="mt-3 space-y-3">
                       <div>
-                        <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">Steps</div>
+                        <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">{t("chat.workbench.steps")}</div>
                         <div className="space-y-1">
                           {proposal.steps.map((step, index) => (
                             <div key={step.id} className="rounded border border-border/50 px-2 py-1.5 text-[11px]">
@@ -872,7 +884,7 @@ function WorkbenchPanel() {
 
                       {linkedDrafts.length > 0 && (
                         <div>
-                          <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">Linked Drafts</div>
+                          <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">{t("chat.workbench.linkedDraftsTitle")}</div>
                           <div className="space-y-1">
                             {linkedDrafts.map((draft) => (
                               <div key={draft.id} className="rounded border border-border/50 px-2 py-1.5 text-[11px]">
@@ -884,7 +896,7 @@ function WorkbenchPanel() {
                                     </div>
                                   </div>
                                   <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground">
-                                    {draftStatusLabel(draft.status)}
+                                    {draftStatusLabel(draft.status, t)}
                                   </span>
                                 </div>
                               </div>
@@ -894,7 +906,7 @@ function WorkbenchPanel() {
                       )}
 
                       <div>
-                        <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">Required Approvals</div>
+                        <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">{t("chat.workbench.requiredApprovals")}</div>
                         <div className="space-y-1">
                           {proposal.requiredApprovals.map((approval) => (
                             <label key={`${proposal.id}:${approval}`} className="flex items-center gap-2 rounded border border-border/50 px-2 py-1.5 text-[11px] text-foreground">
@@ -913,7 +925,7 @@ function WorkbenchPanel() {
 
                       {proposal.plannedWrites.length > 0 && (
                         <div>
-                          <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">Planned Writes</div>
+                          <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">{t("chat.workbench.plannedWrites")}</div>
                           <div className="space-y-1">
                             {proposal.plannedWrites.map((write) => (
                               <label
@@ -947,7 +959,7 @@ function WorkbenchPanel() {
                           className="rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-foreground hover:bg-accent"
                           disabled={proposal.status === "discarded"}
                         >
-                          生成计划草稿
+                          {t("chat.workbench.generatePlanDraft")}
                         </button>
                         <button
                           type="button"
@@ -968,7 +980,7 @@ function WorkbenchPanel() {
                               "border-primary/50 bg-primary/10",
                           )}
                         >
-                          生成目标草稿
+                          {t("chat.workbench.generateTargetDrafts")}
                         </button>
                         <button
                           type="button"
@@ -976,7 +988,7 @@ function WorkbenchPanel() {
                           disabled={busyProposalId === proposal.id || draftSummary.ready === 0}
                           className="rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-foreground hover:bg-accent disabled:opacity-50"
                         >
-                          {busyProposalId === proposal.id ? "批量写回中..." : "批量写回目标草稿"}
+                          {busyProposalId === proposal.id ? t("chat.workbench.bulkApplying") : t("chat.workbench.applyTargetDrafts")}
                         </button>
                         <button
                           type="button"
@@ -988,7 +1000,7 @@ function WorkbenchPanel() {
                           }
                           className="rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-foreground hover:bg-accent disabled:opacity-50"
                         >
-                          批准计划
+                          {t("chat.workbench.approveProposal")}
                         </button>
                         <button
                           type="button"
@@ -996,14 +1008,14 @@ function WorkbenchPanel() {
                           disabled={proposal.status === "discarded"}
                           className="rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent disabled:opacity-50"
                         >
-                          拒绝计划
+                          {t("chat.workbench.rejectProposal")}
                         </button>
                         <button
                           type="button"
                           onClick={() => clearProposal(proposal.id)}
                           className="rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent"
                         >
-                          关闭
+                          {t("common.close")}
                         </button>
                       </div>
                     </div>
@@ -1109,7 +1121,7 @@ function ChatMessages({
                   <Bot className="h-3 w-3" />
                   <span>{msg.model.providerName}</span>
                   {msg.model.model && <span>· {msg.model.model}</span>}
-                  <span>· {msg.model.source === "local" ? "本地模型" : "云模型"}</span>
+                  <span>· {msg.model.source === "local" ? t("chat.model.local") : t("chat.model.cloud")}</span>
                 </div>
               )}
               <EvidenceSummaryButton
@@ -1137,7 +1149,7 @@ function ChatMessages({
                         }
                       }}
                       className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-                      title="Preview Changes"
+                      title={t("chat.previewChanges")}
                     >
                       <GitCompareArrows className="w-3 h-3" />
                     </button>

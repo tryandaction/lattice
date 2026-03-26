@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { FilePlus2, FolderOpen, NotebookPen } from "lucide-react";
+import { ChevronDown, ChevronRight, FilePlus2, FolderOpen, NotebookPen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useWorkspaceStore, type PaneId } from "@/stores/workspace-store";
@@ -89,6 +89,7 @@ export function PdfItemWorkspacePanel({
   const [isLoading, setIsLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const pdfAnnotations = useMemo(
     () => annotations.filter((annotation) => annotation.target.type === "pdf"),
@@ -224,14 +225,25 @@ export function PdfItemWorkspacePanel({
   const actionsDisabled = Boolean(busyAction);
 
   return (
-    <section className="shrink-0 border-b border-border bg-background px-2.5 py-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            {t("pdf.workspace.title")}
+    <section className="shrink-0 border-b border-border bg-background/95 px-2.5 py-2">
+      <div className="flex items-start justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setIsExpanded((value) => !value)}
+          className="flex min-w-0 flex-1 items-start gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-accent/40"
+        >
+          {isExpanded ? (
+            <ChevronDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <div className="min-w-0">
+            <div className="truncate text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              {t("pdf.workspace.title")}
+            </div>
+            <div className="truncate text-[11px] text-foreground">{fileName}</div>
           </div>
-          <div className="truncate text-[11px] text-foreground">{fileName}</div>
-        </div>
+        </button>
         <div className="flex items-center gap-1">
           <ActionIconButton
             title={t("pdf.workspace.action.newNote")}
@@ -250,7 +262,7 @@ export function PdfItemWorkspacePanel({
           <ActionIconButton
             title={t("pdf.workspace.action.reveal")}
             onClick={handleRevealFolder}
-            disabled={!manifest || actionsDisabled}
+            disabled={actionsDisabled || (!manifest && !itemFolderExists)}
           >
             <FolderOpen className="h-4 w-4" />
           </ActionIconButton>
@@ -259,9 +271,6 @@ export function PdfItemWorkspacePanel({
 
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
         <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5">
-          {itemFolderExists ? t("pdf.workspace.state.ready") : t("pdf.workspace.state.pending")}
-        </span>
-        <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5">
           {t("pdf.workspace.count.annotations", { count: pdfAnnotations.length })}
         </span>
         <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5">
@@ -269,35 +278,34 @@ export function PdfItemWorkspacePanel({
         </span>
       </div>
 
-      <div className="mt-1 truncate text-[10px] text-muted-foreground" title={manifest?.itemFolderPath ?? undefined}>
-        {manifest?.itemFolderPath ?? t("pdf.workspace.preparing")}
-      </div>
+      {isExpanded ? (
+        <>
+          {error ? (
+            <div className="mt-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+              {error}
+            </div>
+          ) : null}
 
-      {error ? (
-        <div className="mt-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
-          {error}
-        </div>
-      ) : null}
+          {isLoading ? (
+            <div className="mt-1 text-[10px] text-muted-foreground">{t("pdf.workspace.loading")}</div>
+          ) : null}
 
-      {isLoading ? (
-        <div className="mt-1 text-[10px] text-muted-foreground">{t("pdf.workspace.loading")}</div>
-      ) : null}
-
-      {!isLoading && notes.length > 0 ? (
-        <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
-          {notes.slice(0, 3).map((note) => (
-            <button
-              key={note.path}
-              type="button"
-              onClick={() => void handleOpenNote(note.path)}
-              className="rounded border border-border bg-muted/30 px-1.5 py-0.5 transition-colors hover:bg-muted"
-              title={`${noteLabel(note.type, t)} · ${note.path}`}
-            >
-              {noteLabel(note.type, t)}
-            </button>
-          ))}
-          {notes.length > 3 ? <span className="px-1 py-0.5">+{notes.length - 3}</span> : null}
-        </div>
+          {!isLoading && notes.length > 0 ? (
+            <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
+              {notes.map((note) => (
+                <button
+                  key={note.path}
+                  type="button"
+                  onClick={() => void handleOpenNote(note.path)}
+                  className="rounded border border-border bg-muted/30 px-1.5 py-0.5 transition-colors hover:bg-muted"
+                  title={`${noteLabel(note.type, t)} · ${note.path}`}
+                >
+                  {noteLabel(note.type, t)}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </>
       ) : null}
     </section>
   );

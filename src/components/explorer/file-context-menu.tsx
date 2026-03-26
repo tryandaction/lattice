@@ -3,6 +3,7 @@
 import { useRef, useEffect, useLayoutEffect } from "react";
 import { Trash2, Pencil, FilePlus, FolderPlus, Copy, Scissors, ClipboardPaste } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface FileContextMenuProps {
   x: number;
@@ -43,6 +44,7 @@ export function FileContextMenu({
   isDirectory,
   actions = [],
 }: FileContextMenuProps) {
+  const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Adjust position to stay within viewport
@@ -117,7 +119,7 @@ export function FileContextMenu({
           )}
         >
           <FilePlus className="h-4 w-4" />
-          <span>New File</span>
+          <span>{t("explorer.context.newFile")}</span>
         </button>
       )}
       {isDirectory && onNewFolder && (
@@ -133,7 +135,7 @@ export function FileContextMenu({
           )}
         >
           <FolderPlus className="h-4 w-4" />
-          <span>New Folder</span>
+          <span>{t("explorer.context.newFolder")}</span>
         </button>
       )}
       {(isDirectory && (onNewFile || onNewFolder)) && (
@@ -154,7 +156,7 @@ export function FileContextMenu({
           )}
         >
           <ClipboardPaste className="h-4 w-4" />
-          <span>Paste</span>
+          <span>{t("explorer.context.paste")}</span>
         </button>
       )}
       {(isDirectory && (onNewFile || onNewFolder || onPaste)) && (
@@ -173,7 +175,7 @@ export function FileContextMenu({
           )}
         >
           <Copy className="h-4 w-4" />
-          <span>Copy</span>
+          <span>{t("explorer.context.copy")}</span>
         </button>
       )}
       {onCut && (
@@ -189,7 +191,7 @@ export function FileContextMenu({
           )}
         >
           <Scissors className="h-4 w-4" />
-          <span>Cut</span>
+          <span>{t("explorer.context.cut")}</span>
         </button>
       )}
       {(onCopy || onCut) && (
@@ -228,7 +230,7 @@ export function FileContextMenu({
         )}
       >
         <Pencil className="h-4 w-4" />
-        <span>Rename</span>
+        <span>{t("explorer.context.rename")}</span>
       </button>
       <button
         onClick={() => {
@@ -242,7 +244,7 @@ export function FileContextMenu({
         )}
       >
         <Trash2 className="h-4 w-4" />
-        <span>Delete</span>
+        <span>{t("common.delete")}</span>
       </button>
     </div>
   );
@@ -259,6 +261,7 @@ interface DeleteConfirmDialogProps {
  * Confirmation dialog for file deletion
  */
 export function DeleteConfirmDialog({ fileName, itemType = "file", onConfirm, onCancel }: DeleteConfirmDialogProps) {
+  const { t } = useI18n();
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // Close on escape
@@ -279,23 +282,24 @@ export function DeleteConfirmDialog({ fileName, itemType = "file", onConfirm, on
         ref={dialogRef}
         className="w-full max-w-sm rounded-lg border border-border bg-background p-4 shadow-lg"
       >
-        <h3 className="text-lg font-semibold">{itemType === "folder" ? "Delete Folder" : "Delete File"}</h3>
+        <h3 className="text-lg font-semibold">
+          {itemType === "folder" ? t("explorer.context.deleteFolder") : t("explorer.context.deleteFile")}
+        </h3>
         <p className="mt-2 text-sm text-muted-foreground">
-          Are you sure you want to delete <span className="font-medium text-foreground">{fileName}</span>?
-          This action cannot be undone.
+          {t("explorer.context.deleteConfirm", { fileName })} {t("explorer.context.deleteWarning")}
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <button
             onClick={onCancel}
             className="rounded-md px-3 py-1.5 text-sm hover:bg-accent transition-colors"
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             onClick={onConfirm}
             className="rounded-md bg-destructive px-3 py-1.5 text-sm text-destructive-foreground hover:bg-destructive/90 transition-colors"
           >
-            Delete
+            {t("common.delete")}
           </button>
         </div>
       </div>

@@ -7,6 +7,7 @@ import { deepseekProvider } from './deepseek';
 import { moonshotProvider } from './moonshot';
 import { zhipuProvider } from './zhipu';
 import { customProvider } from './custom';
+import { useSettingsStore } from '@/stores/settings-store';
 
 const providers = new Map<AiProviderId, AiProvider>([
   ['openai', openaiProvider],
@@ -43,10 +44,17 @@ export function getConfiguredProviders(): AiProvider[] {
 
 export function getDefaultProvider(): AiProvider | null {
   const resolved = getResolvedProviderMap();
-  // Check stored preference
-  const preferred = localStorage.getItem('lattice-ai-provider') as AiProviderId | null;
+  const preferred = useSettingsStore.getState().settings.aiProvider as AiProviderId | null;
   if (preferred) {
     const p = resolved.get(preferred);
+    if (p?.isConfigured()) return p;
+  }
+  // Legacy fallback for older sessions that stored the preference in localStorage.
+  const legacyPreferred = typeof localStorage !== 'undefined'
+    ? localStorage.getItem('lattice-ai-provider') as AiProviderId | null
+    : null;
+  if (legacyPreferred) {
+    const p = resolved.get(legacyPreferred);
     if (p?.isConfigured()) return p;
   }
   // Fall back to first configured provider

@@ -16,6 +16,7 @@ import {
   showExportToast,
   updateExportToast,
 } from "@/components/ui/export-toast";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface MarkdownExportDialogProps {
   isOpen: boolean;
@@ -26,52 +27,6 @@ interface MarkdownExportDialogProps {
   rootHandle?: FileSystemDirectoryHandle | null;
 }
 
-const FORMAT_OPTIONS: Array<{
-  value: MarkdownExportFormat;
-  title: string;
-  description: string;
-  icon: typeof FileText;
-}> = [
-  {
-    value: "docx",
-    title: "DOCX",
-    description: "适合继续编辑、共享与归档",
-    icon: FileType2,
-  },
-  {
-    value: "pdf",
-    title: "PDF",
-    description: "导出当前渲染效果，更适合定稿分享",
-    icon: FileText,
-  },
-];
-
-const MODE_OPTIONS: Array<{
-  value: MarkdownExportAnnotationMode;
-  title: string;
-  description: string;
-  icon: typeof Download;
-}> = [
-  {
-    value: "clean",
-    title: "Clean",
-    description: "只导出正文，不附带标注",
-    icon: Download,
-  },
-  {
-    value: "appendix",
-    title: "Appendix",
-    description: "正文纯净，标注和来源整理到文末附录",
-    icon: FileText,
-  },
-  {
-    value: "study-note",
-    title: "Study Note",
-    description: "把标注整理成更适合学习与科研复盘的导出稿",
-    icon: NotebookPen,
-  },
-];
-
 export function MarkdownExportDialog({
   isOpen,
   onClose,
@@ -80,6 +35,7 @@ export function MarkdownExportDialog({
   filePath,
   rootHandle,
 }: MarkdownExportDialogProps) {
+  const { t } = useI18n();
   const [title, setTitle] = useState(fileName.replace(/\.[^.]+$/, "") || fileName);
   const [format, setFormat] = useState<MarkdownExportFormat>("docx");
   const [annotationMode, setAnnotationMode] = useState<MarkdownExportAnnotationMode>("appendix");
@@ -94,6 +50,101 @@ export function MarkdownExportDialog({
   const [previewEntryCount, setPreviewEntryCount] = useState(0);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+
+  const texts = useMemo(() => ({
+    loadAnnotationsFailed: t("export.markdown.loadAnnotationsFailed"),
+    previewFailed: t("export.markdown.previewFailed"),
+    exportFailed: t("export.markdown.exportFailed"),
+    exportProgress: t("export.markdown.exportProgress"),
+    exportCompleted: t("export.markdown.exportCompleted"),
+    exportFailedToast: t("export.markdown.exportFailedToast"),
+    title: t("export.markdown.title"),
+    subtitle: t("export.markdown.subtitle"),
+    exportTitle: t("export.markdown.exportTitle"),
+    exportTitleHint: t("export.markdown.exportTitleHint"),
+    exportTitlePlaceholder: t("export.markdown.exportTitlePlaceholder"),
+    formatTitle: t("export.markdown.formatTitle"),
+    formatHint: t("export.markdown.formatHint"),
+    annotationTitle: t("export.markdown.annotationTitle"),
+    annotationDetected: t("export.markdown.annotationDetected", {
+      count: isLoadingAnnotations ? "..." : annotationsCount,
+    }),
+    includeAnnotations: t("export.markdown.includeAnnotations"),
+    visualTitle: t("export.markdown.visualTitle"),
+    visualHint: t("export.markdown.visualHint"),
+    visualDocument: t("export.markdown.visualDocument"),
+    visualDocumentHint: t("export.markdown.visualDocumentHint"),
+    visualRendered: t("export.markdown.visualRendered"),
+    visualRenderedHint: t("export.markdown.visualRenderedHint"),
+    currentFile: t("export.markdown.currentFile"),
+    outputMode: t("export.markdown.outputMode"),
+    documentTitle: t("export.markdown.documentTitle"),
+    notSet: t("export.markdown.notSet"),
+    exportModelHint: t("export.markdown.exportModelHint"),
+    previewTitle: t("export.markdown.previewTitle"),
+    previewHint: t("export.markdown.previewHint"),
+    sourceCount: t("export.markdown.sourceCount", { count: previewEntryCount }),
+    previewLoading: t("export.markdown.previewLoading"),
+    previewUnavailable: t("export.markdown.previewUnavailable"),
+    noAnnotations: t("export.markdown.noAnnotations"),
+    annotationSummary: t("export.markdown.annotationSummary", { count: annotationsCount }),
+    cancel: t("common.cancel"),
+    export: t("workbench.commandBar.export"),
+    formatDocxHint: t("export.markdown.formatDocxHint"),
+    formatPdfHint: t("export.markdown.formatPdfHint"),
+    modeCleanTitle: t("export.markdown.modeCleanTitle"),
+    modeAppendixTitle: t("export.markdown.modeAppendixTitle"),
+    modeStudyTitle: t("export.markdown.modeStudyTitle"),
+    modeCleanHint: t("export.markdown.modeCleanHint"),
+    modeAppendixHint: t("export.markdown.modeAppendixHint"),
+    modeStudyHint: t("export.markdown.modeStudyHint"),
+  }), [annotationsCount, isLoadingAnnotations, previewEntryCount, t]);
+
+  const formatOptions = useMemo<Array<{
+    value: MarkdownExportFormat;
+    title: string;
+    description: string;
+    icon: typeof FileText;
+  }>>(() => [
+    {
+      value: "docx",
+      title: "DOCX",
+      description: texts.formatDocxHint,
+      icon: FileType2,
+    },
+    {
+      value: "pdf",
+      title: "PDF",
+      description: texts.formatPdfHint,
+      icon: FileText,
+    },
+  ], [texts.formatDocxHint, texts.formatPdfHint]);
+
+  const modeOptions = useMemo<Array<{
+    value: MarkdownExportAnnotationMode;
+    title: string;
+    description: string;
+    icon: typeof Download;
+  }>>(() => [
+    {
+      value: "clean",
+      title: texts.modeCleanTitle,
+      description: texts.modeCleanHint,
+      icon: Download,
+    },
+    {
+      value: "appendix",
+      title: texts.modeAppendixTitle,
+      description: texts.modeAppendixHint,
+      icon: FileText,
+    },
+    {
+      value: "study-note",
+      title: texts.modeStudyTitle,
+      description: texts.modeStudyHint,
+      icon: NotebookPen,
+    },
+  ], [texts.modeAppendixHint, texts.modeAppendixTitle, texts.modeCleanHint, texts.modeCleanTitle, texts.modeStudyHint, texts.modeStudyTitle]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -113,7 +164,7 @@ export function MarkdownExportDialog({
       .catch((loadError) => {
         if (cancelled) return;
         console.error("Failed to load export annotations:", loadError);
-        setError(loadError instanceof Error ? loadError.message : "加载标注失败");
+        setError(loadError instanceof Error ? loadError.message : texts.loadAnnotationsFailed);
         setAnnotations([]);
         setAnnotationsCount(0);
         setAnnotationsEnabled(false);
@@ -127,7 +178,7 @@ export function MarkdownExportDialog({
     return () => {
       cancelled = true;
     };
-  }, [fileName, filePath, isOpen, rootHandle]);
+  }, [fileName, filePath, isOpen, rootHandle, texts.loadAnnotationsFailed]);
 
   const effectiveMode = useMemo<MarkdownExportAnnotationMode>(() => {
     if (!annotationsEnabled) {
@@ -165,7 +216,7 @@ export function MarkdownExportDialog({
         console.error("Failed to build markdown export preview:", previewBuildError);
         setPreviewHtml("");
         setPreviewEntryCount(0);
-        setPreviewError(previewBuildError instanceof Error ? previewBuildError.message : "预览生成失败");
+        setPreviewError(previewBuildError instanceof Error ? previewBuildError.message : texts.previewFailed);
       } finally {
         if (!cancelled) {
           setIsPreviewLoading(false);
@@ -188,6 +239,7 @@ export function MarkdownExportDialog({
     isOpen,
     rootHandle,
     title,
+    texts.previewFailed,
     visualMode,
   ]);
 
@@ -202,7 +254,7 @@ export function MarkdownExportDialog({
     setError(null);
     const toastId = showExportToast({
       type: "progress",
-      message: "Exporting markdown document...",
+      message: texts.exportProgress,
       progress: 10,
     });
 
@@ -227,22 +279,22 @@ export function MarkdownExportDialog({
       }
 
       if (!result.success) {
-        throw new Error(result.error || "导出失败");
+        throw new Error(result.error || texts.exportFailed);
       }
 
       showExportToast({
         type: "success",
-        message: "Markdown export completed",
+        message: texts.exportCompleted,
         filePath: result.filePath,
       });
       onClose();
     } catch (exportError) {
       dismissExportToast(toastId);
-      const message = exportError instanceof Error ? exportError.message : "导出失败";
+      const message = exportError instanceof Error ? exportError.message : texts.exportFailed;
       setError(message);
       showExportToast({
         type: "error",
-        message: "Markdown export failed",
+        message: texts.exportFailedToast,
         error: message,
       });
     } finally {
@@ -258,10 +310,8 @@ export function MarkdownExportDialog({
       >
         <div className="flex items-start justify-between border-b border-border px-6 py-5">
           <div className="space-y-1">
-            <h2 className="text-xl font-semibold">导出 Markdown 文档</h2>
-            <p className="text-sm text-muted-foreground">
-              公式、代码块、表格、引用块与标题层级会按渲染结构导出，DOCX 与 PDF 共用同一套导出模型。
-            </p>
+            <h2 className="text-xl font-semibold">{texts.title}</h2>
+            <p className="text-sm text-muted-foreground">{texts.subtitle}</p>
           </div>
           <Button variant="ghost" size="icon" onClick={onClose}>
             <X className="h-4 w-4" />
@@ -274,25 +324,25 @@ export function MarkdownExportDialog({
               <div className="flex items-center gap-2">
                 <TextCursorInput className="h-4 w-4" />
                 <div>
-                  <h3 className="text-sm font-medium">导出标题</h3>
-                  <p className="text-xs text-muted-foreground">用于导出文档首页标题与最终成品文档信息头部。</p>
+                  <h3 className="text-sm font-medium">{texts.exportTitle}</h3>
+                  <p className="text-xs text-muted-foreground">{texts.exportTitleHint}</p>
                 </div>
               </div>
               <input
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
-                placeholder="输入导出标题"
+                placeholder={texts.exportTitlePlaceholder}
                 className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary"
               />
             </section>
 
           <section className="space-y-3">
             <div>
-              <h3 className="text-sm font-medium">导出格式</h3>
-              <p className="text-xs text-muted-foreground">为最终交付物选择目标格式。</p>
+              <h3 className="text-sm font-medium">{texts.formatTitle}</h3>
+              <p className="text-xs text-muted-foreground">{texts.formatHint}</p>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
-              {FORMAT_OPTIONS.map((option) => {
+              {formatOptions.map((option) => {
                 const Icon = option.icon;
                 const active = option.value === format;
                 return (
@@ -318,10 +368,8 @@ export function MarkdownExportDialog({
           <section className="grid gap-4 md:grid-cols-[1.2fr_1fr]">
             <div className="space-y-3 rounded-xl border border-border p-4">
               <div>
-                <h3 className="text-sm font-medium">标注导出策略</h3>
-                <p className="text-xs text-muted-foreground">
-                  当前检测到 {isLoadingAnnotations ? "..." : annotationsCount} 条当前文件侧车标注。
-                </p>
+                <h3 className="text-sm font-medium">{texts.annotationTitle}</h3>
+                <p className="text-xs text-muted-foreground">{texts.annotationDetected}</p>
               </div>
 
               <label className="flex items-center gap-3 text-sm">
@@ -332,11 +380,11 @@ export function MarkdownExportDialog({
                   disabled={annotationsCount === 0}
                   onChange={(event) => setAnnotationsEnabled(event.target.checked)}
                 />
-                <span>包含当前文件标注与来源信息</span>
+                <span>{texts.includeAnnotations}</span>
               </label>
 
               <div className="grid gap-3">
-                {MODE_OPTIONS.map((option) => {
+                {modeOptions.map((option) => {
                   const Icon = option.icon;
                   const active = option.value === effectiveMode;
                   return (
@@ -362,10 +410,8 @@ export function MarkdownExportDialog({
 
             <div className="space-y-4 rounded-xl border border-border p-4">
               <div>
-                <h3 className="text-sm font-medium">渲染视图</h3>
-                <p className="text-xs text-muted-foreground">
-                  是否以当前可视化渲染风格导出，而不是默认文档版式。
-                </p>
+                <h3 className="text-sm font-medium">{texts.visualTitle}</h3>
+                <p className="text-xs text-muted-foreground">{texts.visualHint}</p>
               </div>
 
               <div className="grid gap-3">
@@ -376,10 +422,8 @@ export function MarkdownExportDialog({
                     visualMode === "document" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"
                   }`}
                 >
-                  <div className="font-medium">文档版式</div>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    更适合打印、提交与正式阅读。
-                  </p>
+                  <div className="font-medium">{texts.visualDocument}</div>
+                  <p className="mt-1 text-sm text-muted-foreground">{texts.visualDocumentHint}</p>
                 </button>
                 <button
                   type="button"
@@ -388,18 +432,16 @@ export function MarkdownExportDialog({
                     visualMode === "rendered" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"
                   }`}
                 >
-                  <div className="font-medium">当前渲染视图</div>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    更接近应用内阅读效果，适合代码块、引用与视觉强调保留。
-                  </p>
+                  <div className="font-medium">{texts.visualRendered}</div>
+                  <p className="mt-1 text-sm text-muted-foreground">{texts.visualRenderedHint}</p>
                 </button>
               </div>
 
               <div className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
-                <p>当前文件：{fileName}</p>
-                <p>输出模式：{format.toUpperCase()} / {effectiveMode} / {visualMode}</p>
-                <p>文档标题：{title || "未设置"}</p>
-                <p>说明：PDF 走渲染快照链路，DOCX 走结构化 HTML 导入链路。</p>
+                <p>{texts.currentFile}：{fileName}</p>
+                <p>{texts.outputMode}：{format.toUpperCase()} / {effectiveMode} / {visualMode}</p>
+                <p>{texts.documentTitle}：{title || texts.notSet}</p>
+                <p>{texts.exportModelHint}</p>
               </div>
             </div>
           </section>
@@ -416,14 +458,12 @@ export function MarkdownExportDialog({
               <div className="flex items-center gap-2">
                 <Eye className="h-4 w-4" />
                 <div>
-                  <h3 className="text-sm font-medium">导出预览</h3>
-                  <p className="text-xs text-muted-foreground">
-                    预览当前导出配置下的成品文档结构。
-                  </p>
+                  <h3 className="text-sm font-medium">{texts.previewTitle}</h3>
+                  <p className="text-xs text-muted-foreground">{texts.previewHint}</p>
                 </div>
               </div>
               <div className="text-right text-xs text-muted-foreground">
-                <div>{previewEntryCount} 条来源项</div>
+                <div>{texts.sourceCount}</div>
                 <div>{format.toUpperCase()} / {visualMode}</div>
               </div>
             </div>
@@ -432,7 +472,7 @@ export function MarkdownExportDialog({
               {isPreviewLoading ? (
                 <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  正在生成预览...
+                  {texts.previewLoading}
                 </div>
               ) : previewError ? (
                 <div className="flex h-full items-center justify-center px-6 text-sm text-destructive">
@@ -440,14 +480,14 @@ export function MarkdownExportDialog({
                 </div>
               ) : previewHtml ? (
                 <iframe
-                  title="Markdown export preview"
+                  title={texts.previewTitle}
                   sandbox=""
                   srcDoc={previewHtml}
                   className="h-full w-full rounded-b-xl bg-white"
                 />
               ) : (
                 <div className="flex h-full items-center justify-center px-6 text-sm text-muted-foreground">
-                  预览暂不可用
+                  {texts.previewUnavailable}
                 </div>
               )}
             </div>
@@ -457,16 +497,16 @@ export function MarkdownExportDialog({
         <div className="flex items-center justify-between border-t border-border px-6 py-4">
           <p className="text-xs text-muted-foreground">
             {annotationsCount === 0
-              ? "当前文件未发现侧车标注，将仅导出正文结构。"
-              : `本次可带出 ${annotationsCount} 条标注及其来源定位。`}
+              ? texts.noAnnotations
+              : texts.annotationSummary}
           </p>
           <div className="flex items-center gap-2">
             <Button variant="ghost" onClick={onClose} disabled={isExporting}>
-              取消
+              {texts.cancel}
             </Button>
             <Button onClick={handleExport} disabled={isExporting || isLoadingAnnotations}>
               {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              导出
+              {texts.export}
             </Button>
           </div>
         </div>

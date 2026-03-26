@@ -9,7 +9,9 @@ import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
-import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
+import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
 
 interface CodeReaderProps {
   content: string;
@@ -26,6 +28,13 @@ export function CodeReader({ content, fileName, paneId, filePath }: CodeReaderPr
   const extension = getFileExtension(fileName);
   const language = getLanguageForExtension(extension);
   const containerRef = useRef<HTMLDivElement>(null);
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const persistedViewStateKey = buildPersistedFileViewStateKey({
+    kind: "code-reader",
+    workspaceRootPath,
+    filePath,
+    fallbackName: fileName,
+  });
   const [selectionHubState, setSelectionHubState] = useState<{
     context: SelectionContext;
     mode: SelectionAiMode;
@@ -46,6 +55,11 @@ export function CodeReader({ content, fileName, paneId, filePath }: CodeReaderPr
     }
   );
 
+  usePersistedViewState({
+    storageKey: persistedViewStateKey,
+    containerRef,
+  });
+
   return (
     <div ref={containerRef} className="h-full overflow-auto">
       <SelectionContextMenu
@@ -59,21 +73,8 @@ export function CodeReader({ content, fileName, paneId, filePath }: CodeReaderPr
         returnFocusTo={selectionHubState?.returnFocusTo}
         onClose={() => setSelectionHubState(null)}
       />
-      {/* File header */}
-      <HorizontalScrollStrip
-        className="sticky top-0 z-10 border-b border-border bg-muted/90 backdrop-blur"
-        viewportClassName="px-4 py-2"
-        contentClassName="min-w-full w-max justify-between gap-3"
-        ariaLabel={`${fileName} 只读代码栏`}
-      >
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="max-w-[24rem] truncate text-sm font-medium text-foreground">{fileName}</span>
-          <span className="text-xs text-muted-foreground">({language})</span>
-        </div>
-      </HorizontalScrollStrip>
-
       {/* Code content */}
-      <div className="p-4">
+      <div className="p-4 pt-5">
         <SyntaxHighlighter
           language={language}
           style={oneDark}

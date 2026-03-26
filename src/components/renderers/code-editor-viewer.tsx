@@ -33,6 +33,7 @@ import {
 } from "@/lib/runner/preferences";
 import { useExecutionRunner } from "@/hooks/use-execution-runner";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useContentCacheStore } from "@/stores/content-cache-store";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
 import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 import { ProblemsPanel } from "@/components/runner/problems-panel";
@@ -43,6 +44,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { useExecutionDockLayout } from "@/hooks/use-execution-dock-layout";
 import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
 import { useI18n } from "@/hooks/use-i18n";
+import { buildPersistedFileViewStateKey, loadPersistedFileViewState, savePersistedFileViewState } from "@/lib/file-view-state";
 
 interface CodeEditorViewerProps {
   content: string;
@@ -89,6 +91,17 @@ export function CodeEditorViewer({
   const setRunnerPreferences = useWorkspaceStore((state) => state.setRunnerPreferences);
   const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
   const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
+  const saveCachedEditorState = useContentCacheStore((state) => state.saveEditorState);
+  const getCachedEditorState = useContentCacheStore((state) => state.getEditorState);
+  const persistedViewStateKey = useMemo(
+    () => buildPersistedFileViewStateKey({
+      kind: "code",
+      workspaceRootPath,
+      filePath,
+      fallbackName: fileName,
+    }),
+    [fileName, filePath, workspaceRootPath],
+  );
 
   const {
     status: runnerStatus,
@@ -200,9 +213,9 @@ export function CodeEditorViewer({
       kind: "workspace" as const,
       filePath: absoluteFilePath ?? filePath,
       fileName,
-      label: "当前文件运行环境",
+      label: t("workbench.runner.currentFileEnv"),
     }),
-    [absoluteFilePath, fileName, filePath],
+    [absoluteFilePath, fileName, filePath, t],
   );
 
   useAnnotationNavigation({
@@ -219,6 +232,65 @@ export function CodeEditorViewer({
   useEffect(() => {
     currentContentRef.current = content;
   }, [content]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    let cancelled = false;
+    const restore = async () => {
+      const cachedState = getCachedEditorState(filePath);
+      if (
+        cachedState &&
+        typeof cachedState.cursorPosition === "number" &&
+        typeof cachedState.scrollTop === "number"
+      ) {
+        requestAnimationFrame(() => {
+          editorRef.current?.restoreEditorState(cachedState as {
+            cursorPosition: number;
+            scrollTop: number;
+            scrollLeft?: number;
+            selection?: { from: number; to: number };
+          });
+        });
+        return;
+      }
+
+      const persistedState = await loadPersistedFileViewState(persistedViewStateKey);
+      if (
+        cancelled ||
+        !persistedState ||
+        typeof persistedState.cursorPosition !== "number" ||
+        typeof persistedState.scrollTop !== "number"
+      ) {
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        editorRef.current?.restoreEditorState(persistedState as {
+          cursorPosition: number;
+          scrollTop: number;
+          scrollLeft?: number;
+          selection?: { from: number; to: number };
+        });
+      });
+      saveCachedEditorState(filePath, persistedState as {
+        cursorPosition: number;
+        scrollTop: number;
+        scrollLeft?: number;
+        selection?: { from: number; to: number };
+      });
+    };
+
+    void restore();
+
+    return () => {
+      cancelled = true;
+      const editorState = editor?.getEditorState();
+      if (editorState) {
+        saveCachedEditorState(filePath, editorState);
+        void savePersistedFileViewState(persistedViewStateKey, editorState);
+      }
+    };
+  }, [filePath, getCachedEditorState, persistedViewStateKey, saveCachedEditorState]);
 
   useEffect(() => {
     if (!pendingNavigation || !isSameWorkspacePath(pendingNavigation.filePath, filePath)) {
@@ -434,18 +506,24 @@ export function CodeEditorViewer({
         {
           id: "save",
           label: t("common.save"),
+          priority: 10,
+          group: "primary",
           disabled: !onSave || isReadOnly,
           onTrigger: () => { void onSave?.(); },
         },
         {
           id: isRunning ? "stop" : "run",
           label: isRunning ? t("workbench.commandBar.stop") : t("workbench.commandBar.run"),
+          priority: 20,
+          group: "primary",
           disabled: !canRun,
           onTrigger: isRunning ? () => { void terminate(); } : () => { void handleRun(); },
         },
         {
           id: "rerun",
           label: t("workbench.commandBar.rerun"),
+          priority: 21,
+          group: "secondary",
           disabled: !lastRequest || isRunning || isLoading,
           onTrigger: () => { void handleRerun(); },
         },
@@ -476,7 +554,7 @@ export function CodeEditorViewer({
         className="border-b border-border bg-muted/50"
         viewportClassName="px-3 py-1.5"
         contentClassName="min-w-full w-max justify-between gap-3"
-        ariaLabel="代码执行停靠栏"
+        ariaLabel={t("workbench.runner.managerCode")}
       >
         <div className="flex shrink-0 items-center gap-2">
           <button
@@ -488,7 +566,7 @@ export function CodeEditorViewer({
             ) : (
               <ChevronUp className="h-3 w-3" />
             )}
-            <span>{showOutput ? "Hide Dock" : "Show Dock"}</span>
+            <span>{showOutput ? t("workbench.dock.hide") : t("workbench.dock.show")}</span>
           </button>
           <div className="flex items-center gap-1 rounded-md border border-border bg-background p-0.5">
             <button
@@ -499,7 +577,7 @@ export function CodeEditorViewer({
               }}
               className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "run" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
             >
-              Run
+              {t("workbench.dock.run")}
               {outputs.length > 0 ? (
                 <span className="ml-1 rounded bg-primary/10 px-1 py-0.5 text-[10px]">{outputs.length}</span>
               ) : null}
@@ -512,7 +590,7 @@ export function CodeEditorViewer({
               }}
               className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "problems" ? "bg-destructive/10 text-destructive" : "text-muted-foreground hover:text-foreground"}`}
             >
-              Problems
+              {t("workbench.dock.problems")}
               {problems.length > 0 ? (
                 <span className="ml-1 rounded bg-destructive/10 px-1 py-0.5 text-[10px]">{problems.length}</span>
               ) : null}
@@ -541,7 +619,7 @@ export function CodeEditorViewer({
             <button
               onClick={clearOutputs}
               className="p-1 text-muted-foreground transition-colors hover:text-foreground"
-              title="Clear execution feedback"
+              title={t("workbench.dock.clearFeedback")}
             >
               <Trash2 className="w-3 h-3" />
             </button>
@@ -593,6 +671,7 @@ export function CodeEditorViewer({
     showOutput,
     summary.exitCode,
     summary.startedAt,
+    t,
   ]);
 
   return (
@@ -630,37 +709,6 @@ export function CodeEditorViewer({
         returnFocusTo={selectionHubState?.returnFocusTo}
         onClose={() => setSelectionHubState(null)}
       />
-
-      <HorizontalScrollStrip
-        className="sticky top-0 z-10 border-b border-border bg-muted/90 backdrop-blur"
-        viewportClassName="px-4 py-2"
-        contentClassName="min-w-full w-max justify-between gap-3"
-        ariaLabel={`${fileName} 工具栏`}
-      >
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="max-w-[24rem] truncate text-sm font-medium text-foreground">{fileName}</span>
-          <span className="text-xs text-muted-foreground">({language})</span>
-          {runnerDefinition && (
-            <span className="text-xs text-muted-foreground">
-              {t("workbench.code.runnerPrefix")}: {runnerDefinition.displayName}
-            </span>
-          )}
-        </div>
-
-        <div className="flex shrink-0 items-center gap-2">
-          {canRun ? (
-            <span className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground">
-              {isRunning ? t("workbench.code.status.running") : isLoading ? t("workbench.code.status.preparing") : t("workbench.code.status.ready")}
-            </span>
-          ) : null}
-
-          {isReadOnly && (
-            <span className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground">
-              {t("workbench.code.readonly")}
-            </span>
-          )}
-        </div>
-      </HorizontalScrollStrip>
 
       {canRun && shouldRenderDock && showOutput ? (
         <ResizablePanelGroup

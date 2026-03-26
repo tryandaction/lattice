@@ -10,6 +10,7 @@ import { NotebookAiAssist } from "@/components/ai/notebook-ai-assist";
 import type { ExecutionProblem, ExecutionPanelMeta } from "@/lib/runner/types";
 import { ProblemsPanel } from "@/components/runner/problems-panel";
 import { diagnosticsToExecutionProblems, mergeExecutionProblems, outputsToExecutionProblems } from "@/lib/runner/problem-utils";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface CodeCellProps {
   source: string;
@@ -59,6 +60,7 @@ export const CodeCell = memo(function CodeCell({
   isExecuting = false,
   canRun = true,
 }: CodeCellProps) {
+  const { t } = useI18n();
   const [content, setContent] = useState(source);
   const [syntaxProblems, setSyntaxProblems] = useState<ExecutionProblem[]>([]);
   const editorRef = useRef<CodeEditorRef | null>(null);
@@ -142,10 +144,10 @@ export const CodeCell = memo(function CodeCell({
                      bg-primary/10 hover:bg-primary/20 text-primary
                      disabled:opacity-50 disabled:cursor-not-allowed
                      transition-colors"
-          title={canRun ? "Run cell (Shift+Enter)" : "当前运行环境未就绪"}
+          title={canRun ? t("notebook.cell.runShortcut") : t("notebook.cell.runtimeNotReady")}
         >
           <PlayIcon className="w-3 h-3" />
-          <span>{isExecuting ? "Running" : "Run"}</span>
+          <span>{isExecuting ? t("notebook.cell.running") : t("workbench.commandBar.run")}</span>
         </button>
       </div>
 
@@ -174,14 +176,14 @@ export const CodeCell = memo(function CodeCell({
 
       {problems.length > 0 ? (
         <div className="space-y-1">
-          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Problems</div>
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t("workbench.dock.problems")}</div>
           <ProblemsPanel problems={problems} variant="compact" onSelectProblem={navigateToProblem} />
         </div>
       ) : null}
 
       {executionOutputs.length > 0 ? (
         <div className="space-y-1">
-          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Output</div>
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t("workbench.dock.run")}</div>
           <OutputArea outputs={executionOutputs} meta={executionMeta} variant="compact" showDiagnosticsInline={false} />
         </div>
       ) : null}

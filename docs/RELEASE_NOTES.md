@@ -2,7 +2,69 @@
 
 发布日期：2026-03-21
 
+最新 Web 预览部署：<https://47f3417d.lattice-apq.pages.dev>
+
 ## 本次重点
+
+### 2026-03-26 阶段性收尾补充
+
+- 工作区与桌面状态恢复继续收口：
+  - workbench session 现已按 `workspaceRootPath` 独立持久化
+  - 关闭后重开时会继续恢复 pane / split / 标签页 / active pane / active tab / sidebar collapsed
+  - viewer 级阅读状态继续与 workbench session 分离，统一走 `file-view-state`
+- Notebook 顶部结构继续压回工作台：
+  - 独立顶部动作带已移除
+  - `Save / Verify / Run All / New Cell` 已统一进入 `Command Bar`
+  - Notebook 内只保留正文首块运行环境摘要与问题信息，不再形成第二条工作台 header
+- PDF 主路径继续加固：
+  - PDF view state 现在继续记录 `sidebarSize` 与最近选中的 annotation
+  - 反链 / deep link 跳回批注时会同步展开 sidebar 并选中目标
+  - `PdfItemWorkspacePanel` 已改为可折叠 section，减少左栏工具台堆叠
+- 主路径 i18n 继续清零：
+  - AI Chat / Workbench 的 badge、toast、审批动作、模型来源已改为统一 i18n key
+  - Markdown 导出对话框已移除组件内 `isZh ? ... : ...` 双分支
+  - PDF 批注侧栏的搜索/筛选/多选/空态等高频文案已统一进入 i18n
+- 旧代码清理：
+  - 删除未引用旧组件 `pdf-viewer-with-annotations.tsx`
+  - `layout-persistence.ts` 已改造成真正接线的 workbench session 持久化实现
+
+### 2026-03-26 桌面状态统一与只读 Viewer 收口补充
+
+- 桌面端状态存储继续收口到 Tauri store：
+  - 前端 `storage-adapter` 现已真正接入 Rust store，而不再默认只写 `localStorage`
+  - `lattice-settings` 在桌面端首次读取时会自动从 `localStorage` 迁移到 Tauri store
+  - 启动恢复、默认文件夹、最近工作区会共用同一份桌面持久状态
+  - 最近工作区重开时会先检查路径是否仍然存在，失效路径会从历史中移除
+- Windows 自定义标题栏继续收口：
+  - `tauri.conf.json` 现在显式关闭窗口装饰
+  - `Command Bar` 保持为唯一标题栏
+  - 最小化 / 最大化 / 还原 / 关闭按钮已固定在最右侧，不再跟随动作区滚动
+- 只读 Viewer 顶部结构继续减噪：
+  - `Word / HTML / 图片 / 只读代码 / 只读 Jupyter` 已去掉重复顶部文件名栏
+  - Word 的 `Import as Note` 与 HTML 的 `Preview / Source` 已开始进入统一 `Command Bar`
+- 仓库清理：
+  - 删除未引用组件 `auto-hide-header.tsx`
+  - 删除未引用组件 `tab-context-menu.tsx`
+
+### 2026-03-26 桌面壳层与视觉减噪收口
+
+- Windows 桌面端标题区继续收口：
+  - 原生标题栏与应用命令栏的双排问题已处理为单行桌面标题栏
+  - 窗口控制按钮已并入顶部标题栏
+- 桌面工作区恢复链路已补强：
+  - 最近工作区重开不再错误落入“仅桌面版可用”的误判分支
+  - 桌面启动时对最后一次工作区的自动恢复，现兼容 `__TAURI_INTERNALS__.invoke` 桥接
+- Viewer 顶部重复结构继续清理：
+  - Markdown 阅读态不再重复显示文件名标题条
+  - Code / Notebook / PDF 的本地顶部工具条继续缩减或移除
+  - PDF 工具动作转入 Command Bar 后，不再占用独立顶栏
+- 工作台视觉继续减噪：
+  - Explorer 头部去掉重复折叠按钮
+  - Activity Bar 底部仅保留高频入口，帮助与设置不再重复占位
+  - Pane / Tab / 空状态文案继续统一，减少中英文混杂
+- 仓库继续清理：
+  - 删除未引用旧组件 `pane-header.tsx`
+  - 文档中旧 `Open Local Folder` 表述已同步到当前产品文案
 
 ### 2026-03-24 本轮体验收口
 

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 改进 (2026-03-26 阶段性收敛补充)
+- **桌面工作区与 session 恢复**
+  - ✅ workbench session 现已按 `workspaceRootPath` 独立持久化
+  - ✅ 关闭后重开可继续恢复 pane / split / 标签页 / active pane / active tab / sidebar collapsed
+  - ✅ 工作区切换与自动恢复前会先清理旧 workbench / cache，避免旧标签短暂闪现
+- **Notebook / PDF 结构收口**
+  - ✅ Notebook 独立顶部动作带已移除，高频动作统一进入 `Command Bar`
+  - ✅ Notebook 现已补顶层 scroll + `activeCellId` 恢复
+  - ✅ PDF 现已继续持久化 `sidebarSize` 与最近选中的 annotation
+  - ✅ PDF 反链 / deep link 跳回时会自动展开 sidebar 并同步选中目标批注
+  - ✅ `PdfItemWorkspacePanel` 已改为可折叠 section，降低左栏网页感工具台堆叠
+- **主路径 i18n 收口**
+  - ✅ AI Chat / Workbench 的 badge、toast、审批动作、模型来源已统一进入 i18n
+  - ✅ Markdown 导出对话框已移除组件内 `isZh ? ... : ...` 文案分支
+  - ✅ PDF 批注侧栏的搜索、筛选、多选、空态与常用菜单动作已统一进入 i18n
+  - ✅ Search / Settings / Notebook loading indicator 继续清理主路径硬编码文案
+- **旧代码与文档同步**
+  - ✅ 删除未引用旧组件 `pdf-viewer-with-annotations.tsx`
+  - ✅ `layout-persistence.ts` 已改造成真实接线的 workbench session 持久化层
+  - ✅ `README`、`USER_GUIDE`、`RELEASE_NOTES`、`MANUAL_RELEASE_GUIDE`、`PRODUCT_STRATEGY` 已同步更新
+- **发布与验证**
+  - ✅ 本轮顺序通过 `lint / typecheck / test:docs / test:run / build / tauri:build / release:prepare / deploy:web`
+  - ✅ 桌面 release 已刷新到 `releases/v2.1.0/`
+  - ✅ 最新 Cloudflare Pages 预览地址：`https://47f3417d.lattice-apq.pages.dev`
+
 ### 改进 (2026-03-24 本轮体验收口)
 - **PDF 选区 / 复制 / 侧栏体验**
   - ✅ PDF 文本选择已改为原生选区阶段与 Lattice transient overlay 阶段分离，不再过早清空原生选区

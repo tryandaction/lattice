@@ -35,24 +35,43 @@ use uuid::Uuid;
 const SETTINGS_STORE: &str = "settings.json";
 const RUNNER_EVENT_NAME: &str = "runner://event";
 const PYTHON_EVENT_PREFIX: &str = "__LATTICE_EVENT__";
+const FRONTEND_SETTINGS_KEY: &str = "lattice-settings";
 const DEFAULT_FOLDER_KEY: &str = "default_folder";
 const LAST_OPENED_FOLDER_KEY: &str = "last_opened_folder";
 const LAST_WORKSPACE_PATH_KEY: &str = "last_workspace_path";
+const RECENT_WORKSPACE_PATHS_KEY: &str = "recent_workspace_paths";
+const WINDOW_STATE_KEY: &str = "window_state";
+const MAX_RECENT_WORKSPACES: usize = 12;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW_FLAG: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowStateSnapshot {
+    pub width: f64,
+    pub height: f64,
+    pub x: f64,
+    pub y: f64,
+    pub is_maximized: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub default_folder: Option<String>,
     pub last_opened_folder: Option<String>,
     pub last_workspace_path: Option<String>,
+    #[serde(default)]
+    pub recent_workspace_paths: Vec<String>,
+    pub window_state: Option<WindowStateSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum StartupWorkspaceSource {
     LastWorkspacePath,
+    RecentWorkspacePaths,
     DefaultFolder,
 }
 
@@ -202,137 +221,339 @@ struct PythonProbe {
     base_prefix: Option<String>,
 }
 
-#[tauri::command]
-fn get_default_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
+fn normalize_optional_path(path: Option<String>) -> Option<String> {
+    path.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
 
-    if let Some(value) = store.get(DEFAULT_FOLDER_KEY) {
-        if let Some(folder) = value.as_str() {
-            return Ok(Some(folder.to_string()));
+fn normalize_recent_workspace_paths(paths: Vec<String>) -> Vec<String> {
+    let mut deduped = Vec::new();
+
+    for path in paths {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let normalized = trimmed.to_string();
+        if deduped.iter().any(|existing| existing == &normalized) {
+            continue;
+        }
+
+        deduped.push(normalized);
+        if deduped.len() >= MAX_RECENT_WORKSPACES {
+            break;
         }
     }
 
-    Ok(None)
+    deduped
+}
+
+fn has_persisted_app_settings(settings: &AppSettings) -> bool {
+    settings.default_folder.is_some()
+        || settings.last_opened_folder.is_some()
+        || settings.last_workspace_path.is_some()
+        || !settings.recent_workspace_paths.is_empty()
+        || settings.window_state.is_some()
+}
+
+fn build_app_settings_from_store(app: &tauri::AppHandle) -> Result<AppSettings, String> {
+    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
+
+    let mut settings = store
+        .get(FRONTEND_SETTINGS_KEY)
+        .and_then(|value| serde_json::from_value::<AppSettings>(value).ok())
+        .unwrap_or_default();
+
+    if settings.default_folder.is_none() {
+        settings.default_folder = store
+            .get(DEFAULT_FOLDER_KEY)
+            .and_then(|value| value.as_str().map(str::to_string));
+    }
+
+    if settings.last_opened_folder.is_none() {
+        settings.last_opened_folder = store
+            .get(LAST_OPENED_FOLDER_KEY)
+            .and_then(|value| value.as_str().map(str::to_string));
+    }
+
+    if settings.last_workspace_path.is_none() {
+        settings.last_workspace_path = store
+            .get(LAST_WORKSPACE_PATH_KEY)
+            .and_then(|value| value.as_str().map(str::to_string));
+    }
+
+    if settings.recent_workspace_paths.is_empty() {
+        settings.recent_workspace_paths = store
+            .get(RECENT_WORKSPACE_PATHS_KEY)
+            .and_then(|value| serde_json::from_value::<Vec<String>>(value).ok())
+            .unwrap_or_default();
+    }
+
+    if settings.window_state.is_none() {
+        settings.window_state = store
+            .get(WINDOW_STATE_KEY)
+            .and_then(|value| serde_json::from_value::<WindowStateSnapshot>(value).ok());
+    }
+
+    settings.default_folder = normalize_optional_path(settings.default_folder);
+    settings.last_opened_folder = normalize_optional_path(settings.last_opened_folder);
+    settings.last_workspace_path = normalize_optional_path(settings.last_workspace_path);
+    settings.recent_workspace_paths = normalize_recent_workspace_paths(settings.recent_workspace_paths);
+
+    Ok(settings)
+}
+
+fn save_app_settings(app: &tauri::AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
+    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
+
+    let normalized = AppSettings {
+        default_folder: normalize_optional_path(settings.default_folder),
+        last_opened_folder: normalize_optional_path(settings.last_opened_folder),
+        last_workspace_path: normalize_optional_path(settings.last_workspace_path),
+        recent_workspace_paths: normalize_recent_workspace_paths(settings.recent_workspace_paths),
+        window_state: settings.window_state,
+    };
+
+    match normalized.default_folder.as_deref() {
+        Some(value) => store.set(DEFAULT_FOLDER_KEY, json!(value)),
+        None => {
+            store.delete(DEFAULT_FOLDER_KEY);
+        }
+    }
+
+    match normalized.last_opened_folder.as_deref() {
+        Some(value) => store.set(LAST_OPENED_FOLDER_KEY, json!(value)),
+        None => {
+            store.delete(LAST_OPENED_FOLDER_KEY);
+        }
+    }
+
+    match normalized.last_workspace_path.as_deref() {
+        Some(value) => store.set(LAST_WORKSPACE_PATH_KEY, json!(value)),
+        None => {
+            store.delete(LAST_WORKSPACE_PATH_KEY);
+        }
+    }
+
+    if normalized.recent_workspace_paths.is_empty() {
+        store.delete(RECENT_WORKSPACE_PATHS_KEY);
+    } else {
+        store.set(
+            RECENT_WORKSPACE_PATHS_KEY,
+            serde_json::to_value(&normalized.recent_workspace_paths).map_err(|error| error.to_string())?,
+        );
+    }
+
+    if let Some(window_state) = &normalized.window_state {
+        store.set(
+            WINDOW_STATE_KEY,
+            serde_json::to_value(window_state).map_err(|error| error.to_string())?,
+        );
+    } else {
+        store.delete(WINDOW_STATE_KEY);
+    }
+
+    if has_persisted_app_settings(&normalized) {
+        store.set(
+            FRONTEND_SETTINGS_KEY,
+            serde_json::to_value(&normalized).map_err(|error| error.to_string())?,
+        );
+    } else {
+        store.delete(FRONTEND_SETTINGS_KEY);
+    }
+
+    store.save().map_err(|error| error.to_string())?;
+    Ok(normalized)
+}
+
+#[tauri::command]
+fn get_default_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    Ok(build_app_settings_from_store(&app)?.default_folder)
 }
 
 #[tauri::command]
 fn set_default_folder(app: tauri::AppHandle, folder: String) -> Result<(), String> {
-    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
-    store.set(DEFAULT_FOLDER_KEY, json!(folder));
-    store.save().map_err(|error| error.to_string())?;
+    let mut settings = build_app_settings_from_store(&app)?;
+    settings.default_folder = Some(folder);
+    save_app_settings(&app, settings)?;
     Ok(())
 }
 
 #[tauri::command]
 fn get_last_opened_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
-
-    if let Some(value) = store.get(LAST_OPENED_FOLDER_KEY) {
-        if let Some(folder) = value.as_str() {
-            return Ok(Some(folder.to_string()));
-        }
-    }
-
-    Ok(None)
+    Ok(build_app_settings_from_store(&app)?.last_opened_folder)
 }
 
 #[tauri::command]
 fn set_last_opened_folder(app: tauri::AppHandle, folder: String) -> Result<(), String> {
-    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
-    store.set(LAST_OPENED_FOLDER_KEY, json!(folder));
-    store.save().map_err(|error| error.to_string())?;
+    let mut settings = build_app_settings_from_store(&app)?;
+    settings.last_opened_folder = Some(folder);
+    save_app_settings(&app, settings)?;
     Ok(())
 }
 
 #[tauri::command]
 fn clear_default_folder(app: tauri::AppHandle) -> Result<(), String> {
-    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
-    store.delete(DEFAULT_FOLDER_KEY);
-    store.save().map_err(|error| error.to_string())?;
+    let mut settings = build_app_settings_from_store(&app)?;
+    settings.default_folder = None;
+    save_app_settings(&app, settings)?;
     Ok(())
 }
 
 #[tauri::command]
 fn set_last_workspace_path(app: tauri::AppHandle, path: Option<String>) -> Result<(), String> {
-    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
-    match path.as_deref().filter(|value| !value.trim().is_empty()) {
-        Some(value) => {
-            store.set(LAST_WORKSPACE_PATH_KEY, json!(value));
-            // Compatibility write for one migration cycle.
-            store.set(LAST_OPENED_FOLDER_KEY, json!(value));
-        }
-        None => {
-            store.delete(LAST_WORKSPACE_PATH_KEY);
-            store.delete(LAST_OPENED_FOLDER_KEY);
-        }
-    }
-    store.save().map_err(|error| error.to_string())?;
+    let mut settings = build_app_settings_from_store(&app)?;
+    settings.last_workspace_path = path.clone();
+    settings.last_opened_folder = path;
+    save_app_settings(&app, settings)?;
     Ok(())
 }
 
 #[tauri::command]
 fn resolve_startup_workspace(app: tauri::AppHandle) -> Result<StartupWorkspaceResolution, String> {
-    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
-    let last_workspace_path = store
-        .get(LAST_WORKSPACE_PATH_KEY)
-        .and_then(|value| value.as_str().map(str::to_string))
-        .filter(|value| !value.trim().is_empty());
-    let legacy_last_opened = store
-        .get(LAST_OPENED_FOLDER_KEY)
-        .and_then(|value| value.as_str().map(str::to_string))
-        .filter(|value| !value.trim().is_empty());
-    let default_folder = store
-        .get(DEFAULT_FOLDER_KEY)
-        .and_then(|value| value.as_str().map(str::to_string))
-        .filter(|value| !value.trim().is_empty());
+    let settings = build_app_settings_from_store(&app)?;
+    let valid_recent_workspace_paths = normalize_recent_workspace_paths(
+        settings
+            .recent_workspace_paths
+            .iter()
+            .filter_map(|path| resolve_existing_directory_path(path))
+            .collect(),
+    );
 
-    if let Some(valid_path) = last_workspace_path
+    let mut next_settings = settings.clone();
+    next_settings.recent_workspace_paths = valid_recent_workspace_paths.clone();
+
+    let resolved = if let Some(valid_path) = settings
+        .last_workspace_path
         .as_deref()
         .and_then(resolve_existing_directory_path)
     {
-        if legacy_last_opened.as_deref() != Some(valid_path.as_str()) {
-            store.set(LAST_OPENED_FOLDER_KEY, json!(valid_path));
-            store.save().map_err(|error| error.to_string())?;
+        next_settings.last_workspace_path = Some(valid_path.clone());
+        next_settings.last_opened_folder = Some(valid_path.clone());
+        if !next_settings.recent_workspace_paths.iter().any(|path| path == &valid_path) {
+            next_settings.recent_workspace_paths.insert(0, valid_path.clone());
+            next_settings.recent_workspace_paths =
+                normalize_recent_workspace_paths(next_settings.recent_workspace_paths.clone());
         }
-        return Ok(StartupWorkspaceResolution {
+
+        StartupWorkspaceResolution {
             path: Some(valid_path),
             source: Some(StartupWorkspaceSource::LastWorkspacePath),
-        });
-    }
-
-    if let Some(valid_path) = legacy_last_opened
+        }
+    } else if let Some(valid_path) = settings
+        .last_opened_folder
         .as_deref()
         .and_then(resolve_existing_directory_path)
     {
-        store.set(LAST_WORKSPACE_PATH_KEY, json!(valid_path));
-        store.set(LAST_OPENED_FOLDER_KEY, json!(valid_path));
-        store.save().map_err(|error| error.to_string())?;
-        return Ok(StartupWorkspaceResolution {
+        next_settings.last_workspace_path = Some(valid_path.clone());
+        next_settings.last_opened_folder = Some(valid_path.clone());
+        if !next_settings.recent_workspace_paths.iter().any(|path| path == &valid_path) {
+            next_settings.recent_workspace_paths.insert(0, valid_path.clone());
+            next_settings.recent_workspace_paths =
+                normalize_recent_workspace_paths(next_settings.recent_workspace_paths.clone());
+        }
+
+        StartupWorkspaceResolution {
             path: Some(valid_path),
             source: Some(StartupWorkspaceSource::LastWorkspacePath),
-        });
-    }
+        }
+    } else if let Some(valid_path) = valid_recent_workspace_paths.first().cloned() {
+        next_settings.last_workspace_path = Some(valid_path.clone());
+        next_settings.last_opened_folder = Some(valid_path.clone());
 
-    if let Some(valid_path) = default_folder
+        StartupWorkspaceResolution {
+            path: Some(valid_path),
+            source: Some(StartupWorkspaceSource::RecentWorkspacePaths),
+        }
+    } else if let Some(valid_path) = settings
+        .default_folder
         .as_deref()
         .and_then(resolve_existing_directory_path)
     {
-        return Ok(StartupWorkspaceResolution {
+        next_settings.default_folder = Some(valid_path.clone());
+
+        StartupWorkspaceResolution {
             path: Some(valid_path),
             source: Some(StartupWorkspaceSource::DefaultFolder),
-        });
+        }
+    } else {
+        next_settings.last_workspace_path = None;
+        next_settings.last_opened_folder = None;
+
+        StartupWorkspaceResolution {
+            path: None,
+            source: None,
+        }
+    };
+
+    if next_settings.default_folder != settings.default_folder
+        || next_settings.last_opened_folder != settings.last_opened_folder
+        || next_settings.last_workspace_path != settings.last_workspace_path
+        || next_settings.recent_workspace_paths != settings.recent_workspace_paths
+    {
+        save_app_settings(&app, next_settings)?;
     }
 
-    if last_workspace_path.is_some() || legacy_last_opened.is_some() {
-        store.delete(LAST_WORKSPACE_PATH_KEY);
-        store.delete(LAST_OPENED_FOLDER_KEY);
-        store.save().map_err(|error| error.to_string())?;
+    Ok(resolved)
+}
+
+#[tauri::command]
+fn get_setting(app: tauri::AppHandle, key: String) -> Result<Option<Value>, String> {
+    if key == FRONTEND_SETTINGS_KEY {
+        let settings = build_app_settings_from_store(&app)?;
+        if has_persisted_app_settings(&settings) {
+            return Ok(Some(
+                serde_json::to_value(settings).map_err(|error| error.to_string())?,
+            ));
+        }
+        return Ok(None);
     }
 
-    Ok(StartupWorkspaceResolution {
-        path: None,
-        source: None,
-    })
+    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
+    Ok(store.get(&key))
+}
+
+#[tauri::command]
+fn set_setting(app: tauri::AppHandle, key: String, value: Value) -> Result<(), String> {
+    if key == FRONTEND_SETTINGS_KEY {
+        let settings =
+            serde_json::from_value::<AppSettings>(value).map_err(|error| error.to_string())?;
+        save_app_settings(&app, settings)?;
+        return Ok(());
+    }
+
+    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
+    store.set(&key, value);
+    store.save().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn remove_setting(app: tauri::AppHandle, key: String) -> Result<(), String> {
+    if key == FRONTEND_SETTINGS_KEY {
+        save_app_settings(&app, AppSettings::default())?;
+        return Ok(());
+    }
+
+    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
+    store.delete(&key);
+    store.save().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn clear_settings(app: tauri::AppHandle) -> Result<(), String> {
+    let store = app.store(SETTINGS_STORE).map_err(|error| error.to_string())?;
+    store.clear();
+    store.save().map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -395,6 +616,33 @@ fn desktop_remove_path(path: String, recursive: bool) -> Result<(), String> {
         fs::remove_file(target).map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+#[tauri::command]
+fn desktop_window_minimize(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.minimize().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn desktop_window_toggle_maximize(window: tauri::WebviewWindow) -> Result<bool, String> {
+    let is_maximized = window.is_maximized().map_err(|error| error.to_string())?;
+    if is_maximized {
+        window.unmaximize().map_err(|error| error.to_string())?;
+        Ok(false)
+    } else {
+        window.maximize().map_err(|error| error.to_string())?;
+        Ok(true)
+    }
+}
+
+#[tauri::command]
+fn desktop_window_is_maximized(window: tauri::WebviewWindow) -> Result<bool, String> {
+    window.is_maximized().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn desktop_window_close(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.close().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -782,6 +1030,10 @@ fn main() {
         .manage(ExecutionSessions::default())
         .manage(PythonSessions::default())
         .invoke_handler(tauri::generate_handler![
+            get_setting,
+            set_setting,
+            remove_setting,
+            clear_settings,
             get_default_folder,
             set_default_folder,
             get_last_opened_folder,
@@ -795,6 +1047,10 @@ fn main() {
             desktop_exists_path,
             desktop_create_dir,
             desktop_remove_path,
+            desktop_window_minimize,
+            desktop_window_toggle_maximize,
+            desktop_window_is_maximized,
+            desktop_window_close,
             detect_python_environments,
             probe_command_availability,
             start_local_execution,
@@ -805,6 +1061,10 @@ fn main() {
         ])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = window.set_decorations(false);
+                }
                 let _ = window.maximize();
             }
             Ok(())

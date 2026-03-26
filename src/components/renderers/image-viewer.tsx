@@ -1,15 +1,21 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { ZoomIn, ZoomOut, RotateCw, Maximize2, Download, Move, Minimize2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Move } from "lucide-react";
+import { useI18n } from "@/hooks/use-i18n";
 import { useAnnotationNavigation } from "../../hooks/use-annotation-navigation";
 import { useObjectUrl } from "@/hooks/use-object-url";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import type { PaneId } from "@/types/layout";
+import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
+import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
 
 interface ImageViewerProps {
   content: ArrayBuffer;
   fileName: string;
   mimeType: string;
+  paneId?: PaneId;
+  filePath?: string;
 }
 
 type FitMode = "fit" | "width" | "height" | "actual";
@@ -19,7 +25,8 @@ type FitMode = "fit" | "width" | "height" | "actual";
  * Displays images with zoom, rotate, pan, and fullscreen controls
  * Optimized for large images and long images
  */
-export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
+export function ImageViewer({ content, fileName, mimeType, paneId, filePath }: ImageViewerProps) {
+  const { t } = useI18n();
   const imageBlob = useMemo(() => new Blob([content], { type: mimeType }), [content, mimeType]);
   const imageUrl = useObjectUrl(imageBlob);
   const [manualZoom, setManualZoom] = useState(1);
@@ -41,6 +48,15 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
+  const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
+  const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const persistedViewStateKey = buildPersistedFileViewStateKey({
+    kind: "image",
+    workspaceRootPath,
+    filePath,
+    fallbackName: fileName,
+  });
 
   useEffect(() => {
     const container = imageContainerRef.current;
@@ -109,6 +125,32 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
     };
   }, []);
 
+  usePersistedViewState({
+    storageKey: persistedViewStateKey,
+    containerRef: imageContainerRef,
+    viewState: {
+      fitMode,
+      manualZoom,
+      rotation,
+      panOffset,
+    },
+    applyViewState: (persisted) => {
+      if (persisted?.fitMode === "fit" || persisted?.fitMode === "width" || persisted?.fitMode === "height" || persisted?.fitMode === "actual") {
+        setFitMode(persisted.fitMode);
+      }
+      if (typeof persisted?.manualZoom === "number") {
+        setManualZoom(persisted.manualZoom);
+      }
+      if (typeof persisted?.rotation === "number") {
+        setRotation(persisted.rotation);
+      }
+      const nextPanOffset = persisted?.panOffset as { x?: number; y?: number } | undefined;
+      if (typeof nextPanOffset?.x === "number" && typeof nextPanOffset?.y === "number") {
+        setPanOffset({ x: nextPanOffset.x, y: nextPanOffset.y });
+      }
+    },
+  });
+
   // Calculate fit zoom based on container and image size
   const calculateFitZoom = useCallback(() => {
     if (containerSize.width === 0 || containerSize.height === 0 || naturalSize.width === 0) return 1;
@@ -158,45 +200,45 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
     }
   };
 
-  const handleZoomIn = () => {
+  const handleZoomIn = useCallback(() => {
     setManualZoom((z) => Math.min(z * 1.25, 10));
     setFitMode("actual"); // Switch to manual zoom mode
-  };
+  }, []);
   
-  const handleZoomOut = () => {
+  const handleZoomOut = useCallback(() => {
     setManualZoom((z) => Math.max(z / 1.25, 0.05));
     setFitMode("actual");
-  };
+  }, []);
   
-  const handleRotate = () => {
+  const handleRotate = useCallback(() => {
     setRotation((r) => (r + 90) % 360);
-  };
+  }, []);
   
-  const handleReset = () => {
+  const handleReset = useCallback(() => {
     setRotation(0);
     setFitMode("fit");
     setManualZoom(1);
     setPanOffset({ x: 0, y: 0 });
-  };
+  }, []);
 
-  const handleFitMode = (mode: FitMode) => {
+  const handleFitMode = useCallback((mode: FitMode) => {
     setFitMode(mode);
     if (mode === "actual") {
       setManualZoom(1);
     }
     setPanOffset({ x: 0, y: 0 });
-  };
+  }, []);
 
-  const handleDownload = () => {
+  const handleDownload = useCallback(() => {
     if (imageUrl) {
       const a = document.createElement("a");
       a.href = imageUrl;
       a.download = fileName;
       a.click();
     }
-  };
+  }, [fileName, imageUrl]);
 
-  const handleFullscreen = () => {
+  const handleFullscreen = useCallback(() => {
     if (containerRef.current) {
       if (document.fullscreenElement) {
         document.exitFullscreen();
@@ -204,7 +246,7 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
         containerRef.current.requestFullscreen();
       }
     }
-  };
+  }, []);
 
   // Handle wheel zoom
   const handleWheel = (e: React.WheelEvent) => {
@@ -215,6 +257,111 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
       setFitMode("actual");
     }
   };
+
+  useEffect(() => {
+    if (!paneId) {
+      return;
+    }
+
+    const breadcrumbs = (filePath ?? fileName).split("/").filter(Boolean).map((segment) => ({ label: segment }));
+    setCommandBarState(paneId, {
+      breadcrumbs,
+      actions: [
+        {
+          id: "fit",
+          label: t("viewer.image.command.fit"),
+          priority: 10,
+          group: "primary",
+          disabled: fitMode === "fit",
+          onTrigger: () => handleFitMode("fit"),
+        },
+        {
+          id: "fit-width",
+          label: t("viewer.image.command.fitWidth"),
+          priority: 11,
+          group: "secondary",
+          disabled: fitMode === "width",
+          onTrigger: () => handleFitMode("width"),
+        },
+        {
+          id: "fit-height",
+          label: t("viewer.image.command.fitHeight"),
+          priority: 12,
+          group: "secondary",
+          disabled: fitMode === "height",
+          onTrigger: () => handleFitMode("height"),
+        },
+        {
+          id: "actual-size",
+          label: t("viewer.image.command.actualSize"),
+          priority: 13,
+          group: "secondary",
+          disabled: fitMode === "actual" && manualZoom === 1,
+          onTrigger: () => handleFitMode("actual"),
+        },
+        {
+          id: "zoom-out",
+          label: t("viewer.image.command.zoomOut"),
+          priority: 20,
+          group: "secondary",
+          onTrigger: handleZoomOut,
+        },
+        {
+          id: "zoom-in",
+          label: t("viewer.image.command.zoomIn"),
+          priority: 21,
+          group: "secondary",
+          onTrigger: handleZoomIn,
+        },
+        {
+          id: "rotate",
+          label: t("viewer.image.command.rotate"),
+          priority: 22,
+          group: "secondary",
+          onTrigger: handleRotate,
+        },
+        {
+          id: "download",
+          label: t("viewer.image.command.download"),
+          priority: 23,
+          group: "secondary",
+          onTrigger: handleDownload,
+        },
+        {
+          id: "fullscreen",
+          label: t("viewer.image.command.fullscreen"),
+          priority: 24,
+          group: "secondary",
+          onTrigger: handleFullscreen,
+        },
+        {
+          id: "reset",
+          label: t("viewer.image.command.reset"),
+          priority: 25,
+          group: "secondary",
+          onTrigger: handleReset,
+        },
+      ],
+    });
+
+    return () => clearCommandBarState(paneId);
+  }, [
+    clearCommandBarState,
+    fileName,
+    filePath,
+    fitMode,
+    handleDownload,
+    handleFitMode,
+    handleFullscreen,
+    handleReset,
+    handleRotate,
+    handleZoomIn,
+    handleZoomOut,
+    manualZoom,
+    paneId,
+    setCommandBarState,
+    t,
+  ]);
 
   // Pan handlers for dragging
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -241,14 +388,6 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
     setIsPanning(false);
   };
 
-  // Format file size info
-  const formatSize = () => {
-    if (naturalSize.width === 0) return "";
-    const { width, height } = naturalSize;
-    const megapixels = (width * height) / 1000000;
-    return `${width} × ${height} (${megapixels.toFixed(1)} MP)`;
-  };
-
   // Determine if image is "large" or has unusual aspect ratio
   const isLargeImage = naturalSize.width > 2000 || naturalSize.height > 2000;
   const aspectRatio = naturalSize.height / naturalSize.width;
@@ -257,102 +396,18 @@ export function ImageViewer({ content, fileName, mimeType }: ImageViewerProps) {
   if (!imageUrl) {
     return (
       <div className="flex h-full items-center justify-center bg-background">
-        <span className="text-sm text-muted-foreground">Loading image...</span>
+        <span className="text-sm text-muted-foreground">{t("viewer.image.loading")}</span>
       </div>
     );
   }
 
   return (
     <div ref={containerRef} className="flex h-full flex-col bg-background">
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/50 px-4 py-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm font-medium truncate">{fileName}</span>
-          {naturalSize.width > 0 && (
-            <span className="text-xs text-muted-foreground whitespace-nowrap">
-              {formatSize()}
-            </span>
-          )}
-        </div>
-        
-        <div className="flex items-center gap-1 flex-wrap">
-          {/* Fit mode buttons */}
-          <div className="flex items-center border rounded-md overflow-hidden mr-2">
-            <Button
-              variant={fitMode === "fit" ? "secondary" : "ghost"}
-              size="sm"
-              className="rounded-none h-7 px-2 text-xs"
-              onClick={() => handleFitMode("fit")}
-              title="Fit to view"
-            >
-              <Minimize2 className="h-3 w-3 mr-1" />
-              Fit
-            </Button>
-            <Button
-              variant={fitMode === "width" ? "secondary" : "ghost"}
-              size="sm"
-              className="rounded-none h-7 px-2 text-xs border-l"
-              onClick={() => handleFitMode("width")}
-              title="Fit to width"
-            >
-              W
-            </Button>
-            <Button
-              variant={fitMode === "height" ? "secondary" : "ghost"}
-              size="sm"
-              className="rounded-none h-7 px-2 text-xs border-l"
-              onClick={() => handleFitMode("height")}
-              title="Fit to height"
-            >
-              H
-            </Button>
-            <Button
-              variant={fitMode === "actual" ? "secondary" : "ghost"}
-              size="sm"
-              className="rounded-none h-7 px-2 text-xs border-l"
-              onClick={() => handleFitMode("actual")}
-              title="Actual size (100%)"
-            >
-              1:1
-            </Button>
-          </div>
-
-          {/* Zoom controls */}
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleZoomOut} title="Zoom Out">
-            <ZoomOut className="h-4 w-4" />
-          </Button>
-          <span className="min-w-[3.5rem] text-center text-xs text-muted-foreground">
-            {Math.round(zoom * 100)}%
-          </span>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleZoomIn} title="Zoom In">
-            <ZoomIn className="h-4 w-4" />
-          </Button>
-          
-          <div className="mx-1 h-4 w-px bg-border" />
-          
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleRotate} title="Rotate 90°">
-            <RotateCw className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleFullscreen} title="Fullscreen">
-            <Maximize2 className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleDownload} title="Download">
-            <Download className="h-4 w-4" />
-          </Button>
-          
-          <div className="mx-1 h-4 w-px bg-border" />
-          
-          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={handleReset}>
-            Reset
-          </Button>
-        </div>
-      </div>
-
       {/* Hint for large/unusual aspect ratio images */}
       {(isLargeImage || isUnusualAspect) && (
         <div className="flex items-center justify-center gap-2 bg-muted/30 px-4 py-1 text-xs text-muted-foreground">
           <Move className="h-3 w-3" />
-          <span>Drag to pan • Ctrl+Scroll to zoom</span>
+          <span>{t("viewer.image.hint.panZoom")}</span>
         </div>
       )}
 

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { AlertTriangle, Check, ChevronDown, Loader2, RefreshCw } from "lucide-react";
 import { buildNotebookRuntimeMessage, getLanguagePreferenceKey, getNotebookKernelPreferenceOrigin } from "@/lib/runner/preferences";
+import { useI18n } from "@/hooks/use-i18n";
 import { isTauriHost } from "@/lib/storage-adapter";
 import type { PythonEnvironmentInfo, RunnerType } from "@/lib/runner/types";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -34,14 +35,17 @@ interface KernelSelectorProps {
   notebookKernelLabel?: string | null;
 }
 
-function buildPyodideOption(isDesktopHost: boolean): KernelOption {
+function buildPyodideOption(
+  isDesktopHost: boolean,
+  t: (key: Parameters<ReturnType<typeof useI18n>["t"]>[0], params?: Record<string, string | number>) => string,
+): KernelOption {
   return {
     id: "pyodide",
     runnerType: "python-pyodide",
-    displayName: isDesktopHost ? "Pyodide（应急回退）" : "Pyodide（浏览器内核）",
+    displayName: isDesktopHost ? t("workbench.notebook.kernel.pyodideFallback") : t("workbench.notebook.kernel.pyodideBrowser"),
     description: isDesktopHost
-      ? "仅在本地解释器不可用或临时排障时使用，不应作为桌面端默认运行器。"
-      : "浏览器内 Python，适合网页环境下的轻量执行。",
+      ? t("workbench.notebook.kernel.localFallback")
+      : t("workbench.notebook.kernel.browserDescription"),
   };
 }
 
@@ -82,6 +86,7 @@ export function KernelSelector({
   notebookLanguage,
   notebookKernelLabel,
 }: KernelSelectorProps) {
+  const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [kernelOptions, setKernelOptions] = useState<KernelOption[]>([]);
@@ -105,9 +110,7 @@ export function KernelSelector({
   const detectEnvironments = useCallback(async () => {
     if (!isNotebookLanguageSupported) {
       setKernelOptions([]);
-      setRuntimeMessage(
-        `当前 Notebook 内核为 ${notebookKernelLabel ?? notebookLanguage ?? "unknown"}，本轮仅支持 Python Notebook 执行。`,
-      );
+      setRuntimeMessage(t("workbench.notebook.runtime.unsupported", { kernel: notebookKernelLabel ?? notebookLanguage ?? "unknown" }));
       setIsLoading(false);
       return;
     }
@@ -116,7 +119,7 @@ export function KernelSelector({
     setRuntimeMessage(null);
 
     try {
-      const fallback = buildPyodideOption(isDesktopHost);
+      const fallback = buildPyodideOption(isDesktopHost, t);
       let options: KernelOption[] = [fallback];
       let localOptions: KernelOption[] = [];
       const snapshot = await refreshRunnerHealth();
@@ -157,7 +160,7 @@ export function KernelSelector({
           const preferredOption = preferredEnvironment
             ? localOptions.find((option) => option.command === preferredEnvironment.path) ?? options[0]
             : options[0];
-          onKernelChange(decorateKernelOption(preferredOption, "detected", "自动探测"));
+          onKernelChange(decorateKernelOption(preferredOption, "detected", t("workbench.notebook.kernel.detected")));
           return;
         }
         if (matchedCurrent.id !== currentKernel?.id) {
@@ -167,53 +170,55 @@ export function KernelSelector({
       }
 
       const preferredOption = recent?.runnerType === "python-pyodide"
-        ? decorateKernelOption(fallback, "fallback", "当前入口回退")
+        ? decorateKernelOption(fallback, "fallback", t("workbench.notebook.kernel.currentEntryFallback"))
         : preferredEnvironment
           ? decorateKernelOption(
               localOptions.find((option) => option.command === preferredEnvironment.path) ?? options[0],
               recent?.command === preferredEnvironment.path ? "current-entry" : runnerPreferences.defaultPythonPath === preferredEnvironment.path ? "workspace-default" : notebookKernelLabel ? "metadata" : "detected",
               recent?.command === preferredEnvironment.path
-                ? "当前 Notebook 选择"
+                ? t("workbench.notebook.kernel.currentEntry")
                 : runnerPreferences.defaultPythonPath === preferredEnvironment.path
-                  ? "工作区默认"
+                  ? t("workbench.notebook.kernel.workspaceDefault")
                   : notebookKernelLabel
-                    ? `Notebook 元数据 (${notebookKernelLabel})`
-                    : "自动探测",
+                    ? t("workbench.notebook.kernel.metadata", { kernel: notebookKernelLabel })
+                    : t("workbench.notebook.kernel.detected"),
             )
-          : decorateKernelOption(options[0], options[0].runnerType === "python-pyodide" ? "fallback" : "detected", options[0].runnerType === "python-pyodide" ? "Pyodide 回退" : "自动探测");
+          : decorateKernelOption(
+              options[0],
+              options[0].runnerType === "python-pyodide" ? "fallback" : "detected",
+              options[0].runnerType === "python-pyodide" ? t("workbench.notebook.kernel.pyodideFallback") : t("workbench.notebook.kernel.detected"),
+            );
 
       if (!currentKernel || preferredOption.id !== currentKernel.id) {
         onKernelChange(preferredOption);
       }
     } catch (error) {
       console.error("Failed to detect notebook runtimes:", error);
-      const fallback = buildPyodideOption(isDesktopHost);
+      const fallback = buildPyodideOption(isDesktopHost, t);
       setKernelOptions([fallback]);
       setRuntimeMessage(
         isDesktopHost
-          ? "桌面运行器探测失败，当前只保留 Pyodide 应急回退。请刷新运行器列表并检查本地 Python 环境。"
-          : "网页环境下仅提供 Pyodide 浏览器内核。",
+          ? t("workbench.notebook.kernel.desktopDetectionFailed")
+          : t("workbench.notebook.kernel.webOnly"),
       );
       if (!currentKernel) {
-        onKernelChange(decorateKernelOption(fallback, "fallback", "Pyodide 回退"));
+        onKernelChange(decorateKernelOption(fallback, "fallback", t("workbench.notebook.kernel.pyodideFallback")));
       }
     } finally {
       setIsLoading(false);
     }
-  }, [currentKernel, fileKey, isDesktopHost, isNotebookLanguageSupported, notebookKernelLabel, notebookLanguage, onKernelChange, refreshRunnerHealth, runnerPreferences]);
+  }, [currentKernel, fileKey, isDesktopHost, isNotebookLanguageSupported, notebookKernelLabel, notebookLanguage, onKernelChange, refreshRunnerHealth, runnerPreferences, t]);
 
   useEffect(() => {
     if (!isNotebookLanguageSupported) {
-      setRuntimeMessage(
-        `当前 Notebook 内核为 ${notebookKernelLabel ?? notebookLanguage ?? "unknown"}，本轮仅支持 Python Notebook 执行。`,
-      );
+      setRuntimeMessage(t("workbench.notebook.runtime.unsupported", { kernel: notebookKernelLabel ?? notebookLanguage ?? "unknown" }));
       setKernelOptions([]);
     }
-  }, [isNotebookLanguageSupported, notebookKernelLabel, notebookLanguage]);
+  }, [isNotebookLanguageSupported, notebookKernelLabel, notebookLanguage, t]);
 
   const handleSelect = (kernel: KernelOption) => {
     const recentKey = filePath ?? "__notebook__";
-    const nextKernel = decorateKernelOption(kernel, "manual", "手动选择");
+    const nextKernel = decorateKernelOption(kernel, "manual", t("workbench.notebook.kernel.manual"));
     setRecentRunConfig(recentKey, {
       runnerType: kernel.runnerType,
       command: kernel.command,
@@ -246,14 +251,14 @@ export function KernelSelector({
         {isLoading ? (
           <>
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            <span>检测运行环境...</span>
+            <span>{t("workbench.notebook.kernel.detecting")}</span>
           </>
         ) : (
           <>
             <span className="font-medium">
               {isNotebookLanguageSupported
-                ? currentKernel?.displayName || "选择运行器"
-                : `不支持的内核：${notebookKernelLabel ?? notebookLanguage ?? "unknown"}`}
+                ? currentKernel?.displayName || t("workbench.notebook.kernel.select")
+                : t("workbench.notebook.kernel.unsupportedLabel", { kernel: notebookKernelLabel ?? notebookLanguage ?? "unknown" })}
             </span>
             <ChevronDown className="h-3.5 w-3.5" />
           </>
@@ -266,7 +271,9 @@ export function KernelSelector({
           <div className="absolute top-full left-0 mt-1 w-[28rem] bg-card border border-border rounded-lg shadow-lg z-50 overflow-hidden">
             <div className="max-h-96 overflow-y-auto">
               <div className="border-b border-border px-4 py-3 text-xs text-muted-foreground">
-                当前环境：{isDesktopHost ? "桌面运行时" : "网页运行时"}
+                {t("workbench.notebook.kernel.currentHost", {
+                  host: isDesktopHost ? t("workbench.runner.manager.desktop") : t("workbench.runner.manager.web"),
+                })}
               </div>
 
               {runtimeMessage && (
@@ -295,11 +302,11 @@ export function KernelSelector({
                       <span className="font-medium text-sm">{kernel.displayName}</span>
                       {kernel.runnerType === "python-pyodide" ? (
                         <span className="text-xs px-1.5 py-0.5 bg-yellow-500/10 text-yellow-700 dark:text-yellow-300 rounded">
-                          {isDesktopHost ? "Fallback" : "Browser"}
+                          {isDesktopHost ? t("workbench.badge.fallback") : t("workbench.badge.browser")}
                         </span>
                       ) : (
                         <span className="text-xs px-1.5 py-0.5 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 rounded">
-                          Desktop
+                          {t("workbench.badge.desktop")}
                         </span>
                       )}
                     </div>
@@ -316,13 +323,13 @@ export function KernelSelector({
                   className="w-full flex items-center gap-2 rounded px-3 py-2 text-sm text-muted-foreground hover:bg-muted transition-colors"
                 >
                   <RefreshCw className="h-4 w-4" />
-                  <span>刷新运行器列表</span>
+                  <span>{t("workbench.notebook.kernel.refresh")}</span>
                 </button>
                 <WorkspaceRunnerManager
                   cwd={cwd}
                   fileKey={fileKey}
-                  title="Notebook Runner Manager"
-                  triggerLabel="打开运行器管理"
+                  title={t("workbench.runner.managerNotebook")}
+                  triggerLabel={t("workbench.runner.trigger")}
                   triggerClassName="w-full justify-center rounded px-3 py-2 text-sm hover:bg-muted"
                 />
               </div>

@@ -22,12 +22,13 @@ import { useFileSystem } from "@/hooks/use-file-system";
 import { getAllPaneIds, findPane } from "@/lib/layout-utils";
 import { cn } from "@/lib/utils";
 import { FileContextMenu, DeleteConfirmDialog } from "./file-context-menu";
-import { resolveEntry, type EntryKind } from "@/lib/file-operations";
+import type { EntryKind } from "@/lib/file-operations";
 import {
   createPdfItemNote,
   ensurePdfItemWorkspace,
 } from "@/lib/pdf-item";
 import { generateFileId } from "@/lib/universal-annotation-storage";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface TreeNodeProps {
   node: TreeNode;
@@ -172,6 +173,7 @@ interface FileNodeProps {
 }
 
 function FileNodeComponent({ node, depth }: FileNodeProps) {
+  const { t } = useI18n();
   const toggleDirectory = useWorkspaceStore((state) => state.toggleDirectory);
   const openFileInPane = useWorkspaceStore((state) => state.openFileInPane);
   const closeTabsByPath = useWorkspaceStore((state) => state.closeTabsByPath);
@@ -387,7 +389,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
                 toggleDirectory(node.path);
               }}
               className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
-              title={node.isExpanded ? "折叠条目子项" : "展开条目子项"}
+              title={node.isExpanded ? t("explorer.pdf.collapseChildren") : t("explorer.pdf.expandChildren")}
             >
               <ChevronIcon className="h-4 w-4 shrink-0" />
             </button>
@@ -442,8 +444,8 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
           x={contextMenu.x}
           y={contextMenu.y}
           actions={node.extension === "pdf" && !node.isVirtual ? [
-            { label: "新建阅读笔记", onSelect: () => void handleCreatePdfNote("note") },
-            { label: "新建 Notebook", onSelect: () => void handleCreatePdfNote("notebook") },
+            { label: t("explorer.pdf.newNote"), onSelect: () => void handleCreatePdfNote("note") },
+            { label: t("explorer.pdf.newNotebook"), onSelect: () => void handleCreatePdfNote("notebook") },
           ] : undefined}
           onCopy={() => setExplorerClipboardForPath(node.path, "file", "copy")}
           onCut={() => setExplorerClipboardForPath(node.path, "file", "cut")}

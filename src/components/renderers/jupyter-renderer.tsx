@@ -5,10 +5,14 @@ import { MarkdownRenderer } from "./markdown-renderer";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import type { PaneId } from "@/types/layout";
+import { useI18n } from "@/hooks/use-i18n";
 import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
+import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
 import { OutputArea } from "@/components/notebook/output-area";
 import { jupyterOutputsToExecutionOutputs } from "@/lib/runner/output-utils";
 
@@ -133,7 +137,15 @@ function NotebookCell({
  * Renders .ipynb notebook files in read-only mode
  */
 export function JupyterRenderer({ content, fileName, paneId, filePath, rootHandle = null }: JupyterRendererProps) {
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const persistedViewStateKey = buildPersistedFileViewStateKey({
+    kind: "jupyter-readonly",
+    workspaceRootPath,
+    filePath,
+    fallbackName: fileName,
+  });
   const [selectionHubState, setSelectionHubState] = useState<{
     context: SelectionContext;
     mode: SelectionAiMode;
@@ -170,12 +182,17 @@ export function JupyterRenderer({ content, fileName, paneId, filePath, rootHandl
     }
   );
 
+  usePersistedViewState({
+    storageKey: persistedViewStateKey,
+    containerRef,
+  });
+
   if (!notebook) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-8">
-        <p className="text-destructive">Error: Invalid Jupyter notebook format</p>
+        <p className="text-destructive">{t("viewer.jupyter.error")}</p>
         <p className="mt-2 text-sm text-muted-foreground">
-          The file could not be parsed as a valid .ipynb file.
+          {t("viewer.jupyter.errorDescription")}
         </p>
       </div>
     );
@@ -194,12 +211,11 @@ export function JupyterRenderer({ content, fileName, paneId, filePath, rootHandl
         returnFocusTo={selectionHubState?.returnFocusTo}
         onClose={() => setSelectionHubState(null)}
       />
-      {/* File header */}
-      <div className="mb-6 border-b border-border pb-4">
-        <h1 className="font-serif text-2xl font-bold text-foreground">{fileName}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {notebook.cells.length} cells • nbformat {notebook.nbformat}.{notebook.nbformat_minor}
-        </p>
+      <div className="mb-5 rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+        {t("viewer.jupyter.meta", {
+          count: notebook.cells.length,
+          version: `${notebook.nbformat}.${notebook.nbformat_minor}`,
+        })}
       </div>
 
       {/* Cells */}

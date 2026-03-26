@@ -565,19 +565,19 @@ export function ImageTldrawAdapter({
   }, [diagnosticsSampleNonce, editor, imageSize.height, imageSize.width, isReady]);
 
   // Tool handlers
-  const setTool = (toolId: string) => editor?.setCurrentTool(toolId);
-  const handleZoomIn = () => editor?.zoomIn();
-  const handleZoomOut = () => editor?.zoomOut();
-  const handleUndo = () => editor?.undo();
-  const handleRedo = () => editor?.redo();
+  const setTool = useCallback((toolId: string) => editor?.setCurrentTool(toolId), [editor]);
+  const handleZoomIn = useCallback(() => editor?.zoomIn(), [editor]);
+  const handleZoomOut = useCallback(() => editor?.zoomOut(), [editor]);
+  const handleUndo = useCallback(() => editor?.undo(), [editor]);
+  const handleRedo = useCallback(() => editor?.redo(), [editor]);
   
-  const handleClearAll = () => {
+  const handleClearAll = useCallback(() => {
     if (!editor) return;
     const shapes = editor.getCurrentPageShapes().filter(s => s.type !== 'image').map(s => s.id);
     if (shapes.length > 0) editor.deleteShapes(shapes);
-  };
+  }, [editor]);
 
-  const handleDownload = () => {
+  const handleDownload = useCallback(() => {
     if (imageUrl) {
       const a = document.createElement('a');
       a.href = imageUrl;
@@ -586,7 +586,7 @@ export function ImageTldrawAdapter({
       a.click();
       document.body.removeChild(a);
     }
-  };
+  }, [fileName, imageUrl]);
 
   const handleAnnotationClick = useCallback((annotation: AnnotationItem) => {
     if (annotation.target.type === 'image' && editor && imageSize.width > 0) {

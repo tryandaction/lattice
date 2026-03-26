@@ -134,6 +134,8 @@ interface WorkspaceState {
   resizePanes: (splitId: string, sizes: number[]) => void;
   setCommandBarState: (paneId: PaneId, state: CommandBarState) => void;
   clearCommandBarState: (paneId: PaneId) => void;
+  restoreWorkbenchState: (layout: LayoutState, sidebarCollapsed?: boolean) => void;
+  resetWorkbenchState: (sidebarCollapsed?: boolean) => void;
 
   // Tab actions
   openFileInPane: (paneId: PaneId, handle: FileSystemFileHandle, path: string) => void;
@@ -347,6 +349,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const next = { ...state.commandBarByPane };
       delete next[paneId];
       return { commandBarByPane: next };
+    }),
+
+  restoreWorkbenchState: (layout, sidebarCollapsed = false) =>
+    set({
+      layout,
+      sidebarCollapsed,
+      commandBarByPane: {},
+    }),
+
+  resetWorkbenchState: (sidebarCollapsed = false) =>
+    set({
+      layout: createInitialLayout(),
+      sidebarCollapsed,
+      commandBarByPane: {},
     }),
 
   // Tab actions

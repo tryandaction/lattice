@@ -5,6 +5,7 @@ import { Code2, Eye } from "lucide-react";
 import { LivePreviewEditor, type LivePreviewEditorRef } from "@/components/editor/codemirror/live-preview/live-preview-editor";
 import type { ViewMode } from "@/components/editor/codemirror/live-preview/types";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface MarkdownCellProps {
   source: string;
@@ -57,6 +58,7 @@ export function MarkdownCell({
   filePath,
   cellId,
 }: MarkdownCellProps) {
+  const { t } = useI18n();
   const [mode, setMode] = useState<ViewMode>("live");
   const editorRef = useRef<LivePreviewEditorRef>(null);
 
@@ -87,10 +89,10 @@ export function MarkdownCell({
     >
       {isActive && (
         <div className="flex items-center justify-between border-b border-border bg-muted/40 px-2 py-1.5">
-          <span className="text-[11px] text-muted-foreground">Markdown Cell</span>
+          <span className="text-[11px] text-muted-foreground">{t("notebook.cell.markdown")}</span>
           <div className="inline-flex items-center gap-1 rounded-md bg-muted p-1">
-            <ModeButton mode="live" currentMode={mode} onClick={() => setMode("live")} icon={Eye} label="Live" />
-            <ModeButton mode="source" currentMode={mode} onClick={() => setMode("source")} icon={Code2} label="Source" />
+            <ModeButton mode="live" currentMode={mode} onClick={() => setMode("live")} icon={Eye} label={t("workbench.commandBar.live")} />
+            <ModeButton mode="source" currentMode={mode} onClick={() => setMode("source")} icon={Code2} label={t("workbench.commandBar.source")} />
           </div>
         </div>
       )}

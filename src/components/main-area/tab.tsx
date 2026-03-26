@@ -10,6 +10,7 @@ import {
   Presentation,
   BookOpen,
 } from "lucide-react";
+import { useI18n } from "@/hooks/use-i18n";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { TabState, PaneId, TabDragData } from "@/types/layout";
@@ -73,6 +74,7 @@ export function Tab({
   onClose,
   isDraggable = true,
 }: TabProps) {
+  const { t } = useI18n();
   const extension = getFileExtension(tab.fileName);
 
   // Set up sortable for drag-and-drop
@@ -123,13 +125,13 @@ export function Tab({
       {...attributes}
       {...listeners}
       className={cn(
-        "group flex h-8 min-w-0 max-w-[180px] cursor-pointer items-center gap-1.5 border-r border-border px-2",
+        "group flex h-8 min-w-0 max-w-[168px] cursor-pointer items-center gap-1.5 border-r border-border px-2",
         "transition-colors duration-100",
         isActive
           ? (isPaneActive
-            ? "bg-background border-t-2 border-t-blue-500"
-            : "bg-muted/40 border-t-2 border-t-blue-500/40")
-          : "bg-muted/50 hover:bg-muted border-t-2 border-t-transparent",
+            ? "bg-background border-t-2 border-t-blue-500 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.45)]"
+            : "bg-muted/35 border-t-2 border-t-blue-500/30")
+          : "bg-muted/35 hover:bg-muted/60 border-t-2 border-t-transparent",
         isDragging && "opacity-50 shadow-lg z-50"
       )}
       onClick={onClick}
@@ -151,7 +153,7 @@ export function Tab({
       
       {/* Dirty Indicator */}
       {tab.isDirty && (
-        <span className="h-2 w-2 shrink-0 rounded-full bg-blue-500" title="Unsaved changes" />
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" title={t("tab.unsaved")} />
       )}
       
       {/* Close Button */}
@@ -163,7 +165,7 @@ export function Tab({
           isActive && "opacity-100",
           "hover:bg-accent"
         )}
-        title="Close"
+        title={t("common.close")}
       >
         <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
       </button>

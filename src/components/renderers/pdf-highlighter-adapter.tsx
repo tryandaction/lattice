@@ -21,8 +21,6 @@ import type {
   Content as PdfHighlightContent,
 } from "react-pdf-highlighter";
 import {
-  ZoomIn,
-  ZoomOut,
   Loader2,
   StickyNote,
   MessageSquare,
@@ -31,23 +29,17 @@ import {
   Highlighter,
   Underline,
   Type,
-  Square,
-  Pencil,
   ChevronDown,
-  Maximize2,
-  PanelRightOpen,
-  PanelRightClose,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAnnotationSystem } from "@/hooks/use-annotation-system";
 import { useAnnotationNavigation } from "@/hooks/use-annotation-navigation";
 import { useInkAnnotation, type MergedInkAnnotation, type InkStroke } from "@/hooks/use-ink-annotation";
 import { HIGHLIGHT_COLORS, BACKGROUND_COLORS, TEXT_COLORS, TEXT_FONT_SIZES, DEFAULT_TEXT_STYLE } from "@/lib/annotation-colors";
-import { PDFExportButton } from "./pdf-export-button";
+import { exportPdfWithAnnotations } from "./pdf-export-button";
 import { PdfAnnotationSidebar } from "./pdf-annotation-sidebar";
 import { PdfItemWorkspacePanel } from "./pdf-item-workspace-panel";
 import { InkSessionIndicator } from "./ink-session-indicator";
-import { InkColorPicker, InkWidthPicker } from "./ink-color-picker";
 import { adjustPopupPosition, type PopupSize } from "@/lib/coordinate-adapter";
 import type { AnnotationItem, PdfTarget, BoundingBox } from "@/types/universal-annotation";
 import { useInkAnnotationStore } from "@/stores/ink-annotation-store";
@@ -78,7 +70,6 @@ import {
   type AnnotationBacklink,
 } from "@/lib/annotation-backlinks";
 import { navigateLink } from "@/lib/link-router/navigate-link";
-import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import {
   buildPdfEditorState,
@@ -110,6 +101,7 @@ import {
   type PdfTransientSelectionRect,
   updatePdfSelectionSession,
 } from "@/lib/pdf-selection-session";
+import { buildPersistedFileViewStateKey, loadPersistedFileViewState, savePersistedFileViewState } from "@/lib/file-view-state";
 
 import "react-pdf-highlighter/dist/style.css";
 import "./pdf-highlighter-adapter.css";
@@ -328,16 +320,6 @@ function buildPdfTransientSelection(input: {
 type AnnotationTool = 'select' | 'highlight' | 'underline' | 'note' | 'text' | 'area' | 'ink';
 const MIN_INK_POINT_DELTA_SQUARED = 0.000004;
 const MIN_SCROLL_OVERFLOW_PX = 24;
-
-// Fit width icon component (Zotero style)
-function FitWidthIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <path d="M7 12h10M7 12l2-2M7 12l2 2M17 12l-2-2M17 12l-2 2" />
-    </svg>
-  );
-}
 
 // ============================================================================
 // Custom Highlight Component (supports colors and underline)
@@ -1319,7 +1301,6 @@ function TextAnnotationPortal({ annotation, page, scale, paneRootRef, onClick, i
     // Enable pointer events for the text annotation
     overlay.style.pointerEvents = 'auto';
     
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setContainer(overlay);
 
     return () => {
@@ -1436,7 +1417,6 @@ function InkAnnotationPortal({ annotation, page, scale, paneRootRef }: InkAnnota
       pageElement.appendChild(overlay);
     }
     
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setContainer(overlay);
 
     return () => {
@@ -1524,7 +1504,6 @@ function CurrentInkPathPortal({ path, page, color, scale, paneRootRef }: Current
       pageElement.appendChild(overlay);
     }
     
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setContainer(overlay);
 
     return () => {
@@ -1656,6 +1635,16 @@ export function PDFHighlighterAdapter({
   filePath,
 }: PDFHighlighterAdapterProps) {
   const { t } = useI18n();
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const persistedPdfViewStateKey = useMemo(
+    () => buildPersistedFileViewStateKey({
+      kind: "pdf",
+      workspaceRootPath,
+      filePath,
+      fallbackName: fileName,
+    }),
+    [fileName, filePath, workspaceRootPath],
+  );
   const cachedPdfViewState = useMemo(() => {
     return readCachedPdfViewState(useContentCacheStore.getState().getEditorState(fileId));
   }, [fileId]);
@@ -1687,15 +1676,15 @@ export function PDFHighlighterAdapter({
   const [scale, setScale] = useState(cachedPdfViewState?.scale ?? 1.2);
   const [zoomMode, setZoomMode] = useState<PdfZoomMode>(cachedPdfViewState?.zoomMode ?? 'fit-width');
   const [activeTool, setActiveTool] = useState<AnnotationTool>('select');
-  const [activeColor, setActiveColor] = useState('#FFEB3B'); // Yellow default
+  const [activeColor] = useState('#FFEB3B'); // Yellow default
   const [pendingPin, setPendingPin] = useState<{ x: number; y: number; page: number } | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string | null>(null);
-  const [showColorPicker, setShowColorPicker] = useState(false);
   const [showSidebar, setShowSidebar] = useState(cachedPdfViewState?.showSidebar ?? false);
-  const [sidebarSize, setSidebarSize] = useState(28);
-  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
+  const [sidebarSize, setSidebarSize] = useState(cachedPdfViewState?.sidebarSize ?? 28);
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(cachedPdfViewState?.selectedAnnotationId ?? null);
   const [currentAnchorDebug, setCurrentAnchorDebug] = useState<PdfViewAnchor | null>(cachedPdfViewState?.anchor ?? null);
+  const [persistedPdfViewState, setPersistedPdfViewState] = useState(() => cachedPdfViewState ?? null);
   const manifestSeedId = useMemo(() => generateFileId(filePath), [filePath]);
   const annotationMirrorTimeoutRef = useRef<number | null>(null);
   const canManagePdfItemWorkspace = useMemo(() => {
@@ -1766,6 +1755,58 @@ export function PDFHighlighterAdapter({
   }, [canManagePdfItemWorkspace, pdfItemManifest, refreshAnnotationBacklinks, showSidebar]);
 
   useEffect(() => {
+    if (!persistedPdfViewStateKey) {
+      return;
+    }
+
+    let cancelled = false;
+    void loadPersistedFileViewState(persistedPdfViewStateKey).then((persistedState) => {
+      if (
+        cancelled ||
+        !persistedState ||
+        typeof persistedState.cursorPosition !== "number" ||
+        typeof persistedState.scrollTop !== "number"
+      ) {
+        return;
+      }
+
+      const nextPdfViewState = readCachedPdfViewState(persistedState);
+      if (!nextPdfViewState) {
+        return;
+      }
+
+      setPersistedPdfViewState(nextPdfViewState);
+
+      if (!cachedPdfViewState) {
+        saveEditorState(fileId, persistedState as {
+          cursorPosition: number;
+          scrollTop: number;
+          scrollLeft?: number;
+          selection?: { from: number; to: number };
+          viewState?: Record<string, unknown>;
+        });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cachedPdfViewState, fileId, persistedPdfViewStateKey, saveEditorState]);
+
+  useEffect(() => {
+    if (cachedPdfViewState || !persistedPdfViewState) {
+      return;
+    }
+
+    setScale(persistedPdfViewState.scale);
+    setZoomMode(persistedPdfViewState.zoomMode);
+    setShowSidebar(persistedPdfViewState.showSidebar);
+    setSidebarSize(persistedPdfViewState.sidebarSize ?? 28);
+    setSelectedAnnotationId(persistedPdfViewState.selectedAnnotationId ?? null);
+    setCurrentAnchorDebug(persistedPdfViewState.anchor ?? null);
+  }, [cachedPdfViewState, persistedPdfViewState]);
+
+  useEffect(() => {
     if (!pdfItemManifest || !canManagePdfItemWorkspace) {
       return;
     }
@@ -1800,10 +1841,6 @@ export function PDFHighlighterAdapter({
     };
   }, [annotations, canManagePdfItemWorkspace, fileName, filePath, manifestSeedId, pdfItemManifest, refreshAnnotationBacklinks, refreshDirectory, rootHandle]);
   const [restoreDebugState, setRestoreDebugState] = useState<PdfRestoreDebugState>(createIdleRestoreDebugState);
-  
-  // Ink style from store
-  const inkStyle = useInkAnnotationStore((state) => state.currentStyle);
-  const setInkStyle = useInkAnnotationStore((state) => state.setCurrentStyle);
   
   // Current stroke state (for real-time drawing preview)
   const [currentInkPath, setCurrentInkPath] = useState<{ x: number; y: number }[]>([]);
@@ -2276,6 +2313,8 @@ export function PDFHighlighterAdapter({
     scale: number;
     zoomMode: PdfZoomMode;
     showSidebar: boolean;
+    sidebarSize: number;
+    selectedAnnotationId: string | null;
     scrollTop: number;
     scrollLeft: number;
     anchor: PdfViewAnchor | null;
@@ -2285,6 +2324,8 @@ export function PDFHighlighterAdapter({
       input.scale.toFixed(4),
       input.zoomMode,
       input.showSidebar ? "1" : "0",
+      Math.round(input.sidebarSize),
+      input.selectedAnnotationId ?? "__none__",
       Math.round(input.scrollTop),
       Math.round(input.scrollLeft),
       anchor?.pageNumber ?? 0,
@@ -2305,6 +2346,8 @@ export function PDFHighlighterAdapter({
       scale,
       zoomMode,
       showSidebar,
+      sidebarSize,
+      selectedAnnotationId,
       anchor: anchor ?? undefined,
       scrollTop: viewerContainer?.scrollTop ?? 0,
       scrollLeft: viewerContainer?.scrollLeft ?? 0,
@@ -2314,6 +2357,8 @@ export function PDFHighlighterAdapter({
       scale,
       zoomMode,
       showSidebar,
+      sidebarSize,
+      selectedAnnotationId,
       scrollTop: editorState.scrollTop,
       scrollLeft: editorState.scrollLeft ?? 0,
       anchor,
@@ -2324,7 +2369,7 @@ export function PDFHighlighterAdapter({
       anchor,
       signature,
     };
-  }, [buildPersistSignature, captureCurrentPdfAnchor, getViewerScrollContainer, scale, showSidebar, zoomMode]);
+  }, [buildPersistSignature, captureCurrentPdfAnchor, getViewerScrollContainer, scale, selectedAnnotationId, showSidebar, sidebarSize, zoomMode]);
 
   const persistPdfViewStateNow = useCallback(() => {
     clearScheduledPersist();
@@ -2347,7 +2392,8 @@ export function PDFHighlighterAdapter({
     lastPersistedEditorStateRef.current = nextState;
     updateCurrentAnchorDebug(anchor);
     saveEditorState(fileId, nextState);
-  }, [buildCurrentPdfEditorStateSnapshot, clearScheduledPersist, fileId, saveEditorState, updateCurrentAnchorDebug]);
+    void savePersistedFileViewState(persistedPdfViewStateKey, nextState);
+  }, [buildCurrentPdfEditorStateSnapshot, clearScheduledPersist, fileId, persistedPdfViewStateKey, saveEditorState, updateCurrentAnchorDebug]);
 
   const persistLastKnownPdfViewState = useCallback(() => {
     const lastKnownState = lastPersistedEditorStateRef.current;
@@ -2356,7 +2402,8 @@ export function PDFHighlighterAdapter({
     }
 
     saveEditorState(fileId, lastKnownState);
-  }, [fileId, saveEditorState]);
+    void savePersistedFileViewState(persistedPdfViewStateKey, lastKnownState);
+  }, [fileId, persistedPdfViewStateKey, saveEditorState]);
 
   const schedulePersistPdfViewState = useCallback((delay = 180) => {
     clearScheduledPersist();
@@ -2397,7 +2444,7 @@ export function PDFHighlighterAdapter({
     }
 
     schedulePersistPdfViewState(120);
-  }, [scale, schedulePersistPdfViewState, showSidebar, zoomMode]);
+  }, [scale, schedulePersistPdfViewState, selectedAnnotationId, showSidebar, sidebarSize, zoomMode]);
 
   useEffect(() => {
     if (hasRestoredScrollRef.current) {
@@ -2801,23 +2848,90 @@ export function PDFHighlighterAdapter({
         {
           id: "toggle-sidebar",
           label: t("workbench.commandBar.sidebar"),
+          priority: 5,
+          group: "utility",
           onTrigger: () => setShowSidebar((value) => !value),
+        },
+        {
+          id: "tool-highlight",
+          label: t("pdf.command.highlight"),
+          priority: 10,
+          group: "primary",
+          onTrigger: () => setActiveTool((value) => (value === "highlight" ? "select" : "highlight")),
+        },
+        {
+          id: "tool-underline",
+          label: t("pdf.command.underline"),
+          priority: 11,
+          group: "primary",
+          onTrigger: () => setActiveTool((value) => (value === "underline" ? "select" : "underline")),
+        },
+        {
+          id: "tool-note",
+          label: t("pdf.command.note"),
+          priority: 12,
+          group: "primary",
+          onTrigger: () => setActiveTool((value) => (value === "note" ? "select" : "note")),
+        },
+        {
+          id: "tool-text",
+          label: t("pdf.command.text"),
+          priority: 13,
+          group: "primary",
+          onTrigger: () => setActiveTool((value) => (value === "text" ? "select" : "text")),
+        },
+        {
+          id: "tool-area",
+          label: t("pdf.command.area"),
+          priority: 14,
+          group: "primary",
+          onTrigger: () => setActiveTool((value) => (value === "area" ? "select" : "area")),
+        },
+        {
+          id: "tool-draw",
+          label: t("pdf.command.draw"),
+          priority: 15,
+          group: "primary",
+          onTrigger: () => setActiveTool((value) => (value === "ink" ? "select" : "ink")),
         },
         {
           id: "fit-width",
           label: t("pdf.fitWidth"),
+          priority: 30,
+          group: "secondary",
           disabled: zoomMode === "fit-width",
           onTrigger: () => applyZoomMode("fit-width"),
         },
         {
+          id: "fit-page",
+          label: t("pdf.fitPage"),
+          priority: 31,
+          group: "secondary",
+          disabled: zoomMode === "fit-page",
+          onTrigger: () => applyZoomMode("fit-page"),
+        },
+        {
           id: "zoom-in",
           label: t("pdf.zoomIn"),
+          priority: 32,
+          group: "secondary",
           onTrigger: zoomIn,
         },
         {
           id: "zoom-out",
           label: t("pdf.zoomOut"),
+          priority: 33,
+          group: "secondary",
           onTrigger: zoomOut,
+        },
+        {
+          id: "export",
+          label: t("workbench.commandBar.export"),
+          priority: 40,
+          group: "secondary",
+          onTrigger: () => {
+            void exportPdfWithAnnotations(content, annotations, fileName);
+          },
         },
       ],
     });
@@ -2825,8 +2939,11 @@ export function PDFHighlighterAdapter({
     return () => clearCommandBarState(paneId);
   }, [
     applyZoomMode,
+    annotations,
     clearCommandBarState,
+    content,
     filePath,
+    fileName,
     paneId,
     setCommandBarState,
     t,
@@ -2954,7 +3071,6 @@ export function PDFHighlighterAdapter({
             break;
           case 'escape':
             setActiveTool('select');
-            setShowColorPicker(false);
             break;
         }
       }
@@ -3361,6 +3477,7 @@ export function PDFHighlighterAdapter({
 
   // Handle sidebar annotation selection - scroll to exact annotation position
   const handleSidebarSelect = useCallback((annotation: AnnotationItem) => {
+    setShowSidebar(true);
     setSelectedAnnotationId(annotation.id);
     setHighlightedId(annotation.id);
 
@@ -3447,6 +3564,7 @@ export function PDFHighlighterAdapter({
   useAnnotationNavigation({
     handlers: {
       onPdfNavigate: (page, annotationId) => {
+        setShowSidebar(true);
         const annotation = annotationById.get(annotationId);
         if (annotation) {
           handleSidebarSelect(annotation);
@@ -3525,7 +3643,7 @@ export function PDFHighlighterAdapter({
   return (
     <div
       ref={containerRef}
-      className="lattice-pdf-viewer flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+      className="lattice-pdf-viewer relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
       data-file-id={fileId}
       data-pane-id={paneId}
       data-transient-selection-active={transientSelection ? "true" : "false"}
@@ -3550,267 +3668,27 @@ export function PDFHighlighterAdapter({
           {t("common.error")}: {annotationsError}
         </div>
       )}
-      
-      {/* Zotero-style Toolbar */}
-      <HorizontalScrollStrip
-        className="border-b border-border bg-muted/50"
-        viewportClassName="px-2 py-1.5"
-        contentClassName="min-w-full w-max justify-between gap-3"
-        ariaLabel={`${fileName} PDF 工具栏`}
-      >
-        {/* Left: Sidebar toggle + File name */}
-        <div className="flex shrink-0 items-center gap-2">
-          {/* Sidebar toggle button - moved to left side (Bug 6 fix) */}
-          <Button
-            variant={showSidebar ? "secondary" : "ghost"}
-            size="icon"
-            className="h-8 w-8 relative"
-            onClick={() => setShowSidebar(!showSidebar)}
-            title={showSidebar ? t("pdf.sidebar.hide") : t("pdf.sidebar.show")}
-          >
-            {showSidebar ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
-            {/* Badge showing annotation count when sidebar is closed */}
-            {!showSidebar && annotations.length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-[10px] rounded-full min-w-[16px] h-4 flex items-center justify-center px-1">
-                {annotations.length > 99 ? '99+' : annotations.length}
-              </span>
-            )}
-          </Button>
-          <span className="max-w-[18rem] truncate text-sm text-muted-foreground">
-            {fileName}
+      {activeTool !== 'select' ? (
+        <div className="pointer-events-none absolute bottom-4 left-4 z-20 rounded-md border border-border bg-background/92 px-3 py-2 text-xs text-muted-foreground shadow-sm backdrop-blur">
+          <span className="font-medium text-foreground">
+            {activeTool === 'highlight'
+              ? t("pdf.highlightHint")
+              : activeTool === 'underline'
+                ? t("pdf.underlineHint")
+                : activeTool === 'note'
+                  ? t("pdf.noteHint")
+                  : activeTool === 'text'
+                    ? t("pdf.textAnnotation.addTitle")
+                    : activeTool === 'area'
+                      ? t("pdf.areaHint")
+                      : t("pdf.drawHint")}
           </span>
         </div>
+      ) : null}
 
-        {/* Center: Annotation Tools (Zotero style) */}
-        <div className="flex shrink-0 items-center gap-0.5">
-          {/* Highlight tool with color picker */}
-          <div className="relative">
-            <Button
-              variant={activeTool === 'highlight' ? "secondary" : "ghost"}
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setActiveTool(activeTool === 'highlight' ? 'select' : 'highlight')}
-              title={t("pdf.tool.highlight")}
-            >
-              <Highlighter className="h-4 w-4" style={{ color: activeColor }} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-4 px-0"
-              onClick={() => setShowColorPicker(!showColorPicker)}
-            >
-              <ChevronDown className="h-3 w-3" />
-            </Button>
-            {showColorPicker && (
-              <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[140px]">
-                {HIGHLIGHT_COLORS.map((color) => (
-                  <button
-                    key={color.value}
-                    onClick={() => {
-                      setActiveColor(color.hex);
-                      setShowColorPicker(false);
-                    }}
-                    className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2 text-sm"
-                  >
-                    <div className="relative">
-                      <div 
-                        className="w-4 h-4 rounded-sm border border-black/10"
-                        style={{ backgroundColor: color.hex }}
-                      />
-                      {activeColor === color.hex && (
-                        <Check className="absolute -top-0.5 -right-0.5 h-3 w-3 text-foreground" />
-                      )}
-                    </div>
-                    <span>{color.nameCN}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Underline tool */}
-          <Button
-            variant={activeTool === 'underline' ? "secondary" : "ghost"}
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => setActiveTool(activeTool === 'underline' ? 'select' : 'underline')}
-            title={t("pdf.tool.underline")}
-          >
-            <Underline className="h-4 w-4" style={{ color: activeTool === 'underline' ? activeColor : undefined }} />
-          </Button>
-
-          {/* Sticky Note tool */}
-          <Button
-            variant={activeTool === 'note' ? "secondary" : "ghost"}
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => setActiveTool(activeTool === 'note' ? 'select' : 'note')}
-            title={t("pdf.tool.note")}
-          >
-            <StickyNote className="h-4 w-4 text-amber-500" />
-          </Button>
-
-          {/* Text tool */}
-          <Button
-            variant={activeTool === 'text' ? "secondary" : "ghost"}
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => setActiveTool(activeTool === 'text' ? 'select' : 'text')}
-            title={t("pdf.tool.text")}
-          >
-            <Type className="h-4 w-4" />
-          </Button>
-
-          {/* Area selection tool */}
-          <Button
-            variant={activeTool === 'area' ? "secondary" : "ghost"}
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => setActiveTool(activeTool === 'area' ? 'select' : 'area')}
-            title={t("pdf.tool.area")}
-          >
-            <Square className="h-4 w-4" />
-          </Button>
-
-          {/* Ink/Draw tool with color picker */}
-          <div className="flex items-center">
-            <Button
-              variant={activeTool === 'ink' ? "secondary" : "ghost"}
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setActiveTool(activeTool === 'ink' ? 'select' : 'ink')}
-              title={t("pdf.tool.draw")}
-            >
-              <Pencil className="h-4 w-4" style={{ color: activeTool === 'ink' ? inkStyle.color : undefined }} />
-            </Button>
-            {activeTool === 'ink' && (
-              <div className="flex items-center ml-1 pl-1 border-l border-border">
-                <InkColorPicker
-                  currentColor={inkStyle.color}
-                  onColorChange={(color) => setInkStyle({ color })}
-                  variant="button"
-                />
-                <InkWidthPicker
-                  currentWidth={inkStyle.width}
-                  onWidthChange={(width) => setInkStyle({ width })}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right: Zoom Controls (Zotero style) */}
-        <div className="flex shrink-0 items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={zoomOut}
-            disabled={scale <= ZOOM_MIN}
-            title={t("pdf.zoomOutShortcut")}
-          >
-            <ZoomOut className="h-4 w-4" />
-          </Button>
-          
-          <span
-            className="min-w-[3.5rem] text-center text-sm tabular-nums"
-            data-testid={`pdf-zoom-label-${paneId}`}
-          >
-            {zoomMode === 'fit-width' ? t("pdf.fitWidth") : zoomMode === 'fit-page' ? t("pdf.fitPage") : `${Math.round(scale * 100)}%`}
-          </span>
-          
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={zoomIn}
-            disabled={scale >= ZOOM_MAX}
-            title={t("pdf.zoomInShortcut")}
-          >
-            <ZoomIn className="h-4 w-4" />
-          </Button>
-
-          {/* Fit width button (Zotero style) */}
-          <Button
-            variant={zoomMode === 'fit-width' ? "secondary" : "ghost"}
-            size="icon"
-            className="h-8 w-8"
-            data-testid={`pdf-fit-width-${paneId}`}
-            onClick={() => applyZoomMode(zoomMode === 'fit-width' ? 'manual' : 'fit-width')}
-            title={t("pdf.fitWidth")}
-          >
-            <FitWidthIcon className="h-4 w-4" />
-          </Button>
-
-          <Button
-            variant={zoomMode === 'fit-page' ? "secondary" : "ghost"}
-            size="icon"
-            className="h-8 w-8"
-            data-testid={`pdf-fit-page-${paneId}`}
-            onClick={() => applyZoomMode(zoomMode === 'fit-page' ? 'manual' : 'fit-page')}
-            title={t("pdf.fitPage")}
-          >
-            <Maximize2 className="h-4 w-4" />
-          </Button>
-
-          <div className="mx-1 h-4 w-px bg-border" />
-
-          <PDFExportButton
-            originalContent={content}
-            annotations={annotations}
-            fileName={fileName}
-          />
-        </div>
-      </HorizontalScrollStrip>
-
-      {/* Tool hint bar */}
-      {activeTool !== 'select' && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-blue-200 bg-blue-50 px-4 py-1 text-xs text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300">
-          {activeTool === 'highlight' && (
-            <>
-              <Highlighter className="h-3 w-3" />
-              {t("pdf.highlightHint")}
-            </>
-          )}
-          {activeTool === 'underline' && (
-            <>
-              <Underline className="h-3 w-3" />
-              {t("pdf.underlineHint")}
-            </>
-          )}
-          {activeTool === 'note' && (
-            <>
-              <StickyNote className="h-3 w-3" />
-              {t("pdf.noteHint")}
-            </>
-          )}
-          {activeTool === 'text' && (
-            <>
-              <Type className="h-3 w-3" />
-              {t("pdf.textAnnotation.addTitle")}
-            </>
-          )}
-          {activeTool === 'area' && (
-            <>
-              <Square className="h-3 w-3" />
-              {t("pdf.areaHint")}
-            </>
-          )}
-          {activeTool === 'ink' && (
-            <>
-              <Pencil className="h-3 w-3" />
-              {t("pdf.drawHint")}
-            </>
-          )}
-          <button 
-            className="ml-auto text-blue-500 hover:text-blue-700"
-            onClick={() => setActiveTool('select')}
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </div>
-      )}
+      <span className="sr-only" data-testid={`pdf-zoom-label-${paneId}`}>
+        {zoomMode === 'fit-width' ? t("pdf.fitWidth") : zoomMode === 'fit-page' ? t("pdf.fitPage") : `${Math.round(scale * 100)}%`}
+      </span>
 
       {isDiagnosticsMode ? (
         <div className="sr-only" aria-hidden="true">

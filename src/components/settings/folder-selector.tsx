@@ -7,7 +7,7 @@ import { readDirectoryRecursive } from '@/hooks/use-file-system';
 import { createDesktopDirectoryHandle } from '@/lib/desktop-file-system';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useWorkspaceStore } from '@/stores/workspace-store';
-import { isTauri } from '@/lib/storage-adapter';
+import { getTauriInvoke, isTauri } from '@/lib/storage-adapter';
 import { useFileSystem } from '@/hooks/use-file-system';
 
 interface FolderSelectorProps {
@@ -37,9 +37,10 @@ export function FolderSelector({ compact = false, autoOpen = true, showNotFoundW
 
   // Check if folder exists (for Tauri mode)
   useEffect(() => {
-    if (showNotFoundWarning && defaultFolder && isTauri()) {
+    const invoke = getTauriInvoke();
+    if (showNotFoundWarning && defaultFolder && isTauri() && invoke) {
       // In Tauri, we can check if the folder exists
-      window.__TAURI__?.core.invoke<boolean>('plugin:fs|exists', { path: defaultFolder })
+      invoke<boolean>('desktop_exists_path', { path: defaultFolder })
         .then((exists: boolean) => {
           setFolderNotFound(!exists);
         })
@@ -73,9 +74,10 @@ export function FolderSelector({ compact = false, autoOpen = true, showNotFoundW
     setIsSelecting(true);
 
     try {
-      if (isTauri()) {
+      const invoke = getTauriInvoke();
+      if (isTauri() && invoke) {
         // Use Tauri dialog
-        const selected = await window.__TAURI__!.core.invoke<string | null>(
+        const selected = await invoke<string | null>(
           'plugin:dialog|open',
           {
             directory: true,

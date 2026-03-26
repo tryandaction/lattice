@@ -96,6 +96,8 @@ export interface CommandBarAction {
   label: string;
   icon?: string;
   disabled?: boolean;
+  priority?: number;
+  group?: "primary" | "secondary" | "utility";
   onTrigger?: () => void;
 }
 

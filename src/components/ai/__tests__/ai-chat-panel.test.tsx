@@ -19,7 +19,7 @@ vi.mock('@/lib/storage-adapter', () => ({
 
 vi.mock('@/hooks/use-i18n', () => ({
   useI18n: () => ({
-    t: (key: string) => {
+    t: (key: string, params?: Record<string, string | number>) => {
       const mapping: Record<string, string> = {
         'chat.title': 'AI Chat',
         'chat.newChat': 'New Chat',
@@ -33,8 +33,25 @@ vi.mock('@/hooks/use-i18n', () => ({
         'chat.placeholder': 'Ask',
         'chat.stop': 'Stop',
         'chat.send': 'Send',
+        'chat.selection.agent': '深度分析',
+        'chat.selection.plan': '计划生成',
+        'chat.selection.quick': '快速问答',
+        'chat.selection.preview': '选区：{preview}',
+        'chat.workbench.title': 'AI Workbench',
+        'chat.workbench.drafts': '{count} 草稿',
+        'chat.workbench.proposals': '{count} 计划',
+        'chat.workbench.generateTargetDrafts': '生成目标草稿',
+        'chat.workbench.standaloneDrafts': 'Standalone Drafts',
+        'chat.workbench.linkedDraftsTitle': 'Linked Drafts',
+        'chat.workbench.linkedDrafts': '关联草稿：{count}',
       };
-      return mapping[key] ?? key;
+      let text = mapping[key] ?? key;
+      if (params) {
+        Object.entries(params).forEach(([param, value]) => {
+          text = text.replace(`{${param}}`, String(value));
+        });
+      }
+      return text;
     },
   }),
 }));

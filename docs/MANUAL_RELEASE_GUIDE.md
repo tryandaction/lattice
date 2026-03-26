@@ -97,6 +97,12 @@ npm run release:prepare -- --upload
 - `/diagnostics/selection-ai` 可通过
 - `/diagnostics/runner` 可打开并展示解释器/命令探测结果
 - `npm run test:browser-regression` 全绿
+- Windows 桌面端启动后不再出现原生标题栏与自定义标题栏双排
+- Windows 标题栏最右侧的最小化 / 最大化 / 还原 / 关闭按钮在窄宽度下仍可见且可用
+- 最近工作区重开前会检查路径有效性，失效路径应从最近列表移除
+- 工作区恢复后，应继续恢复上一次的 pane / split / tab 结构与活跃标签
 - 代码文件、Notebook code cell、Markdown code block 都能看到 `Run / Problems` 分层反馈
+- Notebook 不应再保留独立顶部动作条，高频动作应统一进入 `Command Bar`
 - 打开任意 PDF 后，Explorer 中只投影真实用户笔记 / Notebook；未产生批注前不应默认出现 `_annotations.md`
+- PDF 左栏应表现为紧凑单栏：条目工作区为可折叠 section，批注搜索/筛选/多选不应再形成第二套网页式工具台
 - 新增一条 PDF 批注后，`.basename.lattice/_annotations.md` 会惰性生成并自动同步

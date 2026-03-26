@@ -13,6 +13,8 @@ export interface PdfViewState {
   scale: number;
   zoomMode: PdfZoomMode;
   showSidebar: boolean;
+  sidebarSize?: number;
+  selectedAnnotationId?: string | null;
   anchor?: PdfViewAnchor;
 }
 
@@ -136,6 +138,10 @@ export function readCachedPdfViewState(editorState: PdfEditorStateLike | undefin
     scale: candidate.scale,
     zoomMode: candidate.zoomMode,
     showSidebar: candidate.showSidebar,
+    sidebarSize: typeof candidate.sidebarSize === 'number' ? candidate.sidebarSize : undefined,
+    selectedAnnotationId: typeof candidate.selectedAnnotationId === 'string' || candidate.selectedAnnotationId === null
+      ? candidate.selectedAnnotationId
+      : undefined,
     anchor: isValidAnchor(candidate.anchor) ? candidate.anchor : undefined,
   };
 }
@@ -144,6 +150,8 @@ export function buildPdfEditorState(input: {
   scale: number;
   zoomMode: PdfZoomMode;
   showSidebar: boolean;
+  sidebarSize?: number;
+  selectedAnnotationId?: string | null;
   anchor?: PdfViewAnchor;
   scrollTop?: number;
   scrollLeft?: number;
@@ -157,6 +165,8 @@ export function buildPdfEditorState(input: {
         scale: input.scale,
         zoomMode: input.zoomMode,
         showSidebar: input.showSidebar,
+        ...(typeof input.sidebarSize === 'number' ? { sidebarSize: input.sidebarSize } : {}),
+        ...(input.selectedAnnotationId !== undefined ? { selectedAnnotationId: input.selectedAnnotationId } : {}),
         ...(input.anchor ? { anchor: input.anchor } : {}),
       } satisfies PdfViewState,
     },

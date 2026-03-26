@@ -130,6 +130,7 @@ export function WorkspaceSearchPanel() {
   const updateSetting = useSettingsStore((state) => state.updateSetting);
   const [query, setQuery] = useState("");
   const normalizedKeyword = query.trim();
+  const activeFilePath = activeTab?.filePath ?? null;
   const [results, setResults] = useState<SearchResultGroup[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const scope: SearchScope = searchPanelScope;
@@ -139,14 +140,25 @@ export function WorkspaceSearchPanel() {
 
   useEffect(() => {
     const keyword = query.trim().toLowerCase();
+    let cancelled = false;
+
     if (keyword.length < 2) {
-      setResults([]);
-      setIsSearching(false);
-      return;
+      queueMicrotask(() => {
+        if (!cancelled) {
+          setResults([]);
+          setIsSearching(false);
+        }
+      });
+      return () => {
+        cancelled = true;
+      };
     }
 
-    let cancelled = false;
-    setIsSearching(true);
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setIsSearching(true);
+      }
+    });
 
     void (async () => {
       const groups: SearchResultGroup[] = [];
@@ -218,11 +230,9 @@ export function WorkspaceSearchPanel() {
     openFileInActivePane(group.handle, group.path);
   };
 
-  const visibleResults = useMemo(() => (
-    scope === "current" && activeTab?.filePath
-      ? results.filter((group) => group.path === activeTab.filePath)
-      : results
-  ), [activeTab?.filePath, results, scope]);
+  const visibleResults = scope === "current" && activeFilePath
+    ? results.filter((group) => group.path === activeFilePath)
+    : results;
 
   const sortedVisibleResults = useMemo(() => {
     const next = [...visibleResults];

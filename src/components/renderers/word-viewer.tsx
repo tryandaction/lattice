@@ -3,17 +3,19 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import mammoth from "mammoth";
 import DOMPurify from "dompurify";
-import { Loader2, AlertTriangle, FileText } from "lucide-react";
+import { Loader2, AlertTriangle } from "lucide-react";
 import { useFileSystem } from "@/hooks/use-file-system";
+import { useI18n } from "@/hooks/use-i18n";
+import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { emitVaultChange } from "@/lib/plugins/runtime";
+import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
 import type { PaneId } from "@/types/layout";
 import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
 import { buildBlockSelectionContext } from "@/lib/ai/selection-dom";
-import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
 
 interface WordViewerProps {
   content: ArrayBuffer;
@@ -78,6 +80,7 @@ function htmlToMarkdown(html: string): string {
  * Includes "Import as Note" functionality
  */
 export function WordViewer({ content, fileName, paneId, filePath }: WordViewerProps) {
+  const { t } = useI18n();
   const [htmlContent, setHtmlContent] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -92,7 +95,16 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
 
   const { createFile } = useFileSystem();
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
+  const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
+  const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const markdownSnapshot = useMemo(() => htmlToMarkdown(htmlContent || ""), [htmlContent]);
+  const persistedViewStateKey = buildPersistedFileViewStateKey({
+    kind: "word",
+    workspaceRootPath,
+    filePath,
+    fallbackName: fileName,
+  });
 
   useEffect(() => {
     async function convertDocument() {
@@ -104,14 +116,14 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
         setHtmlContent(result.value);
         setWarnings(result.messages.map((m) => m.message));
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to convert document");
+        setError(err instanceof Error ? err.message : t("viewer.word.errorDescription"));
       } finally {
         setIsLoading(false);
       }
     }
 
     convertDocument();
-  }, [content]);
+  }, [content, t]);
 
   /**
    * Import the document as a Markdown note
@@ -165,11 +177,49 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     }
   );
 
+  usePersistedViewState({
+    storageKey: persistedViewStateKey,
+    containerRef,
+  });
+
+  useEffect(() => {
+    if (!paneId) {
+      return;
+    }
+
+    const breadcrumbs = (filePath ?? fileName).split("/").filter(Boolean).map((segment) => ({ label: segment }));
+    setCommandBarState(paneId, {
+      breadcrumbs,
+      actions: [
+        {
+          id: "import-as-note",
+          label: isImporting ? t("viewer.word.command.importing") : t("viewer.word.command.import"),
+          priority: 10,
+          group: "primary",
+          disabled: isImporting || !htmlContent,
+          onTrigger: () => { void handleImportAsNote(); },
+        },
+      ],
+    });
+
+    return () => clearCommandBarState(paneId);
+  }, [
+    clearCommandBarState,
+    fileName,
+    filePath,
+    handleImportAsNote,
+    htmlContent,
+    isImporting,
+    paneId,
+    setCommandBarState,
+    t,
+  ]);
+
   if (isLoading) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-8">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        <p className="mt-4 text-sm text-muted-foreground">Converting document...</p>
+        <p className="mt-4 text-sm text-muted-foreground">{t("viewer.word.loading")}</p>
       </div>
     );
   }
@@ -177,9 +227,9 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
   if (error) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-8">
-        <p className="text-destructive">Error: {error}</p>
+        <p className="text-destructive">{t("viewer.word.error", { error })}</p>
         <p className="mt-2 text-sm text-muted-foreground">
-          The document could not be converted.
+          {t("viewer.word.errorDescription")}
         </p>
       </div>
     );
@@ -198,42 +248,11 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
         returnFocusTo={selectionHubState?.returnFocusTo}
         onClose={() => setSelectionHubState(null)}
       />
-      {/* File header */}
-      <HorizontalScrollStrip
-        className="sticky top-0 z-10 border-b border-border bg-muted/90 backdrop-blur"
-        viewportClassName="px-4 py-2"
-        contentClassName="min-w-full w-max justify-between gap-3"
-        ariaLabel={`${fileName} Word 工具栏`}
-      >
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="max-w-[24rem] truncate text-sm font-medium text-foreground">{fileName}</span>
-        </div>
-        
-        <button
-          onClick={handleImportAsNote}
-          disabled={isImporting || !htmlContent}
-          className="flex shrink-0 items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isImporting ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Importing...</span>
-            </>
-          ) : (
-            <>
-              <FileText className="h-4 w-4" />
-              <span>Import as Note</span>
-            </>
-          )}
-        </button>
-      </HorizontalScrollStrip>
 
       {/* Read-only notice */}
       <div className="mx-auto max-w-4xl px-8 pt-4">
         <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-          <p>
-            This document is read-only. Click <strong>Import as Note</strong> to create an editable Markdown version.
-          </p>
+          <p>{t("viewer.word.readOnly")}</p>
         </div>
       </div>
 
@@ -243,14 +262,14 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
           <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-3">
             <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-500">
               <AlertTriangle className="h-4 w-4" />
-              <span className="text-sm font-medium">Conversion warnings</span>
+              <span className="text-sm font-medium">{t("viewer.word.warnings")}</span>
             </div>
             <ul className="mt-2 list-inside list-disc text-xs text-muted-foreground">
               {warnings.slice(0, 5).map((warning, index) => (
                 <li key={index}>{warning}</li>
               ))}
               {warnings.length > 5 && (
-                <li>...and {warnings.length - 5} more warnings</li>
+                <li>{t("viewer.word.warnings.more", { count: warnings.length - 5 })}</li>
               )}
             </ul>
           </div>

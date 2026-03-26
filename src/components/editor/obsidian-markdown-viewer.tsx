@@ -14,16 +14,6 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo, startTransition } from "react";
 import {
-  Eye,
-  Save,
-  Loader2,
-  Check,
-  AlertCircle,
-  Code2,
-  PanelLeftClose,
-  PanelLeft,
-  Sparkles,
-  Download,
   AlertTriangle,
   ChevronDown,
   ChevronUp,
@@ -32,7 +22,6 @@ import { useTextSelection } from "@/hooks/use-text-selection";
 import { AiInlineMenu } from "@/components/ai/ai-inline-menu";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
-import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
 import type {
   ViewMode,
@@ -66,6 +55,7 @@ import { useExecutionDockLayout } from "@/hooks/use-execution-dock-layout";
 import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
 import { prepareMarkdownForReading } from "@/lib/markdown-reading";
 import { useI18n } from "@/hooks/use-i18n";
+import { buildPersistedFileViewStateKey, loadPersistedFileViewState, savePersistedFileViewState } from "@/lib/file-view-state";
 
 // Lazy load components
 const LivePreviewEditor = dynamic(
@@ -137,80 +127,6 @@ interface ObsidianMarkdownViewerProps {
 }
 
 /**
- * Save indicator component
- */
-function SaveIndicator({ status }: { status: SaveStatus }) {
-  if (status === "idle") return null;
-
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-1.5 text-xs transition-all",
-        status === "saving" && "text-muted-foreground",
-        status === "saved" && "text-green-600 dark:text-green-400",
-        status === "error" && "text-destructive"
-      )}
-    >
-      {status === "saving" && (
-        <>
-          <Loader2 className="h-3 w-3 animate-spin" />
-          <span>Saving...</span>
-        </>
-      )}
-      {status === "saved" && (
-        <>
-          <Check className="h-3 w-3" />
-          <span>Saved</span>
-        </>
-      )}
-      {status === "error" && (
-        <>
-          <AlertCircle className="h-3 w-3" />
-          <span>Failed</span>
-        </>
-      )}
-    </div>
-  );
-}
-
-/**
- * Mode button component
- */
-function ModeButton({
-  mode,
-  currentMode,
-  onClick,
-  icon: Icon,
-  label,
-  shortcut,
-}: {
-  mode: ViewMode;
-  currentMode: ViewMode;
-  onClick: () => void;
-  icon: React.ElementType;
-  label: string;
-  shortcut?: string;
-}) {
-  const isActive = mode === currentMode;
-  
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
-        isActive 
-          ? "bg-background text-foreground shadow-sm" 
-          : "text-muted-foreground hover:text-foreground"
-      )}
-      title={shortcut ? `${label} (${shortcut})` : label}
-    >
-      <Icon className="h-3.5 w-3.5" />
-      <span className="hidden sm:inline">{label}</span>
-    </button>
-  );
-}
-
-/**
  * ObsidianMarkdownViewer - Obsidian-like Markdown editing experience
  */
 export function ObsidianMarkdownViewer({
@@ -244,6 +160,18 @@ export function ObsidianMarkdownViewer({
   const editorRef = useRef<LivePreviewEditorRef>(null);
   const resolvedFileId = fileId || fileName;
   const prevFileIdRef = useRef(resolvedFileId);
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const workspaceRootName = useWorkspaceStore((state) => state.rootHandle?.name ?? state.fileTree.root?.name ?? null);
+  const persistedViewStateKey = useMemo(
+    () => buildPersistedFileViewStateKey({
+      kind: "markdown",
+      workspaceRootPath,
+      filePath,
+      fallbackName: fileName,
+    }),
+    [fileName, filePath, workspaceRootPath],
+  );
+  const prevPersistedViewStateKeyRef = useRef(persistedViewStateKey);
   const fileChangeCounterRef = useRef(0);
   const localContentRef = useRef(localContent);
   const isDirtyRef = useRef(isDirty);
@@ -265,8 +193,6 @@ export function ObsidianMarkdownViewer({
   const getEditorState = useContentCacheStore((state) => state.getEditorState);
   const pendingNavigation = useLinkNavigationStore((state) => state.pendingByPane[paneId]);
   const consumePendingNavigation = useLinkNavigationStore((state) => state.consumePendingNavigation);
-  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
-  const workspaceRootName = useWorkspaceStore((state) => state.rootHandle?.name ?? state.fileTree.root?.name ?? null);
   const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
   const setRecentRunConfig = useWorkspaceStore((state) => state.setRecentRunConfig);
   const setRunnerPreferences = useWorkspaceStore((state) => state.setRunnerPreferences);
@@ -313,9 +239,9 @@ export function ObsidianMarkdownViewer({
       kind: "workspace" as const,
       filePath: absoluteFilePath ?? filePath,
       fileName,
-      label: "当前文档运行环境",
+      label: t("workbench.runner.currentDocumentEnv"),
     }),
-    [absoluteFilePath, fileName, filePath],
+    [absoluteFilePath, fileName, filePath, t],
   );
   const {
     dockSize,
@@ -341,11 +267,13 @@ export function ObsidianMarkdownViewer({
         const editorState = editorRef.current?.getEditorState();
         if (editorState) {
           saveEditorState(previousFileId, editorState);
+          void savePersistedFileViewState(prevPersistedViewStateKeyRef.current, editorState);
         }
       }
 
       // File changed - force update
       prevFileIdRef.current = resolvedFileId;
+      prevPersistedViewStateKeyRef.current = persistedViewStateKey;
       fileChangeCounterRef.current += 1;
       const changeId = fileChangeCounterRef.current;
 
@@ -369,7 +297,37 @@ export function ObsidianMarkdownViewer({
       // Content changed externally (not by user editing)
       setLocalContent(content);
     }
-  }, [content, resolvedFileId, getEditorState, saveEditorState]);
+  }, [content, resolvedFileId, persistedViewStateKey, getEditorState, saveEditorState]);
+
+  useEffect(() => {
+    if (!persistedViewStateKey || getEditorState(resolvedFileId)) {
+      return;
+    }
+
+    let cancelled = false;
+    void loadPersistedFileViewState(persistedViewStateKey).then((persistedState) => {
+      if (
+        cancelled ||
+        !persistedState ||
+        typeof persistedState.cursorPosition !== "number" ||
+        typeof persistedState.scrollTop !== "number"
+      ) {
+        return;
+      }
+
+      const restoredState = persistedState as {
+        cursorPosition: number;
+        scrollTop: number;
+        selection?: { from: number; to: number };
+      };
+      editorRef.current?.restoreEditorState(restoredState);
+      saveEditorState(resolvedFileId, restoredState);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [getEditorState, persistedViewStateKey, resolvedFileId, saveEditorState]);
 
   // Persist editor state on unmount
   useEffect(() => {
@@ -379,9 +337,10 @@ export function ObsidianMarkdownViewer({
       const editorState = editorInstance?.getEditorState();
       if (editorState) {
         saveEditorState(currentFileId, editorState);
+        void savePersistedFileViewState(persistedViewStateKey, editorState);
       }
     };
-  }, [resolvedFileId, saveEditorState]);
+  }, [persistedViewStateKey, resolvedFileId, saveEditorState]);
 
   // Handle content changes from editor
   const handleContentChange = useCallback((newContent: string) => {
@@ -484,34 +443,46 @@ export function ObsidianMarkdownViewer({
         {
           id: "save",
           label: t("common.save"),
+          priority: 10,
+          group: "primary",
           disabled: !onSave || saveStatus === "saving" || !isDirty,
           onTrigger: () => { void handleSave(); },
         },
         {
           id: "export",
           label: t("workbench.commandBar.export"),
+          priority: 20,
+          group: "secondary",
           onTrigger: () => setShowExportDialog(true),
         },
         {
           id: "outline",
           label: showOutline ? t("workbench.commandBar.hideOutline") : t("workbench.commandBar.showOutline"),
+          priority: 30,
+          group: "secondary",
           onTrigger: () => setShowOutline((value) => !value),
         },
         {
           id: "mode-live",
           label: t("workbench.commandBar.live"),
+          priority: 40,
+          group: "primary",
           disabled: mode === "live",
           onTrigger: () => setMode("live"),
         },
         {
           id: "mode-source",
           label: t("workbench.commandBar.source"),
+          priority: 41,
+          group: "primary",
           disabled: mode === "source",
           onTrigger: () => setMode("source"),
         },
         {
           id: "mode-reading",
           label: t("workbench.commandBar.read"),
+          priority: 42,
+          group: "primary",
           disabled: mode === "reading",
           onTrigger: () => setMode("reading"),
         },
@@ -730,7 +701,7 @@ export function ObsidianMarkdownViewer({
         className="border-b border-border bg-muted/50"
         viewportClassName="px-3 py-1.5"
         contentClassName="min-w-full w-max justify-between gap-3"
-        ariaLabel="Markdown 执行停靠栏"
+        ariaLabel={t("workbench.runner.managerMarkdown")}
       >
         <div className="flex shrink-0 items-center gap-2">
           <button
@@ -739,7 +710,7 @@ export function ObsidianMarkdownViewer({
             className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
           >
             {showRunDock ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
-            <span>{showRunDock ? "Hide Dock" : "Show Dock"}</span>
+            <span>{showRunDock ? t("workbench.dock.hide") : t("workbench.dock.show")}</span>
           </button>
           <div className="flex items-center rounded-md border border-border bg-background p-0.5">
             <button
@@ -750,7 +721,7 @@ export function ObsidianMarkdownViewer({
               }}
               className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "run" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
             >
-              Run
+              {t("workbench.dock.run")}
               {outputs.length > 0 ? (
                 <span className="ml-1 rounded bg-primary/10 px-1 py-0.5 text-[10px]">{outputs.length}</span>
               ) : null}
@@ -763,7 +734,7 @@ export function ObsidianMarkdownViewer({
               }}
               className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "problems" ? "bg-destructive/10 text-destructive" : "text-muted-foreground hover:text-foreground"}`}
             >
-              Problems
+              {t("workbench.dock.problems")}
               {problems.length > 0 ? (
                 <span className="ml-1 rounded bg-destructive/10 px-1 py-0.5 text-[10px]">{problems.length}</span>
               ) : null}
@@ -782,19 +753,19 @@ export function ObsidianMarkdownViewer({
             </span>
           ) : null}
           {durationLabel ? <span>{durationLabel}</span> : null}
-          {summary.exitCode !== null ? <span>Exit {summary.exitCode}</span> : null}
+          {summary.exitCode !== null ? <span>{t("workbench.runner.exit", { code: summary.exitCode })}</span> : null}
           {runnerHealthSnapshot.issues.length > 0 ? (
             <span className="inline-flex items-center gap-1 text-yellow-700 dark:text-yellow-300">
               <AlertTriangle className="h-3 w-3" />
-              <span>{runnerHealthSnapshot.issues.length} health</span>
+              <span>{t("workbench.runner.health", { count: runnerHealthSnapshot.issues.length })}</span>
             </span>
           ) : null}
           <WorkspaceRunnerManager
             cwd={runCwd}
             fileKey={currentDockFileKey}
             commands={currentDockCommand ? [currentDockCommand] : []}
-            title="Markdown Runner Manager"
-            triggerLabel="Runner"
+            title={t("workbench.runner.managerMarkdown")}
+            triggerLabel={t("workbench.runner.trigger")}
           />
         </div>
       </HorizontalScrollStrip>
@@ -807,7 +778,7 @@ export function ObsidianMarkdownViewer({
               <OutputArea outputs={outputs} meta={panelMeta} showDiagnosticsInline={false} />
               {outputs.length === 0 && !runnerError && runnerStatus !== "loading" && runnerStatus !== "running" ? (
                 <p className="py-4 text-center text-xs text-muted-foreground">
-                  No output yet. Use the Run button on a fenced code block to execute.
+                  {t("workbench.runner.noOutput")}
                 </p>
               ) : null}
             </>
@@ -816,7 +787,7 @@ export function ObsidianMarkdownViewer({
               <ProblemsPanel problems={problems} onSelectProblem={navigateToProblem} />
               {problems.length === 0 ? (
                 <p className="py-4 text-center text-xs text-muted-foreground">
-                  No problems detected.
+                  {t("workbench.runner.noProblems")}
                 </p>
               ) : null}
             </>
@@ -841,97 +812,11 @@ export function ObsidianMarkdownViewer({
     setShowRunDock,
     showRunDock,
     summary.exitCode,
+    t,
   ]);
 
   return (
     <div ref={containerRef} className="h-full flex flex-col bg-background">
-      {/* Toolbar */}
-      <HorizontalScrollStrip
-        className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur"
-        viewportClassName="px-4 py-2"
-        contentClassName="min-w-full w-max justify-between gap-3"
-        ariaLabel={`${fileName} Markdown 工具栏`}
-      >
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="max-w-[18rem] truncate text-sm font-medium text-foreground">
-            {fileName}
-          </span>
-          {isDirty && (
-            <span className="text-xs text-muted-foreground">•</span>
-          )}
-          <SaveIndicator status={saveStatus} />
-        </div>
-        
-        <div className="flex shrink-0 items-center gap-1">
-          <button
-            onClick={() => setShowOutline(!showOutline)}
-            className={cn(
-              "rounded p-1.5 transition-colors",
-              showOutline ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"
-            )}
-            title={showOutline ? "Hide outline" : "Show outline"}
-          >
-            {showOutline ? (
-              <PanelLeftClose className="h-4 w-4" />
-            ) : (
-              <PanelLeft className="h-4 w-4" />
-            )}
-          </button>
-          
-          <div className="mx-1 h-4 w-px bg-border" />
-          
-          <div className="flex items-center rounded-md border border-border bg-muted/30 p-0.5">
-            <ModeButton
-              mode="live"
-              currentMode={mode}
-              onClick={() => setMode("live")}
-              icon={Sparkles}
-              label="Live"
-              shortcut="Ctrl+E"
-            />
-            <ModeButton
-              mode="source"
-              currentMode={mode}
-              onClick={() => setMode("source")}
-              icon={Code2}
-              label="Source"
-            />
-            <ModeButton
-              mode="reading"
-              currentMode={mode}
-              onClick={() => setMode("reading")}
-              icon={Eye}
-              label="Read"
-            />
-          </div>
-          
-          {onSave && (
-            <button
-              onClick={handleSave}
-              disabled={saveStatus === "saving" || !isDirty}
-              className={cn(
-                "ml-2 flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors",
-                "hover:bg-accent",
-                (saveStatus === "saving" || !isDirty) && "cursor-not-allowed opacity-50"
-              )}
-              title="Save (Ctrl+S)"
-            >
-              <Save className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Save</span>
-            </button>
-          )}
-
-          <button
-            onClick={() => setShowExportDialog(true)}
-            className="ml-1 flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors hover:bg-accent"
-            title="导出 Markdown"
-          >
-            <Download className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Export</span>
-          </button>
-        </div>
-      </HorizontalScrollStrip>
-
       {shouldRenderRunDock && showRunDock ? (
         <ResizablePanelGroup
           direction="vertical"

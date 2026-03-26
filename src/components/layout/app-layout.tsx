@@ -16,13 +16,13 @@ import { useUnsavedWarning } from "@/hooks/use-unsaved-warning";
 import { useTheme } from "@/hooks/use-theme";
 import { useI18n } from "@/hooks/use-i18n";
 import { useAutoOpenFolder } from "@/hooks/use-auto-open-folder";
+import { useWorkbenchSession } from "@/hooks/use-workbench-session";
 import { isTauriHost } from "@/lib/storage-adapter";
 import { setLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { TOUCH_TARGET_MIN } from "@/lib/responsive";
 import { syncPlugins, updatePluginNetworkAllowlist } from "@/lib/plugins/runtime";
 import { resolveAppRoute } from "@/lib/app-route";
-import { getCollapsedSidebarPercent, getCollapsedSidebarPixelWidth } from "@/lib/layout-sidebar";
 import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot, Search as SearchIcon, MessageSquareText } from "lucide-react";
 import { AiContextDialog } from "@/components/ui/ai-context-dialog";
 import { PluginCommandDialog } from "@/components/ui/plugin-command-dialog";
@@ -170,9 +170,6 @@ function AppLayoutContent() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [desktopSidebarSize, setDesktopSidebarSize] = useState(DESKTOP_SIDEBAR_DEFAULT);
-  const [desktopCollapsedSidebarSize, setDesktopCollapsedSidebarSize] = useState(() =>
-    typeof window === "undefined" ? getCollapsedSidebarPercent(1280) : getCollapsedSidebarPercent(window.innerWidth)
-  );
   const [desktopPanelSize, setDesktopPanelSize] = useState(DESKTOP_PANEL_DEFAULT);
   const [panelOpenInitialized, setPanelOpenInitialized] = useState(false);
   const [activityView, setActivityView] = useState<"files" | "annotations" | "search">("files");
@@ -201,6 +198,7 @@ function AppLayoutContent() {
   }, [router]);
 
   useAutoOpenFolder();
+  useWorkbenchSession();
 
   // Flush pending annotation saves before page unload
   useEffect(() => {
@@ -320,18 +318,6 @@ function AppLayoutContent() {
     }
   }, [isMobile, setSidebarCollapsed]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const updateCollapsedSidebarSize = () => {
-      setDesktopCollapsedSidebarSize(getCollapsedSidebarPercent(window.innerWidth));
-    };
-
-    updateCollapsedSidebarSize();
-    window.addEventListener("resize", updateCollapsedSidebarSize);
-    return () => window.removeEventListener("resize", updateCollapsedSidebarSize);
-  }, []);
-
   useUnsavedWarning();
   usePluginShortcuts();
 
@@ -426,19 +412,6 @@ function AppLayoutContent() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isMobile, openGuide, toggleSidebar, toggleTheme]);
 
-  const desktopGroupSizes = useMemo(() => {
-    if (sidebarCollapsed) {
-      return showPluginPanels
-        ? [desktopCollapsedSidebarSize, Math.max(20, 100 - desktopCollapsedSidebarSize - desktopPanelSize), desktopPanelSize]
-        : [desktopCollapsedSidebarSize, 100 - desktopCollapsedSidebarSize];
-    }
-    if (showPluginPanels) {
-      const main = Math.max(20, 100 - desktopSidebarSize - desktopPanelSize);
-      return [desktopSidebarSize, main, desktopPanelSize];
-    }
-    return [desktopSidebarSize, 100 - desktopSidebarSize];
-  }, [sidebarCollapsed, showPluginPanels, desktopSidebarSize, desktopCollapsedSidebarSize, desktopPanelSize]);
-
   const SidebarContent = (
     <>
       <div className="flex-1 overflow-hidden">
@@ -503,7 +476,7 @@ function AppLayoutContent() {
             "hover:bg-muted hover:text-foreground transition-colors"
           )}
           style={(isMobile || isTablet) ? { minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN } : undefined}
-          title="实时预览指南 (Ctrl+Shift+/)" aria-label="打开实时预览指南" data-guide-entry="sidebar"
+          title={t("settings.shortcuts.openGuide")} aria-label={t("settings.shortcuts.openGuide")} data-guide-entry="sidebar"
         >
           <HelpCircle className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         </button>
@@ -536,7 +509,7 @@ function AppLayoutContent() {
   if (!mounted) {
     return (
       <div className="h-screen w-screen overflow-hidden bg-background flex items-center justify-center">
-        <div className="text-muted-foreground">Loading...</div>
+        <div className="text-muted-foreground">{t("common.loading")}</div>
       </div>
     );
   }
@@ -549,7 +522,7 @@ function AppLayoutContent() {
           <MobileSidebarTrigger onClick={() => setMobileSidebarOpen(true)}>
             <Menu className="h-5 w-5" />
           </MobileSidebarTrigger>
-          <h1 className="text-sm font-medium">Lattice 格致</h1>
+          <h1 className="text-sm font-medium">{t("app.name")}</h1>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowPluginPanels(true)}
@@ -571,7 +544,7 @@ function AppLayoutContent() {
                 "hover:bg-muted transition-colors"
               )}
               style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
-              title="实时预览指南" aria-label="打开实时预览指南" data-guide-entry="mobile-header"
+              title={t("settings.shortcuts.openGuide")} aria-label={t("settings.shortcuts.openGuide")} data-guide-entry="mobile-header"
             >
               <HelpCircle className="h-5 w-5" />
             </button>
@@ -642,7 +615,7 @@ function AppLayoutContent() {
                       "hover:bg-muted transition-colors"
                     )}
                     style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
-                    title="Collapse sidebar"
+                    title={t("workbench.sidebar.collapse")}
                   >
                     <PanelLeftClose className="h-5 w-5" />
                   </button>
@@ -668,11 +641,11 @@ function AppLayoutContent() {
                     "hover:bg-muted transition-colors"
                   )}
                   style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
-                  title="Open sidebar"
+                  title={t("workbench.sidebar.open")}
                 >
                   {isLandscape ? <PanelLeft className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
                 </button>
-                <h1 className="text-sm font-medium flex-1">Lattice 格致</h1>
+                <h1 className="text-sm font-medium flex-1">{t("app.name")}</h1>
                 <button
                   onClick={() => setShowPluginPanels(true)}
                   className={cn(
@@ -768,23 +741,10 @@ function AppLayoutContent() {
           <div className="flex w-full flex-col items-center gap-2 border-t border-border pt-2">
             <CollapsedRailButton
               icon={Bot}
-              label="AI Chat"
-              title="AI Chat"
+              label={t("chat.title")}
+              title={t("chat.title")}
               active={aiChatOpen}
               onClick={() => useAiChatStore.getState().toggleOpen()}
-            />
-            <CollapsedRailButton
-              icon={HelpCircle}
-              label="实时预览指南"
-              title="实时预览指南 (Ctrl+Shift+/)"
-              onClick={openGuide}
-            />
-            <CollapsedRailButton
-              icon={Settings}
-              label={t("settings.title")}
-              title={`${t("settings.title")} (Ctrl+,)`}
-              active={showSettings}
-              onClick={() => setShowSettings(true)}
             />
           </div>
         </div>

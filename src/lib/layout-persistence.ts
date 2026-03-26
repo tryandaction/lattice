@@ -1,219 +1,250 @@
 /**
- * Layout Persistence
- * 
- * Functions for serializing and deserializing layout state to/from localStorage.
+ * Workbench session persistence.
+ *
+ * Persists pane/tab layout per workspace root. Viewer-level state is persisted
+ * separately through file-view-state and content-cache editorState.
  */
 
-import type {
-  LayoutState,
-  LayoutNode,
-  PaneNode,
-  SplitNode,
-  TabState,
-  SerializedLayout,
-  SerializedLayoutNode,
-  SerializedPaneNode,
-  SerializedSplitNode,
-  SerializedTab,
-} from "@/types/layout";
+import { getStorageAdapter } from "@/lib/storage-adapter";
+import { resolveEntry } from "@/lib/file-operations";
+import type { LayoutNode, LayoutState, PaneNode, SplitDirection } from "@/types/layout";
 import { isPaneNode } from "@/types/layout";
-import { createEmptyPane } from "./layout-utils";
+import { createEmptyPane, createTab } from "@/lib/layout-utils";
 
-const LAYOUT_STORAGE_KEY = "lattice-layout-v1";
+const WORKBENCH_SESSION_VERSION = 1;
+const WORKBENCH_SESSION_STORAGE_KEY_PREFIX = "lattice-workbench-session";
 
-/**
- * Serialize a tab to a JSON-safe format
- */
-function serializeTab(tab: TabState): SerializedTab {
-  return {
-    id: tab.id,
-    filePath: tab.filePath,
-    fileName: tab.fileName,
-    isDirty: tab.isDirty,
-    scrollPosition: tab.scrollPosition,
-  };
+interface PersistedWorkbenchTab {
+  filePath: string;
 }
 
-/**
- * Serialize a layout node recursively
- */
-function serializeNode(node: LayoutNode): SerializedLayoutNode {
-  if (isPaneNode(node)) {
-    const serializedPane: SerializedPaneNode = {
-      type: "pane",
-      id: node.id,
-      tabs: node.tabs.map(serializeTab),
-      activeTabIndex: node.activeTabIndex,
-    };
-    return serializedPane;
+interface PersistedWorkbenchPaneNode {
+  type: "pane";
+  id: string;
+  tabs: PersistedWorkbenchTab[];
+  activeTabIndex: number;
+}
+
+interface PersistedWorkbenchSplitNode {
+  type: "split";
+  id: string;
+  direction: SplitDirection;
+  children: PersistedWorkbenchLayoutNode[];
+  sizes: number[];
+}
+
+type PersistedWorkbenchLayoutNode = PersistedWorkbenchPaneNode | PersistedWorkbenchSplitNode;
+
+export interface PersistedWorkbenchSession {
+  version: 1;
+  root: PersistedWorkbenchLayoutNode;
+  activePaneId: string;
+  sidebarCollapsed: boolean;
+}
+
+function normalizeWorkspaceSessionKey(workspaceRootPath: string | null | undefined): string | null {
+  if (!workspaceRootPath) {
+    return null;
   }
 
-  const serializedSplit: SerializedSplitNode = {
+  const trimmed = workspaceRootPath.trim();
+  return trimmed ? trimmed : null;
+}
+
+export function getWorkbenchSessionStorageKey(
+  workspaceRootPath: string | null | undefined,
+): string | null {
+  const normalized = normalizeWorkspaceSessionKey(workspaceRootPath);
+  if (!normalized) {
+    return null;
+  }
+
+  return `${WORKBENCH_SESSION_STORAGE_KEY_PREFIX}:${normalized}`;
+}
+
+function serializeNode(node: LayoutNode): PersistedWorkbenchLayoutNode {
+  if (isPaneNode(node)) {
+    return {
+      type: "pane",
+      id: node.id,
+      tabs: node.tabs.map((tab) => ({ filePath: tab.filePath })),
+      activeTabIndex: node.activeTabIndex,
+    };
+  }
+
+  return {
     type: "split",
     id: node.id,
     direction: node.direction,
     children: node.children.map(serializeNode),
     sizes: node.sizes,
   };
-  return serializedSplit;
 }
 
-/**
- * Serialize the complete layout state
- */
-export function serializeLayout(
+function serializeWorkbenchSession(
   layout: LayoutState,
-  sidebarCollapsed: boolean
-): SerializedLayout {
+  sidebarCollapsed: boolean,
+): PersistedWorkbenchSession {
   return {
-    version: 1,
+    version: WORKBENCH_SESSION_VERSION,
     root: serializeNode(layout.root),
     activePaneId: layout.activePaneId,
     sidebarCollapsed,
   };
 }
 
-/**
- * Deserialize a tab, restoring the file handle from the workspace
- */
-async function deserializeTab(
-  serializedTab: SerializedTab,
-  rootHandle: FileSystemDirectoryHandle
-): Promise<TabState | null> {
-  try {
-    // Navigate to the file using the path
-    const pathParts = serializedTab.filePath.split("/").filter(Boolean);
-    let currentHandle: FileSystemDirectoryHandle | FileSystemFileHandle = rootHandle;
-
-    for (let i = 0; i < pathParts.length; i++) {
-      const part = pathParts[i];
-      const isLast = i === pathParts.length - 1;
-
-      if (isLast) {
-        // Get file handle
-        currentHandle = await (currentHandle as FileSystemDirectoryHandle).getFileHandle(part);
-      } else {
-        // Get directory handle
-        currentHandle = await (currentHandle as FileSystemDirectoryHandle).getDirectoryHandle(part);
-      }
-    }
-
-    return {
-      id: serializedTab.id,
-      fileHandle: currentHandle as FileSystemFileHandle,
-      fileName: serializedTab.fileName,
-      filePath: serializedTab.filePath,
-      isDirty: false, // Reset dirty state on load
-      scrollPosition: serializedTab.scrollPosition,
-    };
-  } catch {
-    // File not found or access denied
-    return null;
-  }
-}
-
-/**
- * Deserialize a layout node recursively
- */
-async function deserializeNode(
-  serializedNode: SerializedLayoutNode,
-  rootHandle: FileSystemDirectoryHandle
-): Promise<LayoutNode> {
-  if (serializedNode.type === "pane") {
-    // Deserialize tabs, filtering out any that couldn't be restored
-    const tabPromises = serializedNode.tabs.map((tab) =>
-      deserializeTab(tab, rootHandle)
-    );
-    const tabs = (await Promise.all(tabPromises)).filter(
-      (tab): tab is TabState => tab !== null
-    );
-
-    const pane: PaneNode = {
-      type: "pane",
-      id: serializedNode.id,
-      tabs,
-      activeTabIndex:
-        tabs.length > 0
-          ? Math.min(serializedNode.activeTabIndex, tabs.length - 1)
-          : -1,
-    };
-    return pane;
+function isPersistedPaneNode(value: unknown): value is PersistedWorkbenchPaneNode {
+  if (typeof value !== "object" || value === null) {
+    return false;
   }
 
-  // Deserialize children
-  const childPromises = serializedNode.children.map((child) =>
-    deserializeNode(child, rootHandle)
+  const candidate = value as Record<string, unknown>;
+  return (
+    candidate.type === "pane" &&
+    typeof candidate.id === "string" &&
+    Array.isArray(candidate.tabs) &&
+    typeof candidate.activeTabIndex === "number"
   );
-  const children = await Promise.all(childPromises);
-
-  const split: SplitNode = {
-    type: "split",
-    id: serializedNode.id,
-    direction: serializedNode.direction,
-    children,
-    sizes: serializedNode.sizes,
-  };
-  return split;
 }
 
-/**
- * Save layout to localStorage
- */
-export function saveLayoutToStorage(
-  layout: LayoutState,
-  sidebarCollapsed: boolean
-): void {
-  try {
-    const serialized = serializeLayout(layout, sidebarCollapsed);
-    localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(serialized));
-  } catch (error) {
-    console.error("Failed to save layout:", error);
+function isPersistedSplitNode(value: unknown): value is PersistedWorkbenchSplitNode {
+  if (typeof value !== "object" || value === null) {
+    return false;
   }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    candidate.type === "split" &&
+    typeof candidate.id === "string" &&
+    (candidate.direction === "horizontal" || candidate.direction === "vertical") &&
+    Array.isArray(candidate.children) &&
+    Array.isArray(candidate.sizes)
+  );
 }
 
-/**
- * Load layout from localStorage
- */
-export async function loadLayoutFromStorage(
-  rootHandle: FileSystemDirectoryHandle
-): Promise<{ layout: LayoutState; sidebarCollapsed: boolean } | null> {
-  try {
-    const stored = localStorage.getItem(LAYOUT_STORAGE_KEY);
-    if (!stored) return null;
+function isPersistedWorkbenchSession(value: unknown): value is PersistedWorkbenchSession {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
 
-    const serialized: SerializedLayout = JSON.parse(stored);
+  const candidate = value as Record<string, unknown>;
+  return (
+    candidate.version === WORKBENCH_SESSION_VERSION &&
+    typeof candidate.activePaneId === "string" &&
+    typeof candidate.sidebarCollapsed === "boolean" &&
+    (isPersistedPaneNode(candidate.root) || isPersistedSplitNode(candidate.root))
+  );
+}
 
-    // Validate version
-    if (serialized.version !== 1) {
-      console.warn("Unknown layout version, using default");
-      return null;
-    }
-
-    const root = await deserializeNode(serialized.root, rootHandle);
-
-    return {
-      layout: {
-        root,
-        activePaneId: serialized.activePaneId,
-      },
-      sidebarCollapsed: serialized.sidebarCollapsed,
-    };
-  } catch (error) {
-    console.error("Failed to load layout:", error);
+async function deserializeTab(
+  rootHandle: FileSystemDirectoryHandle,
+  persistedTab: PersistedWorkbenchTab,
+) {
+  const entry = await resolveEntry(rootHandle, persistedTab.filePath);
+  if (!entry || entry.kind !== "file") {
     return null;
   }
+
+  return createTab(entry.handle as FileSystemFileHandle, persistedTab.filePath);
 }
 
-/**
- * Clear saved layout from localStorage
- */
-export function clearLayoutStorage(): void {
-  localStorage.removeItem(LAYOUT_STORAGE_KEY);
+async function deserializeNode(
+  rootHandle: FileSystemDirectoryHandle,
+  node: PersistedWorkbenchLayoutNode,
+): Promise<LayoutNode> {
+  if (node.type === "pane") {
+    const tabs = (
+      await Promise.all(
+        node.tabs.map((tab) => deserializeTab(rootHandle, tab)),
+      )
+    ).filter((tab): tab is PaneNode["tabs"][number] => tab !== null);
+
+    return {
+      type: "pane",
+      id: node.id,
+      tabs,
+      activeTabIndex: tabs.length === 0
+        ? -1
+        : Math.max(0, Math.min(node.activeTabIndex, tabs.length - 1)),
+    };
+  }
+
+  const children = await Promise.all(node.children.map((child) => deserializeNode(rootHandle, child)));
+  const normalizedChildren = children.length >= 2 ? children : [children[0] ?? createEmptyPane(), createEmptyPane()];
+  const normalizedSizes = node.sizes.length === normalizedChildren.length
+    ? node.sizes
+    : Array.from({ length: normalizedChildren.length }, () => 100 / normalizedChildren.length);
+
+  return {
+    type: "split",
+    id: node.id,
+    direction: node.direction,
+    children: normalizedChildren,
+    sizes: normalizedSizes,
+  };
 }
 
-/**
- * Create default layout state
- */
+function findFirstPaneId(node: LayoutNode): string {
+  if (node.type === "pane") {
+    return node.id;
+  }
+
+  return findFirstPaneId(node.children[0]);
+}
+
+export async function saveWorkbenchSession(
+  workspaceRootPath: string | null | undefined,
+  layout: LayoutState,
+  sidebarCollapsed: boolean,
+): Promise<void> {
+  const storageKey = getWorkbenchSessionStorageKey(workspaceRootPath);
+  if (!storageKey) {
+    return;
+  }
+
+  const storage = getStorageAdapter();
+  await storage.set(storageKey, serializeWorkbenchSession(layout, sidebarCollapsed));
+}
+
+export async function loadWorkbenchSession(
+  workspaceRootPath: string | null | undefined,
+  rootHandle: FileSystemDirectoryHandle,
+): Promise<{ layout: LayoutState; sidebarCollapsed: boolean } | null> {
+  const storageKey = getWorkbenchSessionStorageKey(workspaceRootPath);
+  if (!storageKey) {
+    return null;
+  }
+
+  const storage = getStorageAdapter();
+  const persisted = await storage.get<PersistedWorkbenchSession>(storageKey);
+  if (!persisted || !isPersistedWorkbenchSession(persisted)) {
+    return null;
+  }
+
+  const root = await deserializeNode(rootHandle, persisted.root);
+  const activePaneId = persisted.activePaneId || findFirstPaneId(root);
+
+  return {
+    layout: {
+      root,
+      activePaneId,
+    },
+    sidebarCollapsed: persisted.sidebarCollapsed,
+  };
+}
+
+export async function clearWorkbenchSession(
+  workspaceRootPath: string | null | undefined,
+): Promise<void> {
+  const storageKey = getWorkbenchSessionStorageKey(workspaceRootPath);
+  if (!storageKey) {
+    return;
+  }
+
+  const storage = getStorageAdapter();
+  await storage.remove(storageKey);
+}
+
 export function createDefaultLayout(): LayoutState {
   const initialPaneId = "pane-initial";
   return {
@@ -221,3 +252,8 @@ export function createDefaultLayout(): LayoutState {
     activePaneId: initialPaneId,
   };
 }
+
+// Legacy aliases kept for compatibility with older imports.
+export const saveLayoutToStorage = saveWorkbenchSession;
+export const loadLayoutFromStorage = loadWorkbenchSession;
+export const clearLayoutStorage = clearWorkbenchSession;

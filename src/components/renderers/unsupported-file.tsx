@@ -2,6 +2,7 @@
 
 import { FileQuestion } from "lucide-react";
 import { getFileExtension } from "@/lib/file-utils";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface UnsupportedFileProps {
   fileName: string;
@@ -26,6 +27,7 @@ const SUPPORTED_TYPES = [
  * Displays when a file type is not supported
  */
 export function UnsupportedFile({ fileName }: UnsupportedFileProps) {
+  const { t } = useI18n();
   const extension = getFileExtension(fileName);
 
   return (
@@ -33,7 +35,7 @@ export function UnsupportedFile({ fileName }: UnsupportedFileProps) {
       <FileQuestion className="h-16 w-16 text-muted-foreground" />
       
       <h2 className="mt-4 text-xl font-medium text-foreground">
-        File type not supported
+        {t("viewer.unsupported.title")}
       </h2>
       
       <p className="mt-2 text-sm text-muted-foreground">
@@ -45,7 +47,7 @@ export function UnsupportedFile({ fileName }: UnsupportedFileProps) {
 
       <div className="mt-8 max-w-md">
         <p className="text-center text-sm text-muted-foreground">
-          Supported file types:
+          {t("viewer.unsupported.supportedTypes")}
         </p>
         <div className="mt-4 flex flex-wrap justify-center gap-2">
           {SUPPORTED_TYPES.map((type) => (

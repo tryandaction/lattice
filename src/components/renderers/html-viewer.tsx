@@ -2,10 +2,10 @@
 
 import { startTransition, useState, useMemo, useEffect, useRef } from "react";
 import DOMPurify from "dompurify";
-import { Code, Eye } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import type { PaneId } from "@/types/layout";
+import { useI18n } from "@/hooks/use-i18n";
 import { useSelectionContextMenu, type SelectionContextMenuState } from "@/hooks/use-selection-context-menu";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
@@ -13,6 +13,9 @@ import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
 import { buildBlockSelectionContext } from "@/lib/ai/selection-dom";
 import { isMeaningfulSelectionText } from "@/lib/ai/selection-ui";
 import { useObjectUrl } from "@/hooks/use-object-url";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
+import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
 
 interface HTMLViewerProps {
   content: string;
@@ -40,6 +43,7 @@ function buildPositionFromRect(rect: DOMRect | undefined, fallback: DOMRect): { 
  * Renders HTML content in a sandboxed iframe with source view toggle.
  */
 export function HTMLViewer({ content, fileName, paneId, filePath }: HTMLViewerProps) {
+  const { t } = useI18n();
   const [showSource, setShowSource] = useState(false);
   const [selectionHubState, setSelectionHubState] = useState<{
     context: SelectionContext;
@@ -49,6 +53,15 @@ export function HTMLViewer({ content, fileName, paneId, filePath }: HTMLViewerPr
   const [iframeMenuState, setIframeMenuState] = useState<SelectionContextMenuState<SelectionContext> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
+  const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const persistedViewStateKey = buildPersistedFileViewStateKey({
+    kind: "html",
+    workspaceRootPath,
+    filePath,
+    fallbackName: fileName,
+  });
 
   const sanitizedHtml = useMemo(() => {
     return DOMPurify.sanitize(content, {
@@ -84,6 +97,48 @@ export function HTMLViewer({ content, fileName, paneId, filePath }: HTMLViewerPr
       return null;
     });
   };
+
+  usePersistedViewState({
+    storageKey: persistedViewStateKey,
+    containerRef,
+    viewState: { showSource },
+    applyViewState: (persisted) => {
+      if (typeof persisted?.showSource === "boolean") {
+        setShowSource(persisted.showSource);
+      }
+    },
+  });
+
+  useEffect(() => {
+    if (!paneId) {
+      return;
+    }
+
+    const breadcrumbs = (filePath ?? fileName).split("/").filter(Boolean).map((segment) => ({ label: segment }));
+    setCommandBarState(paneId, {
+      breadcrumbs,
+      actions: [
+        {
+          id: "preview",
+          label: t("viewer.html.preview"),
+          priority: 10,
+          group: "primary",
+          disabled: !showSource,
+          onTrigger: () => setShowSource(false),
+        },
+        {
+          id: "source",
+          label: t("viewer.html.source"),
+          priority: 11,
+          group: "primary",
+          disabled: showSource,
+          onTrigger: () => setShowSource(true),
+        },
+      ],
+    });
+
+    return () => clearCommandBarState(paneId);
+  }, [clearCommandBarState, fileName, filePath, paneId, setCommandBarState, showSource, t]);
 
   useEffect(() => {
     if (showSource) {
@@ -220,39 +275,6 @@ export function HTMLViewer({ content, fileName, paneId, filePath }: HTMLViewerPr
         onClose={() => setSelectionHubState(null)}
       />
 
-      <div className="flex items-center justify-between border-b border-border bg-muted/50 px-4 py-2">
-        <span className="max-w-xs truncate text-sm text-muted-foreground">
-          {fileName}
-        </span>
-
-        <div className="flex items-center gap-1 rounded-lg border border-border p-1">
-          <button
-            onClick={() => setShowSource(false)}
-            className={`flex items-center gap-1 rounded px-2 py-1 text-sm transition-colors ${
-              !showSource
-                ? "bg-primary text-primary-foreground"
-                : "hover:bg-muted"
-            }`}
-            title="Preview"
-          >
-            <Eye className="h-3 w-3" />
-            Preview
-          </button>
-          <button
-            onClick={() => setShowSource(true)}
-            className={`flex items-center gap-1 rounded px-2 py-1 text-sm transition-colors ${
-              showSource
-                ? "bg-primary text-primary-foreground"
-                : "hover:bg-muted"
-            }`}
-            title="Source"
-          >
-            <Code className="h-3 w-3" />
-            Source
-          </button>
-        </div>
-      </div>
-
       <div className="flex-1 overflow-auto">
         {showSource ? (
           <div className="p-4">
@@ -279,7 +301,7 @@ export function HTMLViewer({ content, fileName, paneId, filePath }: HTMLViewerPr
               title={fileName}
             />
           ) : (
-            <div className="p-4 text-sm text-muted-foreground">HTML 预览加载中...</div>
+            <div className="p-4 text-sm text-muted-foreground">{t("viewer.html.loadingPreview")}</div>
           )
         )}
       </div>

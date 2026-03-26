@@ -5,7 +5,7 @@
  * Web (download) and Desktop (Tauri save dialog) environments.
  */
 
-import { isTauri } from './storage-adapter';
+import { getTauriInvoke, isTauri } from './storage-adapter';
 
 export interface ExportOptions {
   defaultFileName: string;
@@ -157,6 +157,14 @@ class TauriExportAdapter implements ExportAdapter {
     }
 
     try {
+      const invoke = getTauriInvoke();
+      if (!invoke) {
+        return {
+          success: false,
+          error: 'Desktop export bridge is unavailable',
+        };
+      }
+
       // Convert Blob to Uint8Array if needed
       let data: Uint8Array;
       if (content instanceof Blob) {
@@ -167,7 +175,7 @@ class TauriExportAdapter implements ExportAdapter {
       }
 
       // Show native save dialog
-      const filePath = await window.__TAURI__!.core.invoke<string | null>(
+      const filePath = await invoke<string | null>(
         'plugin:dialog|save',
         {
           defaultPath: options.defaultFileName,
@@ -183,7 +191,7 @@ class TauriExportAdapter implements ExportAdapter {
       }
 
       // Write file using Tauri fs
-      await window.__TAURI__!.core.invoke('plugin:fs|write_file', {
+      await invoke('plugin:fs|write_file', {
         path: filePath,
         contents: Array.from(data),
       });
@@ -204,7 +212,12 @@ class TauriExportAdapter implements ExportAdapter {
 
   async showInFolder(filePath: string): Promise<void> {
     try {
-      await window.__TAURI__!.core.invoke('plugin:shell|open', {
+      const invoke = getTauriInvoke();
+      if (!invoke) {
+        return;
+      }
+
+      await invoke('plugin:shell|open', {
         path: filePath,
         with: 'explorer', // Windows
       });

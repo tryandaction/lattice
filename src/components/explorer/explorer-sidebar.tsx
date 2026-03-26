@@ -11,7 +11,7 @@ import { getParentPath } from "@/lib/file-operations";
 import { EmptyState } from "./empty-state";
 import { TreeView } from "./tree-view";
 import { NewFileButtons } from "./new-file-buttons";
-import { Loader2, AlertCircle, PanelLeftClose, PanelLeft } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 import { PluginSidebarSlot } from "@/components/ui/plugin-sidebar-slot";
 
 /**
@@ -25,8 +25,6 @@ export function ExplorerSidebar() {
   const isQaMode = process.env.NODE_ENV === "development" && searchParams?.get("qa") === "1";
   const recentWorkspaces = useSettingsStore((state) => state.settings.recentWorkspacePaths);
   const removeRecentWorkspacePath = useSettingsStore((state) => state.removeRecentWorkspacePath);
-  const sidebarCollapsed = useWorkspaceStore((state) => state.sidebarCollapsed);
-  const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
   const setSelectedDirectoryPath = useWorkspaceStore((state) => state.setSelectedDirectoryPath);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
@@ -99,7 +97,7 @@ export function ExplorerSidebar() {
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <span className="font-scientific text-muted-foreground uppercase tracking-wider text-xs">
-          Explorer
+          {t("explorer.title")}
         </span>
         <div className="flex items-center gap-1">
           {/* New File Buttons - only show when directory is open */}
@@ -111,17 +109,6 @@ export function ExplorerSidebar() {
               disabled={isLoading}
             />
           )}
-          <button
-            onClick={toggleSidebar}
-            className="p-1 rounded hover:bg-accent transition-colors"
-            title={sidebarCollapsed ? "Expand sidebar (Ctrl+B)" : "Collapse sidebar (Ctrl+B)"}
-          >
-            {sidebarCollapsed ? (
-              <PanelLeft className="h-4 w-4 text-muted-foreground" />
-            ) : (
-              <PanelLeftClose className="h-4 w-4 text-muted-foreground" />
-            )}
-          </button>
         </div>
       </div>
 
@@ -143,7 +130,7 @@ export function ExplorerSidebar() {
               onClick={openDirectory}
               className="text-sm text-primary underline hover:no-underline"
             >
-              Try again
+              {t("explorer.refresh")}
             </button>
           </div>
         )}

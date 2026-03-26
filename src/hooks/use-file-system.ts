@@ -2,6 +2,7 @@
 
 import { useCallback, useState, useEffect } from "react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import type { FileTree, DirectoryNode, FileNode, TreeNode } from "@/types/file-system";
 import {
@@ -38,7 +39,7 @@ import {
   movePdfItemWorkspace,
 } from "@/lib/pdf-item";
 import { createDesktopDirectoryHandle } from "@/lib/desktop-file-system";
-import { isTauri } from "@/lib/storage-adapter";
+import { getTauriInvoke, isTauri } from "@/lib/storage-adapter";
 import { emitVaultChange, emitVaultDelete, emitVaultRename } from "@/lib/plugins/runtime";
 
 /**
@@ -357,8 +358,10 @@ export function useFileSystem(): UseFileSystemReturn {
     setFileTree,
     setLoading,
     setError,
+    resetWorkbenchState,
   } = useWorkspaceStore();
   const rememberWorkspacePath = useSettingsStore((state) => state.rememberWorkspacePath);
+  const removeRecentWorkspacePath = useSettingsStore((state) => state.removeRecentWorkspacePath);
 
   // Use state with useEffect to avoid hydration mismatch
   // Server always renders false, client updates after mount
@@ -374,6 +377,8 @@ export function useFileSystem(): UseFileSystemReturn {
     handle: FileSystemDirectoryHandle,
     workspaceRootPath: string | null,
   ) => {
+    useContentCacheStore.getState().clearCache();
+    resetWorkbenchState();
     const children = await readDirectoryRecursive(handle);
     const rootNode: DirectoryNode = {
       name: handle.name,
@@ -389,7 +394,7 @@ export function useFileSystem(): UseFileSystemReturn {
     setFileTree({ root: rootNode });
 
     await rememberWorkspacePath(workspaceRootPath ?? handle.name);
-  }, [rememberWorkspacePath, setFileTree, setRootHandle, setWorkspaceRootPath]);
+  }, [rememberWorkspacePath, resetWorkbenchState, setFileTree, setRootHandle, setWorkspaceRootPath]);
 
   /**
    * Refresh the file tree from the current root handle
@@ -440,8 +445,9 @@ export function useFileSystem(): UseFileSystemReturn {
       setLoading(true);
       setError(null);
 
-      if (isTauri()) {
-        const selected = await window.__TAURI__!.core.invoke<string | null>(
+      const tauriInvoke = getTauriInvoke();
+      if (isTauri() && tauriInvoke) {
+        const selected = await tauriInvoke<string | null>(
           "plugin:dialog|open",
           {
             directory: true,
@@ -492,6 +498,18 @@ export function useFileSystem(): UseFileSystemReturn {
     try {
       setLoading(true);
       setError(null);
+      const invoke = getTauriInvoke();
+      if (!invoke) {
+        throw new Error("Tauri invoke bridge unavailable.");
+      }
+
+      const exists = await invoke<boolean>("desktop_exists_path", { path: trimmed });
+      if (!exists) {
+        await removeRecentWorkspacePath(trimmed);
+        setError(`Workspace path no longer exists: ${trimmed}`);
+        return;
+      }
+
       const handle = createDesktopDirectoryHandle(trimmed);
       await applyWorkspaceHandle(handle, trimmed);
     } catch (err) {
@@ -500,7 +518,7 @@ export function useFileSystem(): UseFileSystemReturn {
     } finally {
       setLoading(false);
     }
-  }, [applyWorkspaceHandle, setError, setLoading]);
+  }, [applyWorkspaceHandle, removeRecentWorkspacePath, setError, setLoading]);
 
   /**
    * Open a QA workspace in OPFS (dev-only helper)

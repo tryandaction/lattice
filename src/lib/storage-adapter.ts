@@ -5,8 +5,38 @@
  * Web (localStorage) and Desktop (Tauri store) environments.
  */
 
-function hasTauriCore(win: Window & { __TAURI__?: { core?: { invoke?: unknown } } }): boolean {
-  return typeof win.__TAURI__?.core?.invoke === 'function';
+export type TauriInvoke = <T = unknown>(command: string, args?: Record<string, unknown>, options?: unknown) => Promise<T>;
+
+function resolveTauriInvoke(
+  win: Window & {
+    __TAURI__?: { core?: { invoke?: unknown } };
+    __TAURI_INTERNALS__?: { invoke?: unknown };
+  },
+): TauriInvoke | null {
+  if (typeof win.__TAURI__?.core?.invoke === "function") {
+    return win.__TAURI__.core.invoke as TauriInvoke;
+  }
+
+  if (typeof win.__TAURI_INTERNALS__?.invoke === "function") {
+    return win.__TAURI_INTERNALS__.invoke as TauriInvoke;
+  }
+
+  return null;
+}
+
+function hasTauriCore(win: Window & { __TAURI__?: { core?: { invoke?: unknown } }; __TAURI_INTERNALS__?: { invoke?: unknown } }): boolean {
+  return resolveTauriInvoke(win) !== null;
+}
+
+export function getTauriInvoke(): TauriInvoke | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return resolveTauriInvoke(window as Window & {
+    __TAURI__?: { core?: { invoke?: unknown } };
+    __TAURI_INTERNALS__?: { invoke?: unknown };
+  });
 }
 
 /**
@@ -33,7 +63,10 @@ export function isTauriHost(): boolean {
  */
 export function isTauri(): boolean {
   if (typeof window === 'undefined') return false;
-  return hasTauriCore(window as Window & { __TAURI__?: { core?: { invoke?: unknown } } });
+  return hasTauriCore(window as Window & {
+    __TAURI__?: { core?: { invoke?: unknown } };
+    __TAURI_INTERNALS__?: { invoke?: unknown };
+  });
 }
 
 export interface StorageAdapter {
@@ -83,48 +116,73 @@ class WebStorageAdapter implements StorageAdapter {
 }
 
 /**
- * Tauri Storage Adapter using Tauri invoke commands
- * Falls back to localStorage if Tauri commands fail
- * @internal Reserved for future Tauri backend integration
+ * Tauri Storage Adapter backed by the Rust-side Tauri store.
+ * When a key only exists in localStorage, it is migrated on first read.
  */
-class _TauriStorageAdapter implements StorageAdapter {
+class TauriStorageAdapter implements StorageAdapter {
   private webFallback = new WebStorageAdapter();
 
   async get<T>(key: string): Promise<T | null> {
     try {
-      // Use Tauri invoke to get settings
-      const value = await window.__TAURI__!.core.invoke<string | null>('get_setting', { key });
-      return value ? JSON.parse(value) : null;
-    } catch {
-      // Fallback to localStorage
+      const invoke = getTauriInvoke();
+      if (!invoke) {
+        throw new Error("Tauri invoke bridge unavailable");
+      }
+      const value = await invoke<T | null>("get_setting", { key });
+      if (value !== null && value !== undefined) {
+        return value;
+      }
+
+      const fallbackValue = await this.webFallback.get<T>(key);
+      if (fallbackValue !== null) {
+        await invoke("set_setting", { key, value: fallbackValue });
+        await this.webFallback.remove(key);
+      }
+      return fallbackValue;
+    } catch (error) {
+      console.error(`Failed to get ${key} from Tauri store`, error);
       return this.webFallback.get<T>(key);
     }
   }
 
   async set<T>(key: string, value: T): Promise<void> {
     try {
-      await window.__TAURI__!.core.invoke('set_setting', { 
-        key, 
-        value: JSON.stringify(value) 
-      });
-    } catch {
-      // Fallback to localStorage
+      const invoke = getTauriInvoke();
+      if (!invoke) {
+        throw new Error("Tauri invoke bridge unavailable");
+      }
+      await invoke("set_setting", { key, value });
+      await this.webFallback.remove(key);
+    } catch (error) {
+      console.error(`Failed to set ${key} in Tauri store`, error);
       await this.webFallback.set(key, value);
     }
   }
 
   async remove(key: string): Promise<void> {
     try {
-      await window.__TAURI__!.core.invoke('remove_setting', { key });
-    } catch {
+      const invoke = getTauriInvoke();
+      if (!invoke) {
+        throw new Error("Tauri invoke bridge unavailable");
+      }
+      await invoke("remove_setting", { key });
+      await this.webFallback.remove(key);
+    } catch (error) {
+      console.error(`Failed to remove ${key} from Tauri store`, error);
       await this.webFallback.remove(key);
     }
   }
 
   async clear(): Promise<void> {
     try {
-      await window.__TAURI__!.core.invoke('clear_settings');
-    } catch {
+      const invoke = getTauriInvoke();
+      if (!invoke) {
+        throw new Error("Tauri invoke bridge unavailable");
+      }
+      await invoke("clear_settings");
+      await this.webFallback.clear();
+    } catch (error) {
+      console.error("Failed to clear Tauri store", error);
       await this.webFallback.clear();
     }
   }
@@ -135,8 +193,6 @@ let storageAdapter: StorageAdapter | null = null;
 
 /**
  * Get the appropriate storage adapter for the current environment
- * Note: Always uses WebStorageAdapter for now since Tauri commands
- * need to be implemented in the Rust backend
  */
 export function getStorageAdapter(): StorageAdapter {
   // Return a no-op adapter during SSR
@@ -149,10 +205,12 @@ export function getStorageAdapter(): StorageAdapter {
     };
   }
   
-  if (!storageAdapter) {
-    // For now, always use WebStorageAdapter as it works in both environments
-    // Tauri-specific storage can be added later when backend commands are ready
-    storageAdapter = new WebStorageAdapter();
+  const shouldUseTauri = isTauri();
+  if (
+    !storageAdapter ||
+    (shouldUseTauri && !(storageAdapter instanceof TauriStorageAdapter))
+  ) {
+    storageAdapter = shouldUseTauri ? new TauriStorageAdapter() : new WebStorageAdapter();
   }
   return storageAdapter;
 }

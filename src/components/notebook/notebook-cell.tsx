@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Plus, Trash2, Code, FileText, ChevronDown, FileCode2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/hooks/use-i18n";
 import { CodeCell } from "./code-cell";
 import { MarkdownCell } from "./markdown-cell";
 import { RawCell } from "./raw-cell";
@@ -39,6 +40,7 @@ function CellTypeSelector({
   currentType: "markdown" | "code" | "raw";
   onChange: (type: "markdown" | "code" | "raw") => void;
 }) {
+  const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -46,7 +48,7 @@ function CellTypeSelector({
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-1 rounded px-1.5 py-1 text-xs hover:bg-accent transition-colors"
-        title={currentType === "code" ? "Code cell" : currentType === "markdown" ? "Markdown cell" : "Raw cell"}
+        title={currentType === "code" ? t("notebook.cell.code") : currentType === "markdown" ? t("notebook.cell.markdown") : t("notebook.cell.raw")}
       >
         {currentType === "code" ? (
           <Code className="h-3 w-3" />
@@ -76,7 +78,7 @@ function CellTypeSelector({
               )}
             >
               <Code className="h-3 w-3" />
-              <span>Code</span>
+              <span>{t("notebook.cell.code")}</span>
             </button>
             <button
               onClick={() => {
@@ -89,7 +91,7 @@ function CellTypeSelector({
               )}
             >
               <FileText className="h-3 w-3" />
-              <span>Markdown</span>
+              <span>{t("notebook.cell.markdown")}</span>
             </button>
             <button
               onClick={() => {
@@ -102,7 +104,7 @@ function CellTypeSelector({
               )}
             >
               <FileCode2 className="h-3 w-3" />
-              <span>Raw</span>
+              <span>{t("notebook.cell.raw")}</span>
             </button>
           </div>
         </>
@@ -121,6 +123,7 @@ function AddCellButton({
   position: "above" | "below";
   onAdd: (type: "markdown" | "code" | "raw") => void;
 }) {
+  const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -128,7 +131,7 @@ function AddCellButton({
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-1 rounded p-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-        title={`Add cell ${position}`}
+        title={position === "above" ? t("notebook.cell.addAbove") : t("notebook.cell.addBelow")}
       >
         <Plus className="h-3 w-3" />
       </button>
@@ -148,7 +151,7 @@ function AddCellButton({
               className="flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs hover:bg-accent"
             >
               <Code className="h-3 w-3" />
-              <span>Code</span>
+              <span>{t("notebook.cell.code")}</span>
             </button>
             <button
               onClick={() => {
@@ -158,7 +161,7 @@ function AddCellButton({
               className="flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs hover:bg-accent"
             >
               <FileText className="h-3 w-3" />
-              <span>Markdown</span>
+              <span>{t("notebook.cell.markdown")}</span>
             </button>
             <button
               onClick={() => {
@@ -168,7 +171,7 @@ function AddCellButton({
               className="flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs hover:bg-accent"
             >
               <FileCode2 className="h-3 w-3" />
-              <span>Raw</span>
+              <span>{t("notebook.cell.raw")}</span>
             </button>
           </div>
         </>
@@ -203,6 +206,7 @@ export function NotebookCellComponent({
   isExecuting = false,
   canRunCell = true,
 }: NotebookCellProps) {
+  const { t } = useI18n();
   const [showControls, setShowControls] = useState(false);
 
   // Handle keyboard navigation
@@ -301,7 +305,7 @@ export function NotebookCellComponent({
           <button
             onClick={onDelete}
             className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-            title="Delete cell"
+            title={t("notebook.cell.delete")}
           >
             <Trash2 className="h-3 w-3" />
           </button>

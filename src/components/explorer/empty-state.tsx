@@ -38,10 +38,10 @@ export function EmptyState({
           <AlertTriangle className="h-10 w-10 text-destructive/70" />
           <div className="space-y-1">
             <p className="text-sm font-medium text-destructive">
-              Browser Not Supported
+              {t("explorer.empty.unsupported.title")}
             </p>
             <p className="text-xs text-muted-foreground">
-              File System Access API requires Chrome or Edge browser.
+              {t("explorer.empty.unsupported.description")}
             </p>
           </div>
         </div>
@@ -59,10 +59,10 @@ export function EmptyState({
         <FolderOpen className="h-10 w-10 text-muted-foreground transition-colors group-hover:text-primary" />
         <div className="space-y-1 text-center">
           <p className="text-sm font-medium text-foreground">
-            Open Local Folder
+            {t("explorer.openFolder")}
           </p>
           <p className="text-xs text-muted-foreground">
-            Select a research folder to begin
+            {t("explorer.empty.description")}
           </p>
         </div>
       </button>
@@ -73,13 +73,13 @@ export function EmptyState({
           className="text-xs text-muted-foreground underline decoration-dotted hover:text-primary"
           type="button"
         >
-          Open QA Workspace
+          {t("explorer.empty.qa")}
         </button>
       )}
 
       <div className="text-center">
         <p className="font-scientific text-muted-foreground">
-          Supported: PDF, MD, TXT, PY, IPYNB, PPT, PNG, JPG
+          {t("explorer.empty.supported")}
         </p>
       </div>
 

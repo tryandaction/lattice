@@ -30,6 +30,74 @@ interface PDFExportButtonProps {
   disabled?: boolean;
 }
 
+export async function exportPdfWithAnnotations(
+  originalContent: ArrayBuffer,
+  annotations: AnnotationItem[],
+  fileName: string,
+): Promise<void> {
+  const toastId = showExportToast({
+    type: 'progress',
+    message: 'Exporting PDF...',
+    progress: 0,
+  });
+
+  try {
+    const pdfAnnotations = annotations.filter((annotation) => annotation.target.type === 'pdf');
+
+    let pdfBytes: Uint8Array;
+    if (pdfAnnotations.length === 0) {
+      pdfBytes = new Uint8Array(originalContent);
+      updateExportToast(toastId, { progress: 50 });
+    } else {
+      updateExportToast(toastId, { progress: 30 });
+      pdfBytes = await exportFlattenedPDF(originalContent, pdfAnnotations);
+      updateExportToast(toastId, { progress: 70 });
+    }
+
+    const exportFileName = fileName.replace(/\.pdf$/i, '') + '_annotated.pdf';
+    const result = await exportFile(pdfBytes, {
+      defaultFileName: exportFileName,
+      filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
+    });
+
+    dismissExportToast(toastId);
+
+    if (result.cancelled) {
+      return;
+    }
+
+    if (result.success) {
+      showExportToast({
+        type: 'success',
+        message: 'Export successful',
+        filePath: result.filePath,
+      });
+      return;
+    }
+
+    throw new Error(result.error || 'Export failed');
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'Export failed';
+
+    dismissExportToast(toastId);
+    showExportToast({
+      type: 'error',
+      message: 'Export failed',
+      error: errorMessage,
+    });
+
+    const shouldDownloadJSON = window.confirm(
+      'PDF export failed. Would you like to download your annotations as JSON instead?'
+    );
+
+    if (shouldDownloadJSON) {
+      downloadAnnotationsJSON(annotations, fileName);
+    }
+
+    throw new Error(errorMessage);
+  }
+}
+
 // ============================================================================
 // Component
 // ============================================================================
@@ -52,76 +120,13 @@ export function PDFExportButton({
     
     setIsExporting(true);
     setError(null);
-    
-    // Show progress toast
-    const toastId = showExportToast({
-      type: 'progress',
-      message: 'Exporting PDF...',
-      progress: 0,
-    });
-    
+
     try {
-      // Filter to only PDF annotations
-      const pdfAnnotations = annotations.filter(a => a.target.type === 'pdf');
-      
-      let pdfBytes: Uint8Array;
-      
-      if (pdfAnnotations.length === 0) {
-        // No annotations to export, just use original
-        pdfBytes = new Uint8Array(originalContent);
-        updateExportToast(toastId, { progress: 50 });
-      } else {
-        // Export with annotations burned in
-        updateExportToast(toastId, { progress: 30 });
-        pdfBytes = await exportFlattenedPDF(originalContent, pdfAnnotations);
-        updateExportToast(toastId, { progress: 70 });
-      }
-      
-      // Generate export filename
-      const exportFileName = fileName.replace(/\.pdf$/i, '') + '_annotated.pdf';
-      
-      // Use export adapter for cross-platform support
-      const result = await exportFile(pdfBytes, {
-        defaultFileName: exportFileName,
-        filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
-      });
-      
-      dismissExportToast(toastId);
-      
-      if (result.cancelled) {
-        // User cancelled, no toast needed
-        return;
-      }
-      
-      if (result.success) {
-        showExportToast({
-          type: 'success',
-          message: 'Export successful',
-          filePath: result.filePath,
-        });
-      } else {
-        throw new Error(result.error || 'Export failed');
-      }
+      await exportPdfWithAnnotations(originalContent, annotations, fileName);
     } catch (err) {
       console.error('PDF export failed:', err);
       const errorMessage = err instanceof Error ? err.message : 'Export failed';
       setError(errorMessage);
-      
-      dismissExportToast(toastId);
-      showExportToast({
-        type: 'error',
-        message: 'Export failed',
-        error: errorMessage,
-      });
-      
-      // Offer JSON fallback
-      const shouldDownloadJSON = window.confirm(
-        'PDF export failed. Would you like to download your annotations as JSON instead?'
-      );
-      
-      if (shouldDownloadJSON) {
-        downloadAnnotationsJSON(annotations, fileName);
-      }
     } finally {
       setIsExporting(false);
     }

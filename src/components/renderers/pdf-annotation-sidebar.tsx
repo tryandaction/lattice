@@ -44,15 +44,18 @@ import type { AnnotationItem, PdfTarget } from "@/types/universal-annotation";
 import { cn } from "@/lib/utils";
 import type { PaneId } from "@/types/layout";
 import type { AnnotationBacklink } from "@/lib/annotation-backlinks";
+import { useI18n } from "@/hooks/use-i18n";
+import { getLocale, t as translate } from "@/lib/i18n";
 
 // Helper function to export annotations to Markdown format
 function exportAnnotationsToMarkdown(annotations: AnnotationItem[]): string {
+  const locale = getLocale();
   const lines: string[] = [
-    '# 批注导出',
+    `# ${translate("pdf.sidebar.export.title")}`,
     '',
-    `*导出时间: ${new Date().toLocaleString('zh-CN')}*`,
+    `*${translate("pdf.sidebar.export.time", { time: new Date().toLocaleString(locale) })}*`,
     '',
-    `共 ${annotations.length} 条批注`,
+    translate("pdf.sidebar.export.count", { count: annotations.length }),
     '',
     '---',
     '',
@@ -73,17 +76,17 @@ function exportAnnotationsToMarkdown(annotations: AnnotationItem[]): string {
 
   for (const page of sortedPages) {
     const pageAnnotations = byPage.get(page)!;
-    lines.push(`## 第 ${page} 页`);
+    lines.push(`## ${translate("pdf.sidebar.page", { page })}`);
     lines.push('');
 
     for (const ann of pageAnnotations) {
       const typeLabel = {
-        highlight: '🟡 高亮',
-        underline: '📝 下划线',
-        area: '📦 区域',
-        ink: '✏️ 手绘',
-        text: '💬 文字',
-      }[ann.style.type] || '📌 批注';
+        highlight: `🟡 ${translate("pdf.command.highlight")}`,
+        underline: `📝 ${translate("pdf.command.underline")}`,
+        area: `📦 ${translate("pdf.command.area")}`,
+        ink: `✏️ ${translate("pdf.sidebar.filter.type.ink")}`,
+        text: `💬 ${translate("pdf.command.text")}`,
+      }[ann.style.type] || `📌 ${translate("workbench.annotations.panelTitle")}`;
 
       lines.push(`### ${typeLabel}`);
       
@@ -94,7 +97,7 @@ function exportAnnotationsToMarkdown(annotations: AnnotationItem[]): string {
       
       if (ann.comment) {
         lines.push('');
-        lines.push(`**笔记:** ${ann.comment}`);
+        lines.push(`**${translate("pdf.note.add")}:** ${ann.comment}`);
       }
       
       lines.push('');
@@ -142,6 +145,7 @@ function BatchSelectionToolbar({
   onChangeColor: (color: string) => void;
   onExport?: () => void;
 }) {
+  const { t } = useI18n();
   const [showColorPicker, setShowColorPicker] = useState(false);
   const colorPickerRef = useRef<HTMLDivElement>(null);
 
@@ -160,7 +164,7 @@ function BatchSelectionToolbar({
   return (
     <div className="border-b border-border px-2 py-1.5 flex items-center gap-1.5 bg-background/95 backdrop-blur">
       <span className="text-xs font-medium text-muted-foreground">
-        已选 {selectedCount}/{totalCount}
+        {t("pdf.sidebar.batch.selected", { selected: selectedCount, total: totalCount })}
       </span>
 
       <div className="flex items-center gap-0.5 ml-auto">
@@ -170,7 +174,7 @@ function BatchSelectionToolbar({
           className="h-6 text-xs px-2"
           onClick={selectedCount === totalCount ? onClearSelection : onSelectAll}
         >
-          {selectedCount === totalCount ? '取消全选' : '全选'}
+          {selectedCount === totalCount ? t("pdf.sidebar.batch.clearAll") : t("pdf.sidebar.batch.selectAll")}
         </Button>
 
         <div className="w-px h-4 bg-border mx-1" />
@@ -184,7 +188,7 @@ function BatchSelectionToolbar({
             onClick={() => setShowColorPicker(!showColorPicker)}
           >
             <Palette className="h-3 w-3 mr-1" />
-            颜色
+            {t("pdf.sidebar.filter.color")}
           </Button>
           {showColorPicker && (
             <div className="absolute top-full right-0 mt-1 bg-popover border border-border rounded-lg shadow-lg p-2 z-20">
@@ -215,7 +219,7 @@ function BatchSelectionToolbar({
             onClick={onExport}
           >
             <Download className="h-3 w-3 mr-1" />
-            导出
+            {t("workbench.commandBar.export")}
           </Button>
         )}
 
@@ -226,7 +230,7 @@ function BatchSelectionToolbar({
           onClick={onDelete}
         >
           <Trash2 className="h-3 w-3 mr-1" />
-          删除
+          {t("pdf.delete")}
         </Button>
 
         <Button 
@@ -265,6 +269,7 @@ function SearchFilterToolbar({
   resultCount: number;
   totalCount: number;
 }) {
+  const { t } = useI18n();
   const [showFilters, setShowFilters] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
 
@@ -281,12 +286,12 @@ function SearchFilterToolbar({
   const hasActiveFilters = typeFilter !== 'all' || colorFilter !== 'all' || searchQuery.length > 0;
 
   const typeOptions: { value: AnnotationTypeFilter; label: string; icon: React.ReactNode }[] = [
-    { value: 'all', label: '全部类型', icon: null },
-    { value: 'highlight', label: '高亮', icon: <Highlighter className="h-3 w-3" /> },
-    { value: 'underline', label: '下划线', icon: <Underline className="h-3 w-3" /> },
-    { value: 'area', label: '区域', icon: <Square className="h-3 w-3" /> },
-    { value: 'ink', label: '手绘', icon: <Pencil className="h-3 w-3" /> },
-    { value: 'text', label: '文字', icon: <Type className="h-3 w-3" /> },
+    { value: 'all', label: t("pdf.sidebar.filter.type.all"), icon: null },
+    { value: 'highlight', label: t("pdf.command.highlight"), icon: <Highlighter className="h-3 w-3" /> },
+    { value: 'underline', label: t("pdf.command.underline"), icon: <Underline className="h-3 w-3" /> },
+    { value: 'area', label: t("pdf.command.area"), icon: <Square className="h-3 w-3" /> },
+    { value: 'ink', label: t("pdf.sidebar.filter.type.ink"), icon: <Pencil className="h-3 w-3" /> },
+    { value: 'text', label: t("pdf.command.text"), icon: <Type className="h-3 w-3" /> },
   ];
 
   return (
@@ -298,7 +303,7 @@ function SearchFilterToolbar({
           type="text"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="搜索批注内容..."
+          placeholder={t("pdf.sidebar.search.placeholder")}
           className="w-full h-7 pl-7 pr-7 text-xs bg-muted/50 border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
         />
         {searchQuery && (
@@ -324,7 +329,7 @@ function SearchFilterToolbar({
             onClick={() => setShowFilters(!showFilters)}
           >
             <Filter className="h-3 w-3 mr-1" />
-            筛选
+            {t("pdf.sidebar.filter.label")}
             {hasActiveFilters && (
               <span className="ml-1 bg-primary text-primary-foreground rounded-full w-4 h-4 text-[10px] flex items-center justify-center">
                 {(typeFilter !== 'all' ? 1 : 0) + (colorFilter !== 'all' ? 1 : 0)}
@@ -337,7 +342,7 @@ function SearchFilterToolbar({
             <div className="absolute top-full left-0 mt-1 bg-popover border border-border rounded-lg shadow-lg p-3 z-20 min-w-[200px]">
               {/* Type filter */}
               <div className="mb-3">
-                <div className="text-xs font-medium mb-1.5">类型</div>
+                <div className="text-xs font-medium mb-1.5">{t("pdf.sidebar.filter.type")}</div>
                 <div className="flex flex-wrap gap-1">
                   {typeOptions.map((opt) => (
                     <button
@@ -359,7 +364,7 @@ function SearchFilterToolbar({
 
               {/* Color filter */}
               <div>
-                <div className="text-xs font-medium mb-1.5">颜色</div>
+                <div className="text-xs font-medium mb-1.5">{t("pdf.sidebar.filter.color")}</div>
                 <div className="flex flex-wrap gap-1">
                   <button
                     onClick={() => onColorFilterChange('all')}
@@ -370,7 +375,7 @@ function SearchFilterToolbar({
                         : "border-border hover:border-primary/50"
                     )}
                   >
-                    全部
+                    {t("pdf.sidebar.filter.all")}
                   </button>
                   {HIGHLIGHT_COLORS.map((color) => (
                     <button
@@ -399,7 +404,7 @@ function SearchFilterToolbar({
                   }}
                   className="mt-3 text-xs text-muted-foreground hover:text-foreground"
                 >
-                  清除所有筛选
+                  {t("pdf.sidebar.filter.clear")}
                 </button>
               )}
             </div>
@@ -409,7 +414,7 @@ function SearchFilterToolbar({
         {/* Result count */}
         {hasActiveFilters && (
           <span className="text-xs text-muted-foreground">
-            {resultCount}/{totalCount} 条结果
+            {t("pdf.sidebar.filter.results", { result: resultCount, total: totalCount })}
           </span>
         )}
       </div>
@@ -441,6 +446,7 @@ function AnnotationContextMenu({
   onCopyText?: () => void;
   onUpdateTextStyle?: (textColor: string, fontSize: number, bgColor: string) => void;
 }) {
+  const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
   const [showTextStyleEditor, setShowTextStyleEditor] = useState(false);
   const [textColor, setTextColor] = useState(annotation.style.textStyle?.textColor || DEFAULT_TEXT_STYLE.textColor);
@@ -502,11 +508,11 @@ function AnnotationContextMenu({
         className="fixed z-50 bg-popover border border-border rounded-lg shadow-xl p-3 min-w-[240px]"
         style={{ left: adjustedPosition.x, top: adjustedPosition.y }}
       >
-        <div className="text-sm font-medium mb-2">编辑文字样式</div>
+        <div className="text-sm font-medium mb-2">{t("pdf.sidebar.textStyle.title")}</div>
         
         {/* Text color */}
         <div className="mb-2">
-          <div className="text-xs text-muted-foreground mb-1">文字颜色</div>
+          <div className="text-xs text-muted-foreground mb-1">{t("pdf.textColor")}</div>
           <div className="flex flex-wrap gap-1">
             {TEXT_COLORS.map((color) => (
               <button
@@ -526,7 +532,7 @@ function AnnotationContextMenu({
 
         {/* Background color */}
         <div className="mb-2">
-          <div className="text-xs text-muted-foreground mb-1">背景颜色</div>
+          <div className="text-xs text-muted-foreground mb-1">{t("pdf.backgroundColor")}</div>
           <div className="flex flex-wrap gap-1">
             {BACKGROUND_COLORS.map((color) => (
               <button
@@ -551,7 +557,7 @@ function AnnotationContextMenu({
 
         {/* Font size */}
         <div className="mb-3">
-          <div className="text-xs text-muted-foreground mb-1">字体大小</div>
+          <div className="text-xs text-muted-foreground mb-1">{t("pdf.fontSize")}</div>
           <div className="flex flex-wrap gap-1">
             {TEXT_FONT_SIZES.map((size) => (
               <button
@@ -571,7 +577,7 @@ function AnnotationContextMenu({
 
         <div className="flex justify-end gap-2">
           <Button size="sm" variant="ghost" onClick={() => setShowTextStyleEditor(false)}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button 
             size="sm" 
@@ -580,7 +586,7 @@ function AnnotationContextMenu({
               onClose();
             }}
           >
-            保存
+            {t("common.save")}
           </Button>
         </div>
       </div>
@@ -630,7 +636,7 @@ function AnnotationContextMenu({
             onClick={() => setShowTextStyleEditor(true)}
           >
             <Palette className="h-4 w-4" />
-            编辑文字样式
+            {t("pdf.sidebar.textStyle.title")}
           </button>
           <div className="h-px bg-border mx-2" />
         </>
@@ -647,7 +653,7 @@ function AnnotationContextMenu({
             }}
           >
             <MessageSquare className="h-4 w-4" />
-            添加笔记
+            {t("pdf.note.add")}
           </button>
 
           <button
@@ -658,7 +664,7 @@ function AnnotationContextMenu({
             }}
           >
             <FileText className="h-4 w-4" />
-            添加评论
+            {t("pdf.comment.add")}
           </button>
 
           <button
@@ -666,7 +672,7 @@ function AnnotationContextMenu({
             onClick={onClose}
           >
             <Tag className="h-4 w-4" />
-            添加标签...
+            {t("pdf.sidebar.tag")}
           </button>
 
           <div className="h-px bg-border mx-2 my-1" />
@@ -682,7 +688,7 @@ function AnnotationContextMenu({
           }}
         >
           <Underline className="h-4 w-4" />
-          转换为下划线
+          {t("pdf.convert.underline")}
         </button>
       )}
 
@@ -695,7 +701,7 @@ function AnnotationContextMenu({
           }}
         >
           <Highlighter className="h-4 w-4" />
-          转换为高亮
+          {t("pdf.convert.highlight")}
         </button>
       )}
 
@@ -708,7 +714,7 @@ function AnnotationContextMenu({
           }}
         >
           <Copy className="h-4 w-4" />
-          复制文本
+          {t("pdf.sidebar.copyText")}
         </button>
       )}
 
@@ -722,7 +728,7 @@ function AnnotationContextMenu({
         }}
       >
         <Trash2 className="h-4 w-4" />
-        删除
+        {t("common.delete")}
       </button>
     </div>
   );
@@ -766,6 +772,7 @@ function AnnotationCard({
   onConvertToUnderline?: () => void;
   onUpdateTextStyle?: (textColor: string, fontSize: number, bgColor: string) => void;
 }) {
+  const { t } = useI18n();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
@@ -837,10 +844,10 @@ function AnnotationCard({
   };
 
   const getPreviewText = () => {
-    if (annotation.style.type === 'ink') return '手绘标注';
+    if (annotation.style.type === 'ink') return t("pdf.sidebar.preview.ink");
     if (annotation.content) return annotation.content;
     if (annotation.comment) return annotation.comment;
-    return annotation.style.type === 'area' ? '区域选择' : '批注';
+    return annotation.style.type === 'area' ? t("pdf.sidebar.preview.area") : t("workbench.annotations.panelTitle");
   };
 
   // Get display color for the color bar
@@ -903,7 +910,7 @@ function AnnotationCard({
               }}
             >
               {getTypeIcon()}
-              <span>页 {page}</span>
+              <span>{t("pdf.sidebar.page", { page })}</span>
             </span>
             
             {/* More button */}
@@ -964,7 +971,7 @@ function AnnotationCard({
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={annotation.preview.dataUrl}
-                alt={`第 ${page} 页区域预览`}
+                alt={t("pdf.sidebar.previewImageAlt", { page })}
                 className="block h-24 w-full object-cover"
                 loading="lazy"
               />
@@ -984,7 +991,7 @@ function AnnotationCard({
                         !showPreview ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground'
                       }`}
                     >
-                      编辑
+                      {t("common.edit")}
                     </button>
                     <button
                       onClick={() => setShowPreview(true)}
@@ -992,7 +999,7 @@ function AnnotationCard({
                         showPreview ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground'
                       }`}
                     >
-                      预览
+                      {t("export.markdown.previewTitle")}
                     </button>
                   </div>
 
@@ -1006,7 +1013,7 @@ function AnnotationCard({
                           currentFilePath={currentFilePath}
                         />
                       ) : (
-                        <span className="text-xs text-muted-foreground italic">（空）</span>
+                        <span className="text-xs text-muted-foreground italic">{t("pdf.sidebar.emptyComment")}</span>
                       )}
                     </div>
                   ) : (
@@ -1016,7 +1023,7 @@ function AnnotationCard({
                       onChange={(e) => setEditComment(e.target.value)}
                       className="w-full p-2 text-xs border border-border rounded bg-background resize-none focus:outline-none focus:ring-1 focus:ring-primary font-mono"
                       rows={3}
-                      placeholder="支持 Markdown 和 $公式$..."
+                      placeholder={t("pdf.sidebar.commentPlaceholder")}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                           handleSaveComment();
@@ -1041,14 +1048,14 @@ function AnnotationCard({
                         setEditComment(annotation.comment || '');
                       }}
                     >
-                      取消
+                      {t("common.cancel")}
                     </Button>
                     <Button
                       size="sm"
                       className="h-6 text-xs"
                       onClick={handleSaveComment}
                     >
-                      保存
+                      {t("common.save")}
                     </Button>
                   </div>
                 </div>
@@ -1081,7 +1088,7 @@ function AnnotationCard({
                   }}
                 >
                   <MessageSquare className="h-3 w-3" />
-                  添加笔记...
+                  {t("pdf.note.add")}...
                 </button>
               )}
             </>
@@ -1097,8 +1104,8 @@ function AnnotationCard({
                   setShowBacklinks((value) => !value);
                 }}
               >
-                <span>反链 {resolvedBacklinks.length}</span>
-                <span>{showBacklinks ? "收起" : "展开"}</span>
+                <span>{t("pdf.sidebar.backlinks", { count: resolvedBacklinks.length })}</span>
+                <span>{showBacklinks ? t("pdf.sidebar.collapse") : t("pdf.sidebar.expand")}</span>
               </button>
               {showBacklinks ? (
                 <div className="mt-1 space-y-1">
@@ -1163,6 +1170,7 @@ export function PdfAnnotationSidebar({
   onBatchUpdateColor,
   onBatchExport,
 }: PdfAnnotationSidebarProps) {
+  const { t } = useI18n();
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const isMultiSelectMode = selectedIds.size > 0;
@@ -1292,9 +1300,9 @@ export function PdfAnnotationSidebar({
         <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
           <Highlighter className="h-6 w-6 text-muted-foreground" />
         </div>
-        <p className="text-sm font-medium text-foreground mb-1">暂无批注</p>
+        <p className="text-sm font-medium text-foreground mb-1">{t("pdf.sidebar.empty")}</p>
         <p className="text-xs text-muted-foreground">
-          选择文本或使用工具添加批注
+          {t("pdf.sidebar.emptyHint")}
         </p>
       </div>
     );
@@ -1302,16 +1310,16 @@ export function PdfAnnotationSidebar({
 
   return (
     <div className="h-full min-h-0 overflow-y-auto">
-      <div className="sticky top-0 z-20 bg-background/95 backdrop-blur">
+      <div className="border-b border-border bg-background/95">
         <div className="px-3 py-2 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm font-medium">批注</h3>
+          <h3 className="text-sm font-medium">{t("workbench.annotations.panelTitle")}</h3>
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
               size="icon"
               className="h-6 w-6"
               onClick={() => isMultiSelectMode ? clearSelection() : selectAll()}
-              title={isMultiSelectMode ? "退出多选" : "多选模式"}
+              title={isMultiSelectMode ? t("pdf.sidebar.batch.exit") : t("pdf.sidebar.batch.enter")}
             >
               {isMultiSelectMode ? (
                 <CheckSquare className="h-3.5 w-3.5 text-primary" />
@@ -1353,8 +1361,8 @@ export function PdfAnnotationSidebar({
             <Search className="h-6 w-6 text-muted-foreground mb-2" />
             <p className="text-xs text-muted-foreground">
               {searchQuery || typeFilter !== 'all' || colorFilter !== 'all'
-                ? '没有匹配的批注'
-                : '暂无批注'}
+                ? t("pdf.sidebar.emptyFiltered")
+                : t("pdf.sidebar.empty")}
             </p>
           </div>
         ) : (

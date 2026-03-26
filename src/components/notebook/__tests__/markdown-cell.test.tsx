@@ -77,7 +77,7 @@ describe("MarkdownCell", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Source/i }));
+    fireEvent.click(screen.getByRole("button", { name: /源码/i }));
     const preview = screen.getByTestId("live-preview");
     expect(preview.getAttribute("data-mode")).toBe("source");
 

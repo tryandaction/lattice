@@ -17,7 +17,13 @@
 - PDF 左栏已改为可拖拽宽度的紧凑工具头 + 主批注工作区，批注列表重新占据主要高度
 - Markdown 阅读态与系统索引页已继续收紧，frontmatter 在阅读渲染中默认隐藏
 - 桌面端现在会恢复最近打开的工作区，不再每次重启都重新选择文件夹
+- 桌面端设置存储现已统一到 Tauri store，最近工作区、默认文件夹与启动恢复不再依赖 `localStorage` 作为事实源
+- 工作台 session 现已按 `workspaceRootPath` 单独持久化：pane / split / 打开的标签页 / active pane / active tab / sidebar collapsed 会随工作区一起恢复
+- Windows 桌面端现在显式关闭原生窗口装饰，自定义 `Command Bar` 作为唯一标题栏；窗口控制按钮固定在最右侧，不再跟随动作区滚动
+- Notebook 的 Save / Verify / Run All / New Cell 高优先级动作现已统一进入 `Command Bar`，不再保留独立顶部动作带
+- Word / HTML / 图片 / 只读代码 / 只读 Jupyter 等只读 viewer 已去掉重复顶部文件名栏，主动作继续向统一 `Command Bar` 收口
 - 只读 Markdown renderer 已关闭代码执行入口，避免保留半接通链路
+- `pdf-highlighter-adapter` 是 PDF 主路径；`pdf-viewer.tsx` 仅保留为无文件句柄场景的 fallback
 - AI Chat、Evidence Panel、Workbench 已形成 `Conclusion / Evidence / Next Actions -> Draft / Proposal -> Writeback` 主路径
 - Selection AI、diagnostics、browser regression、release prepare 脚本已形成阶段性工程闭环
 
@@ -88,6 +94,7 @@ releases/           本地发布产物与元数据事实来源
 
 - `web-dist/` 是统一的静态导出产物
 - 线上站点当前发布到 Cloudflare Pages：<https://lattice-apq.pages.dev/>
+- 最新预览部署：<https://47f3417d.lattice-apq.pages.dev>
 - GitHub Pages workflow 仍保留为备用/镜像发布链路
 - 桌面发布使用 `releases/vX.Y.Z/` 作为本地事实来源
 - GitHub Actions 只创建 draft release，不自动 publish

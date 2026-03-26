@@ -7,6 +7,7 @@
 'use client';
 
 import { Loader2 } from 'lucide-react';
+import { useI18n } from '@/hooks/use-i18n';
 
 interface LoadingIndicatorProps {
   status: 'loading' | 'ready' | 'error';
@@ -14,6 +15,7 @@ interface LoadingIndicatorProps {
 }
 
 export function LoadingIndicator({ status, message }: LoadingIndicatorProps) {
+  const { t } = useI18n();
   if (status === 'ready') return null;
 
   return (
@@ -24,7 +26,7 @@ export function LoadingIndicator({ status, message }: LoadingIndicatorProps) {
             <>
               <Loader2 className="h-5 w-5 animate-spin text-primary" />
               <div>
-                <p className="text-sm font-medium">正在加载 Python 环境...</p>
+                <p className="text-sm font-medium">{t('workbench.notebook.loading')}</p>
                 {message && (
                   <p className="text-xs text-muted-foreground mt-1">{message}</p>
                 )}
@@ -37,7 +39,7 @@ export function LoadingIndicator({ status, message }: LoadingIndicatorProps) {
                 <span className="text-red-500 text-sm">✕</span>
               </div>
               <div>
-                <p className="text-sm font-medium text-red-500">加载失败</p>
+                <p className="text-sm font-medium text-red-500">{t('workbench.notebook.loadingFailed')}</p>
                 {message && (
                   <p className="text-xs text-muted-foreground mt-1">{message}</p>
                 )}

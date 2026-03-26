@@ -36,6 +36,13 @@ export type CodeEditorLanguage =
   | "javascript" 
   | "typescript";
 
+export interface CodeEditorStateSnapshot {
+  cursorPosition: number;
+  scrollTop: number;
+  scrollLeft?: number;
+  selection?: { from: number; to: number };
+}
+
 /**
  * Ref handle for CodeEditor component
  */
@@ -60,6 +67,10 @@ export interface CodeEditorRef {
   } | null;
   /** Check if there's a selection */
   hasSelection: () => boolean;
+  /** Get current editor state for restoration */
+  getEditorState: () => CodeEditorStateSnapshot | null;
+  /** Restore editor state (cursor/selection/scroll) */
+  restoreEditorState: (state: CodeEditorStateSnapshot) => void;
 }
 
 /**
@@ -494,6 +505,36 @@ function CodeEditorComponent({
     viewRef.current?.focus();
   }, []);
 
+  const restoreEditorState = useCallback((state: CodeEditorStateSnapshot) => {
+    const view = viewRef.current;
+    if (!view) return;
+
+    const selection = state.selection ?? {
+      from: state.cursorPosition,
+      to: state.cursorPosition,
+    };
+
+    view.dispatch({
+      selection: { anchor: selection.from, head: selection.to },
+      scrollIntoView: false,
+    });
+
+    view.scrollDOM.scrollTop = state.scrollTop ?? 0;
+    view.scrollDOM.scrollLeft = state.scrollLeft ?? 0;
+  }, []);
+
+  const getEditorState = useCallback((): CodeEditorStateSnapshot | null => {
+    const view = viewRef.current;
+    if (!view) return null;
+    const selection = view.state.selection.main;
+    return {
+      cursorPosition: selection.head,
+      scrollTop: view.scrollDOM.scrollTop,
+      scrollLeft: view.scrollDOM.scrollLeft,
+      selection: { from: selection.from, to: selection.to },
+    };
+  }, []);
+
   const scrollToLine = useCallback((lineNumber: number) => {
     const view = viewRef.current;
     if (!view) return;
@@ -582,6 +623,8 @@ function CodeEditorComponent({
         getSelection,
         getSelectionDetails,
         hasSelection,
+        getEditorState,
+        restoreEditorState,
       };
     }
     return () => {
@@ -589,7 +632,7 @@ function CodeEditorComponent({
         editorRef.current = null;
       }
     };
-  }, [editorRef, flashLine, focus, getContent, getSelection, getSelectionDetails, hasSelection, scrollToLine]);
+  }, [editorRef, flashLine, focus, getContent, getEditorState, getSelection, getSelectionDetails, hasSelection, restoreEditorState, scrollToLine]);
 
   // Error state
   if (error) {

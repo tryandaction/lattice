@@ -12,16 +12,17 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useWorkspaceStore } from '@/stores/workspace-store';
+import { useContentCacheStore } from '@/stores/content-cache-store';
 import { readDirectoryRecursive } from '@/hooks/use-file-system';
 import { createDesktopDirectoryHandle, getDesktopHandlePath } from '@/lib/desktop-file-system';
 import { logger } from '@/lib/logger';
-import { isTauri } from '@/lib/storage-adapter';
+import { getTauriInvoke, isTauri } from '@/lib/storage-adapter';
 import type { DirectoryNode } from '@/types/file-system';
 import type { AppSettings } from '@/types/settings';
 
 interface StartupWorkspaceResolution {
   path: string | null;
-  source: 'last_workspace_path' | 'default_folder' | null;
+  source: 'last_workspace_path' | 'recent_workspace_paths' | 'default_folder' | null;
 }
 
 const DB_NAME = 'lattice-handles';
@@ -84,6 +85,7 @@ export function useAutoOpenFolder() {
   const setLoading = useWorkspaceStore((state) => state.setLoading);
   const setError = useWorkspaceStore((state) => state.setError);
   const setWorkspaceRootPath = useWorkspaceStore((state) => state.setWorkspaceRootPath);
+  const resetWorkbenchState = useWorkspaceStore((state) => state.resetWorkbenchState);
 
   const hasAttemptedAutoOpen = useRef(false);
 
@@ -103,6 +105,8 @@ export function useAutoOpenFolder() {
     setLoading(true);
     setError(null);
     try {
+      useContentCacheStore.getState().clearCache();
+      resetWorkbenchState();
       const children = await readDirectoryRecursive(handle);
       const rootNode: DirectoryNode = {
         name: handle.name,
@@ -123,7 +127,7 @@ export function useAutoOpenFolder() {
     } finally {
       setLoading(false);
     }
-  }, [rememberWorkspacePath, setError, setFileTree, setLoading, setRootHandle, setWorkspaceRootPath]);
+  }, [rememberWorkspacePath, resetWorkbenchState, setError, setFileTree, setLoading, setRootHandle, setWorkspaceRootPath]);
 
   const openDefaultFolder = useCallback(async () => {
     if (hasAttemptedAutoOpen.current) return;
@@ -135,7 +139,13 @@ export function useAutoOpenFolder() {
     try {
       if (isTauri()) {
         try {
-          const startupWorkspace = await window.__TAURI__!.core.invoke<StartupWorkspaceResolution>('resolve_startup_workspace');
+          const invoke = getTauriInvoke();
+          if (!invoke) {
+            logger.warn('[AutoOpen] Tauri host detected but invoke bridge is unavailable');
+            return;
+          }
+
+          const startupWorkspace = await invoke<StartupWorkspaceResolution>('resolve_startup_workspace');
           if (!startupWorkspace?.path) {
             return;
           }

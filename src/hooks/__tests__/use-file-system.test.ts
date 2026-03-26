@@ -138,6 +138,14 @@ describe("readDirectoryRecursive", () => {
 
   it("opens a desktop workspace in Tauri mode and rebuilds the file tree", async () => {
     const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "get_setting") {
+        return null;
+      }
+
+      if (command === "set_setting" || command === "remove_setting" || command === "clear_settings") {
+        return null;
+      }
+
       if (command === "plugin:dialog|open") {
         return "C:/vault";
       }

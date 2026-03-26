@@ -237,5 +237,6 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   if (typeof raw.aiTemperature === 'number') normalized.aiTemperature = raw.aiTemperature;
   if (typeof raw.aiMaxTokens === 'number') normalized.aiMaxTokens = raw.aiMaxTokens;
   if (typeof raw.aiStreamingEnabled === 'boolean') normalized.aiStreamingEnabled = raw.aiStreamingEnabled;
+  if (typeof raw.aiSystemPrompt === 'string') normalized.aiSystemPrompt = raw.aiSystemPrompt;
   return normalized;
 }

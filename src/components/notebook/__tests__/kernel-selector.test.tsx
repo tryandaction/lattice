@@ -156,7 +156,7 @@ describe("KernelSelector", () => {
       expect(screen.queryByText("检测运行环境...")).toBeNull();
       expect(screen.getAllByRole("button", { name: /Pyodide（浏览器内核）/ }).length).toBeGreaterThan(0);
     });
-    expect(screen.queryByText("当前环境：网页运行时")).not.toBeNull();
-    expect(screen.queryByText("Browser")).not.toBeNull();
+    expect(screen.queryByText("当前环境：网页")).not.toBeNull();
+    expect(screen.queryByText("浏览器")).not.toBeNull();
   });
 });

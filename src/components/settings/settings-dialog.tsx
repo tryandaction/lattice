@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 import type { TranslationKey } from '@/lib/i18n';
 import type { PluginCommand, PluginManifest, PluginPermission, PluginSettingField } from '@/lib/plugins/types';
 import type { PluginHealth, PluginAuditEvent } from '@/lib/plugins/runtime';
+import packageJson from '../../../package.json';
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -40,6 +41,8 @@ const tabs: { id: SettingsTab; icon: typeof Settings; labelKey: 'settings.genera
   { id: 'shortcuts', icon: Keyboard, labelKey: 'settings.shortcuts' },
   { id: 'about', icon: Info, labelKey: 'settings.about' },
 ];
+
+const APP_VERSION = packageJson.version;
 
 const PERMISSION_META: Record<PluginPermission, { titleKey: TranslationKey; descKey: TranslationKey }> = {
   'file:read': {
@@ -409,7 +412,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                 {/* App shortcuts */}
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">
-                    应用操作
+                    {t('settings.shortcuts.section.app')}
                   </div>
                   <div className="space-y-1">
                     <ShortcutItem label={t('settings.shortcuts.toggleSidebar')} shortcut="Ctrl+B" />
@@ -417,73 +420,73 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     <ShortcutItem label={t('settings.shortcuts.openCommandCenter')} shortcut="Ctrl+K" />
                     <ShortcutItem label={t('settings.shortcuts.openPanels')} shortcut="Ctrl+Shift+P" />
                     <ShortcutItem label={t('settings.shortcuts.toggleTheme')} shortcut="Ctrl+Shift+T" />
-                    <ShortcutItem label="打开实时预览指南" shortcut="Ctrl+Shift+/" />
+                    <ShortcutItem label={t('settings.shortcuts.openGuide')} shortcut="Ctrl+Shift+/" />
                   </div>
                 </div>
 
                 {/* Text formatting */}
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">
-                    文本格式
+                    {t('settings.shortcuts.section.text')}
                   </div>
                   <div className="space-y-1">
-                    <ShortcutItem label="粗体" shortcut="Ctrl+B" />
-                    <ShortcutItem label="斜体" shortcut="Ctrl+I" />
-                    <ShortcutItem label="行内代码" shortcut="Ctrl+`" />
-                    <ShortcutItem label="删除线" shortcut="Ctrl+Shift+S" />
-                    <ShortcutItem label="高亮" shortcut="Ctrl+Shift+H" />
-                    <ShortcutItem label="插入链接" shortcut="Ctrl+K" />
-                    <ShortcutItem label="插入代码块" shortcut="Ctrl+Shift+`" />
-                    <ShortcutItem label="切换注释" shortcut="Ctrl+/" />
+                    <ShortcutItem label={t('settings.shortcuts.bold')} shortcut="Ctrl+B" />
+                    <ShortcutItem label={t('settings.shortcuts.italic')} shortcut="Ctrl+I" />
+                    <ShortcutItem label={t('settings.shortcuts.inlineCode')} shortcut="Ctrl+`" />
+                    <ShortcutItem label={t('settings.shortcuts.strikethrough')} shortcut="Ctrl+Shift+S" />
+                    <ShortcutItem label={t('settings.shortcuts.highlight')} shortcut="Ctrl+Shift+H" />
+                    <ShortcutItem label={t('settings.shortcuts.insertLink')} shortcut="Ctrl+K" />
+                    <ShortcutItem label={t('settings.shortcuts.insertCodeBlock')} shortcut="Ctrl+Shift+`" />
+                    <ShortcutItem label={t('settings.shortcuts.toggleComment')} shortcut="Ctrl+/" />
                   </div>
                 </div>
 
                 {/* Math shortcuts */}
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">
-                    公式编辑
+                    {t('settings.shortcuts.section.math')}
                   </div>
                   <div className="space-y-1">
-                    <ShortcutItem label="行内公式 $…$（选中文字则包裹）" shortcut="Ctrl+Shift+M" />
-                    <ShortcutItem label="块级公式 $$…$$" shortcut="Ctrl+Alt+M" />
-                    <ShortcutItem label="分数 \frac{}" shortcut="Ctrl+Shift+F" />
-                    <ShortcutItem label="根号 \sqrt{}" shortcut="Ctrl+Shift+R" />
-                    <ShortcutItem label="积分 \int_{a}^{b}" shortcut="Ctrl+Shift+I" />
-                    <ShortcutItem label="求和 \sum_{i=1}^{n}" shortcut="Ctrl+Shift+U" />
-                    <ShortcutItem label="极限 \lim_{x \to }" shortcut="Ctrl+Shift+L" />
-                    <ShortcutItem label="矩阵 pmatrix 2×2" shortcut="Ctrl+Shift+X" />
-                    <ShortcutItem label="向量 \vec{}" shortcut="Ctrl+Shift+V" />
-                    <ShortcutItem label="偏导 \frac{\partial }{\partial x}" shortcut="Ctrl+Shift+P" />
-                    <ShortcutItem label="上标 ^{}" shortcut="Ctrl+↑" />
-                    <ShortcutItem label="下标 _{}" shortcut="Ctrl+↓" />
+                    <ShortcutItem label={t('settings.shortcuts.inlineMath')} shortcut="Ctrl+Shift+M" />
+                    <ShortcutItem label={t('settings.shortcuts.blockMath')} shortcut="Ctrl+Alt+M" />
+                    <ShortcutItem label={t('settings.shortcuts.fraction')} shortcut="Ctrl+Shift+F" />
+                    <ShortcutItem label={t('settings.shortcuts.sqrt')} shortcut="Ctrl+Shift+R" />
+                    <ShortcutItem label={t('settings.shortcuts.integral')} shortcut="Ctrl+Shift+I" />
+                    <ShortcutItem label={t('settings.shortcuts.sum')} shortcut="Ctrl+Shift+U" />
+                    <ShortcutItem label={t('settings.shortcuts.limit')} shortcut="Ctrl+Shift+L" />
+                    <ShortcutItem label={t('settings.shortcuts.matrix')} shortcut="Ctrl+Shift+X" />
+                    <ShortcutItem label={t('settings.shortcuts.vector')} shortcut="Ctrl+Shift+V" />
+                    <ShortcutItem label={t('settings.shortcuts.partial')} shortcut="Ctrl+Shift+P" />
+                    <ShortcutItem label={t('settings.shortcuts.superscript')} shortcut="Ctrl+↑" />
+                    <ShortcutItem label={t('settings.shortcuts.subscript')} shortcut="Ctrl+↓" />
                   </div>
                 </div>
 
                 {/* Quantum keyboard */}
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">
-                    量子键盘（公式输入时）
+                    {t('settings.shortcuts.section.quantum')}
                   </div>
                   <div className="space-y-1">
-                    <ShortcutItem label="Tab — 切换行内 / 块级模式" shortcut="Tab" />
-                    <ShortcutItem label="Shift+Tab — 切换 Markdown / LaTeX 插入格式" shortcut="Shift+Tab" />
-                    <ShortcutItem label="Shift+符号键 — 插入变体符号" shortcut="Shift+符号" />
-                    <ShortcutItem label="关闭量子键盘" shortcut="Esc" />
+                    <ShortcutItem label={t('settings.shortcuts.quantumTab')} shortcut="Tab" />
+                    <ShortcutItem label={t('settings.shortcuts.quantumShiftTab')} shortcut="Shift+Tab" />
+                    <ShortcutItem label={t('settings.shortcuts.quantumVariant')} shortcut={t('settings.shortcuts.quantumVariantShortcut')} />
+                    <ShortcutItem label={t('settings.shortcuts.quantumClose')} shortcut="Esc" />
                   </div>
                 </div>
 
                 {/* Line operations */}
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">
-                    行操作
+                    {t('settings.shortcuts.section.line')}
                   </div>
                   <div className="space-y-1">
-                    <ShortcutItem label="上移行" shortcut="Alt+↑" />
-                    <ShortcutItem label="下移行" shortcut="Alt+↓" />
-                    <ShortcutItem label="复制行" shortcut="Ctrl+D" />
-                    <ShortcutItem label="在下方插入新行" shortcut="Ctrl+Enter" />
-                    <ShortcutItem label="增加缩进" shortcut="Ctrl+]" />
-                    <ShortcutItem label="减少缩进" shortcut="Ctrl+[" />
+                    <ShortcutItem label={t('settings.shortcuts.moveLineUp')} shortcut="Alt+↑" />
+                    <ShortcutItem label={t('settings.shortcuts.moveLineDown')} shortcut="Alt+↓" />
+                    <ShortcutItem label={t('settings.shortcuts.duplicateLine')} shortcut="Ctrl+D" />
+                    <ShortcutItem label={t('settings.shortcuts.insertLineBelow')} shortcut="Ctrl+Enter" />
+                    <ShortcutItem label={t('settings.shortcuts.indentMore')} shortcut="Ctrl+]" />
+                    <ShortcutItem label={t('settings.shortcuts.indentLess')} shortcut="Ctrl+[" />
                   </div>
                 </div>
               </div>
@@ -949,29 +952,24 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                   <>
                     {/* Provider Selection */}
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">AI Provider</label>
+                      <label className="text-sm font-medium">{t('settings.ai.providerLabel')}</label>
                       <select
                         className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
                         value={settings.aiProvider ?? ''}
                         onChange={(e) => {
                           const value = e.target.value || null;
-                          updateSetting('aiProvider', value);
-                          if (value) {
-                            localStorage.setItem('lattice-ai-provider', value);
-                          } else {
-                            localStorage.removeItem('lattice-ai-provider');
-                          }
+                          void updateSetting('aiProvider', value);
                         }}
                       >
-                        <option value="">Select a provider...</option>
+                        <option value="">{t('settings.ai.providerPlaceholder')}</option>
                         <option value="openai">OpenAI</option>
                         <option value="anthropic">Anthropic</option>
                         <option value="google">Google Gemini</option>
                         <option value="ollama">Ollama (Local)</option>
                         <option value="deepseek">DeepSeek</option>
                         <option value="moonshot">Kimi (Moonshot)</option>
-                        <option value="zhipu">智谱 AI</option>
-                        <option value="custom">Custom (OpenAI Compatible)</option>
+                        <option value="zhipu">{t('settings.ai.provider.zhipu')}</option>
+                        <option value="custom">{t('settings.ai.provider.custom')}</option>
                       </select>
                     </div>
 
@@ -988,13 +986,13 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     {/* Ollama Help */}
                     {settings.aiProvider === 'ollama' && !isTauri() && (
                       <div className="rounded-lg border border-amber-400/50 bg-amber-50/10 p-3 text-xs text-amber-700 dark:text-amber-400">
-                        <div className="font-semibold mb-1">⚠️ Web 版本访问本地 Ollama 需要 CORS</div>
-                        <p className="mb-1">推荐先确认本地地址为 <code className="font-mono">http://localhost:11434</code>，然后使用以下命令启动：</p>
+                        <div className="font-semibold mb-1">{t('settings.ai.ollamaCors.title')}</div>
+                        <p className="mb-1">{t('settings.ai.ollamaCors.description')}</p>
                         <code className="block bg-black/10 dark:bg-white/10 rounded px-2 py-1 font-mono text-[11px] break-all">
                           OLLAMA_ORIGINS=* ollama serve
                         </code>
                         <p className="mt-1 text-muted-foreground">
-                          如需限制来源：<code className="font-mono">OLLAMA_ORIGINS=https://lattice-apq.pages.dev ollama serve</code>
+                          {t('settings.ai.ollamaCors.restrict')}<code className="font-mono">OLLAMA_ORIGINS=https://lattice-apq.pages.dev ollama serve</code>
                         </p>
                       </div>
                     )}
@@ -1002,7 +1000,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     {/* Model Selection */}
                     {settings.aiProvider && (
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">Model</label>
+                        <label className="text-sm font-medium">{t('settings.ai.modelLabel')}</label>
                         <AiModelSelector provider={settings.aiProvider} currentModel={settings.aiModel} onSelect={(m) => updateSetting('aiModel', m)} />
                       </div>
                     )}
@@ -1032,7 +1030,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
 
                     {/* Max Tokens */}
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Max Tokens</label>
+                      <label className="text-sm font-medium">{t('settings.ai.maxTokens')}</label>
                       <input
                         type="number"
                         className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
@@ -1046,22 +1044,22 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
 
                     {/* System Prompt */}
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">System Prompt</label>
+                      <label className="text-sm font-medium">{t('settings.ai.systemPromptLabel')}</label>
                       <textarea
                         className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm min-h-[80px] resize-y"
                         value={settings.aiSystemPrompt ?? ''}
                         onChange={(e) => updateSetting('aiSystemPrompt', e.target.value)}
-                        placeholder="You are a helpful research assistant..."
+                        placeholder={t('settings.ai.systemPromptPlaceholder')}
                         rows={3}
                       />
-                      <p className="text-xs text-muted-foreground">Custom system prompt for AI interactions. Leave empty for default.</p>
+                      <p className="text-xs text-muted-foreground">{t('settings.ai.systemPromptHint')}</p>
                     </div>
 
                     {/* Streaming Toggle */}
                     <div className="flex items-center justify-between rounded-lg border border-border bg-muted/30 p-3">
                       <div>
-                        <div className="text-sm font-medium">Streaming</div>
-                        <p className="text-xs text-muted-foreground mt-1">Stream responses token by token</p>
+                        <div className="text-sm font-medium">{t('settings.ai.streaming')}</div>
+                        <p className="text-xs text-muted-foreground mt-1">{t('settings.ai.streaming.description')}</p>
                       </div>
                       <input
                         type="checkbox"
@@ -1081,7 +1079,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                   <h3 className="text-2xl font-bold mb-2">{t('app.name')}</h3>
                   <p className="text-muted-foreground mb-4">{t('app.tagline')}</p>
                   <div className="text-sm text-muted-foreground">
-                    {t('settings.version')}: 0.1.0
+                    {t('settings.version')}: {APP_VERSION}
                   </div>
                 </div>
                 <div className="rounded-lg border border-border bg-muted/30 p-4">
@@ -1280,6 +1278,7 @@ function PluginTrustDialog({
 }
 
 function PluginSettingsFields({ pluginId, fields }: { pluginId: string; fields: PluginSettingField[] }) {
+  const { t } = useI18n();
   const [values, setValues] = useState<Record<string, unknown>>(() => {
     const initial: Record<string, unknown> = {};
     for (const field of fields) {
@@ -1296,7 +1295,7 @@ function PluginSettingsFields({ pluginId, fields }: { pluginId: string; fields: 
 
   return (
     <div className="mt-2 space-y-2 border-t border-border pt-2">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Settings</div>
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">{t('settings.title')}</div>
       {fields.map((field) => (
         <div key={field.id} className="flex items-center justify-between gap-2">
           <div>
@@ -1344,18 +1343,22 @@ function PluginSettingsFields({ pluginId, fields }: { pluginId: string; fields: 
   );
 }
 
-const AI_PROVIDER_META: Record<string, { name: string; defaultBaseUrl?: string; apiKeyPlaceholder?: string }> = {
-  openai: { name: 'OpenAI', defaultBaseUrl: 'https://api.openai.com/v1', apiKeyPlaceholder: 'sk-...' },
-  anthropic: { name: 'Anthropic', defaultBaseUrl: 'https://api.anthropic.com', apiKeyPlaceholder: 'sk-ant-...' },
-  google: { name: 'Google Gemini', defaultBaseUrl: 'https://generativelanguage.googleapis.com', apiKeyPlaceholder: 'AIza...' },
-  ollama: { name: 'Ollama', defaultBaseUrl: 'http://localhost:11434' },
-  deepseek: { name: 'DeepSeek', defaultBaseUrl: 'https://api.deepseek.com', apiKeyPlaceholder: 'sk-...' },
-  moonshot: { name: 'Kimi (Moonshot)', defaultBaseUrl: 'https://api.moonshot.cn/v1', apiKeyPlaceholder: 'sk-...' },
-  zhipu: { name: '智谱 AI', defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4', apiKeyPlaceholder: '填写智谱 API Key' },
-  custom: { name: 'Custom (OpenAI Compatible)', defaultBaseUrl: 'https://api.example.com/v1', apiKeyPlaceholder: '填写兼容 API Key' },
-};
+function getAiProviderMeta(t: ReturnType<typeof useI18n>["t"]): Record<string, { name: string; defaultBaseUrl?: string; apiKeyPlaceholder?: string }> {
+  return {
+    openai: { name: 'OpenAI', defaultBaseUrl: 'https://api.openai.com/v1', apiKeyPlaceholder: 'sk-...' },
+    anthropic: { name: 'Anthropic', defaultBaseUrl: 'https://api.anthropic.com', apiKeyPlaceholder: 'sk-ant-...' },
+    google: { name: 'Google Gemini', defaultBaseUrl: 'https://generativelanguage.googleapis.com', apiKeyPlaceholder: 'AIza...' },
+    ollama: { name: 'Ollama', defaultBaseUrl: 'http://localhost:11434' },
+    deepseek: { name: 'DeepSeek', defaultBaseUrl: 'https://api.deepseek.com', apiKeyPlaceholder: 'sk-...' },
+    moonshot: { name: 'Kimi (Moonshot)', defaultBaseUrl: 'https://api.moonshot.cn/v1', apiKeyPlaceholder: 'sk-...' },
+    zhipu: { name: t('settings.ai.provider.zhipu'), defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4', apiKeyPlaceholder: t('settings.ai.apiKeyPlaceholder.zhipu') },
+    custom: { name: t('settings.ai.provider.custom'), defaultBaseUrl: 'https://api.example.com/v1', apiKeyPlaceholder: t('settings.ai.apiKeyPlaceholder.custom') },
+  };
+}
 
 function AiApiKeyInput({ provider }: { provider: string }) {
+  const { t } = useI18n();
+  const providerMeta = getAiProviderMeta(t);
   const [key, setKey] = useState('');
 
   // Load key from secure storage on mount
@@ -1378,22 +1381,24 @@ function AiApiKeyInput({ provider }: { provider: string }) {
 
   return (
     <div className="space-y-2">
-      <label className="text-sm font-medium">{AI_PROVIDER_META[provider]?.name ?? provider} API Key</label>
+      <label className="text-sm font-medium">{providerMeta[provider]?.name ?? provider} API Key</label>
       <input
         type="password"
         className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
         value={key}
         onChange={(e) => save(e.target.value)}
-        placeholder={AI_PROVIDER_META[provider]?.apiKeyPlaceholder ?? 'sk-...'}
+        placeholder={providerMeta[provider]?.apiKeyPlaceholder ?? 'sk-...'}
       />
       <p className="text-xs text-muted-foreground">
-        API Key 会持久化保存，并在调用 provider 时直接读取同一份安全存储。
+        {t('settings.ai.apiKey.persist')}
       </p>
     </div>
   );
 }
 
 function AiBaseUrlInput({ provider }: { provider: string }) {
+  const { t } = useI18n();
+  const providerMeta = getAiProviderMeta(t);
   const [url, setUrl] = useState('');
 
   useEffect(() => {
@@ -1412,23 +1417,24 @@ function AiBaseUrlInput({ provider }: { provider: string }) {
   return (
     <div className="space-y-2">
       <label className="text-sm font-medium">
-        {provider === 'ollama' ? 'Ollama Base URL' : 'API Base URL'}
+        {provider === 'ollama' ? t('settings.ai.baseUrl.ollama') : t('settings.ai.baseUrl.default')}
       </label>
       <input
         type="text"
         className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
         value={url}
         onChange={(e) => save(e.target.value)}
-        placeholder={AI_PROVIDER_META[provider]?.defaultBaseUrl ?? ''}
+        placeholder={providerMeta[provider]?.defaultBaseUrl ?? ''}
       />
       <p className="text-xs text-muted-foreground">
-        留空将使用默认地址：{AI_PROVIDER_META[provider]?.defaultBaseUrl ?? 'provider default'}
+        {t('settings.ai.baseUrl.fallback', { url: providerMeta[provider]?.defaultBaseUrl ?? 'provider default' })}
       </p>
     </div>
   );
 }
 
 function AiProviderConnectionTest({ provider }: { provider: string }) {
+  const { t } = useI18n();
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -1439,10 +1445,10 @@ function AiProviderConnectionTest({ provider }: { provider: string }) {
       const { getProvider } = await import('@/lib/ai/providers');
       const resolved = getProvider(provider as import('@/lib/ai/types').AiProviderId);
       if (!resolved) {
-        setResult({ ok: false, message: 'Provider 不存在。' });
+        setResult({ ok: false, message: t('settings.ai.connection.providerMissing') });
       } else {
         const nextResult = await resolved.testConnection();
-        setResult({ ok: nextResult.ok, message: nextResult.message || (nextResult.ok ? '连接成功。' : '连接失败。') });
+        setResult({ ok: nextResult.ok, message: nextResult.message || (nextResult.ok ? t('settings.ai.connection.success') : t('settings.ai.connection.failure')) });
       }
     } catch (error) {
       setResult({ ok: false, message: error instanceof Error ? error.message : String(error) });
@@ -1455,9 +1461,9 @@ function AiProviderConnectionTest({ provider }: { provider: string }) {
     <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-medium">连接测试</div>
+          <div className="text-sm font-medium">{t('settings.ai.connection.title')}</div>
           <p className="text-xs text-muted-foreground mt-1">
-            检查当前 provider、API Key、Base URL 和网络配置是否真的可用。
+            {t('settings.ai.connection.description')}
           </p>
         </div>
         <button
@@ -1465,7 +1471,7 @@ function AiProviderConnectionTest({ provider }: { provider: string }) {
           disabled={testing}
           className="rounded-md border border-border px-3 py-2 text-xs hover:bg-accent disabled:opacity-50 transition-colors"
         >
-          {testing ? 'Testing...' : 'Test Connection'}
+          {testing ? t('settings.ai.connection.testing') : t('settings.ai.connection.test')}
         </button>
       </div>
       {result && (
@@ -1478,6 +1484,7 @@ function AiProviderConnectionTest({ provider }: { provider: string }) {
 }
 
 function AiModelSelector({ provider, currentModel, onSelect }: { provider: string; currentModel: string | null; onSelect: (model: string) => void }) {
+  const { t } = useI18n();
   const [models, setModels] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(false);
 
@@ -1506,7 +1513,7 @@ function AiModelSelector({ provider, currentModel, onSelect }: { provider: strin
         className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
         value={currentModel ?? ''}
         onChange={(e) => onSelect(e.target.value)}
-        placeholder={loading ? 'Loading models...' : '输入模型 ID，或从建议列表中选择'}
+        placeholder={loading ? t('settings.ai.modelLoading') : t('settings.ai.modelPlaceholder')}
       />
       <datalist id={`ai-models-${provider}`}>
         {models.map((model) => (
@@ -1515,8 +1522,8 @@ function AiModelSelector({ provider, currentModel, onSelect }: { provider: strin
       </datalist>
       <p className="text-xs text-muted-foreground">
         {models.length > 0
-          ? `当前发现 ${models.length} 个可用模型，也支持直接手输模型 ID。`
-          : '当前未拉取到模型列表，仍可直接手输模型 ID。'}
+          ? t('settings.ai.modelHint.withCount', { count: models.length })
+          : t('settings.ai.modelHint.empty')}
       </p>
     </div>
   );

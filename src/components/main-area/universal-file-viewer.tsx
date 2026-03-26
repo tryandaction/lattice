@@ -6,11 +6,12 @@ import dynamic from "next/dynamic";
 import type { PaneId } from "@/stores/workspace-store";
 import { normalizeScientificText } from "@/lib/markdown-converter";
 import { navigateLink } from "@/lib/link-router/navigate-link";
+import { t } from "@/lib/i18n";
 
 /**
  * Loading state component
  */
-function LoadingState({ message = "Loading file..." }: { message?: string }) {
+function LoadingState({ message = t("viewer.loading.file") }: { message?: string }) {
   return (
     <div className="flex h-full flex-col items-center justify-center bg-background p-8">
       <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -39,7 +40,7 @@ function EmptyPanePlaceholder() {
     <div className="flex h-full flex-col items-center justify-center bg-background p-8">
       <FileQuestion className="h-12 w-12 text-muted-foreground/40" />
       <p className="mt-4 text-sm text-muted-foreground">
-        Click a file in the sidebar to open it here
+        {t("viewer.empty.openHere")}
       </p>
     </div>
   );
@@ -48,81 +49,81 @@ function EmptyPanePlaceholder() {
 // Lazy load renderers to minimize bundle size
 const ObsidianMarkdownViewer = dynamic(
   () => import("@/components/editor/obsidian-markdown-viewer").then((mod) => mod.ObsidianMarkdownViewer),
-  { loading: () => <LoadingState message="Loading viewer..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.viewer")} />, ssr: false }
 );
 
 const MarkdownRenderer = dynamic(
   () => import("@/components/renderers/markdown-renderer").then((mod) => mod.MarkdownRenderer),
-  { loading: () => <LoadingState message="Loading Markdown renderer..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.markdown")} />, ssr: false }
 );
 
 const PDFViewer = dynamic(
   () => import("@/components/renderers/pdf-viewer").then((mod) => mod.PDFViewer),
-  { loading: () => <LoadingState message="Loading PDF viewer..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.pdf")} />, ssr: false }
 );
 
 // PDF Highlighter Adapter for annotation support
 const PDFHighlighterAdapter = dynamic(
   () => import("@/components/renderers/pdf-highlighter-adapter").then((mod) => mod.PDFHighlighterAdapter),
-  { loading: () => <LoadingState message="Loading PDF viewer with annotations..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.pdfAnnotated")} />, ssr: false }
 );
 
 const JupyterRenderer = dynamic(
   () => import("@/components/renderers/jupyter-renderer").then((mod) => mod.JupyterRenderer),
-  { loading: () => <LoadingState message="Loading Jupyter renderer..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.jupyter")} />, ssr: false }
 );
 
 const NotebookEditor = dynamic(
   () => import("@/components/notebook/notebook-editor").then((mod) => mod.NotebookEditor),
-  { loading: () => <LoadingState message="Loading notebook editor..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.notebook")} />, ssr: false }
 );
 
 const CodeReader = dynamic(
   () => import("@/components/renderers/code-reader").then((mod) => mod.CodeReader),
-  { loading: () => <LoadingState message="Loading code reader..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.viewer")} />, ssr: false }
 );
 
 const WordViewer = dynamic(
   () => import("@/components/renderers/word-viewer").then((mod) => mod.WordViewer),
-  { loading: () => <LoadingState message="Loading Word viewer..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.word")} />, ssr: false }
 );
 
 const PowerPointViewer = dynamic(
   () => import("@/components/renderers/powerpoint-viewer").then((mod) => mod.PowerPointViewer),
-  { loading: () => <LoadingState message="Loading PowerPoint viewer..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.ppt")} />, ssr: false }
 );
 
 const HTMLViewer = dynamic(
   () => import("@/components/renderers/html-viewer").then((mod) => mod.HTMLViewer),
-  { loading: () => <LoadingState message="Loading HTML viewer..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.html")} />, ssr: false }
 );
 
 const ImageViewer = dynamic(
   () => import("@/components/renderers/image-viewer").then((mod) => mod.ImageViewer),
-  { loading: () => <LoadingState message="Loading image viewer..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.image")} />, ssr: false }
 );
 
 // Image Tldraw Adapter for annotation support
 const ImageTldrawAdapter = dynamic(
   () => import("@/components/renderers/image-tldraw-adapter").then((mod) => mod.ImageTldrawAdapter),
-  { loading: () => <LoadingState message="Loading image editor..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.imageEditor")} />, ssr: false }
 );
 
 const UnsupportedFile = dynamic(
   () => import("@/components/renderers/unsupported-file").then((mod) => mod.UnsupportedFile),
-  { loading: () => <LoadingState message="Loading..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.viewer")} />, ssr: false }
 );
 
 // CodeEditorViewer for editable code files (Requirements 4.1-4.4)
 const CodeEditorViewer = dynamic(
   () => import("@/components/renderers/code-editor-viewer").then((mod) => mod.CodeEditorViewer),
-  { loading: () => <LoadingState message="Loading code editor..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.code")} />, ssr: false }
 );
 
 // HandwritingViewer for handwriting note files
 const HandwritingViewer = dynamic(
   () => import("@/components/renderers/handwriting-viewer").then((mod) => mod.HandwritingViewer),
-  { loading: () => <LoadingState message="Loading handwriting editor..." />, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.handwriting")} />, ssr: false }
 );
 
 /**
@@ -176,10 +177,10 @@ function FileViewer({
             <div className="flex h-full flex-col items-center justify-center bg-background p-8">
               <AlertCircle className="h-8 w-8 text-destructive" />
               <p className="mt-4 text-sm text-destructive">
-                This file appears to contain binary data, not text.
+                {t("viewer.error.binaryText")}
               </p>
               <p className="mt-2 text-xs text-muted-foreground">
-                File: {fileName}
+                {t("viewer.error.binaryTextDescription", { fileName })}
               </p>
             </div>
           );
@@ -355,7 +356,16 @@ function FileViewer({
         );
       }
       // Fallback to basic image viewer
-      return <ImageViewer key={viewerKey} content={content as ArrayBuffer} fileName={fileName} mimeType={getImageMimeType(extension)} />;
+      return (
+        <ImageViewer
+          key={viewerKey}
+          content={content as ArrayBuffer}
+          fileName={fileName}
+          mimeType={getImageMimeType(extension)}
+          paneId={paneId}
+          filePath={filePath ?? fileName}
+        />
+      );
     case "handwriting": {
       // Ensure content is a string for handwriting editor
       let handwritingContent: string;
@@ -437,7 +447,7 @@ export function UniversalFileViewer({
 
   // Loading state
   if (isLoading) {
-    return <LoadingState message="Reading file..." />;
+    return <LoadingState message={t("viewer.loading.reading")} />;
   }
 
   // Error state
@@ -447,7 +457,7 @@ export function UniversalFileViewer({
 
   // No content yet (shouldn't happen if not loading/error, but handle gracefully)
   if (!content) {
-    return <LoadingState message="Preparing content..." />;
+    return <LoadingState message={t("viewer.loading.preparing")} />;
   }
 
   const fileName = handle.name;
