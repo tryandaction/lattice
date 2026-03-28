@@ -2,7 +2,7 @@
 
 > **Source of Truth** for the Lattice project's technical decisions and component relationships.
 > 
-> Last Updated: 2026-03-21 | Version: 2.0
+> Last Updated: 2026-03-28 | Version: 2.1
 
 ---
 
@@ -276,19 +276,19 @@ PDF is now treated as a first-class workspace item rather than a standalone bina
 
 Current model:
 
-- `paper.pdf` maps to a hidden sibling directory `.paper.lattice/`
-- the hidden directory stores:
+- `paper.pdf` maps to a workspace-root item directory `.lattice/items/<fileId>/`
+- the item directory stores:
   - `manifest.json`
   - user-created `*.md` and `*.ipynb`
   - `_annotations.md` only after the first PDF annotation exists
-- Explorer hides the real directory and projects only real user files plus lazy `_annotations.md` under the PDF node as virtual children
+- Explorer hides the real `.lattice/` storage tree and projects only real user files plus lazy `_annotations.md` under the PDF node as virtual children
 - PDF annotations remain the source of truth; `_annotations.md` is a lazy-generated mirror for reading, linking, and backlink browsing
 - PDF annotation storage is keyed by stable `itemId`, not only by current file path, so rename/move/copy/delete can migrate companion state
 
 This architecture intentionally separates:
 
 - **annotation truth**: `.lattice/annotations/<itemId>.json`
-- **document workspace**: `.basename.lattice/`
+- **document workspace**: `.lattice/items/<itemId>/`
 - **UI projection**: virtual children under the PDF node in Explorer
 - **navigation**: internal links route through one shared link router (`#page=`, `#annotation=`, `#line=`, `#cell=`, headings)
 
@@ -350,6 +350,7 @@ Lattice now uses a unified AI system instead of separate, component-specific pro
 - **`AiOrchestrator`**: single entry point for chat, inline actions, research actions, and safe task proposals
 - **`AiContextGraph`**: resolves focus context from files, headings, notebook cells, annotations, code symbols, workspace chunks, and current selection
 - **`EvidenceRef`**: shared evidence model for file paths, markdown headings, PDF pages/annotations, code lines, and notebook cells
+- **`PromptTemplate` / `PromptRun`**: reusable prompt infrastructure for Chat-first workflows with context binding, execution preview, and audit history
 - **`AiDraftArtifact`**: write-back target for summaries, reading notes, formula explainers, code notes, and comparison drafts
 - **`AiTaskProposal`**: half-automatic task plan that enumerates reads/writes before any user-approved action
 - **`ModelRouter`**: provider selection policy that keeps local models and cloud models under one routing layer
@@ -366,6 +367,13 @@ Lattice now uses a unified AI system instead of separate, component-specific pro
 ### Current Interaction Model
 
 - Side chat, inline menu, PDF assistant, and notebook assistant all call the same orchestrator
+- Desktop AI Chat is docked as a right-side workbench panel instead of a free-floating root overlay
+- Desktop shell entrypoints for AI are intentionally narrow: the left activity rail and command center toggle the same docked panel, while the former root-level AI context overlay is no longer part of the desktop shell chrome
+- Prompt templates do **not** create a second AI stack; they only shape prompt assembly, required context, execution preview, and result destination
+- Prompt templates are now shared across `Chat / Selection / Evidence`, with per-surface context binding and one shared execution bridge
+- Plain chat no longer auto-binds the active file body and all annotations by default; heavier context now enters through explicit mentions, selection flows, evidence actions, or prompt-preview confirmation
+- Plain desktop chat also no longer turns every free-form user query into an implicit workspace search. Workspace context only enters when the caller explicitly passes evidence, references, selection, or opt-in prompt-run context
+- Chat-surface prompt runs now expose explicit toggles for `current_file_content / pdf_annotations / workspace_summary`, and those heavy inputs are **off by default**
 - Scientific answers default to evidence-first output and expose context sources in the UI
 - Write-back flows default to **draft only**
 - File creation or content changes require explicit user approval through proposals
@@ -502,6 +510,15 @@ graph LR
 
 **NOT Cached**: File contents (always read from disk)
 
+### Desktop Settings Persistence
+
+- Desktop builds persist the full frontend `lattice-settings` payload in the Tauri store instead of a desktop-only subset
+- Desktop-specific workspace keys (`defaultFolder`, `lastOpenedFolder`, `lastWorkspacePath`, `recentWorkspacePaths`, `windowState`) are still mirrored into native-facing fields for startup restore and window commands
+- `resolve_startup_workspace` is the single desktop startup-resolution path; the frontend only consumes the resolved path and rebuilds the workspace tree
+- Desktop settings hydration now waits for the Tauri invoke bridge before treating the session as initialized, so startup restore and onboarding do not race against a temporary `localStorage` fallback
+- Onboarding visibility is derived from the persisted desktop settings truth, not from a transient pre-bridge default state
+- Auto-generated companion data is now rooted under workspace-level `.lattice/` storage instead of being scattered next to source files
+
 ### PDF Item Storage Split
 
 For PDF research workflows, the storage layer now explicitly splits into two persistent areas:
@@ -509,9 +526,9 @@ For PDF research workflows, the storage layer now explicitly splits into two per
 - `.lattice/annotations/`
   - stores structured annotation JSON sidecars
   - keyed by stable `itemId`
-- `.basename.lattice/`
+- `.lattice/items/<fileId>/`
   - stores PDF item workspace content
-  - overview note, annotation mirror, reading notes, notebooks, and manifest
+  - manifest, annotation mirror, reading notes, and notebooks
 
 This split is deliberate:
 

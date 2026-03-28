@@ -30,6 +30,8 @@ export interface ChatMessage {
   evidenceRefs?: EvidenceRef[];
   promptContext?: AiPromptContext;
   followUpActions?: AiFollowUpAction[];
+  templateId?: string;
+  promptRunId?: string;
   draftSuggestion?: {
     type: AiDraftArtifactType;
     templateId?: AiDraftTemplateId;
@@ -58,14 +60,14 @@ interface AiChatActions {
   setOpen: (open: boolean) => void;
   newConversation: () => string;
   setActiveConversation: (id: string) => void;
-  addUserMessage: (content: string, metadata?: Partial<Pick<ChatMessage, 'origin'>>) => void;
-  startAssistantMessage: () => string;
+  addUserMessage: (content: string, metadata?: Partial<Pick<ChatMessage, 'origin' | 'templateId' | 'promptRunId'>>) => void;
+  startAssistantMessage: (metadata?: Partial<Pick<ChatMessage, 'templateId' | 'promptRunId'>>) => string;
   appendToAssistantMessage: (messageId: string, text: string) => void;
   finishAssistantMessage: (messageId: string) => void;
   setAssistantError: (messageId: string, error: string) => void;
   setAssistantMetadata: (
     messageId: string,
-    metadata: Partial<Pick<ChatMessage, 'model' | 'evidenceRefs' | 'promptContext' | 'followUpActions' | 'draftSuggestion' | 'origin'>>
+    metadata: Partial<Pick<ChatMessage, 'model' | 'evidenceRefs' | 'promptContext' | 'followUpActions' | 'draftSuggestion' | 'origin' | 'templateId' | 'promptRunId'>>
   ) => void;
   setGenerating: (generating: boolean, controller?: AbortController | null) => void;
   stopGenerating: () => void;
@@ -152,7 +154,7 @@ export const useAiChatStore = create<AiChatState & AiChatActions>((set, get) => 
     debouncedSave(get().conversations);
   },
 
-  startAssistantMessage: () => {
+  startAssistantMessage: (metadata) => {
     const convId = get().activeConversationId;
     const msg: ChatMessage = {
       id: generateId(),
@@ -160,6 +162,7 @@ export const useAiChatStore = create<AiChatState & AiChatActions>((set, get) => 
       content: '',
       timestamp: Date.now(),
       isStreaming: true,
+      ...metadata,
     };
     set((s) => ({
       conversations: s.conversations.map((c) =>

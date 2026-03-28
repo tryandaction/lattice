@@ -31,6 +31,7 @@ export const ALLOWED_EXTENSIONS = new Set([
  * These are typically not relevant for research work
  */
 export const IGNORED_DIRECTORIES = new Set([
+  ".lattice",
   ".git",
   "node_modules",
   "__pycache__",

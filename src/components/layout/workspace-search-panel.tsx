@@ -143,7 +143,7 @@ export function WorkspaceSearchPanel() {
     let cancelled = false;
 
     if (keyword.length < 2) {
-      queueMicrotask(() => {
+      Promise.resolve().then(() => {
         if (!cancelled) {
           setResults([]);
           setIsSearching(false);
@@ -154,13 +154,11 @@ export function WorkspaceSearchPanel() {
       };
     }
 
-    queueMicrotask(() => {
+    void (async () => {
       if (!cancelled) {
         setIsSearching(true);
       }
-    });
 
-    void (async () => {
       const groups: SearchResultGroup[] = [];
       let totalMatches = 0;
 

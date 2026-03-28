@@ -8,6 +8,7 @@ import {
   resolveDirectoryHandle,
   sanitizeFileName,
 } from "@/lib/file-operations";
+import { getExtension, isIgnoredDirectory } from "@/lib/constants";
 import {
   buildRelativeWorkspacePath,
   normalizeWorkspacePath,
@@ -23,6 +24,7 @@ import type { AnnotationItem, UniversalAnnotationFile } from "@/types/universal-
 
 const PDF_ITEM_MANIFEST_VERSION = 3;
 const PDF_ITEM_MANIFEST_NAME = "manifest.json";
+const PDF_ITEMS_DIR = ".lattice/items";
 const LEGACY_PDF_ITEMS_DIR = ".lattice/pdf-items";
 const LEGACY_OVERVIEW_NOTE_NAME = "_overview.md";
 const DEFAULT_ANNOTATIONS_NOTE_NAME = "_annotations.md";
@@ -99,6 +101,12 @@ function getPdfBaseName(pdfPath: string): string {
 }
 
 export function getDefaultPdfItemFolderPath(pdfPath: string): string {
+  const normalizedPdfPath = normalizeWorkspacePath(pdfPath);
+  const rawItemId = sanitizeFileName(generateFileId(normalizedPdfPath)) || "pdf-item";
+  return joinPath(PDF_ITEMS_DIR, rawItemId);
+}
+
+export function getLegacyHiddenPdfItemFolderPath(pdfPath: string): string {
   const normalizedPdfPath = normalizeWorkspacePath(pdfPath);
   const parentPath = getParentPath(normalizedPdfPath);
   const rawBaseName = sanitizeFileName(getPdfBaseName(normalizedPdfPath)) || "PDF";
@@ -290,6 +298,31 @@ async function copyDirectoryRecursively(
   }
 }
 
+async function collectWorkspacePdfPaths(
+  handle: FileSystemDirectoryHandle,
+  parentPath = "",
+): Promise<string[]> {
+  const currentPath = parentPath ? `${parentPath}/${handle.name}` : handle.name;
+  const results: string[] = [];
+
+  for await (const entry of handle.values()) {
+    if (entry.kind === "directory") {
+      if (isIgnoredDirectory(entry.name)) {
+        continue;
+      }
+
+      results.push(...await collectWorkspacePdfPaths(entry as FileSystemDirectoryHandle, currentPath));
+      continue;
+    }
+
+    if (getExtension(entry.name) === "pdf") {
+      results.push(`${currentPath}/${entry.name}`);
+    }
+  }
+
+  return results;
+}
+
 async function loadManifestFromItemFolder(
   rootHandle: FileSystemDirectoryHandle,
   itemFolderPath: string,
@@ -335,6 +368,23 @@ async function loadLegacyManifest(
   } catch {
     return null;
   }
+}
+
+async function hasLegacyPdfItemWorkspace(
+  rootHandle: FileSystemDirectoryHandle,
+  fileId: string,
+  pdfPath: string,
+): Promise<boolean> {
+  const legacyManifest = await loadLegacyManifest(rootHandle, fileId);
+  if (legacyManifest) {
+    return true;
+  }
+
+  if (await resolveDirectoryHandle(rootHandle, getLegacyHiddenPdfItemFolderPath(pdfPath))) {
+    return true;
+  }
+
+  return Boolean(await resolveDirectoryHandle(rootHandle, getLegacyPdfItemFolderPath(pdfPath)));
 }
 
 function buildRelativePdfLink(currentFilePath: string, pdfPath: string): string {
@@ -628,6 +678,16 @@ export async function loadPdfItemManifest(
     }
   }
 
+  const legacyHiddenFolderPath = getLegacyHiddenPdfItemFolderPath(normalizedPdfPath);
+  const legacyHiddenFolder = await resolveDirectoryHandle(rootHandle, legacyHiddenFolderPath);
+  if (legacyHiddenFolder) {
+    return normalizePdfItemManifest({
+      itemId: fileId,
+      pdfPath: normalizedPdfPath,
+      itemFolderPath: legacyHiddenFolderPath,
+    });
+  }
+
   const legacyFolderPath = getLegacyPdfItemFolderPath(normalizedPdfPath);
   const legacyFolder = await resolveDirectoryHandle(rootHandle, legacyFolderPath);
   if (legacyFolder) {
@@ -696,7 +756,27 @@ export async function ensurePdfItemWorkspace(
   const persistedManifest = await savePdfItemManifest(rootHandle, nextManifest);
   await syncPdfManagedFiles(rootHandle, persistedManifest);
   await removeFileIfExists(rootHandle, getLegacyPdfItemManifestPath(fileId));
+  await removeDirectoryIfExists(rootHandle, getLegacyHiddenPdfItemFolderPath(normalizedPdfPath));
   return persistedManifest;
+}
+
+export async function migrateLegacyPdfItemWorkspaces(
+  rootHandle: FileSystemDirectoryHandle,
+): Promise<number> {
+  const pdfPaths = await collectWorkspacePdfPaths(rootHandle);
+  let migrated = 0;
+
+  for (const pdfPath of pdfPaths) {
+    const fileId = generateFileId(pdfPath);
+    if (!(await hasLegacyPdfItemWorkspace(rootHandle, fileId, pdfPath))) {
+      continue;
+    }
+
+    await ensurePdfItemWorkspace(rootHandle, fileId, pdfPath);
+    migrated += 1;
+  }
+
+  return migrated;
 }
 
 export async function createPdfItemNote(
@@ -940,5 +1020,6 @@ export async function deletePdfItemWorkspace(
     await deleteAnnotationsFromDisk(fallbackFileId, rootHandle);
   }
   await removeFileIfExists(rootHandle, getLegacyPdfItemManifestPath(fallbackFileId));
+  await removeDirectoryIfExists(rootHandle, getLegacyHiddenPdfItemFolderPath(normalizedPdfPath));
   await removeDirectoryIfExists(rootHandle, getLegacyPdfItemFolderPath(normalizedPdfPath));
 }

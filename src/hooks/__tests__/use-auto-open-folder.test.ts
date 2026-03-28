@@ -57,7 +57,7 @@ describe("useAutoOpenFolder", () => {
     (tauriWindow as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
       invoke: vi.fn(async (command: string, args?: Record<string, unknown>) => {
         if (command === "get_setting") {
-          return null;
+          return useSettingsStore.getState().settings;
         }
 
         if (command === "set_setting" || command === "remove_setting" || command === "clear_settings") {
@@ -65,6 +65,15 @@ describe("useAutoOpenFolder", () => {
         }
 
         if (command === "resolve_startup_workspace") {
+          useSettingsStore.setState((state) => ({
+            ...state,
+            settings: {
+              ...state.settings,
+              lastOpenedFolder: "C:/vault-last",
+              lastWorkspacePath: "C:/vault-last",
+              recentWorkspacePaths: ["C:/vault-last"],
+            },
+          }));
           return {
             path: "C:/vault-last",
             source: "last_workspace_path",
@@ -87,7 +96,7 @@ describe("useAutoOpenFolder", () => {
           }
         }
 
-        if (command === "desktop_exists_path") {
+        if (command === "desktop_is_directory") {
           return true;
         }
 
@@ -108,5 +117,67 @@ describe("useAutoOpenFolder", () => {
     expect(workspace.fileTree.root?.children.map((node) => node.name)).toEqual(["docs", "notes.md"]);
     expect(useSettingsStore.getState().settings.lastWorkspacePath).toBe("C:/vault-last");
     expect(useSettingsStore.getState().settings.recentWorkspacePaths[0]).toBe("C:/vault-last");
+  });
+
+  it("drops invalid recent paths and falls back to the next valid desktop workspace", async () => {
+    useSettingsStore.setState((state) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        lastOpenedFolder: "C:/missing",
+        lastWorkspacePath: "C:/missing",
+        recentWorkspacePaths: ["C:/missing", "C:/vault-valid"],
+      },
+    }));
+
+    (window as { __TAURI_INTERNALS__?: { invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown> } }).__TAURI_INTERNALS__ = {
+      invoke: vi.fn(async (command: string, args?: Record<string, unknown>) => {
+        if (command === "get_setting") {
+          return useSettingsStore.getState().settings;
+        }
+
+        if (command === "set_setting" || command === "remove_setting" || command === "clear_settings") {
+          return null;
+        }
+
+        if (command === "resolve_startup_workspace") {
+          useSettingsStore.setState((state) => ({
+            ...state,
+            settings: {
+              ...state.settings,
+              lastOpenedFolder: "C:/vault-valid",
+              lastWorkspacePath: "C:/vault-valid",
+              recentWorkspacePaths: ["C:/vault-valid"],
+            },
+          }));
+          return {
+            path: "C:/vault-valid",
+            source: "recent_workspace_paths",
+          };
+        }
+
+        if (command === "desktop_read_dir") {
+          const path = String(args?.path ?? "");
+          if (path === "C:/vault-valid") {
+            return [
+              { name: "paper.md", isDirectory: false, isFile: true, isSymlink: false },
+            ];
+          }
+        }
+
+        throw new Error(`Unexpected invoke: ${command}`);
+      }),
+    };
+
+    renderHook(() => useAutoOpenFolder());
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().workspaceRootPath).toBe("C:/vault-valid");
+    });
+
+    const nextSettings = useSettingsStore.getState().settings;
+    expect(nextSettings.lastWorkspacePath).toBe("C:/vault-valid");
+    expect(nextSettings.lastOpenedFolder).toBe("C:/vault-valid");
+    expect(nextSettings.recentWorkspacePaths).toEqual(["C:/vault-valid"]);
   });
 });

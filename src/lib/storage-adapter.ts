@@ -7,6 +7,9 @@
 
 export type TauriInvoke = <T = unknown>(command: string, args?: Record<string, unknown>, options?: unknown) => Promise<T>;
 
+const TAURI_INVOKE_READY_TIMEOUT_MS = 5000;
+const TAURI_INVOKE_READY_POLL_MS = 25;
+
 function resolveTauriInvoke(
   win: Window & {
     __TAURI__?: { core?: { invoke?: unknown } };
@@ -36,6 +39,43 @@ export function getTauriInvoke(): TauriInvoke | null {
   return resolveTauriInvoke(window as Window & {
     __TAURI__?: { core?: { invoke?: unknown } };
     __TAURI_INTERNALS__?: { invoke?: unknown };
+  });
+}
+
+export async function waitForTauriInvokeReady(options?: {
+  timeoutMs?: number;
+  pollMs?: number;
+}): Promise<TauriInvoke | null> {
+  const invoke = getTauriInvoke();
+  if (invoke) {
+    return invoke;
+  }
+
+  if (!isTauriHost()) {
+    return null;
+  }
+
+  const timeoutMs = options?.timeoutMs ?? TAURI_INVOKE_READY_TIMEOUT_MS;
+  const pollMs = options?.pollMs ?? TAURI_INVOKE_READY_POLL_MS;
+  const startedAt = Date.now();
+
+  return new Promise((resolve) => {
+    const check = () => {
+      const nextInvoke = getTauriInvoke();
+      if (nextInvoke) {
+        resolve(nextInvoke);
+        return;
+      }
+
+      if (Date.now() - startedAt >= timeoutMs) {
+        resolve(null);
+        return;
+      }
+
+      window.setTimeout(check, pollMs);
+    };
+
+    check();
   });
 }
 
@@ -124,7 +164,7 @@ class TauriStorageAdapter implements StorageAdapter {
 
   async get<T>(key: string): Promise<T | null> {
     try {
-      const invoke = getTauriInvoke();
+      const invoke = await waitForTauriInvokeReady();
       if (!invoke) {
         throw new Error("Tauri invoke bridge unavailable");
       }
@@ -147,7 +187,7 @@ class TauriStorageAdapter implements StorageAdapter {
 
   async set<T>(key: string, value: T): Promise<void> {
     try {
-      const invoke = getTauriInvoke();
+      const invoke = await waitForTauriInvokeReady();
       if (!invoke) {
         throw new Error("Tauri invoke bridge unavailable");
       }
@@ -161,7 +201,7 @@ class TauriStorageAdapter implements StorageAdapter {
 
   async remove(key: string): Promise<void> {
     try {
-      const invoke = getTauriInvoke();
+      const invoke = await waitForTauriInvokeReady();
       if (!invoke) {
         throw new Error("Tauri invoke bridge unavailable");
       }
@@ -175,7 +215,7 @@ class TauriStorageAdapter implements StorageAdapter {
 
   async clear(): Promise<void> {
     try {
-      const invoke = getTauriInvoke();
+      const invoke = await waitForTauriInvokeReady();
       if (!invoke) {
         throw new Error("Tauri invoke bridge unavailable");
       }
@@ -205,7 +245,7 @@ export function getStorageAdapter(): StorageAdapter {
     };
   }
   
-  const shouldUseTauri = isTauri();
+  const shouldUseTauri = isTauriHost();
   if (
     !storageAdapter ||
     (shouldUseTauri && !(storageAdapter instanceof TauriStorageAdapter))

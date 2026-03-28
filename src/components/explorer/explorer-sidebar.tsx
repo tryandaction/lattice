@@ -4,7 +4,6 @@ import { useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useI18n } from "@/hooks/use-i18n";
-import { useSettingsStore } from "@/stores/settings-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useExplorerStore } from "@/stores/explorer-store";
 import { getParentPath } from "@/lib/file-operations";
@@ -20,14 +19,11 @@ import { PluginSidebarSlot } from "@/components/ui/plugin-sidebar-slot";
  */
 export function ExplorerSidebar() {
   const { t } = useI18n();
-  const { fileTree, isLoading, error, openDirectory, openWorkspacePath, openQaWorkspace, isSupported, isCheckingSupport, createFile, createDirectory } = useFileSystem();
+  const { fileTree, isLoading, error, openDirectory, openQaWorkspace, isSupported, isCheckingSupport, createFile, createDirectory } = useFileSystem();
   const searchParams = useSearchParams();
   const isQaMode = process.env.NODE_ENV === "development" && searchParams?.get("qa") === "1";
-  const recentWorkspaces = useSettingsStore((state) => state.settings.recentWorkspacePaths);
-  const removeRecentWorkspacePath = useSettingsStore((state) => state.removeRecentWorkspacePath);
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
   const setSelectedDirectoryPath = useWorkspaceStore((state) => state.setSelectedDirectoryPath);
-  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const selectedPath = useExplorerStore((state) => state.selectedPath);
   const selectedKind = useExplorerStore((state) => state.selectedKind);
   const setSelection = useExplorerStore((state) => state.setSelection);
@@ -35,7 +31,6 @@ export function ExplorerSidebar() {
 
   const hasDirectory = !!fileTree.root;
   const rootPath = fileTree.root?.path;
-  const alternateWorkspaces = recentWorkspaces.filter((path) => path !== workspaceRootPath).slice(0, 4);
 
   const getCreationTargetPath = useCallback(() => {
     if (!rootPath) {
@@ -94,20 +89,25 @@ export function ExplorerSidebar() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="font-scientific text-muted-foreground uppercase tracking-wider text-xs">
-          {t("explorer.title")}
-        </span>
-        <div className="flex items-center gap-1">
-          {/* New File Buttons - only show when directory is open */}
+      <div className="border-b border-border px-3 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-scientific text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              {t("explorer.title")}
+            </div>
+            <div className="mt-1 truncate text-sm font-semibold text-foreground">
+              {hasDirectory ? (fileTree.root?.name ?? t("explorer.title")) : t("shell.workspace.none")}
+            </div>
+          </div>
           {hasDirectory && (
-            <NewFileButtons
-              onCreateNote={handleCreateNote}
-              onCreateNotebook={handleCreateNotebook}
-              onCreateFolder={handleCreateFolder}
-              disabled={isLoading}
-            />
+            <div className="flex items-center gap-1">
+              <NewFileButtons
+                onCreateNote={handleCreateNote}
+                onCreateNotebook={handleCreateNotebook}
+                onCreateFolder={handleCreateFolder}
+                disabled={isLoading}
+              />
+            </div>
           )}
         </div>
       </div>
@@ -138,52 +138,15 @@ export function ExplorerSidebar() {
         {/* Empty State */}
         {!isLoading && !error && !fileTree.root && (
           <EmptyState 
-            onOpenFolder={openDirectory} 
-            onOpenRecentWorkspace={(path) => void openWorkspacePath(path)}
-            onDismissRecentWorkspace={(path) => void removeRecentWorkspacePath(path)}
             onOpenQaWorkspace={openQaWorkspace}
             showQaWorkspace={isQaMode}
             isSupported={isSupported} 
             isCheckingSupport={isCheckingSupport}
-            recentWorkspaces={recentWorkspaces}
           />
         )}
 
         {/* Tree View */}
-        {!isLoading && !error && fileTree.root && (
-          <>
-            {alternateWorkspaces.length > 0 ? (
-              <div className="border-b border-border px-3 py-2">
-                <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                  {t("explorer.empty.recent")}
-                </div>
-                <div className="space-y-1.5">
-                  {alternateWorkspaces.map((workspacePath) => (
-                    <div key={workspacePath} className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void openWorkspacePath(workspacePath)}
-                        className="flex-1 truncate rounded-md border border-border bg-background px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent"
-                        title={workspacePath}
-                      >
-                        {workspacePath}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void removeRecentWorkspacePath(workspacePath)}
-                        className="rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                        title={t("explorer.empty.removeRecent")}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            <TreeView root={fileTree.root} />
-          </>
-        )}
+        {!isLoading && !error && fileTree.root && <TreeView root={fileTree.root} />}
       </div>
       <PluginSidebarSlot />
     </div>

@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEventHandler } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import {
@@ -23,8 +23,8 @@ import { cn } from "@/lib/utils";
 import { TOUCH_TARGET_MIN } from "@/lib/responsive";
 import { syncPlugins, updatePluginNetworkAllowlist } from "@/lib/plugins/runtime";
 import { resolveAppRoute } from "@/lib/app-route";
-import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot, Search as SearchIcon, MessageSquareText } from "lucide-react";
-import { AiContextDialog } from "@/components/ui/ai-context-dialog";
+import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot, Search as SearchIcon, MessageSquareText, FolderTree } from "lucide-react";
+import { useFileSystem } from "@/hooks/use-file-system";
 import { PluginCommandDialog } from "@/components/ui/plugin-command-dialog";
 import { PluginPanelDialog } from "@/components/ui/plugin-panel-dialog";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
@@ -39,15 +39,24 @@ import { useAiChatStore } from "@/stores/ai-chat-store";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { usePluginShortcuts } from "@/hooks/use-plugin-shortcuts";
 import { initKeyStorage } from "@/lib/ai/key-storage";
+import { DesktopWindowFrame } from "@/components/layout/desktop-window-frame";
+import {
+  buildDesktopWorkbenchLayout,
+  clampDesktopAiPanelSize,
+  clampDesktopPluginPanelSize,
+  DESKTOP_AI_PANEL_DEFAULT,
+  DESKTOP_AI_PANEL_MAX,
+  DESKTOP_AI_PANEL_MIN,
+  DESKTOP_MAIN_PANEL_MIN,
+  DESKTOP_PANEL_MAX,
+  DESKTOP_PANEL_MIN,
+  getDesktopSidebarMaxSize,
+} from "@/components/layout/desktop-workbench-layout";
 
 const DESKTOP_SIDEBAR_DEFAULT = 20;
 const DESKTOP_PANEL_DEFAULT = 22;
-const DESKTOP_PANEL_MIN = 16;
-const DESKTOP_PANEL_MAX = 45;
 const TABLET_SIDEBAR_DEFAULT = 28;
 
-const clampPanelSize = (value: number) =>
-  Math.min(DESKTOP_PANEL_MAX, Math.max(DESKTOP_PANEL_MIN, value));
 
 const ExplorerSidebar = dynamic(
   () => import("@/components/explorer/explorer-sidebar").then((mod) => mod.ExplorerSidebar),
@@ -121,7 +130,7 @@ function CollapsedRailButton({
   label: string;
   title: string;
   active?: boolean;
-  onClick: () => void;
+  onClick: MouseEventHandler<HTMLButtonElement>;
 }) {
   return (
     <button
@@ -165,13 +174,14 @@ function AppLayoutContent() {
   const setSidebarCollapsed = useWorkspaceStore((state) => state.setSidebarCollapsed);
   const [showSettings, setShowSettings] = useState(false);
   const [showCommands, setShowCommands] = useState(false);
-  const [showAiContext, setShowAiContext] = useState(false);
   const [showPluginPanels, setShowPluginPanels] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [desktopSidebarSize, setDesktopSidebarSize] = useState(DESKTOP_SIDEBAR_DEFAULT);
   const [desktopPanelSize, setDesktopPanelSize] = useState(DESKTOP_PANEL_DEFAULT);
+  const [desktopAiPanelSize, setDesktopAiPanelSize] = useState(DESKTOP_AI_PANEL_DEFAULT);
   const [panelOpenInitialized, setPanelOpenInitialized] = useState(false);
+  const [aiPanelOpenInitialized, setAiPanelOpenInitialized] = useState(false);
   const [activityView, setActivityView] = useState<"files" | "annotations" | "search">("files");
   const [activityViewInitialized, setActivityViewInitialized] = useState(false);
   const [sidePanelStateInitialized, setSidePanelStateInitialized] = useState(false);
@@ -180,8 +190,12 @@ function AppLayoutContent() {
     100 - TABLET_SIDEBAR_DEFAULT,
   ]);
   const [panelSizeInitialized, setPanelSizeInitialized] = useState(false);
+  const [aiPanelSizeInitialized, setAiPanelSizeInitialized] = useState(false);
   const panelSizePendingRef = useRef<number | null>(null);
   const panelSizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const aiPanelSizePendingRef = useRef<number | null>(null);
+  const aiPanelSizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const aiPanelFocusReturnRef = useRef<HTMLElement | null>(null);
 
   const loadSettings = useSettingsStore((state) => state.loadSettings);
   const updateSetting = useSettingsStore((state) => state.updateSetting);
@@ -189,6 +203,8 @@ function AppLayoutContent() {
   const isInitialized = useSettingsStore((state) => state.isInitialized);
   const loadPlugins = usePluginStore((state) => state.loadPlugins);
   const aiChatOpen = useAiChatStore((state) => state.isOpen);
+  const setAiChatOpen = useAiChatStore((state) => state.setOpen);
+  const { openDirectory } = useFileSystem();
   const { toggleTheme } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
@@ -247,9 +263,19 @@ function AppLayoutContent() {
       typeof settings.pluginPanelDockSize === "number"
         ? settings.pluginPanelDockSize
         : DESKTOP_PANEL_DEFAULT;
-    setDesktopPanelSize(clampPanelSize(initialSize));
+    setDesktopPanelSize(clampDesktopPluginPanelSize(initialSize));
     setPanelSizeInitialized(true);
   }, [isInitialized, panelSizeInitialized, settings.pluginPanelDockSize]);
+
+  useEffect(() => {
+    if (!isInitialized || aiPanelSizeInitialized) return;
+    const initialSize =
+      typeof settings.aiPanelWidth === "number"
+        ? settings.aiPanelWidth
+        : DESKTOP_AI_PANEL_DEFAULT;
+    setDesktopAiPanelSize(clampDesktopAiPanelSize(initialSize));
+    setAiPanelSizeInitialized(true);
+  }, [aiPanelSizeInitialized, isInitialized, settings.aiPanelWidth]);
 
   useEffect(() => {
     if (!isInitialized || panelOpenInitialized) return;
@@ -261,6 +287,17 @@ function AppLayoutContent() {
     setShowPluginPanels(Boolean(settings.pluginPanelDockOpen));
     setPanelOpenInitialized(true);
   }, [isInitialized, panelOpenInitialized, settings.pluginPanelDockOpen, isDesktopLayout]);
+
+  useEffect(() => {
+    if (!isInitialized || aiPanelOpenInitialized) return;
+    if (!isDesktopLayout) {
+      setAiChatOpen(false);
+      setAiPanelOpenInitialized(true);
+      return;
+    }
+    setAiChatOpen(Boolean(settings.aiPanelOpen));
+    setAiPanelOpenInitialized(true);
+  }, [aiPanelOpenInitialized, isDesktopLayout, isInitialized, setAiChatOpen, settings.aiPanelOpen]);
 
   useEffect(() => {
     if (!isInitialized || activityViewInitialized) return;
@@ -284,7 +321,8 @@ function AppLayoutContent() {
   useEffect(() => {
     if (isDesktopLayout) return;
     setShowPluginPanels(false);
-  }, [isDesktopLayout]);
+    setAiChatOpen(false);
+  }, [isDesktopLayout, setAiChatOpen]);
 
   useEffect(() => {
     if (!isInitialized) return;
@@ -324,7 +362,7 @@ function AppLayoutContent() {
   const persistPanelSize = useCallback(
     (size: number) => {
       if (!isInitialized) return;
-      panelSizePendingRef.current = clampPanelSize(size);
+      panelSizePendingRef.current = clampDesktopPluginPanelSize(size);
       if (panelSizeTimerRef.current) {
         clearTimeout(panelSizeTimerRef.current);
       }
@@ -338,10 +376,30 @@ function AppLayoutContent() {
     [isInitialized, updateSetting]
   );
 
+  const persistAiPanelSize = useCallback(
+    (size: number) => {
+      if (!isInitialized) return;
+      aiPanelSizePendingRef.current = clampDesktopAiPanelSize(size);
+      if (aiPanelSizeTimerRef.current) {
+        clearTimeout(aiPanelSizeTimerRef.current);
+      }
+      aiPanelSizeTimerRef.current = setTimeout(() => {
+        const next = aiPanelSizePendingRef.current;
+        if (typeof next === "number") {
+          void updateSetting("aiPanelWidth", next);
+        }
+      }, 200);
+    },
+    [isInitialized, updateSetting]
+  );
+
   useEffect(() => {
     return () => {
       if (panelSizeTimerRef.current) {
         clearTimeout(panelSizeTimerRef.current);
+      }
+      if (aiPanelSizeTimerRef.current) {
+        clearTimeout(aiPanelSizeTimerRef.current);
       }
     };
   }, []);
@@ -358,6 +416,12 @@ function AppLayoutContent() {
     showPluginPanels,
     updateSetting,
   ]);
+
+  useEffect(() => {
+    if (!isInitialized || !aiPanelOpenInitialized || !isDesktopLayout) return;
+    if (settings.aiPanelOpen === aiChatOpen) return;
+    void updateSetting("aiPanelOpen", aiChatOpen);
+  }, [aiChatOpen, aiPanelOpenInitialized, isDesktopLayout, isInitialized, settings.aiPanelOpen, updateSetting]);
 
   useEffect(() => {
     if (!isInitialized || !activityViewInitialized) return;
@@ -457,18 +521,6 @@ function AppLayoutContent() {
           <PanelLeft className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         </button>
         <button
-          onClick={() => setShowAiContext(true)}
-          className={cn(
-            "p-1.5 rounded-md",
-            "text-muted-foreground",
-            "hover:bg-muted hover:text-foreground transition-colors"
-          )}
-          style={(isMobile || isTablet) ? { minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN } : undefined}
-          title={t("ai.context.open")}
-        >
-          <Bot className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
-        </button>
-        <button
           onClick={openGuide}
           className={cn(
             "p-1.5 rounded-md",
@@ -485,15 +537,41 @@ function AppLayoutContent() {
     </>
   );
 
-  const desktopWorkbenchSizes = useMemo(() => {
-    if (sidebarCollapsed) {
-      return showPluginPanels ? [100 - desktopPanelSize, desktopPanelSize] : [100];
+  const openAiPanel = useCallback((returnFocusElement?: HTMLElement | null) => {
+    if (returnFocusElement) {
+      aiPanelFocusReturnRef.current = returnFocusElement;
+    } else if (document.activeElement instanceof HTMLElement) {
+      aiPanelFocusReturnRef.current = document.activeElement;
     }
-    if (showPluginPanels) {
-      return [desktopSidebarSize, Math.max(24, 100 - desktopSidebarSize - desktopPanelSize), desktopPanelSize];
+    setAiChatOpen(true);
+  }, [setAiChatOpen]);
+
+  const closeAiPanel = useCallback((options?: { restoreFocus?: boolean }) => {
+    setAiChatOpen(false);
+    if (options?.restoreFocus === false) {
+      return;
     }
-    return [desktopSidebarSize, 100 - desktopSidebarSize];
-  }, [desktopPanelSize, desktopSidebarSize, showPluginPanels, sidebarCollapsed]);
+    window.requestAnimationFrame(() => {
+      aiPanelFocusReturnRef.current?.focus();
+    });
+  }, [setAiChatOpen]);
+
+  const toggleAiPanel = useCallback((returnFocusElement?: HTMLElement | null) => {
+    if (useAiChatStore.getState().isOpen) {
+      closeAiPanel();
+      return;
+    }
+    openAiPanel(returnFocusElement);
+  }, [closeAiPanel, openAiPanel]);
+
+  const desktopWorkbenchLayout = useMemo(() => buildDesktopWorkbenchLayout({
+    sidebarCollapsed,
+    requestedSidebarSize: desktopSidebarSize,
+    showPluginPanels,
+    requestedPluginPanelSize: desktopPanelSize,
+    showAiPanel: aiChatOpen,
+    requestedAiPanelSize: desktopAiPanelSize,
+  }), [aiChatOpen, desktopAiPanelSize, desktopPanelSize, desktopSidebarSize, showPluginPanels, sidebarCollapsed]);
 
   const renderDesktopSidePanel = () => {
     if (activityView === "annotations") {
@@ -574,8 +652,6 @@ function AppLayoutContent() {
           setShowSettings={setShowSettings}
           showCommands={showCommands}
           setShowCommands={setShowCommands}
-          showAiContext={showAiContext}
-          setShowAiContext={setShowAiContext}
           showPluginPanels={showPluginPanels}
           setShowPluginPanels={setShowPluginPanels}
         />
@@ -686,8 +762,6 @@ function AppLayoutContent() {
           setShowSettings={setShowSettings}
           showCommands={showCommands}
           setShowCommands={setShowCommands}
-          showAiContext={showAiContext}
-          setShowAiContext={setShowAiContext}
           showPluginPanels={showPluginPanels}
           setShowPluginPanels={setShowPluginPanels}
         />
@@ -697,33 +771,27 @@ function AppLayoutContent() {
 
   // Desktop Layout
   return (
-    <div className="h-screen w-screen overflow-hidden bg-background flex flex-col">
+    <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-background">
+      <DesktopWindowFrame />
       <CommandBar
+        onOpenWorkspace={() => void openDirectory()}
         onOpenCommands={() => setShowCommands(true)}
-        onOpenPanels={() => setShowPluginPanels(true)}
+        onTogglePluginPanels={() => setShowPluginPanels((prev) => !prev)}
         onOpenSettings={() => setShowSettings(true)}
+        onOpenGuide={openGuide}
+        pluginPanelsOpen={showPluginPanels}
       />
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        <div className="flex w-12 shrink-0 flex-col items-center justify-between border-r border-border bg-card/90 px-1 py-2">
+        <div className="flex w-14 shrink-0 flex-col items-center border-r border-border bg-card/90 px-1 py-2">
           <div className="flex w-full flex-col items-center gap-2">
             <CollapsedRailButton
-              icon={PanelLeft}
+              icon={FolderTree}
               label={t("explorer.title")}
               title={t("explorer.title")}
               active={activityView === "files" && !sidebarCollapsed}
               onClick={() => {
                 setActivityView("files");
                 setSidebarCollapsed(activityView === "files" ? !sidebarCollapsed : false);
-              }}
-            />
-            <CollapsedRailButton
-              icon={MessageSquareText}
-              label={t("annotations.title")}
-              title={t("annotations.title")}
-              active={activityView === "annotations" && !sidebarCollapsed}
-              onClick={() => {
-                setActivityView("annotations");
-                setSidebarCollapsed(activityView === "annotations" ? !sidebarCollapsed : false);
               }}
             />
             <CollapsedRailButton
@@ -736,15 +804,23 @@ function AppLayoutContent() {
                 setSidebarCollapsed(activityView === "search" ? !sidebarCollapsed : false);
               }}
             />
-          </div>
-
-          <div className="flex w-full flex-col items-center gap-2 border-t border-border pt-2">
+            <CollapsedRailButton
+              icon={MessageSquareText}
+              label={t("annotations.title")}
+              title={t("annotations.title")}
+              active={activityView === "annotations" && !sidebarCollapsed}
+              onClick={() => {
+                setActivityView("annotations");
+                setSidebarCollapsed(activityView === "annotations" ? !sidebarCollapsed : false);
+              }}
+            />
+            <div className="my-1 h-px w-8 bg-border" />
             <CollapsedRailButton
               icon={Bot}
               label={t("chat.title")}
               title={t("chat.title")}
               active={aiChatOpen}
-              onClick={() => useAiChatStore.getState().toggleOpen()}
+              onClick={(event) => toggleAiPanel(event.currentTarget)}
             />
           </div>
         </div>
@@ -752,28 +828,35 @@ function AppLayoutContent() {
         <ResizablePanelGroup
           direction="horizontal"
           className="flex-1 min-h-0"
-          sizes={desktopWorkbenchSizes}
+          sizes={desktopWorkbenchLayout.sizes}
           onSizesChange={(sizes) => {
-            if (sidebarCollapsed) {
-              if (showPluginPanels && sizes[1]) {
-                const next = clampPanelSize(sizes[1]);
+            if (!sidebarCollapsed && sizes.length >= 1) {
+              setDesktopSidebarSize(
+                Math.min(
+                  getDesktopSidebarMaxSize(desktopWorkbenchLayout.rightPanels),
+                  Math.max(14, sizes[0]),
+                ),
+              );
+            }
+
+            const rightPanelStartIndex = sidebarCollapsed ? 1 : 2;
+            desktopWorkbenchLayout.rightPanels.forEach((panel, index) => {
+              const nextSize = sizes[rightPanelStartIndex + index];
+              if (typeof nextSize !== "number") {
+                return;
+              }
+
+              if (panel.kind === "plugin") {
+                const next = clampDesktopPluginPanelSize(nextSize);
                 setDesktopPanelSize(next);
                 persistPanelSize(next);
+                return;
               }
-              return;
-            }
 
-            if (showPluginPanels && sizes.length >= 3) {
-              setDesktopSidebarSize(Math.min(42, Math.max(14, sizes[0])));
-              const next = clampPanelSize(sizes[2]);
-              setDesktopPanelSize(next);
-              persistPanelSize(next);
-              return;
-            }
-
-            if (sizes.length >= 2) {
-              setDesktopSidebarSize(Math.min(42, Math.max(14, sizes[0])));
-            }
+              const next = clampDesktopAiPanelSize(nextSize);
+              setDesktopAiPanelSize(next);
+              persistAiPanelSize(next);
+            });
           }}
         >
           {!sidebarCollapsed && (
@@ -782,7 +865,7 @@ function AppLayoutContent() {
                 index={0}
                 defaultSize={DESKTOP_SIDEBAR_DEFAULT}
                 minSize={14}
-                maxSize={42}
+                maxSize={getDesktopSidebarMaxSize(desktopWorkbenchLayout.rightPanels)}
                 className="bg-card flex flex-col"
               >
                 {renderDesktopSidePanel()}
@@ -794,7 +877,7 @@ function AppLayoutContent() {
           <ResizablePanel
             index={sidebarCollapsed ? 0 : 1}
             defaultSize={sidebarCollapsed ? 100 : 100 - DESKTOP_SIDEBAR_DEFAULT}
-            minSize={40}
+            minSize={DESKTOP_MAIN_PANEL_MIN}
           >
             <MainArea />
           </ResizablePanel>
@@ -812,17 +895,29 @@ function AppLayoutContent() {
               </ResizablePanel>
             </>
           )}
+
+          {aiChatOpen && (
+            <>
+              <ResizableHandle withHandle index={sidebarCollapsed ? (showPluginPanels ? 1 : 0) : (showPluginPanels ? 2 : 1)} />
+              <ResizablePanel
+                index={sidebarCollapsed ? (showPluginPanels ? 2 : 1) : (showPluginPanels ? 3 : 2)}
+                defaultSize={desktopAiPanelSize}
+                minSize={DESKTOP_AI_PANEL_MIN}
+                maxSize={DESKTOP_AI_PANEL_MAX}
+                className="min-h-0 border-l border-border bg-background"
+              >
+                <AiChatPanel onClose={() => closeAiPanel()} />
+              </ResizablePanel>
+            </>
+          )}
         </ResizablePanelGroup>
       </div>
-      {aiChatOpen && <AiChatPanel />}
       <PluginStatusBarSlot />
       <Dialogs
         showSettings={showSettings}
         setShowSettings={setShowSettings}
         showCommands={showCommands}
         setShowCommands={setShowCommands}
-        showAiContext={showAiContext}
-        setShowAiContext={setShowAiContext}
         showPluginPanels={isMobile ? showPluginPanels : false}
         setShowPluginPanels={setShowPluginPanels}
       />
@@ -835,8 +930,6 @@ function Dialogs({
   setShowSettings,
   showCommands,
   setShowCommands,
-  showAiContext,
-  setShowAiContext,
   showPluginPanels,
   setShowPluginPanels,
 }: {
@@ -844,8 +937,6 @@ function Dialogs({
   setShowSettings: (show: boolean) => void;
   showCommands: boolean;
   setShowCommands: (show: boolean) => void;
-  showAiContext: boolean;
-  setShowAiContext: (show: boolean) => void;
   showPluginPanels: boolean;
   setShowPluginPanels: (show: boolean) => void;
 }) {
@@ -857,9 +948,6 @@ function Dialogs({
       </ErrorBoundary>
       <ErrorBoundary onReset={() => setShowPluginPanels(false)}>
         <PluginPanelDialog isOpen={showPluginPanels} onClose={() => setShowPluginPanels(false)} />
-      </ErrorBoundary>
-      <ErrorBoundary onReset={() => setShowAiContext(false)}>
-        <AiContextDialog isOpen={showAiContext} onClose={() => setShowAiContext(false)} />
       </ErrorBoundary>
       <ErrorBoundary onReset={() => setShowSettings(false)}>
         <SettingsDialog isOpen={showSettings} onClose={() => setShowSettings(false)} />

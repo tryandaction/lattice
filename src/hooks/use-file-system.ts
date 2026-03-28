@@ -36,10 +36,12 @@ import {
   deletePdfItemWorkspace,
   listPdfItemNotes,
   loadPdfItemManifest,
+  migrateLegacyPdfItemWorkspaces,
   movePdfItemWorkspace,
 } from "@/lib/pdf-item";
 import { createDesktopDirectoryHandle } from "@/lib/desktop-file-system";
-import { getTauriInvoke, isTauri } from "@/lib/storage-adapter";
+import { isTauri, isTauriHost } from "@/lib/storage-adapter";
+import { isExistingDesktopDirectory, openDesktopDirectoryDialog } from "@/lib/desktop-folder";
 import { emitVaultChange, emitVaultDelete, emitVaultRename } from "@/lib/plugins/runtime";
 
 /**
@@ -343,6 +345,51 @@ function applyExpandedState(children: TreeNode[], expandedPaths: Set<string>): T
   });
 }
 
+function normalizeWorkspacePathInput(path: string | null | undefined): string | null {
+  if (typeof path !== "string") {
+    return null;
+  }
+
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+export async function applyWorkspaceHandleToStores(
+  handle: FileSystemDirectoryHandle,
+  workspaceRootPath: string | null,
+): Promise<void> {
+  useContentCacheStore.getState().clearCache();
+
+  const workspaceStore = useWorkspaceStore.getState();
+  workspaceStore.resetWorkbenchState();
+
+  try {
+    await migrateLegacyPdfItemWorkspaces(handle);
+  } catch (error) {
+    console.warn("Failed to migrate legacy PDF item workspaces:", error);
+  }
+
+  const children = await readDirectoryRecursive(handle);
+  const rootNode: DirectoryNode = {
+    name: handle.name,
+    kind: "directory",
+    handle,
+    children,
+    path: handle.name,
+    isExpanded: true,
+  };
+
+  workspaceStore.setRootHandle(handle);
+  workspaceStore.setWorkspaceRootPath(workspaceRootPath ?? handle.name);
+  workspaceStore.setFileTree({ root: rootNode });
+
+  await useSettingsStore.getState().rememberWorkspacePath(workspaceRootPath ?? handle.name);
+}
+
 /**
  * Custom hook for File System Access API operations
  * Provides functionality to open directories, create/delete files, and build file trees
@@ -350,18 +397,17 @@ function applyExpandedState(children: TreeNode[], expandedPaths: Set<string>): T
 export function useFileSystem(): UseFileSystemReturn {
   const {
     rootHandle,
+    workspaceRootPath,
     fileTree,
     isLoading,
     error,
-    setRootHandle,
-    setWorkspaceRootPath,
     setFileTree,
     setLoading,
     setError,
-    resetWorkbenchState,
   } = useWorkspaceStore();
-  const rememberWorkspacePath = useSettingsStore((state) => state.rememberWorkspacePath);
   const removeRecentWorkspacePath = useSettingsStore((state) => state.removeRecentWorkspacePath);
+  const lastWorkspacePath = useSettingsStore((state) => state.settings.lastWorkspacePath);
+  const defaultFolder = useSettingsStore((state) => state.settings.defaultFolder);
 
   // Use state with useEffect to avoid hydration mismatch
   // Server always renders false, client updates after mount
@@ -369,32 +415,56 @@ export function useFileSystem(): UseFileSystemReturn {
   const [isCheckingSupport, setIsCheckingSupport] = useState(true);
 
   useEffect(() => {
-    setIsSupported("showDirectoryPicker" in window || isTauri());
+    setIsSupported("showDirectoryPicker" in window || isTauriHost());
     setIsCheckingSupport(false);
   }, []);
 
   const applyWorkspaceHandle = useCallback(async (
     handle: FileSystemDirectoryHandle,
-    workspaceRootPath: string | null,
+    nextWorkspaceRootPath: string | null,
   ) => {
-    useContentCacheStore.getState().clearCache();
-    resetWorkbenchState();
-    const children = await readDirectoryRecursive(handle);
-    const rootNode: DirectoryNode = {
-      name: handle.name,
-      kind: "directory",
-      handle,
-      children,
-      path: handle.name,
-      isExpanded: true,
-    };
+    await applyWorkspaceHandleToStores(handle, nextWorkspaceRootPath);
+  }, []);
 
-    setRootHandle(handle);
-    setWorkspaceRootPath(workspaceRootPath);
-    setFileTree({ root: rootNode });
+  const openWorkspaceFromDesktopPath = useCallback(async (
+    path: string,
+    options: { validateExists?: boolean } = {},
+  ) => {
+    const normalizedPath = normalizeWorkspacePathInput(path);
+    if (!normalizedPath) {
+      setError("Workspace path is empty.");
+      return false;
+    }
 
-    await rememberWorkspacePath(workspaceRootPath ?? handle.name);
-  }, [rememberWorkspacePath, resetWorkbenchState, setFileTree, setRootHandle, setWorkspaceRootPath]);
+    if (!isTauri()) {
+      setError("Recent workspace reopening is only available in the desktop app.");
+      return false;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      if (options.validateExists !== false) {
+        const exists = await isExistingDesktopDirectory(normalizedPath);
+        if (!exists) {
+          await removeRecentWorkspacePath(normalizedPath);
+          setError(`Workspace path no longer exists: ${normalizedPath}`);
+          return false;
+        }
+      }
+
+      const handle = createDesktopDirectoryHandle(normalizedPath);
+      await applyWorkspaceHandle(handle, normalizedPath);
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to open workspace";
+      setError(message);
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, [applyWorkspaceHandle, removeRecentWorkspacePath, setError, setLoading]);
 
   /**
    * Refresh the file tree from the current root handle
@@ -445,22 +515,16 @@ export function useFileSystem(): UseFileSystemReturn {
       setLoading(true);
       setError(null);
 
-      const tauriInvoke = getTauriInvoke();
-      if (isTauri() && tauriInvoke) {
-        const selected = await tauriInvoke<string | null>(
-          "plugin:dialog|open",
-          {
-            directory: true,
-            multiple: false,
-            title: "Open Folder",
-          },
-        );
+      if (isTauri()) {
+        const selected = await openDesktopDirectoryDialog({
+          title: "Open Folder",
+          defaultPath: workspaceRootPath ?? lastWorkspacePath ?? defaultFolder,
+        });
         if (!selected) {
           return;
         }
 
-        const handle = createDesktopDirectoryHandle(selected);
-        await applyWorkspaceHandle(handle, selected);
+        await openWorkspaceFromDesktopPath(selected, { validateExists: false });
         return;
       }
 
@@ -481,44 +545,11 @@ export function useFileSystem(): UseFileSystemReturn {
     } finally {
       setLoading(false);
     }
-  }, [applyWorkspaceHandle, isSupported, setLoading, setError]);
+  }, [applyWorkspaceHandle, defaultFolder, isSupported, lastWorkspacePath, openWorkspaceFromDesktopPath, setLoading, setError, workspaceRootPath]);
 
   const openWorkspacePath = useCallback(async (path: string) => {
-    const trimmed = path.trim();
-    if (!trimmed) {
-      setError("Workspace path is empty.");
-      return;
-    }
-
-    if (!isTauri()) {
-      setError("Recent workspace reopening is only available in the desktop app.");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError(null);
-      const invoke = getTauriInvoke();
-      if (!invoke) {
-        throw new Error("Tauri invoke bridge unavailable.");
-      }
-
-      const exists = await invoke<boolean>("desktop_exists_path", { path: trimmed });
-      if (!exists) {
-        await removeRecentWorkspacePath(trimmed);
-        setError(`Workspace path no longer exists: ${trimmed}`);
-        return;
-      }
-
-      const handle = createDesktopDirectoryHandle(trimmed);
-      await applyWorkspaceHandle(handle, trimmed);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to open workspace";
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
-  }, [applyWorkspaceHandle, removeRecentWorkspacePath, setError, setLoading]);
+    await openWorkspaceFromDesktopPath(path);
+  }, [openWorkspaceFromDesktopPath]);
 
   /**
    * Open a QA workspace in OPFS (dev-only helper)

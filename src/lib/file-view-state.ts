@@ -123,3 +123,20 @@ export async function savePersistedFileViewState(
   });
   await writeStateMap(next);
 }
+
+export async function deletePersistedFileViewState(
+  storageKey: string | null | undefined,
+): Promise<void> {
+  const normalizedKey = normalizeStorageKey(storageKey);
+  if (!normalizedKey) {
+    return;
+  }
+
+  const map = await readStateMap();
+  if (!(normalizedKey in map)) {
+    return;
+  }
+
+  delete map[normalizedKey];
+  await writeStateMap(map);
+}

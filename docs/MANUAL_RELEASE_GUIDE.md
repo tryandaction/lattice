@@ -105,4 +105,4 @@ npm run release:prepare -- --upload
 - Notebook 不应再保留独立顶部动作条，高频动作应统一进入 `Command Bar`
 - 打开任意 PDF 后，Explorer 中只投影真实用户笔记 / Notebook；未产生批注前不应默认出现 `_annotations.md`
 - PDF 左栏应表现为紧凑单栏：条目工作区为可折叠 section，批注搜索/筛选/多选不应再形成第二套网页式工具台
-- 新增一条 PDF 批注后，`.basename.lattice/_annotations.md` 会惰性生成并自动同步
+- 新增一条 PDF 批注后，`.lattice/items/<fileId>/_annotations.md` 会惰性生成并自动同步

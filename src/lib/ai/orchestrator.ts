@@ -184,7 +184,7 @@ export class AiOrchestrator {
         selection: request.selection,
         references: request.references,
         annotations: request.annotations,
-        query: request.prompt,
+        query: request.query,
         explicitEvidenceRefs: request.explicitEvidenceRefs,
       },
     );

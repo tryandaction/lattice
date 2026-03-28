@@ -85,6 +85,22 @@ describe('AiOrchestrator', () => {
     expect(result.draftSuggestion?.type).toBe('paper_note');
   });
 
+  it('does not inject workspace search context into chat unless query is explicitly provided', async () => {
+    generateMock.mockResolvedValue({
+      text: 'No workspace search',
+      model: 'gpt-test',
+    });
+
+    const result = await aiOrchestrator.runChat({
+      prompt: 'Find related notes',
+      settings: baseSettings,
+    });
+
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    expect(result.context.nodes).toEqual([]);
+    expect(result.evidenceRefs).toEqual([]);
+  });
+
   it('falls back to a safe default proposal when provider output is not valid json', async () => {
     generateMock.mockResolvedValue({
       text: 'not-json',

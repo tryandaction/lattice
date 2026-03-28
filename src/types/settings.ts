@@ -74,6 +74,8 @@ export interface AppSettings {
   aiMaxTokens: number;
   aiStreamingEnabled: boolean;
   aiSystemPrompt: string;
+  aiPanelOpen: boolean;
+  aiPanelWidth: number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -110,6 +112,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   aiMaxTokens: 4096,
   aiStreamingEnabled: true,
   aiSystemPrompt: 'You are a helpful research assistant in Lattice, a scientific workbench. Be concise and precise.',
+  aiPanelOpen: false,
+  aiPanelWidth: 28,
 };
 
 export const SETTINGS_STORAGE_KEY = 'lattice-settings';

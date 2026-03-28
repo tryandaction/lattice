@@ -3,7 +3,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const storage = {
   get: vi.fn().mockResolvedValue(null),
@@ -11,6 +11,21 @@ const storage = {
   remove: vi.fn().mockResolvedValue(undefined),
   clear: vi.fn().mockResolvedValue(undefined),
 };
+
+const promptTemplate = {
+  id: "template-chat-1",
+  title: "Context Aware Chat",
+  description: "Chat template",
+  category: "reading",
+  userPrompt: "Explain this",
+  surfaces: ["chat"],
+  outputMode: "structured-chat",
+  requiredContext: [],
+  optionalContext: ["current_file_content", "pdf_annotations", "workspace_summary"],
+  version: 1,
+  createdAt: 1,
+  updatedAt: 1,
+} as const;
 
 vi.mock('@/lib/storage-adapter', () => ({
   getStorageAdapter: () => storage,
@@ -71,6 +86,51 @@ vi.mock('../diff-preview', () => ({
 vi.mock('../evidence-panel', () => ({
   EvidencePanel: ({ message }: { message?: { id: string } | null }) => (
     <div data-testid="evidence-panel">{message?.id ?? 'none'}</div>
+  ),
+}));
+
+vi.mock('@/components/prompt/prompt-picker', () => ({
+  PromptPicker: ({
+    isOpen,
+    onSelectTemplate,
+  }: {
+    isOpen: boolean;
+    onSelectTemplate: (template: typeof promptTemplate) => void;
+  }) => (
+    isOpen ? (
+      <button
+        type="button"
+        data-testid="prompt-picker-select-template"
+        onClick={() => onSelectTemplate(promptTemplate)}
+      >
+        select-template
+      </button>
+    ) : null
+  ),
+}));
+
+vi.mock('@/components/prompt/prompt-editor-dialog', () => ({
+  PromptEditorDialog: () => null,
+}));
+
+vi.mock('@/components/prompt/prompt-run-sheet', () => ({
+  PromptRunSheet: ({
+    isOpen,
+    contextValues,
+    contextControls,
+  }: {
+    isOpen: boolean;
+    contextValues: Record<string, unknown>;
+    contextControls?: Array<{ key: string; checked: boolean }>;
+  }) => (
+    isOpen ? (
+      <div data-testid="prompt-run-sheet-state">
+        {JSON.stringify({
+          contextValues,
+          contextControls,
+        })}
+      </div>
+    ) : null
   ),
 }));
 
@@ -275,5 +335,37 @@ describe('AiChatPanel selection-origin flows', () => {
     expect(screen.getByText('Standalone note')).not.toBeNull();
     expect(screen.getByText('Linked plan draft')).not.toBeNull();
     expect(screen.getByText('关联草稿：1')).not.toBeNull();
+  });
+
+  it('keeps heavy prompt-run context opt-in by default for chat templates', async () => {
+    render(<AiChatPanel />);
+
+    fireEvent.click(screen.getByText('prompt.chat.open'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('prompt-picker-select-template')).not.toBeNull();
+    });
+
+    fireEvent.click(screen.getByTestId('prompt-picker-select-template'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('prompt-run-sheet-state')).not.toBeNull();
+    });
+
+    const payload = JSON.parse(screen.getByTestId('prompt-run-sheet-state').textContent ?? '{}') as {
+      contextValues: Record<string, unknown>;
+      contextControls: Array<{ key: string; checked: boolean }>;
+    };
+
+    expect(payload.contextValues.current_file_content ?? null).toBeNull();
+    expect(payload.contextValues.pdf_annotations ?? null).toBeNull();
+    expect(payload.contextValues.workspace_summary ?? null).toBeNull();
+    expect(payload.contextControls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'includeCurrentFileContent', checked: false }),
+        expect.objectContaining({ key: 'includeAnnotations', checked: false }),
+        expect.objectContaining({ key: 'includeWorkspaceSummary', checked: false }),
+      ]),
+    );
   });
 });

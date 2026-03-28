@@ -11,10 +11,20 @@ import {
   buildEvidenceProposalPromptForSelection,
 } from "@/lib/ai/evidence-panel";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useSettingsStore } from "@/stores/settings-store";
+import { useContentCacheStore } from "@/stores/content-cache-store";
+import { usePromptTemplateStore } from "@/stores/prompt-template-store";
 import type { ChatMessage } from "@/stores/ai-chat-store";
+import type { PromptTemplate } from "@/lib/prompt/types";
+import type { AiRuntimeSettings } from "@/lib/ai/types";
 import { toast } from "sonner";
 import { buildAiResultViewModel } from "@/lib/ai/result-view-model";
 import { buildReferenceBrowserNodesFromEvidence, collectReferenceBrowserLeaves, type ReferenceBrowserNode } from "@/lib/ai/reference-browser";
+import { PromptPicker } from "@/components/prompt/prompt-picker";
+import { PromptEditorDialog } from "@/components/prompt/prompt-editor-dialog";
+import { PromptRunSheet } from "@/components/prompt/prompt-run-sheet";
+import { buildEvidencePromptContextValues } from "@/lib/prompt/context-builders";
+import { executePromptTemplateForSurface } from "@/lib/prompt/surface-actions";
 import { ReferenceBrowser } from "./reference-browser";
 
 export interface EvidencePanelProps {
@@ -43,16 +53,36 @@ export function EvidencePanel({
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
   const activePaneId = useWorkspaceStore((state) => state.layout.activePaneId);
   const activeTab = useWorkspaceStore((state) => state.getActiveTab());
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const settings = useSettingsStore((state) => state.settings);
+  const getCachedContent = useContentCacheStore((state) => state.getContent);
+  const loadPromptState = usePromptTemplateStore((state) => state.loadPromptState);
   const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
   const [selectedLeafLocators, setSelectedLeafLocators] = useState<Record<string, boolean>>({});
   const [savedKeys, setSavedKeys] = useState<Record<string, boolean>>({});
   const [proposalBusyKeys, setProposalBusyKeys] = useState<Record<string, boolean>>({});
   const [proposalDoneKeys, setProposalDoneKeys] = useState<Record<string, boolean>>({});
+  const [promptPickerState, setPromptPickerState] = useState<{
+    refs: NonNullable<ChatMessage["evidenceRefs"]>;
+    label: string;
+  } | null>(null);
+  const [promptRunState, setPromptRunState] = useState<{
+    template: PromptTemplate;
+    refs: NonNullable<ChatMessage["evidenceRefs"]>;
+    label: string;
+  } | null>(null);
+  const [promptEditorState, setPromptEditorState] = useState<{
+    template?: PromptTemplate | null;
+  } | null>(null);
 
   useEffect(() => {
     setExpandedPaths({});
     setSelectedLeafLocators({});
   }, [message?.id]);
+
+  useEffect(() => {
+    void loadPromptState();
+  }, [loadPromptState]);
 
   const panelState = buildEvidencePanelState({
     evidenceRefs: message?.evidenceRefs,
@@ -76,6 +106,68 @@ export function EvidencePanel({
       });
     }
   }, [activePaneId, activeTab?.filePath, rootHandle]);
+
+  const activeContent = activeTab
+    ? (() => {
+        const cached = getCachedContent(activeTab.id);
+        return typeof cached?.content === "string" ? cached.content : null;
+      })()
+    : null;
+
+  const handlePromptRunConfirm = useCallback(async (payload: {
+    renderedPrompt: string;
+    renderedSystemPrompt?: string;
+    contextSummary: string;
+  }) => {
+    if (!promptRunState) {
+      return;
+    }
+
+    try {
+      const result = await executePromptTemplateForSurface({
+        template: promptRunState.template,
+        surface: "evidence",
+        settings: {
+          aiEnabled: settings.aiEnabled,
+          providerId: (settings.aiProvider as AiRuntimeSettings["providerId"]) ?? null,
+          model: settings.aiModel,
+          temperature: settings.aiTemperature,
+          maxTokens: settings.aiMaxTokens,
+          systemPrompt: settings.aiSystemPrompt,
+          preferLocal: settings.aiProvider === "ollama",
+        } satisfies AiRuntimeSettings,
+        contextValues: buildEvidencePromptContextValues({
+          evidenceRefs: promptRunState.refs,
+          currentFile: activeTab?.filePath ?? activeTab?.fileName ?? null,
+          currentFileContent: activeContent,
+          workspaceSummary: promptRunState.label,
+        }),
+        workspaceRootPath,
+        renderedPrompt: payload.renderedPrompt,
+        renderedSystemPrompt: payload.renderedSystemPrompt,
+        contextSummary: payload.contextSummary,
+        filePath: activeTab?.filePath,
+        content: activeContent ?? undefined,
+        query: payload.renderedPrompt,
+        explicitEvidenceRefs: promptRunState.refs,
+      });
+
+      toast.success(
+        result.kind === "proposal"
+          ? "已生成计划"
+          : result.kind === "draft"
+            ? "已生成草稿"
+            : "已发送到 AI Chat",
+        { description: result.title },
+      );
+    } catch (error) {
+      toast.error("模板执行失败", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setPromptRunState(null);
+    }
+  }, [activeContent, activeTab?.fileName, activeTab?.filePath, promptRunState, settings.aiEnabled, settings.aiMaxTokens, settings.aiModel, settings.aiProvider, settings.aiSystemPrompt, settings.aiTemperature, workspaceRootPath]);
 
   if (!message && messages.length === 0) {
     return null;
@@ -123,6 +215,18 @@ export function EvidencePanel({
             disabled={groupDraftSaved || !onCreateDraft}
           >
             {groupDraftSaved ? "已保存" : "草稿"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPromptPickerState({
+                refs: groupLeaves.map((leaf) => leaf.evidenceRef!).filter(Boolean),
+                label: node.label,
+              });
+            }}
+            className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30"
+          >
+            模板
           </button>
           <button
             type="button"
@@ -178,6 +282,18 @@ export function EvidencePanel({
           >
             {draftSavedForLeaf ? "已保存" : "保存草稿"}
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPromptPickerState({
+                refs: [node.evidenceRef!],
+                label: node.label,
+              });
+            }}
+            className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30"
+          >
+            模板
+          </button>
         </>
       );
     }
@@ -187,6 +303,52 @@ export function EvidencePanel({
 
   return (
     <div className="border-b border-border bg-background/95 px-3 py-3">
+      <PromptPicker
+        isOpen={Boolean(promptPickerState)}
+        surface="evidence"
+        workspaceRootPath={workspaceRootPath}
+        currentInput=""
+        onClose={() => setPromptPickerState(null)}
+        onSelectTemplate={(template) => {
+          if (promptPickerState) {
+            setPromptRunState({
+              template,
+              refs: promptPickerState.refs,
+              label: promptPickerState.label,
+            });
+          }
+          setPromptPickerState(null);
+        }}
+        onCreateTemplate={() => {
+          setPromptPickerState(null);
+          setPromptEditorState({});
+        }}
+        onEditTemplate={(template) => {
+          setPromptPickerState(null);
+          setPromptEditorState({ template });
+        }}
+      />
+      <PromptEditorDialog
+        key={`evidence-prompt-editor:${promptEditorState?.template?.id ?? "new"}`}
+        isOpen={Boolean(promptEditorState)}
+        surface="evidence"
+        template={promptEditorState?.template ?? null}
+        onClose={() => setPromptEditorState(null)}
+      />
+      <PromptRunSheet
+        key={`evidence-prompt-run:${promptRunState?.template.id ?? "none"}:${promptRunState?.label ?? ""}`}
+        isOpen={Boolean(promptRunState)}
+        surface="evidence"
+        template={promptRunState?.template ?? null}
+        contextValues={promptRunState ? buildEvidencePromptContextValues({
+          evidenceRefs: promptRunState.refs,
+          currentFile: activeTab?.filePath ?? activeTab?.fileName ?? null,
+          currentFileContent: activeContent,
+          workspaceSummary: promptRunState.label,
+        }) : {}}
+        onClose={() => setPromptRunState(null)}
+        onConfirm={(payload) => void handlePromptRunConfirm(payload)}
+      />
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-xs font-medium text-foreground">
@@ -222,6 +384,19 @@ export function EvidencePanel({
               disabled={draftSaved || !onCreateDraft}
             >
               {draftSaved ? "已保存草稿" : "保存为草稿"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPromptPickerState({
+                  refs: message.evidenceRefs ?? [],
+                  label: messageLabel(message),
+                });
+              }}
+              className="rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-foreground hover:bg-accent"
+              disabled={(message.evidenceRefs?.length ?? 0) === 0}
+            >
+              使用模板
             </button>
             <button
               type="button"
@@ -312,6 +487,18 @@ export function EvidencePanel({
                     disabled={(savedKeys["selection:multi"] ?? false) || !onCreateDraft}
                   >
                     {(savedKeys["selection:multi"] ?? false) ? "已保存" : "保存选中草稿"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPromptPickerState({
+                        refs: selectedLeaves.map((leaf) => leaf.evidenceRef!).filter(Boolean),
+                        label: `已选 ${selectedLeaves.length} 条证据`,
+                      });
+                    }}
+                    className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30"
+                  >
+                    使用模板
                   </button>
                   <button
                     type="button"

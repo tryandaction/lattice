@@ -3,9 +3,9 @@ import type { AnnotationItem } from "@/types/universal-annotation";
 import { buildPdfAnnotationsMarkdown, getDefaultPdfItemFolderPath } from "@/lib/pdf-item";
 
 describe("pdf-item utils", () => {
-  it("derives a visible companion item folder next to the pdf", () => {
-    expect(getDefaultPdfItemFolderPath("papers/rydberg-review.pdf")).toBe("papers/.rydberg-review.lattice");
-    expect(getDefaultPdfItemFolderPath("rydberg review.pdf")).toBe(".rydberg review.lattice");
+  it("derives a root-level lattice item folder for the pdf workspace", () => {
+    expect(getDefaultPdfItemFolderPath("papers/rydberg-review.pdf")).toBe(".lattice/items/papers-rydberg-review.pdf");
+    expect(getDefaultPdfItemFolderPath("rydberg review.pdf")).toBe(".lattice/items/rydberg_review.pdf");
   });
 
   it("builds markdown output for pdf annotations", () => {
@@ -49,8 +49,8 @@ describe("pdf-item utils", () => {
         version: 3,
         itemId: "papers-rydberg-review.pdf",
         pdfPath: "papers/rydberg-review.pdf",
-        itemFolderPath: "papers/.rydberg-review.lattice",
-        annotationIndexPath: "papers/.rydberg-review.lattice/_annotations.md",
+        itemFolderPath: ".lattice/items/papers-rydberg-review.pdf",
+        annotationIndexPath: ".lattice/items/papers-rydberg-review.pdf/_annotations.md",
         createdAt: 1710000000000,
         updatedAt: 1710000000000,
       },
@@ -58,11 +58,11 @@ describe("pdf-item utils", () => {
     });
 
     expect(markdown).toContain("# rydberg-review.pdf Annotations");
-    expect(markdown).toContain("Source PDF: [rydberg-review.pdf](../rydberg-review.pdf)");
+    expect(markdown).toContain("Source PDF: [rydberg-review.pdf](../../../papers/rydberg-review.pdf)");
     expect(markdown).toContain("## Page 2");
     expect(markdown).toContain("## Page 4");
     expect(markdown).toContain("Move this into the reading note.");
-    expect(markdown).toContain("../rydberg-review.pdf#page=2");
-    expect(markdown).toContain("../rydberg-review.pdf#annotation=ann-1");
+    expect(markdown).toContain("../../../papers/rydberg-review.pdf#page=2");
+    expect(markdown).toContain("../../../papers/rydberg-review.pdf#annotation=ann-1");
   });
 });

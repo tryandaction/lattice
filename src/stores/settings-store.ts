@@ -11,6 +11,10 @@ import { getStorageAdapter } from '@/lib/storage-adapter';
 
 const MAX_RECENT_WORKSPACES = 12;
 
+function normalizeWorkspacePath(path: string): string {
+  return path.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
 interface SettingsState {
   settings: AppSettings;
   isLoading: boolean;
@@ -128,16 +132,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   setDefaultFolder: async (folder) => {
-    await get().updateSetting('defaultFolder', folder);
+    await get().updateSetting('defaultFolder', folder ? normalizeWorkspacePath(folder) : null);
   },
 
   rememberWorkspacePath: async (path) => {
-    const trimmed = path.trim();
+    const trimmed = normalizeWorkspacePath(path);
     if (!trimmed) return;
     const { settings, updateSettings } = get();
     const recentWorkspacePaths = [
       trimmed,
-      ...settings.recentWorkspacePaths.filter((item) => item !== trimmed),
+      ...settings.recentWorkspacePaths
+        .map((item) => normalizeWorkspacePath(item))
+        .filter((item) => item !== trimmed),
     ].slice(0, MAX_RECENT_WORKSPACES);
     await updateSettings({
       lastWorkspacePath: trimmed,
@@ -147,13 +153,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   removeRecentWorkspacePath: async (path) => {
-    const trimmed = path.trim();
+    const trimmed = normalizeWorkspacePath(path);
     const { settings, updateSettings } = get();
-    const recentWorkspacePaths = settings.recentWorkspacePaths.filter((item) => item !== trimmed);
-    const nextLastWorkspacePath = settings.lastWorkspacePath === trimmed
+    const recentWorkspacePaths = settings.recentWorkspacePaths
+      .map((item) => normalizeWorkspacePath(item))
+      .filter((item) => item !== trimmed);
+    const nextLastWorkspacePath = normalizeWorkspacePath(settings.lastWorkspacePath ?? '') === trimmed
       ? recentWorkspacePaths[0] ?? null
       : settings.lastWorkspacePath;
-    const nextLastOpenedFolder = settings.lastOpenedFolder === trimmed
+    const nextLastOpenedFolder = normalizeWorkspacePath(settings.lastOpenedFolder ?? '') === trimmed
       ? recentWorkspacePaths[0] ?? null
       : settings.lastOpenedFolder;
     await updateSettings({
@@ -180,9 +188,18 @@ function detectSystemLanguage(): Locale {
 
 function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   const normalized: Partial<AppSettings> = {};
-  const stringOrNull = (value: unknown) => (typeof value === 'string' ? value : value === null ? null : undefined);
+  const stringOrNull = (value: unknown) =>
+    typeof value === 'string'
+      ? normalizeWorkspacePath(value)
+      : value === null
+        ? null
+        : undefined;
   const stringArray = (value: unknown) =>
-    Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : undefined;
+    Array.isArray(value)
+      ? value
+          .filter((item): item is string => typeof item === 'string')
+          .map((item) => normalizeWorkspacePath(item))
+      : undefined;
   const normalizeExecutionDockLayouts = (value: unknown): Record<string, ExecutionDockLayout> | undefined => {
     if (!value || typeof value !== "object") return undefined;
     const entries = Object.entries(value as Record<string, unknown>).flatMap<[string, ExecutionDockLayout]>(([key, layout]) => {
@@ -238,5 +255,7 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   if (typeof raw.aiMaxTokens === 'number') normalized.aiMaxTokens = raw.aiMaxTokens;
   if (typeof raw.aiStreamingEnabled === 'boolean') normalized.aiStreamingEnabled = raw.aiStreamingEnabled;
   if (typeof raw.aiSystemPrompt === 'string') normalized.aiSystemPrompt = raw.aiSystemPrompt;
+  if (typeof raw.aiPanelOpen === 'boolean') normalized.aiPanelOpen = raw.aiPanelOpen;
+  if (typeof raw.aiPanelWidth === 'number') normalized.aiPanelWidth = raw.aiPanelWidth;
   return normalized;
 }

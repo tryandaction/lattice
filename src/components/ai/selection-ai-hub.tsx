@@ -5,11 +5,20 @@ import { Bot, History, ListTodo, Loader2, MessageSquare, Sparkles, X } from "luc
 import { Button } from "@/components/ui/button";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useSelectionAiStore } from "@/stores/selection-ai-store";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import { usePromptTemplateStore } from "@/stores/prompt-template-store";
 import type { SelectionAiMode, SelectionContext } from "@/lib/ai/selection-context";
 import { defaultPromptForSelectionMode } from "@/lib/ai/selection-context";
 import { runSelectionAiMode } from "@/lib/ai/selection-actions";
 import { getSelectionModeMeta } from "@/lib/ai/selection-ui";
 import type { AiRuntimeSettings } from "@/lib/ai/types";
+import type { PromptTemplate } from "@/lib/prompt/types";
+import { buildSelectionOrigin } from "@/lib/ai/selection-ui";
+import { buildSelectionPromptContextValues } from "@/lib/prompt/context-builders";
+import { executePromptTemplateForSurface } from "@/lib/prompt/surface-actions";
+import { PromptPicker } from "@/components/prompt/prompt-picker";
+import { PromptEditorDialog } from "@/components/prompt/prompt-editor-dialog";
+import { PromptRunSheet } from "@/components/prompt/prompt-run-sheet";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +38,16 @@ const MODE_ICONS: Record<SelectionAiMode, typeof Sparkles> = {
 
 const MODE_ORDER: SelectionAiMode[] = ["chat", "agent", "plan"];
 
+const MODE_OUTPUT_ALLOWLIST = {
+  chat: ["chat", "structured-chat"],
+  agent: ["chat", "structured-chat", "draft"],
+  plan: ["proposal", "draft"],
+} as const;
+
+function templateMatchesMode(mode: SelectionAiMode, template: PromptTemplate): boolean {
+  return MODE_OUTPUT_ALLOWLIST[mode].some((outputMode) => outputMode === template.outputMode);
+}
+
 function toRuntimeSettings(settings: ReturnType<typeof useSettingsStore.getState>["settings"]): AiRuntimeSettings {
   return {
     aiEnabled: settings.aiEnabled,
@@ -43,16 +62,33 @@ function toRuntimeSettings(settings: ReturnType<typeof useSettingsStore.getState
 
 export function SelectionAiHub({ context, initialMode = null, returnFocusTo, runMode, onClose }: SelectionAiHubProps) {
   const settings = useSettingsStore((state) => state.settings);
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const preferredMode = useSelectionAiStore((state) => state.preferredMode);
   const recentPrompts = useSelectionAiStore((state) => state.recentPrompts);
   const setPreferredMode = useSelectionAiStore((state) => state.setPreferredMode);
   const rememberPrompt = useSelectionAiStore((state) => state.rememberPrompt);
+  const loadPromptState = usePromptTemplateStore((state) => state.loadPromptState);
+  const getTemplatesForSurface = usePromptTemplateStore((state) => state.getTemplatesForSurface);
   const [mode, setMode] = useState<SelectionAiMode>(initialMode ?? preferredMode);
   const [promptByMode, setPromptByMode] = useState<Record<SelectionAiMode, string>>({
     chat: "",
     agent: "",
     plan: "",
   });
+  const [selectedTemplateByMode, setSelectedTemplateByMode] = useState<Record<SelectionAiMode, PromptTemplate | null>>({
+    chat: null,
+    agent: null,
+    plan: null,
+  });
+  const [isPromptPickerOpen, setPromptPickerOpen] = useState(false);
+  const [promptEditorState, setPromptEditorState] = useState<{
+    template?: PromptTemplate | null;
+    seedUserPrompt?: string;
+  } | null>(null);
+  const [promptRunState, setPromptRunState] = useState<{
+    template: PromptTemplate;
+    additionalInstruction?: string;
+  } | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const contextIdentity = useMemo(
@@ -71,6 +107,15 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
     () => recentPrompts.filter((item) => item.mode === mode).slice(0, 4),
     [mode, recentPrompts],
   );
+  const selectionTemplates = useMemo(
+    () =>
+      getTemplatesForSurface("selection").filter((template) => templateMatchesMode(mode, template)),
+    [getTemplatesForSurface, mode],
+  );
+
+  useEffect(() => {
+    void loadPromptState();
+  }, [loadPromptState]);
 
   useEffect(() => {
     if (!context) {
@@ -98,6 +143,15 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
 
   const handleSubmit = useCallback(async () => {
     if (!context || isRunning) {
+      return;
+    }
+
+    const selectedTemplate = selectedTemplateByMode[mode];
+    if (selectedTemplate) {
+      setPromptRunState({
+        template: selectedTemplate,
+        additionalInstruction: promptByMode[mode].trim() || undefined,
+      });
       return;
     }
 
@@ -138,12 +192,71 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
     mode,
     onClose,
     promptByMode,
+    selectedTemplateByMode,
     rememberPrompt,
     returnFocusTo,
     runMode,
     setPreferredMode,
     settings,
   ]);
+
+  const handlePromptTemplateConfirm = useCallback(async (payload: {
+    renderedPrompt: string;
+    renderedSystemPrompt?: string;
+    contextSummary: string;
+  }) => {
+    if (!context || !promptRunState) {
+      return;
+    }
+
+    const origin = buildSelectionOrigin(context, mode);
+    setPromptRunState(null);
+    setIsRunning(true);
+    try {
+      const result = await executePromptTemplateForSurface({
+        template: promptRunState.template,
+        surface: "selection",
+        settings: toRuntimeSettings(settings),
+        contextValues: buildSelectionPromptContextValues(context),
+        workspaceRootPath,
+        renderedPrompt: payload.renderedPrompt,
+        renderedSystemPrompt: payload.renderedSystemPrompt,
+        contextSummary: payload.contextSummary,
+        filePath: context.filePath,
+        content: context.contextText ?? context.selectedText,
+        selection: context.selectedText,
+        query: payload.renderedPrompt,
+        explicitEvidenceRefs: context.evidenceRefs,
+        origin,
+      });
+
+      if (payload.renderedPrompt.trim()) {
+        rememberPrompt(mode, payload.renderedPrompt);
+      }
+      setPreferredMode(mode);
+
+      toast.success(
+        result.kind === "proposal"
+          ? "已生成整理计划"
+          : result.kind === "draft"
+            ? "已生成草稿"
+            : mode === "agent"
+              ? "已启动深度分析"
+              : "已发送到快速问答",
+        {
+          description: result.title,
+        },
+      );
+      onClose();
+      returnFocusTo?.focus?.();
+    } catch (error) {
+      toast.error("AI 执行失败", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setIsRunning(false);
+    }
+  }, [context, mode, onClose, promptRunState, rememberPrompt, returnFocusTo, setPreferredMode, settings, workspaceRootPath]);
 
   useEffect(() => {
     if (!context) return;
@@ -189,6 +302,43 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
       onClose();
       returnFocusTo?.focus?.();
     }}>
+      <PromptPicker
+        isOpen={isPromptPickerOpen}
+        surface="selection"
+        workspaceRootPath={workspaceRootPath}
+        currentInput={promptByMode[mode]}
+        onClose={() => setPromptPickerOpen(false)}
+        onSelectTemplate={(template) => {
+          setSelectedTemplateByMode((current) => ({ ...current, [mode]: template }));
+          setPromptPickerOpen(false);
+        }}
+        onCreateTemplate={(seed) => {
+          setPromptPickerOpen(false);
+          setPromptEditorState({ seedUserPrompt: seed?.userPrompt ?? promptByMode[mode] });
+        }}
+        onEditTemplate={(template) => {
+          setPromptPickerOpen(false);
+          setPromptEditorState({ template });
+        }}
+      />
+      <PromptEditorDialog
+        key={`selection-prompt-editor:${promptEditorState?.template?.id ?? "new"}:${promptEditorState?.seedUserPrompt ?? ""}`}
+        isOpen={Boolean(promptEditorState)}
+        surface="selection"
+        template={promptEditorState?.template ?? null}
+        seedUserPrompt={promptEditorState?.seedUserPrompt}
+        onClose={() => setPromptEditorState(null)}
+      />
+      <PromptRunSheet
+        key={`selection-prompt-run:${promptRunState?.template.id ?? "none"}:${promptRunState?.additionalInstruction ?? ""}:${context?.filePath ?? context?.fileName ?? ""}:${context?.selectedText ?? ""}`}
+        isOpen={Boolean(promptRunState && context)}
+        surface="selection"
+        template={promptRunState?.template ?? null}
+        contextValues={context ? buildSelectionPromptContextValues(context) : {}}
+        initialPromptAppend={promptRunState?.additionalInstruction}
+        onClose={() => setPromptRunState(null)}
+        onConfirm={(payload) => void handlePromptTemplateConfirm(payload)}
+      />
       <div
         className="w-full max-w-5xl rounded-3xl border border-border bg-background shadow-2xl"
         onClick={(event) => event.stopPropagation()}
@@ -286,16 +436,35 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
             </div>
 
             <div className="rounded-2xl border border-border p-4">
-              <div className="text-sm font-medium">Starter Templates</div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-medium">Prompt Templates</div>
+                <button
+                  type="button"
+                  onClick={() => setPromptPickerOpen(true)}
+                  className="rounded-full border border-border bg-background px-3 py-1.5 text-[11px] text-foreground hover:bg-accent"
+                >
+                  选择模板
+                </button>
+              </div>
+              {selectedTemplateByMode[mode] && (
+                <div className="mt-3 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+                  当前模板：{selectedTemplateByMode[mode]?.title}
+                </div>
+              )}
               <div className="mt-2 flex flex-wrap gap-2">
-                {modeMeta.templates.map((template) => (
+                {selectionTemplates.slice(0, 6).map((template) => (
                   <button
                     key={template.id}
                     type="button"
-                    onClick={() => setPromptByMode((current) => ({ ...current, [mode]: template.prompt(context) }))}
-                    className="rounded-full border border-border bg-background px-3 py-1.5 text-[11px] text-foreground hover:bg-accent"
+                    onClick={() => setSelectedTemplateByMode((current) => ({ ...current, [mode]: template }))}
+                    className={cn(
+                      "rounded-full border px-3 py-1.5 text-[11px]",
+                      selectedTemplateByMode[mode]?.id === template.id
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-background text-foreground hover:bg-accent",
+                    )}
                   >
-                    {template.label}
+                    {template.title}
                   </button>
                 ))}
               </div>
@@ -332,11 +501,11 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
                 ref={textareaRef}
                 value={promptByMode[mode]}
                 onChange={(event) => setPromptByMode((current) => ({ ...current, [mode]: event.target.value }))}
-                placeholder={placeholder}
+                placeholder={selectedTemplateByMode[mode]?.title ? `可选：补充对模板的额外要求` : placeholder}
                 className="min-h-[180px] w-full rounded-2xl border border-border bg-background px-3 py-3 text-sm outline-none transition-colors focus:border-primary"
               />
               <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span>留空会使用当前模式默认提示。Alt+1/2/3 切模式，Ctrl/Cmd+Enter 提交。</span>
+                <span>{selectedTemplateByMode[mode] ? "已选择模板，输入内容会作为补充说明。" : "留空会使用当前模式默认提示。"} Alt+1/2/3 切模式，Ctrl/Cmd+Enter 提交。</span>
                 <span>{modeMeta.executionTarget}</span>
               </div>
             </div>

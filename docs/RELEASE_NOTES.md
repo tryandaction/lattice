@@ -6,6 +6,30 @@
 
 ## 本次重点
 
+### 2026-03-28 桌面壳层与 AI 集成专题收口
+
+- Phase 1 blocker 已完成：
+  - 桌面 `plugin:dialog|open` 已按 Tauri dialog v2 契约改为 `options` payload，`打开工作区 / 打开文件夹 / 切换工作区` 的桌面目录选择主链路恢复可用
+  - 桌面 settings hydration 现在会先等待 Tauri invoke bridge，就绪后再读取持久化状态
+  - onboarding 不再因冷启动桥接时序误判成“首次使用”
+  - Windows 自定义标题栏的右上角控制区已与 drag / resize hit area 隔离，最小化 / 最大化 / 关闭恢复为稳定命中区
+- Phase 2 desktop IA 已收口：
+  - 顶栏收口为 `应用身份 / 工作区入口 / breadcrumb / 全局动作 / 窗口控制`
+  - 左侧活动栏只保留 `文件 / 搜索 / 批注 / AI Chat`
+  - 无工作区状态下，主阅读区欢迎页保留唯一明显主 CTA
+  - Explorer 空态不再重复 recent workspace 主入口，只保留辅助说明
+  - `FolderSelector` 已降级为设置管理组件，不再承担桌面壳层主入口职责
+- Phase 3 AI Chat 右侧专业集成已完成：
+  - 桌面 AI 主入口统一为左侧 Bot 和命令面板命令
+  - 桌面壳层中的 AI context root overlay 已移除
+  - AI Chat 保持为右侧 dock panel，与主阅读区和 plugin panel 处于同一 workbench 布局组
+  - 普通 chat 不再根据 free-form query 隐式触发 workspace search
+  - Chat Prompt Run 现在提供显式上下文开关，`current_file_content / pdf_annotations / workspace_summary` 默认关闭
+- Phase 4 验证与发布同步已完成：
+  - `lint / typecheck / test:docs / test:run / build / tauri:build / release:prepare -- --skip-qa` 已在本地顺序跑通
+  - 最新桌面产物已同步到 `releases/v2.1.0/`
+  - `checksums.txt / release-manifest.json / RELEASE_SUMMARY.md` 已更新为本轮最新产物元数据
+
 ### 2026-03-26 阶段性收尾补充
 
 - 工作区与桌面状态恢复继续收口：
@@ -92,7 +116,7 @@
 ### 2026-03-24 PDF Item System v2 收口
 
 - PDF 已从“可加批注的阅读文件”升级为一等条目：
-  - 首次打开 PDF 会自动建立同级隐藏兄弟目录 `.basename.lattice/`
+- 首次打开 PDF 会自动建立工作区根目录 `.lattice/items/<fileId>/`
   - 默认只保留 `manifest.json` 与用户创建的笔记 / Notebook；`_annotations.md` 只在出现第一条批注后惰性生成
   - Explorer 不再暴露真实隐藏目录，而是把真实用户文件与惰性 `_annotations.md` 投影为 PDF 下的系统子条目
 - PDF 批注 sidecar 已改为稳定 `itemId` 存储：

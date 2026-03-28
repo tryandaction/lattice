@@ -99,20 +99,19 @@ describe('SelectionAiHub', () => {
       expect(screen.queryByText('结果进入 AI Chat，并自动接入 Evidence Panel。')).not.toBeNull();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: '找出风险与缺口' }));
     const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-    expect(textarea.value).toContain('关键风险');
+    fireEvent.change(textarea, { target: { value: '分析这段内容的关键风险' } });
 
     fireEvent.keyDown(document, { ctrlKey: true, key: 'Enter' });
 
     await waitFor(() => {
       expect(runSelectionAiMode).toHaveBeenCalledWith(expect.objectContaining({
         mode: 'agent',
-        prompt: textarea.value,
+        prompt: '分析这段内容的关键风险',
       }));
     });
 
-    expect(useSelectionAiStore.getState().recentPrompts[0]?.prompt).toBe(textarea.value);
+    expect(useSelectionAiStore.getState().recentPrompts[0]?.prompt).toBe('分析这段内容的关键风险');
     expect(useSelectionAiStore.getState().preferredMode).toBe('agent');
   });
 
@@ -139,10 +138,10 @@ describe('SelectionAiHub', () => {
     );
 
     expect(screen.queryByText('结果进入 AI Workbench Proposal，并优先展开目标草稿动作。')).not.toBeNull();
-    expect(screen.getAllByText('生成执行清单')).toHaveLength(2);
+    expect(screen.queryByText('生成执行清单')).not.toBeNull();
     expect(screen.queryByText('找出风险')).toBeNull();
 
-    fireEvent.click(screen.getAllByRole('button', { name: '生成执行清单' })[1]);
+    fireEvent.click(screen.getByRole('button', { name: '生成执行清单' }));
     fireEvent.keyDown(document, { ctrlKey: true, key: 'Enter' });
 
     await waitFor(() => {

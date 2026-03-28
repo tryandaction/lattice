@@ -14,6 +14,7 @@ import {
 } from "./browser-regression-utils";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { buildPdfEditorState, DEFAULT_PDF_VIEWPORT_ANCHOR } from "@/lib/pdf-view-state";
+import { buildPersistedFileViewStateKey, deletePersistedFileViewState } from "@/lib/file-view-state";
 
 interface PdfFixture {
   fileId: string;
@@ -108,6 +109,11 @@ export function PdfRegressionDiagnostics() {
       try {
         const rootHandle = await getDiagnosticsWorkspaceHandle();
         const pdfDirectory = await ensureSubdirectory(rootHandle, "pdf");
+        const sessionId = `pdf-regression-${Date.now()}`;
+        const workspaceRootPath = `${rootHandle.name}/${sessionId}`;
+        const leftFileId = `${sessionId}-left`;
+        const rightAFileId = `${sessionId}-right-a`;
+        const rightBFileId = `${sessionId}-right-b`;
 
         const [leftBuffer, rightABuffer, rightBBuffer] = await Promise.all([
           createSamplePdfBuffer("Left regression fixture"),
@@ -125,7 +131,34 @@ export function PdfRegressionDiagnostics() {
           return;
         }
 
+        const persistedKeys = [
+          buildPersistedFileViewStateKey({
+            kind: "pdf",
+            workspaceRootPath,
+            filePath: "pdf/left-fixture.pdf",
+            fallbackName: "left-fixture.pdf",
+          }),
+          buildPersistedFileViewStateKey({
+            kind: "pdf",
+            workspaceRootPath,
+            filePath: "pdf/right-fixture-a.pdf",
+            fallbackName: "right-fixture-a.pdf",
+          }),
+          buildPersistedFileViewStateKey({
+            kind: "pdf",
+            workspaceRootPath,
+            filePath: "pdf/right-fixture-b.pdf",
+            fallbackName: "right-fixture-b.pdf",
+          }),
+        ];
+
+        await Promise.all(persistedKeys.map((key) => deletePersistedFileViewState(key)));
+        const contentCache = useContentCacheStore.getState();
+        contentCache.clearCache();
+
         useWorkspaceStore.setState({
+          rootHandle,
+          workspaceRootPath,
           layout: {
             root: createEmptyPane("pdf-left-pane"),
             activePaneId: "pdf-left-pane",
@@ -135,21 +168,21 @@ export function PdfRegressionDiagnostics() {
         setWorkspace({
           rootHandle,
           left: {
-            fileId: "diagnostics-pdf-left",
+            fileId: leftFileId,
             fileName: "left-fixture.pdf",
             filePath: "pdf/left-fixture.pdf",
             content: leftBuffer,
             fileHandle: leftHandle,
           },
           rightA: {
-            fileId: "diagnostics-pdf-right-a",
+            fileId: rightAFileId,
             fileName: "right-fixture-a.pdf",
             filePath: "pdf/right-fixture-a.pdf",
             content: rightABuffer,
             fileHandle: rightAHandle,
           },
           rightB: {
-            fileId: "diagnostics-pdf-right-b",
+            fileId: rightBFileId,
             fileName: "right-fixture-b.pdf",
             filePath: "pdf/right-fixture-b.pdf",
             content: rightBBuffer,
@@ -267,16 +300,26 @@ export function PdfRegressionDiagnostics() {
       scrollLeft: Number(readValue("pdf-right-state-scroll-left") ?? "0"),
       visiblePage: Number(readValue("pdf-right-state-visible-page") ?? "0") || null,
       anchorPage: Number(readValue("pdf-right-state-anchor-page") ?? "0") || null,
-      anchorTopRatio: null,
-      anchorLeftRatio: null,
+      anchorTopRatio: readValue("pdf-anchor-top-ratio-pdf-right-pane") ? Number(readValue("pdf-anchor-top-ratio-pdf-right-pane")) : null,
+      anchorLeftRatio: readValue("pdf-anchor-left-ratio-pdf-right-pane") ? Number(readValue("pdf-anchor-left-ratio-pdf-right-pane")) : null,
       restoreStatus: readValue("pdf-right-state-restore-status"),
       restoreOk: readValue("pdf-right-state-restore-ok"),
       restoreDeltaTop: Number(readValue("pdf-right-state-restore-delta-top") ?? "-1"),
       restoreDeltaLeft: Number(readValue("pdf-right-state-restore-delta-left") ?? "-1"),
     };
 
-    const snapshot = domSnapshot.anchorPage ? domSnapshot : rightSnapshot;
-    if (!snapshot?.anchorPage) {
+    const snapshot = (
+      domSnapshot.anchorPage &&
+      domSnapshot.anchorTopRatio !== null &&
+      domSnapshot.anchorLeftRatio !== null
+    )
+      ? domSnapshot
+      : rightSnapshot;
+    if (
+      !snapshot?.anchorPage ||
+      snapshot.anchorTopRatio === null ||
+      snapshot.anchorLeftRatio === null
+    ) {
       return;
     }
 

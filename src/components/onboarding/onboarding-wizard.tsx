@@ -30,7 +30,7 @@ export function OnboardingWizard() {
     }
   }, [isInitialized, onboardingCompleted]);
 
-  if (!isVisible || onboardingCompleted) return null;
+  if (!isInitialized || !isVisible || onboardingCompleted) return null;
 
   const currentIndex = steps.indexOf(currentStep);
   const isFirst = currentIndex === 0;

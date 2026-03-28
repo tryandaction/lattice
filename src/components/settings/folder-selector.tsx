@@ -1,34 +1,27 @@
 'use client';
 
 import { FolderOpen, Trash2, AlertCircle, RefreshCw, X } from 'lucide-react';
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useI18n } from '@/hooks/use-i18n';
-import { readDirectoryRecursive } from '@/hooks/use-file-system';
-import { createDesktopDirectoryHandle } from '@/lib/desktop-file-system';
+import { isExistingDesktopDirectory, openDesktopDirectoryDialog } from '@/lib/desktop-folder';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useWorkspaceStore } from '@/stores/workspace-store';
-import { getTauriInvoke, isTauri } from '@/lib/storage-adapter';
+import { isTauri } from '@/lib/storage-adapter';
 import { useFileSystem } from '@/hooks/use-file-system';
 
 interface FolderSelectorProps {
   compact?: boolean;
-  /** If true, automatically open the folder after selection */
-  autoOpen?: boolean;
   /** Show folder not found warning */
   showNotFoundWarning?: boolean;
 }
 
-export function FolderSelector({ compact = false, autoOpen = true, showNotFoundWarning = false }: FolderSelectorProps) {
+export function FolderSelector({ compact = false, showNotFoundWarning = false }: FolderSelectorProps) {
   const { t } = useI18n();
   const defaultFolder = useSettingsStore((state) => state.settings.defaultFolder);
   const recentWorkspaces = useSettingsStore((state) => state.settings.recentWorkspacePaths);
   const setDefaultFolder = useSettingsStore((state) => state.setDefaultFolder);
-  const rememberWorkspacePath = useSettingsStore((state) => state.rememberWorkspacePath);
   const removeRecentWorkspacePath = useSettingsStore((state) => state.removeRecentWorkspacePath);
-  const setRootHandle = useWorkspaceStore((state) => state.setRootHandle);
-  const setFileTree = useWorkspaceStore((state) => state.setFileTree);
-  const setLoading = useWorkspaceStore((state) => state.setLoading);
-  const setWorkspaceRootPath = useWorkspaceStore((state) => state.setWorkspaceRootPath);
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const { openWorkspacePath } = useFileSystem();
   
   const [error, setError] = useState<string | null>(null);
@@ -37,15 +30,12 @@ export function FolderSelector({ compact = false, autoOpen = true, showNotFoundW
 
   // Check if folder exists (for Tauri mode)
   useEffect(() => {
-    const invoke = getTauriInvoke();
-    if (showNotFoundWarning && defaultFolder && isTauri() && invoke) {
-      // In Tauri, we can check if the folder exists
-      invoke<boolean>('desktop_exists_path', { path: defaultFolder })
-        .then((exists: boolean) => {
+    if (showNotFoundWarning && defaultFolder && isTauri()) {
+      isExistingDesktopDirectory(defaultFolder)
+        .then((exists) => {
           setFolderNotFound(!exists);
         })
         .catch(() => {
-          // If check fails, assume folder exists
           setFolderNotFound(false);
         });
     } else {
@@ -53,53 +43,19 @@ export function FolderSelector({ compact = false, autoOpen = true, showNotFoundW
     }
   }, [defaultFolder, showNotFoundWarning]);
 
-  // Build file tree from directory handle
-  const buildFileTree = useCallback(async (handle: FileSystemDirectoryHandle) => {
-    const children = await readDirectoryRecursive(handle);
-    return {
-      root: {
-        name: handle.name,
-        kind: "directory" as const,
-        handle,
-        children,
-        path: handle.name,
-        isExpanded: true,
-      },
-    };
-  }, []);
-
   const handleSelectFolder = async () => {
     setError(null);
     setFolderNotFound(false);
     setIsSelecting(true);
 
     try {
-      const invoke = getTauriInvoke();
-      if (isTauri() && invoke) {
-        // Use Tauri dialog
-        const selected = await invoke<string | null>(
-          'plugin:dialog|open',
-          {
-            directory: true,
-            multiple: false,
-            title: t('settings.defaultFolder.select'),
-          }
-        );
+      if (isTauri()) {
+        const selected = await openDesktopDirectoryDialog({
+          title: t('settings.defaultFolder.select'),
+          defaultPath: defaultFolder ?? workspaceRootPath,
+        });
         if (selected) {
           await setDefaultFolder(selected);
-          if (autoOpen) {
-            setLoading(true);
-            try {
-              const handle = createDesktopDirectoryHandle(selected);
-              setRootHandle(handle);
-              setWorkspaceRootPath(selected);
-              const fileTree = await buildFileTree(handle);
-              setFileTree(fileTree);
-              await rememberWorkspacePath(selected);
-            } finally {
-              setLoading(false);
-            }
-          }
         }
       } else {
         // Web: Use File System Access API
@@ -110,20 +66,6 @@ export function FolderSelector({ compact = false, autoOpen = true, showNotFoundW
           
           // Save the folder name as default
           await setDefaultFolder(handle.name);
-          
-          // Auto-open the folder if requested
-          if (autoOpen) {
-            setLoading(true);
-            try {
-              setRootHandle(handle);
-              setWorkspaceRootPath(handle.name);
-              const fileTree = await buildFileTree(handle);
-              setFileTree(fileTree);
-              await rememberWorkspacePath(handle.name);
-            } finally {
-              setLoading(false);
-            }
-          }
         } else {
           setError('Folder selection not supported in this browser');
         }

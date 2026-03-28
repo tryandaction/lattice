@@ -65,6 +65,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub recent_workspace_paths: Vec<String>,
     pub window_state: Option<WindowStateSnapshot>,
+    #[serde(default, flatten)]
+    pub extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -261,6 +263,7 @@ fn has_persisted_app_settings(settings: &AppSettings) -> bool {
         || settings.last_workspace_path.is_some()
         || !settings.recent_workspace_paths.is_empty()
         || settings.window_state.is_some()
+        || !settings.extra.is_empty()
 }
 
 fn build_app_settings_from_store(app: &tauri::AppHandle) -> Result<AppSettings, String> {
@@ -319,6 +322,7 @@ fn save_app_settings(app: &tauri::AppHandle, settings: AppSettings) -> Result<Ap
         last_workspace_path: normalize_optional_path(settings.last_workspace_path),
         recent_workspace_paths: normalize_recent_workspace_paths(settings.recent_workspace_paths),
         window_state: settings.window_state,
+        extra: settings.extra,
     };
 
     match normalized.default_folder.as_deref() {
@@ -592,6 +596,11 @@ fn desktop_exists_path(path: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
+fn desktop_is_directory(path: String) -> Result<bool, String> {
+    Ok(PathBuf::from(path).is_dir())
+}
+
+#[tauri::command]
 fn desktop_create_dir(path: String, recursive: bool) -> Result<(), String> {
     let target = PathBuf::from(path);
     if recursive {
@@ -621,6 +630,11 @@ fn desktop_remove_path(path: String, recursive: bool) -> Result<(), String> {
 #[tauri::command]
 fn desktop_window_minimize(window: tauri::WebviewWindow) -> Result<(), String> {
     window.minimize().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn desktop_window_start_dragging(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.start_dragging().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1045,9 +1059,11 @@ fn main() {
             desktop_read_file_bytes,
             desktop_write_file_bytes,
             desktop_exists_path,
+            desktop_is_directory,
             desktop_create_dir,
             desktop_remove_path,
             desktop_window_minimize,
+            desktop_window_start_dragging,
             desktop_window_toggle_maximize,
             desktop_window_is_maximized,
             desktop_window_close,
@@ -1689,6 +1705,57 @@ fn configure_std_command(command: &mut StdCommand) {
     #[cfg(windows)]
     {
         command.creation_flags(CREATE_NO_WINDOW_FLAG);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_settings_roundtrip_preserves_frontend_extra_fields() {
+        let settings = serde_json::from_value::<AppSettings>(json!({
+            "defaultFolder": "C:/workspace",
+            "lastOpenedFolder": "C:/workspace",
+            "lastWorkspacePath": "C:/workspace",
+            "recentWorkspacePaths": ["C:/workspace"],
+            "windowState": {
+                "width": 1440.0,
+                "height": 900.0,
+                "x": 100.0,
+                "y": 120.0,
+                "isMaximized": true
+            },
+            "onboardingCompleted": true,
+            "activityView": "search",
+            "pluginPanelDockOpen": true,
+            "aiPanelOpen": true,
+            "aiPanelWidth": 32
+        }))
+        .expect("settings should deserialize");
+
+        assert_eq!(settings.default_folder.as_deref(), Some("C:/workspace"));
+        assert_eq!(settings.last_workspace_path.as_deref(), Some("C:/workspace"));
+        assert_eq!(settings.extra.get("onboardingCompleted"), Some(&json!(true)));
+        assert_eq!(settings.extra.get("aiPanelOpen"), Some(&json!(true)));
+        assert_eq!(settings.extra.get("aiPanelWidth"), Some(&json!(32)));
+
+        let encoded = serde_json::to_value(&settings).expect("settings should serialize");
+        assert_eq!(encoded["onboardingCompleted"], json!(true));
+        assert_eq!(encoded["activityView"], json!("search"));
+        assert_eq!(encoded["pluginPanelDockOpen"], json!(true));
+        assert_eq!(encoded["aiPanelOpen"], json!(true));
+        assert_eq!(encoded["aiPanelWidth"], json!(32));
+    }
+
+    #[test]
+    fn persisted_settings_detection_counts_extra_frontend_fields() {
+        let mut settings = AppSettings::default();
+        settings
+            .extra
+            .insert("onboardingCompleted".to_string(), json!(true));
+
+        assert!(has_persisted_app_settings(&settings));
     }
 }
 

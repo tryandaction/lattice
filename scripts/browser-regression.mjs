@@ -1,3 +1,4 @@
+import http from "node:http";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdir } from "node:fs/promises";
@@ -88,11 +89,21 @@ async function waitForServer(url, timeoutMs = 120000) {
 
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const response = await fetch(url, { redirect: "manual" });
-      if (response.ok || response.status === 307 || response.status === 308) {
+      const response = await new Promise((resolve, reject) => {
+        const request = http.get(url, (res) => {
+          res.resume();
+          resolve(res);
+        });
+        request.on("error", reject);
+      });
+      if (
+        (typeof response.statusCode === "number" && response.statusCode >= 200 && response.statusCode < 300) ||
+        response.statusCode === 307 ||
+        response.statusCode === 308
+      ) {
         return;
       }
-      lastError = new Error(`Unexpected status: ${response.status}`);
+      lastError = new Error(`Unexpected status: ${response.statusCode}`);
     } catch (error) {
       lastError = error;
     }
@@ -496,7 +507,7 @@ async function main() {
   let browser;
 
   try {
-    await waitForServer(`${baseUrl}/diagnostics`);
+    await waitForServer(`${baseUrl}`, 300000);
     browser = await chromium.launch({ headless: true });
     const createPage = () => browser.newPage({ viewport: { width: 1720, height: 1080 } });
 
@@ -505,7 +516,11 @@ async function main() {
       try {
         await flow(page, baseUrl);
       } catch (error) {
-        await screenshotOnFailure(page, `browser-regression-failure-${name}`);
+        try {
+          await screenshotOnFailure(page, `browser-regression-failure-${name}`);
+        } catch (screenshotError) {
+          console.error(`Failed to capture regression screenshot for ${name}:`, screenshotError instanceof Error ? screenshotError.message : screenshotError);
+        }
         throw error;
       } finally {
         await page.close();

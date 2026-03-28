@@ -8,13 +8,16 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useAnnotationStore } from "@/stores/annotation-store";
 import { aiOrchestrator } from "@/lib/ai/orchestrator";
-import { X, Send, Square, Plus, Trash2, MessageSquare, Copy, Check, GitCompareArrows, Bot, FileText, ShieldCheck, Wand2, ChevronDown, ChevronUp, ChevronRight, FolderPen, FileOutput, ListTodo } from "lucide-react";
+import { X, Send, Square, Plus, Trash2, MessageSquare, Copy, Check, GitCompareArrows, Bot, FileText, ShieldCheck, Wand2, ChevronDown, ChevronUp, ChevronRight, FolderPen, FileOutput, ListTodo, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MarkdownRenderer } from "@/components/renderers/markdown-renderer";
 import { useI18n } from "@/hooks/use-i18n";
 import { MentionAutocomplete } from "./mention-autocomplete";
 import { DiffPreview } from "./diff-preview";
 import { EvidencePanel } from "./evidence-panel";
+import { PromptPicker } from "@/components/prompt/prompt-picker";
+import { PromptEditorDialog } from "@/components/prompt/prompt-editor-dialog";
+import { PromptRunSheet } from "@/components/prompt/prompt-run-sheet";
 import { parseMentions, resolveMentions } from "@/lib/ai/mention-resolver";
 import { extractCodeBlocks } from "@/lib/ai/diff-utils";
 import { deriveFileId } from "@/lib/annotation-storage";
@@ -35,8 +38,23 @@ import type {
   EvidenceRef,
   SelectionAiOrigin,
 } from "@/lib/ai/types";
+import type { PromptContextValues, PromptTemplate } from "@/lib/prompt/types";
+import { runPromptTemplate } from "@/lib/prompt/executor";
+import { usePromptTemplateStore } from "@/stores/prompt-template-store";
 import { toast } from "sonner";
 import { buildAiResultViewModel } from "@/lib/ai/result-view-model";
+
+interface ChatPromptContextOptions {
+  includeCurrentFileContent: boolean;
+  includeAnnotations: boolean;
+  includeWorkspaceSummary: boolean;
+}
+
+const DEFAULT_CHAT_PROMPT_CONTEXT_OPTIONS: ChatPromptContextOptions = {
+  includeCurrentFileContent: false,
+  includeAnnotations: false,
+  includeWorkspaceSummary: false,
+};
 
 async function readWorkspaceFile(
   rootHandle: FileSystemDirectoryHandle,
@@ -82,7 +100,54 @@ function toRuntimeSettings(settings: ReturnType<typeof useSettingsStore.getState
   };
 }
 
-export function AiChatPanel() {
+function buildWorkspaceSummary(
+  rootHandle: FileSystemDirectoryHandle | null,
+  filePath: string | undefined,
+): string | null {
+  if (!rootHandle && !filePath) {
+    return null;
+  }
+
+  return [
+    rootHandle ? `Workspace: ${rootHandle.name}` : null,
+    filePath ? `Active file: ${filePath}` : null,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join("\n");
+}
+
+function formatAnnotationContext(
+  annotations: Array<{
+    target?: { type?: string; page?: number; line?: number };
+    comment?: string;
+    content?: string;
+  }>,
+): string | null {
+  if (annotations.length === 0) {
+    return null;
+  }
+
+  return annotations
+    .slice(0, 20)
+    .map((annotation, index) => {
+      const targetLabel = annotation.target?.type === "pdf"
+        ? `Page ${annotation.target.page ?? "?"}`
+        : annotation.target?.type === "code_line"
+          ? `Line ${annotation.target.line ?? "?"}`
+          : annotation.target?.type ?? "annotation";
+      const note = annotation.comment?.trim() || annotation.content?.trim() || "[no text]";
+      return `${index + 1}. ${targetLabel}: ${note}`;
+    })
+    .join("\n");
+}
+
+export function AiChatPanel({
+  className,
+  onClose,
+}: {
+  className?: string;
+  onClose?: () => void;
+} = {}) {
   const isOpen = useAiChatStore((s) => s.isOpen);
   const setOpen = useAiChatStore((s) => s.setOpen);
   const loadConversations = useAiChatStore((s) => s.loadConversations);
@@ -178,8 +243,14 @@ export function AiChatPanel() {
   if (!isOpen) return null;
 
   return (
-    <div className="flex h-full w-80 flex-col border-l border-border bg-background">
-      <ChatHeader onClose={() => setOpen(false)} />
+    <div className={cn("flex h-full min-h-0 flex-col bg-background", className)}>
+      <ChatHeader onClose={() => {
+        if (onClose) {
+          onClose();
+          return;
+        }
+        setOpen(false);
+      }} />
       <EvidencePanel
         message={selectedEvidenceMessage}
         messages={evidenceMessages}
@@ -189,7 +260,8 @@ export function AiChatPanel() {
         onProposeTask={handleProposeEvidenceTask}
         onClose={() => setEvidencePanelOpen(false)}
       />
-      <ChatMessages
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <ChatMessages
         onOpenEvidence={(messageId) => {
           if (isEvidencePanelVisible && selectedEvidenceMessage?.id === messageId) {
             setEvidencePanelOpen(false);
@@ -200,7 +272,8 @@ export function AiChatPanel() {
         }}
         selectedEvidenceMessageId={selectedEvidenceMessage?.id ?? null}
         isEvidencePanelOpen={isEvidencePanelVisible}
-      />
+        />
+      </div>
       <WorkbenchPanel />
       <ChatInput />
     </div>
@@ -1195,6 +1268,17 @@ function ChatMessages({
 function ChatInput() {
   const { t } = useI18n();
   const [input, setInput] = useState("");
+  const [isPromptPickerOpen, setPromptPickerOpen] = useState(false);
+  const [promptEditorState, setPromptEditorState] = useState<{
+    template?: PromptTemplate | null;
+    seedUserPrompt?: string;
+  } | null>(null);
+  const [promptRunState, setPromptRunState] = useState<{
+    template: PromptTemplate;
+    contextValues: PromptContextValues;
+    contextOptions: ChatPromptContextOptions;
+    isContextUpdating: boolean;
+  } | null>(null);
   const isGenerating = useAiChatStore((s) => s.isGenerating);
   const stopGenerating = useAiChatStore((s) => s.stopGenerating);
   const addUserMessage = useAiChatStore((s) => s.addUserMessage);
@@ -1205,14 +1289,88 @@ function ChatInput() {
   const setAssistantMetadata = useAiChatStore((s) => s.setAssistantMetadata);
   const setGenerating = useAiChatStore((s) => s.setGenerating);
   const getMessagesForApi = useAiChatStore((s) => s.getMessagesForApi);
+  const createDraft = useAiWorkbenchStore((state) => state.createDraft);
+  const addProposal = useAiWorkbenchStore((state) => state.addProposal);
   const settings = useSettingsStore((s) => s.settings);
   const activeTab = useWorkspaceStore((s) => s.getActiveTab());
   const rootHandle = useWorkspaceStore((s) => s.rootHandle);
+  const workspaceRootPath = useWorkspaceStore((s) => s.workspaceRootPath);
   const getCachedContent = useContentCacheStore((s) => s.getContent);
   const getAnnotationsForFile = useAnnotationStore((s) => s.getAnnotationsForFile);
+  const loadPromptState = usePromptTemplateStore((state) => state.loadPromptState);
+  const addPromptRun = usePromptTemplateStore((state) => state.addRun);
+  const updatePromptRunResult = usePromptTemplateStore((state) => state.updateRunResult);
+  const rememberTemplateUsage = usePromptTemplateStore((state) => state.rememberTemplateUsage);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionPos, setMentionPos] = useState({ top: 0, left: 0 });
+  const promptRunContextRequestRef = useRef(0);
+
+  useEffect(() => {
+    void loadPromptState();
+  }, [loadPromptState]);
+
+  const buildChatContextSnapshot = useCallback(async (options?: {
+    includeCurrentFileContent?: boolean;
+    includeAnnotations?: boolean;
+    includeWorkspaceSummary?: boolean;
+  }) => {
+    const activeContent = options?.includeCurrentFileContent
+      ? await resolveActiveFileContent(
+          activeTab,
+          activeTab ? (typeof getCachedContent(activeTab.id)?.content === "string" ? getCachedContent(activeTab.id)?.content as string : null) : null,
+        )
+      : undefined;
+
+    const annotations = options?.includeAnnotations && activeTab?.filePath
+      ? getAnnotationsForFile(deriveFileId(activeTab.filePath)).map(migrateLegacyAnnotation)
+      : [];
+    const selectedText = typeof window !== "undefined" ? window.getSelection()?.toString().trim() ?? "" : "";
+
+    return {
+      activeContent: activeContent ?? null,
+      annotations,
+      contextValues: {
+        selected_text: selectedText || null,
+        current_file: activeTab?.filePath ?? activeTab?.fileName ?? null,
+        current_file_content: activeContent ?? null,
+        pdf_annotations: options?.includeAnnotations ? formatAnnotationContext(annotations) : null,
+        workspace_summary: options?.includeWorkspaceSummary ? buildWorkspaceSummary(rootHandle, activeTab?.filePath) : null,
+      } satisfies PromptContextValues,
+    };
+  }, [activeTab, getAnnotationsForFile, getCachedContent, rootHandle]);
+
+  const prepareChatExecution = useCallback(async (promptText: string, options?: {
+    includeCurrentFileContent?: boolean;
+    includeAnnotations?: boolean;
+    includeWorkspaceSummary?: boolean;
+  }) => {
+    const snapshot = await buildChatContextSnapshot(options);
+    const mentions = parseMentions(promptText);
+    const resolvedMentions = mentions.length > 0 && rootHandle
+      ? await resolveMentions(mentions, {
+          currentSelection: snapshot.contextValues.selected_text ?? "",
+          readFile: (path) => readWorkspaceFile(rootHandle, path),
+        })
+      : [];
+
+    const references = resolvedMentions
+      .filter((mention) => mention.type === "file" && mention.resolved && !mention.resolved.startsWith("[Error"))
+      .map((mention) => ({
+        path: mention.target,
+        content: mention.resolved ?? "",
+      }));
+
+    const explicitEvidenceRefs = resolvedMentions.flatMap((mention) =>
+      mention.evidenceRef ? [mention.evidenceRef] : [],
+    );
+
+    return {
+      ...snapshot,
+      references,
+      explicitEvidenceRefs: explicitEvidenceRefs.length > 0 ? explicitEvidenceRefs : undefined,
+    };
+  }, [buildChatContextSnapshot, rootHandle]);
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
@@ -1220,9 +1378,6 @@ function ChatInput() {
     setInput("");
 
     const historyBeforeSend = getMessagesForApi();
-
-    // Resolve @mentions before sending
-    const mentions = parseMentions(text);
     addUserMessage(text); // Show original text in UI
     const msgId = startAssistantMessage();
     const controller = new AbortController();
@@ -1234,43 +1389,21 @@ function ChatInput() {
         return;
       }
 
-      const activeContent = await resolveActiveFileContent(
-        activeTab,
-        activeTab ? (typeof getCachedContent(activeTab.id)?.content === "string" ? getCachedContent(activeTab.id)?.content as string : null) : null,
-      );
-
-      const resolvedMentions = mentions.length > 0 && rootHandle
-        ? await resolveMentions(mentions, {
-            currentSelection: typeof window !== "undefined" ? window.getSelection()?.toString() ?? "" : "",
-            readFile: (path) => readWorkspaceFile(rootHandle, path),
-          })
-        : [];
-
-      const references = resolvedMentions
-        .filter((mention) => mention.type === "file" && mention.resolved && !mention.resolved.startsWith("[Error"))
-        .map((mention) => ({
-          path: mention.target,
-          content: mention.resolved ?? "",
-        }));
-
-      const explicitEvidenceRefs = resolvedMentions.flatMap((mention) =>
-        mention.evidenceRef ? [mention.evidenceRef] : []
-      );
-
-      const annotations = activeTab?.filePath
-        ? getAnnotationsForFile(deriveFileId(activeTab.filePath)).map(migrateLegacyAnnotation)
-        : [];
+      const execution = await prepareChatExecution(text, {
+        includeCurrentFileContent: false,
+        includeAnnotations: false,
+        includeWorkspaceSummary: false,
+      });
 
       const result = await aiOrchestrator.runChat({
         prompt: text,
         history: historyBeforeSend,
         settings: toRuntimeSettings(settings),
         filePath: activeTab?.filePath,
-        content: activeContent,
-        references,
-        annotations,
-        query: text,
-        explicitEvidenceRefs: explicitEvidenceRefs.length > 0 ? explicitEvidenceRefs : undefined,
+        content: undefined,
+        references: execution.references,
+        annotations: [],
+        explicitEvidenceRefs: execution.explicitEvidenceRefs,
       });
 
       if (controller.signal.aborted) {
@@ -1303,13 +1436,209 @@ function ChatInput() {
     setGenerating,
     settings,
     activeTab,
-    getCachedContent,
-    rootHandle,
-    getAnnotationsForFile,
+    prepareChatExecution,
     appendToAssistantMessage,
     finishAssistantMessage,
     setAssistantError,
     setAssistantMetadata,
+  ]);
+
+  const syncPromptRunContext = useCallback(async (
+    template: PromptTemplate,
+    contextOptions: ChatPromptContextOptions,
+  ) => {
+    const requestId = promptRunContextRequestRef.current + 1;
+    promptRunContextRequestRef.current = requestId;
+
+    setPromptRunState((current) => current && current.template.id === template.id
+      ? {
+          ...current,
+          contextOptions,
+          isContextUpdating: true,
+        }
+      : current);
+
+    const snapshot = await buildChatContextSnapshot(contextOptions);
+    if (promptRunContextRequestRef.current !== requestId) {
+      return;
+    }
+
+    setPromptRunState((current) => current && current.template.id === template.id
+      ? {
+          ...current,
+          contextValues: snapshot.contextValues,
+          contextOptions,
+          isContextUpdating: false,
+        }
+      : current);
+  }, [buildChatContextSnapshot]);
+
+  const openPromptRun = useCallback(async (template: PromptTemplate) => {
+    setPromptRunState({
+      template,
+      contextValues: {},
+      contextOptions: DEFAULT_CHAT_PROMPT_CONTEXT_OPTIONS,
+      isContextUpdating: true,
+    });
+    setPromptPickerOpen(false);
+    await syncPromptRunContext(template, DEFAULT_CHAT_PROMPT_CONTEXT_OPTIONS);
+  }, [syncPromptRunContext]);
+
+  const handlePromptRunConfirm = useCallback(async (payload: {
+    renderedPrompt: string;
+    renderedSystemPrompt?: string;
+    contextSummary: string;
+  }) => {
+    if (!promptRunState || isGenerating) {
+      return;
+    }
+
+    const template = promptRunState.template;
+    const runId = addPromptRun({
+      templateId: template.id,
+      surface: "chat",
+      renderedPrompt: payload.renderedPrompt,
+      renderedSystemPrompt: payload.renderedSystemPrompt,
+      contextSummary: payload.contextSummary,
+      outputMode: template.outputMode,
+    });
+
+    rememberTemplateUsage(template.id, "chat", workspaceRootPath);
+    setPromptRunState(null);
+    setInput("");
+
+    try {
+      if (!settings.aiEnabled) {
+        throw new Error("AI is disabled. Go to Settings → AI to enable it.");
+      }
+
+      const historyBeforeSend = getMessagesForApi();
+      const execution = await prepareChatExecution(payload.renderedPrompt, {
+        includeCurrentFileContent: promptRunState.contextOptions.includeCurrentFileContent,
+        includeAnnotations: promptRunState.contextOptions.includeAnnotations,
+        includeWorkspaceSummary: promptRunState.contextOptions.includeWorkspaceSummary,
+      });
+
+      const shouldSendToChat = template.outputMode === "chat" || template.outputMode === "structured-chat";
+
+      if (shouldSendToChat) {
+        addUserMessage(payload.renderedPrompt, {
+          templateId: template.id,
+          promptRunId: runId,
+        });
+      }
+
+      const assistantMessageId = shouldSendToChat
+        ? startAssistantMessage({
+            templateId: template.id,
+            promptRunId: runId,
+          })
+        : null;
+
+      const controller = new AbortController();
+      if (assistantMessageId) {
+        setGenerating(true, controller);
+      }
+
+      const result = await runPromptTemplate({
+        template,
+        surface: "chat",
+        contextValues: promptRunState.contextValues,
+        settings: toRuntimeSettings(settings),
+        history: historyBeforeSend,
+        filePath: activeTab?.filePath,
+        content: execution.activeContent ?? undefined,
+        selection: execution.contextValues.selected_text ?? undefined,
+        references: execution.references,
+        annotations: execution.annotations,
+        explicitEvidenceRefs: execution.explicitEvidenceRefs,
+        renderedOverride: {
+          renderedPrompt: payload.renderedPrompt,
+          renderedSystemPrompt: payload.renderedSystemPrompt,
+          contextSummary: payload.contextSummary,
+        },
+      });
+
+      if (shouldSendToChat && assistantMessageId && (result.outputMode === "chat" || result.outputMode === "structured-chat")) {
+        if (controller.signal.aborted) {
+          finishAssistantMessage(assistantMessageId);
+          return;
+        }
+
+        appendToAssistantMessage(assistantMessageId, result.chatResult.text);
+        finishAssistantMessage(assistantMessageId);
+        setAssistantMetadata(assistantMessageId, {
+          model: result.chatResult.model,
+          evidenceRefs: result.chatResult.evidenceRefs,
+          promptContext: result.chatResult.context,
+          followUpActions: result.chatResult.followUpActions,
+          draftSuggestion: result.chatResult.draftSuggestion,
+          templateId: template.id,
+          promptRunId: runId,
+        });
+        updatePromptRunResult(runId, { resultMessageId: assistantMessageId });
+        return;
+      }
+
+      if (result.outputMode === "draft") {
+        const draftId = createDraft({
+          type: result.chatResult.draftSuggestion?.type ?? "paper_note",
+          templateId: result.chatResult.draftSuggestion?.templateId,
+          promptRunId: runId,
+          title: result.draft.title,
+          sourceRefs: result.chatResult.evidenceRefs,
+          content: result.draft.content,
+        });
+        updatePromptRunResult(runId, { resultDraftId: draftId });
+        toast.success(t("prompt.run.toast.draftCreated"), {
+          description: template.title,
+        });
+        return;
+      }
+
+      if (result.outputMode === "proposal") {
+        addProposal({
+          ...result.proposal,
+          promptRunId: runId,
+        });
+        updatePromptRunResult(runId, { resultProposalId: result.proposal.id });
+        toast.success(t("prompt.run.toast.proposalCreated"), {
+          description: result.proposal.summary,
+        });
+      }
+    } catch (error) {
+      if ((template.outputMode === "chat" || template.outputMode === "structured-chat")) {
+        const activeConversation = useAiChatStore.getState().getActiveConversation();
+        const latestAssistant = activeConversation?.messages.at(-1);
+        if (latestAssistant?.role === "assistant" && latestAssistant.promptRunId === runId) {
+          setAssistantError(latestAssistant.id, error instanceof Error ? error.message : String(error));
+        }
+      }
+      toast.error(t("prompt.run.toast.failed"), {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [
+    addPromptRun,
+    addProposal,
+    addUserMessage,
+    activeTab?.filePath,
+    appendToAssistantMessage,
+    createDraft,
+    finishAssistantMessage,
+    getMessagesForApi,
+    isGenerating,
+    prepareChatExecution,
+    promptRunState,
+    rememberTemplateUsage,
+    setAssistantError,
+    setAssistantMetadata,
+    setGenerating,
+    settings,
+    startAssistantMessage,
+    t,
+    updatePromptRunResult,
+    workspaceRootPath,
   ]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -1321,6 +1650,70 @@ function ChatInput() {
 
   return (
     <div className="border-t border-border p-2 relative">
+      <PromptPicker
+        isOpen={isPromptPickerOpen}
+        surface="chat"
+        workspaceRootPath={workspaceRootPath}
+        currentInput={input}
+        onClose={() => setPromptPickerOpen(false)}
+        onSelectTemplate={(template) => void openPromptRun(template)}
+        onCreateTemplate={(seed) => {
+          setPromptPickerOpen(false);
+          setPromptEditorState({ seedUserPrompt: seed?.userPrompt });
+        }}
+        onEditTemplate={(template) => {
+          setPromptPickerOpen(false);
+          setPromptEditorState({ template });
+        }}
+      />
+      <PromptEditorDialog
+        key={`prompt-editor:${promptEditorState?.template?.id ?? "new"}:${promptEditorState?.seedUserPrompt ?? ""}`}
+        isOpen={Boolean(promptEditorState)}
+        surface="chat"
+        template={promptEditorState?.template ?? null}
+        seedUserPrompt={promptEditorState?.seedUserPrompt}
+        onClose={() => setPromptEditorState(null)}
+      />
+      <PromptRunSheet
+        key={`prompt-run:${promptRunState?.template?.id ?? "none"}:${promptRunState?.contextValues.current_file ?? ""}:${promptRunState?.contextValues.selected_text ?? ""}`}
+        isOpen={Boolean(promptRunState)}
+        surface="chat"
+        template={promptRunState?.template ?? null}
+        contextValues={promptRunState?.contextValues ?? {}}
+        contextControls={promptRunState ? [
+          {
+            key: "includeCurrentFileContent",
+            label: t("prompt.run.chat.includeCurrentFileContent"),
+            description: t("prompt.run.chat.includeCurrentFileContentHint"),
+            checked: promptRunState.contextOptions.includeCurrentFileContent,
+          },
+          {
+            key: "includeAnnotations",
+            label: t("prompt.run.chat.includeAnnotations"),
+            description: t("prompt.run.chat.includeAnnotationsHint"),
+            checked: promptRunState.contextOptions.includeAnnotations,
+          },
+          {
+            key: "includeWorkspaceSummary",
+            label: t("prompt.run.chat.includeWorkspaceSummary"),
+            description: t("prompt.run.chat.includeWorkspaceSummaryHint"),
+            checked: promptRunState.contextOptions.includeWorkspaceSummary,
+          },
+        ] : undefined}
+        isContextUpdating={promptRunState?.isContextUpdating ?? false}
+        onClose={() => setPromptRunState(null)}
+        onContextControlChange={(key, checked) => {
+          if (!promptRunState) {
+            return;
+          }
+          const nextOptions = {
+            ...promptRunState.contextOptions,
+            [key]: checked,
+          } as ChatPromptContextOptions;
+          void syncPromptRunContext(promptRunState.template, nextOptions);
+        }}
+        onConfirm={(payload) => void handlePromptRunConfirm(payload)}
+      />
       {mentionQuery !== null && (
         <MentionAutocomplete
           query={mentionQuery}
@@ -1347,6 +1740,25 @@ function ChatInput() {
           onClose={() => setMentionQuery(null)}
         />
       )}
+      <div className="mb-2 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setPromptPickerOpen(true)}
+          className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-[11px] text-foreground hover:bg-accent"
+        >
+          <Wand2 className="h-3.5 w-3.5" />
+          {t("prompt.chat.open")}
+        </button>
+        <button
+          type="button"
+          onClick={() => setPromptEditorState({ seedUserPrompt: input })}
+          disabled={!input.trim()}
+          className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-[11px] text-foreground hover:bg-accent disabled:opacity-50"
+        >
+          <Save className="h-3.5 w-3.5" />
+          {t("prompt.chat.saveCurrent")}
+        </button>
+      </div>
       <div className="flex items-end gap-1">
         <textarea
           ref={textareaRef}

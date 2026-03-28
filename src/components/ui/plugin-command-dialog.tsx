@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Command, RefreshCcw, X } from "lucide-react";
 import { useI18n } from "@/hooks/use-i18n";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useAiChatStore } from "@/stores/ai-chat-store";
 import { getRegisteredCommands, subscribePluginRegistry } from "@/lib/plugins/runtime";
 import type { PluginCommand } from "@/lib/plugins/types";
 import { cn } from "@/lib/utils";
@@ -40,9 +41,24 @@ function readRecentCommandIds(): string[] {
   }
 }
 
-function getBuiltinCommands(language: string, navigate: (path: string) => void): CommandItem[] {
+function getBuiltinCommands(
+  language: string,
+  navigate: (path: string) => void,
+  toggleAiChat: () => void,
+  aiChatOpen: boolean,
+): CommandItem[] {
   const isZh = language !== "en-US";
   return [
+    {
+      id: "core.toggle-ai-chat-panel",
+      title: isZh
+        ? (aiChatOpen ? "关闭 AI Chat 面板" : "打开 AI Chat 面板")
+        : (aiChatOpen ? "Close AI Chat Panel" : "Open AI Chat Panel"),
+      source: "core",
+      run: async () => {
+        toggleAiChat();
+      },
+    },
     {
       id: "core.open-live-preview-guide",
       title: isZh ? "打开实时预览指南" : "Open Live Preview Guide",
@@ -94,6 +110,8 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
   const { t } = useI18n();
   const router = useRouter();
   const settings = useSettingsStore((state) => state.settings);
+  const aiChatOpen = useAiChatStore((state) => state.isOpen);
+  const toggleAiChat = useAiChatStore((state) => state.toggleOpen);
   const language = settings.language || "zh-CN";
   const [pluginCommands, setPluginCommands] = useState<PluginCommand[]>([]);
   const [query, setQuery] = useState("");
@@ -102,8 +120,8 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const builtinCommands = useMemo(
-    () => getBuiltinCommands(language, (path) => router.push(path)),
-    [language, router],
+    () => getBuiltinCommands(language, (path) => router.push(path), toggleAiChat, aiChatOpen),
+    [aiChatOpen, language, router, toggleAiChat],
   );
   const allCommands = useMemo<CommandItem[]>(() => {
     const plugins = pluginCommands.map((command) => ({ ...command, source: "plugin" as const }));

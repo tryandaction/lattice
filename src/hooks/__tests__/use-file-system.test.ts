@@ -104,13 +104,15 @@ describe("readDirectoryRecursive", () => {
     root.addFile(new FakeFileHandle("paper.pdf"));
     root.addFile(new FakeFileHandle("notes.md"));
 
-    const itemDir = root.addDirectory(new FakeDirectoryHandle(".paper.lattice"));
+    const latticeDir = root.addDirectory(new FakeDirectoryHandle(".lattice"));
+    const itemsDir = latticeDir.addDirectory(new FakeDirectoryHandle("items"));
+    const itemDir = itemsDir.addDirectory(new FakeDirectoryHandle("workspace-paper.pdf"));
     itemDir.addFile(new FakeFileHandle("manifest.json", JSON.stringify({
       version: 2,
       itemId: "workspace-paper.pdf",
       pdfPath: "workspace/paper.pdf",
-      itemFolderPath: "workspace/.paper.lattice",
-      annotationIndexPath: "workspace/.paper.lattice/_annotations.md",
+      itemFolderPath: ".lattice/items/workspace-paper.pdf",
+      annotationIndexPath: ".lattice/items/workspace-paper.pdf/_annotations.md",
       createdAt: 1710000000000,
       updatedAt: 1710000000000,
     })));
@@ -120,7 +122,7 @@ describe("readDirectoryRecursive", () => {
 
     const nodes = await readDirectoryRecursive(root as unknown as FileSystemDirectoryHandle);
     const pdfNode = nodes.find((node) => isFileNode(node) && node.name === "paper.pdf");
-    const hiddenItemDir = nodes.find((node) => !isFileNode(node) && node.name === ".paper.lattice");
+    const hiddenItemDir = nodes.find((node) => !isFileNode(node) && node.name === ".lattice");
 
     expect(hiddenItemDir).toBeUndefined();
     expect(pdfNode && isFileNode(pdfNode)).toBe(true);
@@ -147,6 +149,13 @@ describe("readDirectoryRecursive", () => {
       }
 
       if (command === "plugin:dialog|open") {
+        expect(args).toEqual({
+          options: {
+            directory: true,
+            multiple: false,
+            title: "Open Folder",
+          },
+        });
         return "C:/vault";
       }
 
@@ -190,5 +199,54 @@ describe("readDirectoryRecursive", () => {
     expect(workspace.rootHandle?.name).toBe("vault");
     expect(workspace.fileTree.root?.children.map((node) => node.name)).toEqual(["docs", "notes.md"]);
     expect(useSettingsStore.getState().settings.lastOpenedFolder).toBe("C:/vault");
+  });
+
+  it("drops a missing recent desktop workspace before reopening", async () => {
+    useSettingsStore.setState((state) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        lastOpenedFolder: "C:/missing",
+        lastWorkspacePath: "C:/missing",
+        recentWorkspacePaths: ["C:/missing"],
+      },
+    }));
+
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "get_setting") {
+        return null;
+      }
+
+      if (command === "set_setting" || command === "remove_setting" || command === "clear_settings") {
+        return null;
+      }
+
+      if (command === "desktop_is_directory") {
+        return false;
+      }
+
+      throw new Error(`Unexpected invoke: ${command}`);
+    });
+
+    (window as Window & {
+      __TAURI__?: { core: { invoke: typeof window.__TAURI__ extends { core: { invoke: infer U } } ? U : never } };
+    }).__TAURI__ = {
+      core: { invoke: invoke as never },
+    };
+
+    const { result } = renderHook(() => useFileSystem());
+
+    await waitFor(() => {
+      expect(result.current.isSupported).toBe(true);
+    });
+
+    await act(async () => {
+      await result.current.openWorkspacePath("C:/missing");
+    });
+
+    expect(useSettingsStore.getState().settings.recentWorkspacePaths).toEqual([]);
+    expect(useSettingsStore.getState().settings.lastWorkspacePath).toBeNull();
+    expect(useWorkspaceStore.getState().workspaceRootPath).toBeNull();
+    expect(useWorkspaceStore.getState().error).toContain("Workspace path no longer exists");
   });
 });

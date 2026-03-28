@@ -48,8 +48,8 @@ describe("AnnotationsActivityPanel", () => {
       version: 3,
       itemId: "docs-paper.pdf",
       pdfPath: "docs/paper.pdf",
-      itemFolderPath: "docs/.paper.lattice",
-      annotationIndexPath: "docs/.paper.lattice/_annotations.md",
+      itemFolderPath: ".lattice/items/docs-paper.pdf",
+      annotationIndexPath: ".lattice/items/docs-paper.pdf/_annotations.md",
       createdAt: 1,
       updatedAt: 1,
     });

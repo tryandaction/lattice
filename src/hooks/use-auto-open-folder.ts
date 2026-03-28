@@ -12,18 +12,12 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useWorkspaceStore } from '@/stores/workspace-store';
-import { useContentCacheStore } from '@/stores/content-cache-store';
-import { readDirectoryRecursive } from '@/hooks/use-file-system';
+import { applyWorkspaceHandleToStores } from '@/hooks/use-file-system';
 import { createDesktopDirectoryHandle, getDesktopHandlePath } from '@/lib/desktop-file-system';
+import { resolveDesktopStartupWorkspace } from '@/lib/desktop-folder';
 import { logger } from '@/lib/logger';
-import { getTauriInvoke, isTauri } from '@/lib/storage-adapter';
-import type { DirectoryNode } from '@/types/file-system';
+import { isTauri } from '@/lib/storage-adapter';
 import type { AppSettings } from '@/types/settings';
-
-interface StartupWorkspaceResolution {
-  path: string | null;
-  source: 'last_workspace_path' | 'recent_workspace_paths' | 'default_folder' | null;
-}
 
 const DB_NAME = 'lattice-handles';
 const STORE_NAME = 'directory-handles';
@@ -77,15 +71,11 @@ export function resolveAutoOpenWorkspacePath(
 export function useAutoOpenFolder() {
   const isInitialized = useSettingsStore((state) => state.isInitialized);
   const settings = useSettingsStore((state) => state.settings);
-  const rememberWorkspacePath = useSettingsStore((state) => state.rememberWorkspacePath);
+  const loadSettings = useSettingsStore((state) => state.loadSettings);
 
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
-  const setRootHandle = useWorkspaceStore((state) => state.setRootHandle);
-  const setFileTree = useWorkspaceStore((state) => state.setFileTree);
   const setLoading = useWorkspaceStore((state) => state.setLoading);
   const setError = useWorkspaceStore((state) => state.setError);
-  const setWorkspaceRootPath = useWorkspaceStore((state) => state.setWorkspaceRootPath);
-  const resetWorkbenchState = useWorkspaceStore((state) => state.resetWorkbenchState);
 
   const hasAttemptedAutoOpen = useRef(false);
 
@@ -101,33 +91,21 @@ export function useAutoOpenFolder() {
   const restoreWorkspaceFromHandle = useCallback(async (
     handle: FileSystemDirectoryHandle,
     workspaceRootPath: string | null,
-  ) => {
+  ): Promise<boolean> => {
     setLoading(true);
     setError(null);
     try {
-      useContentCacheStore.getState().clearCache();
-      resetWorkbenchState();
-      const children = await readDirectoryRecursive(handle);
-      const rootNode: DirectoryNode = {
-        name: handle.name,
-        kind: "directory",
-        handle,
-        children,
-        path: handle.name,
-        isExpanded: true,
-      };
-      setRootHandle(handle);
-      setWorkspaceRootPath(workspaceRootPath ?? handle.name);
-      setFileTree({ root: rootNode });
-      await rememberWorkspacePath(workspaceRootPath ?? handle.name);
+      await applyWorkspaceHandleToStores(handle, workspaceRootPath);
       logger.info('[AutoOpen] Restored workspace tree:', handle.name);
+      return true;
     } catch (err) {
       logger.warn('[AutoOpen] Failed to rebuild workspace tree:', err);
       setError(err instanceof Error ? err.message : 'Failed to restore workspace');
+      return false;
     } finally {
       setLoading(false);
     }
-  }, [rememberWorkspacePath, resetWorkbenchState, setError, setFileTree, setLoading, setRootHandle, setWorkspaceRootPath]);
+  }, [setError, setLoading]);
 
   const openDefaultFolder = useCallback(async () => {
     if (hasAttemptedAutoOpen.current) return;
@@ -138,23 +116,16 @@ export function useAutoOpenFolder() {
 
     try {
       if (isTauri()) {
-        try {
-          const invoke = getTauriInvoke();
-          if (!invoke) {
-            logger.warn('[AutoOpen] Tauri host detected but invoke bridge is unavailable');
-            return;
-          }
-
-          const startupWorkspace = await invoke<StartupWorkspaceResolution>('resolve_startup_workspace');
-          if (!startupWorkspace?.path) {
-            return;
-          }
-
-          const desktopHandle = createDesktopDirectoryHandle(startupWorkspace.path);
-          await restoreWorkspaceFromHandle(desktopHandle, startupWorkspace.path);
-        } catch (err) {
-          logger.warn('[AutoOpen] Failed to resolve startup workspace via Tauri:', err);
+        const startupWorkspace = await resolveDesktopStartupWorkspace();
+        await loadSettings();
+        if (!startupWorkspace?.path) {
+          return;
         }
+
+        await restoreWorkspaceFromHandle(
+          createDesktopDirectoryHandle(startupWorkspace.path),
+          startupWorkspace.path,
+        );
         return;
       }
 
@@ -183,6 +154,7 @@ export function useAutoOpenFolder() {
       logger.warn('[AutoOpen] Failed to restore folder handle:', err);
     }
   }, [
+    loadSettings,
     restoreWorkspaceFromHandle,
     rootHandle,
     settings,

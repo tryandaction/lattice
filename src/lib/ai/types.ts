@@ -229,6 +229,7 @@ export interface AiDraftArtifact {
   id: string;
   type: AiDraftArtifactType;
   templateId?: AiDraftTemplateId;
+  promptRunId?: string;
   title: string;
   sourceRefs: EvidenceRef[];
   content: string;
@@ -257,6 +258,7 @@ export type AiTaskProposalStatus = 'pending' | 'approved' | 'discarded';
 export interface AiTaskProposal {
   id: string;
   summary: string;
+  promptRunId?: string;
   steps: AiTaskProposalStep[];
   requiredApprovals: string[];
   plannedWrites: AiPlannedWrite[];
