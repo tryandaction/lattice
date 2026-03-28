@@ -205,6 +205,17 @@ async function ensureSelectionAiHubOpen(page) {
   await page.getByRole("button", { name: "发送到快速问答" }).waitFor({ timeout: 30000 });
 }
 
+async function resetSelectionAiDiagnostics(page) {
+  const reopenButton = page.getByTestId("reopen-selection-ai-hub");
+  if (!(await reopenButton.isVisible().catch(() => false))) {
+    await page.keyboard.press("Escape");
+    await reopenButton.waitFor({ timeout: 30000 });
+  }
+
+  await page.getByTestId("reset-selection-ai-diagnostics").click();
+  await page.waitForTimeout(1000);
+}
+
 async function runSelectionAiFlow(page, options) {
   let lastError = null;
 
@@ -235,8 +246,7 @@ async function runSelectionAiFlow(page, options) {
     } catch (error) {
       lastError = error;
       if (attempt < 2) {
-        await page.getByTestId("reset-selection-ai-diagnostics").click();
-        await page.waitForTimeout(1000);
+        await resetSelectionAiDiagnostics(page);
       }
     }
   }
@@ -431,7 +441,7 @@ async function testSelectionAi(page, baseUrl) {
     ],
   });
 
-  await page.getByTestId("reset-selection-ai-diagnostics").click();
+  await resetSelectionAiDiagnostics(page);
   await runSelectionAiFlow(page, {
     modeButtonName: "Agent",
     prompt: "Agent diagnostics prompt",
@@ -443,7 +453,7 @@ async function testSelectionAi(page, baseUrl) {
     ],
   });
 
-  await page.getByTestId("reset-selection-ai-diagnostics").click();
+  await resetSelectionAiDiagnostics(page);
   await runSelectionAiFlow(page, {
     modeButtonName: "Plan",
     prompt: "Plan diagnostics prompt",

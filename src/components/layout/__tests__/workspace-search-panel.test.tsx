@@ -23,7 +23,11 @@ function createFileHandle(name: string, content: string): FileSystemFileHandle {
   } as unknown as FileSystemFileHandle;
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
   consoleErrorSpy?.mockRestore();
   navigateLinkMock.mockClear();
   useWorkspaceStore.setState((state) => ({
@@ -35,8 +39,8 @@ afterEach(() => {
 
 beforeEach(() => {
   consoleErrorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-    const first = String(args[0] ?? "");
-    if (first.includes("not wrapped in act")) {
+    const message = args.map((value) => String(value ?? "")).join(" ");
+    if (message.includes("not wrapped in act")) {
       return;
     }
     originalConsoleError(...args);
