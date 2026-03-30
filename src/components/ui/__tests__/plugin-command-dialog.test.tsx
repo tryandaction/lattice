@@ -57,6 +57,7 @@ describe("PluginCommandDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     aiChatState.isOpen = false;
+    localStorage.clear();
   });
 
   it("exposes an AI Chat command that toggles the right-side panel", async () => {
@@ -70,5 +71,42 @@ describe("PluginCommandDialog", () => {
       fireEvent.click(screen.getAllByText("commands.run")[0]!);
     });
     expect(hoisted.toggleOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes global settings and plugin center commands", async () => {
+    const onOpenSettings = vi.fn();
+    const onOpenPluginPanels = vi.fn();
+
+    render(
+      <PluginCommandDialog
+        isOpen
+        onClose={() => {}}
+        onOpenSettings={onOpenSettings}
+        onOpenPluginPanels={onOpenPluginPanels}
+      />,
+    );
+
+    const settingsRow = await screen.findByText("Open Settings");
+    const pluginCenterRow = await screen.findByText("Open Plugin Center");
+
+    await act(async () => {
+      fireEvent.click(settingsRow.closest("[data-command-id]") as HTMLElement);
+    });
+    await act(async () => {
+      fireEvent.click(pluginCenterRow.closest("[data-command-id]") as HTMLElement);
+    });
+
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    expect(onOpenPluginPanels).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not duplicate recent commands in the main result list", async () => {
+    localStorage.setItem("lattice-command-recent", JSON.stringify(["core.toggle-ai-chat-panel"]));
+
+    render(<PluginCommandDialog isOpen onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Open AI Chat Panel")).toHaveLength(1);
+    });
   });
 });

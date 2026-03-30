@@ -967,7 +967,12 @@ function Dialogs({
     <>
       {!isTauriHost() && <DownloadAppDialog />}
       <ErrorBoundary onReset={() => setShowCommands(false)}>
-        <PluginCommandDialog isOpen={showCommands} onClose={() => setShowCommands(false)} />
+        <PluginCommandDialog
+          isOpen={showCommands}
+          onClose={() => setShowCommands(false)}
+          onOpenSettings={() => setShowSettings(true)}
+          onOpenPluginPanels={() => setShowPluginPanels(true)}
+        />
       </ErrorBoundary>
       <ErrorBoundary onReset={() => setShowPluginPanels(false)}>
         <PluginPanelDialog isOpen={showPluginPanels} onClose={() => setShowPluginPanels(false)} />
