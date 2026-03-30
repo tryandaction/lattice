@@ -25,6 +25,7 @@ const desktopWindowMocks = vi.hoisted(() => {
     toggleDesktopWindowMaximize: vi.fn(async () => true),
     minimizeDesktopWindow: vi.fn(async () => undefined),
     closeDesktopWindow: vi.fn(async () => undefined),
+    startDesktopWindowDrag: vi.fn(async () => undefined),
     startDesktopWindowResize: vi.fn(async () => undefined),
     subscribeDesktopWindowState: vi.fn(async (listener: (payload: { isMaximized: boolean }) => void) => {
       stateListener = listener;
@@ -57,6 +58,7 @@ vi.mock("@/lib/desktop-window", () => ({
   toggleDesktopWindowMaximize: desktopWindowMocks.toggleDesktopWindowMaximize,
   minimizeDesktopWindow: desktopWindowMocks.minimizeDesktopWindow,
   closeDesktopWindow: desktopWindowMocks.closeDesktopWindow,
+  startDesktopWindowDrag: desktopWindowMocks.startDesktopWindowDrag,
   startDesktopWindowResize: desktopWindowMocks.startDesktopWindowResize,
   subscribeDesktopWindowState: desktopWindowMocks.subscribeDesktopWindowState,
 }));
@@ -68,6 +70,7 @@ describe("CommandBar desktop interactions", () => {
     desktopWindowMocks.toggleDesktopWindowMaximize.mockClear();
     desktopWindowMocks.minimizeDesktopWindow.mockClear();
     desktopWindowMocks.closeDesktopWindow.mockClear();
+    desktopWindowMocks.startDesktopWindowDrag.mockClear();
     desktopWindowMocks.startDesktopWindowResize.mockClear();
     desktopWindowMocks.subscribeDesktopWindowState.mockClear();
   });
@@ -101,6 +104,25 @@ describe("CommandBar desktop interactions", () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText("workbench.window.restore")).not.toBeNull();
+    });
+  });
+
+  it("starts dragging from the title bar region on mouse down", async () => {
+    render(
+      <CommandBar
+        onOpenWorkspace={() => {}}
+        onOpenCommands={() => {}}
+        onTogglePluginPanels={() => {}}
+        onOpenSettings={() => {}}
+        onOpenGuide={() => {}}
+        pluginPanelsOpen={false}
+      />,
+    );
+
+    fireEvent.mouseDown(screen.getByTestId("desktop-commandbar-title"));
+
+    await waitFor(() => {
+      expect(desktopWindowMocks.startDesktopWindowDrag).toHaveBeenCalledTimes(1);
     });
   });
 

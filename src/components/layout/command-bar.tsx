@@ -21,6 +21,7 @@ import {
   Pencil,
   Play,
   RotateCcw,
+  LayoutGrid,
   Save,
   ScanSearch,
   Settings,
@@ -42,6 +43,7 @@ import {
   isDesktopWindowMaximized,
   isWindowsDesktopHost,
   minimizeDesktopWindow,
+  startDesktopWindowDrag,
   subscribeDesktopWindowState,
   toggleDesktopWindowMaximize,
 } from "@/lib/desktop-window";
@@ -195,6 +197,48 @@ function CommandBarActionButton({
   );
 }
 
+function BreadcrumbScroller({
+  breadcrumbs,
+}: {
+  breadcrumbs: Array<{ label: string }>;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    const element = scrollRef.current;
+    if (!element || element.scrollWidth <= element.clientWidth + 1) {
+      return;
+    }
+
+    if (Math.abs(event.deltaY) >= Math.abs(event.deltaX)) {
+      element.scrollLeft += event.deltaY;
+      event.preventDefault();
+    }
+  }, []);
+
+  return (
+    <div
+      ref={scrollRef}
+      onWheel={handleWheel}
+      className="min-w-0 max-w-[28rem] overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      data-tauri-drag-region="false"
+      style={{ WebkitAppRegion: "no-drag", touchAction: "pan-x" } as CSSProperties}
+      data-testid="desktop-commandbar-breadcrumbs"
+    >
+      <div className="flex min-w-max items-center gap-1 text-xs text-muted-foreground">
+        {breadcrumbs.length > 0 ? breadcrumbs.map((segment, index) => (
+          <div key={`${segment.label}:${index}`} className="flex items-center gap-1">
+            {index > 0 ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : null}
+            <span className={cn("truncate", index === breadcrumbs.length - 1 && "text-foreground")}>
+              {segment.label}
+            </span>
+          </div>
+        )) : null}
+      </div>
+    </div>
+  );
+}
+
 export function CommandBar({
   onOpenWorkspace,
   onOpenCommands,
@@ -238,8 +282,21 @@ export function CommandBar({
       }),
     [registeredState?.actions],
   );
-  const visibleActions = sortedActions.slice(0, 8);
-  const overflowActions = sortedActions.slice(8);
+  const { visibleActions, overflowActions } = useMemo(() => {
+    const primary = sortedActions.filter((action) => action.group === "primary");
+    const secondary = sortedActions.filter((action) => action.group === "secondary");
+    const utility = sortedActions.filter((action) => action.group === "utility");
+    const visible = [
+      ...primary,
+      ...secondary.slice(0, 6),
+      ...utility.slice(0, 2),
+    ].slice(0, 12);
+    const visibleIds = new Set(visible.map((action) => action.id));
+    return {
+      visibleActions: visible,
+      overflowActions: sortedActions.filter((action) => !visibleIds.has(action.id)),
+    };
+  }, [sortedActions]);
 
   const syncMaximizedState = useCallback(() => {
     if (!isWindowsDesktop) {
@@ -303,57 +360,139 @@ export function CommandBar({
     });
   }, [isWindowsDesktop, syncMaximizedState]);
 
+  const handleDragPointerDown = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    if (!isWindowsDesktop || event.button !== 0) {
+      return;
+    }
+
+    if (event.currentTarget !== event.target) {
+      return;
+    }
+
+    void startDesktopWindowDrag();
+  }, [isWindowsDesktop]);
+
   return (
     <div
-      className="relative z-[70] flex items-center border-b border-border bg-background/95 pl-2 pr-0 backdrop-blur"
-      style={{ height: DESKTOP_COMMAND_BAR_HEIGHT }}
+      className="relative z-[70] grid grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-border bg-background/95 pl-2 pr-0 backdrop-blur"
+      style={{ height: DESKTOP_COMMAND_BAR_HEIGHT, WebkitAppRegion: "drag" } as CSSProperties}
+      data-tauri-drag-region={isWindowsDesktop ? "true" : undefined}
+      onMouseDown={handleDragPointerDown}
     >
       <div
-        className="flex shrink-0 select-none items-center gap-2 px-2"
-        data-tauri-drag-region={isWindowsDesktop ? "true" : undefined}
-        onDoubleClick={handleToggleMaximize}
-        data-testid="desktop-commandbar-title"
+        className="flex min-w-0 items-center gap-2 pr-3"
+        data-testid="desktop-commandbar-left"
       >
-        <Box className="h-4 w-4 text-muted-foreground" />
-        <span className="text-sm font-medium text-foreground">{t("app.name")}</span>
+        <div
+          className="flex shrink-0 select-none items-center gap-2 px-2"
+          data-tauri-drag-region={isWindowsDesktop ? "true" : undefined}
+          onDoubleClick={handleToggleMaximize}
+          onMouseDown={handleDragPointerDown}
+          data-testid="desktop-commandbar-title"
+        >
+          <Box className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm font-medium text-foreground">{t("app.name")}</span>
+        </div>
+        <div className="h-6 w-px shrink-0 bg-border/80" />
+        <div
+          className="flex shrink-0 items-center gap-1"
+          data-tauri-drag-region="false"
+          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+          data-testid="desktop-commandbar-shell-actions"
+        >
+          <button
+            type="button"
+            onClick={onOpenCommands}
+            onMouseDown={(event) => event.stopPropagation()}
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title={t("commands.open")}
+            data-tauri-drag-region="false"
+            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+          >
+            <Command className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onTogglePluginPanels}
+            onMouseDown={(event) => event.stopPropagation()}
+            className={cn(
+              "rounded-md p-1.5 transition-colors",
+              pluginPanelsOpen
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+            )}
+            title={t("panels.open")}
+            aria-pressed={pluginPanelsOpen}
+            data-tauri-drag-region="false"
+            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+          >
+            <LayoutGrid className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onOpenGuide}
+            onMouseDown={(event) => event.stopPropagation()}
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title={t("settings.shortcuts.openGuide")}
+            aria-label={t("settings.shortcuts.openGuide")}
+            data-tauri-drag-region="false"
+            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+          >
+            <HelpCircle className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            onMouseDown={(event) => event.stopPropagation()}
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title={t("settings.title")}
+            aria-label={t("settings.title")}
+            data-tauri-drag-region="false"
+            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+          >
+            <Settings className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
-      <button
-        type="button"
-        onClick={onOpenWorkspace}
-        className="ml-2 inline-flex max-w-56 shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-left transition-colors hover:bg-accent"
-        title={workspaceDescription}
-        data-tauri-drag-region="false"
-        data-testid="desktop-commandbar-workspace"
-      >
-        <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <span className="truncate text-sm font-medium text-foreground">{workspaceLabel}</span>
-      </button>
-
       <div
-        className="ml-3 flex min-w-0 flex-1 select-none items-center gap-1 overflow-hidden text-xs text-muted-foreground"
-        data-tauri-drag-region={isWindowsDesktop ? "true" : undefined}
-        onDoubleClick={handleToggleMaximize}
-        data-testid="desktop-commandbar-breadcrumbs"
+        className="flex min-w-0 items-center justify-center gap-4 px-2"
+        data-testid="desktop-commandbar-center"
       >
-        {breadcrumbs.length > 0 ? breadcrumbs.map((segment, index) => (
-          <div key={`${segment.label}:${index}`} className="flex min-w-0 items-center gap-1">
-            {index > 0 ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : null}
-            <span className={cn("truncate", index === breadcrumbs.length - 1 && "text-foreground")}>
-              {segment.label}
+        <div
+          className="flex min-w-0 shrink items-center gap-2"
+          data-testid="desktop-commandbar-file-context"
+          data-tauri-drag-region="false"
+          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+        >
+          <button
+            type="button"
+            onClick={onOpenWorkspace}
+            onMouseDown={(event) => event.stopPropagation()}
+            className="inline-flex max-w-40 shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-2 text-left transition-colors hover:bg-accent"
+            title={workspaceDescription}
+            data-tauri-drag-region="false"
+            data-testid="desktop-commandbar-workspace"
+            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+          >
+            <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="truncate text-sm font-medium text-foreground">{workspaceLabel}</span>
+          </button>
+          {breadcrumbs.length > 0 ? (
+            <BreadcrumbScroller breadcrumbs={breadcrumbs} />
+          ) : (
+            <span className="truncate text-xs text-muted-foreground" data-testid="desktop-commandbar-breadcrumbs">
+              {t("workbench.commandBar.empty")}
             </span>
-          </div>
-        )) : (
-          <span>{t("workbench.commandBar.empty")}</span>
-        )}
-      </div>
+          )}
+        </div>
 
-      <div
-        className="ml-2 flex shrink-0 items-center gap-1 px-1"
-        data-testid="desktop-commandbar-actions"
-        data-tauri-drag-region="false"
-        style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-      >
+        <div
+          className="flex shrink-0 items-center gap-1 px-1"
+          data-testid="desktop-commandbar-actions"
+          data-tauri-drag-region="false"
+          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+        >
         {visibleActions.map((action) => (
           <CommandBarActionButton key={`${activePaneId}:${action.id}`} action={action} />
         ))}
@@ -398,58 +537,7 @@ export function CommandBar({
             ) : null}
           </div>
         ) : null}
-        <button
-          type="button"
-          onClick={onOpenCommands}
-          onMouseDown={(event) => event.stopPropagation()}
-          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title={t("commands.open")}
-          data-tauri-drag-region="false"
-          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-        >
-          <Command className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={onTogglePluginPanels}
-          onMouseDown={(event) => event.stopPropagation()}
-          className={cn(
-            "rounded-md p-1.5 transition-colors",
-            pluginPanelsOpen
-              ? "bg-accent text-foreground"
-              : "text-muted-foreground hover:bg-accent hover:text-foreground"
-          )}
-          title={t("panels.open")}
-          aria-pressed={pluginPanelsOpen}
-          data-tauri-drag-region="false"
-          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-        >
-          <PanelLeft className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={onOpenGuide}
-          onMouseDown={(event) => event.stopPropagation()}
-          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title={t("settings.shortcuts.openGuide")}
-          aria-label={t("settings.shortcuts.openGuide")}
-          data-tauri-drag-region="false"
-          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-        >
-          <HelpCircle className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          onMouseDown={(event) => event.stopPropagation()}
-          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title={t("settings.title")}
-          aria-label={t("settings.title")}
-          data-tauri-drag-region="false"
-          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-        >
-          <Settings className="h-4 w-4" />
-        </button>
+        </div>
       </div>
 
       {isWindowsDesktop ? (

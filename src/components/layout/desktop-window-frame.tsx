@@ -8,7 +8,6 @@ import {
   type DesktopResizeDirection,
 } from "@/lib/desktop-window";
 import {
-  DESKTOP_COMMAND_BAR_HEIGHT,
   DESKTOP_WINDOW_CONTROLS_SAFE_WIDTH,
   DESKTOP_WINDOW_TOP_STRIP_HEIGHT,
 } from "@/components/layout/desktop-window-metrics";
@@ -20,42 +19,42 @@ const RESIZE_HANDLES: Array<{
 }> = [
   {
     direction: "north",
-    style: { left: 12, right: DESKTOP_WINDOW_CONTROLS_SAFE_WIDTH, top: 0, height: DESKTOP_WINDOW_TOP_STRIP_HEIGHT, cursor: "n-resize" },
+    style: { left: 8, right: 0, top: 0, height: 6, cursor: "n-resize" },
     testId: "desktop-resize-north",
   },
   {
     direction: "south",
-    style: { left: 12, right: 12, bottom: 0, height: 4, cursor: "s-resize" },
+    style: { left: 8, right: 8, bottom: 0, height: 6, cursor: "s-resize" },
     testId: "desktop-resize-south",
   },
   {
     direction: "west",
-    style: { left: 0, top: 12, bottom: 12, width: 4, cursor: "w-resize" },
+    style: { left: 0, top: 8, bottom: 8, width: 6, cursor: "w-resize" },
     testId: "desktop-resize-west",
   },
   {
     direction: "east",
-    style: { right: 0, top: DESKTOP_COMMAND_BAR_HEIGHT, bottom: 12, width: 4, cursor: "e-resize" },
+    style: { right: 0, top: 8, bottom: 8, width: 6, cursor: "e-resize" },
     testId: "desktop-resize-east",
   },
   {
     direction: "north-west",
-    style: { left: 0, top: 0, width: 12, height: 12, cursor: "nw-resize" },
+    style: { left: 0, top: 0, width: 14, height: 14, cursor: "nw-resize" },
     testId: "desktop-resize-north-west",
   },
   {
     direction: "north-east",
-    style: { right: DESKTOP_WINDOW_CONTROLS_SAFE_WIDTH, top: 0, width: 12, height: 12, cursor: "ne-resize" },
+    style: { right: 0, top: 0, width: 14, height: 14, cursor: "ne-resize" },
     testId: "desktop-resize-north-east",
   },
   {
     direction: "south-west",
-    style: { left: 0, bottom: 0, width: 12, height: 12, cursor: "sw-resize" },
+    style: { left: 0, bottom: 0, width: 14, height: 14, cursor: "sw-resize" },
     testId: "desktop-resize-south-west",
   },
   {
     direction: "south-east",
-    style: { right: 0, bottom: 0, width: 12, height: 12, cursor: "se-resize" },
+    style: { right: 0, bottom: 0, width: 14, height: 14, cursor: "se-resize" },
     testId: "desktop-resize-south-east",
   },
 ];
