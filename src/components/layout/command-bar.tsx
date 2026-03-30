@@ -12,7 +12,6 @@ import {
   FileOutput,
   FilePenLine,
   FolderOpen,
-  HelpCircle,
   Highlighter,
   ListTree,
   Minus,
@@ -21,10 +20,8 @@ import {
   Pencil,
   Play,
   RotateCcw,
-  LayoutGrid,
   Save,
   ScanSearch,
-  Settings,
   ShieldCheck,
   Square,
   StickyNote,
@@ -54,11 +51,6 @@ import {
 
 interface CommandBarProps {
   onOpenWorkspace: () => void;
-  onOpenCommands: () => void;
-  onTogglePluginPanels: () => void;
-  onOpenSettings: () => void;
-  onOpenGuide: () => void;
-  pluginPanelsOpen: boolean;
 }
 
 function extractWorkspaceRootName(rootHandleName: string | null | undefined, workspaceRootPath: string | null | undefined): string | null {
@@ -241,11 +233,6 @@ function BreadcrumbScroller({
 
 export function CommandBar({
   onOpenWorkspace,
-  onOpenCommands,
-  onTogglePluginPanels,
-  onOpenSettings,
-  onOpenGuide,
-  pluginPanelsOpen,
 }: CommandBarProps) {
   const { t } = useI18n();
   const activePaneId = useWorkspaceStore((state) => state.layout.activePaneId);
@@ -394,65 +381,6 @@ export function CommandBar({
           <span className="text-sm font-medium text-foreground">{t("app.name")}</span>
         </div>
         <div className="h-6 w-px shrink-0 bg-border/80" />
-        <div
-          className="flex shrink-0 items-center gap-1"
-          data-tauri-drag-region="false"
-          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-          data-testid="desktop-commandbar-shell-actions"
-        >
-          <button
-            type="button"
-            onClick={onOpenCommands}
-            onMouseDown={(event) => event.stopPropagation()}
-            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title={t("commands.open")}
-            data-tauri-drag-region="false"
-            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-          >
-            <Command className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={onTogglePluginPanels}
-            onMouseDown={(event) => event.stopPropagation()}
-            className={cn(
-              "rounded-md p-1.5 transition-colors",
-              pluginPanelsOpen
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground"
-            )}
-            title={t("panels.open")}
-            aria-pressed={pluginPanelsOpen}
-            data-tauri-drag-region="false"
-            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-          >
-            <LayoutGrid className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={onOpenGuide}
-            onMouseDown={(event) => event.stopPropagation()}
-            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title={t("settings.shortcuts.openGuide")}
-            aria-label={t("settings.shortcuts.openGuide")}
-            data-tauri-drag-region="false"
-            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-          >
-            <HelpCircle className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            onMouseDown={(event) => event.stopPropagation()}
-            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title={t("settings.title")}
-            aria-label={t("settings.title")}
-            data-tauri-drag-region="false"
-            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-          >
-            <Settings className="h-4 w-4" />
-          </button>
-        </div>
       </div>
 
       <div

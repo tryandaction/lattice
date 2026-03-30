@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 import { TOUCH_TARGET_MIN } from "@/lib/responsive";
 import { syncPlugins, updatePluginNetworkAllowlist } from "@/lib/plugins/runtime";
 import { resolveAppRoute } from "@/lib/app-route";
-import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot, Search as SearchIcon, MessageSquareText, FolderTree } from "lucide-react";
+import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot, Search as SearchIcon, MessageSquareText, FolderTree, LayoutGrid } from "lucide-react";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { PluginCommandDialog } from "@/components/ui/plugin-command-dialog";
 import { PluginPanelDialog } from "@/components/ui/plugin-panel-dialog";
@@ -775,11 +775,6 @@ function AppLayoutContent() {
       <DesktopWindowFrame />
       <CommandBar
         onOpenWorkspace={() => void openDirectory()}
-        onOpenCommands={() => setShowCommands(true)}
-        onTogglePluginPanels={() => setShowPluginPanels((prev) => !prev)}
-        onOpenSettings={() => setShowSettings(true)}
-        onOpenGuide={openGuide}
-        pluginPanelsOpen={showPluginPanels}
       />
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div className="flex w-14 shrink-0 flex-col items-center border-r border-border bg-card/90 px-1 py-2">
@@ -821,6 +816,34 @@ function AppLayoutContent() {
               title={t("chat.title")}
               active={aiChatOpen}
               onClick={(event) => toggleAiPanel(event.currentTarget)}
+            />
+          </div>
+
+          <div className="mt-auto flex w-full flex-col items-center gap-2 border-t border-border pt-2">
+            <CollapsedRailButton
+              icon={Command}
+              label={t("commands.open")}
+              title={t("commands.open")}
+              onClick={() => setShowCommands(true)}
+            />
+            <CollapsedRailButton
+              icon={LayoutGrid}
+              label={t("panels.open")}
+              title={t("panels.open")}
+              active={showPluginPanels}
+              onClick={() => setShowPluginPanels((prev) => !prev)}
+            />
+            <CollapsedRailButton
+              icon={HelpCircle}
+              label={t("settings.shortcuts.openGuide")}
+              title={t("settings.shortcuts.openGuide")}
+              onClick={openGuide}
+            />
+            <CollapsedRailButton
+              icon={Settings}
+              label={t("settings.title")}
+              title={t("settings.title")}
+              onClick={() => setShowSettings(true)}
             />
           </div>
         </div>

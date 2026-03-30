@@ -83,11 +83,6 @@ describe("CommandBar desktop interactions", () => {
     render(
       <CommandBar
         onOpenWorkspace={() => {}}
-        onOpenCommands={() => {}}
-        onTogglePluginPanels={() => {}}
-        onOpenSettings={() => {}}
-        onOpenGuide={() => {}}
-        pluginPanelsOpen={false}
       />,
     );
 
@@ -111,11 +106,6 @@ describe("CommandBar desktop interactions", () => {
     render(
       <CommandBar
         onOpenWorkspace={() => {}}
-        onOpenCommands={() => {}}
-        onTogglePluginPanels={() => {}}
-        onOpenSettings={() => {}}
-        onOpenGuide={() => {}}
-        pluginPanelsOpen={false}
       />,
     );
 
@@ -142,11 +132,6 @@ describe("CommandBar desktop interactions", () => {
         <DesktopWindowFrame />
         <CommandBar
           onOpenWorkspace={() => {}}
-          onOpenCommands={() => {}}
-          onTogglePluginPanels={() => {}}
-          onOpenSettings={() => {}}
-          onOpenGuide={() => {}}
-          pluginPanelsOpen={false}
         />
       </>,
     );
@@ -163,11 +148,6 @@ describe("CommandBar desktop interactions", () => {
     render(
       <CommandBar
         onOpenWorkspace={onOpenWorkspace}
-        onOpenCommands={() => {}}
-        onTogglePluginPanels={() => {}}
-        onOpenSettings={() => {}}
-        onOpenGuide={() => {}}
-        pluginPanelsOpen={false}
       />,
     );
 
@@ -180,11 +160,6 @@ describe("CommandBar desktop interactions", () => {
     render(
       <CommandBar
         onOpenWorkspace={() => {}}
-        onOpenCommands={() => {}}
-        onTogglePluginPanels={() => {}}
-        onOpenSettings={() => {}}
-        onOpenGuide={() => {}}
-        pluginPanelsOpen={false}
       />,
     );
 
