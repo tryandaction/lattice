@@ -86,9 +86,9 @@ export function PromptRunSheet({
   const canRun = !isContextUpdating && rendered.missingRequiredContext.length === 0;
 
   return (
-    <div className="fixed inset-0 z-[190] flex items-end justify-end bg-black/45" onClick={onClose}>
+    <div className="fixed inset-0 z-[190] flex items-start justify-end bg-black/45 px-2 pb-2 pt-6 md:px-4 md:pt-20" onClick={onClose}>
       <div
-        className="my-2 flex h-[calc(100vh-1rem)] w-full max-w-2xl flex-col overflow-hidden rounded-l-2xl border border-border bg-background shadow-2xl"
+        className="flex h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl md:h-[calc(100vh-6rem)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between border-b border-border px-6 py-4">
@@ -110,7 +110,7 @@ export function PromptRunSheet({
           </button>
         </div>
 
-        <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
           <section>
             <div className="mb-2 text-sm font-medium text-foreground">{t("prompt.run.contextSummary")}</div>
             <div className="rounded-xl border border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">

@@ -318,8 +318,8 @@ export function MarkdownExportDialog({
           </Button>
         </div>
 
-        <div className="grid min-h-0 flex-1 gap-6 overflow-hidden px-6 py-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
-          <div className="grid min-h-0 gap-6 overflow-y-auto pr-1">
+        <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto px-6 py-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] xl:overflow-hidden">
+          <div className="grid gap-6 pr-1 xl:min-h-0 xl:overflow-y-auto">
             <section className="space-y-3 rounded-xl border border-border p-4">
               <div className="flex items-center gap-2">
                 <TextCursorInput className="h-4 w-4" />
@@ -453,7 +453,7 @@ export function MarkdownExportDialog({
           ) : null}
           </div>
 
-          <section className="flex min-h-[360px] min-h-0 flex-col rounded-xl border border-border bg-muted/20 xl:min-h-0">
+          <section className="flex min-h-[420px] flex-col rounded-xl border border-border bg-muted/20 xl:min-h-0">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <div className="flex items-center gap-2">
                 <Eye className="h-4 w-4" />

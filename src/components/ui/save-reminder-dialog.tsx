@@ -50,7 +50,7 @@ export function SaveReminderDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
+      className="fixed inset-0 z-[180] flex items-start justify-center overflow-y-auto px-4 pb-4 pt-6 md:pt-24"
       onKeyDown={handleKeyDown}
     >
       {/* Backdrop */}
@@ -60,7 +60,7 @@ export function SaveReminderDialog({
       />
 
       {/* Dialog */}
-      <div className="relative z-10 w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-xl">
+      <div className="relative z-10 w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-xl max-h-[calc(100vh-2rem)] overflow-y-auto md:max-h-[calc(100vh-8rem)]">
         {/* Header */}
         <div className="flex items-start gap-4">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-yellow-500/10">

@@ -35,8 +35,8 @@ export function DownloadAppDialog() {
   if (isDesktopApp || !isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="relative w-full max-w-lg mx-4 bg-white dark:bg-gray-900 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-700">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 px-4 pb-4 pt-6 backdrop-blur-sm md:pt-20">
+      <div className="relative w-full max-w-lg bg-white dark:bg-gray-900 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-700 max-h-[calc(100vh-2rem)] overflow-y-auto md:max-h-[calc(100vh-6rem)]">
         {/* 关闭按钮 */}
         <button
           onClick={handleClose}

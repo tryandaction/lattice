@@ -133,8 +133,12 @@ export function PromptEditorDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/55 px-4">
-      <div className="w-full max-w-4xl rounded-2xl border border-border bg-background shadow-2xl">
+    <div className="fixed inset-0 z-[150] flex items-start justify-center overflow-y-auto bg-black/55 px-4 pb-4 pt-6 md:pt-20">
+      <div className="absolute inset-0" onClick={onClose} />
+      <div
+        className="relative flex w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]"
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
@@ -151,7 +155,7 @@ export function PromptEditorDialog({
           </button>
         </div>
 
-        <div className="grid gap-5 px-6 py-5 lg:grid-cols-2">
+        <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto px-6 py-5 lg:grid-cols-2">
           <div className="space-y-4">
             <label className="block">
               <div className="mb-1 text-sm font-medium">{t("prompt.editor.field.title")}</div>

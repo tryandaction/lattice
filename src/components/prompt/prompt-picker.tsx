@@ -66,9 +66,12 @@ export function PromptPicker({
   }
 
   return (
-    <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/50 px-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[140] flex items-start justify-center overflow-y-auto bg-black/50 px-4 pb-4 pt-6 md:pt-20"
+      onClick={onClose}
+    >
       <div
-        className="w-full max-w-3xl rounded-2xl border border-border bg-background shadow-2xl"
+        className="flex w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between border-b border-border px-6 py-4">
@@ -87,7 +90,7 @@ export function PromptPicker({
           </button>
         </div>
 
-        <div className="space-y-5 px-6 py-5">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"

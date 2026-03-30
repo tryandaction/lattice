@@ -168,8 +168,12 @@ export function WorkspaceRunnerManager({
       </button>
 
       {isOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="relative max-h-[85vh] w-full max-w-4xl overflow-hidden rounded-lg border border-border bg-background shadow-2xl">
+        <div className="fixed inset-0 z-[180] flex items-start justify-center overflow-y-auto bg-black/50 px-4 pb-4 pt-6 md:pt-20">
+          <div className="absolute inset-0" onClick={() => setIsOpen(false)} />
+          <div
+            className="relative flex w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]"
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <div>
                 <div className="text-sm font-medium">{title ?? t("workbench.runner.managerCode")}</div>
@@ -197,8 +201,8 @@ export function WorkspaceRunnerManager({
               </div>
             </div>
 
-            <div className="grid max-h-[calc(85vh-57px)] grid-cols-1 overflow-hidden lg:grid-cols-[1.4fr_1fr]">
-              <div className="overflow-auto border-r border-border p-4">
+            <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[1.4fr_1fr]">
+              <div className="min-h-0 overflow-y-auto border-r border-border p-4">
                 <div className="mb-4 flex items-center justify-between">
                   <div>
                     <div className="text-sm font-medium">{t("workbench.runner.manager.pythonInterpreters")}</div>
@@ -286,7 +290,7 @@ export function WorkspaceRunnerManager({
                 </div>
               </div>
 
-              <div className="overflow-auto p-4">
+              <div className="min-h-0 overflow-y-auto p-4">
                 <div className="mb-4">
                   <div className="mb-2 text-sm font-medium">{t("workbench.runner.manager.healthTitle")}</div>
                   <ProblemsPanel problems={issueProblems} onAction={handleProblemAction} />

@@ -97,15 +97,15 @@ export function AnnotationExportDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      className="fixed inset-0 z-[180] flex items-start justify-center overflow-y-auto bg-black/50 px-4 pb-4 pt-6 md:pt-20"
       onClick={onClose}
     >
       <div
-        className="bg-background border border-border rounded-lg shadow-lg max-w-2xl w-full mx-4 max-h-[90vh] overflow-auto"
+        className="flex w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="border-b border-border px-6 py-4">
+        <div className="border-b border-border px-6 py-4 shrink-0">
           <h2 className="text-xl font-semibold">Export Annotations</h2>
           <p className="text-sm text-muted-foreground mt-1">
             {annotationCount} annotation{annotationCount !== 1 ? 's' : ''} • {annotationFile.fileId}
@@ -113,7 +113,7 @@ export function AnnotationExportDialog({
         </div>
 
         {/* Content */}
-        <div className="px-6 py-4 space-y-6">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4 space-y-6">
           {/* Format Selection */}
           <div>
             <label className="block text-sm font-medium mb-3">Export Format</label>
@@ -226,7 +226,7 @@ export function AnnotationExportDialog({
           {/* Preview */}
           <div>
             <label className="block text-sm font-medium mb-2">Preview</label>
-            <div className="bg-muted rounded-lg p-4 text-xs font-mono max-h-48 overflow-auto whitespace-pre-wrap">
+            <div className="bg-muted rounded-lg p-4 text-xs font-mono max-h-72 overflow-auto whitespace-pre-wrap">
               {(() => {
                 try {
                   const result = exportAnnotations(
@@ -246,7 +246,7 @@ export function AnnotationExportDialog({
         </div>
 
         {/* Footer */}
-        <div className="border-t border-border px-6 py-4 flex items-center justify-between">
+        <div className="border-t border-border px-6 py-4 flex items-center justify-between shrink-0">
           <button
             onClick={onClose}
             className="px-4 py-2 text-sm rounded-md hover:bg-muted transition-colors"
