@@ -73,6 +73,7 @@ describe("CommandBar desktop interactions", () => {
     desktopWindowMocks.startDesktopWindowDrag.mockClear();
     desktopWindowMocks.startDesktopWindowResize.mockClear();
     desktopWindowMocks.subscribeDesktopWindowState.mockClear();
+    workspaceState.commandBarByPane = {};
   });
 
   afterEach(() => {
@@ -164,5 +165,29 @@ describe("CommandBar desktop interactions", () => {
     );
 
     expect(screen.getByTestId("desktop-commandbar-breadcrumbs").textContent).toBe("notes.md");
+  });
+
+  it("renders distinct icons and active state for command bar actions", () => {
+    const commandBarByPane = workspaceState.commandBarByPane as Record<string, unknown>;
+    commandBarByPane["pane-1"] = {
+      breadcrumbs: [],
+      actions: [
+        { id: "fit-width", label: "Fit width", icon: "arrow-left-right", active: true, group: "secondary", onTrigger: () => {} },
+        { id: "fit-page", label: "Fit page", icon: "maximize-2", group: "secondary", onTrigger: () => {} },
+      ],
+    };
+
+    render(
+      <CommandBar
+        onOpenWorkspace={() => {}}
+      />,
+    );
+
+    const fitWidthButton = screen.getByLabelText("Fit width");
+    const fitPageButton = screen.getByLabelText("Fit page");
+
+    expect(fitWidthButton.getAttribute("aria-pressed")).toBe("true");
+    expect(fitPageButton.getAttribute("aria-pressed")).toBeNull();
+    expect(fitWidthButton.innerHTML).not.toBe(fitPageButton.innerHTML);
   });
 });

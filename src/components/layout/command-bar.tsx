@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowLeftRight,
   BookOpen,
   Box,
   ChevronRight,
@@ -28,6 +29,7 @@ import {
   Type,
   Underline,
   X,
+  Maximize2,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -98,6 +100,8 @@ const ACTION_ICON_MAP = {
   eye: Eye,
   code2: Code2,
   scanSearch: ScanSearch,
+  arrowLeftRight: ArrowLeftRight,
+  maximize2: Maximize2,
   zoomIn: ZoomIn,
   zoomOut: ZoomOut,
   fileCode2: FileCode2,
@@ -122,6 +126,30 @@ function resolveActionIcon(action: { id: string; icon?: string; label: string })
       return "listTree";
     case "file-text":
       return "filePenLine";
+    case "arrow-left-right":
+      return "arrowLeftRight";
+    case "maximize-2":
+      return "maximize2";
+    case "zoom-in":
+      return "zoomIn";
+    case "zoom-out":
+      return "zoomOut";
+    case "panel-left":
+      return "panelLeft";
+    case "highlighter":
+      return "highlighter";
+    case "underline":
+      return "underline";
+    case "sticky-note":
+      return "stickyNote";
+    case "type":
+      return "type";
+    case "square":
+      return "square";
+    case "pencil":
+      return "pencil";
+    case "file-output":
+      return "fileOutput";
     default:
       break;
   }
@@ -138,7 +166,8 @@ function resolveActionIcon(action: { id: string; icon?: string; label: string })
   if (actionId === "mode-live") return "eye";
   if (actionId === "mode-source") return "code2";
   if (actionId === "mode-reading") return "bookOpen";
-  if (actionId === "fit-width" || actionId === "fit-page") return "scanSearch";
+  if (actionId === "fit-width") return "arrowLeftRight";
+  if (actionId === "fit-page") return "maximize2";
   if (actionId === "zoom-in") return "zoomIn";
   if (actionId === "zoom-out") return "zoomOut";
   if (actionId === "add-code-cell" || actionId === "add-raw-cell") return "fileCode2";
@@ -159,6 +188,7 @@ function CommandBarActionButton({
     id: string;
     icon?: string;
     label: string;
+    active?: boolean;
     disabled?: boolean;
     group?: "primary" | "secondary" | "utility";
     onTrigger?: () => void;
@@ -175,12 +205,15 @@ function CommandBarActionButton({
       disabled={action.disabled}
       title={action.label}
       aria-label={action.label}
+      aria-pressed={action.active ? true : undefined}
       data-tauri-drag-region="false"
       style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
       className={cn(
         "inline-flex h-8 w-8 items-center justify-center rounded-md border transition-colors disabled:opacity-40",
-        action.group === "primary"
-          ? "border-border bg-accent/60 text-foreground hover:bg-accent"
+        action.active
+          ? "border-border bg-accent text-foreground shadow-sm"
+          : action.group === "primary"
+          ? "border-border/70 bg-background text-muted-foreground hover:bg-accent hover:text-foreground"
           : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-foreground"
       )}
     >

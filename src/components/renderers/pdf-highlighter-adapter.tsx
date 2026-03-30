@@ -71,6 +71,7 @@ import {
 } from "@/lib/annotation-backlinks";
 import { navigateLink } from "@/lib/link-router/navigate-link";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { copyToClipboard } from "@/lib/clipboard";
 import {
   buildPdfEditorState,
   capturePdfViewAnchor,
@@ -314,6 +315,27 @@ function buildPdfTransientSelection(input: {
     color: input.color,
     styleType: input.styleType,
   };
+}
+
+function normalizePdfSelectionText(text: string | undefined): string {
+  return (text ?? "").replace(/\s+/g, " ").trim();
+}
+
+function shouldUseNativePdfSelectionSnapshot(input: {
+  rawText: string;
+  nativeText: string;
+  hasNativeRange: boolean;
+  nativeRects?: PdfTransientSelectionRect[];
+}): boolean {
+  if (!input.hasNativeRange || !input.nativeText || !input.nativeRects?.length) {
+    return false;
+  }
+
+  if (!input.rawText) {
+    return true;
+  }
+
+  return input.rawText === input.nativeText;
 }
 
 // Annotation tool types (Zotero-style)
@@ -1993,12 +2015,12 @@ export function PDFHighlighterAdapter({
   }, []);
 
   const getActivePdfSelectionText = useCallback(() => {
-    const nativeText = getNativePdfSelectionText();
-    if (nativeText) {
-      return nativeText;
+    const frozenSelectionText = normalizePdfSelectionText(transientSelection?.text);
+    if (frozenSelectionText) {
+      return frozenSelectionText;
     }
 
-    return transientSelection?.text ?? "";
+    return normalizePdfSelectionText(getNativePdfSelectionText());
   }, [getNativePdfSelectionText, transientSelection?.text]);
 
   const clearNativePdfSelection = useCallback(() => {
@@ -2628,7 +2650,11 @@ export function PDFHighlighterAdapter({
         return;
       }
 
-      event.clipboardData?.setData("text/plain", selectedText);
+      if (event.clipboardData) {
+        event.clipboardData.setData("text/plain", selectedText);
+      } else {
+        void copyToClipboard(selectedText);
+      }
       event.preventDefault();
     };
 
@@ -2848,6 +2874,8 @@ export function PDFHighlighterAdapter({
         {
           id: "toggle-sidebar",
           label: t("workbench.commandBar.sidebar"),
+          icon: "panel-left",
+          active: showSidebar,
           priority: 5,
           group: "utility",
           onTrigger: () => setShowSidebar((value) => !value),
@@ -2855,6 +2883,8 @@ export function PDFHighlighterAdapter({
         {
           id: "tool-highlight",
           label: t("pdf.command.highlight"),
+          icon: "highlighter",
+          active: activeTool === "highlight",
           priority: 10,
           group: "primary",
           onTrigger: () => setActiveTool((value) => (value === "highlight" ? "select" : "highlight")),
@@ -2862,6 +2892,8 @@ export function PDFHighlighterAdapter({
         {
           id: "tool-underline",
           label: t("pdf.command.underline"),
+          icon: "underline",
+          active: activeTool === "underline",
           priority: 11,
           group: "primary",
           onTrigger: () => setActiveTool((value) => (value === "underline" ? "select" : "underline")),
@@ -2869,6 +2901,8 @@ export function PDFHighlighterAdapter({
         {
           id: "tool-note",
           label: t("pdf.command.note"),
+          icon: "sticky-note",
+          active: activeTool === "note",
           priority: 12,
           group: "primary",
           onTrigger: () => setActiveTool((value) => (value === "note" ? "select" : "note")),
@@ -2876,6 +2910,8 @@ export function PDFHighlighterAdapter({
         {
           id: "tool-text",
           label: t("pdf.command.text"),
+          icon: "type",
+          active: activeTool === "text",
           priority: 13,
           group: "primary",
           onTrigger: () => setActiveTool((value) => (value === "text" ? "select" : "text")),
@@ -2883,6 +2919,8 @@ export function PDFHighlighterAdapter({
         {
           id: "tool-area",
           label: t("pdf.command.area"),
+          icon: "square",
+          active: activeTool === "area",
           priority: 14,
           group: "primary",
           onTrigger: () => setActiveTool((value) => (value === "area" ? "select" : "area")),
@@ -2890,6 +2928,8 @@ export function PDFHighlighterAdapter({
         {
           id: "tool-draw",
           label: t("pdf.command.draw"),
+          icon: "pencil",
+          active: activeTool === "ink",
           priority: 15,
           group: "primary",
           onTrigger: () => setActiveTool((value) => (value === "ink" ? "select" : "ink")),
@@ -2897,6 +2937,8 @@ export function PDFHighlighterAdapter({
         {
           id: "fit-width",
           label: t("pdf.fitWidth"),
+          icon: "arrow-left-right",
+          active: zoomMode === "fit-width",
           priority: 30,
           group: "secondary",
           disabled: zoomMode === "fit-width",
@@ -2905,6 +2947,8 @@ export function PDFHighlighterAdapter({
         {
           id: "fit-page",
           label: t("pdf.fitPage"),
+          icon: "maximize-2",
+          active: zoomMode === "fit-page",
           priority: 31,
           group: "secondary",
           disabled: zoomMode === "fit-page",
@@ -2913,6 +2957,7 @@ export function PDFHighlighterAdapter({
         {
           id: "zoom-in",
           label: t("pdf.zoomIn"),
+          icon: "zoom-in",
           priority: 32,
           group: "secondary",
           onTrigger: zoomIn,
@@ -2920,6 +2965,7 @@ export function PDFHighlighterAdapter({
         {
           id: "zoom-out",
           label: t("pdf.zoomOut"),
+          icon: "zoom-out",
           priority: 33,
           group: "secondary",
           onTrigger: zoomOut,
@@ -2927,6 +2973,7 @@ export function PDFHighlighterAdapter({
         {
           id: "export",
           label: t("workbench.commandBar.export"),
+          icon: "file-output",
           priority: 40,
           group: "secondary",
           onTrigger: () => {
@@ -2947,6 +2994,8 @@ export function PDFHighlighterAdapter({
     paneId,
     setCommandBarState,
     t,
+    activeTool,
+    showSidebar,
     zoomIn,
     zoomMode,
     zoomOut,
@@ -3027,10 +3076,10 @@ export function PDFHighlighterAdapter({
           }
         } else if (e.key.toLowerCase() === 'c' && selectedText) {
           e.preventDefault();
-          void navigator.clipboard.writeText(selectedText).catch(() => undefined);
+          void copyToClipboard(selectedText);
         } else if (e.key.toLowerCase() === 'c' && selectedContent) {
           e.preventDefault();
-          void navigator.clipboard.writeText(selectedContent).catch(() => undefined);
+          void copyToClipboard(selectedContent);
         }
       }
 
@@ -3087,20 +3136,20 @@ export function PDFHighlighterAdapter({
   ) => {
     const normalizedPosition = position as ViewportPosition;
     const nativeSelectionRange = getNativePdfSelectionRange();
-    const nativeSelectionText = getNativePdfSelectionText();
-    const selectionText = nativeSelectionText || rawContent.text || "";
-    const nativeSelectionPageElement = nativeSelectionRange
-      ? ((nativeSelectionRange.commonAncestorContainer instanceof Element
-          ? nativeSelectionRange.commonAncestorContainer
-          : nativeSelectionRange.commonAncestorContainer.parentElement
-        )?.closest<HTMLElement>("[data-page-number]") ?? null)
-      : null;
-    const nativeSelectionRects = nativeSelectionRange
-      ? buildPdfSelectionRects(nativeSelectionRange, nativeSelectionPageElement)
-      : undefined;
+    const rawSelectionText = normalizePdfSelectionText(rawContent.text);
+    const nativeSelectionText = normalizePdfSelectionText(getNativePdfSelectionText());
     const nativeTransientRects = nativeSelectionRange
       ? buildPdfTransientSelectionRectsFromRange(nativeSelectionRange, containerRef.current)
       : undefined;
+    const useNativeSelectionSnapshot = shouldUseNativePdfSelectionSnapshot({
+      rawText: rawSelectionText,
+      nativeText: nativeSelectionText,
+      hasNativeRange: Boolean(nativeSelectionRange),
+      nativeRects: nativeTransientRects,
+    });
+    const selectionText = useNativeSelectionSnapshot
+      ? nativeSelectionText
+      : rawSelectionText || nativeSelectionText;
     const normalizedContent: PdfHighlightContent = {
       ...rawContent,
       text: selectionText,
@@ -3119,12 +3168,6 @@ export function PDFHighlighterAdapter({
     });
     const selectionToken = lastSelectionSessionRef.current?.token ?? 0;
     const isAreaSelection = Boolean(rawContent.image && !selectionText.trim());
-
-    if (nativeSelectionText && (!nativeSelectionRange || !nativeSelectionPageElement || !nativeSelectionRects?.length)) {
-      hideTipAndSelection();
-      clearTransientSelection({ nextPhase: 'cancelled' });
-      return null;
-    }
 
     if (!isAreaSelection && !selectionText.trim()) {
       hideTipAndSelection();
@@ -3153,7 +3196,7 @@ export function PDFHighlighterAdapter({
       signature,
       color: activeTool === 'highlight' || activeTool === 'underline' ? activeColor : '#3B82F6',
       styleType: selectionStyleType,
-      nativeRects: nativeTransientRects,
+      nativeRects: useNativeSelectionSnapshot ? nativeTransientRects : undefined,
     });
     const newHighlight: NewHighlight = {
       position: position as NewHighlight["position"],

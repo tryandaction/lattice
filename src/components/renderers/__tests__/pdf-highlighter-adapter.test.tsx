@@ -421,7 +421,24 @@ describe('PDFHighlighterAdapter', () => {
     });
   });
 
-  it('prefers native pdf selection text when copying and clears it on cancel', async () => {
+  it('copies native pdf selection text when no transient selection is active', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    selectNativePdfText();
+
+    const clipboardData = { setData: vi.fn() };
+    const copyEvent = new Event('copy', { bubbles: true, cancelable: true });
+    Object.defineProperty(copyEvent, 'clipboardData', {
+      configurable: true,
+      value: clipboardData,
+    });
+
+    document.dispatchEvent(copyEvent);
+    expect(clipboardData.setData).toHaveBeenCalledWith('text/plain', 'Native PDF text');
+    expect(copyEvent.defaultPrevented).toBe(true);
+  });
+
+  it('keeps frozen transient selection text for copy even if native selection changes, and clears it on cancel', async () => {
     render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
 
     fireEvent.click(screen.getByTestId('mock-pdf-selection-trigger'));
@@ -439,7 +456,7 @@ describe('PDFHighlighterAdapter', () => {
     });
 
     document.dispatchEvent(copyEvent);
-    expect(clipboardData.setData).toHaveBeenCalledWith('text/plain', 'Native PDF text');
+    expect(clipboardData.setData).toHaveBeenCalledWith('text/plain', 'Selected PDF text');
 
     fireEvent.click(screen.getByRole('button', { name: '取消' }));
     await waitFor(() => {
