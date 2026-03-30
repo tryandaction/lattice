@@ -182,9 +182,9 @@ export function AiContextDialog({ isOpen, onClose }: AiContextDialogProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onKeyDown={(e) => e.key === "Escape" && onClose()}>
+    <div className="fixed inset-0 z-[180] flex items-start justify-center overflow-y-auto px-4 pb-4 pt-6 md:pt-20" onKeyDown={(e) => e.key === "Escape" && onClose()}>
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-3xl rounded-xl border border-border bg-background shadow-2xl">
+      <div className="relative z-10 flex w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <div className="flex items-center gap-2">
             <Bot className="h-4 w-4 text-muted-foreground" />
@@ -199,7 +199,7 @@ export function AiContextDialog({ isOpen, onClose }: AiContextDialogProps) {
           </button>
         </div>
 
-        <div className="px-6 py-4 space-y-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
           <div className="flex items-start justify-between gap-4">
             <p className="text-xs text-muted-foreground">
               {t("ai.context.description")}

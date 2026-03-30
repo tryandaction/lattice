@@ -338,8 +338,8 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="relative w-full max-w-2xl mx-4 bg-background rounded-xl shadow-2xl border border-border overflow-hidden">
+    <div className="fixed inset-0 z-[180] flex items-start justify-center bg-black/50 px-4 pb-4 pt-6 backdrop-blur-sm md:pt-20">
+      <div className="relative flex w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <h2 className="text-lg font-semibold">{t('settings.title')}</h2>
@@ -352,9 +352,9 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
           </button>
         </div>
 
-        <div className="flex h-[480px]">
+        <div className="flex min-h-0 flex-1">
           {/* Sidebar */}
-          <div className="w-48 border-r border-border p-2 space-y-1">
+          <div className="w-48 shrink-0 border-r border-border p-2 space-y-1 overflow-y-auto">
             {tabs.map(({ id, icon: Icon, labelKey }) => (
               <button
                 key={id}
@@ -372,7 +372,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
           </div>
 
           {/* Content */}
-          <div className="flex-1 p-6 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto p-6">
             {activeTab === 'general' && (
               <div className="space-y-6">
                 <LanguageSelector />
@@ -1201,9 +1201,9 @@ function PluginTrustDialog({
   const permissions = Array.from(new Set(plugin.permissions ?? []));
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
+    <div className="fixed inset-0 z-[190] flex items-start justify-center bg-black/60 px-4 pb-4 pt-6 md:pt-24">
       <div
-        className="w-full max-w-lg rounded-xl border border-border bg-background p-6 shadow-2xl"
+        className="w-full max-w-lg rounded-xl border border-border bg-background p-6 shadow-2xl max-h-[calc(100vh-2rem)] overflow-y-auto md:max-h-[calc(100vh-8rem)]"
         role="dialog"
         aria-modal="true"
       >

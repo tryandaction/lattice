@@ -187,7 +187,7 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
+      className="fixed inset-0 z-[180] flex items-start justify-center overflow-y-auto px-4 pb-4 pt-6 md:pt-20"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           onClose();
@@ -210,7 +210,7 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
       }}
     >
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-lg rounded-xl border border-border bg-background shadow-2xl">
+      <div className="relative z-10 flex w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]">
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <div className="flex items-center gap-2">
             <Command className="h-4 w-4 text-muted-foreground" />
@@ -228,7 +228,7 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
           </button>
         </div>
 
-        <div className="space-y-4 px-6 py-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
           <div className="flex items-center justify-between gap-3">
             <div className="text-xs text-muted-foreground">{t("commands.hint")}</div>
             <button
@@ -266,7 +266,7 @@ export function PluginCommandDialog({ isOpen, onClose }: PluginCommandDialogProp
           {filteredCommands.length === 0 ? (
             <div className="text-sm text-muted-foreground">{t("commands.search.empty")}</div>
           ) : (
-            <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
+            <div className="space-y-3 pr-1">
               {query.trim().length === 0 && recentCommands.length > 0 && (
                 <div>
                   <div className="mb-2 text-xs text-muted-foreground">{t("commands.recent")}</div>

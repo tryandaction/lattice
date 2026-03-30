@@ -306,9 +306,9 @@ export function PluginPanelDialog({ isOpen, onClose }: PluginPanelDialogProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-[180] flex items-start justify-center overflow-y-auto px-4 pb-4 pt-6 md:pt-20">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-5xl rounded-xl border border-border bg-background shadow-2xl">
+      <div className="relative z-10 flex w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <div className="flex items-center gap-2">
             <PanelLeft className="h-4 w-4 text-muted-foreground" />
@@ -323,8 +323,8 @@ export function PluginPanelDialog({ isOpen, onClose }: PluginPanelDialogProps) {
           </button>
         </div>
 
-        <div className="flex h-[520px]">
-          <div className="w-56 border-r border-border p-2 space-y-1 overflow-y-auto">
+        <div className="flex min-h-0 flex-1">
+          <div className="w-56 shrink-0 border-r border-border p-2 space-y-1 overflow-y-auto">
             <div className="px-2 pb-2">
               <input
                 type="text"
@@ -421,7 +421,7 @@ export function PluginPanelDialog({ isOpen, onClose }: PluginPanelDialogProps) {
             )}
           </div>
 
-          <div className="flex-1 p-6 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto p-6">
             {activePanelWithLiveProps && (
               <div className="space-y-4">
                 <div>

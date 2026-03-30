@@ -86,9 +86,9 @@ export function PromptRunSheet({
   const canRun = !isContextUpdating && rendered.missingRequiredContext.length === 0;
 
   return (
-    <div className="fixed inset-0 z-[160] flex items-end justify-end bg-black/45" onClick={onClose}>
+    <div className="fixed inset-0 z-[190] flex items-end justify-end bg-black/45" onClick={onClose}>
       <div
-        className="flex h-full w-full max-w-2xl flex-col border-l border-border bg-background shadow-2xl"
+        className="my-2 flex h-[calc(100vh-1rem)] w-full max-w-2xl flex-col overflow-hidden rounded-l-2xl border border-border bg-background shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between border-b border-border px-6 py-4">

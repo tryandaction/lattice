@@ -303,9 +303,9 @@ export function MarkdownExportDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[180] flex items-start justify-center overflow-y-auto bg-black/50 px-4 pb-4 pt-6 md:pt-20" onClick={onClose}>
       <div
-        className="w-full max-w-6xl rounded-2xl border border-border bg-background shadow-2xl"
+        className="flex w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between border-b border-border px-6 py-5">
@@ -318,8 +318,8 @@ export function MarkdownExportDialog({
           </Button>
         </div>
 
-        <div className="grid gap-6 px-6 py-5 xl:grid-cols-[1.05fr_minmax(360px,0.95fr)]">
-          <div className="grid gap-6">
+        <div className="grid min-h-0 flex-1 gap-6 overflow-hidden px-6 py-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
+          <div className="grid min-h-0 gap-6 overflow-y-auto pr-1">
             <section className="space-y-3 rounded-xl border border-border p-4">
               <div className="flex items-center gap-2">
                 <TextCursorInput className="h-4 w-4" />
@@ -453,7 +453,7 @@ export function MarkdownExportDialog({
           ) : null}
           </div>
 
-          <section className="flex min-h-[640px] flex-col rounded-xl border border-border bg-muted/20">
+          <section className="flex min-h-[360px] min-h-0 flex-col rounded-xl border border-border bg-muted/20 xl:min-h-0">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <div className="flex items-center gap-2">
                 <Eye className="h-4 w-4" />
@@ -468,7 +468,7 @@ export function MarkdownExportDialog({
               </div>
             </div>
 
-            <div className="relative flex-1">
+            <div className="relative min-h-0 flex-1 overflow-hidden">
               {isPreviewLoading ? (
                 <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />

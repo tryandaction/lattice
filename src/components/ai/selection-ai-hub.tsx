@@ -298,7 +298,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
   }
 
   return (
-    <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/55 px-4" onClick={() => {
+    <div className="fixed inset-0 z-[185] flex items-start justify-center overflow-y-auto bg-black/55 px-4 pb-4 pt-6 md:pt-20" onClick={() => {
       onClose();
       returnFocusTo?.focus?.();
     }}>
@@ -340,7 +340,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
         onConfirm={(payload) => void handlePromptTemplateConfirm(payload)}
       />
       <div
-        className="w-full max-w-5xl rounded-3xl border border-border bg-background shadow-2xl"
+        className="flex w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between border-b border-border px-6 py-5">
@@ -363,7 +363,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
           </Button>
         </div>
 
-        <div className="grid gap-6 px-6 py-5 lg:grid-cols-[1.05fr_1.15fr]">
+        <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto px-6 py-5 lg:grid-cols-[1.05fr_1.15fr]">
           <div className="space-y-4">
             <div className="rounded-2xl border border-border bg-muted/20 p-4">
               <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
