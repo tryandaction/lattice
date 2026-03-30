@@ -157,6 +157,7 @@ export const zhCN = {
   'workbench.commandBar.rerun': '重跑',
   'workbench.commandBar.verify': '验证环境',
   'workbench.commandBar.runAll': '全部运行',
+  'workbench.commandBar.more': '更多操作',
   'workbench.runner.started': '已启动',
   'workbench.runner.exit': '退出码 {code}',
   'workbench.runner.health': '{count} 个健康项',

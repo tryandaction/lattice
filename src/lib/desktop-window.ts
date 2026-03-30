@@ -1,7 +1,7 @@
 "use client";
 
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { isTauri, isTauriHost } from "@/lib/storage-adapter";
+import { isTauri, isTauriHost, waitForTauriInvokeReady } from "@/lib/storage-adapter";
 
 export type DesktopResizeDirection =
   | "north"
@@ -54,6 +54,23 @@ function getDesktopWindow() {
   return getCurrentWindow();
 }
 
+async function invokeDesktopWindowCommand<T>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T | null> {
+  const invoke = await waitForTauriInvokeReady();
+  if (!invoke) {
+    return null;
+  }
+
+  try {
+    return await invoke<T>(command, args);
+  } catch (error) {
+    console.error(`[DesktopWindow] ${command} failed:`, error);
+    return null;
+  }
+}
+
 export function isWindowsDesktopHost(): boolean {
   if (typeof window === "undefined" || !isTauriHost()) {
     return false;
@@ -70,6 +87,11 @@ export function isWindowsDesktopHost(): boolean {
 }
 
 export async function minimizeDesktopWindow(): Promise<void> {
+  const invoked = await invokeDesktopWindowCommand("desktop_window_minimize");
+  if (invoked !== null) {
+    return;
+  }
+
   const desktopWindow = getDesktopWindow();
   if (!desktopWindow) {
     return;
@@ -79,6 +101,11 @@ export async function minimizeDesktopWindow(): Promise<void> {
 }
 
 export async function startDesktopWindowDrag(): Promise<void> {
+  const invoked = await invokeDesktopWindowCommand("desktop_window_start_dragging");
+  if (invoked !== null) {
+    return;
+  }
+
   const desktopWindow = getDesktopWindow();
   if (!desktopWindow) {
     return;
@@ -97,6 +124,11 @@ export async function startDesktopWindowResize(direction: DesktopResizeDirection
 }
 
 export async function toggleDesktopWindowMaximize(): Promise<boolean | null> {
+  const invoked = await invokeDesktopWindowCommand<boolean>("desktop_window_toggle_maximize");
+  if (typeof invoked === "boolean") {
+    return invoked;
+  }
+
   const desktopWindow = getDesktopWindow();
   if (!desktopWindow) {
     return null;
@@ -107,6 +139,11 @@ export async function toggleDesktopWindowMaximize(): Promise<boolean | null> {
 }
 
 export async function isDesktopWindowMaximized(): Promise<boolean> {
+  const invoked = await invokeDesktopWindowCommand<boolean>("desktop_window_is_maximized");
+  if (typeof invoked === "boolean") {
+    return invoked;
+  }
+
   const desktopWindow = getDesktopWindow();
   if (!desktopWindow) {
     return false;
@@ -116,6 +153,11 @@ export async function isDesktopWindowMaximized(): Promise<boolean> {
 }
 
 export async function closeDesktopWindow(): Promise<void> {
+  const invoked = await invokeDesktopWindowCommand("desktop_window_close");
+  if (invoked !== null) {
+    return;
+  }
+
   const desktopWindow = getDesktopWindow();
   if (!desktopWindow) {
     return;

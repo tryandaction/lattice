@@ -153,4 +153,19 @@ describe("CommandBar desktop interactions", () => {
     expect(onOpenWorkspace).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("desktop-commandbar-workspace").textContent).toContain("workspace");
   });
+
+  it("shows breadcrumbs relative to the workspace root", () => {
+    render(
+      <CommandBar
+        onOpenWorkspace={() => {}}
+        onOpenCommands={() => {}}
+        onTogglePluginPanels={() => {}}
+        onOpenSettings={() => {}}
+        onOpenGuide={() => {}}
+        pluginPanelsOpen={false}
+      />,
+    );
+
+    expect(screen.getByTestId("desktop-commandbar-breadcrumbs").textContent).toBe("notes.md");
+  });
 });

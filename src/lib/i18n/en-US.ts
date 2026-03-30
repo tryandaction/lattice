@@ -159,6 +159,7 @@ export const enUS: Record<TranslationKey, string> = {
   'workbench.commandBar.rerun': 'Rerun',
   'workbench.commandBar.verify': 'Verify',
   'workbench.commandBar.runAll': 'Run all',
+  'workbench.commandBar.more': 'More actions',
   'workbench.runner.started': 'Started',
   'workbench.runner.exit': 'Exit {code}',
   'workbench.runner.health': '{count} health',
