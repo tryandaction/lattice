@@ -14,7 +14,7 @@ const workspaceState = {
     activePaneId: "pane-1",
   },
   commandBarByPane: {},
-  getActiveTab: () => ({ filePath: "workspace/notes.md" }),
+  getActiveTab: () => ({ id: "tab-1", filePath: "workspace/notes.md" }),
 };
 
 const desktopWindowMocks = vi.hoisted(() => {
@@ -189,5 +189,24 @@ describe("CommandBar desktop interactions", () => {
     expect(fitWidthButton.getAttribute("aria-pressed")).toBe("true");
     expect(fitPageButton.getAttribute("aria-pressed")).toBeNull();
     expect(fitWidthButton.innerHTML).not.toBe(fitPageButton.innerHTML);
+  });
+
+  it("忽略不属于当前 active scope 的旧 command bar 动作", () => {
+    const commandBarByPane = workspaceState.commandBarByPane as Record<string, unknown>;
+    commandBarByPane["pane-1"] = {
+      scopeId: "pane-1::tab-stale",
+      breadcrumbs: [],
+      actions: [
+        { id: "run", label: "Run", group: "primary", onTrigger: () => {} },
+      ],
+    };
+
+    render(
+      <CommandBar
+        onOpenWorkspace={() => {}}
+      />,
+    );
+
+    expect(screen.queryByLabelText("Run")).toBeNull();
   });
 });

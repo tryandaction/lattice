@@ -300,6 +300,20 @@ This architecture intentionally separates:
 
 Lattice now exposes a single runner event model across code files, notebook cells, and markdown code blocks.
 
+The current execution layer is organized around a **scope-based execution session registry**:
+
+- each runnable surface is keyed by `paneId + tabId`
+- code files and notebooks no longer own execution truth in component-local React state
+- `Command Bar`, output areas, problems, kernel/runtime badges, and diagnostics now read from the same per-scope session state
+- unmounting a viewer only removes the UI subscriber; explicit tab close, pane close, workspace reset, stop, or restart is what destroys the execution scope
+
+This is the current answer to the "single source of truth" requirement for execution UX. The goal is VS Code / Cursor / JupyterLab-like predictability for:
+
+- run / stop / interrupt / restart / rerun enablement
+- pane-local isolation
+- cross-tab remount stability
+- diagnosable failures instead of silent no-op states
+
 **Runner types in the current phase**:
 - **`python-local`**: Preferred on desktop. Runs local Python with real process execution and streamed events.
 - **`external-command`**: Minimal support for Node, Julia, and Rscript through explicit command templates.
@@ -326,6 +340,73 @@ Python execution uses a lightweight bootstrap wrapper so Lattice can normalize c
 - HTML tables
 - rendered matplotlib figures
 
+### Execution Session Registry
+
+Every execution scope now carries one structured `ExecutionSessionState` with:
+
+- lifecycle phase
+- active run id
+- last request
+- runtime/kernel metadata
+- aggregated outputs
+- aggregated problems
+- health snapshot
+- command enablement state
+- command-bar action model bound to the active execution scope
+- last structured event
+
+Notebook scopes additionally track:
+
+- current cell id
+- run-all progress
+- per-cell outputs / execution count / panel metadata
+- notebook runtime selection metadata and current kernel source
+
+Code scopes additionally reuse the same session state for:
+
+- run / stop / rerun semantics
+- output docking
+- problems docking
+- command bar enablement
+
+Alongside the serializable session store, Lattice now keeps a separate **execution runtime registry** for non-serializable resources only:
+
+- local runner sessions
+- persistent notebook Python sessions
+- runtime event subscriptions
+- per-scope transient execution resources
+
+This split is intentional:
+
+- the **session store** is the only UI source of truth
+- the **runtime registry** owns disposable process/session handles
+- async callbacks are expected to write back through scope state instead of exposing resource internals to viewers
+
+### Failure Stages
+
+Execution failures are now normalized by stage instead of only by raw message. Current stages include:
+
+- `interpreter-discovery`
+- `kernel-selection`
+- `session-start`
+- `request-build`
+- `execution`
+- `output-parse`
+- `render`
+- `health-check`
+
+These stages are surfaced through structured diagnostics, mapped into Problems, and exposed in `/diagnostics/runner`.
+
+### Scope-Aware Command Bar
+
+Execution-capable surfaces now register command-bar actions with both `paneId` and `scopeId`.
+
+The desktop `Command Bar` only consumes the action model whose `scopeId` matches the currently active `pane + tab` execution scope. This prevents:
+
+- file switch after remount from reusing stale execution closures
+- old tab actions from surviving pane/tab transitions
+- notebook/code command state from drifting away from the active execution session
+
 ### Persistent Notebook Sessions
 
 In the current desktop phase, notebook cells running on `python-local` reuse a persistent local Python process instead of spawning a fresh interpreter for every cell. This gives notebook execution the expected scientific workflow semantics:
@@ -334,6 +415,8 @@ In the current desktop phase, notebook cells running on `python-local` reuse a p
 - rerun/interrupt/restart operate on the same local session lifecycle
 - notebook output still flows through the same unified runner event model
 - notebook execution is gated by a `ready` handshake instead of assuming session startup succeeded
+- notebook cell output is stored in the same scope session so pane switches and remounts do not lose the current execution view
+- notebook command enablement is unified: `Run Cell / Run All / Interrupt / Restart / Kernel Select` all derive from the same scope state
 
 This is intentionally narrower than a full kernel gateway or remote Jupyter management layer. The current goal is reliable local execution for real desktop work, not multi-kernel orchestration.
 

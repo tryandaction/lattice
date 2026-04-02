@@ -169,6 +169,24 @@ describe('useNotebookExecutor', () => {
       expect(executionResult!.outputs.some((o: any) => o.type === 'error')).toBe(true);
     });
 
+    it('应该在执行前清洗孤立 surrogate 字符', async () => {
+      const { result } = renderHook(() => useNotebookExecutor({ kernel }));
+
+      await act(async () => {
+        await kernel.initialize();
+      });
+
+      let executionResult: CellExecutionResult | null = null;
+
+      await act(async () => {
+        executionResult = await result.current.executeCell('cell-1', "print('\udc92hello')");
+      });
+
+      expect(executionResult).not.toBeNull();
+      expect(executionResult!.success).toBe(true);
+      expect(JSON.stringify(executionResult!.outputs)).toContain("’hello");
+    });
+
     it('应该在没有 kernel 时返回错误', async () => {
       const { result } = renderHook(() => useNotebookExecutor());
 

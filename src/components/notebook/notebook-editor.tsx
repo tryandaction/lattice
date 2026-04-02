@@ -15,7 +15,7 @@ import { KernelStatus } from "./kernel-status";
 import { cn } from "@/lib/utils";
 import { debounce } from "@/lib/fast-save";
 import type { KernelOption } from "./kernel-selector";
-import type { PaneId } from "@/types/layout";
+import type { CommandBarState, PaneId } from "@/types/layout";
 import { useLinkNavigationStore } from "@/stores/link-navigation-store";
 import { isSameWorkspacePath } from "@/lib/link-router/path-utils";
 import { dirname, resolveWorkspaceFilePath } from "@/lib/runner/path-utils";
@@ -34,6 +34,7 @@ import { navigateLink } from "@/lib/link-router/navigate-link";
 import { useI18n } from "@/hooks/use-i18n";
 import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
 import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
+import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
 
 interface NotebookEditorProps {
   content: string;
@@ -41,7 +42,9 @@ interface NotebookEditorProps {
   onContentChange?: (content: string) => void;
   onSave?: () => Promise<void>;
   paneId: PaneId;
+  tabId: string;
   filePath: string;
+  executionScopeId: string;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -102,7 +105,11 @@ function resolveNotebookKernelLabel(metadata: ReturnType<typeof useNotebookEdito
     || null;
 }
 
-export function NotebookEditor({ content, fileName, onContentChange, onSave, paneId, filePath }: NotebookEditorProps) {
+function isKernelOption(value: unknown): value is KernelOption {
+  return Boolean(value && typeof value === "object" && "runnerType" in (value as Record<string, unknown>));
+}
+
+export function NotebookEditor({ content, fileName, onContentChange, onSave, paneId, tabId, filePath, executionScopeId }: NotebookEditorProps) {
   const { t } = useI18n();
   const {
     state,
@@ -121,17 +128,10 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     serialize,
     markClean,
     resetState,
-    appendCellOutput,
-    updateCellExecutionCount,
-    updateCellExecutionMeta,
-    clearCellOutputs,
+    syncExecutionState,
   } = useNotebookEditor(content);
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
-  const [manualKernelState, setManualKernelState] = useState<{ filePath: string; kernel: KernelOption | null }>({
-    filePath,
-    kernel: null,
-  });
   const [selectionHubState, setSelectionHubState] = useState<{
     context: SelectionContext;
     mode: SelectionAiMode;
@@ -147,8 +147,6 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   const workspaceRootHandle = useWorkspaceStore((workspace) => workspace.rootHandle);
   const workspaceRootPath = useWorkspaceStore((workspace) => workspace.workspaceRootPath);
   const runnerPreferences = useWorkspaceStore((workspace) => workspace.runnerPreferences);
-  const setCommandBarState = useWorkspaceStore((workspace) => workspace.setCommandBarState);
-  const clearCommandBarState = useWorkspaceStore((workspace) => workspace.clearCommandBarState);
   const persistedViewStateKey = useMemo(
     () => buildPersistedFileViewStateKey({
       kind: "notebook",
@@ -264,10 +262,6 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     };
   }, [filePath, isDesktopHost, isPythonNotebook, notebookKernelLabel, runnerPreferences, t]);
 
-  const currentKernel = manualKernelState.filePath === filePath && manualKernelState.kernel
-    ? manualKernelState.kernel
-    : preferredKernel;
-
   const {
     executionState,
     currentCellId,
@@ -279,24 +273,27 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     prepareRuntime,
     runAll,
     interrupt,
+    restartKernel,
     switchKernel,
     executeCell,
+    kernel: selectedKernel,
+    cellStates,
+    commandState,
   } = useNotebookExecutor({
-    runner: currentKernel,
+    scope: {
+      scopeId: executionScopeId,
+      kind: "notebook",
+      paneId,
+      tabId,
+      filePath,
+      fileName,
+    },
+    runner: preferredKernel,
     cwd: notebookCwd,
     filePath,
     notebookLanguage,
-    onCellStart: (cellId) => {
-      clearCellOutputs(cellId);
-    },
-    onCellOutput: (cellId, output) => {
-      appendCellOutput(cellId, output);
-    },
-    onCellComplete: (cellId, result) => {
-      updateCellExecutionCount(cellId, result.executionCount);
-      updateCellExecutionMeta(cellId, result.panelMeta);
-    },
   });
+  const currentKernel = isKernelOption(selectedKernel) ? selectedKernel : preferredKernel;
   const {
     runnerHealthSnapshot,
     isRefreshing: isRefreshingRunnerHealth,
@@ -400,11 +397,11 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     debouncedNotifyChangeRef.current?.(serialized);
   }, [state, serialize, isDirty, onContentChange]);
 
+  useEffect(() => {
+    syncExecutionState(cellStates);
+  }, [cellStates, syncExecutionState]);
+
   const handleKernelChange = useCallback(async (kernel: KernelOption) => {
-    setManualKernelState({
-      filePath,
-      kernel,
-    });
     setNotebookProblemsState({
       filePath,
       open: false,
@@ -443,6 +440,9 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   }, [filePath, prepareRuntime, refreshRunnerHealth]);
 
   const handleRunAll = useCallback(async () => {
+    if (!commandState.canRun) {
+      return;
+    }
     setNotebookProblemsState({
       filePath,
       open: false,
@@ -453,17 +453,22 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
       type: cell.cell_type,
     }));
     await runAll(cells);
-  }, [filePath, state.cells, runAll]);
+  }, [commandState.canRun, filePath, state.cells, runAll]);
 
   const handleRunCell = useCallback(async (cellId: string, source: string) => {
+    if (!commandState.canRun) {
+      return {
+        cellId,
+        outputs: [],
+        executionCount: 0,
+        success: false,
+      };
+    }
     setNotebookProblemsState({
       filePath,
       open: false,
     });
-    clearCellOutputs(cellId);
     const result = await executeCell(cellId, source);
-    updateCellExecutionCount(cellId, result.executionCount);
-    updateCellExecutionMeta(cellId, result.panelMeta);
     if (!result.success) {
       setNotebookProblemsState({
         filePath,
@@ -471,7 +476,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
       });
     }
     return result;
-  }, [clearCellOutputs, executeCell, filePath, updateCellExecutionCount, updateCellExecutionMeta]);
+  }, [commandState.canRun, executeCell, filePath]);
 
   const handleLinkNavigate = useCallback((target: string) => {
     void navigateLink(target, {
@@ -491,7 +496,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
 
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "Enter") {
         e.preventDefault();
-        if (isPythonNotebook) {
+        if (isPythonNotebook && commandState.canRun) {
           void handleRunAll();
         }
         return;
@@ -529,7 +534,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [handleSave, handleRunAll, isPythonNotebook, addCellAboveActive, addCellBelowActive, deleteActiveCell]);
+  }, [handleSave, handleRunAll, isPythonNotebook, addCellAboveActive, addCellBelowActive, deleteActiveCell, commandState.canRun]);
 
   const healthProblems = useMemo(
     () => runnerHealthIssuesToExecutionProblems(runnerHealthSnapshot.issues, healthContext),
@@ -565,11 +570,11 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
 
   const canExecuteNotebook = isPythonNotebook
     && Boolean(currentKernel)
-    && runtimeStatus !== "loading";
+    && commandState.canRun;
 
-  useEffect(() => {
+  const commandBarState = useMemo<CommandBarState>(() => {
     const breadcrumbs = filePath.split("/").filter(Boolean).map((segment) => ({ label: segment }));
-    setCommandBarState(paneId, {
+    return {
       breadcrumbs,
       actions: [
         {
@@ -585,7 +590,9 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
           label: executionState === "running" ? t("workbench.commandBar.stop") : t("workbench.commandBar.verify"),
           priority: 20,
           group: "primary",
-          disabled: executionState !== "running" && (!isPythonNotebook || isRefreshingRunnerHealth || runtimeStatus === "loading"),
+          disabled: executionState === "running"
+            ? !commandState.canInterrupt
+            : !commandState.canVerifyRuntime || !isPythonNotebook || isRefreshingRunnerHealth || runtimeStatus === "loading",
           onTrigger: executionState === "running"
             ? () => { void interrupt(); }
             : () => { void handleVerifyRuntime(); },
@@ -595,8 +602,16 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
           label: t("workbench.commandBar.runAll"),
           priority: 21,
           group: "primary",
-          disabled: !canExecuteNotebook || executionState === "running",
+          disabled: !commandState.canRun || !canExecuteNotebook || executionState === "running",
           onTrigger: () => { void handleRunAll(); },
+        },
+        {
+          id: "restart-kernel",
+          label: "重启内核",
+          priority: 22,
+          group: "secondary",
+          disabled: !commandState.canRestart,
+          onTrigger: () => { void restartKernel(); },
         },
         {
           id: "add-code-cell",
@@ -620,12 +635,9 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
           onTrigger: () => addCellBelowActive("raw"),
         },
       ],
-    });
-
-    return () => clearCommandBarState(paneId);
+    };
   }, [
     canExecuteNotebook,
-    clearCommandBarState,
     executionState,
     filePath,
     handleRunAll,
@@ -636,12 +648,21 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     isPythonNotebook,
     isRefreshingRunnerHealth,
     onSave,
-    paneId,
+    commandState.canInterrupt,
+    commandState.canRestart,
+    commandState.canRun,
+    commandState.canVerifyRuntime,
+    restartKernel,
     runtimeStatus,
     saveStatus,
-    setCommandBarState,
     t,
   ]);
+
+  usePaneCommandBar({
+    paneId,
+    scopeId: executionScopeId,
+    state: commandBarState,
+  });
 
   const runtimeStatusLabel = runtimeAvailability === "ready"
     ? t("workbench.notebook.runtime.ready")
@@ -662,6 +683,8 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
         : runtimeAvailability === "unsupported"
           ? "bg-yellow-500/10 text-yellow-700 dark:text-yellow-300"
           : "bg-muted text-muted-foreground";
+
+  const notebookKernelStatus = executionState === "running" ? "running" : runtimeStatus;
 
   return (
     <div ref={containerRef} className="h-full overflow-auto bg-background">
@@ -706,7 +729,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <KernelStatus status={runtimeStatus} error={runtimeError} />
+            <KernelStatus status={notebookKernelStatus} error={runtimeError} />
             <WorkspaceRunnerManager
               cwd={notebookCwd}
               fileKey={filePath}
@@ -763,7 +786,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
               notebookFilePath={filePath}
               onRunCell={isPythonNotebook ? handleRunCell : undefined}
               isExecuting={executionState === "running" && currentCellId === cell.id}
-              canRunCell={canExecuteNotebook}
+              canRunCell={isPythonNotebook && commandState.canRun}
             />
           </div>
         ))}

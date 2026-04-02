@@ -33,6 +33,8 @@ import {
   generatePaneId,
 } from "@/lib/layout-utils";
 import { emitFileOpen, emitFileClose, emitWorkspaceOpen, emitActiveFileChange } from "@/lib/plugins/runtime";
+import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
+import { destroyExecutionScope, destroyExecutionScopes } from "@/stores/execution-session-store";
 
 /**
  * Create initial layout with a single empty pane
@@ -92,6 +94,28 @@ function toggleNodeExpansion(
   };
 }
 
+function collectExecutionScopeIds(root: LayoutNode): string[] {
+  if (root.type === "pane") {
+    return root.tabs.map((tab) => buildExecutionScopeId({
+      paneId: root.id,
+      tabId: tab.id,
+    }));
+  }
+  return root.children.flatMap((child) => collectExecutionScopeIds(child));
+}
+
+function collectExecutionScopeIdsByPath(root: LayoutNode, predicate: (tab: TabState) => boolean): string[] {
+  if (root.type === "pane") {
+    return root.tabs
+      .filter(predicate)
+      .map((tab) => buildExecutionScopeId({
+        paneId: root.id,
+        tabId: tab.id,
+      }));
+  }
+  return root.children.flatMap((child) => collectExecutionScopeIdsByPath(child, predicate));
+}
+
 /**
  * Workspace state interface
  */
@@ -133,7 +157,7 @@ interface WorkspaceState {
   setActivePaneId: (paneId: PaneId) => void;
   resizePanes: (splitId: string, sizes: number[]) => void;
   setCommandBarState: (paneId: PaneId, state: CommandBarState) => void;
-  clearCommandBarState: (paneId: PaneId) => void;
+  clearCommandBarState: (paneId: PaneId, scopeId?: string | null) => void;
   restoreWorkbenchState: (layout: LayoutState, sidebarCollapsed?: boolean) => void;
   resetWorkbenchState: (sidebarCollapsed?: boolean) => void;
 
@@ -202,7 +226,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setLoading: (loading) => set({ isLoading: loading }),
   setError: (error) => set({ error }),
 
-  clearWorkspace: () =>
+  clearWorkspace: () => {
+    const scopeIds = collectExecutionScopeIds(get().layout.root);
     set({
       rootHandle: null,
       workspaceRootPath: null,
@@ -212,7 +237,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       layout: createInitialLayout(),
       runnerPreferences: createInitialRunnerPreferences(),
       commandBarByPane: {},
-    }),
+    });
+    void destroyExecutionScopes(scopeIds);
+  },
 
   toggleDirectory: (path) =>
     set((state) => {
@@ -299,6 +326,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       newActivePaneId = firstPaneId ?? state.layout.activePaneId;
     }
 
+    const pane = findPane(state.layout.root, paneId);
+    const scopeIds = pane?.tabs.map((tab) => buildExecutionScopeId({
+      paneId,
+      tabId: tab.id,
+    })) ?? [];
+
     set({
       layout: {
         root: newRoot,
@@ -308,6 +341,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         Object.entries(state.commandBarByPane).filter(([key]) => key !== paneId)
       ),
     });
+    void destroyExecutionScopes(scopeIds);
     return true;
   },
 
@@ -341,9 +375,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       },
     })),
 
-  clearCommandBarState: (paneId) =>
+  clearCommandBarState: (paneId, scopeId) =>
     set((state) => {
       if (!(paneId in state.commandBarByPane)) {
+        return state;
+      }
+      if (scopeId && state.commandBarByPane[paneId]?.scopeId && state.commandBarByPane[paneId]?.scopeId !== scopeId) {
         return state;
       }
       const next = { ...state.commandBarByPane };
@@ -352,18 +389,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }),
 
   restoreWorkbenchState: (layout, sidebarCollapsed = false) =>
-    set({
-      layout,
-      sidebarCollapsed,
-      commandBarByPane: {},
-    }),
+    {
+      const scopeIds = collectExecutionScopeIds(get().layout.root);
+      set({
+        layout,
+        sidebarCollapsed,
+        commandBarByPane: {},
+      });
+      void destroyExecutionScopes(scopeIds);
+    },
 
   resetWorkbenchState: (sidebarCollapsed = false) =>
-    set({
-      layout: createInitialLayout(),
-      sidebarCollapsed,
-      commandBarByPane: {},
-    }),
+    {
+      const scopeIds = collectExecutionScopeIds(get().layout.root);
+      set({
+        layout: createInitialLayout(),
+        sidebarCollapsed,
+        commandBarByPane: {},
+      });
+      void destroyExecutionScopes(scopeIds);
+    },
 
   // Tab actions
   openFileInPane: (paneId, handle, path) => {
@@ -389,34 +434,45 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const state = get();
     const pane = findPane(state.layout.root, paneId);
     const closedPath = pane?.tabs[tabIndex]?.filePath;
+    const closedTabId = pane?.tabs[tabIndex]?.id;
     set((state) => ({
       layout: {
         ...state.layout,
         root: removeTabFromPane(state.layout.root, paneId, tabIndex),
       },
     }));
+    if (closedTabId) {
+      void destroyExecutionScope(buildExecutionScopeId({
+        paneId,
+        tabId: closedTabId,
+      }));
+    }
     if (closedPath) {
       emitFileClose(closedPath);
     }
   },
 
   closeTabsByPath: (path) => {
+    const scopeIds = collectExecutionScopeIdsByPath(get().layout.root, (tab) => tab.filePath === path);
     set((state) => ({
       layout: {
         ...state.layout,
         root: removeTabsByPathUtil(state.layout.root, path),
       },
     }));
+    void destroyExecutionScopes(scopeIds);
     emitFileClose(path);
   },
 
   closeTabsByPrefix: (pathPrefix) => {
+    const scopeIds = collectExecutionScopeIdsByPath(get().layout.root, (tab) => tab.filePath.startsWith(pathPrefix));
     set((state) => ({
       layout: {
         ...state.layout,
         root: removeTabsByPrefixUtil(state.layout.root, pathPrefix),
       },
     }));
+    void destroyExecutionScopes(scopeIds);
   },
 
   updateTabPath: (oldPath, newPath) =>
@@ -464,12 +520,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     })),
 
   moveTabToPane: (sourcePaneId, tabIndex, targetPaneId) =>
-    set((state) => ({
-      layout: {
-        ...state.layout,
-        root: moveTabBetweenPanes(state.layout.root, sourcePaneId, tabIndex, targetPaneId),
-      },
-    })),
+    {
+      const sourcePane = findPane(get().layout.root, sourcePaneId);
+      const tab = sourcePane?.tabs[tabIndex];
+      set((state) => ({
+        layout: {
+          ...state.layout,
+          root: moveTabBetweenPanes(state.layout.root, sourcePaneId, tabIndex, targetPaneId),
+        },
+      }));
+      if (tab) {
+        void destroyExecutionScope(buildExecutionScopeId({
+          paneId: sourcePaneId,
+          tabId: tab.id,
+        }));
+      }
+    },
 
   moveTabToNewSplit: (sourcePaneId, tabIndex, targetPaneId, direction) => {
     const state = get();
@@ -494,6 +560,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activePaneId: newPaneId,
       },
     });
+    void destroyExecutionScope(buildExecutionScopeId({
+      paneId: sourcePaneId,
+      tabId: tab.id,
+    }));
   },
 
   setTabDirty: (paneId, tabIndex, isDirty) => {
@@ -529,6 +599,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         root: newRoot,
       },
     });
+    void destroyExecutionScopes(
+      pane.tabs.map((tab) => buildExecutionScopeId({
+        paneId,
+        tabId: tab.id,
+      })),
+    );
     
     return unsavedTabs;
   },
@@ -556,6 +632,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         root: newRoot,
       },
     });
+    void destroyExecutionScopes(
+      pane.tabs
+        .filter((tab) => !tab.isDirty)
+        .map((tab) => buildExecutionScopeId({
+          paneId,
+          tabId: tab.id,
+        })),
+    );
   },
 
   closeOtherTabs: (paneId, keepTabIndex) => {
@@ -585,6 +669,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         root: newRoot,
       },
     });
+    void destroyExecutionScopes(
+      pane.tabs
+        .filter((tab, index) => index !== keepTabIndex)
+        .map((tab) => buildExecutionScopeId({
+          paneId,
+          tabId: tab.id,
+        })),
+    );
     
     return unsavedTabs;
   },

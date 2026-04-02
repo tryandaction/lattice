@@ -4,6 +4,39 @@ export type ExecutionMode = "file" | "selection" | "cell" | "inline";
 
 export type RunnerStatus = "idle" | "loading" | "ready" | "running" | "error";
 
+export type ExecutionSessionKind = "code" | "notebook";
+
+export type ExecutionRuntimeSelectionSource =
+  | "manual"
+  | "current-entry"
+  | "workspace-default"
+  | "language-default"
+  | "metadata"
+  | "detected"
+  | "fallback"
+  | "legacy";
+
+export type ExecutionLifecyclePhase =
+  | "idle"
+  | "preparing"
+  | "ready"
+  | "running"
+  | "stopping"
+  | "interrupted"
+  | "completed"
+  | "error";
+
+export type ExecutionFailureStage =
+  | "interpreter-discovery"
+  | "kernel-selection"
+  | "session-start"
+  | "request-build"
+  | "execution"
+  | "output-parse"
+  | "render"
+  | "health-check"
+  | "unknown";
+
 export interface RunnerExecutionRequest {
   sessionId?: string;
   runnerType: RunnerType;
@@ -42,6 +75,7 @@ export interface ExecutionDiagnostic {
   title: string;
   message: string;
   hint?: string;
+  stage?: ExecutionFailureStage;
 }
 
 export type ExecutionContextKind = "file" | "notebook-cell" | "markdown-block" | "workspace";
@@ -78,6 +112,110 @@ export interface ExecutionPanelMeta {
   origin: ExecutionOrigin | null;
   diagnostics: ExecutionDiagnostic[];
   context?: ExecutionContextRef | null;
+}
+
+export interface ExecutionRunSummary {
+  sessionId: string | null;
+  startedAt: number | null;
+  completedAt: number | null;
+  durationMs: number | null;
+  exitCode: number | null;
+  terminated: boolean;
+}
+
+export interface ExecutionCommandState {
+  canRun: boolean;
+  canRerun: boolean;
+  canStop: boolean;
+  canInterrupt: boolean;
+  canRestart: boolean;
+  canVerifyRuntime: boolean;
+  canSelectRuntime: boolean;
+}
+
+export interface RunnerCapabilityModel {
+  supportsSelection: boolean;
+  supportsPersistentSession: boolean;
+  supportsNotebook: boolean;
+  supportsLocalExecution: boolean;
+  supportsPyodide: boolean;
+  canRun: boolean;
+  canStop: boolean;
+  canInterrupt: boolean;
+  canRestart: boolean;
+}
+
+export interface ExecutionSessionScope {
+  scopeId: string;
+  kind: ExecutionSessionKind;
+  paneId: string;
+  tabId: string;
+  filePath: string;
+  fileName?: string;
+}
+
+export interface NotebookExecutionSnapshot {
+  executionState: "idle" | "running" | "interrupted";
+  currentCellId: string | null;
+  progress: {
+    current: number;
+    total: number;
+  };
+  cells: Record<string, NotebookCellExecutionState>;
+}
+
+export interface NotebookCellExecutionState {
+  outputs: Array<Record<string, unknown>>;
+  executionCount: number | null;
+  panelMeta: ExecutionPanelMeta | null;
+}
+
+export interface ExecutionSessionProblems {
+  runtime: ExecutionProblem[];
+  health: ExecutionProblem[];
+  external: ExecutionProblem[];
+}
+
+export interface ExecutionLastEvent {
+  type: RunnerEvent["type"] | "failure";
+  timestampMs: number;
+  message?: string | null;
+}
+
+export interface ExecutionSessionRuntimeState {
+  status: RunnerStatus;
+  availability?: string | null;
+  error: string | null;
+  hasValidatedRuntime: boolean;
+  kernelId?: string | null;
+  kernelLabel?: string | null;
+  kernelDescription?: string | null;
+  kernelSelectionSource?: ExecutionRuntimeSelectionSource | null;
+  kernelSourceLabel?: string | null;
+  runnerType?: RunnerType | null;
+  command?: string | null;
+  cwd?: string;
+  args?: string[];
+}
+
+export interface ExecutionSessionState extends ExecutionSessionScope {
+  lifecyclePhase: ExecutionLifecyclePhase;
+  failureStage: ExecutionFailureStage | null;
+  activeRunId: string | null;
+  lastCompletedRunId: string | null;
+  status: RunnerStatus;
+  runtime: ExecutionSessionRuntimeState;
+  summary: ExecutionRunSummary;
+  panelMeta: ExecutionPanelMeta;
+  outputs: ExecutionOutput[];
+  lastRequest: RunnerExecutionRequest | null;
+  problems: ExecutionProblem[];
+  problemSources: ExecutionSessionProblems;
+  healthSnapshot: RunnerHealthSnapshot | null;
+  commandState: ExecutionCommandState;
+  capability: RunnerCapabilityModel;
+  notebook: NotebookExecutionSnapshot | null;
+  lastEvent: ExecutionLastEvent | null;
 }
 
 export type ExecutionOutput =
@@ -165,6 +303,7 @@ export interface ExecutionProblem {
   message: string;
   hint?: string;
   code?: string;
+  stage?: ExecutionFailureStage;
   errorName?: string;
   errorValue?: string;
   traceback?: string[];

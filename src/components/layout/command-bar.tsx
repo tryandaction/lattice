@@ -32,11 +32,13 @@ import {
   Maximize2,
   ZoomIn,
   ZoomOut,
+  MousePointer2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/hooks/use-i18n";
+import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 import {
   closeDesktopWindow,
   isDesktopWindowMaximized,
@@ -110,6 +112,7 @@ const ACTION_ICON_MAP = {
   stickyNote: StickyNote,
   type: Type,
   pencil: Pencil,
+  mousePointer2: MousePointer2,
   command: Command,
 } as const;
 
@@ -148,6 +151,8 @@ function resolveActionIcon(action: { id: string; icon?: string; label: string })
       return "square";
     case "pencil":
       return "pencil";
+    case "mouse-pointer-2":
+      return "mousePointer2";
     case "file-output":
       return "fileOutput";
     default:
@@ -158,6 +163,7 @@ function resolveActionIcon(action: { id: string; icon?: string; label: string })
   if (actionId === "save") return "save";
   if (actionId === "run" || actionId === "run-all") return "play";
   if (actionId === "rerun") return "rotateCcw";
+  if (actionId === "restart-kernel") return "rotateCcw";
   if (actionId === "stop") return "square";
   if (actionId === "verify") return "shieldCheck";
   if (actionId === "toggle-sidebar") return "panelLeft";
@@ -173,6 +179,7 @@ function resolveActionIcon(action: { id: string; icon?: string; label: string })
   if (actionId === "add-code-cell" || actionId === "add-raw-cell") return "fileCode2";
   if (actionId === "add-markdown-cell") return "filePenLine";
   if (actionId === "tool-highlight") return "highlighter";
+  if (actionId === "tool-select") return "mousePointer2";
   if (actionId === "tool-underline") return "underline";
   if (actionId === "tool-note") return "stickyNote";
   if (actionId === "tool-text") return "type";
@@ -273,6 +280,15 @@ export function CommandBar({
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const registeredState = useWorkspaceStore((state) => state.commandBarByPane[state.layout.activePaneId]);
+  const activeScopeId = activePaneId && activeTab
+    ? buildExecutionScopeId({
+        paneId: activePaneId,
+        tabId: activeTab.id,
+      })
+    : null;
+  const scopedRegisteredState = registeredState && (!registeredState.scopeId || !activeScopeId || registeredState.scopeId === activeScopeId)
+    ? registeredState
+    : null;
   const [isMaximized, setIsMaximized] = useState(false);
   const [overflowOpen, setOverflowOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement | null>(null);
@@ -280,8 +296,8 @@ export function CommandBar({
   const workspaceLabel = rootHandle?.name ?? t("shell.workspace.none");
   const workspaceDescription = workspaceRootPath ?? t("shell.workspace.none");
   const breadcrumbs = (() => {
-    if (registeredState?.breadcrumbs?.length) {
-      return normalizeBreadcrumbs(registeredState.breadcrumbs, rootHandle?.name, workspaceRootPath);
+    if (scopedRegisteredState?.breadcrumbs?.length) {
+      return normalizeBreadcrumbs(scopedRegisteredState.breadcrumbs, rootHandle?.name, workspaceRootPath);
     }
     if (!activeTab?.filePath) {
       return [];
@@ -295,12 +311,12 @@ export function CommandBar({
 
   const sortedActions = useMemo(
     () =>
-      [...(registeredState?.actions ?? [])].sort((left, right) => {
+      [...(scopedRegisteredState?.actions ?? [])].sort((left, right) => {
         const leftPriority = left.priority ?? 50;
         const rightPriority = right.priority ?? 50;
         return leftPriority - rightPriority || left.label.localeCompare(right.label);
       }),
-    [registeredState?.actions],
+    [scopedRegisteredState?.actions],
   );
   const { visibleActions, overflowActions } = useMemo(() => {
     const primary = sortedActions.filter((action) => action.group === "primary");

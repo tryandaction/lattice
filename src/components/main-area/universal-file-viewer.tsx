@@ -7,6 +7,7 @@ import type { PaneId } from "@/stores/workspace-store";
 import { normalizeScientificText } from "@/lib/markdown-converter";
 import { navigateLink } from "@/lib/link-router/navigate-link";
 import { t } from "@/lib/i18n";
+import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 
 /**
  * Loading state component
@@ -156,6 +157,10 @@ function FileViewer({
 }) {
   const extension = getFileExtension(fileName);
   const viewerKey = fileId || fileName;
+  const executionScopeId = buildExecutionScopeId({
+    paneId,
+    tabId: fileId || fileName,
+  });
   const isSystemIndexFile = fileName === "_annotations.md" || fileName === "_overview.md";
   
   switch (rendererType) {
@@ -273,7 +278,9 @@ function FileViewer({
             onContentChange={onContentChange}
             onSave={onSave}
             paneId={paneId}
+            tabId={fileId || fileName}
             filePath={filePath ?? fileName}
+            executionScopeId={executionScopeId}
           />
         );
       }
@@ -312,7 +319,9 @@ function FileViewer({
             onContentChange={onContentChange}
             onSave={onSave}
             paneId={paneId}
+            tabId={fileId || fileName}
             filePath={filePath ?? fileName}
+            executionScopeId={executionScopeId}
           />
         );
       }

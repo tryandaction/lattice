@@ -11,9 +11,11 @@ import { ProblemsPanel } from "@/components/runner/problems-panel";
 import { RUNNER_DEFINITIONS } from "@/lib/runner/extension-map";
 import { runnerManager } from "@/lib/runner/runner-manager";
 import { isTauriHost } from "@/lib/storage-adapter";
+import { useExecutionSessionStore } from "@/stores/execution-session-store";
 
 export function RunnerDiagnostics() {
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const executionSessions = useExecutionSessionStore((state) => Object.values(state.sessions));
   const [sessionValidation, setSessionValidation] = useState<{
     status: "idle" | "running" | "success" | "error";
     message: string | null;
@@ -187,6 +189,42 @@ export function RunnerDiagnostics() {
         </section>
 
         <section className="overflow-auto p-4">
+          <div className="mb-4">
+            <div className="mb-2 text-sm font-medium">Execution Sessions</div>
+            <div className="space-y-2">
+              {executionSessions.map((session) => (
+                <div key={session.scopeId} className="rounded-lg border border-border bg-muted/20 p-3 text-xs">
+                  <div className="font-medium text-foreground">{session.kind} · {session.scopeId}</div>
+                  <div className="mt-1 text-muted-foreground">Lifecycle: {session.lifecyclePhase}</div>
+                  <div className="mt-1 text-muted-foreground">Status: {session.status}</div>
+                  <div className="mt-1 text-muted-foreground">Failure Stage: {session.failureStage ?? "none"}</div>
+                  <div className="mt-1 text-muted-foreground">Last Event: {session.lastEvent?.type ?? "none"}</div>
+                  <div className="mt-1 text-muted-foreground">File: {session.filePath}</div>
+                  <div className="mt-1 text-muted-foreground">Runtime Source: {session.runtime.kernelSourceLabel ?? session.runtime.kernelSelectionSource ?? "none"}</div>
+                  <div className="mt-1 text-muted-foreground">Runtime Label: {session.runtime.kernelLabel ?? "none"}</div>
+                  <div className="mt-1 break-all text-muted-foreground">Command: {session.runtime.command ?? "none"}</div>
+                  <div className="mt-1 break-all text-muted-foreground">cwd: {session.runtime.cwd ?? "none"}</div>
+                  <div className="mt-1 text-muted-foreground">
+                    Command State: run={String(session.commandState.canRun)} / rerun={String(session.commandState.canRerun)} / stop={String(session.commandState.canStop)} / interrupt={String(session.commandState.canInterrupt)} / restart={String(session.commandState.canRestart)}
+                  </div>
+                  {session.lastRequest ? (
+                    <div className="mt-2 rounded border border-border/70 bg-background/70 p-2 text-[11px] text-muted-foreground">
+                      <div>Last Request: {session.lastRequest.runnerType} · {session.lastRequest.mode}</div>
+                      <div className="break-all">request.command: {session.lastRequest.command ?? "none"}</div>
+                      <div className="break-all">request.filePath: {session.lastRequest.filePath ?? "none"}</div>
+                      <div className="break-all">request.cwd: {session.lastRequest.cwd ?? "none"}</div>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+              {executionSessions.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+                  当前没有活跃或已缓存的 execution session。
+                </div>
+              ) : null}
+            </div>
+          </div>
+
           <div className="mb-2 text-sm font-medium">Issues</div>
           <ProblemsPanel problems={issues} />
           {issues.length === 0 ? (

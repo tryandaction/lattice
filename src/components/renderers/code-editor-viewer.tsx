@@ -20,7 +20,7 @@ import { useTextSelection } from "@/hooks/use-text-selection";
 import { AiInlineMenu } from "@/components/ai/ai-inline-menu";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
-import type { PaneId } from "@/types/layout";
+import type { CommandBarState, PaneId } from "@/types/layout";
 import { useLinkNavigationStore } from "@/stores/link-navigation-store";
 import { isSameWorkspacePath } from "@/lib/link-router/path-utils";
 import { getRunnerDefinition } from "@/lib/runner/extension-map";
@@ -36,8 +36,9 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
 import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
+import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
 import { ProblemsPanel } from "@/components/runner/problems-panel";
-import { diagnosticsToExecutionProblems, mergeExecutionProblems, outputsToExecutionProblems, runnerHealthIssuesToExecutionProblems } from "@/lib/runner/problem-utils";
+import { diagnosticsToExecutionProblems, mergeExecutionProblems, runnerHealthIssuesToExecutionProblems } from "@/lib/runner/problem-utils";
 import { useRunnerHealth } from "@/hooks/use-runner-health";
 import { WorkspaceRunnerManager } from "@/components/runner/workspace-runner-manager";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
@@ -45,6 +46,7 @@ import { useExecutionDockLayout } from "@/hooks/use-execution-dock-layout";
 import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
 import { useI18n } from "@/hooks/use-i18n";
 import { buildPersistedFileViewStateKey, loadPersistedFileViewState, savePersistedFileViewState } from "@/lib/file-view-state";
+import { setExecutionHealthSnapshot } from "@/stores/execution-session-store";
 
 interface CodeEditorViewerProps {
   content: string;
@@ -53,7 +55,9 @@ interface CodeEditorViewerProps {
   onSave?: () => Promise<void>;
   isReadOnly?: boolean;
   paneId: PaneId;
+  tabId: string;
   filePath: string;
+  executionScopeId: string;
 }
 
 const DEBOUNCE_DELAY = 500;
@@ -72,7 +76,9 @@ export function CodeEditorViewer({
   onSave,
   isReadOnly = false,
   paneId,
+  tabId,
   filePath,
+  executionScopeId,
 }: CodeEditorViewerProps) {
   const { t } = useI18n();
   const extension = getFileExtension(fileName);
@@ -89,8 +95,6 @@ export function CodeEditorViewer({
   const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
   const setRecentRunConfig = useWorkspaceStore((state) => state.setRecentRunConfig);
   const setRunnerPreferences = useWorkspaceStore((state) => state.setRunnerPreferences);
-  const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
-  const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
   const saveCachedEditorState = useContentCacheStore((state) => state.saveEditorState);
   const getCachedEditorState = useContentCacheStore((state) => state.getEditorState);
   const persistedViewStateKey = useMemo(
@@ -109,14 +113,37 @@ export function CodeEditorViewer({
     panelMeta,
     error: runnerError,
     summary,
+    problems,
     run,
     terminate,
     clearOutputs,
     setPanelMeta,
+    setExternalProblems,
     isRunning,
     isLoading,
     lastRequest,
-  } = useExecutionRunner();
+    commandState,
+  } = useExecutionRunner({
+    scope: {
+      scopeId: executionScopeId,
+      kind: "code",
+      paneId,
+      tabId,
+      filePath,
+      fileName,
+    },
+    capability: {
+      supportsSelection: Boolean(runnerDefinition?.supportsInlineCode),
+      supportsPersistentSession: false,
+      supportsNotebook: false,
+      supportsLocalExecution: true,
+      supportsPyodide: false,
+      canRun: Boolean(runnerDefinition) && !isReadOnly,
+      canStop: Boolean(runnerDefinition) && !isReadOnly,
+      canInterrupt: false,
+      canRestart: false,
+    },
+  });
 
   const [syntaxProblems, setSyntaxProblems] = useState<ExecutionProblem[]>([]);
   const currentContentRef = useRef(content);
@@ -396,6 +423,9 @@ export function CodeEditorViewer({
   }, [absoluteFilePath, executionContext, extension, filePath, onSave, runCwd, runnerDefinition, runnerPreferences]);
 
   const handleRun = useCallback(async () => {
+    if (!runnerDefinition || !commandState.canRun) {
+      return;
+    }
     await refreshRunnerHealth();
     const { request, origin, diagnostics, context } = await buildRunRequest("file");
     clearOutputs();
@@ -417,9 +447,12 @@ export function CodeEditorViewer({
       setRecentRunConfig(commit.fileKey, commit.recentRunConfig);
       setRunnerPreferences(commit.preferences);
     }
-  }, [buildRunRequest, clearOutputs, extension, filePath, refreshRunnerHealth, run, runnerDefinition, runnerPreferences, setActiveDockTab, setPanelMeta, setRecentRunConfig, setRunnerPreferences, setShowOutput]);
+  }, [buildRunRequest, clearOutputs, commandState.canRun, extension, filePath, refreshRunnerHealth, run, runnerDefinition, runnerPreferences, setActiveDockTab, setPanelMeta, setRecentRunConfig, setRunnerPreferences, setShowOutput]);
 
   const handleRunSelection = useCallback(async () => {
+    if (!runnerDefinition || !commandState.canRun) {
+      return;
+    }
     const selection = editorRef.current?.getSelection();
     if (!selection?.trim()) return;
 
@@ -436,28 +469,38 @@ export function CodeEditorViewer({
 
     closeSelectionMenu();
     await run(request);
-  }, [buildRunRequest, clearOutputs, closeSelectionMenu, refreshRunnerHealth, run, setActiveDockTab, setPanelMeta, setShowOutput]);
+  }, [buildRunRequest, clearOutputs, closeSelectionMenu, commandState.canRun, refreshRunnerHealth, run, runnerDefinition, setActiveDockTab, setPanelMeta, setShowOutput]);
 
   const handleRerun = useCallback(async () => {
-    if (!lastRequest) {
+    if (!lastRequest || !commandState.canRerun) {
       return;
     }
     clearOutputs();
     setShowOutput(true);
     setActiveDockTab("run");
     await run(lastRequest);
-  }, [clearOutputs, lastRequest, run, setActiveDockTab, setShowOutput]);
+  }, [clearOutputs, commandState.canRerun, lastRequest, run, setActiveDockTab, setShowOutput]);
 
-  const problems = useMemo(
-    () =>
-      mergeExecutionProblems(
-        syntaxProblems,
-        diagnosticsToExecutionProblems(panelMeta.diagnostics, "preflight", panelMeta.context ?? executionContext),
-        outputsToExecutionProblems(outputs, panelMeta.context ?? executionContext),
-        runnerHealthIssuesToExecutionProblems(runnerHealthSnapshot.issues, healthContext),
-      ),
-    [executionContext, healthContext, outputs, panelMeta.context, panelMeta.diagnostics, runnerHealthSnapshot.issues, syntaxProblems],
+  const healthProblems = useMemo(
+    () => runnerHealthIssuesToExecutionProblems(runnerHealthSnapshot.issues, healthContext),
+    [healthContext, runnerHealthSnapshot.issues],
   );
+
+  const externalProblems = useMemo(
+    () => mergeExecutionProblems(
+      syntaxProblems,
+      diagnosticsToExecutionProblems(panelMeta.diagnostics, "preflight", panelMeta.context ?? executionContext),
+    ),
+    [executionContext, panelMeta.context, panelMeta.diagnostics, syntaxProblems],
+  );
+
+  useEffect(() => {
+    setExternalProblems(externalProblems);
+  }, [externalProblems, setExternalProblems]);
+
+  useEffect(() => {
+    setExecutionHealthSnapshot(executionScopeId, runnerHealthSnapshot, healthProblems);
+  }, [executionScopeId, healthProblems, runnerHealthSnapshot]);
 
   const navigateToProblem = useCallback((problem: ExecutionProblem) => {
     const line = problem.context?.line;
@@ -488,9 +531,11 @@ export function CodeEditorViewer({
   const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
     if (runnerDefinition && event.shiftKey && event.key === "Enter") {
       event.preventDefault();
-      void handleRun();
+      if (commandState.canRun) {
+        void handleRun();
+      }
     }
-  }, [handleRun, runnerDefinition]);
+  }, [commandState.canRun, handleRun, runnerDefinition]);
 
   const canRun = Boolean(runnerDefinition) && !isReadOnly;
   const enableHeavyEditorFeatures = canRun && content.length <= HEAVY_EDITOR_FEATURE_CHAR_LIMIT;
@@ -498,9 +543,9 @@ export function CodeEditorViewer({
   const shouldRenderDock = showOutput || outputs.length > 0 || problems.length > 0 || isRunning || isLoading;
   const runnerCommand = runnerDefinition?.command;
 
-  useEffect(() => {
+  const commandBarState = useMemo<CommandBarState>(() => {
     const breadcrumbs = filePath.split("/").filter(Boolean).map((segment) => ({ label: segment }));
-    setCommandBarState(paneId, {
+    return {
       breadcrumbs,
       actions: [
         {
@@ -516,7 +561,7 @@ export function CodeEditorViewer({
           label: isRunning ? t("workbench.commandBar.stop") : t("workbench.commandBar.run"),
           priority: 20,
           group: "primary",
-          disabled: !canRun,
+          disabled: !canRun || (isRunning ? !commandState.canStop : !commandState.canRun),
           onTrigger: isRunning ? () => { void terminate(); } : () => { void handleRun(); },
         },
         {
@@ -524,29 +569,31 @@ export function CodeEditorViewer({
           label: t("workbench.commandBar.rerun"),
           priority: 21,
           group: "secondary",
-          disabled: !lastRequest || isRunning || isLoading,
+          disabled: !commandState.canRerun,
           onTrigger: () => { void handleRerun(); },
         },
       ],
-    });
-
-    return () => clearCommandBarState(paneId);
+    };
   }, [
     canRun,
-    clearCommandBarState,
     filePath,
     handleRerun,
     handleRun,
-    isLoading,
     isReadOnly,
     isRunning,
-    lastRequest,
     onSave,
-    paneId,
-    setCommandBarState,
     t,
     terminate,
+    commandState.canRun,
+    commandState.canRerun,
+    commandState.canStop,
   ]);
+
+  usePaneCommandBar({
+    paneId,
+    scopeId: executionScopeId,
+    state: commandBarState,
+  });
 
   const renderDock = useCallback((expanded: boolean) => (
     <div className={expanded ? "flex h-full min-h-0 flex-col border-t border-border bg-background" : "border-t border-border bg-background"}>

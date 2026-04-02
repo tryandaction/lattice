@@ -123,6 +123,7 @@ export function diagnosticsToExecutionProblems(
     title: diagnostic.title,
     message: diagnostic.message,
     hint: diagnostic.hint,
+    stage: diagnostic.stage,
     context: context ?? null,
   }));
 }
@@ -151,6 +152,7 @@ export function outputsToExecutionProblems(
         message,
         hint: runtimeMeta.hint,
         code: runtimeMeta.code,
+        stage: "execution",
         errorName: output.errorName,
         errorValue: output.errorValue,
         traceback: output.traceback,
@@ -173,6 +175,19 @@ export function runnerHealthIssuesToExecutionProblems(
     message: issue.message,
     hint: issue.hint,
     code: issue.code,
+    stage: issue.code === "python_not_found" || issue.code === "preferred_python_missing"
+      ? "interpreter-discovery"
+      : issue.code === "command_not_found"
+        ? "request-build"
+        : issue.code === "web_fallback_only"
+          ? "health-check"
+          : issue.code === "session_start_failed" || issue.code === "session_not_ready" || issue.code === "session_terminated"
+            ? "session-start"
+            : issue.code === "invalid_cwd"
+              ? "request-build"
+              : issue.code === "notebook_runtime_mismatch"
+                ? "kernel-selection"
+                : "unknown",
     actions: issue.actions,
     context: context ?? null,
   }));

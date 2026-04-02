@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { AlertTriangle, Check, ChevronDown, Loader2, RefreshCw } from "lucide-react";
-import { buildNotebookRuntimeMessage, getLanguagePreferenceKey, getNotebookKernelPreferenceOrigin } from "@/lib/runner/preferences";
+import { buildNotebookRuntimeMessage, getLanguagePreferenceKey } from "@/lib/runner/preferences";
 import { useI18n } from "@/hooks/use-i18n";
 import { isTauriHost } from "@/lib/storage-adapter";
 import type { PythonEnvironmentInfo, RunnerType } from "@/lib/runner/types";
@@ -138,60 +138,6 @@ export function KernelSelector({
       setKernelOptions(options);
       setHasLoadedOptions(true);
 
-      const recent = runnerPreferences.recentRunByFile[fileKey];
-      const preferredEnvironment = getNotebookKernelPreferenceOrigin(
-        localOptions.map((option) => option.pythonEnv).filter((env): env is PythonEnvironmentInfo => Boolean(env)),
-        runnerPreferences,
-        fileKey,
-      );
-
-      const matchedCurrent = currentKernel
-        ? options.find((option) => option.id === currentKernel.id || option.command === currentKernel.command)
-        : null;
-
-      const shouldPromotePreferredOption =
-        isDesktopHost &&
-        currentKernel?.runnerType === "python-pyodide" &&
-        recent?.runnerType !== "python-pyodide" &&
-        localOptions.length > 0;
-
-      if (matchedCurrent) {
-        if (shouldPromotePreferredOption) {
-          const preferredOption = preferredEnvironment
-            ? localOptions.find((option) => option.command === preferredEnvironment.path) ?? options[0]
-            : options[0];
-          onKernelChange(decorateKernelOption(preferredOption, "detected", t("workbench.notebook.kernel.detected")));
-          return;
-        }
-        if (matchedCurrent.id !== currentKernel?.id) {
-          onKernelChange(matchedCurrent);
-        }
-        return;
-      }
-
-      const preferredOption = recent?.runnerType === "python-pyodide"
-        ? decorateKernelOption(fallback, "fallback", t("workbench.notebook.kernel.currentEntryFallback"))
-        : preferredEnvironment
-          ? decorateKernelOption(
-              localOptions.find((option) => option.command === preferredEnvironment.path) ?? options[0],
-              recent?.command === preferredEnvironment.path ? "current-entry" : runnerPreferences.defaultPythonPath === preferredEnvironment.path ? "workspace-default" : notebookKernelLabel ? "metadata" : "detected",
-              recent?.command === preferredEnvironment.path
-                ? t("workbench.notebook.kernel.currentEntry")
-                : runnerPreferences.defaultPythonPath === preferredEnvironment.path
-                  ? t("workbench.notebook.kernel.workspaceDefault")
-                  : notebookKernelLabel
-                    ? t("workbench.notebook.kernel.metadata", { kernel: notebookKernelLabel })
-                    : t("workbench.notebook.kernel.detected"),
-            )
-          : decorateKernelOption(
-              options[0],
-              options[0].runnerType === "python-pyodide" ? "fallback" : "detected",
-              options[0].runnerType === "python-pyodide" ? t("workbench.notebook.kernel.pyodideFallback") : t("workbench.notebook.kernel.detected"),
-            );
-
-      if (!currentKernel || preferredOption.id !== currentKernel.id) {
-        onKernelChange(preferredOption);
-      }
     } catch (error) {
       console.error("Failed to detect notebook runtimes:", error);
       const fallback = buildPyodideOption(isDesktopHost, t);
@@ -201,13 +147,10 @@ export function KernelSelector({
           ? t("workbench.notebook.kernel.desktopDetectionFailed")
           : t("workbench.notebook.kernel.webOnly"),
       );
-      if (!currentKernel) {
-        onKernelChange(decorateKernelOption(fallback, "fallback", t("workbench.notebook.kernel.pyodideFallback")));
-      }
     } finally {
       setIsLoading(false);
     }
-  }, [currentKernel, fileKey, isDesktopHost, isNotebookLanguageSupported, notebookKernelLabel, notebookLanguage, onKernelChange, refreshRunnerHealth, runnerPreferences, t]);
+  }, [fileKey, isDesktopHost, isNotebookLanguageSupported, notebookKernelLabel, notebookLanguage, refreshRunnerHealth, runnerPreferences, t]);
 
   useEffect(() => {
     if (!isNotebookLanguageSupported) {

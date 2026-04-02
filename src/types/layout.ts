@@ -103,6 +103,7 @@ export interface CommandBarAction {
 }
 
 export interface CommandBarState {
+  scopeId?: string | null;
   breadcrumbs: CommandBarBreadcrumb[];
   actions: CommandBarAction[];
 }

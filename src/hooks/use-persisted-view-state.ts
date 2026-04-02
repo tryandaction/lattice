@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import { loadPersistedFileViewState, savePersistedFileViewState } from "@/lib/file-view-state";
 
 interface UsePersistedViewStateOptions<TViewState extends Record<string, unknown> | undefined = Record<string, unknown> | undefined> {
@@ -16,6 +16,17 @@ export function usePersistedViewState<TViewState extends Record<string, unknown>
   viewState,
   applyViewState,
 }: UsePersistedViewStateOptions<TViewState>) {
+  const latestViewStateRef = useRef<TViewState>(viewState);
+  const latestApplyViewStateRef = useRef<typeof applyViewState>(applyViewState);
+
+  useEffect(() => {
+    latestViewStateRef.current = viewState;
+  }, [viewState]);
+
+  useEffect(() => {
+    latestApplyViewStateRef.current = applyViewState;
+  }, [applyViewState]);
+
   useEffect(() => {
     if (!storageKey) {
       return;
@@ -35,8 +46,8 @@ export function usePersistedViewState<TViewState extends Record<string, unknown>
           container.scrollLeft = persistedState.scrollLeft ?? 0;
         }
 
-        if (persistedState.viewState && applyViewState) {
-          applyViewState(persistedState.viewState as TViewState);
+        if (persistedState.viewState && latestApplyViewStateRef.current) {
+          latestApplyViewStateRef.current(persistedState.viewState as TViewState);
         }
       });
     });
@@ -46,10 +57,10 @@ export function usePersistedViewState<TViewState extends Record<string, unknown>
       void savePersistedFileViewState(storageKey, {
         scrollTop: container?.scrollTop ?? 0,
         scrollLeft: container?.scrollLeft ?? 0,
-        viewState,
+        viewState: latestViewStateRef.current,
       });
     };
-  }, [applyViewState, containerRef, storageKey, viewState]);
+  }, [containerRef, storageKey]);
 
   useEffect(() => {
     if (!storageKey) {
@@ -65,7 +76,7 @@ export function usePersistedViewState<TViewState extends Record<string, unknown>
       void savePersistedFileViewState(storageKey, {
         scrollTop: container.scrollTop,
         scrollLeft: container.scrollLeft,
-        viewState,
+        viewState: latestViewStateRef.current,
       });
     };
 
@@ -73,5 +84,5 @@ export function usePersistedViewState<TViewState extends Record<string, unknown>
     return () => {
       container.removeEventListener("scroll", persist);
     };
-  }, [containerRef, storageKey, viewState]);
+  }, [containerRef, storageKey]);
 }

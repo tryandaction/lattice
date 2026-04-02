@@ -1,6 +1,7 @@
 import { getStorageAdapter, isTauriHost } from "@/lib/storage-adapter";
 import { getRunnerDefinition, normalizeRunnerLanguage, type RunnerDefinition } from "@/lib/runner/extension-map";
 import { runnerManager } from "@/lib/runner/runner-manager";
+import { normalizeExecutionText } from "@/lib/runner/text-utils";
 import type {
   CommandAvailability,
   ExecutionDiagnostic,
@@ -265,6 +266,7 @@ export async function resolveRunnerExecutionRequest(
 }> {
   const { runnerDefinition, mode, code, cwd, absoluteFilePath, fileKey, language, preferences } = options;
   const diagnostics: ExecutionDiagnostic[] = [];
+  const normalizedCode = typeof code === "string" ? normalizeExecutionText(code) : code;
   const runnerType = resolvePreferredRunnerType(runnerDefinition, preferences, fileKey, language);
   const recent = preferences.recentRunByFile[fileKey];
 
@@ -343,15 +345,15 @@ export async function resolveRunnerExecutionRequest(
       mode,
       allowPyodideFallback: false,
     };
-  } else if (code?.trim()) {
+  } else if (normalizedCode?.trim()) {
     const effectiveMode: ExecutionMode = mode === "file" ? "inline" : mode;
     request = {
       runnerType,
       command,
       cwd,
-      code,
+      code: normalizedCode,
       args: runnerDefinition.buildArgs({
-        code,
+        code: normalizedCode,
         mode: effectiveMode,
       }),
       mode: effectiveMode,

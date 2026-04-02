@@ -36,6 +36,11 @@ interface UseNotebookEditorReturn {
   updateCellExecutionCount: (cellId: string, count: number) => void;
   updateCellExecutionMeta: (cellId: string, meta: NotebookCell["execution_meta"]) => void;
   clearCellOutputs: (cellId: string) => void;
+  syncExecutionState: (cellStates: Record<string, {
+    outputs: Array<Record<string, unknown>>;
+    executionCount: number | null;
+    panelMeta: NotebookCell["execution_meta"] | null;
+  }>) => void;
 
   // Navigation
   activateNextCell: () => void;
@@ -177,6 +182,28 @@ export function useNotebookEditor(initialContent: string): UseNotebookEditorRetu
     }));
   }, []);
 
+  const syncExecutionState = useCallback((cellStates: Record<string, {
+    outputs: Array<Record<string, unknown>>;
+    executionCount: number | null;
+    panelMeta: NotebookCell["execution_meta"] | null;
+  }>) => {
+    setState((prev) => ({
+      ...prev,
+      cells: prev.cells.map((cell) => {
+        const cellState = cellStates[cell.id];
+        if (!cellState || cell.cell_type !== "code") {
+          return cell;
+        }
+        return {
+          ...cell,
+          outputs: cellState.outputs as unknown as NotebookCell["outputs"],
+          execution_count: cellState.executionCount,
+          execution_meta: cellState.panelMeta ?? undefined,
+        };
+      }),
+    }));
+  }, []);
+
   /**
    * Activate the next cell (move down)
    */
@@ -280,6 +307,7 @@ export function useNotebookEditor(initialContent: string): UseNotebookEditorRetu
     updateCellExecutionCount,
     updateCellExecutionMeta,
     clearCellOutputs,
+    syncExecutionState,
     activateNextCell,
     activatePrevCell,
     addCellAboveActive,

@@ -705,6 +705,8 @@ async fn start_local_execution(
     if let Some(environment) = &request.env {
         command.envs(environment);
     }
+    command.env("PYTHONUTF8", "1");
+    command.env("PYTHONIOENCODING", "utf-8");
 
     let mut child = command.spawn().map_err(|error| error.to_string())?;
     let stdout = child.stdout.take();
@@ -861,7 +863,7 @@ async fn start_python_session(
 
     let cleanup = create_python_session_artifacts()?;
     let mut command = Command::new(&python);
-    configure_tokio_command(&mut command);
+    configure_python_tokio_command(&mut command);
     command.arg("-u").arg(&cleanup.bootstrap_path);
 
     if let Some(cwd) = &cwd_path {
@@ -872,6 +874,8 @@ async fn start_python_session(
     if let Some(environment) = &request.env {
         command.envs(environment);
     }
+    command.env("PYTHONUTF8", "1");
+    command.env("PYTHONIOENCODING", "utf-8");
 
     let mut child = command.spawn().map_err(|error| error.to_string())?;
     let stdout = child.stdout.take().ok_or_else(|| "Failed to capture Python session stdout".to_string())?;
@@ -1218,7 +1222,7 @@ fn build_python_command(
         .clone()
         .ok_or_else(|| "Missing Python runner payload".to_string())?;
     let mut command = Command::new(&python);
-    configure_tokio_command(&mut command);
+    configure_python_tokio_command(&mut command);
     command
         .arg("-u")
         .arg(&artifacts.bootstrap_path)
@@ -1571,6 +1575,15 @@ from pathlib import Path
 
 PREFIX = "__LATTICE_EVENT__"
 
+def reconfigure_stdio():
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:
+            pass
+
+reconfigure_stdio()
+
 def emit(event, payload):
     sys.__stdout__.write(PREFIX + json.dumps({"event": event, "payload": payload}, ensure_ascii=False) + "\n")
     sys.__stdout__.flush()
@@ -1581,6 +1594,22 @@ def normalize_text(value):
     if isinstance(value, (list, tuple)):
         return "".join(str(item) for item in value)
     return str(value)
+
+def normalize_lattice_code(value):
+    if value is None:
+        return ""
+
+    normalized = []
+    for ch in value:
+        codepoint = ord(ch)
+        if 0xDC80 <= codepoint <= 0xDCFF:
+            normalized.append(bytes([codepoint - 0xDC00]).decode("cp1252", errors="replace"))
+        elif 0xD800 <= codepoint <= 0xDFFF:
+            normalized.append("\uFFFD")
+        else:
+            normalized.append(ch)
+
+    return "".join(normalized)
 
 def make_display_payload(value):
     if value is None:
@@ -1657,6 +1686,7 @@ def main():
         if file_path:
             runpy.run_path(file_path, init_globals=globals_dict, run_name="__main__")
         elif code:
+            code = normalize_lattice_code(code)
             exec(compile(code, "<lattice-inline>", "exec"), globals_dict, globals_dict)
         else:
             raise RuntimeError("Nothing to execute")
@@ -1699,6 +1729,12 @@ fn configure_tokio_command(command: &mut Command) {
     {
         command.creation_flags(CREATE_NO_WINDOW_FLAG);
     }
+}
+
+fn configure_python_tokio_command(command: &mut Command) {
+    configure_tokio_command(command);
+    command.env("PYTHONUTF8", "1");
+    command.env("PYTHONIOENCODING", "utf-8");
 }
 
 fn configure_std_command(command: &mut StdCommand) {
@@ -1770,6 +1806,15 @@ import traceback
 PREFIX = "__LATTICE_EVENT__"
 execution_count = 0
 
+def reconfigure_stdio():
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:
+            pass
+
+reconfigure_stdio()
+
 def emit(event, payload):
     sys.__stdout__.write(PREFIX + json.dumps({"event": event, "payload": payload}, ensure_ascii=False) + "\n")
     sys.__stdout__.flush()
@@ -1780,6 +1825,22 @@ def normalize_text(value):
     if isinstance(value, (list, tuple)):
         return "".join(str(item) for item in value)
     return str(value)
+
+def normalize_lattice_code(value):
+    if value is None:
+        return ""
+
+    normalized = []
+    for ch in value:
+        codepoint = ord(ch)
+        if 0xDC80 <= codepoint <= 0xDCFF:
+            normalized.append(bytes([codepoint - 0xDC00]).decode("cp1252", errors="replace"))
+        elif 0xD800 <= codepoint <= 0xDFFF:
+            normalized.append("\uFFFD")
+        else:
+            normalized.append(ch)
+
+    return "".join(normalized)
 
 def make_display_payload(value):
     if value is None:
@@ -1855,6 +1916,7 @@ for raw_line in sys.stdin:
         code = payload.get("code")
         if not code:
             raise RuntimeError("Missing code payload")
+        code = normalize_lattice_code(code)
 
         execution_count += 1
         try:

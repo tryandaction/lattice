@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import type { RunnerEvent } from '@/lib/runner/types';
+import { destroyExecutionScope } from '@/stores/execution-session-store';
 
 const mockCreatePersistentPythonSession = vi.hoisted(() => vi.fn());
 const mockCreateSession = vi.hoisted(() => vi.fn());
@@ -167,7 +168,7 @@ describe('useNotebookExecutor (Tauri persistent session)', () => {
     expect(result.current.executionState).toBe('interrupted');
   });
 
-  it('应该在卸载时释放持久会话', async () => {
+  it('应该在 scope 销毁时释放持久会话，而不是在卸载时直接释放', async () => {
     const session = createPersistentSessionMock();
     session.execute.mockResolvedValue({
       sessionId: 'session-1',
@@ -176,9 +177,18 @@ describe('useNotebookExecutor (Tauri persistent session)', () => {
       terminated: false,
     });
     mockCreatePersistentPythonSession.mockReturnValue(session);
+    const scope = {
+      scopeId: 'pane-1::tab-1',
+      kind: 'notebook' as const,
+      paneId: 'pane-1',
+      tabId: 'tab-1',
+      filePath: 'workspace/test.ipynb',
+      fileName: 'test.ipynb',
+    };
 
     const { result, unmount } = renderHook(() =>
       useNotebookExecutor({
+        scope,
         runner: pythonLocalRunner,
       })
     );
@@ -188,8 +198,78 @@ describe('useNotebookExecutor (Tauri persistent session)', () => {
     });
 
     unmount();
+    expect(session.dispose).not.toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(session.dispose).toHaveBeenCalledTimes(0);
+    });
+
+    await act(async () => {
+      await destroyExecutionScope(scope.scopeId);
+    });
+
     await waitFor(() => {
       expect(session.dispose).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('应该在同一 scope remount 后恢复已缓存的 cell 执行状态', async () => {
+    const session = createPersistentSessionMock();
+    session.execute.mockImplementation(async ({ code }: { code: string }, onEvent?: (event: RunnerEvent) => void) => {
+      onEvent?.({
+        type: 'stdout',
+        sessionId: 'session-1',
+        payload: { text: `${code}\n`, channel: 'stdout' },
+      });
+      return {
+        sessionId: 'session-1',
+        success: true,
+        exitCode: 0,
+        terminated: false,
+      };
+    });
+    mockCreatePersistentPythonSession.mockReturnValue(session);
+    const scope = {
+      scopeId: 'pane-2::tab-2',
+      kind: 'notebook' as const,
+      paneId: 'pane-2',
+      tabId: 'tab-2',
+      filePath: 'workspace/test.ipynb',
+      fileName: 'test.ipynb',
+    };
+
+    const { result, unmount } = renderHook(() =>
+      useNotebookExecutor({
+        scope,
+        runner: pythonLocalRunner,
+      })
+    );
+
+    await act(async () => {
+      await result.current.executeCell('cell-1', 'value = 1');
+    });
+
+    unmount();
+
+    const remounted = renderHook(() =>
+      useNotebookExecutor({
+        scope,
+        runner: pythonLocalRunner,
+      })
+    );
+
+    expect(remounted.result.current.cellStates['cell-1']?.executionCount).toBe(1);
+    expect(remounted.result.current.cellStates['cell-1']?.outputs).toEqual([
+      {
+        output_type: 'stream',
+        name: 'stdout',
+        text: 'value = 1\n',
+      },
+    ]);
+
+    remounted.unmount();
+    await act(async () => {
+      await destroyExecutionScope(scope.scopeId);
     });
   });
 });

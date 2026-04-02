@@ -353,6 +353,9 @@ export function setActiveCell(
   state: NotebookEditorState,
   cellId: string
 ): NotebookEditorState {
+  if (state.activeCellId === cellId) {
+    return state;
+  }
   return {
     ...state,
     activeCellId: cellId,

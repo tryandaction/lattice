@@ -1,21 +1,39 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
-import { runnerManager, type ExecutionSession, type PersistentPythonSession } from "@/lib/runner/runner-manager";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { runnerManager, type PersistentPythonSession } from "@/lib/runner/runner-manager";
+import {
+  ensureNotebookRuntimeResource,
+  getNotebookRuntimeResource,
+} from "@/lib/runner/execution-runtime-registry";
 import type { JupyterOutput } from "@/lib/notebook-utils";
 import { getExecutionOrigin } from "@/lib/runner/preferences";
 import type {
+  ExecutionCommandState,
   ExecutionDiagnostic,
+  ExecutionFailureStage,
   ExecutionPanelMeta,
   ExecutionProblem,
+  ExecutionSessionScope,
   RunnerEvent,
   RunnerStatus,
 } from "@/lib/runner/types";
 import { diagnosticsToExecutionProblems } from "@/lib/runner/problem-utils";
 import type { KernelOption } from "@/components/notebook/kernel-selector";
 import { isTauriHost } from "@/lib/storage-adapter";
+import { normalizeExecutionText } from "@/lib/runner/text-utils";
+import {
+  clearNotebookCellSessionState,
+  createExecutionSessionFallback,
+  ensureExecutionSession,
+  getExecutionSession,
+  patchExecutionSession,
+  setNotebookCellSessionState,
+  updateExecutionProblemSources,
+  useExecutionSessionStore,
+} from "@/stores/execution-session-store";
 
-interface LegacyKernel {
+export interface LegacyKernel {
   initialize?: () => Promise<void>;
   execute: (code: string, options?: Record<string, unknown>) => Promise<{
     outputs: unknown[];
@@ -42,6 +60,7 @@ export interface CellExecutionResult {
 export type NotebookRuntimeAvailability = "unknown" | "checking" | "ready" | "error" | "unsupported";
 
 interface UseNotebookExecutorOptions {
+  scope?: ExecutionSessionScope | null;
   kernel?: LegacyKernel | null;
   runner?: KernelOption | null;
   cwd?: string;
@@ -51,6 +70,25 @@ interface UseNotebookExecutorOptions {
   onCellOutput?: (cellId: string, output: JupyterOutput) => void;
   onCellComplete?: (cellId: string, result: CellExecutionResult) => void;
   onAllComplete?: (results: CellExecutionResult[]) => void;
+}
+
+const LOCAL_SCOPE_PREFIX = "__local_notebook_scope__";
+
+function randomId(prefix: string): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? `${prefix}_${crypto.randomUUID()}`
+    : `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createLocalScope(scopeId: string): ExecutionSessionScope {
+  return {
+    scopeId,
+    kind: "notebook",
+    paneId: scopeId,
+    tabId: scopeId,
+    filePath: scopeId,
+    fileName: "notebook.ipynb",
+  };
 }
 
 function isLegacyKernel(value: KernelOption | LegacyKernel | null | undefined): value is LegacyKernel {
@@ -102,20 +140,22 @@ function buildRuntimeDiagnostic(
   title: string,
   message: string,
   hint?: string,
+  stage?: ExecutionFailureStage,
 ): ExecutionDiagnostic {
   return {
     severity: "error",
     title,
     message,
     hint,
+    stage,
   };
 }
 
 function looksLikeInvalidCwd(message: string): boolean {
   const normalized = message.toLowerCase();
-  return normalized.includes("no such file") ||
-    normalized.includes("cannot find the path") ||
-    normalized.includes("path specified");
+  return normalized.includes("no such file")
+    || normalized.includes("cannot find the path")
+    || normalized.includes("path specified");
 }
 
 function isPersistentSessionReady(session: PersistentPythonSession | null): boolean {
@@ -128,131 +168,298 @@ function isPersistentSessionReady(session: PersistentPythonSession | null): bool
   return true;
 }
 
-export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
-  const { kernel, runner, cwd, filePath, notebookLanguage, onCellStart, onCellOutput, onCellComplete, onAllComplete } = options;
-  const [executionState, setExecutionState] = useState<ExecutionState>("idle");
-  const [currentCellId, setCurrentCellId] = useState<string | null>(null);
-  const [progress, setProgress] = useState({ current: 0, total: 0 });
-  const [activeKernel, setActiveKernel] = useState<KernelOption | LegacyKernel | null>(runner ?? kernel ?? null);
-  const [runtimeStatus, setRuntimeStatus] = useState<RunnerStatus>("idle");
-  const [runtimeError, setRuntimeError] = useState<string | null>(null);
-  const [runtimeProblems, setRuntimeProblems] = useState<ExecutionProblem[]>([]);
-  const [hasValidatedRuntime, setHasValidatedRuntime] = useState(false);
-  const [runtimeMeta, setRuntimeMeta] = useState<ExecutionPanelMeta>({
-    origin: null,
-    diagnostics: [],
-    context: filePath
-      ? {
-          kind: "workspace",
-          filePath,
-          label: "Notebook Runtime",
-        }
-      : {
-          kind: "workspace",
-          label: "Notebook Runtime",
-        },
-  });
-  const interruptedRef = useRef(false);
-  const executionCountRef = useRef(0);
-  const activeSessionRef = useRef<ExecutionSession | null>(null);
-  const notebookSessionRef = useRef<PersistentPythonSession | null>(null);
-  const sessionCleanupRef = useRef<(() => void) | null>(null);
+function mapRuntimeAvailability(status: RunnerStatus, hasValidatedRuntime: boolean, supportedNotebook: boolean, hasKernel: boolean): NotebookRuntimeAvailability {
+  if (!hasKernel) {
+    return "unknown";
+  }
+  if (!supportedNotebook) {
+    return "unsupported";
+  }
+  if (status === "loading") {
+    return "checking";
+  }
+  if (status === "ready") {
+    return "ready";
+  }
+  if (status === "error") {
+    return "error";
+  }
+  return hasValidatedRuntime ? "error" : "unknown";
+}
 
-  useEffect(() => {
-    setActiveKernel(runner ?? kernel ?? null);
-  }, [kernel, runner]);
+function deriveNotebookCommandState(
+  controller: NonNullable<ReturnType<typeof getNotebookRuntimeResource>>,
+  current: NonNullable<ReturnType<typeof getExecutionSession>>,
+): ExecutionCommandState {
+  const busy = current.notebook?.executionState === "running"
+    || current.lifecyclePhase === "preparing"
+    || current.lifecyclePhase === "running"
+    || current.lifecyclePhase === "stopping";
+  const hasKernel = Boolean(controller.activeKernel);
+  return {
+    canRun: controller.supportsNotebook && hasKernel && !busy && current.runtime.status !== "loading",
+    canRerun: false,
+    canStop: busy,
+    canInterrupt: busy,
+    canRestart: controller.supportsNotebook && hasKernel,
+    canVerifyRuntime: controller.supportsNotebook && hasKernel && !busy && current.runtime.status !== "loading",
+    canSelectRuntime: controller.supportsNotebook && !busy,
+  };
+}
 
-  useEffect(() => {
-    const origin = !isLegacyKernel(activeKernel) && activeKernel
-      ? getExecutionOrigin({
-          runnerType: activeKernel.runnerType,
-          mode: "cell",
-          command: activeKernel.command,
-        })
-      : null;
-    const nextStatus = !activeKernel
-      ? "idle"
-      : !isLegacyKernel(activeKernel) && activeKernel.runnerType === "python-pyodide"
-        ? "ready"
-        : "idle";
-    setRuntimeStatus(nextStatus);
-    setRuntimeError(null);
-    setRuntimeProblems([]);
-    setHasValidatedRuntime(!activeKernel ? false : !isLegacyKernel(activeKernel) && activeKernel.runnerType === "python-pyodide");
-    setRuntimeMeta((previous) => ({
-      ...previous,
-      origin,
-      diagnostics: [],
-    }));
-  }, [activeKernel]);
-
-  useEffect(() => {
-    setRuntimeMeta((previous) => ({
-      ...previous,
-      context: filePath
-        ? {
-            kind: "workspace",
-            filePath,
-            label: "Notebook Runtime",
-          }
-        : {
-            kind: "workspace",
-            label: "Notebook Runtime",
-          },
-    }));
-  }, [filePath]);
-
-  useEffect(() => {
-    return () => {
-      sessionCleanupRef.current?.();
-      void activeSessionRef.current?.terminate();
-      activeSessionRef.current = null;
-
-      if (notebookSessionRef.current) {
-        void notebookSessionRef.current.dispose();
-        notebookSessionRef.current = null;
-      }
+function updateNotebookScopeState(
+  scopeId: string,
+  updater: (current: NonNullable<ReturnType<typeof getExecutionSession>>) => NonNullable<ReturnType<typeof getExecutionSession>>,
+): void {
+  patchExecutionSession(scopeId, (current) => {
+    const controller = getNotebookRuntimeResource(scopeId);
+    const next = updater(current);
+    if (!controller) {
+      return next;
+    }
+    return {
+      ...next,
+      commandState: deriveNotebookCommandState(controller, next),
     };
-  }, []);
+  });
+}
 
-  const setRuntimeFailure = useCallback((
-    title: string,
-    message: string,
-    hint?: string,
-  ) => {
-    const diagnostic = buildRuntimeDiagnostic(title, message, hint);
-    const problems = diagnosticsToExecutionProblems([diagnostic], "preflight", runtimeMeta.context ?? null);
-    setRuntimeStatus("error");
-    setRuntimeError(message);
-    setRuntimeProblems(problems);
-    setHasValidatedRuntime(true);
-    setRuntimeMeta((previous) => ({
-      ...previous,
-      diagnostics: [diagnostic],
-    }));
-    return [diagnostic];
-  }, [runtimeMeta.context]);
+function updateNotebookKernelState(scopeId: string): void {
+  const controller = getNotebookRuntimeResource(scopeId);
+  if (!controller) {
+    return;
+  }
+  updateNotebookScopeState(scopeId, (current) => ({
+    ...current,
+    runtime: {
+      ...current.runtime,
+      kernelId: !isLegacyKernel(controller.activeKernel) ? controller.activeKernel?.id ?? null : "legacy-kernel",
+      kernelLabel: !isLegacyKernel(controller.activeKernel)
+        ? controller.activeKernel?.displayName ?? null
+        : "Legacy Kernel",
+      kernelDescription: !isLegacyKernel(controller.activeKernel)
+        ? controller.activeKernel?.description ?? null
+        : "Legacy kernel session",
+      kernelSelectionSource: !isLegacyKernel(controller.activeKernel)
+        ? controller.activeKernel?.selectionSource ?? null
+        : "legacy",
+      kernelSourceLabel: !isLegacyKernel(controller.activeKernel)
+        ? controller.activeKernel?.sourceLabel ?? null
+        : "Legacy",
+      runnerType: !isLegacyKernel(controller.activeKernel)
+        ? controller.activeKernel?.runnerType ?? null
+        : null,
+      command: !isLegacyKernel(controller.activeKernel)
+        ? controller.activeKernel?.command ?? null
+        : null,
+      availability: mapRuntimeAvailability(
+        current.runtime.status,
+        current.runtime.hasValidatedRuntime,
+        controller.supportsNotebook,
+        Boolean(controller.activeKernel),
+      ),
+    },
+  }));
+}
 
-  const clearRuntimeFailure = useCallback(() => {
-    setRuntimeError(null);
-    setRuntimeProblems([]);
-    setHasValidatedRuntime(true);
-    setRuntimeMeta((previous) => ({
-      ...previous,
-      diagnostics: [],
-    }));
-  }, []);
+function setRuntimeFailure(
+  scopeId: string,
+  stage: ExecutionFailureStage,
+  title: string,
+  message: string,
+  hint?: string,
+): ExecutionDiagnostic[] {
+  const diagnostic = buildRuntimeDiagnostic(title, message, hint, stage);
+  updateNotebookScopeState(scopeId, (current) => {
+    const problemSources = {
+      ...current.problemSources,
+      runtime: diagnosticsToExecutionProblems([diagnostic], "preflight", current.panelMeta.context ?? null),
+    };
+    return {
+      ...current,
+      lifecyclePhase: "error",
+      failureStage: stage,
+      status: "error",
+      runtime: {
+        ...current.runtime,
+        status: "error",
+        error: message,
+        hasValidatedRuntime: true,
+        availability: mapRuntimeAvailability("error", true, getNotebookRuntimeResource(scopeId)?.supportsNotebook ?? true, Boolean(getNotebookRuntimeResource(scopeId)?.activeKernel)),
+      },
+      panelMeta: {
+        ...current.panelMeta,
+        diagnostics: [diagnostic],
+      },
+      problemSources,
+      problems: [
+        ...problemSources.runtime,
+        ...problemSources.health,
+        ...problemSources.external,
+      ],
+      lastEvent: {
+        type: "failure",
+        timestampMs: Date.now(),
+        message,
+      },
+    };
+  });
+  return [diagnostic];
+}
+
+function clearRuntimeFailure(scopeId: string): void {
+  updateNotebookScopeState(scopeId, (current) => {
+    const problemSources = {
+      ...current.problemSources,
+      runtime: [],
+    };
+    const controller = getNotebookRuntimeResource(scopeId);
+    const runtimeStatus = !controller?.activeKernel
+      ? "idle"
+      : !isLegacyKernel(controller.activeKernel) && controller.activeKernel.runnerType === "python-pyodide"
+        ? "ready"
+        : current.runtime.status === "loading"
+          ? "loading"
+          : "idle";
+    return {
+      ...current,
+      failureStage: null,
+      status: runtimeStatus,
+      runtime: {
+        ...current.runtime,
+        status: runtimeStatus,
+        error: null,
+        hasValidatedRuntime: true,
+        availability: mapRuntimeAvailability(
+          runtimeStatus,
+          true,
+          controller?.supportsNotebook ?? true,
+          Boolean(controller?.activeKernel),
+        ),
+      },
+      panelMeta: {
+        ...current.panelMeta,
+        diagnostics: [],
+      },
+      problemSources,
+      problems: [
+        ...problemSources.runtime,
+        ...problemSources.health,
+        ...problemSources.external,
+      ],
+    };
+  });
+}
+
+function ensureNotebookController(
+  scope: ExecutionSessionScope,
+  kernel: KernelOption | LegacyKernel | null,
+  notebookLanguage?: string | null,
+){
+  const supportedNotebook = !notebookLanguage || notebookLanguage.trim().toLowerCase() === "python";
+  const controller = ensureNotebookRuntimeResource(scope, supportedNotebook, kernel);
+
+  ensureExecutionSession(scope, {
+    commandState: {
+      canRun: false,
+      canRerun: false,
+      canStop: false,
+      canInterrupt: false,
+      canRestart: false,
+      canVerifyRuntime: false,
+      canSelectRuntime: supportedNotebook,
+    },
+    capability: {
+      supportsSelection: false,
+      supportsPersistentSession: true,
+      supportsNotebook: true,
+      supportsLocalExecution: true,
+      supportsPyodide: true,
+      canRun: true,
+      canStop: true,
+      canInterrupt: true,
+      canRestart: true,
+    },
+  });
+  updateNotebookKernelState(scope.scopeId);
+  return controller;
+}
+
+export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
+  const {
+    scope: providedScope,
+    kernel,
+    runner,
+    cwd,
+    notebookLanguage,
+    onCellStart,
+    onCellOutput,
+    onCellComplete,
+    onAllComplete,
+  } = options;
+  const [localScopeId] = useState(() => `${LOCAL_SCOPE_PREFIX}:${randomId("scope")}`);
+  const providedScopeId = providedScope?.scopeId;
+  const providedScopeKind = providedScope?.kind;
+  const providedScopePaneId = providedScope?.paneId;
+  const providedScopeTabId = providedScope?.tabId;
+  const providedScopeFilePath = providedScope?.filePath;
+  const providedScopeFileName = providedScope?.fileName;
+  const scope = useMemo(
+    () => providedScopeId
+      ? {
+          scopeId: providedScopeId,
+          kind: providedScopeKind!,
+          paneId: providedScopePaneId!,
+          tabId: providedScopeTabId!,
+          filePath: providedScopeFilePath!,
+          fileName: providedScopeFileName,
+        }
+      : createLocalScope(localScopeId),
+    [
+      localScopeId,
+      providedScopeId,
+      providedScopeKind,
+      providedScopePaneId,
+      providedScopeTabId,
+      providedScopeFilePath,
+      providedScopeFileName,
+    ],
+  );
+  const getController = useCallback(
+    () => ensureNotebookController(scope, runner ?? kernel ?? null, notebookLanguage),
+    [kernel, notebookLanguage, runner, scope],
+  );
+  const controller = getNotebookRuntimeResource(scope.scopeId) ?? null;
+  const state = useExecutionSessionStore((store) => store.sessions[scope.scopeId]);
+  const fallback = useMemo(() => createExecutionSessionFallback(scope), [scope]);
+  const current = state ?? fallback;
+
+  useEffect(() => {
+    getController();
+  }, [getController]);
+
+  useEffect(() => {
+    const ensuredController = getController();
+    ensuredController.supportsNotebook = !notebookLanguage || notebookLanguage.trim().toLowerCase() === "python";
+    if (!ensuredController.activeKernel && (runner ?? kernel)) {
+      ensuredController.activeKernel = runner ?? kernel ?? ensuredController.activeKernel;
+    }
+    updateNotebookKernelState(scope.scopeId);
+  }, [getController, kernel, notebookLanguage, runner, scope.scopeId]);
 
   const attachPersistentSession = useCallback((session: PersistentPythonSession) => {
-    sessionCleanupRef.current?.();
-    sessionCleanupRef.current = session.onEvent((event) => {
+    const controller = getController();
+    controller.sessionCleanup?.();
+    controller.sessionCleanup = session.onEvent((event) => {
       if (event.type === "ready") {
-        setRuntimeStatus("ready");
-        setRuntimeError(null);
-        setRuntimeProblems([]);
-        setRuntimeMeta((previous) => ({
-          ...previous,
-          diagnostics: [],
+        clearRuntimeFailure(scope.scopeId);
+        updateNotebookScopeState(scope.scopeId, (currentState) => ({
+          ...currentState,
+          runtime: {
+            ...currentState.runtime,
+            status: "ready",
+            availability: "ready",
+          },
         }));
         return;
       }
@@ -261,24 +468,41 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
         event.type === "terminated" ||
         (event.type === "completed" && event.payload.persistent)
       ) {
+        controller.notebookSession = null;
+        if (controller.expectedPersistentShutdown) {
+          controller.expectedPersistentShutdown = false;
+          updateNotebookScopeState(scope.scopeId, (currentState) => ({
+            ...currentState,
+            runtime: {
+              ...currentState.runtime,
+              status: "idle",
+              availability: mapRuntimeAvailability("idle", currentState.runtime.hasValidatedRuntime, controller.supportsNotebook, Boolean(controller.activeKernel)),
+            },
+          }));
+          return;
+        }
         setRuntimeFailure(
+          scope.scopeId,
+          "session-start",
           "Notebook 会话已终止",
           "Notebook Python 会话已结束，请重新验证或重新运行。",
           "通常是解释器进程退出、被中断或工作目录失效导致。",
         );
-        notebookSessionRef.current = null;
       }
     });
-  }, [setRuntimeFailure]);
+  }, [getController, scope.scopeId]);
 
   const prepareRuntime = useCallback(async (): Promise<boolean> => {
-    if (!activeKernel) {
-      setRuntimeFailure("未选择运行环境", "当前 Notebook 没有可用的运行环境。");
+    const controller = getController();
+    if (!controller.activeKernel) {
+      setRuntimeFailure(scope.scopeId, "kernel-selection", "未选择运行环境", "当前 Notebook 没有可用的运行环境。");
       return false;
     }
 
-    if (notebookLanguage && notebookLanguage.toLowerCase() !== "python") {
+    if (!controller.supportsNotebook) {
       setRuntimeFailure(
+        scope.scopeId,
+        "kernel-selection",
         "暂不支持的 Notebook 内核",
         `当前 Notebook 语言为 ${notebookLanguage}，本轮只支持 Python Notebook 执行。`,
         "请切换到 Python Notebook，或仅以只读方式查看当前 .ipynb。",
@@ -286,28 +510,56 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
       return false;
     }
 
-    if (isLegacyKernel(activeKernel)) {
+    if (isLegacyKernel(controller.activeKernel)) {
       try {
-        setRuntimeStatus("loading");
-        await activeKernel.initialize?.();
-        clearRuntimeFailure();
-        setRuntimeStatus("ready");
+        updateNotebookScopeState(scope.scopeId, (currentState) => ({
+          ...currentState,
+          runtime: {
+            ...currentState.runtime,
+            status: "loading",
+            availability: "checking",
+          },
+        }));
+        await controller.activeKernel.initialize?.();
+        clearRuntimeFailure(scope.scopeId);
+        updateNotebookScopeState(scope.scopeId, (currentState) => ({
+          ...currentState,
+          status: "ready",
+          lifecyclePhase: "ready",
+          runtime: {
+            ...currentState.runtime,
+            status: "ready",
+            availability: "ready",
+          },
+        }));
         return true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        setRuntimeFailure("Legacy kernel 初始化失败", message);
+        setRuntimeFailure(scope.scopeId, "session-start", "Legacy kernel 初始化失败", message);
         return false;
       }
     }
 
-    if (activeKernel.runnerType === "python-pyodide") {
-      clearRuntimeFailure();
-      setRuntimeStatus("ready");
+    if (controller.activeKernel.runnerType === "python-pyodide") {
+      clearRuntimeFailure(scope.scopeId);
+      updateNotebookScopeState(scope.scopeId, (currentState) => ({
+        ...currentState,
+        status: "ready",
+        lifecyclePhase: "ready",
+        runtime: {
+          ...currentState.runtime,
+          status: "ready",
+          availability: "ready",
+          hasValidatedRuntime: true,
+        },
+      }));
       return true;
     }
 
     if (!isTauriHost()) {
       setRuntimeFailure(
+        scope.scopeId,
+        "session-start",
         "本地 Python 不可用",
         "当前环境不是桌面端，无法启动本地 Python 会话。",
         "请切换到桌面端，或改用 Pyodide 浏览器内核。",
@@ -315,8 +567,10 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
       return false;
     }
 
-    if (!activeKernel.command) {
+    if (!controller.activeKernel.command) {
       setRuntimeFailure(
+        scope.scopeId,
+        "interpreter-discovery",
         "缺少 Python 解释器",
         "当前 Notebook 没有解析到可用的本地 Python 解释器。",
         "请在 Runner Manager 中选择一个有效解释器后重试。",
@@ -324,34 +578,64 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
       return false;
     }
 
-    if (isPersistentSessionReady(notebookSessionRef.current)) {
-      clearRuntimeFailure();
-      setRuntimeStatus("ready");
+    if (isPersistentSessionReady(controller.notebookSession)) {
+      clearRuntimeFailure(scope.scopeId);
+      updateNotebookScopeState(scope.scopeId, (currentState) => ({
+        ...currentState,
+        status: "ready",
+        lifecyclePhase: "ready",
+        runtime: {
+          ...currentState.runtime,
+          status: "ready",
+          availability: "ready",
+          hasValidatedRuntime: true,
+        },
+      }));
       return true;
     }
 
-    setRuntimeStatus("loading");
-    setRuntimeError(null);
-    setRuntimeProblems([]);
-    setRuntimeMeta((previous) => ({
-      ...previous,
-      diagnostics: [],
+    updateNotebookScopeState(scope.scopeId, (currentState) => ({
+      ...currentState,
+      lifecyclePhase: "preparing",
+      runtime: {
+        ...currentState.runtime,
+        status: "loading",
+        error: null,
+        hasValidatedRuntime: false,
+        availability: "checking",
+      },
+      panelMeta: {
+        ...currentState.panelMeta,
+        diagnostics: [],
+      },
     }));
+    updateExecutionProblemSources(scope.scopeId, { runtime: [] });
 
     try {
-      if (notebookSessionRef.current) {
-        await notebookSessionRef.current.dispose();
+      if (controller.notebookSession) {
+        controller.expectedPersistentShutdown = true;
+        await controller.notebookSession.dispose();
       }
-
       const session = runnerManager.createPersistentPythonSession({
-        command: activeKernel.command,
+        command: controller.activeKernel.command,
         cwd,
       });
       attachPersistentSession(session);
-      notebookSessionRef.current = session;
+      controller.notebookSession = session;
+      controller.expectedPersistentShutdown = false;
       await session.start();
-      clearRuntimeFailure();
-      setRuntimeStatus("ready");
+      clearRuntimeFailure(scope.scopeId);
+      updateNotebookScopeState(scope.scopeId, (currentState) => ({
+        ...currentState,
+        status: "ready",
+        lifecyclePhase: "ready",
+        runtime: {
+          ...currentState.runtime,
+          status: "ready",
+          availability: "ready",
+          hasValidatedRuntime: true,
+        },
+      }));
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -359,359 +643,336 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
       const hint = looksLikeInvalidCwd(message)
         ? "请确认当前文件路径与工作区根目录有效，再重新选择运行环境。"
         : "请检查解释器、依赖环境或 Runner Diagnostics 后重试。";
-      setRuntimeFailure(title, message, hint);
-      notebookSessionRef.current = null;
+      setRuntimeFailure(scope.scopeId, looksLikeInvalidCwd(message) ? "request-build" : "session-start", title, message, hint);
+      controller.notebookSession = null;
       return false;
     }
-  }, [
-    activeKernel,
-    attachPersistentSession,
-    clearRuntimeFailure,
-    cwd,
-    notebookLanguage,
-    setRuntimeFailure,
-  ]);
+  }, [attachPersistentSession, cwd, getController, notebookLanguage, scope.scopeId]);
 
-  const executeCellInternal = useCallback(async (
-    cellId: string,
-    code: string,
-  ): Promise<CellExecutionResult> => {
-    if (!activeKernel) {
-      const diagnostics = setRuntimeFailure("未选择运行环境", "当前 Notebook 没有可用的运行环境。");
-      return {
-        cellId,
-        outputs: [createNotebookErrorOutput("当前 Notebook 没有可用的运行环境。")],
+  const executeCellInternal = useCallback(async (cellId: string, code: string): Promise<CellExecutionResult> => {
+    const normalizedCode = normalizeExecutionText(code);
+    const controller = getController();
+    if (!controller.activeKernel) {
+      const diagnostics = setRuntimeFailure(scope.scopeId, "kernel-selection", "未选择运行环境", "当前 Notebook 没有可用的运行环境。");
+      const failureOutput = createNotebookErrorOutput("当前 Notebook 没有可用的运行环境。");
+      setNotebookCellSessionState(scope.scopeId, cellId, {
+        outputs: [failureOutput as unknown as Record<string, unknown>],
         executionCount: 0,
-        success: false,
-        panelMeta: {
-          ...runtimeMeta,
-          diagnostics,
-        },
-      };
+        panelMeta: { ...current.panelMeta, diagnostics },
+      });
+      return { cellId, outputs: [failureOutput], executionCount: 0, success: false, panelMeta: { ...current.panelMeta, diagnostics } };
     }
 
     if (!(await prepareRuntime())) {
-      return {
-        cellId,
-        outputs: [createNotebookErrorOutput(runtimeError || "Notebook 运行环境未就绪")],
+      const failureOutput = createNotebookErrorOutput(getExecutionSession(scope.scopeId)?.runtime.error || "Notebook 运行环境未就绪");
+      setNotebookCellSessionState(scope.scopeId, cellId, {
+        outputs: [failureOutput as unknown as Record<string, unknown>],
         executionCount: 0,
-        success: false,
-        panelMeta: runtimeMeta,
-      };
-    }
-
-    if (isLegacyKernel(activeKernel)) {
-      executionCountRef.current += 1;
-      const executionCount = executionCountRef.current;
-      try {
-        const result = await activeKernel.execute(code, {
-          silent: false,
-          storeHistory: true,
-        });
-
-        return {
-          cellId,
-          outputs: result.outputs as Array<Record<string, unknown>>,
-          executionCount: result.executionCount ?? executionCount,
-          success: result.status !== "error",
-          executionTime: result.executionTime,
-          panelMeta: runtimeMeta,
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          cellId,
-          outputs: [createNotebookErrorOutput(message)],
-          executionCount,
-          success: false,
-          panelMeta: runtimeMeta,
-        };
-      }
+        panelMeta: getExecutionSession(scope.scopeId)?.panelMeta ?? current.panelMeta,
+      });
+      return { cellId, outputs: [failureOutput], executionCount: 0, success: false, panelMeta: getExecutionSession(scope.scopeId)?.panelMeta ?? current.panelMeta };
     }
 
     const panelMeta: ExecutionPanelMeta = {
-      origin: getExecutionOrigin({
-        runnerType: activeKernel.runnerType,
+      origin: !isLegacyKernel(controller.activeKernel) ? getExecutionOrigin({
+        runnerType: controller.activeKernel.runnerType,
         mode: "cell",
-        command: activeKernel.command,
-      }),
-      diagnostics: runtimeMeta.diagnostics,
-      context: runtimeMeta.context,
+        command: controller.activeKernel.command,
+      }) : current.panelMeta.origin,
+      diagnostics: getExecutionSession(scope.scopeId)?.panelMeta.diagnostics ?? [],
+      context: getExecutionSession(scope.scopeId)?.panelMeta.context,
     };
 
-    if (isTauriHost() && activeKernel.runnerType === "python-local") {
-      interruptedRef.current = false;
-      executionCountRef.current += 1;
-      const executionCount = executionCountRef.current;
-      const outputs: JupyterOutput[] = [];
-      const startedAt = Date.now();
-      const persistentSession = notebookSessionRef.current;
+    const appendOutputs = (outputs: JupyterOutput[], executionCount: number) => {
+      setNotebookCellSessionState(scope.scopeId, cellId, {
+        outputs: outputs as unknown as Array<Record<string, unknown>>,
+        executionCount,
+        panelMeta,
+      });
+      outputs.forEach((output) => onCellOutput?.(cellId, output));
+    };
 
-      if (!persistentSession) {
-        return {
-          cellId,
-          outputs: [createNotebookErrorOutput("Notebook Python 会话未初始化，请先验证运行环境。")],
-          executionCount,
-          success: false,
-          panelMeta,
-        };
-      }
-
+    if (isLegacyKernel(controller.activeKernel)) {
+      controller.executionCount += 1;
+      const executionCount = controller.executionCount;
       try {
-        const result = await persistentSession.execute({ code }, (event) => {
-          const notebookOutputs = normalizeNotebookOutput(event);
-          notebookOutputs.forEach((output) => {
-            outputs.push(output);
-            onCellOutput?.(cellId, output);
-          });
+        const result = await controller.activeKernel.execute(normalizedCode, { silent: false, storeHistory: true });
+        setNotebookCellSessionState(scope.scopeId, cellId, {
+          outputs: result.outputs as Array<Record<string, unknown>>,
+          executionCount: result.executionCount ?? executionCount,
+          panelMeta,
         });
-
-        return {
-          cellId,
-          outputs,
-          executionCount,
-          success: result.success,
-          executionTime: Date.now() - startedAt,
-          panelMeta,
-        };
+        return { cellId, outputs: result.outputs as Array<Record<string, unknown>>, executionCount: result.executionCount ?? executionCount, success: result.status !== "error", executionTime: result.executionTime, panelMeta };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const failureOutput = createNotebookErrorOutput(message);
-        outputs.push(failureOutput);
-        onCellOutput?.(cellId, failureOutput);
-        setRuntimeFailure("Notebook 会话执行失败", message);
-        return {
-          cellId,
-          outputs,
-          executionCount,
-          success: false,
-          panelMeta,
-        };
+        const failureOutput = createNotebookErrorOutput(error instanceof Error ? error.message : String(error));
+        appendOutputs([failureOutput], executionCount);
+        return { cellId, outputs: [failureOutput], executionCount, success: false, panelMeta };
       }
     }
 
-    executionCountRef.current += 1;
-    const executionCount = executionCountRef.current;
-    const session = runnerManager.createSession();
-    activeSessionRef.current = session;
+    controller.executionCount += 1;
+    const executionCount = controller.executionCount;
 
-    const startedAt = Date.now();
+    if (isTauriHost() && controller.activeKernel.runnerType === "python-local") {
+      const outputs: JupyterOutput[] = [];
+      const persistentSession = controller.notebookSession;
+      if (!persistentSession) {
+        const failureOutput = createNotebookErrorOutput("Notebook Python 会话未初始化，请先验证运行环境。");
+        appendOutputs([failureOutput], executionCount);
+        return { cellId, outputs: [failureOutput], executionCount, success: false, panelMeta };
+      }
+      try {
+        const result = await persistentSession.execute({ code: normalizedCode }, (event) => {
+          const chunk = normalizeNotebookOutput(event);
+          if (chunk.length > 0) {
+            outputs.push(...chunk);
+            appendOutputs(outputs, executionCount);
+          }
+        });
+        return { cellId, outputs, executionCount, success: result.success, executionTime: undefined, panelMeta };
+      } catch (error) {
+        const failureOutput = createNotebookErrorOutput(error instanceof Error ? error.message : String(error));
+        outputs.push(failureOutput);
+        appendOutputs(outputs, executionCount);
+        setRuntimeFailure(scope.scopeId, "execution", "Notebook 会话执行失败", failureOutput.evalue || failureOutput.traceback?.[0] || "执行失败");
+        return { cellId, outputs, executionCount, success: false, panelMeta };
+      }
+    }
+
+    const session = runnerManager.createSession();
+    controller.activeSession = session;
     const outputs: JupyterOutput[] = [];
     session.onEvent((event) => {
-      const notebookOutputs = normalizeNotebookOutput(event);
-      notebookOutputs.forEach((output) => {
-        outputs.push(output);
-        onCellOutput?.(cellId, output);
-      });
+      const chunk = normalizeNotebookOutput(event);
+      if (chunk.length > 0) {
+        outputs.push(...chunk);
+        appendOutputs(outputs, executionCount);
+      }
     });
-
     try {
       const result = await session.run({
-        runnerType: activeKernel.runnerType,
-        command: activeKernel.command,
-        code,
+        runnerType: controller.activeKernel.runnerType,
+        command: controller.activeKernel.command,
+        code: normalizedCode,
         cwd,
         mode: "cell",
-        allowPyodideFallback: activeKernel.runnerType === "python-pyodide",
+        allowPyodideFallback: controller.activeKernel.runnerType === "python-pyodide",
       });
-
-      const executionTime = Date.now() - startedAt;
-      return {
-        cellId,
-        outputs,
-        executionCount,
-        success: result.success,
-        executionTime,
-        panelMeta,
-      };
+      return { cellId, outputs, executionCount, success: result.success, executionTime: undefined, panelMeta };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const failureOutput = createNotebookErrorOutput(message);
+      const failureOutput = createNotebookErrorOutput(error instanceof Error ? error.message : String(error));
       outputs.push(failureOutput);
-      onCellOutput?.(cellId, failureOutput);
-      return {
-        cellId,
-        outputs,
-        executionCount,
-        success: false,
-        panelMeta,
-      };
+      appendOutputs(outputs, executionCount);
+      setRuntimeFailure(scope.scopeId, "session-start", "Notebook 运行启动失败", failureOutput.evalue || failureOutput.traceback?.[0] || "启动失败");
+      return { cellId, outputs, executionCount, success: false, panelMeta };
     } finally {
       session.dispose();
-      activeSessionRef.current = null;
+      controller.activeSession = null;
     }
-  }, [
-    activeKernel,
-    cwd,
-    onCellOutput,
-    prepareRuntime,
-    runtimeError,
-    runtimeMeta,
-    setRuntimeFailure,
-  ]);
+  }, [current.panelMeta, onCellOutput, prepareRuntime, scope.scopeId, cwd, getController]);
 
-  const executeCell = useCallback(async (
-    cellId: string,
-    code: string,
-  ): Promise<CellExecutionResult> => {
-    interruptedRef.current = false;
-    setExecutionState("running");
-    setCurrentCellId(cellId);
+  const finishNotebookRun = useCallback((didInterrupt: boolean) => {
+    updateNotebookScopeState(scope.scopeId, (sessionState) => ({
+      ...sessionState,
+      activeRunId: null,
+      lastCompletedRunId: sessionState.activeRunId,
+      lifecyclePhase: didInterrupt ? "interrupted" : "completed",
+      status: didInterrupt ? "idle" : sessionState.runtime.status === "ready" ? "ready" : "idle",
+      notebook: sessionState.notebook
+        ? {
+            ...sessionState.notebook,
+            executionState: didInterrupt ? "interrupted" : "idle",
+            currentCellId: null,
+            progress: { current: 0, total: 0 },
+          }
+        : sessionState.notebook,
+    }));
+  }, [scope.scopeId]);
 
+  const executeCell = useCallback(async (cellId: string, code: string): Promise<CellExecutionResult> => {
+    const controller = getController();
+    const currentState = getExecutionSession(scope.scopeId) ?? ensureExecutionSession(scope);
+    if (currentState.notebook?.executionState === "running") {
+      const failureOutput = createNotebookErrorOutput("Notebook 正在执行，已阻止新的单元格运行请求。");
+      setRuntimeFailure(scope.scopeId, "execution", "Notebook 正在执行", "当前 Notebook 正在执行，不能并发运行多个单元格。");
+      return { cellId, outputs: [failureOutput], executionCount: currentState.notebook.cells[cellId]?.executionCount ?? 0, success: false, panelMeta: currentState.panelMeta };
+    }
+
+    controller.interrupted = false;
+    clearNotebookCellSessionState(scope.scopeId, cellId);
+    updateNotebookScopeState(scope.scopeId, (sessionState) => ({
+      ...sessionState,
+      lifecyclePhase: "running",
+      status: "running",
+      activeRunId: randomId("nb"),
+      notebook: sessionState.notebook
+        ? { ...sessionState.notebook, executionState: "running", currentCellId: cellId }
+        : sessionState.notebook,
+    }));
+    onCellStart?.(cellId);
     try {
-      return await executeCellInternal(cellId, code);
+      const result = await executeCellInternal(cellId, code);
+      onCellComplete?.(cellId, result);
+      return result;
     } finally {
-      setExecutionState(interruptedRef.current ? "interrupted" : "idle");
-      setCurrentCellId(null);
+      finishNotebookRun(controller.interrupted);
     }
-  }, [executeCellInternal]);
+  }, [executeCellInternal, finishNotebookRun, onCellComplete, onCellStart, scope, getController]);
 
-  const runCells = useCallback(async (
-    cells: Array<{ id: string; source: string; type: string }>,
-  ): Promise<CellExecutionResult[]> => {
+  const runCells = useCallback(async (cells: Array<{ id: string; source: string; type: string }>): Promise<CellExecutionResult[]> => {
+    const controller = getController();
+    const currentState = getExecutionSession(scope.scopeId) ?? ensureExecutionSession(scope);
+    if (currentState.notebook?.executionState === "running") {
+      setRuntimeFailure(scope.scopeId, "execution", "Notebook 正在执行", "当前 Notebook 正在执行，不能并发运行多个请求。");
+      return [];
+    }
     const codeCells = cells.filter((cell) => cell.type === "code");
     if (codeCells.length === 0) {
       return [];
     }
 
-    interruptedRef.current = false;
-    setExecutionState("running");
-    setProgress({ current: 0, total: codeCells.length });
+    controller.interrupted = false;
+    updateNotebookScopeState(scope.scopeId, (sessionState) => ({
+      ...sessionState,
+      lifecyclePhase: "running",
+      status: "running",
+      activeRunId: randomId("nb_all"),
+      notebook: sessionState.notebook
+        ? { ...sessionState.notebook, executionState: "running", currentCellId: null, progress: { current: 0, total: codeCells.length } }
+        : sessionState.notebook,
+    }));
 
     const results: CellExecutionResult[] = [];
     let didInterrupt = false;
-
     for (let index = 0; index < codeCells.length; index += 1) {
-      if (interruptedRef.current) {
-        setExecutionState("interrupted");
+      if (controller.interrupted) {
         didInterrupt = true;
         break;
       }
-
       const cell = codeCells[index];
-      setCurrentCellId(cell.id);
-      setProgress({ current: index + 1, total: codeCells.length });
+      clearNotebookCellSessionState(scope.scopeId, cell.id);
+      updateNotebookScopeState(scope.scopeId, (sessionState) => ({
+        ...sessionState,
+        notebook: sessionState.notebook
+          ? { ...sessionState.notebook, currentCellId: cell.id, progress: { current: index + 1, total: codeCells.length } }
+          : sessionState.notebook,
+      }));
       onCellStart?.(cell.id);
-
       const result = await executeCellInternal(cell.id, cell.source);
       results.push(result);
       onCellComplete?.(cell.id, result);
-
-      if (interruptedRef.current) {
-        didInterrupt = true;
-      }
-
-      if (!result.success) {
+      if (!result.success || controller.interrupted) {
+        didInterrupt = controller.interrupted;
         break;
       }
     }
-
-    setExecutionState(didInterrupt ? "interrupted" : "idle");
-    setCurrentCellId(null);
-    setProgress({ current: 0, total: 0 });
+    finishNotebookRun(didInterrupt);
     onAllComplete?.(results);
     return results;
-  }, [executeCellInternal, onAllComplete, onCellComplete, onCellStart]);
+  }, [executeCellInternal, finishNotebookRun, onAllComplete, onCellComplete, onCellStart, scope, getController]);
 
-  const runAll = useCallback(async (cells: Array<{ id: string; source: string; type: string }>) => {
-    return runCells(cells);
-  }, [runCells]);
-
-  const runAllAbove = useCallback(async (
-    cells: Array<{ id: string; source: string; type: string }>,
-    targetCellId: string,
-  ) => {
+  const runAll = useCallback(async (cells: Array<{ id: string; source: string; type: string }>) => runCells(cells), [runCells]);
+  const runAllAbove = useCallback(async (cells: Array<{ id: string; source: string; type: string }>, targetCellId: string) => {
     const targetIndex = cells.findIndex((cell) => cell.id === targetCellId);
-    if (targetIndex === -1) return [];
-    return runCells(cells.slice(0, targetIndex + 1));
+    return targetIndex === -1 ? [] : runCells(cells.slice(0, targetIndex + 1));
   }, [runCells]);
-
-  const runAllBelow = useCallback(async (
-    cells: Array<{ id: string; source: string; type: string }>,
-    targetCellId: string,
-  ) => {
+  const runAllBelow = useCallback(async (cells: Array<{ id: string; source: string; type: string }>, targetCellId: string) => {
     const targetIndex = cells.findIndex((cell) => cell.id === targetCellId);
-    if (targetIndex === -1) return [];
-    return runCells(cells.slice(targetIndex));
+    return targetIndex === -1 ? [] : runCells(cells.slice(targetIndex));
   }, [runCells]);
 
   const interrupt = useCallback(async () => {
-    interruptedRef.current = true;
-    setExecutionState("interrupted");
-    if (isLegacyKernel(activeKernel)) {
-      await activeKernel.interrupt();
+    const controller = getController();
+    controller.interrupted = true;
+    updateNotebookScopeState(scope.scopeId, (sessionState) => ({
+      ...sessionState,
+      lifecyclePhase: "stopping",
+      notebook: sessionState.notebook ? { ...sessionState.notebook, executionState: "interrupted" } : sessionState.notebook,
+    }));
+    if (isLegacyKernel(controller.activeKernel)) {
+      await controller.activeKernel.interrupt();
       return;
     }
-    if (notebookSessionRef.current) {
-      await notebookSessionRef.current.stop();
-      notebookSessionRef.current = null;
-      setRuntimeStatus("idle");
+    if (controller.notebookSession) {
+      controller.expectedPersistentShutdown = true;
+      await controller.notebookSession.stop();
+      controller.notebookSession = null;
       return;
     }
-    await activeSessionRef.current?.terminate();
-  }, [activeKernel]);
+    await controller.activeSession?.terminate();
+  }, [getController, scope.scopeId]);
 
   const restartKernel = useCallback(async () => {
-    interruptedRef.current = true;
-    executionCountRef.current = 0;
-    setExecutionState("idle");
-    setCurrentCellId(null);
-    setProgress({ current: 0, total: 0 });
-    clearRuntimeFailure();
-    if (isLegacyKernel(activeKernel)) {
-      await activeKernel.restart();
+    const controller = getController();
+    controller.interrupted = true;
+    controller.executionCount = 0;
+    clearRuntimeFailure(scope.scopeId);
+    if (isLegacyKernel(controller.activeKernel)) {
+      await controller.activeKernel.restart();
+      finishNotebookRun(false);
       return;
     }
-    if (notebookSessionRef.current) {
-      await notebookSessionRef.current.dispose();
-      notebookSessionRef.current = null;
-      setRuntimeStatus("idle");
+    if (controller.notebookSession) {
+      controller.expectedPersistentShutdown = true;
+      await controller.notebookSession.dispose();
+      controller.notebookSession = null;
       await prepareRuntime();
       return;
     }
-    await activeSessionRef.current?.terminate();
-    activeSessionRef.current = null;
-  }, [activeKernel, clearRuntimeFailure, prepareRuntime]);
+    await controller.activeSession?.terminate();
+    controller.activeSession = null;
+    finishNotebookRun(false);
+  }, [finishNotebookRun, prepareRuntime, scope.scopeId, getController]);
 
   const switchKernel = useCallback(async (newKernel: KernelOption | LegacyKernel) => {
-    interruptedRef.current = false;
-    executionCountRef.current = 0;
-    await activeSessionRef.current?.terminate();
-    activeSessionRef.current = null;
-    if (notebookSessionRef.current) {
-      await notebookSessionRef.current.dispose();
-      notebookSessionRef.current = null;
+    const controller = getController();
+    controller.interrupted = false;
+    controller.executionCount = 0;
+    await controller.activeSession?.terminate();
+    controller.activeSession = null;
+    if (controller.notebookSession) {
+      controller.expectedPersistentShutdown = true;
+      await controller.notebookSession.dispose();
+      controller.notebookSession = null;
+      controller.expectedPersistentShutdown = false;
     }
-    clearRuntimeFailure();
-    setRuntimeStatus(!isLegacyKernel(newKernel) && newKernel.runnerType === "python-pyodide" ? "ready" : "idle");
-    setActiveKernel(newKernel);
-  }, [clearRuntimeFailure]);
+    controller.activeKernel = newKernel;
+    clearRuntimeFailure(scope.scopeId);
+    updateNotebookScopeState(scope.scopeId, (sessionState) => ({
+      ...sessionState,
+      lifecyclePhase: !isLegacyKernel(newKernel) && newKernel.runnerType === "python-pyodide" ? "ready" : "idle",
+      status: !isLegacyKernel(newKernel) && newKernel.runnerType === "python-pyodide" ? "ready" : "idle",
+      runtime: {
+        ...sessionState.runtime,
+        status: !isLegacyKernel(newKernel) && newKernel.runnerType === "python-pyodide" ? "ready" : "idle",
+        availability: !isLegacyKernel(newKernel) && newKernel.runnerType === "python-pyodide" ? "ready" : "unknown",
+        hasValidatedRuntime: !isLegacyKernel(newKernel) && newKernel.runnerType === "python-pyodide",
+      },
+    }));
+    updateNotebookKernelState(scope.scopeId);
+  }, [getController, scope.scopeId]);
 
-  const runtimeAvailability: NotebookRuntimeAvailability = !activeKernel
-    ? "unknown"
-    : notebookLanguage && notebookLanguage.toLowerCase() !== "python"
-      ? "unsupported"
-      : runtimeStatus === "loading"
-        ? "checking"
-        : runtimeStatus === "ready"
-          ? "ready"
-          : runtimeStatus === "error"
-            ? "error"
-            : hasValidatedRuntime
-              ? "error"
-              : "unknown";
+  const notebookState = current.notebook ?? fallback.notebook;
+  const runtimeAvailability = (current.runtime.availability as NotebookRuntimeAvailability | null)
+    ?? mapRuntimeAvailability(
+      current.runtime.status,
+      current.runtime.hasValidatedRuntime,
+      controller?.supportsNotebook ?? (!notebookLanguage || notebookLanguage.trim().toLowerCase() === "python"),
+      Boolean(controller?.activeKernel ?? runner ?? kernel),
+    );
 
   return {
-    executionState,
-    currentCellId,
-    progress,
-    kernel: activeKernel,
-    runtimeStatus,
+    executionState: notebookState?.executionState ?? "idle",
+    currentCellId: notebookState?.currentCellId ?? null,
+    progress: notebookState?.progress ?? { current: 0, total: 0 },
+    cellStates: notebookState?.cells ?? {},
+    kernel: controller?.activeKernel ?? runner ?? kernel ?? null,
+    runtimeStatus: current.runtime.status,
     runtimeAvailability,
-    runtimeError,
-    runtimeProblems,
-    runtimeMeta,
-    hasValidatedRuntime,
+    runtimeError: current.runtime.error,
+    runtimeProblems: current.problemSources.runtime as ExecutionProblem[],
+    runtimeMeta: current.panelMeta,
+    hasValidatedRuntime: current.runtime.hasValidatedRuntime,
     prepareRuntime,
     runAll,
     runAllAbove,
@@ -720,5 +981,6 @@ export function useNotebookExecutor(options: UseNotebookExecutorOptions = {}) {
     restartKernel,
     switchKernel,
     executeCell,
+    commandState: current.commandState,
   };
 }

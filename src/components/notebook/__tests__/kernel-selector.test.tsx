@@ -73,7 +73,7 @@ describe("KernelSelector", () => {
     });
   });
 
-  it("桌面端检测到本地 Python 时默认优先选择本地内核", async () => {
+  it("桌面端检测到本地 Python 时展示本地内核候选，但不自动切换", async () => {
     isTauriHostMock.mockReturnValue(true);
     detectPythonEnvironments.mockResolvedValue([
       {
@@ -90,21 +90,19 @@ describe("KernelSelector", () => {
     fireEvent.click(screen.getByRole("button", { name: /选择运行器/ }));
 
     await waitFor(() => {
-      expect(onKernelChange).toHaveBeenCalledWith(expect.objectContaining({
-        runnerType: "python-local",
-        command: "C:/Python312/python.exe",
-      }));
-    });
-
-    await waitFor(() => {
       expect(screen.queryByText("检测运行环境...")).toBeNull();
       const button = screen.getAllByRole("button", { name: /Python 3.12.2/ })[0];
       fireEvent.click(button);
       expect(screen.queryByText("Pyodide（应急回退）")).not.toBeNull();
     });
+
+    expect(onKernelChange).toHaveBeenCalledWith(expect.objectContaining({
+      runnerType: "python-local",
+      command: "C:/Python312/python.exe",
+    }));
   });
 
-  it("桌面端当前停留在 Pyodide 时，探测到本地 Python 后会自动切回本地内核", async () => {
+  it("桌面端当前停留在 Pyodide 时，探测到本地 Python 后仍保持当前内核，直到用户显式切换", async () => {
     isTauriHostMock.mockReturnValue(true);
     detectPythonEnvironments.mockResolvedValue([
       {
@@ -129,11 +127,10 @@ describe("KernelSelector", () => {
     fireEvent.click(screen.getByRole("button", { name: /Pyodide（应急回退）/ }));
 
     await waitFor(() => {
-      expect(onKernelChange).toHaveBeenCalledWith(expect.objectContaining({
-        runnerType: "python-local",
-        command: "D:/envs/project/python.exe",
-      }));
+      expect(screen.getAllByRole("button", { name: /Python 3.11.9/ }).length).toBeGreaterThan(0);
     });
+
+    expect(onKernelChange).not.toHaveBeenCalled();
   });
 
   it("网页环境只暴露浏览器内核文案，不伪装成桌面本地运行器", async () => {
@@ -146,16 +143,10 @@ describe("KernelSelector", () => {
     fireEvent.click(screen.getByRole("button", { name: /选择运行器/ }));
 
     await waitFor(() => {
-      expect(onKernelChange).toHaveBeenCalledWith(expect.objectContaining({
-        runnerType: "python-pyodide",
-        displayName: "Pyodide（浏览器内核）",
-      }));
-    });
-
-    await waitFor(() => {
       expect(screen.queryByText("检测运行环境...")).toBeNull();
       expect(screen.getAllByRole("button", { name: /Pyodide（浏览器内核）/ }).length).toBeGreaterThan(0);
     });
+    expect(onKernelChange).not.toHaveBeenCalled();
     expect(screen.queryByText("当前环境：网页")).not.toBeNull();
     expect(screen.queryByText("浏览器")).not.toBeNull();
   });
