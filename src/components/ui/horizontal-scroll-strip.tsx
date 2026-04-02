@@ -182,7 +182,7 @@ export function HorizontalScrollStrip({
         aria-label={ariaLabel}
         onWheel={handleWheel}
         className={cn(
-          "min-w-0 flex-1 overflow-x-auto overflow-y-hidden scroll-smooth scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent",
+          "min-w-0 flex-1 overflow-x-auto overflow-y-hidden scroll-smooth [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted",
           viewportClassName,
         )}
       >

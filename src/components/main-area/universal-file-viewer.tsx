@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useCallback } from "react";
 import { Loader2, AlertCircle, FileQuestion } from "lucide-react";
 import { getRendererForExtension, getFileExtension, getImageMimeType, RendererType, isEditableCodeFile } from "@/lib/file-utils";
 import dynamic from "next/dynamic";
@@ -8,6 +9,26 @@ import { normalizeScientificText } from "@/lib/markdown-converter";
 import { navigateLink } from "@/lib/link-router/navigate-link";
 import { t } from "@/lib/i18n";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
+
+/**
+ * LRU cache for normalizeScientificText results.
+ * Avoids re-running expensive regex chains on every render when content hasn't changed.
+ */
+const normalizeCache = new Map<string, string>();
+const NORMALIZE_CACHE_MAX = 20;
+
+function cachedNormalizeScientificText(raw: string): string {
+  const cached = normalizeCache.get(raw);
+  if (cached !== undefined) return cached;
+  const result = normalizeScientificText(raw);
+  if (normalizeCache.size >= NORMALIZE_CACHE_MAX) {
+    // Evict oldest entry
+    const firstKey = normalizeCache.keys().next().value;
+    if (firstKey !== undefined) normalizeCache.delete(firstKey);
+  }
+  normalizeCache.set(raw, result);
+  return result;
+}
 
 /**
  * Loading state component
@@ -142,6 +163,7 @@ function FileViewer({
   filePath,
   onNavigateToFile,
   paneId,
+  executionScopeId,
 }: {
   content: string | ArrayBuffer;
   fileName: string;
@@ -154,13 +176,10 @@ function FileViewer({
   filePath?: string;
   onNavigateToFile?: (target: string) => void;
   paneId: PaneId;
+  executionScopeId: string;
 }) {
   const extension = getFileExtension(fileName);
   const viewerKey = fileId || fileName;
-  const executionScopeId = buildExecutionScopeId({
-    paneId,
-    tabId: fileId || fileName,
-  });
   const isSystemIndexFile = fileName === "_annotations.md" || fileName === "_overview.md";
   
   switch (rendererType) {
@@ -199,7 +218,8 @@ function FileViewer({
       }
 
       // Normalize content: convert HTML to Markdown, fix LaTeX delimiters, etc.
-      const normalizedContent = normalizeScientificText(textContent);
+      // Uses LRU cache to avoid re-running expensive regex chains on unchanged content
+      const normalizedContent = cachedNormalizeScientificText(textContent);
 
       // Use ObsidianMarkdownViewer for Obsidian-like experience (default render, click to edit)
       if (onContentChange) {
@@ -438,7 +458,7 @@ export function UniversalFileViewer({
   fileId, // Unique identifier for the file
   filePath,
 }: UniversalFileViewerProps) {
-  const handleNavigateToFile = async (target: string) => {
+  const handleNavigateToFile = useCallback(async (target: string) => {
     const success = await navigateLink(target, {
       paneId,
       rootHandle,
@@ -448,7 +468,12 @@ export function UniversalFileViewer({
     if (!success) {
       console.warn("Failed to resolve link target:", target);
     }
-  };
+  }, [paneId, rootHandle, filePath]);
+
+  const executionScopeId = useMemo(() => buildExecutionScopeId({
+    paneId,
+    tabId: fileId || handle?.name || "",
+  }), [paneId, fileId, handle?.name]);
   // No file selected - show empty placeholder
   if (!handle) {
     return <EmptyPanePlaceholder />;
@@ -487,6 +512,7 @@ export function UniversalFileViewer({
         filePath={filePath}
         onNavigateToFile={handleNavigateToFile}
         paneId={paneId}
+        executionScopeId={executionScopeId}
       />
     </div>
   );

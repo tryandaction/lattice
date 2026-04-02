@@ -7,10 +7,11 @@ import { Loader2, AlertTriangle } from "lucide-react";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useI18n } from "@/hooks/use-i18n";
 import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
+import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { emitVaultChange } from "@/lib/plugins/runtime";
 import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
-import type { PaneId } from "@/types/layout";
+import type { CommandBarState, PaneId } from "@/types/layout";
 import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
@@ -95,8 +96,6 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
 
   const { createFile } = useFileSystem();
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
-  const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
-  const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const markdownSnapshot = useMemo(() => htmlToMarkdown(htmlContent || ""), [htmlContent]);
   const persistedViewStateKey = buildPersistedFileViewStateKey({
@@ -182,13 +181,9 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     containerRef,
   });
 
-  useEffect(() => {
-    if (!paneId) {
-      return;
-    }
-
+  const commandBarState = useMemo<CommandBarState>(() => {
     const breadcrumbs = (filePath ?? fileName).split("/").filter(Boolean).map((segment) => ({ label: segment }));
-    setCommandBarState(paneId, {
+    return {
       breadcrumbs,
       actions: [
         {
@@ -200,20 +195,20 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
           onTrigger: () => { void handleImportAsNote(); },
         },
       ],
-    });
-
-    return () => clearCommandBarState(paneId);
+    };
   }, [
-    clearCommandBarState,
     fileName,
     filePath,
     handleImportAsNote,
     htmlContent,
     isImporting,
-    paneId,
-    setCommandBarState,
     t,
   ]);
+
+  usePaneCommandBar({
+    paneId,
+    state: paneId ? commandBarState : null,
+  });
 
   if (isLoading) {
     return (

@@ -351,13 +351,17 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
             />
             <input
               ref={inputRef}
+              data-explorer-rename-input="true"
               type="text"
               value={renameValue}
               onChange={(event) => {
                 setRenameValue(event.target.value);
                 setRenameError(null);
               }}
-              onKeyDown={handleRenameKeyDown}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                handleRenameKeyDown(event);
+              }}
               onBlur={() => void handleRename()}
               className={cn(
                 "flex-1 rounded border bg-background px-1 py-0.5 text-sm",
@@ -677,13 +681,17 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
               <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
               <input
                 ref={inputRef}
+                data-explorer-rename-input="true"
                 type="text"
                 value={renameValue}
                 onChange={(event) => {
                   setRenameValue(event.target.value);
                   setRenameError(null);
                 }}
-                onKeyDown={handleRenameKeyDown}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                  handleRenameKeyDown(event);
+                }}
                 onBlur={() => void handleRename()}
                 className={cn(
                   "flex-1 rounded border bg-background px-1 py-0.5 text-sm",

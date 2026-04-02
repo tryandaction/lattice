@@ -37,7 +37,7 @@ import { Button } from "@/components/ui/button";
 import { useAnnotationSystem } from "@/hooks/use-annotation-system";
 import { useAnnotationNavigation } from "@/hooks/use-annotation-navigation";
 import { useI18n } from "@/hooks/use-i18n";
-import { useWorkspaceStore } from "@/stores/workspace-store";
+import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
 import type { PaneId } from "@/types/layout";
 import {
   serializeShapes,
@@ -181,8 +181,6 @@ export function ImageTldrawAdapter({
   onDiagnosticsSnapshot,
 }: ImageTldrawAdapterProps) {
   const { t } = useI18n();
-  const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
-  const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
   const {
     annotations: allAnnotations,
     isLoading: annotationsLoading,
@@ -635,15 +633,11 @@ export function ImageTldrawAdapter({
     }
   }, [editor, imageSize, fileName]);
 
-  useEffect(() => {
-    if (!paneId) {
-      return;
-    }
-
+  const commandBarState = useMemo(() => {
     const breadcrumbSource = filePath ?? fileName;
     const breadcrumbs = breadcrumbSource.split("/").filter(Boolean).map((segment) => ({ label: segment }));
 
-    setCommandBarState(paneId, {
+    return {
       breadcrumbs,
       actions: [
         {
@@ -677,11 +671,8 @@ export function ImageTldrawAdapter({
           onTrigger: () => { void handleExportWithAnnotations(); },
         },
       ],
-    });
-
-    return () => clearCommandBarState(paneId);
+    };
   }, [
-    clearCommandBarState,
     fileName,
     filePath,
     handleClearAll,
@@ -689,11 +680,14 @@ export function ImageTldrawAdapter({
     handleExportWithAnnotations,
     handleZoomIn,
     handleZoomOut,
-    paneId,
-    setCommandBarState,
     showSidebar,
     t,
   ]);
+
+  usePaneCommandBar({
+    paneId,
+    state: paneId ? commandBarState : null,
+  });
 
   // Error fallback
   if (tldrawError) {

@@ -429,6 +429,15 @@ export async function renameFile(
       };
     }
 
+    if (sanitized === oldName) {
+      const handle = await dirHandle.getFileHandle(oldName);
+      return {
+        success: true,
+        handle,
+        path: `${dirHandle.name}/${sanitized}`,
+      };
+    }
+
     // Check if new name already exists
     if (await fileExists(dirHandle, sanitized)) {
       return {

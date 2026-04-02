@@ -1,17 +1,29 @@
 /**
  * PDF Highlight Mapping Utilities
- * 
+ *
  * Converts between Universal Annotation format and react-pdf-highlighter format.
- * Provides bidirectional mapping for highlights.
+ * The runtime and tests should share this file as the single coordinate mapping source.
  */
 
-import type { 
-  AnnotationItem, 
-  PdfTarget, 
+import type {
+  AnnotationItem,
+  PdfTarget,
   BoundingBox,
-  AnnotationStyleType 
-} from '../types/universal-annotation';
-import { HIGHLIGHT_COLORS, DEFAULT_HIGHLIGHT_COLOR } from './annotation-colors';
+  AnnotationStyleType,
+} from "../types/universal-annotation";
+import { HIGHLIGHT_COLORS, DEFAULT_HIGHLIGHT_COLOR } from "./annotation-colors";
+
+export interface PdfPageDimensions {
+  width: number;
+  height: number;
+}
+
+export type PdfPageDimensionsMap = Map<number, PdfPageDimensions>;
+
+const DEFAULT_PAGE_DIMENSIONS: PdfPageDimensions = {
+  width: 612,
+  height: 792,
+};
 
 // ============================================================================
 // Types for react-pdf-highlighter
@@ -71,55 +83,108 @@ export interface PDFSelection {
   scaledPosition: ScaledPosition;
 }
 
+function resolvePageDimensions(
+  pageNumber: number,
+  pageDimensions?: PdfPageDimensionsMap,
+): PdfPageDimensions {
+  const dimensions = pageDimensions?.get(pageNumber);
+  if (dimensions && dimensions.width > 0 && dimensions.height > 0) {
+    return dimensions;
+  }
+
+  return DEFAULT_PAGE_DIMENSIONS;
+}
+
+function toNormalizedCoordinate(value: number, dimension: number): number {
+  if (!Number.isFinite(value) || dimension <= 0) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, value / dimension));
+}
+
+export function scaledPositionToBoundingBoxes(position: ScaledPosition): BoundingBox[] {
+  const boundingRect = position.boundingRect;
+  return position.rects
+    .map((rect) => {
+      const width = rect.width || boundingRect.width;
+      const height = rect.height || boundingRect.height;
+      const x1 = toNormalizedCoordinate(Math.min(rect.x1, rect.x2), width);
+      const y1 = toNormalizedCoordinate(Math.min(rect.y1, rect.y2), height);
+      const x2 = toNormalizedCoordinate(Math.max(rect.x1, rect.x2), width);
+      const y2 = toNormalizedCoordinate(Math.max(rect.y1, rect.y2), height);
+      return { x1, y1, x2, y2 };
+    })
+    .filter((rect) => (
+      rect.x2 > rect.x1 &&
+      rect.y2 > rect.y1 &&
+      (rect.x2 - rect.x1) > 0.001 &&
+      (rect.y2 - rect.y1) > 0.001
+    ));
+}
+
+export function boundingBoxesToScaledPosition(
+  target: PdfTarget,
+  pageDimensions?: PdfPageDimensionsMap,
+): ScaledPosition {
+  const dimensions = resolvePageDimensions(target.page, pageDimensions);
+  const rects = target.rects.map((rect) => ({
+    x1: rect.x1 * dimensions.width,
+    y1: rect.y1 * dimensions.height,
+    x2: rect.x2 * dimensions.width,
+    y2: rect.y2 * dimensions.height,
+    width: dimensions.width,
+    height: dimensions.height,
+    pageNumber: target.page,
+  }));
+
+  const x1 = Math.min(...rects.map((rect) => rect.x1));
+  const y1 = Math.min(...rects.map((rect) => rect.y1));
+  const x2 = Math.max(...rects.map((rect) => rect.x2));
+  const y2 = Math.max(...rects.map((rect) => rect.y2));
+
+  return {
+    boundingRect: {
+      x1,
+      y1,
+      x2,
+      y2,
+      width: dimensions.width,
+      height: dimensions.height,
+      pageNumber: target.page,
+    },
+    rects,
+    pageNumber: target.page,
+  };
+}
+
 // ============================================================================
 // Annotation to Highlight Conversion
 // ============================================================================
 
-/**
- * Converts a Universal AnnotationItem to react-pdf-highlighter Highlight format
- * 
- * @param annotation - Universal annotation item
- * @returns PDFHighlight or null if not a PDF annotation
- */
-export function annotationToHighlight(annotation: AnnotationItem): PDFHighlight | null {
-  // Only convert PDF target annotations
-  if (annotation.target.type !== 'pdf') {
+export function annotationToHighlight(
+  annotation: AnnotationItem,
+  pageDimensions?: PdfPageDimensionsMap,
+): PDFHighlight | null {
+  if (annotation.target.type !== "pdf") {
     return null;
   }
 
   const target = annotation.target as PdfTarget;
-  
-  // Convert bounding boxes to scaled position format
-  const rects = target.rects.map(rect => ({
-    x1: rect.x1,
-    y1: rect.y1,
-    x2: rect.x2,
-    y2: rect.y2,
-    width: rect.x2 - rect.x1,
-    height: rect.y2 - rect.y1,
-    pageNumber: target.page,
-  }));
-
-  // Calculate overall bounding rect from all rects
-  const boundingRect = calculateBoundingRect(rects);
+  if (target.rects.length === 0) {
+    return null;
+  }
 
   const highlight: PDFHighlight = {
     id: annotation.id,
-    position: {
-      boundingRect: {
-        ...boundingRect,
-        pageNumber: target.page,
-      },
-      rects,
-      pageNumber: target.page,
-    },
+    position: boundingBoxesToScaledPosition(target, pageDimensions),
     content: {
       text: annotation.content,
+      image: annotation.preview?.type === "image" ? annotation.preview.dataUrl : undefined,
     },
     color: annotation.style.color,
   };
 
-  // Add comment if present
   if (annotation.comment) {
     highlight.comment = {
       text: annotation.comment,
@@ -129,51 +194,37 @@ export function annotationToHighlight(annotation: AnnotationItem): PDFHighlight 
   return highlight;
 }
 
-/**
- * Converts multiple annotations to highlights
- * 
- * @param annotations - Array of universal annotations
- * @returns Array of PDF highlights (non-PDF annotations filtered out)
- */
-export function annotationsToHighlights(annotations: AnnotationItem[]): PDFHighlight[] {
+export function annotationsToHighlights(
+  annotations: AnnotationItem[],
+  pageDimensions?: PdfPageDimensionsMap,
+): PDFHighlight[] {
   return annotations
-    .map(annotationToHighlight)
-    .filter((h): h is PDFHighlight => h !== null);
+    .map((annotation) => annotationToHighlight(annotation, pageDimensions))
+    .filter((highlight): highlight is PDFHighlight => highlight !== null);
 }
 
 // ============================================================================
 // Selection to Annotation Conversion
 // ============================================================================
 
-/**
- * Converts a react-pdf-highlighter selection to Universal AnnotationItem format
- * 
- * @param selection - Selection from onSelectionFinished
- * @param color - Highlight color
- * @param author - Author identifier
- * @param styleType - Style type (default: 'highlight')
- * @returns Partial annotation item (without id and createdAt)
- */
 export function selectionToAnnotation(
   selection: PDFSelection,
   color: string,
   author: string,
-  styleType: AnnotationStyleType = 'highlight'
-): Omit<AnnotationItem, 'id' | 'createdAt'> {
+  styleType: AnnotationStyleType = "highlight",
+): Omit<AnnotationItem, "id" | "createdAt"> {
   const position = selection.scaledPosition || selection.position;
-  
-  // Convert rects to BoundingBox format
-  const rects: BoundingBox[] = position.rects.map(rect => ({
-    x1: rect.x1,
-    y1: rect.y1,
-    x2: rect.x2,
-    y2: rect.y2,
-  }));
+  const rects = scaledPositionToBoundingBoxes(position);
 
   const target: PdfTarget = {
-    type: 'pdf',
+    type: "pdf",
     page: position.pageNumber,
-    rects,
+    rects: rects.length > 0 ? rects : [{
+      x1: toNormalizedCoordinate(position.boundingRect.x1, position.boundingRect.width),
+      y1: toNormalizedCoordinate(position.boundingRect.y1, position.boundingRect.height),
+      x2: toNormalizedCoordinate(position.boundingRect.x2, position.boundingRect.width),
+      y2: toNormalizedCoordinate(position.boundingRect.y2, position.boundingRect.height),
+    }],
   };
 
   return {
@@ -187,30 +238,18 @@ export function selectionToAnnotation(
   };
 }
 
-/**
- * Creates a pin annotation at specific coordinates
- * 
- * @param page - Page number (1-indexed)
- * @param x - X coordinate (normalized 0-1)
- * @param y - Y coordinate (normalized 0-1)
- * @param comment - Optional comment text
- * @param author - Author identifier
- * @param color - Pin color (default: amber)
- * @returns Partial annotation item for a pin
- */
 export function createPinAnnotation(
   page: number,
   x: number,
   y: number,
   comment: string | undefined,
   author: string,
-  color: string = '#FFC107'
-): Omit<AnnotationItem, 'id' | 'createdAt'> {
-  // Create a small area around the click point
-  const pinSize = 0.02; // 2% of page dimension
-  
+  color: string = "#FFC107",
+): Omit<AnnotationItem, "id" | "createdAt"> {
+  const pinSize = 0.02;
+
   const target: PdfTarget = {
-    type: 'pdf',
+    type: "pdf",
     page,
     rects: [{
       x1: Math.max(0, x - pinSize / 2),
@@ -224,7 +263,7 @@ export function createPinAnnotation(
     target,
     style: {
       color,
-      type: 'area',
+      type: "area",
     },
     comment,
     author,
@@ -235,36 +274,19 @@ export function createPinAnnotation(
 // Highlight to Annotation Conversion (reverse mapping)
 // ============================================================================
 
-/**
- * Converts a react-pdf-highlighter Highlight back to Universal AnnotationItem format
- * Useful for round-trip testing
- * 
- * @param highlight - PDF highlight
- * @param author - Author identifier
- * @returns Partial annotation item
- */
 export function highlightToAnnotation(
   highlight: PDFHighlight,
-  author: string
-): Omit<AnnotationItem, 'id' | 'createdAt'> {
-  const rects: BoundingBox[] = highlight.position.rects.map(rect => ({
-    x1: rect.x1,
-    y1: rect.y1,
-    x2: rect.x2,
-    y2: rect.y2,
-  }));
-
-  const target: PdfTarget = {
-    type: 'pdf',
-    page: highlight.position.pageNumber,
-    rects,
-  };
-
+  author: string,
+): Omit<AnnotationItem, "id" | "createdAt"> {
   return {
-    target,
+    target: {
+      type: "pdf",
+      page: highlight.position.pageNumber,
+      rects: scaledPositionToBoundingBoxes(highlight.position),
+    },
     style: {
       color: highlight.color || DEFAULT_HIGHLIGHT_COLOR.hex,
-      type: 'highlight',
+      type: "highlight",
     },
     content: highlight.content.text,
     comment: highlight.comment?.text,
@@ -276,82 +298,46 @@ export function highlightToAnnotation(
 // Utility Functions
 // ============================================================================
 
-/**
- * Calculates the overall bounding rectangle from multiple rects
- */
-function calculateBoundingRect(rects: Array<{ x1: number; y1: number; x2: number; y2: number; width: number; height: number }>) {
-  if (rects.length === 0) {
-    return { x1: 0, y1: 0, x2: 0, y2: 0, width: 0, height: 0 };
-  }
-
-  const x1 = Math.min(...rects.map(r => r.x1));
-  const y1 = Math.min(...rects.map(r => r.y1));
-  const x2 = Math.max(...rects.map(r => r.x2));
-  const y2 = Math.max(...rects.map(r => r.y2));
-
-  return {
-    x1,
-    y1,
-    x2,
-    y2,
-    width: x2 - x1,
-    height: y2 - y1,
-  };
-}
-
-/**
- * Checks if an annotation is a pin (area style with small rect)
- */
 export function isPinAnnotation(annotation: AnnotationItem): boolean {
-  if (annotation.target.type !== 'pdf') return false;
-  if (annotation.style.type !== 'area') return false;
-  
+  if (annotation.target.type !== "pdf") return false;
+  if (annotation.style.type !== "area") return false;
+
   const target = annotation.target as PdfTarget;
   if (target.rects.length !== 1) return false;
-  
+
   const rect = target.rects[0];
   const width = rect.x2 - rect.x1;
   const height = rect.y2 - rect.y1;
-  
-  // Pin annotations are small (< 5% of page)
+
   return width < 0.05 && height < 0.05;
 }
 
-/**
- * Gets the center point of a pin annotation
- */
 export function getPinCenter(annotation: AnnotationItem): { x: number; y: number } | null {
   if (!isPinAnnotation(annotation)) return null;
-  
+
   const target = annotation.target as PdfTarget;
   const rect = target.rects[0];
-  
+
   return {
     x: (rect.x1 + rect.x2) / 2,
     y: (rect.y1 + rect.y2) / 2,
   };
 }
 
-/**
- * Gets the color name from a color value
- */
 export function getColorName(color: string): string {
-  const found = HIGHLIGHT_COLORS.find(c => c.hex === color || c.value === color);
-  return found?.name || 'Custom';
+  const found = HIGHLIGHT_COLORS.find((candidate) => candidate.hex === color || candidate.value === color);
+  return found?.name || "Custom";
 }
 
-/**
- * Validates that a highlight has required fields
- */
 export function isValidHighlight(highlight: unknown): highlight is PDFHighlight {
-  if (!highlight || typeof highlight !== 'object') return false;
-  
-  const h = highlight as Record<string, unknown>;
-  
+  if (!highlight || typeof highlight !== "object") return false;
+
+  const candidate = highlight as Record<string, unknown>;
+
   return (
-    typeof h.id === 'string' &&
-    h.position !== null &&
-    typeof h.position === 'object' &&
-    typeof (h.position as Record<string, unknown>).pageNumber === 'number'
+    typeof candidate.id === "string" &&
+    candidate.position !== null &&
+    typeof candidate.position === "object" &&
+    typeof (candidate.position as Record<string, unknown>).pageNumber === "number"
   );
 }

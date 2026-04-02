@@ -19,6 +19,7 @@ import type {
   IHighlight, 
   NewHighlight, 
   Content as PdfHighlightContent,
+  ScaledPosition as PdfHighlighterScaledPosition,
 } from "react-pdf-highlighter";
 import {
   Loader2,
@@ -41,11 +42,11 @@ import { PdfAnnotationSidebar } from "./pdf-annotation-sidebar";
 import { PdfItemWorkspacePanel } from "./pdf-item-workspace-panel";
 import { InkSessionIndicator } from "./ink-session-indicator";
 import { adjustPopupPosition, type PopupSize } from "@/lib/coordinate-adapter";
-import type { AnnotationItem, PdfTarget, BoundingBox } from "@/types/universal-annotation";
+import type { AnnotationItem, PdfTarget } from "@/types/universal-annotation";
 import { useInkAnnotationStore } from "@/stores/ink-annotation-store";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
-import type { PaneId } from "@/types/layout";
+import type { CommandBarState, PaneId } from "@/types/layout";
 import { useLinkNavigationStore } from "@/stores/link-navigation-store";
 import { isSameWorkspacePath } from "@/lib/link-router/path-utils";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
@@ -56,6 +57,7 @@ import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useI18n } from "@/hooks/use-i18n";
+import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
 import {
   ensurePdfItemWorkspace,
   loadPdfItemManifest,
@@ -95,14 +97,26 @@ import {
 import {
   beginPdfSelectionSession,
   buildPdfAreaPreview,
+  createIdlePdfSelectionSession,
+  createPdfSelectionSnapshot,
   buildPdfSelectionSignature,
   isDuplicatePdfSelection,
   projectPdfSelectionRectsToPages,
+  projectPdfScaledSelectionToViewportRects,
+  resolvePdfCopySelectionText,
+  type PdfSelectionSnapshot,
   type PdfSelectionSessionState,
   type PdfTransientSelectionRect,
   updatePdfSelectionSession,
 } from "@/lib/pdf-selection-session";
 import { buildPersistedFileViewStateKey, loadPersistedFileViewState, savePersistedFileViewState } from "@/lib/file-view-state";
+import {
+  annotationToHighlight as mapPdfAnnotationToHighlight,
+  createPinAnnotation as createPdfPinAnnotation,
+  isPinAnnotation,
+  selectionToAnnotation,
+  type PdfPageDimensionsMap,
+} from "@/lib/pdf-highlight-mapping";
 
 import "react-pdf-highlighter/dist/style.css";
 import "./pdf-highlighter-adapter.css";
@@ -129,15 +143,6 @@ interface PdfRestoreDebugState {
   deltaTopRatio: number | null;
   deltaLeftRatio: number | null;
   captureRevision: number | null;
-}
-
-interface PdfTransientSelection {
-  text: string;
-  pageNumber: number;
-  rects: PdfTransientSelectionRect[];
-  signature: string;
-  color: string;
-  styleType: 'highlight' | 'underline';
 }
 
 function createIdleRestoreDebugState(): PdfRestoreDebugState {
@@ -225,6 +230,76 @@ function buildPdfSelectionRects(range: Range | undefined, pageElement: HTMLEleme
   return rects.length > 0 ? rects : undefined;
 }
 
+function buildPdfSelectionRectsFromSnapshot(
+  snapshot: PdfSelectionSnapshot | null | undefined,
+  scopeRoot: ParentNode | null | undefined,
+): { pageNumber: number | undefined; rects: EvidenceAnchorRect[] | undefined } {
+  if (!snapshot) {
+    return { pageNumber: undefined, rects: undefined };
+  }
+
+  const pageNumber = snapshot.pageNumbers[0];
+  if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+    return { pageNumber: undefined, rects: undefined };
+  }
+
+  const pageElement = findPdfPageElementInScope(scopeRoot, pageNumber);
+  if (!pageElement) {
+    return { pageNumber, rects: undefined };
+  }
+
+  const pageRect = pageElement.getBoundingClientRect();
+  if (pageRect.width <= 0 || pageRect.height <= 0) {
+    return { pageNumber, rects: undefined };
+  }
+
+  const rects = (snapshot.overlayRectsByPage[pageNumber] ?? [])
+    .map((rect) => ({
+      left: Math.max(0, Math.min(1, rect.left / pageRect.width)),
+      top: Math.max(0, Math.min(1, rect.top / pageRect.height)),
+      width: Math.max(0, Math.min(1, rect.width / pageRect.width)),
+      height: Math.max(0, Math.min(1, rect.height / pageRect.height)),
+    }))
+    .filter((rect) => rect.width > 0 && rect.height > 0);
+
+  return {
+    pageNumber,
+    rects: rects.length > 0 ? rects : undefined,
+  };
+}
+
+function buildPdfSelectionMenuSnapshot(
+  snapshot: PdfSelectionSnapshot | null | undefined,
+  scopeRoot: ParentNode | null | undefined,
+): Partial<import("@/hooks/use-selection-context-menu").SelectionSnapshot> | null {
+  if (!snapshot) {
+    return null;
+  }
+
+  const pageNumber = snapshot.pageNumbers[0];
+  const pageElement = Number.isInteger(pageNumber) && pageNumber > 0
+    ? findPdfPageElementInScope(scopeRoot, pageNumber)
+    : null;
+  const firstRect = pageNumber ? snapshot.overlayRectsByPage[pageNumber]?.[0] : undefined;
+
+  let boundingRect: DOMRect | undefined;
+  if (pageElement && firstRect) {
+    const pageRect = pageElement.getBoundingClientRect();
+    boundingRect = new DOMRect(
+      pageRect.left + firstRect.left,
+      pageRect.top + firstRect.top,
+      firstRect.width,
+      firstRect.height,
+    );
+  }
+
+  return {
+    text: snapshot.text,
+    eventTarget: pageElement,
+    boundingRect,
+  };
+}
+
 function findPdfPageElementInScope(
   scopeRoot: ParentNode | null | undefined,
   pageNumber: number,
@@ -273,69 +348,6 @@ function buildPdfTransientSelectionRectsFromRange(
   }
 
   return rects;
-}
-
-function buildPdfTransientSelection(input: {
-  position: ViewportPosition;
-  text: string;
-  signature: string;
-  color: string;
-  styleType: 'highlight' | 'underline';
-  nativeRects?: PdfTransientSelectionRect[];
-}): PdfTransientSelection | null {
-  const text = input.text.trim();
-  if (!text) {
-    return null;
-  }
-
-  const rects = (input.nativeRects ?? input.position.rects
-    .map((rect) => ({
-      left: rect.left,
-      top: rect.top,
-      width: rect.width,
-      height: rect.height,
-      pageNumber: rect.pageNumber ?? input.position.pageNumber,
-    })))
-    .filter((rect) => (
-      Number.isInteger(rect.pageNumber) &&
-      rect.pageNumber > 0 &&
-      rect.width > 0 &&
-      rect.height > 0
-    ));
-
-  if (rects.length === 0) {
-    return null;
-  }
-
-  return {
-    text,
-    pageNumber: rects[0].pageNumber,
-    rects,
-    signature: input.signature,
-    color: input.color,
-    styleType: input.styleType,
-  };
-}
-
-function normalizePdfSelectionText(text: string | undefined): string {
-  return (text ?? "").replace(/\s+/g, " ").trim();
-}
-
-function shouldUseNativePdfSelectionSnapshot(input: {
-  rawText: string;
-  nativeText: string;
-  hasNativeRange: boolean;
-  nativeRects?: PdfTransientSelectionRect[];
-}): boolean {
-  if (!input.hasNativeRange || !input.nativeText || !input.nativeRects?.length) {
-    return false;
-  }
-
-  if (!input.rawText) {
-    return true;
-  }
-
-  return input.rawText === input.nativeText;
 }
 
 // Annotation tool types (Zotero-style)
@@ -497,59 +509,7 @@ function CustomHighlight({ position, isScrolledTo, color, styleType, isActive = 
  * The react-pdf-highlighter library handles scaling internally based on pdfScaleValue
  */
 function annotationToHighlight(annotation: AnnotationItem, pdfPageDimensions?: Map<number, { width: number; height: number }>): IHighlight | null {
-  if (annotation.target.type !== 'pdf') return null;
-  
-  const target = annotation.target as PdfTarget;
-  
-  // Get actual page dimensions if available, otherwise use US Letter defaults
-  const pageDims = pdfPageDimensions?.get(target.page);
-  const pageWidth = pageDims?.width || 612;
-  const pageHeight = pageDims?.height || 792;
-  
-  // Convert normalized coordinates (0-1) back to PDF points
-  // react-pdf-highlighter expects coordinates in PDF points (not scaled)
-  const rects = target.rects.map(rect => ({
-    x1: rect.x1 * pageWidth,
-    y1: rect.y1 * pageHeight,
-    x2: rect.x2 * pageWidth,
-    y2: rect.y2 * pageHeight,
-    width: pageWidth,
-    height: pageHeight,
-    pageNumber: target.page,
-  }));
-
-  // Handle empty rects (e.g., for ink annotations)
-  if (rects.length === 0) {
-    return null;
-  }
-
-  // Calculate bounding rect from converted coordinates
-  const x1 = Math.min(...rects.map(r => r.x1));
-  const y1 = Math.min(...rects.map(r => r.y1));
-  const x2 = Math.max(...rects.map(r => r.x2));
-  const y2 = Math.max(...rects.map(r => r.y2));
-
-  return {
-    id: annotation.id,
-    position: {
-      boundingRect: {
-        x1, y1, x2, y2,
-        width: pageWidth,
-        height: pageHeight,
-        pageNumber: target.page,
-      },
-      rects,
-      pageNumber: target.page,
-    },
-    content: {
-      text: annotation.content,
-      image: annotation.preview?.type === 'image' ? annotation.preview.dataUrl : undefined,
-    },
-    comment: {
-      text: annotation.comment || '',
-      emoji: '',
-    },
-  };
+  return mapPdfAnnotationToHighlight(annotation, pdfPageDimensions as PdfPageDimensionsMap | undefined) as IHighlight | null;
 }
 
 /**
@@ -562,55 +522,22 @@ function highlightToAnnotationData(
   author: string,
   styleType: 'highlight' | 'underline' | 'area' = 'highlight'
 ): Omit<AnnotationItem, 'id' | 'createdAt'> {
-  // Get page dimensions from boundingRect (more reliable than individual rects)
-  const boundingRect = highlight.position.boundingRect;
-  const pageWidth = boundingRect.width || 612;  // Default to US Letter
-  const pageHeight = boundingRect.height || 792;
-  
-  // Normalize coordinates from PDF points to 0-1 range
-  // Ensure coordinates are properly ordered (x1 < x2, y1 < y2)
-  const rects: BoundingBox[] = highlight.position.rects.map(rect => {
-    const x1 = Math.max(0, Math.min(1, Math.min(rect.x1, rect.x2) / pageWidth));
-    const y1 = Math.max(0, Math.min(1, Math.min(rect.y1, rect.y2) / pageHeight));
-    const x2 = Math.max(0, Math.min(1, Math.max(rect.x1, rect.x2) / pageWidth));
-    const y2 = Math.max(0, Math.min(1, Math.max(rect.y1, rect.y2) / pageHeight));
-    return { x1, y1, x2, y2 };
-  });
-
-  // Filter out invalid/empty rects
-  const validRects = rects.filter(r => 
-    r.x2 > r.x1 && r.y2 > r.y1 && 
-    (r.x2 - r.x1) > 0.001 && (r.y2 - r.y1) > 0.001
-  );
-
-  // If no valid rects, create one from bounding rect
-  const finalRects = validRects.length > 0 ? validRects : [{
-    x1: Math.max(0, Math.min(1, boundingRect.x1 / pageWidth)),
-    y1: Math.max(0, Math.min(1, boundingRect.y1 / pageHeight)),
-    x2: Math.max(0, Math.min(1, boundingRect.x2 / pageWidth)),
-    y2: Math.max(0, Math.min(1, boundingRect.y2 / pageHeight)),
-  }];
+  const baseAnnotation = selectionToAnnotation({
+    content: highlight.content,
+    position: highlight.position,
+    scaledPosition: highlight.position,
+  }, color, author, styleType);
 
   return {
-    target: {
-      type: 'pdf',
-      page: highlight.position.pageNumber,
-      rects: finalRects,
-    } as PdfTarget,
-    style: {
-      color,
-      type: styleType,
-    },
-    content: highlight.content.text,
+    ...baseAnnotation,
     comment: highlight.comment?.text || undefined,
     preview: styleType === 'area'
       ? buildPdfAreaPreview({
           dataUrl: highlight.content.image,
-          width: boundingRect.width || 0,
-          height: boundingRect.height || 0,
+          width: highlight.position.boundingRect.width || 0,
+          height: highlight.position.boundingRect.height || 0,
         })
       : undefined,
-    author,
   };
 }
 
@@ -624,43 +551,7 @@ function createPinAnnotationData(
   comment: string | undefined,
   author: string
 ): Omit<AnnotationItem, 'id' | 'createdAt'> {
-  const pinSize = 0.02;
-  
-  return {
-    target: {
-      type: 'pdf',
-      page,
-      rects: [{
-        x1: Math.max(0, x - pinSize / 2),
-        y1: Math.max(0, y - pinSize / 2),
-        x2: Math.min(1, x + pinSize / 2),
-        y2: Math.min(1, y + pinSize / 2),
-      }],
-    } as PdfTarget,
-    style: {
-      color: '#FFC107',
-      type: 'area',
-    },
-    comment,
-    author,
-  };
-}
-
-/**
- * Checks if an annotation is a pin
- */
-function isPinAnnotation(annotation: AnnotationItem): boolean {
-  if (annotation.target.type !== 'pdf') return false;
-  if (annotation.style.type !== 'area') return false;
-  
-  const target = annotation.target as PdfTarget;
-  if (target.rects.length !== 1) return false;
-  
-  const rect = target.rects[0];
-  const width = rect.x2 - rect.x1;
-  const height = rect.y2 - rect.y1;
-  
-  return width < 0.05 && height < 0.05;
+  return createPdfPinAnnotation(page, x, y, comment, author);
 }
 
 // ============================================================================
@@ -1545,13 +1436,15 @@ function CurrentInkPathPortal({ path, page, color, scale, paneRootRef }: Current
 }
 
 interface PdfTransientSelectionOverlayProps {
-  selection: PdfTransientSelection;
+  selection: PdfSelectionSnapshot;
   paneId: PaneId;
   page: number;
+  color: string;
+  styleType: 'highlight' | 'underline';
 }
 
-function PdfTransientSelectionOverlay({ selection, paneId, page }: PdfTransientSelectionOverlayProps) {
-  const rects = selection.rects.filter((rect) => rect.pageNumber === page);
+function PdfTransientSelectionOverlay({ selection, paneId, page, color, styleType }: PdfTransientSelectionOverlayProps) {
+  const rects = selection.overlayRectsByPage[page] ?? [];
   if (rects.length === 0) {
     return null;
   }
@@ -1567,14 +1460,14 @@ function PdfTransientSelectionOverlay({ selection, paneId, page }: PdfTransientS
           key={`${selection.signature}-${page}-${index}`}
           className="absolute rounded-sm"
           data-testid={index === 0 ? `pdf-transient-selection-first-rect-${paneId}` : undefined}
-          style={selection.styleType === 'underline'
+          style={styleType === 'underline'
             ? {
                 left: rect.left,
                 top: rect.top,
                 width: rect.width,
                 height: rect.height,
-                borderBottom: `2px solid ${selection.color}`,
-                boxShadow: `inset 0 -1px 0 ${selection.color}`,
+                borderBottom: `2px solid ${color}`,
+                boxShadow: `inset 0 -1px 0 ${color}`,
                 opacity: 0.95,
               }
             : {
@@ -1582,8 +1475,8 @@ function PdfTransientSelectionOverlay({ selection, paneId, page }: PdfTransientS
                 top: rect.top,
                 width: rect.width,
                 height: rect.height,
-                backgroundColor: `${selection.color}33`,
-                boxShadow: `inset 0 0 0 1px ${selection.color}55`,
+                backgroundColor: `${color}33`,
+                boxShadow: `inset 0 0 0 1px ${color}55`,
                 opacity: 0.95,
               }}
         />
@@ -1593,13 +1486,15 @@ function PdfTransientSelectionOverlay({ selection, paneId, page }: PdfTransientS
 }
 
 interface PdfTransientSelectionPortalProps {
-  selection: PdfTransientSelection;
+  selection: PdfSelectionSnapshot;
   paneId: PaneId;
   page: number;
   paneRootRef: React.RefObject<HTMLElement | null>;
+  color: string;
+  styleType: 'highlight' | 'underline';
 }
 
-function PdfTransientSelectionPortal({ selection, paneId, page, paneRootRef }: PdfTransientSelectionPortalProps) {
+function PdfTransientSelectionPortal({ selection, paneId, page, paneRootRef, color, styleType }: PdfTransientSelectionPortalProps) {
   const [container, setContainer] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -1638,7 +1533,13 @@ function PdfTransientSelectionPortal({ selection, paneId, page, paneRootRef }: P
   }
 
   return ReactDOM.createPortal(
-    <PdfTransientSelectionOverlay selection={selection} paneId={paneId} page={page} />,
+    <PdfTransientSelectionOverlay
+      selection={selection}
+      paneId={paneId}
+      page={page}
+      color={color}
+      styleType={styleType}
+    />,
     container,
   );
 }
@@ -1672,8 +1573,6 @@ export function PDFHighlighterAdapter({
   }, [fileId]);
   const { refreshDirectory } = useFileSystem();
   const isPaneActive = useWorkspaceStore((state) => state.layout.activePaneId === paneId);
-  const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
-  const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
   const saveEditorState = useContentCacheStore((state) => state.saveEditorState);
   const getEditorState = useContentCacheStore((state) => state.getEditorState);
   const [pdfItemManifest, setPdfItemManifest] = useState<PdfItemManifest | null>(null);
@@ -1871,8 +1770,8 @@ export function PDFHighlighterAdapter({
   
   const [textAnnotationPosition, setTextAnnotationPosition] = useState<{ x: number; y: number; page: number } | null>(null);
   const [editingTextAnnotation, setEditingTextAnnotation] = useState<{ annotation: AnnotationItem; position: { x: number; y: number } } | null>(null);
-  const [pdfPageDimensions, _setPdfPageDimensions] = useState<Map<number, { width: number; height: number }>>(new Map());
-  const [transientSelection, setTransientSelection] = useState<PdfTransientSelection | null>(null);
+  const [pdfPageDimensions, setPdfPageDimensions] = useState<PdfPageDimensionsMap>(new Map());
+  const [pdfSelectionSession, setPdfSelectionSession] = useState<PdfSelectionSessionState>(() => createIdlePdfSelectionSession());
   const [selectionHubState, setSelectionHubState] = useState<{
     context: SelectionContext;
     mode: SelectionAiMode;
@@ -1892,7 +1791,6 @@ export function PDFHighlighterAdapter({
   const lastPersistSignatureRef = useRef<string | null>(null);
   const lastPersistedEditorStateRef = useRef<ReturnType<typeof buildPdfEditorState> | null>(null);
   const anchorCaptureRevisionRef = useRef(0);
-  const lastSelectionSessionRef = useRef<PdfSelectionSessionState | null>(null);
   const pendingAreaPreviewBackfillRef = useRef<Set<string>>(new Set());
   const currentInkPathRef = useRef<{ x: number; y: number }[]>([]);
   const currentInkPageRef = useRef<number | null>(null);
@@ -1900,9 +1798,12 @@ export function PDFHighlighterAdapter({
   const inkPreviewFrameRef = useRef<number | null>(null);
   const transientSelectionDismissRef = useRef<(() => void) | null>(null);
   const lastScaleSyncRef = useRef<{ fileId: string; pdfScaleValue: string } | null>(null);
+  const pdfSelectionSessionRef = useRef<PdfSelectionSessionState>(pdfSelectionSession);
+  const frozenPdfSelection = pdfSelectionSession.phase === "frozen" ? pdfSelectionSession.snapshot : null;
   const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
     scrollContainerRef,
     ({ text, eventTarget, domRange }) => {
+      const frozenContext = buildPdfSelectionRectsFromSnapshot(frozenPdfSelection, containerRef.current);
       const sourceElement = eventTarget instanceof HTMLElement ? eventTarget : eventTarget instanceof Node ? eventTarget.parentElement : null;
       const pageElement = sourceElement?.closest<HTMLElement>('[data-page-number]');
       const pageNumber = Number(pageElement?.dataset.pageNumber ?? '');
@@ -1912,17 +1813,25 @@ export function PDFHighlighterAdapter({
         paneId,
         fileName,
         filePath,
-        selectedText: text,
-        pdfPage: Number.isInteger(pageNumber) && pageNumber > 0 ? pageNumber : undefined,
-        pdfRects: buildPdfSelectionRects(domRange, pageElement ?? null),
+        selectedText: frozenPdfSelection?.text || text,
+        pdfPage: frozenContext.pageNumber ?? (Number.isInteger(pageNumber) && pageNumber > 0 ? pageNumber : undefined),
+        pdfRects: frozenContext.rects ?? buildPdfSelectionRects(domRange, pageElement ?? null),
       });
-    }
+    },
+    {
+      getSelectionSnapshot: () => buildPdfSelectionMenuSnapshot(frozenPdfSelection, containerRef.current),
+    },
   );
   const pdfHighlighterRef = useRef<PdfHighlighter<IHighlight> | null>(null);
   const pendingNavigation = useLinkNavigationStore((state) => state.pendingByPane[paneId]);
   const consumePendingNavigation = useLinkNavigationStore((state) => state.consumePendingNavigation);
+  const commitPdfSelectionSession = useCallback((nextState: PdfSelectionSessionState) => {
+    pdfSelectionSessionRef.current = nextState;
+    setPdfSelectionSession(nextState);
+  }, []);
 
   const resolveViewerScrollContainer = useCallback((): HTMLDivElement | null => {
+    // Fast path: return cached container if still valid
     const cached = resolvedScrollContainerRef.current;
     if (cached && cached.isConnected && hasMeaningfulScrollOverflow(cached)) {
       return cached;
@@ -1930,39 +1839,57 @@ export function PDFHighlighterAdapter({
 
     const shellContainer = scrollContainerRef.current;
     const viewerContainer = pdfHighlighterRef.current?.viewer?.container;
-    const roots = [shellContainer, viewerContainer].filter(
-      (candidate): candidate is HTMLDivElement => candidate instanceof HTMLDivElement,
-    );
 
+    // Try the two most likely candidates first — avoids expensive querySelectorAll
+    const quickCandidates = [viewerContainer, shellContainer].filter(
+      (c): c is HTMLDivElement => c instanceof HTMLDivElement,
+    );
+    for (const candidate of quickCandidates) {
+      if (hasMeaningfulScrollOverflow(candidate)) {
+        resolvedScrollContainerRef.current = candidate;
+        return candidate;
+      }
+    }
+
+    // Fallback: search children, but limit depth to avoid scanning thousands of nodes
+    const roots = quickCandidates;
     if (roots.length === 0) {
       return null;
     }
 
-    const seen = new Set<HTMLDivElement>();
-    const candidates: HTMLDivElement[] = [];
-    roots.forEach((root) => {
-      if (!seen.has(root)) {
-        seen.add(root);
-        candidates.push(root);
-      }
+    const seen = new Set<HTMLDivElement>(roots);
+    let best: HTMLDivElement | null = null;
+    let bestScore = 0;
 
-      root.querySelectorAll<HTMLDivElement>("div").forEach((element) => {
-        if (!seen.has(element)) {
-          seen.add(element);
-          candidates.push(element);
+    for (const root of roots) {
+      // Only check direct children and one level deeper — not the entire subtree
+      const children = root.children;
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i];
+        if (!(child instanceof HTMLDivElement) || seen.has(child)) continue;
+        seen.add(child);
+        const score = getScrollContainerOverflowScore(child);
+        if (score > bestScore) {
+          bestScore = score;
+          best = child;
         }
-      });
-    });
+        // Check grandchildren
+        const grandchildren = child.children;
+        for (let j = 0; j < grandchildren.length; j++) {
+          const gc = grandchildren[j];
+          if (!(gc instanceof HTMLDivElement) || seen.has(gc)) continue;
+          seen.add(gc);
+          const gcScore = getScrollContainerOverflowScore(gc);
+          if (gcScore > bestScore) {
+            bestScore = gcScore;
+            best = gc;
+          }
+        }
+      }
+    }
 
-    candidates.sort((left, right) => {
-      const leftOverflow = getScrollContainerOverflowScore(left);
-      const rightOverflow = getScrollContainerOverflowScore(right);
-      return rightOverflow - leftOverflow;
-    });
-
-    const resolved = candidates[0] ?? null;
-    resolvedScrollContainerRef.current = hasMeaningfulScrollOverflow(resolved) ? resolved : null;
-    return resolved;
+    resolvedScrollContainerRef.current = best && hasMeaningfulScrollOverflow(best) ? best : null;
+    return best;
   }, []);
 
   const getViewerScrollContainer = useCallback((): HTMLDivElement | null => {
@@ -2015,13 +1942,11 @@ export function PDFHighlighterAdapter({
   }, []);
 
   const getActivePdfSelectionText = useCallback(() => {
-    const frozenSelectionText = normalizePdfSelectionText(transientSelection?.text);
-    if (frozenSelectionText) {
-      return frozenSelectionText;
-    }
-
-    return normalizePdfSelectionText(getNativePdfSelectionText());
-  }, [getNativePdfSelectionText, transientSelection?.text]);
+    return resolvePdfCopySelectionText({
+      nativeText: getNativePdfSelectionText(),
+      frozenSnapshot: frozenPdfSelection,
+    });
+  }, [frozenPdfSelection, getNativePdfSelectionText]);
 
   const clearNativePdfSelection = useCallback(() => {
     const selection = window.getSelection();
@@ -2053,39 +1978,36 @@ export function PDFHighlighterAdapter({
     clearNative?: boolean;
     nextPhase?: 'committed' | 'cancelled';
   }) => {
-    setTransientSelection(null);
     if (options?.hideTip !== false) {
       dismissTransientSelectionTip();
     }
     if (options?.clearNative !== false) {
       clearNativePdfSelection();
     }
-    if (options?.nextPhase) {
-      lastSelectionSessionRef.current = updatePdfSelectionSession(lastSelectionSessionRef.current, {
-        phase: options.nextPhase,
-      });
-    }
-  }, [clearNativePdfSelection, dismissTransientSelectionTip]);
+    commitPdfSelectionSession(updatePdfSelectionSession(pdfSelectionSessionRef.current, {
+      phase: options?.nextPhase ?? 'cancelled',
+      snapshot: null,
+    }));
+  }, [clearNativePdfSelection, commitPdfSelectionSession, dismissTransientSelectionTip]);
 
   const activateTransientSelection = useCallback((
-    selection: PdfTransientSelection | null,
+    selection: PdfSelectionSnapshot | null,
     dismissTip?: () => void,
   ) => {
     transientSelectionDismissRef.current = dismissTip ?? null;
-    setTransientSelection(selection);
-    lastSelectionSessionRef.current = updatePdfSelectionSession(lastSelectionSessionRef.current, {
-      phase: 'transient_overlay',
-      signature: selection?.signature ?? null,
-    });
-  }, []);
+    commitPdfSelectionSession(updatePdfSelectionSession(pdfSelectionSessionRef.current, {
+      phase: selection ? 'frozen' : 'cancelled',
+      snapshot: selection,
+    }));
+  }, [commitPdfSelectionSession]);
 
   const beginNativePdfSelectionInteraction = useCallback(() => {
     if (activeTool === 'note' || activeTool === 'text' || activeTool === 'ink') {
       return;
     }
 
-    lastSelectionSessionRef.current = beginPdfSelectionSession(lastSelectionSessionRef.current);
-  }, [activeTool]);
+    commitPdfSelectionSession(beginPdfSelectionSession(pdfSelectionSessionRef.current));
+  }, [activeTool, commitPdfSelectionSession]);
 
   const updateCurrentAnchorDebug = useCallback((anchor: PdfViewAnchor | null) => {
     if (isDiagnosticsMode) {
@@ -2159,7 +2081,7 @@ export function PDFHighlighterAdapter({
     fallbackScrollLeft?: number;
   }) => {
     let frameId = 0;
-    let attemptsLeft = input.anchor ? 240 : 0;
+    let attemptsLeft = input.anchor ? 60 : 0;
 
     const commitFallback = () => {
       if (input.fallbackScrollState) {
@@ -2295,7 +2217,7 @@ export function PDFHighlighterAdapter({
     currentInkPathRef.current = [];
     currentInkPageRef.current = null;
     currentInkPageElementRef.current = null;
-    lastSelectionSessionRef.current = null;
+    pdfSelectionSessionRef.current = createIdlePdfSelectionSession();
     setViewerScrollContainer(null);
     updateCurrentAnchorDebug(cachedPdfViewState?.anchor ?? null);
     updateRestoreDebugState(createIdleRestoreDebugState());
@@ -2306,7 +2228,7 @@ export function PDFHighlighterAdapter({
     setHoveredAnnotationId(null);
     setSelectedAnnotationId(null);
     transientSelectionDismissRef.current = null;
-    setTransientSelection(null);
+    setPdfSelectionSession(createIdlePdfSelectionSession());
     clearScheduledPersist();
   }, [cachedPdfViewState?.anchor, clearScheduledPersist, fileId, updateCurrentAnchorDebug, updateRestoreDebugState]);
 
@@ -2315,13 +2237,18 @@ export function PDFHighlighterAdapter({
   }, [activeTool, clearTransientSelection]);
 
   useEffect(() => {
-    if (!transientSelection) {
+    if (!frozenPdfSelection) {
       return;
     }
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
-      if (target?.closest('.pdf-selection-color-picker')) {
+      if (
+        event.button === 2 ||
+        target?.closest('.pdf-selection-color-picker') ||
+        target?.closest('[role="menu"]') ||
+        target?.closest('[role="dialog"]')
+      ) {
         return;
       }
       clearTransientSelection({ nextPhase: 'cancelled' });
@@ -2329,7 +2256,7 @@ export function PDFHighlighterAdapter({
 
     document.addEventListener('pointerdown', handlePointerDown, true);
     return () => document.removeEventListener('pointerdown', handlePointerDown, true);
-  }, [clearTransientSelection, transientSelection]);
+  }, [clearTransientSelection, frozenPdfSelection]);
 
   const buildPersistSignature = useCallback((input: {
     scale: number;
@@ -2441,17 +2368,24 @@ export function PDFHighlighterAdapter({
       return;
     }
 
+    let scrollRafId = 0;
     const handleScroll = () => {
-      const snapshot = buildCurrentPdfEditorStateSnapshot();
-      if (snapshot) {
-        lastPersistedEditorStateRef.current = snapshot.editorState;
-      }
-      schedulePersistPdfViewState();
+      // Throttle to one snapshot per animation frame to avoid jank during fast scrolling
+      if (scrollRafId) return;
+      scrollRafId = window.requestAnimationFrame(() => {
+        scrollRafId = 0;
+        const snapshot = buildCurrentPdfEditorStateSnapshot();
+        if (snapshot) {
+          lastPersistedEditorStateRef.current = snapshot.editorState;
+        }
+        schedulePersistPdfViewState();
+      });
     };
 
     viewerContainer.addEventListener('scroll', handleScroll, { passive: true });
     return () => {
       viewerContainer.removeEventListener('scroll', handleScroll);
+      if (scrollRafId) window.cancelAnimationFrame(scrollRafId);
       if (lastPersistedEditorStateRef.current) {
         persistLastKnownPdfViewState();
       } else {
@@ -2482,7 +2416,7 @@ export function PDFHighlighterAdapter({
     const cachedPdfState = readCachedPdfViewState(cachedState);
     let frameId = 0;
     let cleanupRestore: (() => void) | undefined;
-    let attemptsLeft = 240;
+    let attemptsLeft = 60;
 
     const restore = () => {
       const viewerContainer = getViewerScrollContainer();
@@ -2639,28 +2573,36 @@ export function PDFHighlighterAdapter({
     return () => window.removeEventListener('keydown', handleSidebarShortcut);
   }, [isPaneActive, paneId]);
 
+  const handlePdfCopy = useCallback((clipboardData?: DataTransfer | null) => {
+    const selectedText = getActivePdfSelectionText();
+    if (!selectedText) {
+      return false;
+    }
+
+    if (clipboardData) {
+      clipboardData.setData("text/plain", selectedText);
+    } else {
+      void copyToClipboard(selectedText);
+    }
+
+    return true;
+  }, [getActivePdfSelectionText]);
+
   useEffect(() => {
     const handleCopy = (event: ClipboardEvent) => {
       if (!isPdfInteractionActive({ paneId, isPaneActive })) {
         return;
       }
 
-      const selectedText = getActivePdfSelectionText();
-      if (!selectedText) {
+      if (!handlePdfCopy(event.clipboardData)) {
         return;
-      }
-
-      if (event.clipboardData) {
-        event.clipboardData.setData("text/plain", selectedText);
-      } else {
-        void copyToClipboard(selectedText);
       }
       event.preventDefault();
     };
 
     document.addEventListener("copy", handleCopy, true);
     return () => document.removeEventListener("copy", handleCopy, true);
-  }, [getActivePdfSelectionText, isPaneActive, paneId]);
+  }, [handlePdfCopy, isPaneActive, paneId]);
 
   // Zoom limits
   const ZOOM_MIN = 0.25;
@@ -2677,7 +2619,7 @@ export function PDFHighlighterAdapter({
 
   useEffect(() => {
     let frameId = 0;
-    let attemptsLeft = 180;
+    let attemptsLeft = 30;
 
     const syncScrollContainer = () => {
       const nextContainer = resolveViewerScrollContainer();
@@ -2748,13 +2690,74 @@ export function PDFHighlighterAdapter({
   }, [getViewerScrollContainer, isDiagnosticsMode, paneId]);
 
   useEffect(() => {
+    let frameId = 0;
+    let attemptsLeft = 30;
+
+    const syncPageDimensions = () => {
+      const pages = getRenderedPdfPages();
+      if (pages.length === 0) {
+        attemptsLeft -= 1;
+        if (attemptsLeft > 0) {
+          frameId = window.requestAnimationFrame(syncPageDimensions);
+        }
+        return;
+      }
+
+      const nextDimensions: PdfPageDimensionsMap = new Map();
+      pages.forEach((page) => {
+        const pageNumber = Number(page.dataset.pageNumber ?? "");
+        const pageRect = page.getBoundingClientRect();
+        if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageRect.width <= 0 || pageRect.height <= 0) {
+          return;
+        }
+
+        nextDimensions.set(pageNumber, {
+          width: pageRect.width,
+          height: pageRect.height,
+        });
+      });
+
+      if (nextDimensions.size === 0) {
+        attemptsLeft -= 1;
+        if (attemptsLeft > 0) {
+          frameId = window.requestAnimationFrame(syncPageDimensions);
+        }
+        return;
+      }
+
+      setPdfPageDimensions((previous) => {
+        if (previous.size === nextDimensions.size) {
+          const isSame = [...nextDimensions.entries()].every(([pageNumber, dimensions]) => {
+            const previousDimensions = previous.get(pageNumber);
+            return previousDimensions &&
+              Math.abs(previousDimensions.width - dimensions.width) < 0.5 &&
+              Math.abs(previousDimensions.height - dimensions.height) < 0.5;
+          });
+          if (isSame) {
+            return previous;
+          }
+        }
+
+        return nextDimensions;
+      });
+    };
+
+    frameId = window.requestAnimationFrame(syncPageDimensions);
+    return () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [getRenderedPdfPages, pdfScaleValue, showSidebar]);
+
+  useEffect(() => {
     const pdfHighlighter = pdfHighlighterRef.current;
     if (!pdfHighlighter) {
       return;
     }
 
     let frameId = 0;
-    let attemptsLeft = 180;
+    let attemptsLeft = 60;
     let cleanupRestore: (() => void) | undefined;
 
     const shouldSyncScale = (() => {
@@ -2866,9 +2869,9 @@ export function PDFHighlighterAdapter({
     setZoomMode('manual');
   }, []);
 
-  useEffect(() => {
+  const commandBarState = useMemo<CommandBarState>(() => {
     const breadcrumbs = filePath.split("/").filter(Boolean).map((segment) => ({ label: segment }));
-    setCommandBarState(paneId, {
+    return {
       breadcrumbs,
       actions: [
         {
@@ -2879,6 +2882,15 @@ export function PDFHighlighterAdapter({
           priority: 5,
           group: "utility",
           onTrigger: () => setShowSidebar((value) => !value),
+        },
+        {
+          id: "tool-select",
+          label: t("pdf.command.select"),
+          icon: "mouse-pointer-2",
+          active: activeTool === "select",
+          priority: 9,
+          group: "primary",
+          onTrigger: () => setActiveTool("select"),
         },
         {
           id: "tool-highlight",
@@ -2903,8 +2915,8 @@ export function PDFHighlighterAdapter({
           label: t("pdf.command.note"),
           icon: "sticky-note",
           active: activeTool === "note",
-          priority: 12,
-          group: "primary",
+          priority: 20,
+          group: "secondary",
           onTrigger: () => setActiveTool((value) => (value === "note" ? "select" : "note")),
         },
         {
@@ -2930,8 +2942,8 @@ export function PDFHighlighterAdapter({
           label: t("pdf.command.draw"),
           icon: "pencil",
           active: activeTool === "ink",
-          priority: 15,
-          group: "primary",
+          priority: 21,
+          group: "secondary",
           onTrigger: () => setActiveTool((value) => (value === "ink" ? "select" : "ink")),
         },
         {
@@ -2981,74 +2993,94 @@ export function PDFHighlighterAdapter({
           },
         },
       ],
-    });
-
-    return () => clearCommandBarState(paneId);
+    };
   }, [
-    applyZoomMode,
-    annotations,
-    clearCommandBarState,
-    content,
-    filePath,
-    fileName,
-    paneId,
-    setCommandBarState,
-    t,
     activeTool,
+    annotations,
+    applyZoomMode,
+    content,
+    fileName,
+    filePath,
     showSidebar,
+    t,
     zoomIn,
     zoomMode,
     zoomOut,
   ]);
+
+  usePaneCommandBar({
+    paneId,
+    state: commandBarState,
+  });
 
   const annotationById = useMemo(() => {
     return new Map(annotations.map((annotation) => [annotation.id, annotation] as const));
   }, [annotations]);
 
   const transientSelectionPages = useMemo(() => (
-    transientSelection
-      ? Array.from(new Set(transientSelection.rects.map((rect) => rect.pageNumber))).sort((left, right) => left - right)
+    frozenPdfSelection
+      ? frozenPdfSelection.pageNumbers
       : []
-  ), [transientSelection]);
+  ), [frozenPdfSelection]);
+  const transientSelectionStyleType = activeTool === "underline" ? "underline" : "highlight";
+  const transientSelectionColor = activeColor;
 
-  // Handle Ctrl+Wheel zoom only inside the current pane
+  // Handle Ctrl+Wheel zoom only inside the current pane.
+  // CRITICAL for scroll performance: we only register a non-passive wheel handler
+  // while Ctrl/Meta is held. When no modifier is pressed, the browser can scroll
+  // natively without waiting for JS — this eliminates scroll jank.
   useEffect(() => {
-    const viewerScope = scrollContainerRef.current;
-    if (!viewerScope) {
-      return;
-    }
-
     const handleWheelZoom = (e: WheelEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) {
-        return;
-      }
-
+      const viewerScope = scrollContainerRef.current;
       const target = e.target instanceof Node ? e.target : null;
-      if (!target || !viewerScope.contains(target)) {
+      if (!viewerScope || !target || !viewerScope.contains(target)) {
         return;
       }
-
       e.preventDefault();
       const delta = getPdfWheelZoomDelta(e.deltaY, ZOOM_STEP);
       setScale((s) => clampPdfScale(s + delta, ZOOM_MIN, ZOOM_MAX));
       setZoomMode('manual');
     };
 
-    viewerScope.addEventListener('wheel', handleWheelZoom, { passive: false });
-    
+    let wheelAttached = false;
+
+    const attachWheel = () => {
+      if (!wheelAttached) {
+        wheelAttached = true;
+        document.addEventListener('wheel', handleWheelZoom, { passive: false });
+      }
+    };
+
+    const detachWheel = () => {
+      if (wheelAttached) {
+        wheelAttached = false;
+        document.removeEventListener('wheel', handleWheelZoom);
+      }
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Control' || e.key === 'Meta') attachWheel();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Control' || e.key === 'Meta') detachWheel();
+    };
+    const onBlur = () => detachWheel();
+
+    document.addEventListener('keydown', onKeyDown, { passive: true });
+    document.addEventListener('keyup', onKeyUp, { passive: true });
+    window.addEventListener('blur', onBlur, { passive: true });
+
     return () => {
-      viewerScope.removeEventListener('wheel', handleWheelZoom);
+      detachWheel();
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
     };
   }, []);
 
   // Handle keyboard shortcuts for zoom and tools
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const selectedText = getActivePdfSelectionText();
-      const selectedContent = selectedAnnotationId
-        ? annotationById.get(selectedAnnotationId)?.content
-        : undefined;
-
       if (!isPdfInteractionActive({ paneId, isPaneActive })) {
         return;
       }
@@ -3074,12 +3106,12 @@ export function PDFHighlighterAdapter({
           if (inkStore.canRedo()) {
             inkStore.redo();
           }
-        } else if (e.key.toLowerCase() === 'c' && selectedText) {
+        } else if (e.key.toLowerCase() === 'c') {
+          const copied = handlePdfCopy();
+          if (!copied) {
+            return;
+          }
           e.preventDefault();
-          void copyToClipboard(selectedText);
-        } else if (e.key.toLowerCase() === 'c' && selectedContent) {
-          e.preventDefault();
-          void copyToClipboard(selectedContent);
         }
       }
 
@@ -3127,26 +3159,34 @@ export function PDFHighlighterAdapter({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [annotationById, getActivePdfSelectionText, isPaneActive, paneId, resetZoom, selectedAnnotationId, zoomIn, zoomOut]);
+  }, [handlePdfCopy, isPaneActive, paneId, resetZoom, zoomIn, zoomOut]);
 
   const handlePdfSelectionFinished = useCallback((
     position: unknown,
     rawContent: PdfHighlightContent,
     hideTipAndSelection: () => void,
   ) => {
-    const normalizedPosition = position as ViewportPosition;
+    const scaledPosition = position as PdfHighlighterScaledPosition;
     const nativeSelectionRange = getNativePdfSelectionRange();
-    const rawSelectionText = normalizePdfSelectionText(rawContent.text);
-    const nativeSelectionText = normalizePdfSelectionText(getNativePdfSelectionText());
+    const rawSelectionText = (rawContent.text ?? "").replace(/\s+/g, " ").trim();
+    const nativeSelectionText = (getNativePdfSelectionText() ?? "").replace(/\s+/g, " ").trim();
     const nativeTransientRects = nativeSelectionRange
       ? buildPdfTransientSelectionRectsFromRange(nativeSelectionRange, containerRef.current)
       : undefined;
-    const useNativeSelectionSnapshot = shouldUseNativePdfSelectionSnapshot({
-      rawText: rawSelectionText,
-      nativeText: nativeSelectionText,
-      hasNativeRange: Boolean(nativeSelectionRange),
-      nativeRects: nativeTransientRects,
-    });
+    const renderedPages = getRenderedPdfPages().map((pageElement) => {
+      const pageRect = pageElement.getBoundingClientRect();
+      return {
+        pageNumber: Number(pageElement.dataset.pageNumber ?? ""),
+        width: pageRect.width,
+        height: pageRect.height,
+      };
+    }).filter((page) => Number.isInteger(page.pageNumber) && page.pageNumber > 0 && page.width > 0 && page.height > 0);
+    const useNativeSelectionSnapshot = Boolean(
+      nativeSelectionRange &&
+      nativeSelectionText &&
+      nativeTransientRects?.length &&
+      (!rawSelectionText || rawSelectionText === nativeSelectionText)
+    );
     const selectionText = useNativeSelectionSnapshot
       ? nativeSelectionText
       : rawSelectionText || nativeSelectionText;
@@ -3163,19 +3203,25 @@ export function PDFHighlighterAdapter({
           : 'select';
     const signature = buildPdfSelectionSignature({
       tool: normalizedTool,
-      position: position as Parameters<typeof buildPdfSelectionSignature>[0]["position"],
+      position: scaledPosition,
       content: normalizedContent,
     });
-    const selectionToken = lastSelectionSessionRef.current?.token ?? 0;
+    const selectionToken = pdfSelectionSessionRef.current.token;
     const isAreaSelection = Boolean(rawContent.image && !selectionText.trim());
+    const overlayRects = useNativeSelectionSnapshot
+      ? nativeTransientRects ?? []
+      : projectPdfScaledSelectionToViewportRects({
+          scaledPosition,
+          pages: renderedPages,
+        });
 
-    if (!isAreaSelection && !selectionText.trim()) {
+    if (!isAreaSelection && (!selectionText.trim() || overlayRects.length === 0)) {
       hideTipAndSelection();
       clearTransientSelection({ nextPhase: 'cancelled' });
       return null;
     }
 
-    if (isDuplicatePdfSelection(lastSelectionSessionRef.current, {
+    if (isDuplicatePdfSelection(pdfSelectionSessionRef.current, {
       signature,
       token: selectionToken,
     })) {
@@ -3183,36 +3229,30 @@ export function PDFHighlighterAdapter({
       return null;
     }
 
-    lastSelectionSessionRef.current = updatePdfSelectionSession(lastSelectionSessionRef.current, {
-      phase: 'native_settled',
-      signature,
-      token: selectionToken,
-    });
-
-    const selectionStyleType = activeTool === 'underline' ? 'underline' : 'highlight';
-    const nextTransientSelection = buildPdfTransientSelection({
-      position: normalizedPosition,
-      text: selectionText,
-      signature,
-      color: activeTool === 'highlight' || activeTool === 'underline' ? activeColor : '#3B82F6',
-      styleType: selectionStyleType,
-      nativeRects: useNativeSelectionSnapshot ? nativeTransientRects : undefined,
-    });
+    const nextSnapshot = !isAreaSelection
+      ? createPdfSelectionSnapshot({
+          text: selectionText,
+          scaledPosition,
+          overlayRects,
+          sourceTrust: useNativeSelectionSnapshot ? "native" : "library",
+          signature,
+        })
+      : null;
     const newHighlight: NewHighlight = {
-      position: position as NewHighlight["position"],
+      position: scaledPosition,
       content: normalizedContent,
       comment: { text: '', emoji: '' },
     };
 
     if (activeTool === 'area' || isAreaSelection) {
       dismissTransientSelectionTip();
-      setTransientSelection(null);
+      commitPdfSelectionSession(updatePdfSelectionSession(pdfSelectionSessionRef.current, {
+        phase: 'committed',
+        snapshot: null,
+        token: selectionToken,
+      }));
       const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user', 'area');
       addAnnotation(annotationData);
-      lastSelectionSessionRef.current = updatePdfSelectionSession(lastSelectionSessionRef.current, {
-        phase: 'committed',
-        signature,
-      });
       clearNativePdfSelectionLater();
       hideTipAndSelection();
       return null;
@@ -3220,23 +3260,28 @@ export function PDFHighlighterAdapter({
 
     if (activeTool === 'highlight' || activeTool === 'underline') {
       const styleType = activeTool === 'underline' ? 'underline' : 'highlight';
+      commitPdfSelectionSession(updatePdfSelectionSession(pdfSelectionSessionRef.current, {
+        phase: 'committed',
+        snapshot: null,
+        token: selectionToken,
+      }));
       const annotationData = highlightToAnnotationData(newHighlight, activeColor, 'user', styleType);
       addAnnotation(annotationData);
-      lastSelectionSessionRef.current = updatePdfSelectionSession(lastSelectionSessionRef.current, {
-        phase: 'committed',
-        signature,
-      });
       clearNativePdfSelectionLater();
       hideTipAndSelection();
       return null;
     }
 
-    if (nextTransientSelection) {
-      activateTransientSelection(nextTransientSelection, hideTipAndSelection);
-      clearNativePdfSelectionLater(2);
+    if (!nextSnapshot) {
+      hideTipAndSelection();
+      clearTransientSelection({ nextPhase: 'cancelled' });
+      return null;
     }
 
-      return (
+    activateTransientSelection(nextSnapshot, hideTipAndSelection);
+    clearNativePdfSelectionLater(2);
+
+    return (
       <ColorPicker
         selectedText={selectionText}
         onColorSelect={(color) => {
@@ -3254,9 +3299,11 @@ export function PDFHighlighterAdapter({
     addAnnotation,
     clearNativePdfSelectionLater,
     clearTransientSelection,
+    commitPdfSelectionSession,
     dismissTransientSelectionTip,
     getNativePdfSelectionRange,
     getNativePdfSelectionText,
+    getRenderedPdfPages,
   ]);
 
   // Convert annotations to highlights
@@ -3683,13 +3730,311 @@ export function PDFHighlighterAdapter({
     console.error("PDF item workspace error:", pdfItemError);
   }
 
+  const renderPdfViewport = (fillHeight: boolean) => (
+    <div
+      ref={scrollContainerRef}
+      className={`relative flex-1 min-h-0 min-w-0 overflow-auto bg-muted/30${fillHeight ? " h-full" : ""}`}
+      data-testid={`pdf-scroll-container-${paneId}`}
+      onPointerDownCapture={beginNativePdfSelectionInteraction}
+      onClick={activeTool === 'note' || activeTool === 'text' ? handlePdfClick : undefined}
+      onMouseDown={activeTool === 'ink' ? handleInkMouseDown : undefined}
+      onMouseMove={activeTool === 'ink' || isDrawingStroke ? handleInkMouseMove : undefined}
+      onMouseUp={activeTool === 'ink' || isDrawingStroke ? handleInkMouseUp : undefined}
+      onMouseLeave={activeTool === 'ink' || isDrawingStroke ? handleInkMouseUp : undefined}
+      style={{
+        cursor: activeTool === 'note'
+          ? 'crosshair'
+          : activeTool === 'area'
+            ? 'crosshair'
+            : activeTool === 'ink'
+              ? 'crosshair'
+              : activeTool === 'text'
+                ? 'text'
+                : 'default',
+      }}
+    >
+      {pdfUrl ? (
+        <PdfLoader
+          url={pdfUrl}
+          beforeLoad={
+            <div className="flex items-center justify-center gap-2 py-8">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span className="text-sm text-muted-foreground">{t("pdf.loading")}</span>
+            </div>
+          }
+        >
+          {(pdfDocument) => (
+            <PdfHighlighter
+              ref={pdfHighlighterRef}
+              pdfDocument={pdfDocument}
+              enableAreaSelection={(event) => event.altKey || activeTool === 'area'}
+              onSelectionFinished={handlePdfSelectionFinished}
+              highlightTransform={(
+                highlight,
+                index,
+                setTip,
+                hideTip,
+                viewportToScaled,
+                screenshot,
+                isScrolledTo
+              ) => {
+                const annotation = annotationById.get(highlight.id);
+                const isPin = annotation && isPinAnnotation(annotation);
+                const isHighlighted = highlightedId === highlight.id;
+                const isActive = hoveredAnnotationId === highlight.id || selectedAnnotationId === highlight.id;
+
+                if (
+                  annotation?.style.type === 'area' &&
+                  !annotation.preview &&
+                  !pendingAreaPreviewBackfillRef.current.has(annotation.id)
+                ) {
+                  pendingAreaPreviewBackfillRef.current.add(annotation.id);
+                  scheduleTimeout(() => {
+                    const preview = buildPdfAreaPreview({
+                      dataUrl: highlight.content.image || screenshot(highlight.position.boundingRect),
+                      width: highlight.position.boundingRect.width || 0,
+                      height: highlight.position.boundingRect.height || 0,
+                    });
+
+                    if (preview) {
+                      updateAnnotation(annotation.id, { preview });
+                    }
+                    pendingAreaPreviewBackfillRef.current.delete(annotation.id);
+                  }, 0);
+                }
+
+                const handleChangeColor = (color: string) => {
+                  if (annotation) {
+                    updateAnnotation(highlight.id, { style: { color } });
+                  }
+                  hideTip();
+                };
+
+                const handleConvertStyle = () => {
+                  if (annotation) {
+                    const newType = annotation.style.type === 'highlight' ? 'underline' : 'highlight';
+                    updateAnnotation(highlight.id, { style: { type: newType } });
+                    hideTip();
+                  }
+                };
+
+                if (isPin) {
+                  const position = highlight.position;
+                  const pinComment = annotation?.comment || highlight.comment?.text;
+                  return (
+                    <div
+                      key={highlight.id}
+                      className={`absolute cursor-pointer transition-transform ${
+                        isHighlighted ? 'animate-pulse scale-125' : isActive ? 'scale-110' : ''
+                      }`}
+                      style={{
+                        left: position.boundingRect.left,
+                        top: position.boundingRect.top,
+                        transform: 'translate(-50%, -100%)',
+                      }}
+                      onClick={() => {
+                        setSelectedAnnotationId(highlight.id);
+                        setHighlightedId(highlight.id);
+                        setTip(highlight, () => (
+                          <HighlightPopupContent
+                            comment={highlight.comment}
+                            highlightText={highlight.content?.text}
+                            currentColor={annotation?.style.color}
+                            styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
+                            onDelete={() => {
+                              deleteAnnotation(highlight.id);
+                              hideTip();
+                            }}
+                            onAddComment={(comment) => {
+                              updateAnnotation(highlight.id, { comment });
+                              hideTip();
+                            }}
+                            onChangeColor={handleChangeColor}
+                          />
+                        ));
+                      }}
+                    >
+                      <div className="flex flex-col items-center">
+                        <StickyNote
+                          className="h-5 w-5 text-amber-500 drop-shadow-md"
+                          fill="currentColor"
+                        />
+                        {pinComment && (
+                          <div
+                            className="mt-1 max-w-[150px] whitespace-pre-wrap break-words rounded border border-amber-300 bg-amber-100 px-2 py-1 text-xs text-amber-900 shadow-sm dark:border-amber-700 dark:bg-amber-900/80 dark:text-amber-100"
+                            style={{ transform: 'translateX(50%)' }}
+                          >
+                            {pinComment}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
+                const highlightColor = annotation?.style.color || '#FFD400';
+                const highlightStyleType = (annotation?.style.type || 'highlight') as 'highlight' | 'underline' | 'area';
+
+                return (
+                  <Popup
+                    popupContent={
+                      <HighlightPopupContent
+                        comment={highlight.comment}
+                        highlightText={highlight.content?.text}
+                        currentColor={annotation?.style.color}
+                        styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
+                        onDelete={() => {
+                          deleteAnnotation(highlight.id);
+                          hideTip();
+                        }}
+                        onAddComment={(comment) => {
+                          updateAnnotation(highlight.id, { comment });
+                          hideTip();
+                        }}
+                        onChangeColor={handleChangeColor}
+                        onConvertToUnderline={handleConvertStyle}
+                      />
+                    }
+                    onMouseOver={(popupContent) => setTip(highlight, () => popupContent)}
+                    onMouseOut={() => {
+                      setHoveredAnnotationId(null);
+                      hideTip();
+                    }}
+                    key={highlight.id}
+                  >
+                    <div
+                      onMouseEnter={() => setHoveredAnnotationId(highlight.id)}
+                      onMouseLeave={() => setHoveredAnnotationId(null)}
+                      onClick={() => {
+                        setSelectedAnnotationId(highlight.id);
+                        setHighlightedId(highlight.id);
+                        setTip(highlight, () => (
+                          <HighlightPopupContent
+                            comment={highlight.comment}
+                            highlightText={highlight.content?.text}
+                            currentColor={annotation?.style.color}
+                            styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
+                            onDelete={() => {
+                              deleteAnnotation(highlight.id);
+                              hideTip();
+                            }}
+                            onAddComment={(comment) => {
+                              updateAnnotation(highlight.id, { comment });
+                              hideTip();
+                            }}
+                            onChangeColor={handleChangeColor}
+                            onConvertToUnderline={handleConvertStyle}
+                          />
+                        ));
+                      }}
+                    >
+                      <CustomHighlight
+                        isScrolledTo={isScrolledTo || isHighlighted || isActive}
+                        position={highlight.position}
+                        color={highlightColor}
+                        styleType={highlightStyleType}
+                        isActive={isActive || isHighlighted}
+                      />
+                    </div>
+                  </Popup>
+                );
+              }}
+              highlights={highlights}
+              pdfScaleValue={pdfScaleValue}
+              onScrollChange={() => {}}
+              scrollRef={() => {}}
+            />
+          )}
+        </PdfLoader>
+      ) : (
+        <div className="flex items-center justify-center gap-2 py-8">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span className="text-sm text-muted-foreground">{t("pdf.loading")}</span>
+        </div>
+      )}
+
+      {frozenPdfSelection && transientSelectionPages.map((page) => (
+        <PdfTransientSelectionPortal
+          key={`${frozenPdfSelection.signature}-${page}`}
+          selection={frozenPdfSelection}
+          paneId={paneId}
+          page={page}
+          paneRootRef={containerRef}
+          color={transientSelectionColor}
+          styleType={transientSelectionStyleType}
+        />
+      ))}
+
+      {inkAnnotations.map((ann) => {
+        if (ann.target.type !== 'pdf') return null;
+        const target = ann.target as PdfTarget;
+        return (
+          <InkAnnotationPortal
+            key={ann.id}
+            annotation={ann}
+            page={target.page}
+            scale={scale}
+            paneRootRef={containerRef}
+          />
+        );
+      })}
+
+      {textAnnotations.map((ann) => {
+        if (ann.target.type !== 'pdf') return null;
+        const target = ann.target as PdfTarget;
+        return (
+          <TextAnnotationPortal
+            key={ann.id}
+            annotation={ann}
+            page={target.page}
+            scale={scale}
+            paneRootRef={containerRef}
+            isHighlighted={highlightedId === ann.id || hoveredAnnotationId === ann.id || selectedAnnotationId === ann.id}
+            onClick={() => {
+              const pageElement = findPdfPageElementInScope(containerRef.current, target.page);
+              if (pageElement && target.rects.length > 0) {
+                const pageRect = pageElement.getBoundingClientRect();
+                const rect = target.rects[0];
+                const x = pageRect.left + ((rect.x1 + rect.x2) / 2 * pageRect.width);
+                const y = pageRect.top + (rect.y1 * pageRect.height);
+
+                setEditingTextAnnotation({
+                  annotation: ann,
+                  position: { x, y },
+                });
+                setSelectedAnnotationId(ann.id);
+              }
+            }}
+          />
+        );
+      })}
+
+      {currentInkPage !== null && currentInkPath.length > 0 && (
+        <CurrentInkPathPortal
+          path={currentInkPath}
+          page={currentInkPage}
+          color={activeColor}
+          scale={scale}
+          paneRootRef={containerRef}
+        />
+      )}
+
+      <InkSessionIndicator
+        isDrawing={isInkBuffering}
+        strokeCount={inkStrokeCount}
+        onFinalize={finalizeInkNow}
+        onCancel={cancelInkDrawing}
+      />
+    </div>
+  );
+
   return (
     <div
       ref={containerRef}
       className="lattice-pdf-viewer relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
       data-file-id={fileId}
       data-pane-id={paneId}
-      data-transient-selection-active={transientSelection ? "true" : "false"}
+      data-transient-selection-active={frozenPdfSelection ? "true" : "false"}
       data-testid={`pdf-pane-${paneId}`}
     >
       <SelectionContextMenu
@@ -3745,6 +4090,11 @@ export function PDFHighlighterAdapter({
           <span data-testid={`pdf-restore-actual-page-${paneId}`}>{restoreDebugState.actualPage ?? 0}</span>
           <span data-testid={`pdf-restore-delta-top-${paneId}`}>{restoreDebugState.deltaTopRatio ?? -1}</span>
           <span data-testid={`pdf-restore-delta-left-${paneId}`}>{restoreDebugState.deltaLeftRatio ?? -1}</span>
+          <span data-testid={`pdf-selection-phase-${paneId}`}>{pdfSelectionSession.phase}</span>
+          <span data-testid={`pdf-selection-source-${paneId}`}>{frozenPdfSelection?.sourceTrust ?? "none"}</span>
+          <span data-testid={`pdf-selection-preview-${paneId}`}>{frozenPdfSelection?.text ?? ""}</span>
+          <span data-testid={`pdf-selection-page-count-${paneId}`}>{frozenPdfSelection?.pageNumbers.length ?? 0}</span>
+          <span data-testid={`pdf-copy-payload-${paneId}`}>{getActivePdfSelectionText()}</span>
         </div>
       ) : null}
 
@@ -3814,611 +4164,11 @@ export function PDFHighlighterAdapter({
             </ResizablePanel>
             <ResizableHandle withHandle index={0} />
             <ResizablePanel index={1} defaultSize={100 - sidebarSize} minSize={40} className="min-h-0 overflow-hidden">
-              <div
-                ref={scrollContainerRef}
-                className="relative flex-1 min-h-0 min-w-0 overflow-auto bg-muted/30 h-full"
-                data-testid={`pdf-scroll-container-${paneId}`}
-                onPointerDownCapture={beginNativePdfSelectionInteraction}
-                onClick={activeTool === 'note' || activeTool === 'text' ? handlePdfClick : undefined}
-                onMouseDown={activeTool === 'ink' ? handleInkMouseDown : undefined}
-                onMouseMove={activeTool === 'ink' || isDrawingStroke ? handleInkMouseMove : undefined}
-                onMouseUp={activeTool === 'ink' || isDrawingStroke ? handleInkMouseUp : undefined}
-                onMouseLeave={activeTool === 'ink' || isDrawingStroke ? handleInkMouseUp : undefined}
-                style={{
-                  cursor: activeTool === 'note' ? 'crosshair' :
-                          activeTool === 'area' ? 'crosshair' :
-                          activeTool === 'ink' ? 'crosshair' :
-                          activeTool === 'text' ? 'text' : 'default'
-                }}
-              >
-        {pdfUrl ? (
-          <PdfLoader
-            url={pdfUrl}
-            beforeLoad={
-              <div className="flex items-center justify-center gap-2 py-8">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm text-muted-foreground">{t("pdf.loading")}</span>
-              </div>
-            }
-          >
-            {(pdfDocument) => (
-              <PdfHighlighter
-                ref={pdfHighlighterRef}
-                pdfDocument={pdfDocument}
-                enableAreaSelection={(event) => event.altKey || activeTool === 'area'}
-                onSelectionFinished={handlePdfSelectionFinished}
-                highlightTransform={(
-                  highlight,
-                  index,
-                  setTip,
-                  hideTip,
-                  viewportToScaled,
-                  screenshot,
-                  isScrolledTo
-                ) => {
-                  const annotation = annotationById.get(highlight.id);
-                  const isPin = annotation && isPinAnnotation(annotation);
-                  const isHighlighted = highlightedId === highlight.id;
-                  const isActive = hoveredAnnotationId === highlight.id || selectedAnnotationId === highlight.id;
-
-                  if (
-                    annotation?.style.type === 'area' &&
-                    !annotation.preview &&
-                    !pendingAreaPreviewBackfillRef.current.has(annotation.id)
-                  ) {
-                    pendingAreaPreviewBackfillRef.current.add(annotation.id);
-                    scheduleTimeout(() => {
-                      const preview = buildPdfAreaPreview({
-                        dataUrl: highlight.content.image || screenshot(highlight.position.boundingRect),
-                        width: highlight.position.boundingRect.width || 0,
-                        height: highlight.position.boundingRect.height || 0,
-                      });
-
-                      if (preview) {
-                        updateAnnotation(annotation.id, { preview });
-                      }
-                      pendingAreaPreviewBackfillRef.current.delete(annotation.id);
-                    }, 0);
-                  }
-
-                  // Handler for changing color - only pass the color field
-                  const handleChangeColor = (color: string) => {
-                    if (annotation) {
-                      updateAnnotation(highlight.id, { style: { color } });
-                    }
-                    hideTip();
-                  };
-
-                  // Handler for converting highlight to underline or vice versa
-                  const handleConvertStyle = () => {
-                    if (annotation) {
-                      const newType = annotation.style.type === 'highlight' ? 'underline' : 'highlight';
-                      updateAnnotation(highlight.id, { style: { type: newType } });
-                      hideTip();
-                    }
-                  };
-
-                  if (isPin) {
-                    const position = highlight.position;
-                    const pinComment = annotation?.comment || highlight.comment?.text;
-                    // Pin position uses viewport coordinates (left, top)
-                    return (
-                      <div
-                        key={highlight.id}
-                        className={`absolute cursor-pointer transition-transform ${
-                          isHighlighted ? 'animate-pulse scale-125' : isActive ? 'scale-110' : ''
-                        }`}
-                        style={{
-                          left: position.boundingRect.left,
-                          top: position.boundingRect.top,
-                          // Offset to center the pin icon
-                          transform: 'translate(-50%, -100%)',
-                        }}
-                        onClick={() => {
-                          setSelectedAnnotationId(highlight.id);
-                          setHighlightedId(highlight.id);
-                          setTip(highlight, () => (
-                            <HighlightPopupContent
-                              comment={highlight.comment}
-                              highlightText={highlight.content?.text}
-                              currentColor={annotation?.style.color}
-                              styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
-                              onDelete={() => {
-                                deleteAnnotation(highlight.id);
-                                hideTip();
-                              }}
-                              onAddComment={(comment) => {
-                                updateAnnotation(highlight.id, { comment });
-                                hideTip();
-                              }}
-                              onChangeColor={handleChangeColor}
-                            />
-                          ));
-                        }}
-                      >
-                        <div className="flex flex-col items-center">
-                          <StickyNote
-                            className="h-5 w-5 text-amber-500 drop-shadow-md"
-                            fill="currentColor"
-                          />
-                          {/* Display pin comment text below the icon */}
-                          {pinComment && (
-                            <div 
-                              className="mt-1 px-2 py-1 bg-amber-100 dark:bg-amber-900/80 border border-amber-300 dark:border-amber-700 rounded shadow-sm text-xs text-amber-900 dark:text-amber-100 max-w-[150px] whitespace-pre-wrap break-words"
-                              style={{ transform: 'translateX(50%)' }}
-                            >
-                              {pinComment}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  // Get the style type and color from annotation
-                  const highlightColor = annotation?.style.color || '#FFD400';
-                  const highlightStyleType = (annotation?.style.type || 'highlight') as 'highlight' | 'underline' | 'area';
-
-                  return (
-                    <Popup
-                      popupContent={
-                        <HighlightPopupContent
-                          comment={highlight.comment}
-                          highlightText={highlight.content?.text}
-                          currentColor={annotation?.style.color}
-                          styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
-                          onDelete={() => {
-                            deleteAnnotation(highlight.id);
-                            hideTip();
-                          }}
-                          onAddComment={(comment) => {
-                            updateAnnotation(highlight.id, { comment });
-                            hideTip();
-                          }}
-                          onChangeColor={handleChangeColor}
-                          onConvertToUnderline={handleConvertStyle}
-                        />
-                      }
-                      onMouseOver={(popupContent) => setTip(highlight, () => popupContent)}
-                      onMouseOut={() => {
-                        setHoveredAnnotationId(null);
-                        hideTip();
-                      }}
-                      key={highlight.id}
-                    >
-                      <div
-                        onMouseEnter={() => setHoveredAnnotationId(highlight.id)}
-                        onMouseLeave={() => setHoveredAnnotationId(null)}
-                        onClick={() => {
-                          setSelectedAnnotationId(highlight.id);
-                          setHighlightedId(highlight.id);
-                          setTip(highlight, () => (
-                            <HighlightPopupContent
-                              comment={highlight.comment}
-                              highlightText={highlight.content?.text}
-                              currentColor={annotation?.style.color}
-                              styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
-                              onDelete={() => {
-                                deleteAnnotation(highlight.id);
-                                hideTip();
-                              }}
-                              onAddComment={(comment) => {
-                                updateAnnotation(highlight.id, { comment });
-                                hideTip();
-                              }}
-                              onChangeColor={handleChangeColor}
-                              onConvertToUnderline={handleConvertStyle}
-                            />
-                          ));
-                        }}
-                      >
-                        <CustomHighlight
-                          isScrolledTo={isScrolledTo || isHighlighted || isActive}
-                          position={highlight.position}
-                          color={highlightColor}
-                          styleType={highlightStyleType}
-                          isActive={isActive || isHighlighted}
-                        />
-                      </div>
-                    </Popup>
-                  );
-                }}
-                highlights={highlights}
-                pdfScaleValue={pdfScaleValue}
-                onScrollChange={() => {}}
-                scrollRef={() => {}}
-              />
-            )}
-          </PdfLoader>
-        ) : (
-          <div className="flex items-center justify-center gap-2 py-8">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="text-sm text-muted-foreground">{t("pdf.loading")}</span>
-          </div>
-        )}
-
-                {transientSelection && transientSelectionPages.map((page) => (
-                  <PdfTransientSelectionPortal
-                    key={`${transientSelection.signature}-${page}`}
-                    selection={transientSelection}
-                    paneId={paneId}
-                    page={page}
-                    paneRootRef={containerRef}
-                  />
-                ))}
-
-                {/* Ink annotations - rendered using portals to each page */}
-                {inkAnnotations.map(ann => {
-                  if (ann.target.type !== 'pdf') return null;
-                  const target = ann.target as PdfTarget;
-                  return (
-                    <InkAnnotationPortal
-                      key={ann.id}
-                      annotation={ann}
-                      page={target.page}
-                      scale={scale}
-                      paneRootRef={containerRef}
-                    />
-                  );
-                })}
-
-                {/* Text annotations - rendered using portals to each page */}
-                {textAnnotations.map(ann => {
-                  if (ann.target.type !== 'pdf') return null;
-                  const target = ann.target as PdfTarget;
-                  return (
-                    <TextAnnotationPortal
-                      key={ann.id}
-                      annotation={ann}
-                      page={target.page}
-                      scale={scale}
-                      paneRootRef={containerRef}
-                      isHighlighted={highlightedId === ann.id || hoveredAnnotationId === ann.id || selectedAnnotationId === ann.id}
-                      onClick={() => {
-                        // Open text annotation editor
-                        const pageElement = findPdfPageElementInScope(containerRef.current, target.page);
-                        if (pageElement && target.rects.length > 0) {
-                          const pageRect = pageElement.getBoundingClientRect();
-                          const rect = target.rects[0];
-                          
-                          // Calculate position for editor popup (center of annotation)
-                          const x = pageRect.left + ((rect.x1 + rect.x2) / 2 * pageRect.width);
-                          const y = pageRect.top + (rect.y1 * pageRect.height);
-                          
-                          setEditingTextAnnotation({
-                            annotation: ann,
-                            position: { x, y }
-                          });
-                          setSelectedAnnotationId(ann.id);
-                        }
-                      }}
-                    />
-                  );
-                })}
-                
-                {/* Current drawing path */}
-                {currentInkPage !== null && currentInkPath.length > 0 && (
-                  <CurrentInkPathPortal
-                    path={currentInkPath}
-                    page={currentInkPage}
-                    color={activeColor}
-                    scale={scale}
-                    paneRootRef={containerRef}
-                  />
-                )}
-
-                {/* Ink session indicator - shows when strokes are being buffered */}
-                <InkSessionIndicator
-                  isDrawing={isInkBuffering}
-                  strokeCount={inkStrokeCount}
-                  onFinalize={finalizeInkNow}
-                  onCancel={cancelInkDrawing}
-                />
-              </div>
+              {renderPdfViewport(true)}
             </ResizablePanel>
           </ResizablePanelGroup>
         ) : (
-          <div
-            ref={scrollContainerRef}
-            className="relative flex-1 min-h-0 min-w-0 overflow-auto bg-muted/30"
-            data-testid={`pdf-scroll-container-${paneId}`}
-            onPointerDownCapture={beginNativePdfSelectionInteraction}
-            onClick={activeTool === 'note' || activeTool === 'text' ? handlePdfClick : undefined}
-            onMouseDown={activeTool === 'ink' ? handleInkMouseDown : undefined}
-            onMouseMove={activeTool === 'ink' || isDrawingStroke ? handleInkMouseMove : undefined}
-            onMouseUp={activeTool === 'ink' || isDrawingStroke ? handleInkMouseUp : undefined}
-            onMouseLeave={activeTool === 'ink' || isDrawingStroke ? handleInkMouseUp : undefined}
-            style={{
-              cursor: activeTool === 'note' ? 'crosshair' :
-                      activeTool === 'area' ? 'crosshair' :
-                      activeTool === 'ink' ? 'crosshair' :
-                      activeTool === 'text' ? 'text' : 'default'
-            }}
-          >
-        {pdfUrl ? (
-          <PdfLoader
-            url={pdfUrl}
-            beforeLoad={
-              <div className="flex items-center justify-center gap-2 py-8">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm text-muted-foreground">{t("pdf.loading")}</span>
-              </div>
-            }
-          >
-            {(pdfDocument) => (
-              <PdfHighlighter
-                ref={pdfHighlighterRef}
-                pdfDocument={pdfDocument}
-                enableAreaSelection={(event) => event.altKey || activeTool === 'area'}
-                onSelectionFinished={handlePdfSelectionFinished}
-                highlightTransform={(
-                  highlight,
-                  index,
-                  setTip,
-                  hideTip,
-                  viewportToScaled,
-                  screenshot,
-                  isScrolledTo
-                ) => {
-                  const annotation = annotationById.get(highlight.id);
-                  const isPin = annotation && isPinAnnotation(annotation);
-                  const isHighlighted = highlightedId === highlight.id;
-                  const isActive = hoveredAnnotationId === highlight.id || selectedAnnotationId === highlight.id;
-
-                  if (
-                    annotation?.style.type === 'area' &&
-                    !annotation.preview &&
-                    !pendingAreaPreviewBackfillRef.current.has(annotation.id)
-                  ) {
-                    pendingAreaPreviewBackfillRef.current.add(annotation.id);
-                    scheduleTimeout(() => {
-                      const preview = buildPdfAreaPreview({
-                        dataUrl: highlight.content.image || screenshot(highlight.position.boundingRect),
-                        width: highlight.position.boundingRect.width || 0,
-                        height: highlight.position.boundingRect.height || 0,
-                      });
-
-                      if (preview) {
-                        updateAnnotation(annotation.id, { preview });
-                      }
-                      pendingAreaPreviewBackfillRef.current.delete(annotation.id);
-                    }, 0);
-                  }
-
-                  // Handler for changing color - only pass the color field
-                  const handleChangeColor = (color: string) => {
-                    if (annotation) {
-                      updateAnnotation(highlight.id, { style: { color } });
-                    }
-                    hideTip();
-                  };
-
-                  // Handler for converting highlight to underline or vice versa
-                  const handleConvertStyle = () => {
-                    if (annotation) {
-                      const newType = annotation.style.type === 'highlight' ? 'underline' : 'highlight';
-                      updateAnnotation(highlight.id, { style: { type: newType } });
-                      hideTip();
-                    }
-                  };
-
-                  if (isPin) {
-                    const position = highlight.position;
-                    const pinComment = annotation?.comment || highlight.comment?.text;
-                    // Pin position uses viewport coordinates (left, top)
-                    return (
-                      <div
-                        key={highlight.id}
-                        className={`absolute cursor-pointer transition-transform ${
-                          isHighlighted ? 'animate-pulse scale-125' : isActive ? 'scale-110' : ''
-                        }`}
-                        style={{
-                          left: position.boundingRect.left,
-                          top: position.boundingRect.top,
-                          // Offset to center the pin icon
-                          transform: 'translate(-50%, -100%)',
-                        }}
-                        onClick={() => {
-                          setSelectedAnnotationId(highlight.id);
-                          setHighlightedId(highlight.id);
-                          setTip(highlight, () => (
-                            <HighlightPopupContent
-                              comment={highlight.comment}
-                              highlightText={highlight.content?.text}
-                              currentColor={annotation?.style.color}
-                              styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
-                              onDelete={() => {
-                                deleteAnnotation(highlight.id);
-                                hideTip();
-                              }}
-                              onAddComment={(comment) => {
-                                updateAnnotation(highlight.id, { comment });
-                                hideTip();
-                              }}
-                              onChangeColor={handleChangeColor}
-                            />
-                          ));
-                        }}
-                      >
-                        <div className="flex flex-col items-center">
-                          <StickyNote
-                            className="h-5 w-5 text-amber-500 drop-shadow-md"
-                            fill="currentColor"
-                          />
-                          {/* Display pin comment text below the icon */}
-                          {pinComment && (
-                            <div 
-                              className="mt-1 px-2 py-1 bg-amber-100 dark:bg-amber-900/80 border border-amber-300 dark:border-amber-700 rounded shadow-sm text-xs text-amber-900 dark:text-amber-100 max-w-[150px] whitespace-pre-wrap break-words"
-                              style={{ transform: 'translateX(50%)' }}
-                            >
-                              {pinComment}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  // Get the style type and color from annotation
-                  const highlightColor = annotation?.style.color || '#FFD400';
-                  const highlightStyleType = (annotation?.style.type || 'highlight') as 'highlight' | 'underline' | 'area';
-
-                  return (
-                    <Popup
-                      popupContent={
-                        <HighlightPopupContent
-                          comment={highlight.comment}
-                          highlightText={highlight.content?.text}
-                          currentColor={annotation?.style.color}
-                          styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
-                          onDelete={() => {
-                            deleteAnnotation(highlight.id);
-                            hideTip();
-                          }}
-                          onAddComment={(comment) => {
-                            updateAnnotation(highlight.id, { comment });
-                            hideTip();
-                          }}
-                          onChangeColor={handleChangeColor}
-                          onConvertToUnderline={handleConvertStyle}
-                        />
-                      }
-                      onMouseOver={(popupContent) => setTip(highlight, () => popupContent)}
-                      onMouseOut={() => {
-                        setHoveredAnnotationId(null);
-                        hideTip();
-                      }}
-                      key={highlight.id}
-                    >
-                      <div
-                        onMouseEnter={() => setHoveredAnnotationId(highlight.id)}
-                        onMouseLeave={() => setHoveredAnnotationId(null)}
-                        onClick={() => {
-                          setSelectedAnnotationId(highlight.id);
-                          setHighlightedId(highlight.id);
-                          setTip(highlight, () => (
-                            <HighlightPopupContent
-                              comment={highlight.comment}
-                              highlightText={highlight.content?.text}
-                              currentColor={annotation?.style.color}
-                              styleType={annotation?.style.type as 'highlight' | 'underline' | 'area' | 'ink'}
-                              onDelete={() => {
-                                deleteAnnotation(highlight.id);
-                                hideTip();
-                              }}
-                              onAddComment={(comment) => {
-                                updateAnnotation(highlight.id, { comment });
-                                hideTip();
-                              }}
-                              onChangeColor={handleChangeColor}
-                              onConvertToUnderline={handleConvertStyle}
-                            />
-                          ));
-                        }}
-                      >
-                        <CustomHighlight
-                          isScrolledTo={isScrolledTo || isHighlighted || isActive}
-                          position={highlight.position}
-                          color={highlightColor}
-                          styleType={highlightStyleType}
-                          isActive={isActive || isHighlighted}
-                        />
-                      </div>
-                    </Popup>
-                  );
-                }}
-                highlights={highlights}
-                pdfScaleValue={pdfScaleValue}
-                onScrollChange={() => {}}
-                scrollRef={() => {}}
-              />
-            )}
-          </PdfLoader>
-        ) : (
-          <div className="flex items-center justify-center gap-2 py-8">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="text-sm text-muted-foreground">{t("pdf.loading")}</span>
-          </div>
-        )}
-
-          {transientSelection && transientSelectionPages.map((page) => (
-            <PdfTransientSelectionPortal
-              key={`${transientSelection.signature}-${page}`}
-              selection={transientSelection}
-              paneId={paneId}
-              page={page}
-              paneRootRef={containerRef}
-            />
-          ))}
-
-          {/* Ink annotations - rendered using portals to each page */}
-          {inkAnnotations.map(ann => {
-            if (ann.target.type !== 'pdf') return null;
-            const target = ann.target as PdfTarget;
-            return (
-              <InkAnnotationPortal
-                key={ann.id}
-                annotation={ann}
-                page={target.page}
-                scale={scale}
-                paneRootRef={containerRef}
-              />
-            );
-          })}
-
-          {/* Text annotations - rendered using portals to each page */}
-          {textAnnotations.map(ann => {
-            if (ann.target.type !== 'pdf') return null;
-            const target = ann.target as PdfTarget;
-            return (
-              <TextAnnotationPortal
-                key={ann.id}
-                annotation={ann}
-                page={target.page}
-                scale={scale}
-                paneRootRef={containerRef}
-                isHighlighted={highlightedId === ann.id || hoveredAnnotationId === ann.id || selectedAnnotationId === ann.id}
-                onClick={() => {
-                  // Open text annotation editor
-                  const pageElement = findPdfPageElementInScope(containerRef.current, target.page);
-                  if (pageElement && target.rects.length > 0) {
-                    const pageRect = pageElement.getBoundingClientRect();
-                    const rect = target.rects[0];
-                    
-                    // Calculate position for editor popup (center of annotation)
-                    const x = pageRect.left + ((rect.x1 + rect.x2) / 2 * pageRect.width);
-                    const y = pageRect.top + (rect.y1 * pageRect.height);
-                    
-                    setEditingTextAnnotation({
-                      annotation: ann,
-                      position: { x, y }
-                    });
-                    setSelectedAnnotationId(ann.id);
-                  }
-                }}
-              />
-            );
-          })}
-          
-          {/* Current drawing path */}
-          {currentInkPage !== null && currentInkPath.length > 0 && (
-            <CurrentInkPathPortal
-              path={currentInkPath}
-              page={currentInkPage}
-              color={activeColor}
-              scale={scale}
-              paneRootRef={containerRef}
-            />
-          )}
-
-          {/* Ink session indicator - shows when strokes are being buffered */}
-          <InkSessionIndicator
-            isDrawing={isInkBuffering}
-            strokeCount={inkStrokeCount}
-            onFinalize={finalizeInkNow}
-            onCancel={cancelInkDrawing}
-          />
-        </div>
+          renderPdfViewport(false)
         )}
       </div>
 

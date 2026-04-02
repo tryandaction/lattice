@@ -391,11 +391,17 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     },
   });
 
+  // Only serialize when cells content actually changes, not on activeCellId or other state changes
+  const cellsFingerprint = useMemo(
+    () => state.cells.map(c => `${c.id}:${c.cell_type}:${c.source.length}`).join("|"),
+    [state.cells],
+  );
+
   useEffect(() => {
     if (!onContentChange || !isDirty) return;
     const serialized = serialize();
     debouncedNotifyChangeRef.current?.(serialized);
-  }, [state, serialize, isDirty, onContentChange]);
+  }, [cellsFingerprint, serialize, isDirty, onContentChange]);
 
   useEffect(() => {
     syncExecutionState(cellStates);
@@ -541,6 +547,15 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     [healthContext, runnerHealthSnapshot.issues],
   );
 
+  // Only recompute cell problems when code cells' outputs/diagnostics actually change
+  const codeCellProblemFingerprint = useMemo(
+    () => state.cells
+      .filter(c => c.cell_type === "code")
+      .map(c => `${c.id}:${c.execution_count ?? ""}:${(c.outputs?.length ?? 0)}:${(c.execution_meta?.diagnostics?.length ?? 0)}`)
+      .join("|"),
+    [state.cells],
+  );
+
   const cellProblems = useMemo(
     () => state.cells.flatMap((cell) => {
       if (cell.cell_type !== "code") {
@@ -560,7 +575,8 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
         outputsToExecutionProblems(jupyterOutputsToExecutionOutputs(cell.outputs), context),
       );
     }),
-    [filePath, notebookLanguage, state.cells],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filePath, notebookLanguage, codeCellProblemFingerprint],
   );
 
   const notebookProblems = useMemo(
@@ -686,6 +702,36 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
 
   const notebookKernelStatus = executionState === "running" ? "running" : runtimeStatus;
 
+  // Stable cell callbacks — avoid creating new closures per cell per render
+  const handleCellActivate = useCallback((cellId: string) => {
+    activateCell(cellId);
+  }, [activateCell]);
+
+  const handleCellAddAbove = useCallback((cellId: string, type: "markdown" | "code" | "raw") => {
+    addCellAbove(cellId, type);
+  }, [addCellAbove]);
+
+  const handleCellAddBelow = useCallback((cellId: string, type: "markdown" | "code" | "raw") => {
+    addCellBelow(cellId, type);
+  }, [addCellBelow]);
+
+  const handleCellDelete = useCallback((cellId: string) => {
+    removeCell(cellId);
+  }, [removeCell]);
+
+  const handleCellSourceChange = useCallback((cellId: string, source: string) => {
+    updateSource(cellId, source);
+  }, [updateSource]);
+
+  const handleCellTypeChange = useCallback((cellId: string, type: "markdown" | "code" | "raw") => {
+    changeType(cellId, type);
+  }, [changeType]);
+
+  const cellCount = state.cells.length;
+  const canDeleteCell = cellCount > 1;
+  const canRunCellValue = isPythonNotebook && commandState.canRun;
+  const runCellHandler = isPythonNotebook ? handleRunCell : undefined;
+
   return (
     <div ref={containerRef} className="h-full overflow-auto bg-background">
       <SelectionContextMenu
@@ -770,23 +816,24 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
           >
             <NotebookCellComponent
               cell={cell}
+              cellId={cell.id}
               isActive={cell.id === state.activeCellId}
               isHighlighted={cell.id === highlightedCellId}
-              canDelete={state.cells.length > 1}
-              onActivate={() => activateCell(cell.id)}
-              onAddAbove={(type) => addCellAbove(cell.id, type)}
-              onAddBelow={(type) => addCellBelow(cell.id, type)}
-              onDelete={() => removeCell(cell.id)}
-              onSourceChange={(source) => updateSource(cell.id, source)}
-              onTypeChange={(type) => changeType(cell.id, type)}
+              canDelete={canDeleteCell}
+              onActivate={handleCellActivate}
+              onAddAbove={handleCellAddAbove}
+              onAddBelow={handleCellAddBelow}
+              onDelete={handleCellDelete}
+              onSourceChange={handleCellSourceChange}
+              onTypeChange={handleCellTypeChange}
               onNavigateUp={index > 0 ? activatePrevCell : undefined}
-              onNavigateDown={index < state.cells.length - 1 ? activateNextCell : undefined}
+              onNavigateDown={index < cellCount - 1 ? activateNextCell : undefined}
               onLinkNavigate={handleLinkNavigate}
               rootHandle={workspaceRootHandle}
               notebookFilePath={filePath}
-              onRunCell={isPythonNotebook ? handleRunCell : undefined}
+              onRunCell={runCellHandler}
               isExecuting={executionState === "running" && currentCellId === cell.id}
-              canRunCell={isPythonNotebook && commandState.canRun}
+              canRunCell={canRunCellValue}
             />
           </div>
         ))}

@@ -147,15 +147,16 @@ describe('Property 2: Annotation-to-Highlight Mapping Round-Trip', () => {
         fc.property(pdfAnnotationArb, (annotation) => {
           const highlight = annotationToHighlight(annotation);
           expect(highlight).not.toBeNull();
-          
+
+          const restored = highlightToAnnotation(highlight!, annotation.author);
           const originalRects = (annotation.target as PdfTarget).rects;
-          const highlightRects = highlight!.position.rects;
-          
+          const restoredRects = (restored.target as PdfTarget).rects;
+
           for (let i = 0; i < originalRects.length; i++) {
-            expect(highlightRects[i].x1).toBeCloseTo(originalRects[i].x1, 5);
-            expect(highlightRects[i].y1).toBeCloseTo(originalRects[i].y1, 5);
-            expect(highlightRects[i].x2).toBeCloseTo(originalRects[i].x2, 5);
-            expect(highlightRects[i].y2).toBeCloseTo(originalRects[i].y2, 5);
+            expect(restoredRects[i].x1).toBeCloseTo(originalRects[i].x1, 5);
+            expect(restoredRects[i].y1).toBeCloseTo(originalRects[i].y1, 5);
+            expect(restoredRects[i].x2).toBeCloseTo(originalRects[i].x2, 5);
+            expect(restoredRects[i].y2).toBeCloseTo(originalRects[i].y2, 5);
           }
         }),
         { numRuns: 100 }
@@ -418,35 +419,56 @@ describe('selectionToAnnotation', () => {
     page: number,
     rects: BoundingBox[],
     text?: string
-  ): PDFSelection => ({
-    content: { text },
-    position: {
-      boundingRect: {
-        x1: Math.min(...rects.map(r => r.x1)),
-        y1: Math.min(...rects.map(r => r.y1)),
-        x2: Math.max(...rects.map(r => r.x2)),
-        y2: Math.max(...rects.map(r => r.y2)),
-        width: 0,
-        height: 0,
+  ): PDFSelection => {
+    const pageWidth = 1000;
+    const pageHeight = 1600;
+
+    return {
+      content: { text },
+      position: {
+        boundingRect: {
+          x1: Math.min(...rects.map(r => r.x1)) * pageWidth,
+          y1: Math.min(...rects.map(r => r.y1)) * pageHeight,
+          x2: Math.max(...rects.map(r => r.x2)) * pageWidth,
+          y2: Math.max(...rects.map(r => r.y2)) * pageHeight,
+          width: pageWidth,
+          height: pageHeight,
+          pageNumber: page,
+        },
+        rects: rects.map((r) => ({
+          x1: r.x1 * pageWidth,
+          y1: r.y1 * pageHeight,
+          x2: r.x2 * pageWidth,
+          y2: r.y2 * pageHeight,
+          width: pageWidth,
+          height: pageHeight,
+          pageNumber: page,
+        })),
         pageNumber: page,
       },
-      rects: rects.map(r => ({ ...r, width: r.x2 - r.x1, height: r.y2 - r.y1, pageNumber: page })),
-      pageNumber: page,
-    },
-    scaledPosition: {
-      boundingRect: {
-        x1: Math.min(...rects.map(r => r.x1)),
-        y1: Math.min(...rects.map(r => r.y1)),
-        x2: Math.max(...rects.map(r => r.x2)),
-        y2: Math.max(...rects.map(r => r.y2)),
-        width: 0,
-        height: 0,
+      scaledPosition: {
+        boundingRect: {
+          x1: Math.min(...rects.map(r => r.x1)) * pageWidth,
+          y1: Math.min(...rects.map(r => r.y1)) * pageHeight,
+          x2: Math.max(...rects.map(r => r.x2)) * pageWidth,
+          y2: Math.max(...rects.map(r => r.y2)) * pageHeight,
+          width: pageWidth,
+          height: pageHeight,
+          pageNumber: page,
+        },
+        rects: rects.map((r) => ({
+          x1: r.x1 * pageWidth,
+          y1: r.y1 * pageHeight,
+          x2: r.x2 * pageWidth,
+          y2: r.y2 * pageHeight,
+          width: pageWidth,
+          height: pageHeight,
+          pageNumber: page,
+        })),
         pageNumber: page,
       },
-      rects: rects.map(r => ({ ...r, width: r.x2 - r.x1, height: r.y2 - r.y1, pageNumber: page })),
-      pageNumber: page,
-    },
-  });
+    };
+  };
 
   it('creates PDF target annotation from selection', () => {
     fc.assert(

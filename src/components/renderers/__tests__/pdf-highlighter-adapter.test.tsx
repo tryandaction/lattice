@@ -8,6 +8,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { PDFHighlighterAdapter } from '../pdf-highlighter-adapter';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 import { useContentCacheStore } from '@/stores/content-cache-store';
+import { resetPersistedFileViewStateCache } from '@/lib/file-view-state';
 
 const {
   inkStoreState,
@@ -112,15 +113,13 @@ vi.mock('react-pdf-highlighter', async () => {
               y1: 24,
               x2: 172,
               y2: 46,
-              left: 12,
-              top: 24,
-              width: 160,
-              height: 22,
+              width: 640,
+              height: 960,
               pageNumber: 1,
             },
             rects: [
-              { x1: 12, y1: 24, x2: 132, y2: 46, left: 12, top: 24, width: 120, height: 22, pageNumber: 1 },
-              { x1: 12, y1: 52, x2: 100, y2: 74, left: 12, top: 52, width: 88, height: 22, pageNumber: 1 },
+              { x1: 12, y1: 24, x2: 132, y2: 46, width: 640, height: 960, pageNumber: 1 },
+              { x1: 12, y1: 52, x2: 100, y2: 74, width: 640, height: 960, pageNumber: 1 },
             ],
             pageNumber: 1,
           },
@@ -265,6 +264,7 @@ describe('PDFHighlighterAdapter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    resetPersistedFileViewStateCache();
     useContentCacheStore.getState().clearCache();
     useWorkspaceStore.setState((state) => ({
       layout: {
@@ -336,10 +336,12 @@ describe('PDFHighlighterAdapter', () => {
       expect(screen.getByTestId('pdf-zoom-label-pane-right').textContent).toBe('适宽');
     });
 
+    fireEvent.keyDown(document, { key: 'Control', ctrlKey: true });
     fireEvent.wheel(screen.getByTestId('pdf-scroll-container-pane-right'), {
       ctrlKey: true,
       deltaY: -100,
     });
+    fireEvent.keyUp(document, { key: 'Control' });
 
     await waitFor(() => {
       expect(screen.getByTestId('pdf-zoom-label-pane-left').textContent).toBe('适宽');
@@ -438,7 +440,7 @@ describe('PDFHighlighterAdapter', () => {
     expect(copyEvent.defaultPrevented).toBe(true);
   });
 
-  it('keeps frozen transient selection text for copy even if native selection changes, and clears it on cancel', async () => {
+  it('prefers native selection text for copy when a fresh native selection exists, and clears frozen state on cancel', async () => {
     render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
 
     fireEvent.click(screen.getByTestId('mock-pdf-selection-trigger'));
@@ -456,7 +458,7 @@ describe('PDFHighlighterAdapter', () => {
     });
 
     document.dispatchEvent(copyEvent);
-    expect(clipboardData.setData).toHaveBeenCalledWith('text/plain', 'Selected PDF text');
+    expect(clipboardData.setData).toHaveBeenCalledWith('text/plain', 'Native PDF text');
 
     fireEvent.click(screen.getByRole('button', { name: '取消' }));
     await waitFor(() => {

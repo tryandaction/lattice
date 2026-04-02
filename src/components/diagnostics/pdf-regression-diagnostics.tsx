@@ -43,6 +43,11 @@ interface PaneSnapshot {
   restoreOk: string | null;
   restoreDeltaTop: number | null;
   restoreDeltaLeft: number | null;
+  selectionPhase: string | null;
+  selectionSource: string | null;
+  selectionPreview: string | null;
+  selectionPageCount: number | null;
+  copyPayload: string | null;
 }
 
 function resolveZoomState(zoomLabel: string | null): { zoomMode: "manual" | "fit-width" | "fit-page"; scale: number } {
@@ -88,6 +93,10 @@ function PaneStateCard({ title, snapshot, paneTestId }: { title: string; snapsho
       <div>Restore OK: <span data-testid={`${paneTestId}-restore-ok`}>{snapshot?.restoreOk ?? "false"}</span></div>
       <div>Anchor Delta Top: <span data-testid={`${paneTestId}-restore-delta-top`}>{snapshot?.restoreDeltaTop ?? -1}</span></div>
       <div>Anchor Delta Left: <span data-testid={`${paneTestId}-restore-delta-left`}>{snapshot?.restoreDeltaLeft ?? -1}</span></div>
+      <div>Selection Phase: <span data-testid={`${paneTestId}-selection-phase`}>{snapshot?.selectionPhase ?? "未就绪"}</span></div>
+      <div>Selection Source: <span data-testid={`${paneTestId}-selection-source`}>{snapshot?.selectionSource ?? "none"}</span></div>
+      <div>Selection Pages: <span data-testid={`${paneTestId}-selection-page-count`}>{snapshot?.selectionPageCount ?? 0}</span></div>
+      <div>Copy Payload: <span data-testid={`${paneTestId}-copy-payload`}>{snapshot?.copyPayload ?? ""}</span></div>
     </div>
   );
 }
@@ -218,6 +227,11 @@ export function PdfRegressionDiagnostics() {
         const restoreOk = document.querySelector<HTMLElement>(`[data-testid="pdf-restore-ok-${paneId}"]`);
         const restoreDeltaTop = document.querySelector<HTMLElement>(`[data-testid="pdf-restore-delta-top-${paneId}"]`);
         const restoreDeltaLeft = document.querySelector<HTMLElement>(`[data-testid="pdf-restore-delta-left-${paneId}"]`);
+        const selectionPhase = document.querySelector<HTMLElement>(`[data-testid="pdf-selection-phase-${paneId}"]`);
+        const selectionSource = document.querySelector<HTMLElement>(`[data-testid="pdf-selection-source-${paneId}"]`);
+        const selectionPreview = document.querySelector<HTMLElement>(`[data-testid="pdf-selection-preview-${paneId}"]`);
+        const selectionPageCount = document.querySelector<HTMLElement>(`[data-testid="pdf-selection-page-count-${paneId}"]`);
+        const copyPayload = document.querySelector<HTMLElement>(`[data-testid="pdf-copy-payload-${paneId}"]`);
         if (!zoomLabel || !scrollContainer || !shell) {
           return null;
         }
@@ -240,6 +254,11 @@ export function PdfRegressionDiagnostics() {
           restoreOk: restoreOk?.textContent ?? null,
           restoreDeltaTop: restoreDeltaTop?.textContent ? Number(restoreDeltaTop.textContent) : null,
           restoreDeltaLeft: restoreDeltaLeft?.textContent ? Number(restoreDeltaLeft.textContent) : null,
+          selectionPhase: selectionPhase?.textContent ?? null,
+          selectionSource: selectionSource?.textContent ?? null,
+          selectionPreview: selectionPreview?.textContent ?? null,
+          selectionPageCount: selectionPageCount?.textContent ? Number(selectionPageCount.textContent) : null,
+          copyPayload: copyPayload?.textContent ?? null,
         };
       };
 
@@ -306,6 +325,11 @@ export function PdfRegressionDiagnostics() {
       restoreOk: readValue("pdf-right-state-restore-ok"),
       restoreDeltaTop: Number(readValue("pdf-right-state-restore-delta-top") ?? "-1"),
       restoreDeltaLeft: Number(readValue("pdf-right-state-restore-delta-left") ?? "-1"),
+      selectionPhase: readValue("pdf-right-state-selection-phase"),
+      selectionSource: readValue("pdf-right-state-selection-source"),
+      selectionPreview: readValue("pdf-right-state-selection-preview"),
+      selectionPageCount: Number(readValue("pdf-right-state-selection-page-count") ?? "0") || null,
+      copyPayload: readValue("pdf-right-state-copy-payload"),
     };
 
     const snapshot = (

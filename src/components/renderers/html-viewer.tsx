@@ -4,9 +4,10 @@ import { startTransition, useState, useMemo, useEffect, useRef } from "react";
 import DOMPurify from "dompurify";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import type { PaneId } from "@/types/layout";
+import type { CommandBarState, PaneId } from "@/types/layout";
 import { useI18n } from "@/hooks/use-i18n";
 import { useSelectionContextMenu, type SelectionContextMenuState } from "@/hooks/use-selection-context-menu";
+import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
@@ -53,8 +54,6 @@ export function HTMLViewer({ content, fileName, paneId, filePath }: HTMLViewerPr
   const [iframeMenuState, setIframeMenuState] = useState<SelectionContextMenuState<SelectionContext> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
-  const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const persistedViewStateKey = buildPersistedFileViewStateKey({
     kind: "html",
@@ -109,13 +108,9 @@ export function HTMLViewer({ content, fileName, paneId, filePath }: HTMLViewerPr
     },
   });
 
-  useEffect(() => {
-    if (!paneId) {
-      return;
-    }
-
+  const commandBarState = useMemo<CommandBarState>(() => {
     const breadcrumbs = (filePath ?? fileName).split("/").filter(Boolean).map((segment) => ({ label: segment }));
-    setCommandBarState(paneId, {
+    return {
       breadcrumbs,
       actions: [
         {
@@ -135,10 +130,13 @@ export function HTMLViewer({ content, fileName, paneId, filePath }: HTMLViewerPr
           onTrigger: () => setShowSource(true),
         },
       ],
-    });
+    };
+  }, [fileName, filePath, showSource, t]);
 
-    return () => clearCommandBarState(paneId);
-  }, [clearCommandBarState, fileName, filePath, paneId, setCommandBarState, showSource, t]);
+  usePaneCommandBar({
+    paneId,
+    state: paneId ? commandBarState : null,
+  });
 
   useEffect(() => {
     if (showSource) {

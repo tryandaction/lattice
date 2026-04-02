@@ -35,10 +35,11 @@ import { emitFileSave } from "@/lib/plugins/runtime";
 import { navigateLink } from "@/lib/link-router/navigate-link";
 import { useLinkNavigationStore } from "@/stores/link-navigation-store";
 import { parseHeadings, buildOutlineTree } from "./codemirror/live-preview/markdown-parser";
-import type { PaneId } from "@/types/layout";
+import type { CommandBarState, PaneId } from "@/types/layout";
 import { MarkdownExportDialog } from "./markdown-export-dialog";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
 import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
+import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
 import { useExecutionRunner } from "@/hooks/use-execution-runner";
 import { OutputArea } from "@/components/notebook/output-area";
 import { ProblemsPanel } from "@/components/runner/problems-panel";
@@ -196,8 +197,6 @@ export function ObsidianMarkdownViewer({
   const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
   const setRecentRunConfig = useWorkspaceStore((state) => state.setRecentRunConfig);
   const setRunnerPreferences = useWorkspaceStore((state) => state.setRunnerPreferences);
-  const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
-  const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
   const absoluteFilePath = useMemo(
     () => (filePath ? resolveWorkspaceFilePath(workspaceRootPath, filePath, workspaceRootName) : null),
     [filePath, workspaceRootName, workspaceRootPath],
@@ -432,12 +431,12 @@ export function ObsidianMarkdownViewer({
     onNavigateToFile?.(target);
   }, [filePath, onNavigateToFile, paneId, rootHandle]);
 
-  useEffect(() => {
+  const commandBarState = useMemo<CommandBarState>(() => {
     const breadcrumbs = (filePath ?? fileName)
       .split("/")
       .filter(Boolean)
       .map((segment) => ({ label: segment }));
-    setCommandBarState(paneId, {
+    return {
       breadcrumbs,
       actions: [
         {
@@ -487,23 +486,23 @@ export function ObsidianMarkdownViewer({
           onTrigger: () => setMode("reading"),
         },
       ],
-    });
-
-    return () => clearCommandBarState(paneId);
+    };
   }, [
-    clearCommandBarState,
     fileName,
     filePath,
     handleSave,
     isDirty,
     mode,
     onSave,
-    paneId,
     saveStatus,
-    setCommandBarState,
     showOutline,
     t,
   ]);
+
+  usePaneCommandBar({
+    paneId,
+    state: commandBarState,
+  });
 
   useEffect(() => {
     if (outputs.some((output) => output.type === "error")) {

@@ -565,6 +565,7 @@ export const zhCN = {
   'pdf.tool.text': '文本 (T)',
   'pdf.tool.area': '区域选择 (A)',
   'pdf.tool.draw': '绘图 (D)',
+  'pdf.command.select': '选择',
   'pdf.command.highlight': '高亮',
   'pdf.command.underline': '下划线',
   'pdf.command.note': '便签',

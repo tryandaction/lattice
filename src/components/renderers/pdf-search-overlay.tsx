@@ -39,9 +39,11 @@ export function PdfSearchOverlay({
     }
   }, [isOpen]);
 
-  // Extract text from all pages
+  // Extract text from all pages — only when search is actually open
   useEffect(() => {
-    if (!pdfDocument || numPages === 0) return;
+    if (!isOpen || !pdfDocument || numPages === 0) return;
+    // Skip if already extracted
+    if (pageTexts.size === numPages) return;
     let cancelled = false;
     async function extractTexts() {
       const texts = new Map<number, string>();
@@ -59,7 +61,7 @@ export function PdfSearchOverlay({
     }
     extractTexts();
     return () => { cancelled = true; };
-  }, [pdfDocument, numPages]);
+  }, [isOpen, pdfDocument, numPages, pageTexts.size]);
 
   // Debounced search
   const doSearch = useCallback((q: string) => {

@@ -567,6 +567,7 @@ export const enUS: Record<TranslationKey, string> = {
   'pdf.tool.text': 'Text (T)',
   'pdf.tool.area': 'Area selection (A)',
   'pdf.tool.draw': 'Draw (D)',
+  'pdf.command.select': 'Select',
   'pdf.command.highlight': 'Highlight',
   'pdf.command.underline': 'Underline',
   'pdf.command.note': 'Note',

@@ -91,8 +91,8 @@ export function TabBar({
   return (
     <HorizontalScrollStrip
       viewportRef={handleViewportRef}
-      className={cn("h-9", isOver && "bg-blue-500/10")}
-      viewportClassName={cn("h-9", isOver && "bg-blue-500/10")}
+      className={cn("h-10", isOver && "bg-blue-500/10")}
+      viewportClassName={cn("h-10 pb-1", isOver && "bg-blue-500/10")}
       contentClassName="h-9 min-w-full w-max items-end gap-0"
       viewportProps={{ "data-pane-id": paneId }}
       ariaLabel="打开的文件标签"

@@ -5,8 +5,9 @@ import { Move } from "lucide-react";
 import { useI18n } from "@/hooks/use-i18n";
 import { useAnnotationNavigation } from "../../hooks/use-annotation-navigation";
 import { useObjectUrl } from "@/hooks/use-object-url";
+import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import type { PaneId } from "@/types/layout";
+import type { CommandBarState, PaneId } from "@/types/layout";
 import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
 import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
 
@@ -48,8 +49,6 @@ export function ImageViewer({ content, fileName, mimeType, paneId, filePath }: I
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
-  const setCommandBarState = useWorkspaceStore((state) => state.setCommandBarState);
-  const clearCommandBarState = useWorkspaceStore((state) => state.clearCommandBarState);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const persistedViewStateKey = buildPersistedFileViewStateKey({
     kind: "image",
@@ -258,13 +257,9 @@ export function ImageViewer({ content, fileName, mimeType, paneId, filePath }: I
     }
   };
 
-  useEffect(() => {
-    if (!paneId) {
-      return;
-    }
-
+  const commandBarState = useMemo<CommandBarState>(() => {
     const breadcrumbs = (filePath ?? fileName).split("/").filter(Boolean).map((segment) => ({ label: segment }));
-    setCommandBarState(paneId, {
+    return {
       breadcrumbs,
       actions: [
         {
@@ -342,11 +337,8 @@ export function ImageViewer({ content, fileName, mimeType, paneId, filePath }: I
           onTrigger: handleReset,
         },
       ],
-    });
-
-    return () => clearCommandBarState(paneId);
+    };
   }, [
-    clearCommandBarState,
     fileName,
     filePath,
     fitMode,
@@ -358,10 +350,13 @@ export function ImageViewer({ content, fileName, mimeType, paneId, filePath }: I
     handleZoomIn,
     handleZoomOut,
     manualZoom,
-    paneId,
-    setCommandBarState,
     t,
   ]);
+
+  usePaneCommandBar({
+    paneId,
+    state: paneId ? commandBarState : null,
+  });
 
   // Pan handlers for dragging
   const handleMouseDown = (e: React.MouseEvent) => {

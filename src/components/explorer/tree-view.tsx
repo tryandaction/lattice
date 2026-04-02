@@ -83,6 +83,15 @@ export function TreeView({ root }: TreeViewProps) {
       className="py-2 focus:outline-none"
       tabIndex={0}
       onKeyDown={(event) => {
+        const target = event.target as HTMLElement | null;
+        if (
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target?.isContentEditable
+        ) {
+          return;
+        }
+
         if (!selectedPath || !selectedKind) {
           return;
         }

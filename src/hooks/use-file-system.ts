@@ -234,12 +234,20 @@ async function attachPdfItemChildren(
 /**
  * Recursively read a directory and build a tree structure
  * Filters files by allowed extensions and excludes ignored directories
+ * Depth-limited to prevent freezing on deeply nested directory trees
  */
+const MAX_TREE_DEPTH = 12;
+
 async function readDirectoryRecursive(
   handle: FileSystemDirectoryHandle,
   parentPath: string = "",
   rootHandle: FileSystemDirectoryHandle = handle,
+  depth: number = 0,
 ): Promise<TreeNode[]> {
+  if (depth > MAX_TREE_DEPTH) {
+    return [];
+  }
+
   const children: TreeNode[] = [];
   const currentPath = parentPath ? `${parentPath}/${handle.name}` : handle.name;
 
@@ -251,7 +259,7 @@ async function readDirectoryRecursive(
       }
 
       const dirHandle = entry as FileSystemDirectoryHandle;
-      const dirChildren = await readDirectoryRecursive(dirHandle, currentPath, rootHandle);
+      const dirChildren = await readDirectoryRecursive(dirHandle, currentPath, rootHandle, depth + 1);
 
       // Only include directories that have allowed files
       if (dirChildren.length > 0) {

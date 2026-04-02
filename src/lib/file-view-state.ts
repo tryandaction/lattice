@@ -50,6 +50,14 @@ export interface HtmlViewState {
 
 type PersistedFileViewStateMap = Record<string, PersistedFileViewState>;
 
+let persistedStateMapCache: PersistedFileViewStateMap | null = null;
+let persistedStateMapPromise: Promise<PersistedFileViewStateMap> | null = null;
+
+export function resetPersistedFileViewStateCache(): void {
+  persistedStateMapCache = null;
+  persistedStateMapPromise = null;
+}
+
 function normalizeStorageKey(key: string | null | undefined): string | null {
   if (!key) return null;
   const trimmed = key.trim();
@@ -57,13 +65,29 @@ function normalizeStorageKey(key: string | null | undefined): string | null {
 }
 
 async function readStateMap(): Promise<PersistedFileViewStateMap> {
+  if (persistedStateMapCache) {
+    return persistedStateMapCache;
+  }
+  if (persistedStateMapPromise) {
+    return persistedStateMapPromise;
+  }
   const storage = getStorageAdapter();
-  const persisted = await storage.get<PersistedFileViewStateMap>(FILE_VIEW_STATE_STORAGE_KEY);
-  return persisted && typeof persisted === "object" ? persisted : {};
+  persistedStateMapPromise = storage.get<PersistedFileViewStateMap>(FILE_VIEW_STATE_STORAGE_KEY).then((persisted) => {
+    const next = persisted && typeof persisted === "object" ? persisted : {};
+    persistedStateMapCache = next;
+    persistedStateMapPromise = null;
+    return next;
+  }).catch((error) => {
+    persistedStateMapPromise = null;
+    throw error;
+  });
+  return persistedStateMapPromise;
 }
 
 async function writeStateMap(next: PersistedFileViewStateMap): Promise<void> {
   const storage = getStorageAdapter();
+  persistedStateMapCache = next;
+  persistedStateMapPromise = Promise.resolve(next);
   await storage.set(FILE_VIEW_STATE_STORAGE_KEY, next);
 }
 

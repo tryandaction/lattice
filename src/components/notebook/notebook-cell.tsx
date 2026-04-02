@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, memo } from "react";
 import { Plus, Trash2, Code, FileText, ChevronDown, FileCode2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/hooks/use-i18n";
@@ -11,15 +11,16 @@ import type { NotebookCell as NotebookCellType } from "@/lib/notebook-utils";
 
 interface NotebookCellProps {
   cell: NotebookCellType;
+  cellId: string;
   isActive: boolean;
   isHighlighted?: boolean;
   canDelete: boolean;
-  onActivate: () => void;
-  onAddAbove: (type: "markdown" | "code" | "raw") => void;
-  onAddBelow: (type: "markdown" | "code" | "raw") => void;
-  onDelete: () => void;
-  onSourceChange: (source: string) => void;
-  onTypeChange: (type: "markdown" | "code" | "raw") => void;
+  onActivate: (cellId: string) => void;
+  onAddAbove: (cellId: string, type: "markdown" | "code" | "raw") => void;
+  onAddBelow: (cellId: string, type: "markdown" | "code" | "raw") => void;
+  onDelete: (cellId: string) => void;
+  onSourceChange: (cellId: string, source: string) => void;
+  onTypeChange: (cellId: string, type: "markdown" | "code" | "raw") => void;
   onNavigateUp?: () => void;
   onNavigateDown?: () => void;
   onLinkNavigate?: (target: string) => void;
@@ -186,8 +187,9 @@ function AddCellButton({
  * Wrapper component for notebook cells with controls.
  * Provides clear visual indication of active state and keyboard navigation support.
  */
-export function NotebookCellComponent({
+export const NotebookCellComponent = memo(function NotebookCellComponent({
   cell,
+  cellId,
   isActive,
   isHighlighted = false,
   canDelete,
@@ -227,7 +229,7 @@ export function NotebookCellComponent({
           (e.target as HTMLElement).tagName !== 'TEXTAREA' &&
           !(e.target as HTMLElement).closest('.cm-editor')) {
         e.preventDefault();
-        onAddAbove('code');
+        onAddAbove(cellId, 'code');
       }
     }
 
@@ -237,7 +239,7 @@ export function NotebookCellComponent({
           (e.target as HTMLElement).tagName !== 'TEXTAREA' &&
           !(e.target as HTMLElement).closest('.cm-editor')) {
         e.preventDefault();
-        onAddBelow('code');
+        onAddBelow(cellId, 'code');
       }
     }
 
@@ -247,7 +249,7 @@ export function NotebookCellComponent({
           (e.target as HTMLElement).tagName !== 'TEXTAREA' &&
           !(e.target as HTMLElement).closest('.cm-editor')) {
         e.preventDefault();
-        onTypeChange('markdown');
+        onTypeChange(cellId, 'markdown');
       }
     }
 
@@ -257,7 +259,7 @@ export function NotebookCellComponent({
           (e.target as HTMLElement).tagName !== 'TEXTAREA' &&
           !(e.target as HTMLElement).closest('.cm-editor')) {
         e.preventDefault();
-        onTypeChange('code');
+        onTypeChange(cellId, 'code');
       }
     }
 
@@ -267,7 +269,7 @@ export function NotebookCellComponent({
           (e.target as HTMLElement).tagName !== 'TEXTAREA' &&
           !(e.target as HTMLElement).closest('.cm-editor')) {
         e.preventDefault();
-        onTypeChange('raw');
+        onTypeChange(cellId, 'raw');
       }
     }
   };
@@ -294,16 +296,16 @@ export function NotebookCellComponent({
           showControls || isActive ? "opacity-100" : "opacity-0"
         )}
       >
-        <CellTypeSelector currentType={cell.cell_type} onChange={onTypeChange} />
-        
+        <CellTypeSelector currentType={cell.cell_type} onChange={(type) => onTypeChange(cellId, type)} />
+
         <div className="flex-1" />
-        
-        <AddCellButton position="above" onAdd={onAddAbove} />
-        <AddCellButton position="below" onAdd={onAddBelow} />
-        
+
+        <AddCellButton position="above" onAdd={(type) => onAddAbove(cellId, type)} />
+        <AddCellButton position="below" onAdd={(type) => onAddBelow(cellId, type)} />
+
         {canDelete && (
           <button
-            onClick={onDelete}
+            onClick={() => onDelete(cellId)}
             className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
             title={t("notebook.cell.delete")}
           >
@@ -320,8 +322,8 @@ export function NotebookCellComponent({
           executionCount={cell.execution_count}
           executionMeta={cell.execution_meta}
           isActive={isActive}
-          onChange={onSourceChange}
-          onFocus={onActivate}
+          onChange={(source) => onSourceChange(cellId, source)}
+          onFocus={() => onActivate(cellId)}
           onNavigateUp={onNavigateUp}
           onNavigateDown={onNavigateDown}
           cellId={cell.id}
@@ -334,8 +336,8 @@ export function NotebookCellComponent({
         <MarkdownCell
           source={cell.source}
           isActive={isActive}
-          onChange={onSourceChange}
-          onFocus={onActivate}
+          onChange={(source) => onSourceChange(cellId, source)}
+          onFocus={() => onActivate(cellId)}
           onLinkNavigate={onLinkNavigate}
           rootHandle={rootHandle}
           filePath={notebookFilePath}
@@ -345,8 +347,8 @@ export function NotebookCellComponent({
         <RawCell
           source={cell.source}
           isActive={isActive}
-          onChange={onSourceChange}
-          onFocus={onActivate}
+          onChange={(source) => onSourceChange(cellId, source)}
+          onFocus={() => onActivate(cellId)}
           onNavigateUp={onNavigateUp}
           onNavigateDown={onNavigateDown}
           cellId={cell.id}
@@ -355,4 +357,4 @@ export function NotebookCellComponent({
       )}
     </div>
   );
-}
+});

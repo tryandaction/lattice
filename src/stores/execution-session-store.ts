@@ -364,3 +364,14 @@ export function setExecutionLifecycle(
     status: status ?? current.status,
   }));
 }
+
+/**
+ * Granular selector: subscribe to a single scope's session.
+ * Components using this will only re-render when their specific session changes,
+ * not when any session in the store changes.
+ */
+export function useExecutionSession(scopeId: string): ExecutionSessionState | null {
+  return useExecutionSessionStore(
+    (state) => state.sessions[scopeId] ?? null,
+  );
+}

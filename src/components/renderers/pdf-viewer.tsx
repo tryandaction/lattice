@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect, memo } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { ZoomIn, ZoomOut, Loader2, Search, List, Maximize2, ArrowLeftRight } from "lucide-react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
@@ -19,8 +19,100 @@ interface PDFViewerProps {
 }
 
 /**
+ * Number of pages to render above/below the visible viewport.
+ * Keeps scrolling smooth without rendering the entire document.
+ */
+const PAGE_BUFFER = 2;
+
+/** Placeholder height (px) for pages that haven't been measured yet */
+const ESTIMATED_PAGE_HEIGHT = 842;
+/** Placeholder width (px) */
+const ESTIMATED_PAGE_WIDTH = 595;
+
+// --- Virtualized page wrapper ---------------------------------------------------
+
+interface VirtualPageProps {
+  pageNumber: number;
+  scale: number;
+  isVisible: boolean;
+  measuredHeight: number | null;
+  measuredWidth: number | null;
+  onMeasure: (pageNumber: number, width: number, height: number) => void;
+  observerRef: React.RefObject<IntersectionObserver | null>;
+}
+
+/**
+ * Renders a single PDF page only when it's near the viewport.
+ * When off-screen, renders a lightweight placeholder of the correct size.
+ */
+const VirtualPage = memo(function VirtualPage({
+  pageNumber,
+  scale,
+  isVisible,
+  measuredHeight,
+  measuredWidth,
+  onMeasure,
+  observerRef,
+}: VirtualPageProps) {
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // Register with IntersectionObserver
+  useEffect(() => {
+    const el = sentinelRef.current;
+    const observer = observerRef.current;
+    if (!el || !observer) return;
+    observer.observe(el);
+    return () => observer.unobserve(el);
+  }, [observerRef]);
+
+  const placeholderW = measuredWidth ? measuredWidth * scale : ESTIMATED_PAGE_WIDTH * scale;
+  const placeholderH = measuredHeight ? measuredHeight * scale : ESTIMATED_PAGE_HEIGHT * scale;
+
+  const handlePageLoad = useCallback(
+    (page: { width: number; height: number }) => {
+      onMeasure(pageNumber, page.width, page.height);
+    },
+    [onMeasure, pageNumber],
+  );
+
+  return (
+    <div
+      ref={sentinelRef}
+      data-page-number={pageNumber}
+      style={{ minHeight: placeholderH, minWidth: placeholderW }}
+    >
+      {isVisible ? (
+        <Page
+          pageNumber={pageNumber}
+          scale={scale}
+          className="shadow-lg"
+          renderTextLayer={true}
+          renderAnnotationLayer={true}
+          onLoadSuccess={handlePageLoad}
+          loading={
+            <div
+              className="flex items-center justify-center bg-white shadow-lg"
+              style={{ width: placeholderW, height: placeholderH }}
+            >
+              <Loader2 className="h-4 w-4 animate-spin" />
+            </div>
+          }
+        />
+      ) : (
+        <div
+          className="flex items-center justify-center bg-white/60 shadow-lg"
+          style={{ width: placeholderW, height: placeholderH }}
+        />
+      )}
+    </div>
+  );
+});
+
+// --- Main PDF Viewer with virtualization ----------------------------------------
+
+/**
  * PDF Document Viewer component
- * Renders all PDF pages in continuous scroll mode for seamless reading
+ * Uses IntersectionObserver to only render pages near the viewport.
  */
 export function PDFViewer({ content, fileName }: PDFViewerProps) {
   const { t } = useI18n();
@@ -34,11 +126,47 @@ export function PDFViewer({ content, fileName }: PDFViewerProps) {
   const [fitMode, setFitMode] = useState<'manual' | 'width' | 'page'>('width');
   const [pageWidth, setPageWidth] = useState(612);
   const [pageHeight, setPageHeight] = useState(792);
-  const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // Track which pages are near the viewport
+  const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set([1, 2, 3]));
+  // Track measured page dimensions (unscaled) — use state so render can read it
+  const [pageDimensions, setPageDimensions] = useState<Map<number, { w: number; h: number }>>(new Map());
+
+  // IntersectionObserver: marks pages as visible when within rootMargin
+  const observerRef = useRef<IntersectionObserver | null>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setVisiblePages((prev) => {
+          let changed = false;
+          const next = new Set(prev);
+          for (const entry of entries) {
+            const el = entry.target as HTMLElement;
+            const pageNum = Number(el.dataset.pageNumber);
+            if (!pageNum) continue;
+            if (entry.isIntersecting) {
+              if (!next.has(pageNum)) { next.add(pageNum); changed = true; }
+            } else {
+              if (next.has(pageNum)) { next.delete(pageNum); changed = true; }
+            }
+          }
+          return changed ? next : prev;
+        });
+      },
+      {
+        root: scrollContainerRef.current,
+        // Render pages 1500px above/below viewport for smooth scrolling
+        rootMargin: "1500px 0px 1500px 0px",
+        threshold: 0,
+      },
+    );
+    observerRef.current = observer;
+    return () => observer.disconnect();
+  }, []);
+
   // Memoize the file data to prevent unnecessary reloads
-  // Copy the ArrayBuffer to avoid detached buffer issues
   const fileData = useMemo(() => {
     const copy = new Uint8Array(content).slice();
     return { data: copy };
@@ -73,10 +201,33 @@ export function PDFViewer({ content, fileName }: PDFViewerProps) {
     return () => ro.disconnect();
   }, [fitMode, pageWidth, pageHeight]);
 
-  const onPageLoadSuccess = useCallback((page: { width: number; height: number }) => {
-    setPageWidth(page.width);
-    setPageHeight(page.height);
+  const handlePageMeasure = useCallback((pageNumber: number, w: number, h: number) => {
+    setPageDimensions((prev) => {
+      const existing = prev.get(pageNumber);
+      if (existing && Math.abs(existing.w - w) < 0.5 && Math.abs(existing.h - h) < 0.5) {
+        return prev; // No change
+      }
+      const next = new Map(prev);
+      next.set(pageNumber, { w, h });
+      return next;
+    });
+    // Use first page dimensions for fit-mode calculations
+    if (pageNumber === 1) {
+      setPageWidth(w);
+      setPageHeight(h);
+    }
   }, []);
+
+  // Compute which pages should be rendered (visible + buffer)
+  const renderedPages = useMemo(() => {
+    const rendered = new Set<number>();
+    for (const p of visiblePages) {
+      for (let i = p - PAGE_BUFFER; i <= p + PAGE_BUFFER; i++) {
+        if (i >= 1 && i <= numPages) rendered.add(i);
+      }
+    }
+    return rendered;
+  }, [visiblePages, numPages]);
 
   const zoomIn = () => {
     setFitMode('manual');
@@ -90,9 +241,12 @@ export function PDFViewer({ content, fileName }: PDFViewerProps) {
 
   const jumpToPage = useCallback((pageNum: number) => {
     if (pageNum < 1 || pageNum > numPages) return;
-    const pageElement = pageRefs.current.get(pageNum);
-    if (pageElement) {
-      pageElement.scrollIntoView({ behavior: "smooth", block: "start" });
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    // Find the sentinel element for the target page
+    const sentinel = container.querySelector(`[data-page-number="${pageNum}"]`);
+    if (sentinel) {
+      sentinel.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }, [numPages]);
 
@@ -228,51 +382,45 @@ export function PDFViewer({ content, fileName }: PDFViewerProps) {
           onClose={() => setOutlineOpen(false)}
         />
 
-        {/* PDF Content - Continuous scroll mode */}
+        {/* PDF Content - Virtualized continuous scroll */}
         <div ref={scrollContainerRef} className="relative flex-1 overflow-auto bg-muted/30 p-4">
-        <PdfSearchOverlay
-          pdfDocument={pdfDoc}
-          numPages={numPages}
-          onNavigateToPage={jumpToPage}
-          isOpen={searchOpen}
-          onClose={() => setSearchOpen(false)}
-        />
-        <Document
-          file={fileData}
-          onLoadSuccess={onDocumentLoadSuccess}
-          onLoadError={onDocumentLoadError}
-          loading={
-            <div className="flex items-center justify-center gap-2 py-8">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-sm text-muted-foreground">Loading PDF...</span>
-            </div>
-          }
-        >
-          <div className="flex flex-col items-center gap-4">
-            {Array.from({ length: numPages }, (_, index) => (
-              <div
-                key={`page_${index + 1}`}
-                ref={(el) => {
-                  if (el) pageRefs.current.set(index + 1, el);
-                }}
-              >
-                <Page
-                  pageNumber={index + 1}
-                  scale={scale}
-                  className="shadow-lg"
-                  renderTextLayer={true}
-                  renderAnnotationLayer={true}
-                  onLoadSuccess={onPageLoadSuccess}
-                  loading={
-                    <div className="flex h-[800px] w-[600px] items-center justify-center bg-white shadow-lg">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    </div>
-                  }
-                />
+          <PdfSearchOverlay
+            pdfDocument={pdfDoc}
+            numPages={numPages}
+            onNavigateToPage={jumpToPage}
+            isOpen={searchOpen}
+            onClose={() => setSearchOpen(false)}
+          />
+          <Document
+            file={fileData}
+            onLoadSuccess={onDocumentLoadSuccess}
+            onLoadError={onDocumentLoadError}
+            loading={
+              <div className="flex items-center justify-center gap-2 py-8">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm text-muted-foreground">Loading PDF...</span>
               </div>
-            ))}
-          </div>
-        </Document>
+            }
+          >
+            <div className="flex flex-col items-center gap-4">
+              {Array.from({ length: numPages }, (_, index) => {
+                const pageNum = index + 1;
+                const dims = pageDimensions.get(pageNum);
+                return (
+                  <VirtualPage
+                    key={pageNum}
+                    pageNumber={pageNum}
+                    scale={scale}
+                    isVisible={renderedPages.has(pageNum)}
+                    measuredHeight={dims?.h ?? null}
+                    measuredWidth={dims?.w ?? null}
+                    onMeasure={handlePageMeasure}
+                    observerRef={observerRef}
+                  />
+                );
+              })}
+            </div>
+          </Document>
         </div>
       </div>
     </div>
