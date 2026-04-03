@@ -1600,13 +1600,21 @@ export function PDFHighlighterAdapter({
   const [persistedPdfViewState, setPersistedPdfViewState] = useState(() => cachedPdfViewState ?? null);
   const manifestSeedId = useMemo(() => generateFileId(filePath), [filePath]);
   const annotationMirrorTimeoutRef = useRef<number | null>(null);
+  const pdfAnnotationCount = useMemo(() => (
+    annotations.filter((annotation) => annotation.target.type === "pdf").length
+  ), [annotations]);
+  const pdfManifestSyncKey = (
+    pdfItemManifest
+      ? `${pdfItemManifest.itemId}:${pdfItemManifest.itemFolderPath}:${pdfItemManifest.annotationIndexPath ?? ""}`
+      : null
+  );
   const canManagePdfItemWorkspace = useMemo(() => {
     const candidate = rootHandle as Partial<FileSystemDirectoryHandle> | null;
     return Boolean(candidate && typeof candidate.getDirectoryHandle === "function" && typeof candidate.values === "function");
   }, [rootHandle]);
 
   const refreshAnnotationBacklinks = useCallback(async (): Promise<Record<string, AnnotationBacklink[]>> => {
-    if (!pdfItemManifest || !canManagePdfItemWorkspace) {
+    if (!pdfItemManifest || !canManagePdfItemWorkspace || !showSidebar || pdfAnnotationCount === 0) {
       return {};
     }
 
@@ -1620,7 +1628,7 @@ export function PDFHighlighterAdapter({
     });
     setBacklinksByAnnotation(nextBacklinks);
     return nextBacklinks;
-  }, [annotations, canManagePdfItemWorkspace, pdfItemManifest, rootHandle]);
+  }, [annotations, canManagePdfItemWorkspace, pdfAnnotationCount, pdfItemManifest, rootHandle, showSidebar]);
 
   useEffect(() => {
     if (!canManagePdfItemWorkspace) {
@@ -1730,8 +1738,15 @@ export function PDFHighlighterAdapter({
 
     annotationMirrorTimeoutRef.current = window.setTimeout(() => {
       void (async () => {
-        const nextBacklinks = await refreshAnnotationBacklinks();
-        const resolvedManifest = annotations.some((annotation) => annotation.target.type === "pdf")
+        const hasPdfAnnotations = pdfAnnotationCount > 0;
+        if (!hasPdfAnnotations && !pdfItemManifest.annotationIndexPath) {
+          return;
+        }
+
+        const nextBacklinks = hasPdfAnnotations && showSidebar
+          ? await refreshAnnotationBacklinks()
+          : {};
+        const resolvedManifest = hasPdfAnnotations
           ? await ensurePdfItemWorkspace(rootHandle, manifestSeedId, filePath)
           : pdfItemManifest;
         const annotationResult = await syncPdfAnnotationsMarkdown(
@@ -1741,8 +1756,28 @@ export function PDFHighlighterAdapter({
           annotations,
           nextBacklinks,
         );
-        setPdfItemManifest(annotationResult.manifest);
-        await refreshDirectory({ silent: true });
+
+        const nextManifest = annotationResult.manifest;
+        const shouldRefreshDirectory = (
+          nextManifest.itemFolderPath !== pdfItemManifest.itemFolderPath ||
+          (nextManifest.annotationIndexPath ?? null) !== (pdfItemManifest.annotationIndexPath ?? null)
+        );
+
+        setPdfItemManifest((current) => {
+          if (!current) {
+            return nextManifest;
+          }
+
+          return (
+            current.itemId === nextManifest.itemId &&
+            current.itemFolderPath === nextManifest.itemFolderPath &&
+            (current.annotationIndexPath ?? null) === (nextManifest.annotationIndexPath ?? null)
+          ) ? current : nextManifest;
+        });
+
+        if (shouldRefreshDirectory) {
+          await refreshDirectory({ silent: true });
+        }
       })();
     }, 450);
 
@@ -1752,7 +1787,7 @@ export function PDFHighlighterAdapter({
         annotationMirrorTimeoutRef.current = null;
       }
     };
-  }, [annotations, canManagePdfItemWorkspace, fileName, filePath, manifestSeedId, pdfItemManifest, refreshAnnotationBacklinks, refreshDirectory, rootHandle]);
+  }, [annotations, canManagePdfItemWorkspace, fileName, filePath, manifestSeedId, pdfAnnotationCount, pdfItemManifest, pdfManifestSyncKey, refreshAnnotationBacklinks, refreshDirectory, rootHandle, showSidebar]);
   const [restoreDebugState, setRestoreDebugState] = useState<PdfRestoreDebugState>(createIdleRestoreDebugState);
   
   // Current stroke state (for real-time drawing preview)
