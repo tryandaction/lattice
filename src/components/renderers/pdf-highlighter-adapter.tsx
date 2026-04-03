@@ -176,14 +176,6 @@ function buildVisiblePageCandidates(pages: HTMLElement[]): PdfVisiblePageCandida
   return candidates;
 }
 
-function getScrollContainerOverflowScore(element: HTMLElement | null | undefined): number {
-  if (!(element instanceof HTMLElement)) {
-    return -1;
-  }
-
-  return (element.scrollHeight - element.clientHeight) + (element.scrollWidth - element.clientWidth);
-}
-
 function hasMeaningfulScrollOverflow(element: HTMLElement | null | undefined): boolean {
   if (!(element instanceof HTMLElement)) {
     return false;
@@ -1783,8 +1775,6 @@ export function PDFHighlighterAdapter({
   const pdfUrl = useObjectUrl(pdfBlob);
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const resolvedScrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const [viewerScrollContainer, setViewerScrollContainer] = useState<HTMLDivElement | null>(null);
   const hasRestoredScrollRef = useRef(false);
   const timeoutIdsRef = useRef<number[]>([]);
   const persistTimeoutRef = useRef<number | null>(null);
@@ -1832,70 +1822,14 @@ export function PDFHighlighterAdapter({
   }, []);
 
   const resolveViewerScrollContainer = useCallback((): HTMLDivElement | null => {
-    // Fast path: return cached container if still valid
-    const cached = resolvedScrollContainerRef.current;
-    if (cached && cached.isConnected && hasMeaningfulScrollOverflow(cached)) {
-      return cached;
-    }
-
-    const shellContainer = scrollContainerRef.current;
     const viewerContainer = pdfHighlighterRef.current?.viewer?.container;
-
-    // Try the two most likely candidates first — avoids expensive querySelectorAll
-    const quickCandidates = [viewerContainer, shellContainer].filter(
-      (c): c is HTMLDivElement => c instanceof HTMLDivElement,
-    );
-    for (const candidate of quickCandidates) {
-      if (hasMeaningfulScrollOverflow(candidate)) {
-        resolvedScrollContainerRef.current = candidate;
-        return candidate;
-      }
-    }
-
-    // Fallback: search children, but limit depth to avoid scanning thousands of nodes
-    const roots = quickCandidates;
-    if (roots.length === 0) {
-      return null;
-    }
-
-    const seen = new Set<HTMLDivElement>(roots);
-    let best: HTMLDivElement | null = null;
-    let bestScore = 0;
-
-    for (const root of roots) {
-      // Only check direct children and one level deeper — not the entire subtree
-      const children = root.children;
-      for (let i = 0; i < children.length; i++) {
-        const child = children[i];
-        if (!(child instanceof HTMLDivElement) || seen.has(child)) continue;
-        seen.add(child);
-        const score = getScrollContainerOverflowScore(child);
-        if (score > bestScore) {
-          bestScore = score;
-          best = child;
-        }
-        // Check grandchildren
-        const grandchildren = child.children;
-        for (let j = 0; j < grandchildren.length; j++) {
-          const gc = grandchildren[j];
-          if (!(gc instanceof HTMLDivElement) || seen.has(gc)) continue;
-          seen.add(gc);
-          const gcScore = getScrollContainerOverflowScore(gc);
-          if (gcScore > bestScore) {
-            bestScore = gcScore;
-            best = gc;
-          }
-        }
-      }
-    }
-
-    resolvedScrollContainerRef.current = best && hasMeaningfulScrollOverflow(best) ? best : null;
-    return best;
+    return viewerContainer instanceof HTMLDivElement ? viewerContainer : null;
   }, []);
 
+
   const getViewerScrollContainer = useCallback((): HTMLDivElement | null => {
-    return viewerScrollContainer ?? resolveViewerScrollContainer();
-  }, [resolveViewerScrollContainer, viewerScrollContainer]);
+    return resolveViewerScrollContainer();
+  }, [resolveViewerScrollContainer]);
 
   const getNativePdfSelectionText = useCallback(() => {
     const selection = window.getSelection();
@@ -2264,14 +2198,12 @@ export function PDFHighlighterAdapter({
 
   useEffect(() => {
     hasRestoredScrollRef.current = false;
-    resolvedScrollContainerRef.current = null;
     lastPersistSignatureRef.current = null;
     lastPersistedEditorStateRef.current = null;
     currentInkPathRef.current = [];
     currentInkPageRef.current = null;
     currentInkPageElementRef.current = null;
     pdfSelectionSessionRef.current = createIdlePdfSelectionSession();
-    setViewerScrollContainer(null);
     updateCurrentAnchorDebug(cachedPdfViewState?.anchor ?? null);
     updateRestoreDebugState(createIdleRestoreDebugState());
     setCurrentInkPath([]);
@@ -2670,38 +2602,15 @@ export function PDFHighlighterAdapter({
     return String(scale);
   }, [scale, zoomMode]);
 
-  useEffect(() => {
-    let frameId = 0;
-    let attemptsLeft = 30;
-
-    const syncScrollContainer = () => {
-      const nextContainer = resolveViewerScrollContainer();
-      setViewerScrollContainer((current) => current === nextContainer ? current : nextContainer);
-
-      if (hasMeaningfulScrollOverflow(nextContainer)) {
-        return;
-      }
-
-      attemptsLeft -= 1;
-      if (attemptsLeft > 0) {
-        frameId = window.requestAnimationFrame(syncScrollContainer);
-      }
-    };
-
-    frameId = window.requestAnimationFrame(syncScrollContainer);
-    return () => {
-      if (frameId) {
-        window.cancelAnimationFrame(frameId);
-      }
-    };
-  }, [fileId, pdfScaleValue, resolveViewerScrollContainer, showSidebar]);
+  const needsPdfPageDimensions = useMemo(() => (
+    annotations.some((annotation) => annotation.style.type !== 'ink' && annotation.style.type !== 'text')
+  ), [annotations]);
 
   useEffect(() => {
     if (!isDiagnosticsMode) {
       return;
     }
 
-    let attemptsLeft = 24;
     let frameId = 0;
 
     const attachViewerAttributes = () => {
@@ -2712,14 +2621,6 @@ export function PDFHighlighterAdapter({
       }
 
       if (viewerContainer) {
-        if (viewerContainer === shellContainer && !hasMeaningfulScrollOverflow(viewerContainer)) {
-          attemptsLeft -= 1;
-          if (attemptsLeft > 0) {
-            frameId = window.requestAnimationFrame(attachViewerAttributes);
-          }
-          return;
-        }
-
         if (viewerContainer !== shellContainer) {
           viewerContainer.setAttribute("data-pane-id", paneId);
           viewerContainer.setAttribute("data-testid", `pdf-viewer-container-${paneId}`);
@@ -2727,10 +2628,7 @@ export function PDFHighlighterAdapter({
         return;
       }
 
-      attemptsLeft -= 1;
-      if (attemptsLeft > 0) {
-        frameId = window.requestAnimationFrame(attachViewerAttributes);
-      }
+      frameId = window.requestAnimationFrame(attachViewerAttributes);
     };
 
     frameId = window.requestAnimationFrame(attachViewerAttributes);
@@ -2743,6 +2641,11 @@ export function PDFHighlighterAdapter({
   }, [getViewerScrollContainer, isDiagnosticsMode, paneId]);
 
   useEffect(() => {
+    if (!needsPdfPageDimensions) {
+      setPdfPageDimensions((previous) => previous.size === 0 ? previous : new Map());
+      return;
+    }
+
     let frameId = 0;
     let attemptsLeft = 30;
 
@@ -2801,7 +2704,7 @@ export function PDFHighlighterAdapter({
         window.cancelAnimationFrame(frameId);
       }
     };
-  }, [getRenderedPdfPages, pdfScaleValue, showSidebar]);
+  }, [getRenderedPdfPages, needsPdfPageDimensions, pdfScaleValue, showSidebar]);
 
   useEffect(() => {
     const pdfHighlighter = pdfHighlighterRef.current;
@@ -3081,7 +2984,7 @@ export function PDFHighlighterAdapter({
   // Handle Ctrl+Wheel zoom only inside the current pane.
   // CRITICAL for scroll performance: we only register a non-passive wheel handler
   // while Ctrl/Meta is held. When no modifier is pressed, the browser can scroll
-  // natively without waiting for JS — this eliminates scroll jank.
+  // natively without waiting for JS, which eliminates scroll jank.
   useEffect(() => {
     const handleWheelZoom = (e: WheelEvent) => {
       const viewerScope = scrollContainerRef.current;
@@ -3786,7 +3689,7 @@ export function PDFHighlighterAdapter({
   const renderPdfViewport = (fillHeight: boolean) => (
     <div
       ref={scrollContainerRef}
-      className={`relative flex-1 min-h-0 min-w-0 overflow-auto bg-muted/30${fillHeight ? " h-full" : ""}`}
+      className={`relative flex-1 min-h-0 min-w-0 overflow-hidden bg-muted/30${fillHeight ? " h-full" : ""}`}
       data-testid={`pdf-scroll-container-${paneId}`}
       onPointerDownCapture={beginNativePdfSelectionInteraction}
       onClick={activeTool === 'note' || activeTool === 'text' ? handlePdfClick : undefined}

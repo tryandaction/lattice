@@ -14,12 +14,12 @@ import type {
 } from '../types/universal-annotation';
 import { validateAnnotationItem } from '../types/universal-annotation';
 import {
-  generateFileId,
   detectFileType,
   createUniversalAnnotationFile,
   saveWithRetry,
   ensureAnnotationsDirectory,
   deserializeAnnotationFile,
+  resolveAnnotationFileCandidates,
 } from '../lib/universal-annotation-storage';
 import {
   isLegacyAnnotationFile,
@@ -85,20 +85,6 @@ export interface UseAnnotationSystemReturn {
   getAnnotationsByTarget: <T extends AnnotationTarget['type']>(
     type: T
   ) => AnnotationItem[];
-}
-
-export function resolveAnnotationFileCandidates(
-  fileHandleName: string,
-  filePath?: string,
-  preferredFileId?: string | null,
-): string[] {
-  const preferredPath = (filePath && filePath.trim()) ? filePath : fileHandleName;
-  const preferredId = generateFileId(preferredPath);
-  const legacyId = generateFileId(fileHandleName);
-  const candidates = [preferredFileId ?? null, preferredId, legacyId]
-    .filter((candidate): candidate is string => Boolean(candidate));
-
-  return Array.from(new Set(candidates));
 }
 
 // ============================================================================

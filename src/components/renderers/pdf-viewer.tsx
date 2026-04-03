@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect, memo } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
-import { ZoomIn, ZoomOut, Loader2, Search, List, Maximize2, ArrowLeftRight } from "lucide-react";
+import { ZoomIn, ZoomOut, Loader2, Search, List, Maximize2, ArrowLeftRight, Highlighter } from "lucide-react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { PdfSearchOverlay } from "./pdf-search-overlay";
 import { PdfOutlineSidebar } from "./pdf-outline-sidebar";
@@ -11,11 +11,18 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
 // Configure PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  "pdfjs-dist/build/pdf.worker.min.mjs",
+  import.meta.url,
+).toString();
 
 interface PDFViewerProps {
   content: ArrayBuffer;
   fileName: string;
+  paneId?: string;
+  canAnnotate?: boolean;
+  hasPersistedAnnotations?: boolean;
+  onRequestAnnotationMode?: () => void;
 }
 
 /**
@@ -69,8 +76,11 @@ const VirtualPage = memo(function VirtualPage({
   const placeholderH = measuredHeight ? measuredHeight * scale : ESTIMATED_PAGE_HEIGHT * scale;
 
   const handlePageLoad = useCallback(
-    (page: { width: number; height: number }) => {
-      onMeasure(pageNumber, page.width, page.height);
+    (page: { width: number; height: number; getViewport?: (options: { scale: number }) => { width: number; height: number } }) => {
+      const baseViewport = typeof page.getViewport === "function"
+        ? page.getViewport({ scale: 1 })
+        : page;
+      onMeasure(pageNumber, baseViewport.width, baseViewport.height);
     },
     [onMeasure, pageNumber],
   );
@@ -114,7 +124,14 @@ const VirtualPage = memo(function VirtualPage({
  * PDF Document Viewer component
  * Uses IntersectionObserver to only render pages near the viewport.
  */
-export function PDFViewer({ content, fileName }: PDFViewerProps) {
+export function PDFViewer({
+  content,
+  fileName,
+  paneId,
+  canAnnotate = false,
+  hasPersistedAnnotations = false,
+  onRequestAnnotationMode,
+}: PDFViewerProps) {
   const { t } = useI18n();
   const [numPages, setNumPages] = useState<number>(0);
   const [scale, setScale] = useState<number>(1.2);
@@ -189,11 +206,11 @@ export function PDFViewer({ content, fileName }: PDFViewerProps) {
     const update = () => {
       const cw = container.clientWidth - 32;
       const ch = container.clientHeight - 32;
-      if (fitMode === 'width') {
-        setScale(Math.max(0.5, Math.min(3.0, cw / pageWidth)));
-      } else {
-        setScale(Math.max(0.5, Math.min(3.0, Math.min(cw / pageWidth, ch / pageHeight))));
-      }
+      const nextScale = fitMode === 'width'
+        ? Math.max(0.5, Math.min(3.0, cw / pageWidth))
+        : Math.max(0.5, Math.min(3.0, Math.min(cw / pageWidth, ch / pageHeight)));
+
+      setScale((previous) => Math.abs(previous - nextScale) < 0.01 ? previous : nextScale);
     };
     update();
     const ro = new ResizeObserver(update);
@@ -293,7 +310,10 @@ export function PDFViewer({ content, fileName }: PDFViewerProps) {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="flex h-full flex-col"
+      data-testid={paneId ? `pdf-viewer-${paneId}` : "pdf-viewer"}
+    >
       {/* Toolbar */}
       <div className="flex items-center justify-between border-b border-border bg-muted/50 px-4 py-2">
         <span className="text-sm text-muted-foreground truncate max-w-xs">
@@ -370,6 +390,23 @@ export function PDFViewer({ content, fileName }: PDFViewerProps) {
           >
             <List className="h-4 w-4" />
           </button>
+
+          {canAnnotate ? (
+            <button
+              type="button"
+              onClick={onRequestAnnotationMode}
+              className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-xs transition-colors ${
+                hasPersistedAnnotations
+                  ? "border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
+                  : "border-border bg-background hover:bg-muted"
+              }`}
+              title={t('pdf.sidebar.show')}
+              data-testid={paneId ? `pdf-annotate-trigger-${paneId}` : "pdf-annotate-trigger"}
+            >
+              <Highlighter className="h-3.5 w-3.5" />
+              <span>{t('pdf.workspace.note.annotation')}</span>
+            </button>
+          ) : null}
         </div>
       </div>
 

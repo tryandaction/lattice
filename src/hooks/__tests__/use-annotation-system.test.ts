@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveAnnotationFileCandidates } from '../use-annotation-system';
+import { resolveAnnotationFileCandidates } from '@/lib/universal-annotation-storage';
 
 describe('use-annotation-system helpers', () => {
   it('prefers full workspace path and keeps legacy filename fallback when needed', () => {

@@ -75,4 +75,12 @@ describe("FolderSelector", () => {
     expect(hoisted.setDefaultFolder).toHaveBeenCalledWith("C:/vault");
     expect(hoisted.openWorkspacePath).not.toHaveBeenCalled();
   });
+
+  it("renders safely when recent workspace history is missing", () => {
+    settingsState.settings.recentWorkspacePaths = undefined as unknown as string[];
+
+    render(<FolderSelector />);
+
+    expect(screen.getByText("settings.recentWorkspaces.empty")).toBeTruthy();
+  });
 });

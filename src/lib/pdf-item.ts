@@ -14,9 +14,12 @@ import {
   normalizeWorkspacePath,
 } from "@/lib/link-router/path-utils";
 import {
+  deserializeAnnotationFile,
   deleteAnnotationsFromDisk,
+  ensureAnnotationsDirectory,
   generateFileId,
   loadAnnotationsFromDisk,
+  resolveAnnotationFileCandidates,
   saveAnnotationsToDisk,
 } from "@/lib/universal-annotation-storage";
 import type { AnnotationBacklink } from "@/lib/annotation-backlinks";
@@ -699,6 +702,44 @@ export async function loadPdfItemManifest(
   }
 
   return createDefaultPdfItemManifest(fileId, normalizedPdfPath);
+}
+
+export async function hasPersistedPdfAnnotations(
+  rootHandle: FileSystemDirectoryHandle,
+  fileId: string,
+  pdfPath: string,
+  fileName: string,
+): Promise<boolean> {
+  try {
+    const manifest = await loadPdfItemManifest(rootHandle, fileId, pdfPath);
+    if (manifest.annotationIndexPath) {
+      return true;
+    }
+  } catch {
+    // Fall through to sidecar checks.
+  }
+
+  try {
+    const annotationsDir = await ensureAnnotationsDirectory(rootHandle);
+    const candidates = resolveAnnotationFileCandidates(fileName, pdfPath, fileId);
+
+    for (const candidate of candidates) {
+      try {
+        const fileHandle = await annotationsDir.getFileHandle(`${candidate}.json`);
+        const file = await fileHandle.getFile();
+        const parsed = deserializeAnnotationFile(await file.text());
+        if (parsed?.annotations.some((annotation) => annotation.target.type === "pdf")) {
+          return true;
+        }
+      } catch {
+        // Try the next candidate id.
+      }
+    }
+  } catch {
+    // Annotation storage unavailable; treat as no persisted annotations.
+  }
+
+  return false;
 }
 
 export async function savePdfItemManifest(

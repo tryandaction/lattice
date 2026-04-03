@@ -9,7 +9,7 @@ import { normalizeScientificText } from "@/lib/markdown-converter";
 import { navigateLink } from "@/lib/link-router/navigate-link";
 import { t } from "@/lib/i18n";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
-import { isTauriHost } from "@/lib/storage-adapter";
+import { hasPersistedPdfAnnotations } from "@/lib/pdf-item";
 
 /**
  * LRU cache for normalizeScientificText results.
@@ -17,10 +17,6 @@ import { isTauriHost } from "@/lib/storage-adapter";
  */
 const normalizeCache = new Map<string, string>();
 const NORMALIZE_CACHE_MAX = 20;
-const WEB_LARGE_PDF_BYTE_THRESHOLD = 8 * 1024 * 1024;
-const WEB_LARGE_PDF_PAGE_THRESHOLD = 40;
-const DESKTOP_LARGE_PDF_BYTE_THRESHOLD = 4 * 1024 * 1024;
-const DESKTOP_LARGE_PDF_PAGE_THRESHOLD = 20;
 
 function cachedNormalizeScientificText(raw: string): string {
   const cached = normalizeCache.get(raw);
@@ -55,71 +51,57 @@ function AdaptivePDFRenderer({
   filePath,
 }: AdaptivePDFRendererProps) {
   const hasAnnotationContext = Boolean(fileHandle && rootHandle);
-  const isDesktopRuntime = isTauriHost();
-  const byteThreshold = isDesktopRuntime ? DESKTOP_LARGE_PDF_BYTE_THRESHOLD : WEB_LARGE_PDF_BYTE_THRESHOLD;
-  const pageThreshold = isDesktopRuntime ? DESKTOP_LARGE_PDF_PAGE_THRESHOLD : WEB_LARGE_PDF_PAGE_THRESHOLD;
-  const [renderMode, setRenderMode] = useState<"checking" | "viewer" | "highlighter">(() => {
-    if (!hasAnnotationContext) return "viewer";
-    if (content.byteLength >= byteThreshold) return "viewer";
-    return "checking";
-  });
+  const activePdfKey = `${fileId}:${filePath}`;
+  const [requestedAnnotationModeKey, setRequestedAnnotationModeKey] = useState<string | null>(null);
+  const [annotationPresenceByKey, setAnnotationPresenceByKey] = useState<Record<string, boolean>>({});
+  const hasPersistedAnnotations = annotationPresenceByKey[activePdfKey] ?? false;
+  const renderMode: "viewer" | "highlighter" = (
+    requestedAnnotationModeKey === activePdfKey || hasPersistedAnnotations
+  ) ? "highlighter" : "viewer";
 
   useEffect(() => {
-    if (!hasAnnotationContext) {
-      setRenderMode("viewer");
-      return;
-    }
-
-    if (content.byteLength >= byteThreshold) {
-      setRenderMode("viewer");
+    if (!fileHandle || !rootHandle) {
       return;
     }
 
     let cancelled = false;
-    let destroyTask: (() => void) | null = null;
 
-    const detectPdfMode = async () => {
+    const detectPersistedAnnotations = async () => {
       try {
-        const { pdfjs } = await import("react-pdf");
-        if (!pdfjs.GlobalWorkerOptions.workerSrc) {
-          pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
-        }
-
-        const loadingTask = pdfjs.getDocument({
-          data: new Uint8Array(content).slice(),
-          disableAutoFetch: true,
-          disableStream: true,
-        });
-        destroyTask = () => {
-          void loadingTask.destroy();
-        };
-
-        const pdfDocument = await loadingTask.promise;
-        const nextMode = pdfDocument.numPages > pageThreshold ? "viewer" : "highlighter";
-        await pdfDocument.destroy();
-
+        const detected = await hasPersistedPdfAnnotations(
+          rootHandle,
+          fileId,
+          filePath,
+          fileName,
+        );
         if (!cancelled) {
-          setRenderMode(nextMode);
+          setAnnotationPresenceByKey((current) => (
+            current[activePdfKey] === detected
+              ? current
+              : {
+                  ...current,
+                  [activePdfKey]: detected,
+                }
+          ));
         }
       } catch {
-        if (!cancelled) {
-          setRenderMode("viewer");
-        }
+        // Detection failure falls back to the lightweight viewer path.
       }
     };
 
-    setRenderMode("checking");
-    void detectPdfMode();
+    void detectPersistedAnnotations();
 
     return () => {
       cancelled = true;
-      destroyTask?.();
     };
-  }, [byteThreshold, content, hasAnnotationContext, pageThreshold]);
+  }, [activePdfKey, fileHandle, fileId, fileName, filePath, rootHandle]);
 
-  if (renderMode === "checking") {
-    return <LoadingState message={t("viewer.loading.pdf")} />;
-  }
+  const handleRequestAnnotationMode = useCallback(() => {
+    if (!hasAnnotationContext) {
+      return;
+    }
+    setRequestedAnnotationModeKey(activePdfKey);
+  }, [activePdfKey, hasAnnotationContext]);
 
   if (renderMode === "highlighter" && fileHandle && rootHandle) {
     return (
@@ -135,7 +117,16 @@ function AdaptivePDFRenderer({
     );
   }
 
-  return <PDFViewer content={content} fileName={fileName} />;
+  return (
+    <PDFViewer
+      content={content}
+      fileName={fileName}
+      paneId={paneId}
+      canAnnotate={hasAnnotationContext}
+      hasPersistedAnnotations={hasPersistedAnnotations}
+      onRequestAnnotationMode={handleRequestAnnotationMode}
+    />
+  );
 }
 
 /**

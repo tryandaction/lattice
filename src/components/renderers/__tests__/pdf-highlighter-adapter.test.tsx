@@ -231,6 +231,10 @@ vi.mock('@/hooks/use-object-url', () => ({
   useObjectUrl: (input: unknown) => useObjectUrlMock(input),
 }));
 
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/diagnostics/pdf-regression',
+}));
+
 function renderPdfPane(props: { paneId: 'pane-left' | 'pane-right'; fileId: string }) {
   return (
     <div className="h-[600px] w-[800px]">
@@ -483,6 +487,17 @@ describe('PDFHighlighterAdapter', () => {
     fireEvent.click(screen.getByTestId('mock-pdf-selection-trigger'));
     await waitFor(() => {
       expect(screen.getByTestId('pdf-transient-selection-pane-left-page-1')).toBeTruthy();
+    });
+  });
+
+  it('exposes the inner pdf.js viewer container in diagnostics mode', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      const diagnosticsContainer = document.querySelector('[data-testid="pdf-viewer-container-pane-left"]');
+      const shellContainer = screen.getByTestId('pdf-scroll-container-pane-left');
+      expect(diagnosticsContainer).toBeTruthy();
+      expect(diagnosticsContainer).not.toBe(shellContainer);
     });
   });
 

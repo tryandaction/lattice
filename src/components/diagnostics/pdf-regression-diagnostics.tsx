@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PDFHighlighterAdapter } from "@/components/renderers/pdf-highlighter-adapter";
+import { UniversalFileViewer } from "@/components/main-area/universal-file-viewer";
 import { resolveAppRoute } from "@/lib/app-route";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { createEmptyPane } from "@/lib/layout-utils";
@@ -15,6 +15,8 @@ import {
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { buildPdfEditorState, DEFAULT_PDF_VIEWPORT_ANCHOR } from "@/lib/pdf-view-state";
 import { buildPersistedFileViewStateKey, deletePersistedFileViewState } from "@/lib/file-view-state";
+import { createUniversalAnnotationFile, generateFileId, saveAnnotationsToDisk } from "@/lib/universal-annotation-storage";
+import { deletePdfItemWorkspace } from "@/lib/pdf-item";
 
 interface PdfFixture {
   fileId: string;
@@ -29,6 +31,7 @@ interface DiagnosticsWorkspace {
   left: PdfFixture;
   rightA: PdfFixture;
   rightB: PdfFixture;
+  plain: PdfFixture;
 }
 
 interface PaneSnapshot {
@@ -80,6 +83,17 @@ function findMostScrollableElement(scope: ParentNode | null): HTMLElement | null
   return candidates[0] ?? null;
 }
 
+function getPdfDiagnosticsScrollContainer(shell: ParentNode | null, paneId: string): HTMLElement | null {
+  if (!shell) {
+    return null;
+  }
+
+  const preferred = document.querySelector<HTMLElement>(`[data-testid="pdf-viewer-container-${paneId}"]`)
+    ?? shell.querySelector<HTMLElement>(`[data-testid="pdf-scroll-container-${paneId}"]`);
+
+  return preferred ?? findMostScrollableElement(shell);
+}
+
 function PaneStateCard({ title, snapshot, paneTestId }: { title: string; snapshot: PaneSnapshot | null; paneTestId: string }) {
   return (
     <div className="rounded-lg border border-border p-3 text-xs leading-6">
@@ -99,6 +113,32 @@ function PaneStateCard({ title, snapshot, paneTestId }: { title: string; snapsho
       <div>Copy Payload: <span data-testid={`${paneTestId}-copy-payload`}>{snapshot?.copyPayload ?? ""}</span></div>
     </div>
   );
+}
+
+async function seedPdfAnnotation(rootHandle: FileSystemDirectoryHandle, fileId: string, page: number) {
+  const annotationFile = createUniversalAnnotationFile(fileId, "pdf");
+  annotationFile.annotations = [
+    {
+      id: `ann-${fileId}`,
+      target: {
+        type: "pdf",
+        page,
+        rects: [
+          { x1: 0.12, y1: 0.18, x2: 0.46, y2: 0.22 },
+        ],
+      },
+      style: {
+        color: "#FFEB3B",
+        type: "highlight",
+      },
+      content: `Diagnostic highlight on page ${page}`,
+      comment: "Regression seed",
+      author: "diagnostics",
+      createdAt: Date.now(),
+    },
+  ];
+
+  await saveAnnotationsToDisk(annotationFile, rootHandle);
 }
 
 export function PdfRegressionDiagnostics() {
@@ -123,18 +163,28 @@ export function PdfRegressionDiagnostics() {
         const leftFileId = `${sessionId}-left`;
         const rightAFileId = `${sessionId}-right-a`;
         const rightBFileId = `${sessionId}-right-b`;
+        const plainFileId = `${sessionId}-plain`;
 
-        const [leftBuffer, rightABuffer, rightBBuffer] = await Promise.all([
+        const [leftBuffer, rightABuffer, rightBBuffer, plainBuffer] = await Promise.all([
           createSamplePdfBuffer("Left regression fixture"),
           createSamplePdfBuffer("Right regression fixture A"),
           createSamplePdfBuffer("Right regression fixture B"),
+          createSamplePdfBuffer("Plain routing fixture", 4),
         ]);
 
-        const [leftHandle, rightAHandle, rightBHandle] = await Promise.all([
+        const [leftHandle, rightAHandle, rightBHandle, plainHandle] = await Promise.all([
           writeArrayBufferFile(pdfDirectory, "left-fixture.pdf", leftBuffer),
           writeArrayBufferFile(pdfDirectory, "right-fixture-a.pdf", rightABuffer),
           writeArrayBufferFile(pdfDirectory, "right-fixture-b.pdf", rightBBuffer),
+          writeArrayBufferFile(pdfDirectory, "plain-fixture.pdf", plainBuffer),
         ]);
+
+        await Promise.all([
+          seedPdfAnnotation(rootHandle, generateFileId("pdf/left-fixture.pdf"), 1),
+          seedPdfAnnotation(rootHandle, generateFileId("pdf/right-fixture-a.pdf"), 1),
+          seedPdfAnnotation(rootHandle, generateFileId("pdf/right-fixture-b.pdf"), 2),
+        ]);
+        await deletePdfItemWorkspace(rootHandle, "pdf/plain-fixture.pdf");
 
         if (disposed) {
           return;
@@ -158,6 +208,12 @@ export function PdfRegressionDiagnostics() {
             workspaceRootPath,
             filePath: "pdf/right-fixture-b.pdf",
             fallbackName: "right-fixture-b.pdf",
+          }),
+          buildPersistedFileViewStateKey({
+            kind: "pdf",
+            workspaceRootPath,
+            filePath: "pdf/plain-fixture.pdf",
+            fallbackName: "plain-fixture.pdf",
           }),
         ];
 
@@ -197,6 +253,13 @@ export function PdfRegressionDiagnostics() {
             content: rightBBuffer,
             fileHandle: rightBHandle,
           },
+          plain: {
+            fileId: plainFileId,
+            fileName: "plain-fixture.pdf",
+            filePath: "pdf/plain-fixture.pdf",
+            content: plainBuffer,
+            fileHandle: plainHandle,
+          },
         });
       } catch (err) {
         if (!disposed) {
@@ -217,9 +280,7 @@ export function PdfRegressionDiagnostics() {
       const readSnapshot = (paneId: string): PaneSnapshot | null => {
         const zoomLabel = document.querySelector<HTMLElement>(`[data-testid="pdf-zoom-label-${paneId}"]`);
         const shell = document.querySelector<HTMLElement>(`[data-testid="${paneId === "pdf-left-pane" ? "pdf-left-shell" : "pdf-right-shell"}"]`);
-        const scrollContainer = findMostScrollableElement(shell)
-          ?? document.querySelector<HTMLElement>(`[data-testid="pdf-viewer-container-${paneId}"]`)
-          ?? document.querySelector<HTMLElement>(`[data-testid="pdf-scroll-container-${paneId}"]`);
+        const scrollContainer = getPdfDiagnosticsScrollContainer(shell, paneId);
         const anchorPage = document.querySelector<HTMLElement>(`[data-testid="pdf-anchor-page-${paneId}"]`);
         const anchorTopRatio = document.querySelector<HTMLElement>(`[data-testid="pdf-anchor-top-ratio-${paneId}"]`);
         const anchorLeftRatio = document.querySelector<HTMLElement>(`[data-testid="pdf-anchor-left-ratio-${paneId}"]`);
@@ -281,7 +342,7 @@ export function PdfRegressionDiagnostics() {
 
     const attemptScroll = () => {
       const shell = document.querySelector<HTMLElement>(`[data-testid="${shellTestId}"]`);
-      const scrollContainer = findMostScrollableElement(shell);
+      const scrollContainer = getPdfDiagnosticsScrollContainer(shell, "pdf-right-pane");
       const page = shell?.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`);
       if (page) {
         page.scrollIntoView({ behavior: "auto", block: "center" });
@@ -313,12 +374,14 @@ export function PdfRegressionDiagnostics() {
     }
 
     const readValue = (testId: string) => document.querySelector<HTMLElement>(`[data-testid="${testId}"]`)?.textContent?.trim() ?? null;
+    const shell = document.querySelector<HTMLElement>('[data-testid="pdf-right-shell"]');
+    const scrollContainer = getPdfDiagnosticsScrollContainer(shell, "pdf-right-pane");
     const domSnapshot: PaneSnapshot = {
-      zoom: readValue("pdf-right-state-zoom"),
-      scrollTop: Number(readValue("pdf-right-state-scroll-top") ?? "0"),
-      scrollLeft: Number(readValue("pdf-right-state-scroll-left") ?? "0"),
+      zoom: readValue("pdf-zoom-label-pdf-right-pane") ?? readValue("pdf-right-state-zoom"),
+      scrollTop: scrollContainer?.scrollTop ?? Number(readValue("pdf-right-state-scroll-top") ?? "0"),
+      scrollLeft: scrollContainer?.scrollLeft ?? Number(readValue("pdf-right-state-scroll-left") ?? "0"),
       visiblePage: Number(readValue("pdf-right-state-visible-page") ?? "0") || null,
-      anchorPage: Number(readValue("pdf-right-state-anchor-page") ?? "0") || null,
+      anchorPage: Number(readValue("pdf-anchor-page-pdf-right-pane") ?? readValue("pdf-right-state-anchor-page") ?? "0") || null,
       anchorTopRatio: readValue("pdf-anchor-top-ratio-pdf-right-pane") ? Number(readValue("pdf-anchor-top-ratio-pdf-right-pane")) : null,
       anchorLeftRatio: readValue("pdf-anchor-left-ratio-pdf-right-pane") ? Number(readValue("pdf-anchor-left-ratio-pdf-right-pane")) : null,
       restoreStatus: readValue("pdf-right-state-restore-status"),
@@ -414,7 +477,11 @@ export function PdfRegressionDiagnostics() {
             type="button"
             data-testid="toggle-right-file"
             onClick={() => {
-              persistRightSnapshot();
+              try {
+                persistRightSnapshot();
+              } catch (error) {
+                console.error("Failed to persist right snapshot before switching fixture:", error);
+              }
               setRightVariant((value) => value === "a" ? "b" : "a");
             }}
             className="rounded border border-border px-3 py-1 hover:bg-muted"
@@ -446,30 +513,46 @@ export function PdfRegressionDiagnostics() {
         </div>
       </header>
 
-      <main className={`grid min-h-0 flex-1 gap-3 overflow-hidden p-3 ${compactLayout ? "grid-cols-[1fr_0.82fr_320px]" : "grid-cols-[1fr_1fr_320px]"}`}>
+      <main className={`grid min-h-0 flex-1 gap-3 overflow-hidden p-3 ${compactLayout ? "grid-cols-[1fr_0.82fr_0.7fr_320px]" : "grid-cols-[1fr_1fr_0.85fr_320px]"}`}>
         <section className="min-h-0 overflow-hidden rounded-xl border border-border" data-testid="pdf-left-shell">
-          <PDFHighlighterAdapter
+          <UniversalFileViewer
             key={workspace.left.fileId}
-            content={workspace.left.content}
-            fileName={workspace.left.fileName}
-            fileHandle={workspace.left.fileHandle}
-            rootHandle={workspace.rootHandle}
             paneId="pdf-left-pane"
+            handle={workspace.left.fileHandle}
+            rootHandle={workspace.rootHandle}
+            content={workspace.left.content}
+            isLoading={false}
+            error={null}
             fileId={workspace.left.fileId}
             filePath={workspace.left.filePath}
           />
         </section>
 
         <section className="min-h-0 overflow-hidden rounded-xl border border-border" data-testid="pdf-right-shell">
-          <PDFHighlighterAdapter
+          <UniversalFileViewer
             key={rightFixture.fileId}
-            content={rightFixture.content}
-            fileName={rightFixture.fileName}
-            fileHandle={rightFixture.fileHandle}
-            rootHandle={workspace.rootHandle}
             paneId="pdf-right-pane"
+            handle={rightFixture.fileHandle}
+            rootHandle={workspace.rootHandle}
+            content={rightFixture.content}
+            isLoading={false}
+            error={null}
             fileId={rightFixture.fileId}
             filePath={rightFixture.filePath}
+          />
+        </section>
+
+        <section className="min-h-0 overflow-hidden rounded-xl border border-border" data-testid="pdf-plain-shell">
+          <UniversalFileViewer
+            key={workspace.plain.fileId}
+            paneId="pdf-plain-pane"
+            handle={workspace.plain.fileHandle}
+            rootHandle={workspace.rootHandle}
+            content={workspace.plain.content}
+            isLoading={false}
+            error={null}
+            fileId={workspace.plain.fileId}
+            filePath={workspace.plain.filePath}
           />
         </section>
 

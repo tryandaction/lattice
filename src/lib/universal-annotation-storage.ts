@@ -73,6 +73,20 @@ export function generateFileId(filePath: string): string {
   return fileId;
 }
 
+export function resolveAnnotationFileCandidates(
+  fileHandleName: string,
+  filePath?: string,
+  preferredFileId?: string | null,
+): string[] {
+  const preferredPath = (filePath && filePath.trim()) ? filePath : fileHandleName;
+  const preferredId = generateFileId(preferredPath);
+  const legacyId = generateFileId(fileHandleName);
+  const candidates = [preferredFileId ?? null, preferredId, legacyId]
+    .filter((candidate): candidate is string => Boolean(candidate));
+
+  return Array.from(new Set(candidates));
+}
+
 /**
  * Gets the annotation file path for a given fileId
  * 

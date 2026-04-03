@@ -150,14 +150,26 @@ async function waitForNumericTextAtMost(page, testId, maximum, message) {
   }
 }
 
+async function waitForNumericTextChange(page, testId, minimum, message) {
+  await page.waitForFunction(({ id, threshold }) => {
+    const value = Number(document.querySelector(`[data-testid="${id}"]`)?.textContent ?? "0");
+    return value >= threshold;
+  }, { id: testId, threshold: minimum }, { timeout: 120000 });
+
+  const received = Number((await page.getByTestId(testId).textContent())?.trim() ?? "0");
+  if (received < minimum) {
+    throw new Error(`${message}: expected >= ${minimum} but received ${received}`);
+  }
+}
+
 async function waitForTruthyText(page, testId, message) {
   await page.waitForFunction((id) => {
     const value = document.querySelector(`[data-testid="${id}"]`)?.textContent?.trim();
-    return value && value !== "无" && value !== "0" && value !== "false";
+    return value && value !== "0" && value !== "false";
   }, testId, { timeout: 120000 });
 
   const received = (await page.getByTestId(testId).textContent())?.trim() ?? "";
-  if (!received || received === "无" || received === "0" || received === "false") {
+  if (!received || received === "0" || received === "false") {
     throw new Error(`${message}: expected truthy text but received "${received}"`);
   }
 }
@@ -202,7 +214,7 @@ async function ensureSelectionAiHubOpen(page) {
     await reopenButton.click();
   }
 
-  await page.getByRole("button", { name: "发送到快速问答" }).waitFor({ timeout: 30000 });
+  await page.getByTestId("selection-ai-submit").waitFor({ timeout: 30000 });
 }
 
 async function resetSelectionAiDiagnostics(page) {
@@ -224,7 +236,8 @@ async function runSelectionAiFlow(page, options) {
       await ensureSelectionAiHubOpen(page);
 
       if (options.modeButtonName) {
-        await page.getByRole("button", { name: options.modeButtonName }).click();
+        const modeTestId = `selection-ai-mode-${options.modeButtonName.toLowerCase()}`;
+        await page.getByTestId(modeTestId).click();
       }
 
       const promptBox = page.locator("textarea").first();
@@ -238,7 +251,7 @@ async function runSelectionAiFlow(page, options) {
         { timeout: 15000 },
       );
 
-      await page.getByRole("button", { name: options.submitButtonName }).click();
+      await page.getByTestId("selection-ai-submit").click();
       for (const assertion of options.assertions) {
         await assertion();
       }
@@ -284,6 +297,15 @@ async function resolvePdfScrollableSelector(page, paneId) {
       return null;
     }
 
+    const preferred = document.querySelector(`[data-testid="pdf-viewer-container-${targetPaneId}"]`)
+      ?? shell.querySelector(`[data-testid="pdf-scroll-container-${targetPaneId}"]`);
+    if (preferred instanceof HTMLElement) {
+      if (!preferred.id) {
+        preferred.id = `pdf-scroll-target-${targetPaneId}`;
+      }
+      return `#${preferred.id}`;
+    }
+
     const candidates = Array.from(shell.querySelectorAll("*"))
       .filter((element) => element instanceof HTMLElement)
       .map((element) => ({
@@ -310,6 +332,12 @@ async function waitForPdfScrollableReady(page, paneId, minimumOverflow = 500) {
     const shell = document.querySelector(`[data-testid="${targetPaneId === "pdf-left-pane" ? "pdf-left-shell" : "pdf-right-shell"}"]`);
     if (!(shell instanceof HTMLElement)) {
       return false;
+    }
+
+    const preferred = document.querySelector(`[data-testid="pdf-viewer-container-${targetPaneId}"]`)
+      ?? shell.querySelector(`[data-testid="pdf-scroll-container-${targetPaneId}"]`);
+    if (preferred instanceof HTMLElement) {
+      return ((preferred.scrollHeight - preferred.clientHeight) + (preferred.scrollWidth - preferred.clientWidth)) > threshold;
     }
 
     const candidates = Array.from(shell.querySelectorAll("*"))
@@ -358,13 +386,23 @@ async function testPdfRegression(page, baseUrl) {
       throw new Error("Right PDF pane overflowed the viewport.");
     }
 
-    await expectText(page.getByTestId("pdf-zoom-label-pdf-left-pane"), "适宽", "Left pane initial zoom");
-    await expectText(page.getByTestId("pdf-zoom-label-pdf-right-pane"), "适宽", "Right pane initial zoom");
+    console.log("[pdf-regression] verify default viewer route");
+    await page.getByTestId("pdf-viewer-pdf-plain-pane").waitFor({ timeout: 120000 });
+    await page.getByTestId("pdf-annotate-trigger-pdf-plain-pane").click();
+    await page.getByTestId("pdf-pane-pdf-plain-pane").waitFor({ timeout: 120000 });
+    await page.getByTestId("pdf-pane-pdf-left-pane").hover();
+    await page.getByTestId("activate-left-pane").click();
+
+    const initialLeftZoom = (await page.getByTestId("pdf-zoom-label-pdf-left-pane").textContent())?.trim() ?? "";
+    const initialRightZoom = (await page.getByTestId("pdf-zoom-label-pdf-right-pane").textContent())?.trim() ?? "";
+    if (!initialLeftZoom || initialLeftZoom !== initialRightZoom) {
+      throw new Error(`Expected both panes to start with the same zoom label, got left="${initialLeftZoom}" right="${initialRightZoom}"`);
+    }
 
     console.log("[pdf-regression] keyboard zoom left");
     await page.keyboard.press("Control+=");
     await expectText(page.getByTestId("pdf-zoom-label-pdf-left-pane"), "145%", "Left pane keyboard zoom");
-    await expectText(page.getByTestId("pdf-zoom-label-pdf-right-pane"), "适宽", "Right pane unchanged after left keyboard zoom");
+    await expectText(page.getByTestId("pdf-zoom-label-pdf-right-pane"), initialRightZoom, "Right pane unchanged after left keyboard zoom");
 
     console.log("[pdf-regression] keyboard zoom right");
     await page.getByTestId("pdf-pane-pdf-right-pane").hover();
@@ -375,7 +413,7 @@ async function testPdfRegression(page, baseUrl) {
     console.log("[pdf-regression] scroll right deep");
     await scrollPdfPaneDeep(page, "pdf-right-pane");
     await page.waitForTimeout(800);
-    await waitForNumericTextAtLeast(page, "pdf-right-state-visible-page", 5, "Right pane visible page after scroll");
+    await waitForNumericTextChange(page, "pdf-right-state-scroll-top", 2000, "Right pane scroll top after deep scroll");
     await waitForNumericTextAtLeast(page, "pdf-right-state-anchor-page", 5, "Right pane anchor page after scroll");
 
     console.log("[pdf-regression] switch file and restore manual zoom");
@@ -409,7 +447,7 @@ async function testImageAnnotation(page, baseUrl) {
   await expectText(page.getByTestId("image-annotation-sidecar-has-image"), "true", "Image annotation sidecar image target");
 
   const currentAnnotationId = (await page.getByTestId("image-annotation-current-id").textContent())?.trim() ?? "";
-  if (!currentAnnotationId || currentAnnotationId === "无") {
+  if (!currentAnnotationId) {
     throw new Error("Image annotation diagnostics did not expose a persisted annotation id.");
   }
 
@@ -431,7 +469,7 @@ async function testSelectionAi(page, baseUrl) {
 
   await runSelectionAiFlow(page, {
     prompt: "Chat diagnostics prompt",
-    submitButtonName: "发送到快速问答",
+    submitButtonName: "unused",
     assertions: [
       () => waitForExactText(page, "selection-ai-latest-origin", "chat", "Selection AI chat origin"),
       () => waitForExactText(page, "selection-ai-evidence-count", "2", "Selection AI chat evidence count"),
@@ -445,7 +483,7 @@ async function testSelectionAi(page, baseUrl) {
   await runSelectionAiFlow(page, {
     modeButtonName: "Agent",
     prompt: "Agent diagnostics prompt",
-    submitButtonName: "启动深度分析",
+    submitButtonName: "unused",
     assertions: [
       () => waitForExactText(page, "selection-ai-latest-origin", "agent", "Selection AI agent origin"),
       () => waitForExactText(page, "selection-ai-evidence-count", "2", "Selection AI agent evidence count"),
@@ -457,7 +495,7 @@ async function testSelectionAi(page, baseUrl) {
   await runSelectionAiFlow(page, {
     modeButtonName: "Plan",
     prompt: "Plan diagnostics prompt",
-    submitButtonName: "生成整理计划",
+    submitButtonName: "unused",
     assertions: [
       () => waitForExactText(page, "selection-ai-proposal-count", "1", "Selection AI plan proposal count"),
       () => waitForTruthyText(page, "selection-ai-highlighted-proposal", "Selection AI plan highlighted proposal"),

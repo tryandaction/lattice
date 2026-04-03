@@ -403,6 +403,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
                     key={candidate}
                     type="button"
                     onClick={() => handleModeChange(candidate)}
+                    data-testid={`selection-ai-mode-${candidate}`}
                     className={cn(
                       "rounded-2xl border px-3 py-3 text-left transition-colors",
                       active ? "border-primary bg-primary/5" : "border-border hover:border-primary/40",
@@ -524,10 +525,11 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
                 returnFocusTo?.focus?.();
               }}
               disabled={isRunning}
+              data-testid="selection-ai-cancel"
             >
               取消
             </Button>
-            <Button onClick={() => void handleSubmit()} disabled={isRunning}>
+            <Button onClick={() => void handleSubmit()} disabled={isRunning} data-testid="selection-ai-submit">
               {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               {isRunning ? modeMeta.runningLabel : modeMeta.submitLabel}
             </Button>
