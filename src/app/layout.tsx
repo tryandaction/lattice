@@ -4,7 +4,7 @@ import { GeistMono } from "geist/font/mono";
 import { Toaster } from "sonner";
 import "./globals.css";
 import { HUDProvider } from "@/components/hud/hud-provider";
-import { ServiceWorkerRegister } from "@/components/pwa";
+import { ChunkReloadGuard, ServiceWorkerRegister } from "@/components/pwa";
 
 export const metadata: Metadata = {
   title: "Lattice 格致 - Scientific Workbench",
@@ -48,6 +48,7 @@ export default function RootLayout({
           {children}
         </HUDProvider>
         <Toaster position="bottom-right" richColors />
+        <ChunkReloadGuard />
         <ServiceWorkerRegister />
         {/* PWA 安装提示已禁用 */}
       </body>
