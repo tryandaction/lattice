@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useEffect, useState } from "react";
 import { Loader2, AlertCircle, FileQuestion } from "lucide-react";
 import { getRendererForExtension, getFileExtension, getImageMimeType, RendererType, isEditableCodeFile } from "@/lib/file-utils";
 import dynamic from "next/dynamic";
@@ -9,6 +9,7 @@ import { normalizeScientificText } from "@/lib/markdown-converter";
 import { navigateLink } from "@/lib/link-router/navigate-link";
 import { t } from "@/lib/i18n";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
+import { isTauriHost } from "@/lib/storage-adapter";
 
 /**
  * LRU cache for normalizeScientificText results.
@@ -16,6 +17,10 @@ import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
  */
 const normalizeCache = new Map<string, string>();
 const NORMALIZE_CACHE_MAX = 20;
+const WEB_LARGE_PDF_BYTE_THRESHOLD = 8 * 1024 * 1024;
+const WEB_LARGE_PDF_PAGE_THRESHOLD = 40;
+const DESKTOP_LARGE_PDF_BYTE_THRESHOLD = 4 * 1024 * 1024;
+const DESKTOP_LARGE_PDF_PAGE_THRESHOLD = 20;
 
 function cachedNormalizeScientificText(raw: string): string {
   const cached = normalizeCache.get(raw);
@@ -28,6 +33,109 @@ function cachedNormalizeScientificText(raw: string): string {
   }
   normalizeCache.set(raw, result);
   return result;
+}
+
+interface AdaptivePDFRendererProps {
+  content: ArrayBuffer;
+  fileName: string;
+  fileHandle?: FileSystemFileHandle;
+  rootHandle?: FileSystemDirectoryHandle | null;
+  paneId: PaneId;
+  fileId: string;
+  filePath: string;
+}
+
+function AdaptivePDFRenderer({
+  content,
+  fileName,
+  fileHandle,
+  rootHandle,
+  paneId,
+  fileId,
+  filePath,
+}: AdaptivePDFRendererProps) {
+  const hasAnnotationContext = Boolean(fileHandle && rootHandle);
+  const isDesktopRuntime = isTauriHost();
+  const byteThreshold = isDesktopRuntime ? DESKTOP_LARGE_PDF_BYTE_THRESHOLD : WEB_LARGE_PDF_BYTE_THRESHOLD;
+  const pageThreshold = isDesktopRuntime ? DESKTOP_LARGE_PDF_PAGE_THRESHOLD : WEB_LARGE_PDF_PAGE_THRESHOLD;
+  const [renderMode, setRenderMode] = useState<"checking" | "viewer" | "highlighter">(() => {
+    if (!hasAnnotationContext) return "viewer";
+    if (content.byteLength >= byteThreshold) return "viewer";
+    return "checking";
+  });
+
+  useEffect(() => {
+    if (!hasAnnotationContext) {
+      setRenderMode("viewer");
+      return;
+    }
+
+    if (content.byteLength >= byteThreshold) {
+      setRenderMode("viewer");
+      return;
+    }
+
+    let cancelled = false;
+    let destroyTask: (() => void) | null = null;
+
+    const detectPdfMode = async () => {
+      try {
+        const { pdfjs } = await import("react-pdf");
+        if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+          pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+        }
+
+        const loadingTask = pdfjs.getDocument({
+          data: new Uint8Array(content).slice(),
+          disableAutoFetch: true,
+          disableStream: true,
+        });
+        destroyTask = () => {
+          void loadingTask.destroy();
+        };
+
+        const pdfDocument = await loadingTask.promise;
+        const nextMode = pdfDocument.numPages > pageThreshold ? "viewer" : "highlighter";
+        await pdfDocument.destroy();
+
+        if (!cancelled) {
+          setRenderMode(nextMode);
+        }
+      } catch {
+        if (!cancelled) {
+          setRenderMode("viewer");
+        }
+      }
+    };
+
+    setRenderMode("checking");
+    void detectPdfMode();
+
+    return () => {
+      cancelled = true;
+      destroyTask?.();
+    };
+  }, [byteThreshold, content, hasAnnotationContext, pageThreshold]);
+
+  if (renderMode === "checking") {
+    return <LoadingState message={t("viewer.loading.pdf")} />;
+  }
+
+  if (renderMode === "highlighter" && fileHandle && rootHandle) {
+    return (
+      <PDFHighlighterAdapter
+        content={content}
+        fileName={fileName}
+        fileHandle={fileHandle}
+        rootHandle={rootHandle}
+        paneId={paneId}
+        fileId={fileId}
+        filePath={filePath}
+      />
+    );
+  }
+
+  return <PDFViewer content={content} fileName={fileName} />;
 }
 
 /**
@@ -258,22 +366,17 @@ function FileViewer({
       );
     }
     case "pdf":
-      // Use PDFHighlighterAdapter if we have file handles for annotation support
-      if (fileHandle && rootHandle) {
-        return (
-          <PDFHighlighterAdapter
-            content={content as ArrayBuffer}
-            fileName={fileName}
-            fileHandle={fileHandle}
-            rootHandle={rootHandle}
-            paneId={paneId}
-            fileId={fileId ?? fileName}
-            filePath={filePath ?? fileName}
-          />
-        );
-      }
-      // Fallback to basic PDF viewer
-      return <PDFViewer content={content as ArrayBuffer} fileName={fileName} />;
+      return (
+        <AdaptivePDFRenderer
+          content={content as ArrayBuffer}
+          fileName={fileName}
+          fileHandle={fileHandle}
+          rootHandle={rootHandle}
+          paneId={paneId}
+          fileId={fileId ?? fileName}
+          filePath={filePath ?? fileName}
+        />
+      );
     case "jupyter": {
       // Ensure content is a string for notebook editors
       let notebookContent: string;

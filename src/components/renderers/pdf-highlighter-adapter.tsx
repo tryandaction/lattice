@@ -1798,6 +1798,7 @@ export function PDFHighlighterAdapter({
   const inkPreviewFrameRef = useRef<number | null>(null);
   const transientSelectionDismissRef = useRef<(() => void) | null>(null);
   const lastScaleSyncRef = useRef<{ fileId: string; pdfScaleValue: string } | null>(null);
+  const renderedPdfPagesRef = useRef<HTMLElement[]>([]);
   const pdfSelectionSessionRef = useRef<PdfSelectionSessionState>(pdfSelectionSession);
   const frozenPdfSelection = pdfSelectionSession.phase === "frozen" ? pdfSelectionSession.snapshot : null;
   const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
@@ -2021,26 +2022,78 @@ export function PDFHighlighterAdapter({
     }
   }, [isDiagnosticsMode]);
 
-  const getRenderedPdfPages = useCallback((): HTMLElement[] => {
-    return Array.from(containerRef.current?.querySelectorAll<HTMLElement>("[data-page-number]") ?? []);
+  const refreshRenderedPdfPages = useCallback((): HTMLElement[] => {
+    const nextPages = Array.from(containerRef.current?.querySelectorAll<HTMLElement>("[data-page-number]") ?? []);
+    renderedPdfPagesRef.current = nextPages;
+    return nextPages;
   }, []);
+
+  const getRenderedPdfPages = useCallback((): HTMLElement[] => {
+    const cachedPages = renderedPdfPagesRef.current;
+    const container = containerRef.current;
+    if (
+      container &&
+      cachedPages.length > 0 &&
+      cachedPages[0]?.isConnected &&
+      cachedPages[cachedPages.length - 1]?.isConnected &&
+      container.contains(cachedPages[0]) &&
+      container.contains(cachedPages[cachedPages.length - 1])
+    ) {
+      return cachedPages;
+    }
+
+    return refreshRenderedPdfPages();
+  }, [refreshRenderedPdfPages]);
 
   const getPrimaryVisiblePageState = useCallback(() => {
     const shell = scrollContainerRef.current;
-    if (!shell) {
+    const container = containerRef.current;
+    if (!shell || !container || typeof document === "undefined") {
       return null;
     }
 
     const shellRect = shell.getBoundingClientRect();
+    const anchorX = shellRect.left + (shellRect.width * DEFAULT_PDF_VIEWPORT_ANCHOR.x);
+    const sampleYRatios = [
+      DEFAULT_PDF_VIEWPORT_ANCHOR.y,
+      0.2,
+      0.5,
+      0.8,
+    ];
+
+    if (typeof document.elementFromPoint === "function") {
+      for (const ratio of sampleYRatios) {
+        const anchorY = shellRect.top + (shellRect.height * ratio);
+        const target = document.elementFromPoint(anchorX, anchorY);
+        const pageElement = target instanceof Element
+          ? target.closest<HTMLElement>("[data-page-number]")
+          : null;
+        if (!pageElement || !container.contains(pageElement)) {
+          continue;
+        }
+
+        const pageNumber = Number(pageElement.dataset.pageNumber ?? "");
+        const pageRect = pageElement.getBoundingClientRect();
+        if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageRect.width <= 0 || pageRect.height <= 0) {
+          continue;
+        }
+
+        return {
+          pageNumber,
+          pageElement,
+          shellRect,
+        };
+      }
+    }
+
     const pages = getRenderedPdfPages();
     const candidates = buildVisiblePageCandidates(pages);
     const pageNumber = findPrimaryVisiblePdfPage(candidates, shellRect);
-
     if (!pageNumber) {
       return null;
     }
 
-    const pageElement = pages.find((page) => Number(page.dataset.pageNumber ?? '') === pageNumber) ?? null;
+    const pageElement = pages.find((page) => Number(page.dataset.pageNumber ?? "") === pageNumber) ?? null;
     if (!pageElement) {
       return null;
     }
