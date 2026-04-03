@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UniversalFileViewer } from "../universal-file-viewer";
 
 const hasPersistedPdfAnnotationsMock = vi.hoisted(() => vi.fn());
+const isTauriHostMock = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock("next/dynamic", async () => {
   const ReactModule = await import("react");
@@ -38,6 +39,10 @@ vi.mock("next/dynamic", async () => {
 
 vi.mock("@/lib/pdf-item", () => ({
   hasPersistedPdfAnnotations: (...args: unknown[]) => hasPersistedPdfAnnotationsMock(...args),
+}));
+
+vi.mock("@/lib/storage-adapter", () => ({
+  isTauriHost: () => isTauriHostMock(),
 }));
 
 vi.mock("@/lib/i18n", () => ({
@@ -102,6 +107,7 @@ function renderPdfViewer() {
 describe("UniversalFileViewer PDF routing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    isTauriHostMock.mockReturnValue(false);
     hasPersistedPdfAnnotationsMock.mockResolvedValue(false);
   });
 
@@ -134,6 +140,19 @@ describe("UniversalFileViewer PDF routing", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("mock-pdf-highlighter-pane-left")).toBeTruthy();
+    });
+  });
+
+  it("keeps desktop PDFs on the lightweight viewer until annotation mode is explicitly requested", async () => {
+    isTauriHostMock.mockReturnValue(true);
+    hasPersistedPdfAnnotationsMock.mockResolvedValue(true);
+
+    renderPdfViewer();
+
+    expect(await screen.findByTestId("mock-pdf-viewer-pane-left")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByTestId("mock-pdf-viewer-has-persisted-pane-left").textContent).toBe("true");
+      expect(screen.queryByTestId("mock-pdf-highlighter-pane-left")).toBeNull();
     });
   });
 });

@@ -638,7 +638,7 @@ function ColorPicker({
 }
 
 interface HighlightPopupProps {
-  comment: { text: string; emoji: string };
+  comment?: { text?: string; emoji?: string } | null;
   onDelete: () => void;
   onAddComment: (comment: string) => void;
   onChangeColor?: (color: string) => void;
@@ -663,8 +663,9 @@ function HighlightPopupContent({
   highlightText,
 }: HighlightPopupProps) {
   const { t } = useI18n();
+  const resolvedCommentText = comment?.text ?? "";
   const [showCommentInput, setShowCommentInput] = useState(false);
-  const [commentText, setCommentText] = useState(comment.text || "");
+  const [commentText, setCommentText] = useState(resolvedCommentText);
   const [showColorPicker, setShowColorPicker] = useState(false);
 
   const handleSaveComment = () => {
@@ -786,7 +787,7 @@ function HighlightPopupContent({
         className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
       >
         <MessageSquare className="h-4 w-4" />
-        <span>{comment.text ? t("pdf.comment.edit") : t("pdf.comment.add")}</span>
+        <span>{resolvedCommentText ? t("pdf.comment.edit") : t("pdf.comment.add")}</span>
       </button>
       
       {/* Change color */}
@@ -3176,7 +3177,7 @@ export function PDFHighlighterAdapter({
       nativeSelectionRange &&
       nativeSelectionText &&
       nativeTransientRects?.length &&
-      (!rawSelectionText || rawSelectionText === nativeSelectionText)
+      !rawContent.image
     );
     const selectionText = useNativeSelectionSnapshot
       ? nativeSelectionText

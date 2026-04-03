@@ -10,6 +10,7 @@ import { navigateLink } from "@/lib/link-router/navigate-link";
 import { t } from "@/lib/i18n";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 import { hasPersistedPdfAnnotations } from "@/lib/pdf-item";
+import { isTauriHost } from "@/lib/storage-adapter";
 
 /**
  * LRU cache for normalizeScientificText results.
@@ -51,12 +52,13 @@ function AdaptivePDFRenderer({
   filePath,
 }: AdaptivePDFRendererProps) {
   const hasAnnotationContext = Boolean(fileHandle && rootHandle);
+  const isDesktopRuntime = isTauriHost();
   const activePdfKey = `${fileId}:${filePath}`;
   const [requestedAnnotationModeKey, setRequestedAnnotationModeKey] = useState<string | null>(null);
   const [annotationPresenceByKey, setAnnotationPresenceByKey] = useState<Record<string, boolean>>({});
   const hasPersistedAnnotations = annotationPresenceByKey[activePdfKey] ?? false;
   const renderMode: "viewer" | "highlighter" = (
-    requestedAnnotationModeKey === activePdfKey || hasPersistedAnnotations
+    requestedAnnotationModeKey === activePdfKey || (!isDesktopRuntime && hasPersistedAnnotations)
   ) ? "highlighter" : "viewer";
 
   useEffect(() => {
