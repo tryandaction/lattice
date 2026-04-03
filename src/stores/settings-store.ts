@@ -139,9 +139,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const trimmed = normalizeWorkspacePath(path);
     if (!trimmed) return;
     const { settings, updateSettings } = get();
+    const currentRecentWorkspacePaths = Array.isArray(settings.recentWorkspacePaths)
+      ? settings.recentWorkspacePaths
+      : [];
     const recentWorkspacePaths = [
       trimmed,
-      ...settings.recentWorkspacePaths
+      ...currentRecentWorkspacePaths
         .map((item) => normalizeWorkspacePath(item))
         .filter((item) => item !== trimmed),
     ].slice(0, MAX_RECENT_WORKSPACES);
@@ -155,7 +158,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   removeRecentWorkspacePath: async (path) => {
     const trimmed = normalizeWorkspacePath(path);
     const { settings, updateSettings } = get();
-    const recentWorkspacePaths = settings.recentWorkspacePaths
+    const currentRecentWorkspacePaths = Array.isArray(settings.recentWorkspacePaths)
+      ? settings.recentWorkspacePaths
+      : [];
+    const recentWorkspacePaths = currentRecentWorkspacePaths
       .map((item) => normalizeWorkspacePath(item))
       .filter((item) => item !== trimmed);
     const nextLastWorkspacePath = normalizeWorkspacePath(settings.lastWorkspacePath ?? '') === trimmed
@@ -188,6 +194,11 @@ function detectSystemLanguage(): Locale {
 
 function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   const normalized: Partial<AppSettings> = {};
+  const assignIfDefined = <K extends keyof AppSettings>(key: K, value: AppSettings[K] | undefined) => {
+    if (value !== undefined) {
+      normalized[key] = value;
+    }
+  };
   const stringOrNull = (value: unknown) =>
     typeof value === 'string'
       ? normalizeWorkspacePath(value)
@@ -219,10 +230,10 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
 
   if (raw.language === 'zh-CN' || raw.language === 'en-US') normalized.language = raw.language;
   if (raw.theme === 'light' || raw.theme === 'dark' || raw.theme === 'system') normalized.theme = raw.theme;
-  normalized.defaultFolder = stringOrNull(raw.defaultFolder);
-  normalized.lastOpenedFolder = stringOrNull(raw.lastOpenedFolder);
-  normalized.lastWorkspacePath = stringOrNull(raw.lastWorkspacePath);
-  normalized.recentWorkspacePaths = stringArray(raw.recentWorkspacePaths)?.slice(0, MAX_RECENT_WORKSPACES);
+  assignIfDefined('defaultFolder', stringOrNull(raw.defaultFolder));
+  assignIfDefined('lastOpenedFolder', stringOrNull(raw.lastOpenedFolder));
+  assignIfDefined('lastWorkspacePath', stringOrNull(raw.lastWorkspacePath));
+  assignIfDefined('recentWorkspacePaths', stringArray(raw.recentWorkspacePaths)?.slice(0, MAX_RECENT_WORKSPACES));
   if (typeof raw.rememberWindowState === 'boolean') normalized.rememberWindowState = raw.rememberWindowState;
   if (raw.activityView === 'files' || raw.activityView === 'annotations' || raw.activityView === 'search') {
     normalized.activityView = raw.activityView;
@@ -239,18 +250,18 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   if (typeof raw.onboardingCompleted === 'boolean') normalized.onboardingCompleted = raw.onboardingCompleted;
   if (raw.windowState && typeof raw.windowState === 'object') normalized.windowState = raw.windowState;
   if (typeof raw.pluginsEnabled === 'boolean') normalized.pluginsEnabled = raw.pluginsEnabled;
-  normalized.enabledPlugins = stringArray(raw.enabledPlugins);
-  normalized.trustedPlugins = stringArray(raw.trustedPlugins);
-  normalized.pluginNetworkAllowlist = stringArray(raw.pluginNetworkAllowlist);
+  assignIfDefined('enabledPlugins', stringArray(raw.enabledPlugins));
+  assignIfDefined('trustedPlugins', stringArray(raw.trustedPlugins));
+  assignIfDefined('pluginNetworkAllowlist', stringArray(raw.pluginNetworkAllowlist));
   if (typeof raw.pluginPanelDockSize === 'number') normalized.pluginPanelDockSize = raw.pluginPanelDockSize;
   if (typeof raw.pluginPanelDockOpen === 'boolean') normalized.pluginPanelDockOpen = raw.pluginPanelDockOpen;
-  normalized.pluginPanelLastActiveId = stringOrNull(raw.pluginPanelLastActiveId);
-  normalized.pluginPanelRecentIds = stringArray(raw.pluginPanelRecentIds);
+  assignIfDefined('pluginPanelLastActiveId', stringOrNull(raw.pluginPanelLastActiveId));
+  assignIfDefined('pluginPanelRecentIds', stringArray(raw.pluginPanelRecentIds));
   const executionDockLayouts = normalizeExecutionDockLayouts(raw.executionDockLayouts);
   if (executionDockLayouts) normalized.executionDockLayouts = executionDockLayouts;
   if (typeof raw.aiEnabled === 'boolean') normalized.aiEnabled = raw.aiEnabled;
-  normalized.aiProvider = stringOrNull(raw.aiProvider);
-  normalized.aiModel = stringOrNull(raw.aiModel);
+  assignIfDefined('aiProvider', stringOrNull(raw.aiProvider));
+  assignIfDefined('aiModel', stringOrNull(raw.aiModel));
   if (typeof raw.aiTemperature === 'number') normalized.aiTemperature = raw.aiTemperature;
   if (typeof raw.aiMaxTokens === 'number') normalized.aiMaxTokens = raw.aiMaxTokens;
   if (typeof raw.aiStreamingEnabled === 'boolean') normalized.aiStreamingEnabled = raw.aiStreamingEnabled;

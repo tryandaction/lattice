@@ -48,4 +48,25 @@ describe("settings-store desktop shell persistence", () => {
     expect(nextState.settings.aiPanelOpen).toBe(true);
     expect(nextState.settings.aiPanelWidth).toBe(34);
   });
+
+  it("keeps default array/null settings when persisted payload omits them", async () => {
+    storage.get.mockResolvedValue({
+      theme: "dark",
+      recentWorkspacePaths: undefined,
+      enabledPlugins: undefined,
+      pluginPanelRecentIds: undefined,
+      defaultFolder: undefined,
+      aiProvider: undefined,
+    });
+
+    await useSettingsStore.getState().loadSettings();
+
+    const nextState = useSettingsStore.getState();
+    expect(nextState.settings.theme).toBe("dark");
+    expect(nextState.settings.recentWorkspacePaths).toEqual([]);
+    expect(nextState.settings.enabledPlugins).toEqual([]);
+    expect(nextState.settings.pluginPanelRecentIds).toEqual([]);
+    expect(nextState.settings.defaultFolder).toBeNull();
+    expect(nextState.settings.aiProvider).toBeNull();
+  });
 });

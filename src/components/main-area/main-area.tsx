@@ -20,7 +20,7 @@ import { useI18n } from "@/hooks/use-i18n";
 function WelcomePlaceholder() {
   const { t } = useI18n();
   const { openDirectory, openWorkspacePath, isLoading } = useFileSystem();
-  const recentWorkspaces = useSettingsStore((state) => state.settings.recentWorkspacePaths).slice(0, 5);
+  const recentWorkspaces = useSettingsStore((state) => state.settings.recentWorkspacePaths ?? []).slice(0, 5);
 
   return (
     <div className="flex h-full items-center justify-center bg-background p-8">

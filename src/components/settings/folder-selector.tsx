@@ -18,7 +18,7 @@ interface FolderSelectorProps {
 export function FolderSelector({ compact = false, showNotFoundWarning = false }: FolderSelectorProps) {
   const { t } = useI18n();
   const defaultFolder = useSettingsStore((state) => state.settings.defaultFolder);
-  const recentWorkspaces = useSettingsStore((state) => state.settings.recentWorkspacePaths);
+  const recentWorkspaces = useSettingsStore((state) => state.settings.recentWorkspacePaths ?? []);
   const setDefaultFolder = useSettingsStore((state) => state.setDefaultFolder);
   const removeRecentWorkspacePath = useSettingsStore((state) => state.removeRecentWorkspacePath);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
