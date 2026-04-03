@@ -484,6 +484,7 @@ export const zhCN = {
   'explorer.context.paste': '粘贴',
   'explorer.context.copy': '复制',
   'explorer.context.cut': '剪切',
+  'explorer.context.openAsWorkspace': '作为工作区打开',
   'explorer.context.rename': '重命名',
   'explorer.context.deleteFile': '删除文件',
   'explorer.context.deleteFolder': '删除文件夹',

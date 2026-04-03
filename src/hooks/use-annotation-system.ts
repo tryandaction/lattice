@@ -19,6 +19,7 @@ import {
   saveWithRetry,
   ensureAnnotationsDirectory,
   deserializeAnnotationFile,
+  loadAnnotationsForFileIdentity,
   resolveAnnotationFileCandidates,
 } from '../lib/universal-annotation-storage';
 import {
@@ -26,6 +27,8 @@ import {
   migrateLegacyAnnotationFile,
 } from '../lib/annotation-migration';
 import { logger } from '../lib/logger';
+import { resolveFileIdentity } from '@/lib/file-identity';
+import { useWorkspaceStore } from '@/stores/workspace-store';
 
 // ============================================================================
 // Types
@@ -152,6 +155,7 @@ export function useAnnotationSystem({
   saveDelay = 1000,
   author: _author = 'user',
 }: UseAnnotationSystemOptions): UseAnnotationSystemReturn {
+  const workspaceIdentity = useWorkspaceStore((state) => state.workspaceIdentity);
   // State
   const [annotations, setAnnotations] = useState<AnnotationItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -180,6 +184,7 @@ export function useAnnotationSystem({
       
       try {
         const fileName = filePath || fileHandle.name;
+        const preferredPath = (filePath && filePath.trim()) ? filePath : fileHandle.name;
         const candidateIds = resolveAnnotationFileCandidates(fileHandle.name, filePath, storageFileId);
         const preferredFileId = storageFileId ?? candidateIds[0];
         if (!preferredFileId) {
@@ -250,6 +255,32 @@ export function useAnnotationSystem({
         }
 
         if (!loadedExistingFile && !cancelled) {
+          const fileIdentity = await resolveFileIdentity({
+            fileHandle,
+            fileName,
+            filePath: preferredPath,
+            workspaceIdentity,
+          });
+          const resolved = await loadAnnotationsForFileIdentity({
+            rootHandle,
+            fileIdentity,
+            workspaceKey: workspaceIdentity?.workspaceKey ?? null,
+            fileType: fileTypeOverride || detected,
+          });
+
+          if (resolved.source) {
+            const resolvedFile = {
+              ...resolved.annotationFile,
+              fileId: preferredFileId,
+              fileType: fileTypeOverride || detected,
+            };
+            annotationFileRef.current = resolvedFile;
+            setAnnotations(resolvedFile.annotations);
+            loadedExistingFile = true;
+          }
+        }
+
+        if (!loadedExistingFile && !cancelled) {
           const newFile = createUniversalAnnotationFile(preferredFileId, fileTypeOverride || detected);
           annotationFileRef.current = newFile;
           setAnnotations([]);
@@ -270,7 +301,7 @@ export function useAnnotationSystem({
     return () => {
       cancelled = true;
     };
-  }, [deferLoad, fileHandle, filePath, rootHandle, fileTypeOverride, storageFileId]);
+  }, [deferLoad, fileHandle, filePath, rootHandle, fileTypeOverride, storageFileId, workspaceIdentity]);
 
   // Debounced save function
   const scheduleSave = useCallback((newAnnotations: AnnotationItem[]) => {

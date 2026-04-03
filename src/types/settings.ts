@@ -36,7 +36,10 @@ export interface AppSettings {
   defaultFolder: string | null;
   lastOpenedFolder: string | null;
   lastWorkspacePath: string | null;
+  lastWorkspaceKey: string | null;
   recentWorkspacePaths: string[];
+  recentWorkspaceKeys: string[];
+  workspaceDisplayPaths: Record<string, string>;
   rememberWindowState: boolean;
 
   // Workbench
@@ -84,7 +87,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultFolder: null,
   lastOpenedFolder: null,
   lastWorkspacePath: null,
+  lastWorkspaceKey: null,
   recentWorkspacePaths: [],
+  recentWorkspaceKeys: [],
+  workspaceDisplayPaths: {},
   rememberWindowState: true,
   activityView: 'files',
   sidePanelWidth: 22,

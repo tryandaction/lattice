@@ -55,8 +55,10 @@ export function HTMLViewer({ content, fileName, paneId, filePath }: HTMLViewerPr
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const persistedViewStateKey = buildPersistedFileViewStateKey({
     kind: "html",
+    workspaceKey,
     workspaceRootPath,
     filePath,
     fallbackName: fileName,

@@ -30,7 +30,13 @@ import {
   type DirectoryOperationResult,
   type EntryOperationResult,
 } from "@/lib/file-operations";
-import { generateFileId } from "@/lib/universal-annotation-storage";
+import {
+  copyAnnotationSidecar,
+  deleteAnnotationSidecarsForPath,
+  detectFileType,
+  generateFileId,
+  moveAnnotationSidecar,
+} from "@/lib/universal-annotation-storage";
 import {
   copyPdfItemWorkspace,
   deletePdfItemWorkspace,
@@ -43,6 +49,7 @@ import { createDesktopDirectoryHandle } from "@/lib/desktop-file-system";
 import { isTauri, isTauriHost } from "@/lib/storage-adapter";
 import { isExistingDesktopDirectory, openDesktopDirectoryDialog } from "@/lib/desktop-folder";
 import { emitVaultChange, emitVaultDelete, emitVaultRename } from "@/lib/plugins/runtime";
+import { resolveWorkspaceIdentity } from "@/lib/workspace-identity";
 
 /**
  * Return type for the useFileSystem hook
@@ -57,6 +64,7 @@ interface UseFileSystemReturn {
   // Actions
   openDirectory: () => Promise<void>;
   openWorkspacePath: (path: string) => Promise<void>;
+  openDirectoryAsWorkspace: (path: string) => Promise<void>;
   openQaWorkspace?: () => Promise<void>;
   createFile: (name: string, type: FileType | 'file', parentPath?: string) => Promise<FileOperationResult>;
   createDirectory: (name: string, parentPath?: string) => Promise<DirectoryOperationResult>;
@@ -369,11 +377,17 @@ function normalizeWorkspacePathInput(path: string | null | undefined): string | 
 export async function applyWorkspaceHandleToStores(
   handle: FileSystemDirectoryHandle,
   workspaceRootPath: string | null,
+  preferredWorkspaceKey?: string | null,
 ): Promise<void> {
   useContentCacheStore.getState().clearCache();
 
   const workspaceStore = useWorkspaceStore.getState();
   workspaceStore.resetWorkbenchState();
+  const resolvedWorkspaceIdentity = await resolveWorkspaceIdentity(handle, {
+    hostKind: isTauri() ? "desktop" : "web",
+    displayPath: workspaceRootPath ?? handle.name,
+    workspaceKey: preferredWorkspaceKey ?? null,
+  });
 
   try {
     await migrateLegacyPdfItemWorkspaces(handle);
@@ -392,10 +406,14 @@ export async function applyWorkspaceHandleToStores(
   };
 
   workspaceStore.setRootHandle(handle);
-  workspaceStore.setWorkspaceRootPath(workspaceRootPath ?? handle.name);
+  workspaceStore.setWorkspaceIdentity(resolvedWorkspaceIdentity);
+  workspaceStore.setWorkspaceRootPath(resolvedWorkspaceIdentity.displayPath ?? workspaceRootPath ?? handle.name);
   workspaceStore.setFileTree({ root: rootNode });
 
-  await useSettingsStore.getState().rememberWorkspacePath(workspaceRootPath ?? handle.name);
+  await useSettingsStore.getState().rememberWorkspace({
+    workspaceKey: resolvedWorkspaceIdentity.workspaceKey,
+    displayPath: resolvedWorkspaceIdentity.displayPath ?? workspaceRootPath ?? handle.name,
+  });
 }
 
 /**
@@ -558,6 +576,40 @@ export function useFileSystem(): UseFileSystemReturn {
   const openWorkspacePath = useCallback(async (path: string) => {
     await openWorkspaceFromDesktopPath(path);
   }, [openWorkspaceFromDesktopPath]);
+
+  const openDirectoryAsWorkspace = useCallback(async (path: string) => {
+    if (!rootHandle) {
+      return;
+    }
+
+    const directoryHandle = await resolveDirectoryHandle(rootHandle, path);
+    if (!directoryHandle) {
+      setError(`Could not find directory: ${path}`);
+      return;
+    }
+
+    const normalizedPath = normalizeWorkspacePathInput(path);
+    const normalizedRootPath = normalizeWorkspacePathInput(workspaceRootPath ?? rootHandle.name);
+    const rootName = normalizeWorkspacePathInput(rootHandle.name);
+    const displayPath = (
+      normalizedPath &&
+      normalizedRootPath &&
+      rootName &&
+      (normalizedPath === rootName || normalizedPath.startsWith(`${rootName}/`))
+    )
+      ? `${normalizedRootPath}${normalizedPath === rootName ? "" : `/${normalizedPath.slice(rootName.length + 1)}`}`
+      : normalizedPath ?? directoryHandle.name;
+
+    try {
+      setLoading(true);
+      setError(null);
+      await applyWorkspaceHandle(directoryHandle, displayPath);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to open nested workspace");
+    } finally {
+      setLoading(false);
+    }
+  }, [applyWorkspaceHandle, rootHandle, setError, setLoading, workspaceRootPath]);
 
   /**
    * Open a QA workspace in OPFS (dev-only helper)
@@ -762,6 +814,13 @@ export function useFileSystem(): UseFileSystemReturn {
         : await deleteEntryUtil(resolvedEntry.parentHandle, resolvedEntry.name, resolvedEntry.kind);
     
     if (result.success) {
+      if (resolvedEntry.kind === "file") {
+        try {
+          await deleteAnnotationSidecarsForPath(rootHandle, path);
+        } catch (annotationCleanupError) {
+          console.error("Failed to delete annotation sidecar:", annotationCleanupError);
+        }
+      }
       if (resolvedEntry.kind === "file" && isPdfPath(path)) {
         try {
           await deletePdfItemWorkspace(rootHandle, path);
@@ -808,6 +867,13 @@ export function useFileSystem(): UseFileSystemReturn {
     if (result.success) {
       const renamedName = result.handle?.name || result.path?.split("/").pop() || newName;
       const fullPath = joinPath(getParentPath(path), renamedName);
+      if (resolvedEntry.kind === "file" && fullPath) {
+        try {
+          await moveAnnotationSidecar(rootHandle, path, fullPath, detectFileType(fullPath));
+        } catch (annotationMoveError) {
+          console.error("Failed to rename annotation sidecar:", annotationMoveError);
+        }
+      }
       if (resolvedEntry.kind === "file" && isPdfPath(path) && fullPath) {
         try {
           await movePdfItemWorkspace(rootHandle, path, fullPath);
@@ -860,6 +926,13 @@ export function useFileSystem(): UseFileSystemReturn {
     if (result.success) {
       const copiedName = result.handle?.name || result.path?.split("/").pop() || resolvedEntry.name;
       const fullPath = joinPath(targetDirectoryPath, copiedName);
+      if (resolvedEntry.kind === "file") {
+        try {
+          await copyAnnotationSidecar(rootHandle, sourcePath, fullPath, detectFileType(fullPath));
+        } catch (annotationCopyError) {
+          console.error("Failed to copy annotation sidecar:", annotationCopyError);
+        }
+      }
       if (resolvedEntry.kind === "file" && isPdfPath(sourcePath)) {
         try {
           await copyPdfItemWorkspace(rootHandle, sourcePath, fullPath);
@@ -924,6 +997,13 @@ export function useFileSystem(): UseFileSystemReturn {
     if (result.success) {
       const movedName = result.handle?.name || result.path?.split("/").pop() || resolvedEntry.name;
       const fullPath = joinPath(targetDirectoryPath, movedName);
+      if (resolvedEntry.kind === "file") {
+        try {
+          await moveAnnotationSidecar(rootHandle, sourcePath, fullPath, detectFileType(fullPath));
+        } catch (annotationMoveError) {
+          console.error("Failed to move annotation sidecar:", annotationMoveError);
+        }
+      }
       if (resolvedEntry.kind === "file" && isPdfPath(sourcePath)) {
         try {
           await movePdfItemWorkspace(rootHandle, sourcePath, fullPath);
@@ -947,6 +1027,7 @@ export function useFileSystem(): UseFileSystemReturn {
     error,
     openDirectory,
     openWorkspacePath,
+    openDirectoryAsWorkspace,
     openQaWorkspace,
     createFile,
     createDirectory,

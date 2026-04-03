@@ -140,8 +140,10 @@ export function JupyterRenderer({ content, fileName, paneId, filePath, rootHandl
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const persistedViewStateKey = buildPersistedFileViewStateKey({
     kind: "jupyter-readonly",
+    workspaceKey,
     workspaceRootPath,
     filePath,
     fallbackName: fileName,

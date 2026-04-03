@@ -90,8 +90,8 @@ describe("workbench session persistence", () => {
       activePaneId: "pane-right",
     };
 
-    await saveWorkbenchSession("workspace", layout, true);
-    const restored = await loadWorkbenchSession("workspace", root as unknown as FileSystemDirectoryHandle);
+    await saveWorkbenchSession("workspace", "workspace", layout, true);
+    const restored = await loadWorkbenchSession("workspace", "workspace", root as unknown as FileSystemDirectoryHandle);
 
     expect(restored?.sidebarCollapsed).toBe(true);
     expect(restored?.layout.activePaneId).toBe("pane-right");
@@ -129,8 +129,8 @@ describe("workbench session persistence", () => {
       activePaneId: "pane-main",
     };
 
-    await saveWorkbenchSession("workspace", layout, false);
-    const restored = await loadWorkbenchSession("workspace", root as unknown as FileSystemDirectoryHandle);
+    await saveWorkbenchSession("workspace", "workspace", layout, false);
+    const restored = await loadWorkbenchSession("workspace", "workspace", root as unknown as FileSystemDirectoryHandle);
 
     expect(restored?.layout.root.type).toBe("pane");
     if (restored?.layout.root.type !== "pane") {

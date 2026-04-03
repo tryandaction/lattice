@@ -103,6 +103,7 @@ function trimStateMapEntries(map: PersistedFileViewStateMap): PersistedFileViewS
 
 export function buildPersistedFileViewStateKey(input: {
   kind: string;
+  workspaceKey?: string | null;
   workspaceRootPath?: string | null;
   filePath?: string | null;
   fallbackName?: string | null;
@@ -112,7 +113,7 @@ export function buildPersistedFileViewStateKey(input: {
     return null;
   }
 
-  const root = normalizeStorageKey(input.workspaceRootPath) ?? "__workspace__";
+  const root = normalizeStorageKey(input.workspaceKey) ?? normalizeStorageKey(input.workspaceRootPath) ?? "__workspace__";
   return `${input.kind}:${root}:${target}`;
 }
 

@@ -162,15 +162,17 @@ export function ObsidianMarkdownViewer({
   const resolvedFileId = fileId || fileName;
   const prevFileIdRef = useRef(resolvedFileId);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const workspaceRootName = useWorkspaceStore((state) => state.rootHandle?.name ?? state.fileTree.root?.name ?? null);
   const persistedViewStateKey = useMemo(
     () => buildPersistedFileViewStateKey({
       kind: "markdown",
+      workspaceKey,
       workspaceRootPath,
       filePath,
       fallbackName: fileName,
     }),
-    [fileName, filePath, workspaceRootPath],
+    [fileName, filePath, workspaceKey, workspaceRootPath],
   );
   const prevPersistedViewStateKeyRef = useRef(persistedViewStateKey);
   const fileChangeCounterRef = useRef(0);

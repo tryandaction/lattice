@@ -5,6 +5,7 @@ describe('use-annotation-system helpers', () => {
   it('prefers full workspace path and keeps legacy filename fallback when needed', () => {
     expect(resolveAnnotationFileCandidates('figure.png', 'papers/week1/figure.png')).toEqual([
       'papers-week1-figure.png',
+      'week1-figure.png',
       'figure.png',
     ]);
   });
@@ -12,10 +13,12 @@ describe('use-annotation-system helpers', () => {
   it('isolates same-name image sidecars by workspace path', () => {
     expect(resolveAnnotationFileCandidates('figure.png', 'experiments/week1/figure.png')).toEqual([
       'experiments-week1-figure.png',
+      'week1-figure.png',
       'figure.png',
     ]);
     expect(resolveAnnotationFileCandidates('figure.png', 'experiments/week2/figure.png')).toEqual([
       'experiments-week2-figure.png',
+      'week2-figure.png',
       'figure.png',
     ]);
   });

@@ -35,6 +35,7 @@ import {
 import { emitFileOpen, emitFileClose, emitWorkspaceOpen, emitActiveFileChange } from "@/lib/plugins/runtime";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 import { destroyExecutionScope, destroyExecutionScopes } from "@/stores/execution-session-store";
+import type { WorkspaceIdentity } from "@/types/workspace-identity";
 
 /**
  * Create initial layout with a single empty pane
@@ -123,6 +124,7 @@ interface WorkspaceState {
   // File system state
   rootHandle: FileSystemDirectoryHandle | null;
   workspaceRootPath: string | null;
+  workspaceIdentity: WorkspaceIdentity | null;
   fileTree: FileTree;
   isLoading: boolean;
   error: string | null;
@@ -137,6 +139,7 @@ interface WorkspaceState {
   // File system actions
   setRootHandle: (handle: FileSystemDirectoryHandle | null) => void;
   setWorkspaceRootPath: (path: string | null) => void;
+  setWorkspaceIdentity: (identity: WorkspaceIdentity | null) => void;
   setFileTree: (tree: FileTree) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
@@ -199,6 +202,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   // Initial file system state
   rootHandle: null,
   workspaceRootPath: null,
+  workspaceIdentity: null,
   fileTree: initialFileTree,
   isLoading: false,
   error: null,
@@ -222,6 +226,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
   setWorkspaceRootPath: (path) => set({ workspaceRootPath: path }),
+  setWorkspaceIdentity: (identity) => set({ workspaceIdentity: identity }),
   setFileTree: (tree) => set({ fileTree: tree }),
   setLoading: (loading) => set({ isLoading: loading }),
   setError: (error) => set({ error }),
@@ -231,6 +236,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({
       rootHandle: null,
       workspaceRootPath: null,
+      workspaceIdentity: null,
       fileTree: initialFileTree,
       isLoading: false,
       error: null,

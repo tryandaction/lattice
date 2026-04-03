@@ -92,6 +92,7 @@ export function CodeEditorViewer({
   );
   const rootName = useWorkspaceStore((state) => state.rootHandle?.name ?? state.fileTree.root?.name ?? null);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
   const setRecentRunConfig = useWorkspaceStore((state) => state.setRecentRunConfig);
   const setRunnerPreferences = useWorkspaceStore((state) => state.setRunnerPreferences);
@@ -100,11 +101,12 @@ export function CodeEditorViewer({
   const persistedViewStateKey = useMemo(
     () => buildPersistedFileViewStateKey({
       kind: "code",
+      workspaceKey,
       workspaceRootPath,
       filePath,
       fallbackName: fileName,
     }),
-    [fileName, filePath, workspaceRootPath],
+    [fileName, filePath, workspaceKey, workspaceRootPath],
   );
 
   const {

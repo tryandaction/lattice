@@ -146,15 +146,17 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   const rootName = useWorkspaceStore((workspace) => workspace.rootHandle?.name ?? workspace.fileTree.root?.name ?? null);
   const workspaceRootHandle = useWorkspaceStore((workspace) => workspace.rootHandle);
   const workspaceRootPath = useWorkspaceStore((workspace) => workspace.workspaceRootPath);
+  const workspaceKey = useWorkspaceStore((workspace) => workspace.workspaceIdentity?.workspaceKey ?? null);
   const runnerPreferences = useWorkspaceStore((workspace) => workspace.runnerPreferences);
   const persistedViewStateKey = useMemo(
     () => buildPersistedFileViewStateKey({
       kind: "notebook",
+      workspaceKey,
       workspaceRootPath,
       filePath,
       fallbackName: fileName,
     }),
-    [fileName, filePath, workspaceRootPath],
+    [fileName, filePath, workspaceKey, workspaceRootPath],
   );
   const notebookAbsolutePath = resolveWorkspaceFilePath(workspaceRootPath, filePath, rootName);
   const notebookCwd = notebookAbsolutePath ? dirname(notebookAbsolutePath) : workspaceRootPath ?? undefined;

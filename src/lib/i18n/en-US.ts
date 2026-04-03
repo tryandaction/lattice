@@ -486,6 +486,7 @@ export const enUS: Record<TranslationKey, string> = {
   'explorer.context.paste': 'Paste',
   'explorer.context.copy': 'Copy',
   'explorer.context.cut': 'Cut',
+  'explorer.context.openAsWorkspace': 'Open as Workspace',
   'explorer.context.rename': 'Rename',
   'explorer.context.deleteFile': 'Delete File',
   'explorer.context.deleteFolder': 'Delete Folder',

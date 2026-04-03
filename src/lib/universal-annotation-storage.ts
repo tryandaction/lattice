@@ -13,6 +13,10 @@ import {
   isUniversalAnnotationFile,
   validateUniversalAnnotationFile 
 } from '../types/universal-annotation';
+import type { AnnotationLocationAlias, AnnotationSourceRecord } from '@/types/annotation-registry';
+import type { FileIdentity } from '@/types/workspace-identity';
+import { registerAnnotationLocation, resolveAnnotationRegistryAliases } from '@/lib/annotation-registry';
+import { isIgnoredDirectory } from '@/lib/constants';
 
 // ============================================================================
 // Constants
@@ -78,11 +82,14 @@ export function resolveAnnotationFileCandidates(
   filePath?: string,
   preferredFileId?: string | null,
 ): string[] {
-  const preferredPath = (filePath && filePath.trim()) ? filePath : fileHandleName;
-  const preferredId = generateFileId(preferredPath);
-  const legacyId = generateFileId(fileHandleName);
-  const candidates = [preferredFileId ?? null, preferredId, legacyId]
-    .filter((candidate): candidate is string => Boolean(candidate));
+  const normalizedPath = (filePath && filePath.trim()) ? filePath.replace(/\\/g, "/") : fileHandleName;
+  const pathParts = normalizedPath.split("/").filter(Boolean);
+  const suffixCandidates = pathParts.map((_, index) => pathParts.slice(index).join("/"));
+  const candidates = [
+    preferredFileId ?? null,
+    ...suffixCandidates.map((candidate) => generateFileId(candidate)),
+    generateFileId(fileHandleName),
+  ].filter((candidate): candidate is string => Boolean(candidate));
 
   return Array.from(new Set(candidates));
 }
@@ -275,6 +282,290 @@ export async function ensureAnnotationsDirectory(
   return annotationsDir;
 }
 
+interface NestedAnnotationMatch {
+  fileHandle: FileSystemFileHandle;
+  source: AnnotationSourceRecord;
+}
+
+async function loadAnnotationFileHandleFromDirectory(
+  directoryHandle: FileSystemDirectoryHandle,
+  candidates: string[],
+): Promise<{ fileHandle: FileSystemFileHandle; fileId: string } | null> {
+  for (const candidate of candidates) {
+    try {
+      const fileHandle = await directoryHandle.getFileHandle(`${candidate}.json`);
+      return { fileHandle, fileId: candidate };
+    } catch {
+      // Try next candidate.
+    }
+  }
+
+  return null;
+}
+
+async function loadAnnotationFileHandleBySuffix(
+  directoryHandle: FileSystemDirectoryHandle,
+  candidates: string[],
+): Promise<{ fileHandle: FileSystemFileHandle; fileId: string } | null> {
+  const candidateNames = new Set(candidates.map((candidate) => `${candidate}.json`));
+
+  for await (const entry of directoryHandle.values()) {
+    if (entry.kind !== "file") {
+      continue;
+    }
+
+    if (candidateNames.has(entry.name)) {
+      return {
+        fileHandle: entry as FileSystemFileHandle,
+        fileId: entry.name.slice(0, -".json".length),
+      };
+    }
+
+    for (const candidate of candidates) {
+      if (entry.name.endsWith(`${candidate}.json`)) {
+        return {
+          fileHandle: entry as FileSystemFileHandle,
+          fileId: entry.name.slice(0, -".json".length),
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+async function walkForNestedAnnotationMatch(
+  directoryHandle: FileSystemDirectoryHandle,
+  currentPath: string,
+  candidates: string[],
+  workspaceKey: string | null,
+): Promise<NestedAnnotationMatch | null> {
+  for await (const entry of directoryHandle.values()) {
+    if (entry.kind !== "directory") {
+      continue;
+    }
+
+    const childDirectory = entry as FileSystemDirectoryHandle;
+    const childPath = `${currentPath}/${childDirectory.name}`;
+
+    if (childDirectory.name === ".lattice") {
+      try {
+        const annotationsDirectory = await childDirectory.getDirectoryHandle("annotations");
+        const matched = await loadAnnotationFileHandleFromDirectory(annotationsDirectory, candidates)
+          ?? await loadAnnotationFileHandleBySuffix(annotationsDirectory, candidates);
+        if (matched) {
+          return {
+            fileHandle: matched.fileHandle,
+            source: {
+              workspaceKey,
+              sourcePath: `${childPath}/annotations/${matched.fileId}.json`,
+              sourceKind: "nested-lattice",
+              fileId: matched.fileId,
+              canonicalPath: null,
+              relativePathFromRoot: null,
+              fileFingerprint: null,
+              updatedAt: Date.now(),
+            },
+          };
+        }
+      } catch {
+        // Ignore malformed nested .lattice roots.
+      }
+      continue;
+    }
+
+    if (isIgnoredDirectory(childDirectory.name)) {
+      continue;
+    }
+
+    const nested = await walkForNestedAnnotationMatch(childDirectory, childPath, candidates, workspaceKey);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+async function findNestedAnnotationMatch(
+  rootHandle: FileSystemDirectoryHandle,
+  candidates: string[],
+  workspaceKey: string | null,
+): Promise<NestedAnnotationMatch | null> {
+  return walkForNestedAnnotationMatch(rootHandle, rootHandle.name, candidates, workspaceKey);
+}
+
+async function tryResolveRegistryAnnotationMatch(
+  rootHandle: FileSystemDirectoryHandle,
+  aliases: AnnotationLocationAlias[],
+): Promise<NestedAnnotationMatch | null> {
+  for (const alias of aliases) {
+    const normalizedSourcePath = alias.sourcePath;
+    if (!normalizedSourcePath) {
+      continue;
+    }
+
+    const parts = normalizedSourcePath.replace(/\\/g, "/").split("/").filter(Boolean);
+    if (parts.length < 2) {
+      continue;
+    }
+
+    const relativeParts = parts[0] === rootHandle.name ? parts.slice(1) : parts;
+    if (relativeParts.length === 0) {
+      continue;
+    }
+
+    try {
+      let current = rootHandle;
+      for (let index = 0; index < relativeParts.length - 1; index += 1) {
+        current = await current.getDirectoryHandle(relativeParts[index]);
+      }
+      const fileHandle = await current.getFileHandle(relativeParts[relativeParts.length - 1]);
+      return {
+        fileHandle,
+        source: {
+          workspaceKey: alias.workspaceKey,
+          sourcePath: normalizedSourcePath,
+          sourceKind: "registry",
+          fileId: alias.fileId,
+          canonicalPath: alias.canonicalPath,
+          relativePathFromRoot: alias.relativePathFromRoot,
+          fileFingerprint: null,
+          updatedAt: alias.updatedAt,
+        },
+      };
+    } catch {
+      // Alias not available from this root; try next alias.
+    }
+  }
+
+  return null;
+}
+
+export async function loadAnnotationsForFileIdentity(input: {
+  rootHandle: FileSystemDirectoryHandle;
+  fileIdentity: FileIdentity;
+  workspaceKey: string | null;
+  fileType?: AnnotationFileType;
+}): Promise<{
+  annotationFile: UniversalAnnotationFile;
+  source: AnnotationSourceRecord | null;
+}> {
+  const fileType = input.fileType ?? 'unknown';
+
+  try {
+    const annotationsDir = await ensureAnnotationsDirectory(input.rootHandle);
+    const currentMatch = await loadAnnotationFileHandleFromDirectory(annotationsDir, input.fileIdentity.fileIdCandidates);
+    if (currentMatch) {
+      const file = await currentMatch.fileHandle.getFile();
+      const content = await file.text();
+      const parsed = deserializeAnnotationFile(content);
+      if (parsed) {
+        await registerAnnotationLocation(input.fileIdentity.fileFingerprint, {
+          sourcePath: `${ANNOTATIONS_DIR}/${currentMatch.fileId}.json`,
+          canonicalPath: input.fileIdentity.canonicalPath,
+          relativePathFromRoot: input.fileIdentity.relativePathFromRoot,
+          fileId: currentMatch.fileId,
+          workspaceKey: input.workspaceKey,
+          updatedAt: Date.now(),
+        });
+        return {
+          annotationFile: {
+            ...parsed,
+            fileId: input.fileIdentity.primaryFileId,
+            fileType,
+          },
+          source: {
+            workspaceKey: input.workspaceKey,
+            sourcePath: `${ANNOTATIONS_DIR}/${currentMatch.fileId}.json`,
+            sourceKind: "current-root",
+            fileId: currentMatch.fileId,
+            canonicalPath: input.fileIdentity.canonicalPath,
+            relativePathFromRoot: input.fileIdentity.relativePathFromRoot,
+            fileFingerprint: input.fileIdentity.fileFingerprint,
+            updatedAt: Date.now(),
+          },
+        };
+      }
+    }
+  } catch {
+    // Fall through to nested / registry.
+  }
+
+  const nestedMatch = await findNestedAnnotationMatch(
+    input.rootHandle,
+    input.fileIdentity.fileIdCandidates,
+    input.workspaceKey,
+  );
+  if (nestedMatch) {
+    try {
+      const file = await nestedMatch.fileHandle.getFile();
+      const parsed = deserializeAnnotationFile(await file.text());
+      if (parsed) {
+        const mirrored = {
+          ...parsed,
+          fileId: input.fileIdentity.primaryFileId,
+          fileType,
+        };
+        await saveAnnotationsToDisk(mirrored, input.rootHandle);
+        await registerAnnotationLocation(input.fileIdentity.fileFingerprint, {
+          sourcePath: `${ANNOTATIONS_DIR}/${input.fileIdentity.primaryFileId}.json`,
+          canonicalPath: input.fileIdentity.canonicalPath,
+          relativePathFromRoot: input.fileIdentity.relativePathFromRoot,
+          fileId: input.fileIdentity.primaryFileId,
+          workspaceKey: input.workspaceKey,
+          updatedAt: Date.now(),
+        });
+        return {
+          annotationFile: mirrored,
+          source: nestedMatch.source,
+        };
+      }
+    } catch {
+      // Ignore nested source failure.
+    }
+  }
+
+  const registryAliases = await resolveAnnotationRegistryAliases({
+    fileFingerprint: input.fileIdentity.fileFingerprint,
+    canonicalPath: input.fileIdentity.canonicalPath,
+  });
+  const registryMatch = await tryResolveRegistryAnnotationMatch(input.rootHandle, registryAliases);
+  if (registryMatch) {
+    try {
+      const file = await registryMatch.fileHandle.getFile();
+      const parsed = deserializeAnnotationFile(await file.text());
+      if (parsed) {
+        const mirrored = {
+          ...parsed,
+          fileId: input.fileIdentity.primaryFileId,
+          fileType,
+        };
+        await saveAnnotationsToDisk(mirrored, input.rootHandle);
+        await registerAnnotationLocation(input.fileIdentity.fileFingerprint, {
+          sourcePath: `${ANNOTATIONS_DIR}/${input.fileIdentity.primaryFileId}.json`,
+          canonicalPath: input.fileIdentity.canonicalPath,
+          relativePathFromRoot: input.fileIdentity.relativePathFromRoot,
+          fileId: input.fileIdentity.primaryFileId,
+          workspaceKey: input.workspaceKey,
+          updatedAt: Date.now(),
+        });
+        return {
+          annotationFile: mirrored,
+          source: registryMatch.source,
+        };
+      }
+    } catch {
+      // Ignore stale registry alias.
+    }
+  }
+
+  return {
+    annotationFile: createUniversalAnnotationFile(input.fileIdentity.primaryFileId, fileType),
+    source: null,
+  };
+}
+
 /**
  * Loads annotations for a file from disk
  * Returns empty annotation file if not found or corrupted
@@ -374,6 +665,83 @@ export async function deleteAnnotationsFromDisk(
     }
     throw error;
   }
+}
+
+async function loadAnnotationFileFromCurrentRootCandidates(
+  rootHandle: FileSystemDirectoryHandle,
+  candidates: string[],
+): Promise<UniversalAnnotationFile | null> {
+  const annotationsDir = await ensureAnnotationsDirectory(rootHandle);
+  const matched = await loadAnnotationFileHandleFromDirectory(annotationsDir, candidates);
+  if (!matched) {
+    return null;
+  }
+
+  const file = await matched.fileHandle.getFile();
+  const parsed = deserializeAnnotationFile(await file.text());
+  return parsed ? { ...parsed, fileId: matched.fileId } : null;
+}
+
+async function deleteAnnotationCandidatesFromCurrentRoot(
+  rootHandle: FileSystemDirectoryHandle,
+  candidates: string[],
+): Promise<void> {
+  for (const candidate of candidates) {
+    try {
+      await deleteAnnotationsFromDisk(candidate, rootHandle);
+    } catch {
+      // Ignore missing legacy aliases.
+    }
+  }
+}
+
+export async function moveAnnotationSidecar(
+  rootHandle: FileSystemDirectoryHandle,
+  oldPath: string,
+  newPath: string,
+  fileType: AnnotationFileType = "unknown",
+): Promise<void> {
+  const oldCandidates = resolveAnnotationFileCandidates(oldPath.split("/").pop() ?? oldPath, oldPath);
+  const current = await loadAnnotationFileFromCurrentRootCandidates(rootHandle, oldCandidates);
+  if (!current) {
+    return;
+  }
+
+  const nextFileId = resolveAnnotationFileCandidates(newPath.split("/").pop() ?? newPath, newPath)[0];
+  await saveAnnotationsToDisk({
+    ...current,
+    fileId: nextFileId,
+    fileType: current.fileType || fileType,
+  }, rootHandle);
+  await deleteAnnotationCandidatesFromCurrentRoot(rootHandle, oldCandidates);
+}
+
+export async function copyAnnotationSidecar(
+  rootHandle: FileSystemDirectoryHandle,
+  sourcePath: string,
+  targetPath: string,
+  fileType: AnnotationFileType = "unknown",
+): Promise<void> {
+  const sourceCandidates = resolveAnnotationFileCandidates(sourcePath.split("/").pop() ?? sourcePath, sourcePath);
+  const current = await loadAnnotationFileFromCurrentRootCandidates(rootHandle, sourceCandidates);
+  if (!current) {
+    return;
+  }
+
+  const nextFileId = resolveAnnotationFileCandidates(targetPath.split("/").pop() ?? targetPath, targetPath)[0];
+  await saveAnnotationsToDisk({
+    ...current,
+    fileId: nextFileId,
+    fileType: current.fileType || fileType,
+  }, rootHandle);
+}
+
+export async function deleteAnnotationSidecarsForPath(
+  rootHandle: FileSystemDirectoryHandle,
+  filePath: string,
+): Promise<void> {
+  const candidates = resolveAnnotationFileCandidates(filePath.split("/").pop() ?? filePath, filePath);
+  await deleteAnnotationCandidatesFromCurrentRoot(rootHandle, candidates);
 }
 
 // ============================================================================

@@ -13,11 +13,12 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 import { applyWorkspaceHandleToStores } from '@/hooks/use-file-system';
-import { createDesktopDirectoryHandle, getDesktopHandlePath } from '@/lib/desktop-file-system';
+import { createDesktopDirectoryHandle } from '@/lib/desktop-file-system';
 import { resolveDesktopStartupWorkspace } from '@/lib/desktop-folder';
 import { logger } from '@/lib/logger';
 import { isTauri } from '@/lib/storage-adapter';
 import type { AppSettings } from '@/types/settings';
+import { loadWorkspaceHandleRegistration } from '@/lib/workspace-identity';
 
 const DB_NAME = 'lattice-handles';
 const STORE_NAME = 'directory-handles';
@@ -38,16 +39,6 @@ function openHandleDB(): Promise<IDBDatabase> {
   });
 }
 
-async function saveHandleToDB(handle: FileSystemDirectoryHandle): Promise<void> {
-  const db = await openHandleDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(handle, HANDLE_KEY);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
 async function loadHandleFromDB(): Promise<FileSystemDirectoryHandle | null> {
   const db = await openHandleDB();
   return new Promise((resolve, reject) => {
@@ -63,8 +54,11 @@ async function loadHandleFromDB(): Promise<FileSystemDirectoryHandle | null> {
 // ============================================================================
 
 export function resolveAutoOpenWorkspacePath(
-  settings: Pick<AppSettings, 'lastOpenedFolder' | 'defaultFolder'> & Partial<Pick<AppSettings, 'lastWorkspacePath'>>
+  settings: Pick<AppSettings, 'lastOpenedFolder' | 'defaultFolder'> & Partial<Pick<AppSettings, 'lastWorkspacePath' | 'lastWorkspaceKey' | 'workspaceDisplayPaths'>>
 ): string | null {
+  if (settings.lastWorkspaceKey && settings.workspaceDisplayPaths?.[settings.lastWorkspaceKey]) {
+    return settings.workspaceDisplayPaths[settings.lastWorkspaceKey];
+  }
   return settings.lastWorkspacePath ?? settings.lastOpenedFolder ?? settings.defaultFolder ?? null;
 }
 
@@ -79,23 +73,15 @@ export function useAutoOpenFolder() {
 
   const hasAttemptedAutoOpen = useRef(false);
 
-  // Persist handle whenever rootHandle changes
-  useEffect(() => {
-    if (rootHandle && !isTauri() && !getDesktopHandlePath(rootHandle)) {
-      saveHandleToDB(rootHandle).catch((err) =>
-        logger.warn('[AutoOpen] Failed to persist folder handle:', err)
-      );
-    }
-  }, [rootHandle]);
-
   const restoreWorkspaceFromHandle = useCallback(async (
     handle: FileSystemDirectoryHandle,
     workspaceRootPath: string | null,
+    preferredWorkspaceKey?: string | null,
   ): Promise<boolean> => {
     setLoading(true);
     setError(null);
     try {
-      await applyWorkspaceHandleToStores(handle, workspaceRootPath);
+      await applyWorkspaceHandleToStores(handle, workspaceRootPath, preferredWorkspaceKey);
       logger.info('[AutoOpen] Restored workspace tree:', handle.name);
       return true;
     } catch (err) {
@@ -125,11 +111,15 @@ export function useAutoOpenFolder() {
         await restoreWorkspaceFromHandle(
           createDesktopDirectoryHandle(startupWorkspace.path),
           startupWorkspace.path,
+          useSettingsStore.getState().settings.lastWorkspaceKey,
         );
         return;
       }
 
-      const savedHandle = await loadHandleFromDB();
+      const registeredWorkspace = settings.lastWorkspaceKey
+        ? await loadWorkspaceHandleRegistration(settings.lastWorkspaceKey)
+        : null;
+      const savedHandle = registeredWorkspace?.handle ?? await loadHandleFromDB();
       if (!savedHandle) {
         logger.debug('[AutoOpen] No saved folder handle found');
         return;
@@ -138,7 +128,11 @@ export function useAutoOpenFolder() {
       // Request permission to access the saved handle
       const permission = await savedHandle.queryPermission({ mode: 'readwrite' });
       if (permission === 'granted') {
-        await restoreWorkspaceFromHandle(savedHandle, resolveAutoOpenWorkspacePath(settings) ?? savedHandle.name);
+        await restoreWorkspaceFromHandle(
+          savedHandle,
+          resolveAutoOpenWorkspacePath(settings) ?? registeredWorkspace?.displayPath ?? savedHandle.name,
+          registeredWorkspace?.workspaceKey ?? settings.lastWorkspaceKey ?? null,
+        );
         return;
       }
 
@@ -146,7 +140,11 @@ export function useAutoOpenFolder() {
       // We can't auto-request without user interaction, but we can try
       const requested = await savedHandle.requestPermission({ mode: 'readwrite' });
       if (requested === 'granted') {
-        await restoreWorkspaceFromHandle(savedHandle, resolveAutoOpenWorkspacePath(settings) ?? savedHandle.name);
+        await restoreWorkspaceFromHandle(
+          savedHandle,
+          resolveAutoOpenWorkspacePath(settings) ?? registeredWorkspace?.displayPath ?? savedHandle.name,
+          registeredWorkspace?.workspaceKey ?? settings.lastWorkspaceKey ?? null,
+        );
       } else {
         logger.debug('[AutoOpen] Permission denied for saved folder');
       }

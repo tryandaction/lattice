@@ -5,12 +5,14 @@ import { Loader2, AlertCircle, FileQuestion } from "lucide-react";
 import { getRendererForExtension, getFileExtension, getImageMimeType, RendererType, isEditableCodeFile } from "@/lib/file-utils";
 import dynamic from "next/dynamic";
 import type { PaneId } from "@/stores/workspace-store";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 import { normalizeScientificText } from "@/lib/markdown-converter";
 import { navigateLink } from "@/lib/link-router/navigate-link";
 import { t } from "@/lib/i18n";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
-import { hasPersistedPdfAnnotations } from "@/lib/pdf-item";
 import { isTauriHost } from "@/lib/storage-adapter";
+import { resolveFileIdentity } from "@/lib/file-identity";
+import { loadAnnotationsForFileIdentity } from "@/lib/universal-annotation-storage";
 
 /**
  * LRU cache for normalizeScientificText results.
@@ -51,6 +53,7 @@ function AdaptivePDFRenderer({
   fileId,
   filePath,
 }: AdaptivePDFRendererProps) {
+  const workspaceIdentity = useWorkspaceStore((state) => state.workspaceIdentity);
   const hasAnnotationContext = Boolean(fileHandle && rootHandle);
   const isDesktopRuntime = isTauriHost();
   const activePdfKey = `${fileId}:${filePath}`;
@@ -70,12 +73,18 @@ function AdaptivePDFRenderer({
 
     const detectPersistedAnnotations = async () => {
       try {
-        const detected = await hasPersistedPdfAnnotations(
-          rootHandle,
-          fileId,
+        const fileIdentity = await resolveFileIdentity({
+          fileHandle,
           filePath,
           fileName,
-        );
+          workspaceIdentity,
+        });
+        const detected = (await loadAnnotationsForFileIdentity({
+          rootHandle,
+          fileIdentity,
+          workspaceKey: workspaceIdentity?.workspaceKey ?? null,
+          fileType: "pdf",
+        })).annotationFile.annotations.some((annotation) => annotation.target.type === "pdf");
         if (!cancelled) {
           setAnnotationPresenceByKey((current) => (
             current[activePdfKey] === detected
@@ -96,7 +105,7 @@ function AdaptivePDFRenderer({
     return () => {
       cancelled = true;
     };
-  }, [activePdfKey, fileHandle, fileId, fileName, filePath, rootHandle]);
+  }, [activePdfKey, fileHandle, fileName, filePath, rootHandle, workspaceIdentity]);
 
   const handleRequestAnnotationMode = useCallback(() => {
     if (!hasAnnotationContext) {

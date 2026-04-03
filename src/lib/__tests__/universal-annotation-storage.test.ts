@@ -14,7 +14,9 @@ import {
   createUniversalAnnotationFile,
   detectFileType,
   ANNOTATIONS_DIR,
+  loadAnnotationsForFileIdentity,
 } from '../universal-annotation-storage';
+import { resolveFileIdentity } from '../file-identity';
 import type { 
   UniversalAnnotationFile, 
   AnnotationItem,
@@ -425,5 +427,143 @@ describe('createUniversalAnnotationFile', () => {
       }),
       { numRuns: 100 }
     );
+  });
+});
+
+class NestedTestFileHandle {
+  kind = 'file' as const;
+
+  constructor(public name: string, private content: string) {}
+
+  async getFile() {
+    return new File([this.content], this.name, { lastModified: 1710000000000 });
+  }
+
+  async createWritable() {
+    return {
+      write: async (nextContent: string) => {
+        this.content = typeof nextContent === "string" ? nextContent : this.content;
+      },
+      close: async () => undefined,
+      abort: async () => undefined,
+    } as unknown as FileSystemWritableFileStream;
+  }
+}
+
+class NestedTestDirectoryHandle {
+  kind = 'directory' as const;
+  private readonly directories = new Map<string, NestedTestDirectoryHandle>();
+  private readonly files = new Map<string, NestedTestFileHandle>();
+
+  constructor(public name: string) {}
+
+  addDirectory(dir: NestedTestDirectoryHandle) {
+    this.directories.set(dir.name, dir);
+    return dir;
+  }
+
+  addFile(file: NestedTestFileHandle) {
+    this.files.set(file.name, file);
+    return file;
+  }
+
+  async *values(): AsyncGenerator<NestedTestDirectoryHandle | NestedTestFileHandle> {
+    for (const dir of this.directories.values()) {
+      yield dir;
+    }
+    for (const file of this.files.values()) {
+      yield file;
+    }
+  }
+
+  async getDirectoryHandle(name: string, options?: { create?: boolean }) {
+    const existing = this.directories.get(name);
+    if (existing) {
+      return existing;
+    }
+    if (options?.create) {
+      const created = new NestedTestDirectoryHandle(name);
+      this.directories.set(name, created);
+      return created;
+    }
+    throw new DOMException(`Directory not found: ${name}`, 'NotFoundError');
+  }
+
+  async getFileHandle(name: string, options?: { create?: boolean }) {
+    const existing = this.files.get(name);
+    if (existing) {
+      return existing;
+    }
+    if (options?.create) {
+      const created = new NestedTestFileHandle(name, '');
+      this.files.set(name, created);
+      return created;
+    }
+    throw new DOMException(`File not found: ${name}`, 'NotFoundError');
+  }
+
+  async isSameEntry(other: FileSystemHandle) {
+    return other === (this as unknown as FileSystemHandle);
+  }
+}
+
+describe('nested .lattice discovery', () => {
+  it('loads annotations from a nested child workspace and mirrors them into the current root', async () => {
+    const root = new NestedTestDirectoryHandle('Course');
+    const child = root.addDirectory(new NestedTestDirectoryHandle('选修'));
+    const subRoot = child.addDirectory(new NestedTestDirectoryHandle('概统'));
+    const pdfHandle = subRoot.addFile(new NestedTestFileHandle('讲义.pdf', 'pdf'));
+    const latticeDir = subRoot.addDirectory(new NestedTestDirectoryHandle('.lattice'));
+    const annotationsDir = latticeDir.addDirectory(new NestedTestDirectoryHandle('annotations'));
+    annotationsDir.addFile(new NestedTestFileHandle(
+      `${generateFileId('概统/讲义.pdf')}.json`,
+      JSON.stringify({
+        version: 2,
+        fileId: generateFileId('概统/讲义.pdf'),
+        fileType: 'pdf',
+        annotations: [
+          {
+            id: 'ann-1',
+            target: {
+              type: 'pdf',
+              page: 1,
+              rects: [{ x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 }],
+            },
+            style: { color: '#FFEB3B', type: 'highlight' },
+            author: 'user',
+            createdAt: 1710000000000,
+          },
+        ],
+        lastModified: 1710000000000,
+      }),
+    ));
+
+    const fileIdentity = await resolveFileIdentity({
+      fileHandle: pdfHandle as unknown as FileSystemFileHandle,
+      fileName: '讲义.pdf',
+      filePath: 'Course/选修/概统/讲义.pdf',
+      workspaceIdentity: {
+        workspaceKey: 'web:course',
+        displayPath: 'Course',
+        rootName: 'Course',
+        hostKind: 'web',
+        handleFingerprint: null,
+        lastUsedAt: Date.now(),
+      },
+    });
+
+    const resolved = await loadAnnotationsForFileIdentity({
+      rootHandle: root as unknown as FileSystemDirectoryHandle,
+      fileIdentity,
+      workspaceKey: 'web:course',
+      fileType: 'pdf',
+    });
+
+    expect(resolved.annotationFile.annotations).toHaveLength(1);
+
+    const mirrored = await root.getDirectoryHandle('.lattice').then((dir) => dir.getDirectoryHandle('annotations')).then((dir) => dir.getFileHandle(`${fileIdentity.primaryFileId}.json`));
+    const mirroredContent = await (await mirrored.getFile()).text();
+    const parsedMirrored = deserializeAnnotationFile(mirroredContent);
+    expect(parsedMirrored?.annotations).toHaveLength(1);
   });
 });

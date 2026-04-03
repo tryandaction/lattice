@@ -8,6 +8,7 @@ import { useContentCacheStore } from "@/stores/content-cache-store";
 export function useWorkbenchSession() {
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const layout = useWorkspaceStore((state) => state.layout);
   const sidebarCollapsed = useWorkspaceStore((state) => state.sidebarCollapsed);
   const restoreWorkbenchState = useWorkspaceStore((state) => state.restoreWorkbenchState);
@@ -18,7 +19,7 @@ export function useWorkbenchSession() {
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!rootHandle || !workspaceRootPath) {
+    if (!rootHandle || !workspaceKey) {
       hydratedWorkspaceKeyRef.current = null;
       if (persistTimerRef.current) {
         clearTimeout(persistTimerRef.current);
@@ -27,7 +28,7 @@ export function useWorkbenchSession() {
       return;
     }
 
-    if (hydratedWorkspaceKeyRef.current === workspaceRootPath) {
+    if (hydratedWorkspaceKeyRef.current === workspaceKey) {
       return;
     }
 
@@ -35,7 +36,7 @@ export function useWorkbenchSession() {
     clearContentCache();
 
     let cancelled = false;
-    void loadWorkbenchSession(workspaceRootPath, rootHandle).then((session) => {
+    void loadWorkbenchSession(workspaceKey, workspaceRootPath, rootHandle).then((session) => {
       if (cancelled) {
         return;
       }
@@ -46,7 +47,7 @@ export function useWorkbenchSession() {
         resetWorkbenchState(sidebarCollapsed);
       }
 
-      hydratedWorkspaceKeyRef.current = workspaceRootPath;
+      hydratedWorkspaceKeyRef.current = workspaceKey;
     });
 
     return () => {
@@ -58,11 +59,12 @@ export function useWorkbenchSession() {
     restoreWorkbenchState,
     rootHandle,
     sidebarCollapsed,
+    workspaceKey,
     workspaceRootPath,
   ]);
 
   useEffect(() => {
-    if (!rootHandle || !workspaceRootPath || hydratedWorkspaceKeyRef.current !== workspaceRootPath) {
+    if (!rootHandle || !workspaceKey || hydratedWorkspaceKeyRef.current !== workspaceKey) {
       return;
     }
 
@@ -71,7 +73,7 @@ export function useWorkbenchSession() {
     }
 
     persistTimerRef.current = setTimeout(() => {
-      void saveWorkbenchSession(workspaceRootPath, layout, sidebarCollapsed);
+      void saveWorkbenchSession(workspaceKey, workspaceRootPath, layout, sidebarCollapsed);
     }, 180);
 
     return () => {
@@ -80,5 +82,5 @@ export function useWorkbenchSession() {
         persistTimerRef.current = null;
       }
     };
-  }, [layout, rootHandle, sidebarCollapsed, workspaceRootPath]);
+  }, [layout, rootHandle, sidebarCollapsed, workspaceKey, workspaceRootPath]);
 }

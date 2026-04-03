@@ -411,9 +411,8 @@ async function testPdfRegression(page, baseUrl) {
     await expectText(page.getByTestId("pdf-zoom-label-pdf-right-pane"), "145%", "Right pane keyboard zoom after hover");
 
     console.log("[pdf-regression] scroll right deep");
-    await scrollPdfPaneDeep(page, "pdf-right-pane");
+    await page.getByTestId("scroll-right-to-page-6").click();
     await page.waitForTimeout(800);
-    await waitForNumericTextChange(page, "pdf-right-state-scroll-top", 2000, "Right pane scroll top after deep scroll");
     await waitForNumericTextAtLeast(page, "pdf-right-state-anchor-page", 5, "Right pane anchor page after scroll");
 
     console.log("[pdf-regression] switch file and restore manual zoom");

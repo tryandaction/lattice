@@ -7,8 +7,27 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UniversalFileViewer } from "../universal-file-viewer";
 
-const hasPersistedPdfAnnotationsMock = vi.hoisted(() => vi.fn());
 const isTauriHostMock = vi.hoisted(() => vi.fn(() => false));
+const resolveFileIdentityMock = vi.hoisted(() => vi.fn(async (_input?: unknown) => ({
+  primaryFileId: "paper-id",
+  fileIdCandidates: ["paper-id"],
+  canonicalPath: "workspace:docs/paper.pdf",
+  relativePathFromRoot: "docs/paper.pdf",
+  fileName: "paper.pdf",
+  fileFingerprint: null,
+  size: null,
+  lastModified: null,
+})));
+const loadAnnotationsForFileIdentityMock = vi.hoisted(() => vi.fn(async (_input?: unknown) => ({
+  annotationFile: {
+    version: 2 as const,
+    fileId: "paper-id",
+    fileType: "pdf" as const,
+    annotations: [],
+    lastModified: Date.now(),
+  },
+  source: null,
+} as any)));
 
 vi.mock("next/dynamic", async () => {
   const ReactModule = await import("react");
@@ -37,12 +56,16 @@ vi.mock("next/dynamic", async () => {
   };
 });
 
-vi.mock("@/lib/pdf-item", () => ({
-  hasPersistedPdfAnnotations: (...args: unknown[]) => hasPersistedPdfAnnotationsMock(...args),
-}));
-
 vi.mock("@/lib/storage-adapter", () => ({
   isTauriHost: () => isTauriHostMock(),
+}));
+
+vi.mock("@/lib/file-identity", () => ({
+  resolveFileIdentity: (input: unknown) => resolveFileIdentityMock(input),
+}));
+
+vi.mock("@/lib/universal-annotation-storage", () => ({
+  loadAnnotationsForFileIdentity: (input: unknown) => loadAnnotationsForFileIdentityMock(input),
 }));
 
 vi.mock("@/lib/i18n", () => ({
@@ -56,6 +79,16 @@ vi.mock("@/lib/link-router/navigate-link", () => ({
 vi.mock("@/lib/runner/execution-scope", () => ({
   buildExecutionScopeId: () => "scope:test",
 }));
+
+vi.mock("@/stores/workspace-store", async () => {
+  const actual = await vi.importActual("@/stores/workspace-store");
+  return {
+    ...actual,
+    useWorkspaceStore: (selector: (state: { workspaceIdentity: { workspaceKey: string } | null }) => unknown) => selector({
+      workspaceIdentity: { workspaceKey: "workspace:test" },
+    }),
+  };
+});
 
 vi.mock("@/components/renderers/pdf-viewer", () => ({
   PDFViewer: ({
@@ -108,7 +141,16 @@ describe("UniversalFileViewer PDF routing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     isTauriHostMock.mockReturnValue(false);
-    hasPersistedPdfAnnotationsMock.mockResolvedValue(false);
+    loadAnnotationsForFileIdentityMock.mockResolvedValue({
+      annotationFile: {
+        version: 2 as const,
+        fileId: "paper-id",
+        fileType: "pdf" as const,
+        annotations: [],
+        lastModified: Date.now(),
+      },
+      source: null,
+    } as any);
   });
 
   it("defaults to the lightweight PDF viewer when no persisted annotations exist", async () => {
@@ -123,7 +165,26 @@ describe("UniversalFileViewer PDF routing", () => {
   });
 
   it("auto-upgrades to the highlighter path when persisted annotations are detected", async () => {
-    hasPersistedPdfAnnotationsMock.mockResolvedValue(true);
+    loadAnnotationsForFileIdentityMock.mockResolvedValue({
+      annotationFile: {
+        version: 2 as const,
+        fileId: "paper-id",
+        fileType: "pdf" as const,
+        annotations: [
+          {
+            id: "ann-1",
+            target: { type: "pdf" as const, page: 1, rects: [{ x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 }] },
+            style: { color: "#FFEB3B", type: "highlight" as const },
+            content: undefined,
+            comment: undefined,
+            author: "user",
+            createdAt: Date.now(),
+          },
+        ],
+        lastModified: Date.now(),
+      },
+      source: { sourceKind: "nested-lattice" } as unknown,
+    } as any);
 
     renderPdfViewer();
 
@@ -145,7 +206,26 @@ describe("UniversalFileViewer PDF routing", () => {
 
   it("keeps desktop PDFs on the lightweight viewer until annotation mode is explicitly requested", async () => {
     isTauriHostMock.mockReturnValue(true);
-    hasPersistedPdfAnnotationsMock.mockResolvedValue(true);
+    loadAnnotationsForFileIdentityMock.mockResolvedValue({
+      annotationFile: {
+        version: 2 as const,
+        fileId: "paper-id",
+        fileType: "pdf" as const,
+        annotations: [
+          {
+            id: "ann-1",
+            target: { type: "pdf" as const, page: 1, rects: [{ x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 }] },
+            style: { color: "#FFEB3B", type: "highlight" as const },
+            content: undefined,
+            comment: undefined,
+            author: "user",
+            createdAt: Date.now(),
+          },
+        ],
+        lastModified: Date.now(),
+      },
+      source: { sourceKind: "nested-lattice" } as unknown,
+    } as any);
 
     renderPdfViewer();
 

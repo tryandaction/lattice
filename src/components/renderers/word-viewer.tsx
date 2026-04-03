@@ -97,9 +97,11 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
   const { createFile } = useFileSystem();
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const markdownSnapshot = useMemo(() => htmlToMarkdown(htmlContent || ""), [htmlContent]);
   const persistedViewStateKey = buildPersistedFileViewStateKey({
     kind: "word",
+    workspaceKey,
     workspaceRootPath,
     filePath,
     fallbackName: fileName,

@@ -29,8 +29,10 @@ export function CodeReader({ content, fileName, paneId, filePath }: CodeReaderPr
   const language = getLanguageForExtension(extension);
   const containerRef = useRef<HTMLDivElement>(null);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const persistedViewStateKey = buildPersistedFileViewStateKey({
     kind: "code-reader",
+    workspaceKey,
     workspaceRootPath,
     filePath,
     fallbackName: fileName,

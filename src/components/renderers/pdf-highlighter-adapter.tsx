@@ -1552,14 +1552,16 @@ export function PDFHighlighterAdapter({
 }: PDFHighlighterAdapterProps) {
   const { t } = useI18n();
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const persistedPdfViewStateKey = useMemo(
     () => buildPersistedFileViewStateKey({
       kind: "pdf",
+      workspaceKey,
       workspaceRootPath,
       filePath,
       fallbackName: fileName,
     }),
-    [fileName, filePath, workspaceRootPath],
+    [fileName, filePath, workspaceKey, workspaceRootPath],
   );
   const cachedPdfViewState = useMemo(() => {
     return readCachedPdfViewState(useContentCacheStore.getState().getEditorState(fileId));

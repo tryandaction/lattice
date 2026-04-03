@@ -484,6 +484,7 @@ interface DirectoryNodeProps {
 }
 
 function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
+  const { t } = useI18n();
   const toggleDirectory = useWorkspaceStore((state) => state.toggleDirectory);
   const setSelectedDirectoryPath = useWorkspaceStore((state) => state.setSelectedDirectoryPath);
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
@@ -496,6 +497,7 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
     renameFile,
     copyEntry,
     moveEntry,
+    openDirectoryAsWorkspace,
   } = useFileSystem();
   const selectedPath = useExplorerStore((state) => state.selectedPath);
   const selectedKind = useExplorerStore((state) => state.selectedKind);
@@ -789,6 +791,12 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
           y={contextMenu.y}
           isDirectory={true}
           canPaste={!!clipboard}
+          actions={[
+            {
+              label: t("explorer.context.openAsWorkspace"),
+              onSelect: () => void openDirectoryAsWorkspace(node.path),
+            },
+          ]}
           onNewFile={() => void handleCreateFile()}
           onNewFolder={() => void handleCreateFolder()}
           onPaste={() => void handlePaste()}

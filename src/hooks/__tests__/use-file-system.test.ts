@@ -19,6 +19,10 @@ class FakeFileHandle {
       text: async () => this.content,
     };
   }
+
+  async isSameEntry(other: FileSystemHandle) {
+    return other === (this as unknown as FileSystemHandle);
+  }
 }
 
 class FakeDirectoryHandle {
@@ -75,6 +79,10 @@ class FakeDirectoryHandle {
     }
 
     throw new DOMException(`File not found: ${name}`, "NotFoundError");
+  }
+
+  async isSameEntry(other: FileSystemHandle) {
+    return other === (this as unknown as FileSystemHandle);
   }
 }
 
@@ -248,5 +256,29 @@ describe("readDirectoryRecursive", () => {
     expect(useSettingsStore.getState().settings.lastWorkspacePath).toBeNull();
     expect(useWorkspaceStore.getState().workspaceRootPath).toBeNull();
     expect(useWorkspaceStore.getState().error).toContain("Workspace path no longer exists");
+  });
+
+  it("opens a selected child directory as a new workspace", async () => {
+    const root = new FakeDirectoryHandle("Course");
+    const elective = root.addDirectory(new FakeDirectoryHandle("选修"));
+    const stats = elective.addDirectory(new FakeDirectoryHandle("概统"));
+    stats.addFile(new FakeFileHandle("讲义.pdf"));
+
+    useWorkspaceStore.setState((state) => ({
+      ...state,
+      rootHandle: root as unknown as FileSystemDirectoryHandle,
+      workspaceRootPath: "Course",
+      fileTree: { root: null },
+    }));
+
+    const { result } = renderHook(() => useFileSystem());
+
+    await act(async () => {
+      await result.current.openDirectoryAsWorkspace("Course/选修/概统");
+    });
+
+    expect(useWorkspaceStore.getState().workspaceRootPath).toBe("Course/选修/概统");
+    expect(useWorkspaceStore.getState().rootHandle?.name).toBe("概统");
+    expect(useWorkspaceStore.getState().workspaceIdentity?.workspaceKey).toContain("web:");
   });
 });

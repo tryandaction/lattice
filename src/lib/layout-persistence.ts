@@ -42,7 +42,11 @@ export interface PersistedWorkbenchSession {
   sidebarCollapsed: boolean;
 }
 
-function normalizeWorkspaceSessionKey(workspaceRootPath: string | null | undefined): string | null {
+function normalizeWorkspaceSessionKey(workspaceKey: string | null | undefined, workspaceRootPath: string | null | undefined): string | null {
+  if (workspaceKey?.trim()) {
+    return workspaceKey.trim();
+  }
+
   if (!workspaceRootPath) {
     return null;
   }
@@ -52,9 +56,10 @@ function normalizeWorkspaceSessionKey(workspaceRootPath: string | null | undefin
 }
 
 export function getWorkbenchSessionStorageKey(
+  workspaceKey: string | null | undefined,
   workspaceRootPath: string | null | undefined,
 ): string | null {
-  const normalized = normalizeWorkspaceSessionKey(workspaceRootPath);
+  const normalized = normalizeWorkspaceSessionKey(workspaceKey, workspaceRootPath);
   if (!normalized) {
     return null;
   }
@@ -193,11 +198,12 @@ function findFirstPaneId(node: LayoutNode): string {
 }
 
 export async function saveWorkbenchSession(
+  workspaceKey: string | null | undefined,
   workspaceRootPath: string | null | undefined,
   layout: LayoutState,
   sidebarCollapsed: boolean,
 ): Promise<void> {
-  const storageKey = getWorkbenchSessionStorageKey(workspaceRootPath);
+  const storageKey = getWorkbenchSessionStorageKey(workspaceKey, workspaceRootPath);
   if (!storageKey) {
     return;
   }
@@ -207,10 +213,11 @@ export async function saveWorkbenchSession(
 }
 
 export async function loadWorkbenchSession(
+  workspaceKey: string | null | undefined,
   workspaceRootPath: string | null | undefined,
   rootHandle: FileSystemDirectoryHandle,
 ): Promise<{ layout: LayoutState; sidebarCollapsed: boolean } | null> {
-  const storageKey = getWorkbenchSessionStorageKey(workspaceRootPath);
+  const storageKey = getWorkbenchSessionStorageKey(workspaceKey, workspaceRootPath);
   if (!storageKey) {
     return null;
   }
@@ -234,9 +241,10 @@ export async function loadWorkbenchSession(
 }
 
 export async function clearWorkbenchSession(
+  workspaceKey: string | null | undefined,
   workspaceRootPath: string | null | undefined,
 ): Promise<void> {
-  const storageKey = getWorkbenchSessionStorageKey(workspaceRootPath);
+  const storageKey = getWorkbenchSessionStorageKey(workspaceKey, workspaceRootPath);
   if (!storageKey) {
     return;
   }

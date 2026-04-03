@@ -31,7 +31,7 @@ interface SettingsActions {
   setLanguage: (language: Locale) => Promise<void>;
   setTheme: (theme: ThemeMode) => Promise<void>;
   setDefaultFolder: (folder: string | null) => Promise<void>;
-  rememberWorkspacePath: (path: string) => Promise<void>;
+  rememberWorkspace: (input: { workspaceKey: string; displayPath: string }) => Promise<void>;
   removeRecentWorkspacePath: (path: string) => Promise<void>;
 }
 
@@ -135,12 +135,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await get().updateSetting('defaultFolder', folder ? normalizeWorkspacePath(folder) : null);
   },
 
-  rememberWorkspacePath: async (path) => {
-    const trimmed = normalizeWorkspacePath(path);
+  rememberWorkspace: async ({ workspaceKey, displayPath }) => {
+    const trimmed = normalizeWorkspacePath(displayPath);
+    const normalizedWorkspaceKey = workspaceKey.trim();
+    if (!normalizedWorkspaceKey) return;
     if (!trimmed) return;
     const { settings, updateSettings } = get();
     const currentRecentWorkspacePaths = Array.isArray(settings.recentWorkspacePaths)
       ? settings.recentWorkspacePaths
+      : [];
+    const currentRecentWorkspaceKeys = Array.isArray(settings.recentWorkspaceKeys)
+      ? settings.recentWorkspaceKeys
       : [];
     const recentWorkspacePaths = [
       trimmed,
@@ -148,10 +153,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         .map((item) => normalizeWorkspacePath(item))
         .filter((item) => item !== trimmed),
     ].slice(0, MAX_RECENT_WORKSPACES);
+    const recentWorkspaceKeys = [
+      normalizedWorkspaceKey,
+      ...currentRecentWorkspaceKeys.filter((item) => item !== normalizedWorkspaceKey),
+    ].slice(0, MAX_RECENT_WORKSPACES);
     await updateSettings({
       lastWorkspacePath: trimmed,
+      lastWorkspaceKey: normalizedWorkspaceKey,
       lastOpenedFolder: trimmed,
       recentWorkspacePaths,
+      recentWorkspaceKeys,
+      workspaceDisplayPaths: {
+        ...(settings.workspaceDisplayPaths ?? {}),
+        [normalizedWorkspaceKey]: trimmed,
+      },
     });
   },
 
@@ -174,6 +189,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       recentWorkspacePaths,
       lastWorkspacePath: nextLastWorkspacePath,
       lastOpenedFolder: nextLastOpenedFolder,
+      recentWorkspaceKeys: Array.isArray(settings.recentWorkspaceKeys)
+        ? settings.recentWorkspaceKeys.filter((key) => (settings.workspaceDisplayPaths?.[key] ?? "") !== trimmed)
+        : [],
+      workspaceDisplayPaths: Object.fromEntries(
+        Object.entries(settings.workspaceDisplayPaths ?? {}).filter(([, value]) => normalizeWorkspacePath(value) !== trimmed)
+      ),
+      lastWorkspaceKey: normalizeWorkspacePath(settings.lastWorkspacePath ?? '') === trimmed
+        ? (Array.isArray(settings.recentWorkspaceKeys)
+            ? settings.recentWorkspaceKeys.find((key) => normalizeWorkspacePath((settings.workspaceDisplayPaths ?? {})[key] ?? "") !== trimmed) ?? null
+            : null)
+        : settings.lastWorkspaceKey ?? null,
     });
   },
 }));
@@ -211,6 +237,18 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
           .filter((item): item is string => typeof item === 'string')
           .map((item) => normalizeWorkspacePath(item))
       : undefined;
+  const rawStringArray = (value: unknown) =>
+    Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === 'string')
+      : undefined;
+  const stringRecord = (value: unknown) => {
+    if (!value || typeof value !== "object") return undefined;
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, item]) => typeof item === "string")
+        .map(([key, item]) => [key, normalizeWorkspacePath(item as string)])
+    );
+  };
   const normalizeExecutionDockLayouts = (value: unknown): Record<string, ExecutionDockLayout> | undefined => {
     if (!value || typeof value !== "object") return undefined;
     const entries = Object.entries(value as Record<string, unknown>).flatMap<[string, ExecutionDockLayout]>(([key, layout]) => {
@@ -233,7 +271,10 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   assignIfDefined('defaultFolder', stringOrNull(raw.defaultFolder));
   assignIfDefined('lastOpenedFolder', stringOrNull(raw.lastOpenedFolder));
   assignIfDefined('lastWorkspacePath', stringOrNull(raw.lastWorkspacePath));
+  assignIfDefined('lastWorkspaceKey', typeof raw.lastWorkspaceKey === 'string' ? raw.lastWorkspaceKey : raw.lastWorkspaceKey === null ? null : undefined);
   assignIfDefined('recentWorkspacePaths', stringArray(raw.recentWorkspacePaths)?.slice(0, MAX_RECENT_WORKSPACES));
+  assignIfDefined('recentWorkspaceKeys', rawStringArray(raw.recentWorkspaceKeys)?.slice(0, MAX_RECENT_WORKSPACES));
+  assignIfDefined('workspaceDisplayPaths', stringRecord(raw.workspaceDisplayPaths));
   if (typeof raw.rememberWindowState === 'boolean') normalized.rememberWindowState = raw.rememberWindowState;
   if (raw.activityView === 'files' || raw.activityView === 'annotations' || raw.activityView === 'search') {
     normalized.activityView = raw.activityView;

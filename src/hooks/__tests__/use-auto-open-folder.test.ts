@@ -17,6 +17,18 @@ describe("resolveAutoOpenWorkspacePath", () => {
     })).toBe("C:/workspace/last");
   });
 
+  it("prefers workspace key display mapping over stale workspace paths", () => {
+    expect(resolveAutoOpenWorkspacePath({
+      lastWorkspacePath: "C:/workspace/parent",
+      lastWorkspaceKey: "web:child",
+      workspaceDisplayPaths: {
+        "web:child": "C:/workspace/parent/child",
+      },
+      lastOpenedFolder: "C:/workspace/recent",
+      defaultFolder: "C:/workspace/default",
+    })).toBe("C:/workspace/parent/child");
+  });
+
   it("falls back to default folder when no recent workspace exists", () => {
     expect(resolveAutoOpenWorkspacePath({
       lastOpenedFolder: null,

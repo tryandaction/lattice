@@ -50,8 +50,10 @@ export function ImageViewer({ content, fileName, mimeType, paneId, filePath }: I
   const imageRef = useRef<HTMLImageElement>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const persistedViewStateKey = buildPersistedFileViewStateKey({
     kind: "image",
+    workspaceKey,
     workspaceRootPath,
     filePath,
     fallbackName: fileName,
