@@ -137,6 +137,10 @@ export function PDFViewer({
   onRequestAnnotationMode,
 }: PDFViewerProps) {
   const { t } = useI18n();
+  const documentKey = useMemo(
+    () => `${paneId ?? "default"}:${fileName}:${content.byteLength}`,
+    [content.byteLength, fileName, paneId],
+  );
 
   // ── Diagnostic: log mount time and worker status ──
   const [numPages, setNumPages] = useState<number>(0);
@@ -158,6 +162,15 @@ export function PDFViewer({
 
   // IntersectionObserver: marks pages as visible when within rootMargin
   const observerRef = useRef<IntersectionObserver | null>(null);
+
+  useEffect(() => {
+    setNumPages(0);
+    setPdfDoc(null);
+    setError(null);
+    setPageInput("1");
+    setVisiblePages(new Set([1, 2, 3]));
+    setPageDimensions(new Map());
+  }, [documentKey]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -435,6 +448,7 @@ export function PDFViewer({
             onClose={() => setSearchOpen(false)}
           />
           <Document
+            key={documentKey}
             file={fileData}
             onLoadSuccess={onDocumentLoadSuccess}
             onLoadError={onDocumentLoadError}
