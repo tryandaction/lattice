@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { createRunnerPreferenceDefaults, loadWorkspaceRunnerPreferences, normalizeWorkspacePath, saveWorkspaceRunnerPreferences } from "@/lib/runner/preferences";
+import { createRunnerPreferenceDefaults, getWorkspaceRunnerPreferencesStorageKey, saveWorkspaceRunnerPreferences, loadWorkspaceRunnerPreferences } from "@/lib/runner/preferences";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 
 export function useWorkspaceRunnerPreferencesPersistence(): void {
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
   const replaceRunnerPreferences = useWorkspaceStore((state) => state.replaceRunnerPreferences);
 
@@ -14,7 +15,8 @@ export function useWorkspaceRunnerPreferencesPersistence(): void {
 
   useEffect(() => {
     let cancelled = false;
-    const normalizedKey = normalizeWorkspacePath(workspaceRootPath);
+    const scope = { workspaceKey, workspaceRootPath };
+    const normalizedKey = getWorkspaceRunnerPreferencesStorageKey(scope);
 
     if (!normalizedKey) {
       hydratedKeyRef.current = null;
@@ -23,7 +25,7 @@ export function useWorkspaceRunnerPreferencesPersistence(): void {
     }
 
     isHydratingRef.current = true;
-    void loadWorkspaceRunnerPreferences(workspaceRootPath).then((preferences) => {
+    void loadWorkspaceRunnerPreferences(scope).then((preferences) => {
       if (cancelled) {
         return;
       }
@@ -41,14 +43,15 @@ export function useWorkspaceRunnerPreferencesPersistence(): void {
     return () => {
       cancelled = true;
     };
-  }, [replaceRunnerPreferences, workspaceRootPath]);
+  }, [replaceRunnerPreferences, workspaceKey, workspaceRootPath]);
 
   useEffect(() => {
-    const normalizedKey = normalizeWorkspacePath(workspaceRootPath);
+    const scope = { workspaceKey, workspaceRootPath };
+    const normalizedKey = getWorkspaceRunnerPreferencesStorageKey(scope);
     if (!normalizedKey || hydratedKeyRef.current !== normalizedKey || isHydratingRef.current) {
       return;
     }
 
-    void saveWorkspaceRunnerPreferences(workspaceRootPath, runnerPreferences);
-  }, [runnerPreferences, workspaceRootPath]);
+    void saveWorkspaceRunnerPreferences(scope, runnerPreferences);
+  }, [runnerPreferences, workspaceKey, workspaceRootPath]);
 }

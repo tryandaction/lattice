@@ -63,6 +63,7 @@ function toRuntimeSettings(settings: ReturnType<typeof useSettingsStore.getState
 export function SelectionAiHub({ context, initialMode = null, returnFocusTo, runMode, onClose }: SelectionAiHubProps) {
   const settings = useSettingsStore((state) => state.settings);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const preferredMode = useSelectionAiStore((state) => state.preferredMode);
   const recentPrompts = useSelectionAiStore((state) => state.recentPrompts);
   const setPreferredMode = useSelectionAiStore((state) => state.setPreferredMode);
@@ -218,6 +219,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
         surface: "selection",
         settings: toRuntimeSettings(settings),
         contextValues: buildSelectionPromptContextValues(context),
+        workspaceKey,
         workspaceRootPath,
         renderedPrompt: payload.renderedPrompt,
         renderedSystemPrompt: payload.renderedSystemPrompt,
@@ -256,7 +258,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
     } finally {
       setIsRunning(false);
     }
-  }, [context, mode, onClose, promptRunState, rememberPrompt, returnFocusTo, setPreferredMode, settings, workspaceRootPath]);
+  }, [context, mode, onClose, promptRunState, rememberPrompt, returnFocusTo, setPreferredMode, settings, workspaceKey, workspaceRootPath]);
 
   useEffect(() => {
     if (!context) return;
@@ -305,6 +307,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
       <PromptPicker
         isOpen={isPromptPickerOpen}
         surface="selection"
+        workspaceKey={workspaceKey}
         workspaceRootPath={workspaceRootPath}
         currentInput={promptByMode[mode]}
         onClose={() => setPromptPickerOpen(false)}

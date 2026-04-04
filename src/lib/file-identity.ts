@@ -44,10 +44,16 @@ function toHex(bytes: ArrayBuffer): string {
 
 export async function buildFileFingerprint(
   fileHandle: FileSystemFileHandle | null | undefined,
-): Promise<{ fingerprint: string | null; size: number | null; lastModified: number | null }> {
+): Promise<{
+  fingerprint: string | null;
+  versionFingerprint: string | null;
+  size: number | null;
+  lastModified: number | null;
+}> {
   if (!fileHandle) {
     return {
       fingerprint: null,
+      versionFingerprint: null,
       size: null,
       lastModified: null,
     };
@@ -62,20 +68,30 @@ export async function buildFileFingerprint(
     const tailBytes = tailStart > 0
       ? await file.slice(tailStart, size).arrayBuffer()
       : new ArrayBuffer(0);
-    const meta = new TextEncoder().encode(`${file.name}:${size}:${lastModified}:`);
-    const merged = new Uint8Array(meta.byteLength + headBytes.byteLength + tailBytes.byteLength);
-    merged.set(meta, 0);
-    merged.set(new Uint8Array(headBytes), meta.byteLength);
-    merged.set(new Uint8Array(tailBytes), meta.byteLength + headBytes.byteLength);
-    const digest = await crypto.subtle.digest("SHA-256", merged);
+    const contentMeta = new TextEncoder().encode(`${size}:`);
+    const contentBytes = new Uint8Array(contentMeta.byteLength + headBytes.byteLength + tailBytes.byteLength);
+    contentBytes.set(contentMeta, 0);
+    contentBytes.set(new Uint8Array(headBytes), contentMeta.byteLength);
+    contentBytes.set(new Uint8Array(tailBytes), contentMeta.byteLength + headBytes.byteLength);
+    const versionMeta = new TextEncoder().encode(`${file.name}:${size}:${lastModified}:`);
+    const versionBytes = new Uint8Array(versionMeta.byteLength + headBytes.byteLength + tailBytes.byteLength);
+    versionBytes.set(versionMeta, 0);
+    versionBytes.set(new Uint8Array(headBytes), versionMeta.byteLength);
+    versionBytes.set(new Uint8Array(tailBytes), versionMeta.byteLength + headBytes.byteLength);
+    const [contentDigest, versionDigest] = await Promise.all([
+      crypto.subtle.digest("SHA-256", contentBytes),
+      crypto.subtle.digest("SHA-256", versionBytes),
+    ]);
     return {
-      fingerprint: toHex(digest),
+      fingerprint: toHex(contentDigest),
+      versionFingerprint: toHex(versionDigest),
       size,
       lastModified,
     };
   } catch {
     return {
       fingerprint: null,
+      versionFingerprint: null,
       size: null,
       lastModified: null,
     };
@@ -105,6 +121,7 @@ export async function resolveFileIdentity(input: {
     relativePathFromRoot,
     fileName: input.fileName,
     fileFingerprint: fingerprint.fingerprint,
+    versionFingerprint: fingerprint.versionFingerprint,
     size: fingerprint.size,
     lastModified: fingerprint.lastModified,
   };

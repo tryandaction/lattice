@@ -9,6 +9,7 @@ import type { PromptSurface, PromptTemplate } from "@/lib/prompt/types";
 interface PromptPickerProps {
   isOpen: boolean;
   surface: PromptSurface;
+  workspaceKey?: string | null;
   workspaceRootPath?: string | null;
   currentInput: string;
   onClose: () => void;
@@ -20,6 +21,7 @@ interface PromptPickerProps {
 export function PromptPicker({
   isOpen,
   surface,
+  workspaceKey,
   workspaceRootPath,
   currentInput,
   onClose,
@@ -42,8 +44,11 @@ export function PromptPicker({
   }, [isOpen, loadPromptState]);
 
   const recentTemplates = useMemo(
-    () => getRecentTemplates(surface, workspaceRootPath),
-    [getRecentTemplates, surface, workspaceRootPath],
+    () => getRecentTemplates(surface, {
+      workspaceKey,
+      workspaceRootPath,
+    }),
+    [getRecentTemplates, surface, workspaceKey, workspaceRootPath],
   );
 
   const allTemplates = useMemo(() => {

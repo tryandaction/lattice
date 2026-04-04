@@ -19,6 +19,7 @@ export interface PromptSurfaceExecutionInput {
   surface: PromptSurface;
   settings: AiRuntimeSettings;
   contextValues: PromptContextValues;
+  workspaceKey?: string | null;
   workspaceRootPath?: string | null;
   renderedPrompt: string;
   renderedSystemPrompt?: string;
@@ -50,7 +51,10 @@ export async function executePromptTemplateForSurface(
     outputMode: input.template.outputMode,
   });
 
-  promptStore.rememberTemplateUsage(input.template.id, input.surface, input.workspaceRootPath);
+  promptStore.rememberTemplateUsage(input.template.id, input.surface, {
+    workspaceKey: input.workspaceKey,
+    workspaceRootPath: input.workspaceRootPath,
+  });
 
   const shouldSendToChat = input.template.outputMode === "chat" || input.template.outputMode === "structured-chat";
   let assistantMessageId: string | null = null;

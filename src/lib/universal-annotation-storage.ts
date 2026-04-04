@@ -15,7 +15,7 @@ import {
 } from '../types/universal-annotation';
 import type { AnnotationLocationAlias, AnnotationSourceRecord } from '@/types/annotation-registry';
 import type { FileIdentity } from '@/types/workspace-identity';
-import { registerAnnotationLocation, resolveAnnotationRegistryAliases } from '@/lib/annotation-registry';
+import { registerAnnotationLocation, resolveAnnotationRegistryMatch } from '@/lib/annotation-registry';
 import { isIgnoredDirectory } from '@/lib/constants';
 
 // ============================================================================
@@ -364,6 +364,7 @@ async function walkForNestedAnnotationMatch(
               canonicalPath: null,
               relativePathFromRoot: null,
               fileFingerprint: null,
+              versionFingerprint: null,
               updatedAt: Date.now(),
             },
           };
@@ -431,6 +432,7 @@ async function tryResolveRegistryAnnotationMatch(
           canonicalPath: alias.canonicalPath,
           relativePathFromRoot: alias.relativePathFromRoot,
           fileFingerprint: null,
+          versionFingerprint: alias.versionFingerprint ?? null,
           updatedAt: alias.updatedAt,
         },
       };
@@ -467,7 +469,10 @@ export async function loadAnnotationsForFileIdentity(input: {
           relativePathFromRoot: input.fileIdentity.relativePathFromRoot,
           fileId: currentMatch.fileId,
           workspaceKey: input.workspaceKey,
+          versionFingerprint: input.fileIdentity.versionFingerprint,
           updatedAt: Date.now(),
+        }, {
+          versionFingerprint: input.fileIdentity.versionFingerprint,
         });
         return {
           annotationFile: {
@@ -483,6 +488,7 @@ export async function loadAnnotationsForFileIdentity(input: {
             canonicalPath: input.fileIdentity.canonicalPath,
             relativePathFromRoot: input.fileIdentity.relativePathFromRoot,
             fileFingerprint: input.fileIdentity.fileFingerprint,
+            versionFingerprint: input.fileIdentity.versionFingerprint,
             updatedAt: Date.now(),
           },
         };
@@ -514,7 +520,10 @@ export async function loadAnnotationsForFileIdentity(input: {
           relativePathFromRoot: input.fileIdentity.relativePathFromRoot,
           fileId: input.fileIdentity.primaryFileId,
           workspaceKey: input.workspaceKey,
+          versionFingerprint: input.fileIdentity.versionFingerprint,
           updatedAt: Date.now(),
+        }, {
+          versionFingerprint: input.fileIdentity.versionFingerprint,
         });
         return {
           annotationFile: mirrored,
@@ -526,11 +535,12 @@ export async function loadAnnotationsForFileIdentity(input: {
     }
   }
 
-  const registryAliases = await resolveAnnotationRegistryAliases({
+  const registryMatchCandidate = await resolveAnnotationRegistryMatch({
     fileFingerprint: input.fileIdentity.fileFingerprint,
+    versionFingerprint: input.fileIdentity.versionFingerprint,
     canonicalPath: input.fileIdentity.canonicalPath,
   });
-  const registryMatch = await tryResolveRegistryAnnotationMatch(input.rootHandle, registryAliases);
+  const registryMatch = await tryResolveRegistryAnnotationMatch(input.rootHandle, registryMatchCandidate.aliases);
   if (registryMatch) {
     try {
       const file = await registryMatch.fileHandle.getFile();
@@ -548,7 +558,10 @@ export async function loadAnnotationsForFileIdentity(input: {
           relativePathFromRoot: input.fileIdentity.relativePathFromRoot,
           fileId: input.fileIdentity.primaryFileId,
           workspaceKey: input.workspaceKey,
+          versionFingerprint: input.fileIdentity.versionFingerprint,
           updatedAt: Date.now(),
+        }, {
+          versionFingerprint: input.fileIdentity.versionFingerprint,
         });
         return {
           annotationFile: mirrored,

@@ -28,10 +28,17 @@ interface PromptTemplateActions {
   deleteTemplate: (templateId: string) => void;
   addRun: (run: Omit<PromptRun, "id" | "createdAt">) => string;
   updateRunResult: (runId: string, result: Partial<Pick<PromptRun, "resultMessageId" | "resultDraftId" | "resultProposalId">>) => void;
-  rememberTemplateUsage: (templateId: string, surface: PromptSurface, workspaceRootPath?: string | null) => void;
+  rememberTemplateUsage: (
+    templateId: string,
+    surface: PromptSurface,
+    workspaceIdentity?: { workspaceKey?: string | null; workspaceRootPath?: string | null } | null,
+  ) => void;
   getTemplatesForSurface: (surface: PromptSurface) => PromptTemplate[];
   getTemplateById: (templateId: string) => PromptTemplate | null;
-  getRecentTemplates: (surface: PromptSurface, workspaceRootPath?: string | null) => PromptTemplate[];
+  getRecentTemplates: (
+    surface: PromptSurface,
+    workspaceIdentity?: { workspaceKey?: string | null; workspaceRootPath?: string | null } | null,
+  ) => PromptTemplate[];
   getRecentRuns: (surface?: PromptSurface) => PromptRun[];
 }
 
@@ -44,8 +51,21 @@ function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function getWorkspacePreferenceKey(workspaceRootPath?: string | null): string {
-  return workspaceRootPath?.trim() || "__global__";
+function getWorkspacePreferenceKey(input?: { workspaceKey?: string | null; workspaceRootPath?: string | null } | null): string {
+  const workspaceKey = input?.workspaceKey?.trim();
+  if (workspaceKey) {
+    return workspaceKey;
+  }
+  return input?.workspaceRootPath?.trim() || "__global__";
+}
+
+function getWorkspacePreferenceCandidates(input?: { workspaceKey?: string | null; workspaceRootPath?: string | null } | null): string[] {
+  const candidates = [
+    input?.workspaceKey?.trim() || null,
+    input?.workspaceRootPath?.trim() || null,
+    "__global__",
+  ].filter((value): value is string => Boolean(value));
+  return Array.from(new Set(candidates));
 }
 
 function normalizeUserTemplate(template: PromptTemplate): PromptTemplate {
@@ -192,10 +212,12 @@ export const usePromptTemplateStore = create<PromptTemplateState & PromptTemplat
     });
   },
 
-  rememberTemplateUsage: (templateId, surface, workspaceRootPath) => {
-    const preferenceKey = getWorkspacePreferenceKey(workspaceRootPath);
+  rememberTemplateUsage: (templateId, surface, workspaceIdentity) => {
+    const preferenceKey = getWorkspacePreferenceKey(workspaceIdentity);
     set((state) => {
-      const currentPreference = state.workspacePreferences[preferenceKey] ?? DEFAULT_PREFERENCE;
+      const currentPreference = getWorkspacePreferenceCandidates(workspaceIdentity)
+        .map((candidate) => state.workspacePreferences[candidate])
+        .find(Boolean) ?? DEFAULT_PREFERENCE;
       return {
         workspacePreferences: {
           ...state.workspacePreferences,
@@ -237,9 +259,11 @@ export const usePromptTemplateStore = create<PromptTemplateState & PromptTemplat
   getTemplateById: (templateId) =>
     [...BUILTIN_PROMPT_TEMPLATES, ...get().userTemplates].find((template) => template.id === templateId) ?? null,
 
-  getRecentTemplates: (surface, workspaceRootPath) => {
+  getRecentTemplates: (surface, workspaceIdentity) => {
     const templates = get().getTemplatesForSurface(surface);
-    const preference = get().workspacePreferences[getWorkspacePreferenceKey(workspaceRootPath)] ?? DEFAULT_PREFERENCE;
+    const preference = getWorkspacePreferenceCandidates(workspaceIdentity)
+      .map((candidate) => get().workspacePreferences[candidate])
+      .find(Boolean) ?? DEFAULT_PREFERENCE;
     return preference.recentTemplateIds
       .map((templateId) => templates.find((template) => template.id === templateId))
       .filter((template): template is PromptTemplate => Boolean(template));

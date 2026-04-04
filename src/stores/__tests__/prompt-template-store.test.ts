@@ -44,7 +44,7 @@ describe("prompt-template-store", () => {
     expect(storage.set).toHaveBeenCalled();
   });
 
-  it("records recent template usage per workspace", () => {
+  it("records recent template usage per workspace key", () => {
     const template = usePromptTemplateStore.getState().upsertTemplate({
       title: "Workspace Prompt",
       category: "planning",
@@ -53,11 +53,41 @@ describe("prompt-template-store", () => {
       outputMode: "proposal",
     });
 
-    usePromptTemplateStore.getState().rememberTemplateUsage(template.id, "chat", "C:/vault");
+    usePromptTemplateStore.getState().rememberTemplateUsage(template.id, "chat", {
+      workspaceKey: "web:vault",
+      workspaceRootPath: "C:/vault",
+    });
 
-    expect(usePromptTemplateStore.getState().getRecentTemplates("chat", "C:/vault").map((item) => item.id)).toEqual([
-      template.id,
-    ]);
+    expect(usePromptTemplateStore.getState().getRecentTemplates("chat", {
+      workspaceKey: "web:vault",
+      workspaceRootPath: "C:/vault",
+    }).map((item) => item.id)).toEqual([template.id]);
+  });
+
+  it("falls back to legacy path preferences for recent templates", () => {
+    const template = usePromptTemplateStore.getState().upsertTemplate({
+      title: "Legacy Workspace Prompt",
+      category: "planning",
+      userPrompt: "Plan this work",
+      surfaces: ["chat"],
+      outputMode: "proposal",
+    });
+
+    usePromptTemplateStore.setState({
+      workspacePreferences: {
+        "C:/vault": {
+          recentTemplateIds: [template.id],
+          defaultTemplatesBySurface: {
+            chat: template.id,
+          },
+        },
+      },
+    });
+
+    expect(usePromptTemplateStore.getState().getRecentTemplates("chat", {
+      workspaceKey: "web:vault",
+      workspaceRootPath: "C:/vault",
+    }).map((item) => item.id)).toEqual([template.id]);
   });
 
   it("records prompt runs and updates result targets", () => {

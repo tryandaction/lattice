@@ -15,6 +15,7 @@ const resolveFileIdentityMock = vi.hoisted(() => vi.fn(async (_input?: unknown) 
   relativePathFromRoot: "docs/paper.pdf",
   fileName: "paper.pdf",
   fileFingerprint: null,
+  versionFingerprint: null,
   size: null,
   lastModified: null,
 })));

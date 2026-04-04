@@ -54,6 +54,7 @@ export function EvidencePanel({
   const activePaneId = useWorkspaceStore((state) => state.layout.activePaneId);
   const activeTab = useWorkspaceStore((state) => state.getActiveTab());
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const settings = useSettingsStore((state) => state.settings);
   const getCachedContent = useContentCacheStore((state) => state.getContent);
   const loadPromptState = usePromptTemplateStore((state) => state.loadPromptState);
@@ -142,6 +143,7 @@ export function EvidencePanel({
           currentFileContent: activeContent,
           workspaceSummary: promptRunState.label,
         }),
+        workspaceKey,
         workspaceRootPath,
         renderedPrompt: payload.renderedPrompt,
         renderedSystemPrompt: payload.renderedSystemPrompt,
@@ -167,7 +169,7 @@ export function EvidencePanel({
     } finally {
       setPromptRunState(null);
     }
-  }, [activeContent, activeTab?.fileName, activeTab?.filePath, promptRunState, settings.aiEnabled, settings.aiMaxTokens, settings.aiModel, settings.aiProvider, settings.aiSystemPrompt, settings.aiTemperature, workspaceRootPath]);
+  }, [activeContent, activeTab?.fileName, activeTab?.filePath, promptRunState, settings.aiEnabled, settings.aiMaxTokens, settings.aiModel, settings.aiProvider, settings.aiSystemPrompt, settings.aiTemperature, workspaceKey, workspaceRootPath]);
 
   if (!message && messages.length === 0) {
     return null;
@@ -306,6 +308,7 @@ export function EvidencePanel({
       <PromptPicker
         isOpen={Boolean(promptPickerState)}
         surface="evidence"
+        workspaceKey={workspaceKey}
         workspaceRootPath={workspaceRootPath}
         currentInput=""
         onClose={() => setPromptPickerState(null)}

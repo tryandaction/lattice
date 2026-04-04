@@ -62,6 +62,7 @@ describe("PromptPicker", () => {
       <PromptPicker
         isOpen
         surface="chat"
+        workspaceKey="web:workspace"
         workspaceRootPath="C:/workspace"
         currentInput=""
         onClose={() => {}}

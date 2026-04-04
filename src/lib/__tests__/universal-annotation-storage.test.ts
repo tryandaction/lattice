@@ -15,6 +15,7 @@ import {
   detectFileType,
   ANNOTATIONS_DIR,
   loadAnnotationsForFileIdentity,
+  moveAnnotationSidecar,
 } from '../universal-annotation-storage';
 import { resolveFileIdentity } from '../file-identity';
 import type { 
@@ -502,6 +503,13 @@ class NestedTestDirectoryHandle {
     throw new DOMException(`File not found: ${name}`, 'NotFoundError');
   }
 
+  async removeEntry(name: string) {
+    if (this.files.delete(name) || this.directories.delete(name)) {
+      return;
+    }
+    throw new DOMException(`Entry not found: ${name}`, 'NotFoundError');
+  }
+
   async isSameEntry(other: FileSystemHandle) {
     return other === (this as unknown as FileSystemHandle);
   }
@@ -565,5 +573,51 @@ describe('nested .lattice discovery', () => {
     const mirroredContent = await (await mirrored.getFile()).text();
     const parsedMirrored = deserializeAnnotationFile(mirroredContent);
     expect(parsedMirrored?.annotations).toHaveLength(1);
+  });
+});
+
+describe('annotation sidecar moves', () => {
+  it('moves annotation sidecars to the new file id on rename', async () => {
+    const root = new NestedTestDirectoryHandle('Course');
+    const latticeDir = root.addDirectory(new NestedTestDirectoryHandle('.lattice'));
+    const annotationsDir = latticeDir.addDirectory(new NestedTestDirectoryHandle('annotations'));
+    const oldFileId = generateFileId('Course/notes/original.pdf');
+    const newFileId = generateFileId('Course/notes/renamed.pdf');
+
+    annotationsDir.addFile(new NestedTestFileHandle(
+      `${oldFileId}.json`,
+      JSON.stringify({
+        version: 2,
+        fileId: oldFileId,
+        fileType: 'pdf',
+        annotations: [
+          {
+            id: 'ann-1',
+            target: {
+              type: 'pdf',
+              page: 1,
+              rects: [{ x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 }],
+            },
+            style: { color: '#FFEB3B', type: 'highlight' },
+            author: 'user',
+            createdAt: 1710000000000,
+          },
+        ],
+        lastModified: 1710000000000,
+      }),
+    ));
+
+    await moveAnnotationSidecar(
+      root as unknown as FileSystemDirectoryHandle,
+      'Course/notes/original.pdf',
+      'Course/notes/renamed.pdf',
+      'pdf',
+    );
+
+    await expect(annotationsDir.getFileHandle(`${oldFileId}.json`)).rejects.toThrow();
+    const renamedHandle = await annotationsDir.getFileHandle(`${newFileId}.json`);
+    const parsed = deserializeAnnotationFile(await (await renamedHandle.getFile()).text());
+    expect(parsed?.fileId).toBe(newFileId);
+    expect(parsed?.annotations).toHaveLength(1);
   });
 });

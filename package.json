@@ -15,6 +15,7 @@
     "test:docs": "node scripts/check-docs.mjs",
     "test:run": "vitest run --maxWorkers=2",
     "test:browser-regression": "node scripts/browser-regression.mjs",
+    "qa:workspace-annotation-manual": "node scripts/workspace-annotation-manual-smoke.mjs",
     "qa:gate": "npm run lint && npm run typecheck && npm run test:docs && npm run test:run && npm run build && npm run tauri:build",
     "qa:gate:extended": "npm run qa:gate && npm run test:browser-regression",
     "release:prepare": "node scripts/prepare-release.mjs",

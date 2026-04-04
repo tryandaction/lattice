@@ -20,6 +20,7 @@ export interface FileIdentity {
   relativePathFromRoot: string;
   fileName: string;
   fileFingerprint: string | null;
+  versionFingerprint: string | null;
   size: number | null;
   lastModified: number | null;
 }

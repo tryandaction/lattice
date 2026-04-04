@@ -1,7 +1,7 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import process from "node:process";
@@ -10,9 +10,14 @@ import { chromium } from "playwright";
 const DEFAULT_PORT = Number(process.env.LATTICE_BROWSER_REGRESSION_PORT ?? 3217);
 const HOST = "127.0.0.1";
 const OUTPUT_DIR = path.resolve(process.cwd(), "output", "playwright");
+const REGRESSION_DIST_DIR = process.env.LATTICE_BROWSER_REGRESSION_DIST_DIR?.trim() || "web-dist-browser-regression";
 
 async function ensureOutputDir() {
   await mkdir(OUTPUT_DIR, { recursive: true });
+}
+
+async function prepareRegressionDistDir() {
+  await rm(path.resolve(process.cwd(), REGRESSION_DIST_DIR), { recursive: true, force: true });
 }
 
 function startNextDevServer(port) {
@@ -23,6 +28,7 @@ function startNextDevServer(port) {
     env: {
       ...process.env,
       NODE_ENV: "development",
+      NEXT_DIST_DIR: REGRESSION_DIST_DIR,
     },
   });
 
@@ -547,6 +553,7 @@ async function testPerformanceBaseline(page, baseUrl) {
 
 async function main() {
   await ensureOutputDir();
+  await prepareRegressionDistDir();
 
   const port = await findAvailablePort(DEFAULT_PORT);
   const baseUrl = `http://${HOST}:${port}`;

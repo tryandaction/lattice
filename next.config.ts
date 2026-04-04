@@ -1,8 +1,10 @@
 import type { NextConfig } from "next";
 
+const distDir = process.env.NEXT_DIST_DIR?.trim() || "web-dist";
+
 const nextConfig: NextConfig = {
   output: "export",
-  distDir: "web-dist",
+  distDir,
   images: {
     unoptimized: true,
   },

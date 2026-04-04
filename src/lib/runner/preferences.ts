@@ -30,8 +30,40 @@ export function normalizeWorkspacePath(path: string | null | undefined): string 
   return normalized;
 }
 
-export function getWorkspaceRunnerPreferencesStorageKey(workspaceRootPath: string | null | undefined): string | null {
-  const normalized = normalizeWorkspacePath(workspaceRootPath);
+interface WorkspacePreferenceScopeInput {
+  workspaceKey?: string | null;
+  workspaceRootPath?: string | null;
+}
+
+function normalizeWorkspacePreferenceScope(input: WorkspacePreferenceScopeInput | string | null | undefined): string | null {
+  if (typeof input === "string" || input == null) {
+    return normalizeWorkspacePath(input);
+  }
+
+  const workspaceKey = input.workspaceKey?.trim();
+  if (workspaceKey) {
+    return workspaceKey;
+  }
+
+  return normalizeWorkspacePath(input.workspaceRootPath);
+}
+
+function getLegacyWorkspaceRunnerPreferencesStorageKey(
+  workspaceScope: WorkspacePreferenceScopeInput | string | null | undefined,
+): string | null {
+  if (typeof workspaceScope === "string" || workspaceScope == null) {
+    const normalized = normalizeWorkspacePath(workspaceScope);
+    return normalized ? `${STORAGE_PREFIX}${normalized}` : null;
+  }
+
+  const normalized = normalizeWorkspacePath(workspaceScope.workspaceRootPath);
+  return normalized ? `${STORAGE_PREFIX}${normalized}` : null;
+}
+
+export function getWorkspaceRunnerPreferencesStorageKey(
+  workspaceScope: WorkspacePreferenceScopeInput | string | null | undefined,
+): string | null {
+  const normalized = normalizeWorkspacePreferenceScope(workspaceScope);
   return normalized ? `${STORAGE_PREFIX}${normalized}` : null;
 }
 
@@ -44,15 +76,24 @@ export function createRunnerPreferenceDefaults(): WorkspaceRunnerPreferences {
 }
 
 export async function loadWorkspaceRunnerPreferences(
-  workspaceRootPath: string | null | undefined,
+  workspaceScope: WorkspacePreferenceScopeInput | string | null | undefined,
 ): Promise<WorkspaceRunnerPreferences> {
-  const key = getWorkspaceRunnerPreferencesStorageKey(workspaceRootPath);
+  const key = getWorkspaceRunnerPreferencesStorageKey(workspaceScope);
   if (!key) {
     return createRunnerPreferenceDefaults();
   }
 
   const storage = getStorageAdapter();
-  const stored = await storage.get<WorkspaceRunnerPreferences>(key);
+  let stored = await storage.get<WorkspaceRunnerPreferences>(key);
+  if (!stored) {
+    const legacyKey = getLegacyWorkspaceRunnerPreferencesStorageKey(workspaceScope);
+    if (legacyKey && legacyKey !== key) {
+      stored = await storage.get<WorkspaceRunnerPreferences>(legacyKey);
+      if (stored) {
+        await storage.set(key, stored);
+      }
+    }
+  }
   return {
     ...createRunnerPreferenceDefaults(),
     ...(stored ?? {}),
@@ -62,10 +103,10 @@ export async function loadWorkspaceRunnerPreferences(
 }
 
 export async function saveWorkspaceRunnerPreferences(
-  workspaceRootPath: string | null | undefined,
+  workspaceScope: WorkspacePreferenceScopeInput | string | null | undefined,
   preferences: WorkspaceRunnerPreferences,
 ): Promise<void> {
-  const key = getWorkspaceRunnerPreferencesStorageKey(workspaceRootPath);
+  const key = getWorkspaceRunnerPreferencesStorageKey(workspaceScope);
   if (!key) {
     return;
   }

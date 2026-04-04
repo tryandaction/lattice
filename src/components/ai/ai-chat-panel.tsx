@@ -1295,6 +1295,7 @@ function ChatInput() {
   const activeTab = useWorkspaceStore((s) => s.getActiveTab());
   const rootHandle = useWorkspaceStore((s) => s.rootHandle);
   const workspaceRootPath = useWorkspaceStore((s) => s.workspaceRootPath);
+  const workspaceKey = useWorkspaceStore((s) => s.workspaceIdentity?.workspaceKey ?? null);
   const getCachedContent = useContentCacheStore((s) => s.getContent);
   const getAnnotationsForFile = useAnnotationStore((s) => s.getAnnotationsForFile);
   const loadPromptState = usePromptTemplateStore((state) => state.loadPromptState);
@@ -1503,7 +1504,10 @@ function ChatInput() {
       outputMode: template.outputMode,
     });
 
-    rememberTemplateUsage(template.id, "chat", workspaceRootPath);
+    rememberTemplateUsage(template.id, "chat", {
+      workspaceKey,
+      workspaceRootPath,
+    });
     setPromptRunState(null);
     setInput("");
 
@@ -1638,7 +1642,8 @@ function ChatInput() {
     startAssistantMessage,
     t,
     updatePromptRunResult,
-    workspaceRootPath,
+      workspaceKey,
+      workspaceRootPath,
   ]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -1653,6 +1658,7 @@ function ChatInput() {
       <PromptPicker
         isOpen={isPromptPickerOpen}
         surface="chat"
+        workspaceKey={workspaceKey}
         workspaceRootPath={workspaceRootPath}
         currentInput={input}
         onClose={() => setPromptPickerOpen(false)}
