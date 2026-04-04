@@ -13,6 +13,7 @@ import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 import { isTauriHost } from "@/lib/storage-adapter";
 import { resolveFileIdentity } from "@/lib/file-identity";
 import { loadAnnotationsForFileIdentity } from "@/lib/universal-annotation-storage";
+import type { PdfRuntimeProfile } from "@/types/pdf-runtime";
 
 /**
  * LRU cache for normalizeScientificText results.
@@ -56,12 +57,14 @@ function AdaptivePDFRenderer({
   const workspaceIdentity = useWorkspaceStore((state) => state.workspaceIdentity);
   const hasAnnotationContext = Boolean(fileHandle && rootHandle);
   const isDesktopRuntime = isTauriHost();
+  const runtimeProfile: PdfRuntimeProfile = isDesktopRuntime ? "desktop-performance" : "web-rich";
   const activePdfKey = `${fileId}:${filePath}`;
   const [requestedAnnotationModeKey, setRequestedAnnotationModeKey] = useState<string | null>(null);
   const [annotationPresenceByKey, setAnnotationPresenceByKey] = useState<Record<string, boolean>>({});
   const hasPersistedAnnotations = annotationPresenceByKey[activePdfKey] ?? false;
   const renderMode: "viewer" | "highlighter" = (
-    requestedAnnotationModeKey === activePdfKey || (!isDesktopRuntime && hasPersistedAnnotations)
+    runtimeProfile === "web-rich" &&
+    (requestedAnnotationModeKey === activePdfKey || hasPersistedAnnotations)
   ) ? "highlighter" : "viewer";
 
   useEffect(() => {
@@ -117,6 +120,7 @@ function AdaptivePDFRenderer({
   if (renderMode === "highlighter" && fileHandle && rootHandle) {
     return (
       <PDFHighlighterAdapter
+        key={`highlighter:${activePdfKey}`}
         content={content}
         fileName={fileName}
         fileHandle={fileHandle}
@@ -130,9 +134,15 @@ function AdaptivePDFRenderer({
 
   return (
     <PDFViewer
+      key={`viewer:${activePdfKey}`}
       content={content}
       fileName={fileName}
       paneId={paneId}
+      fileId={fileId}
+      filePath={filePath}
+      fileHandle={fileHandle}
+      rootHandle={rootHandle}
+      runtimeProfile={runtimeProfile}
       canAnnotate={hasAnnotationContext}
       hasPersistedAnnotations={hasPersistedAnnotations}
       onRequestAnnotationMode={handleRequestAnnotationMode}

@@ -94,16 +94,19 @@ vi.mock("@/stores/workspace-store", async () => {
 vi.mock("@/components/renderers/pdf-viewer", () => ({
   PDFViewer: ({
     paneId,
+    runtimeProfile,
     canAnnotate,
     hasPersistedAnnotations,
     onRequestAnnotationMode,
   }: {
     paneId?: string;
+    runtimeProfile?: string;
     canAnnotate?: boolean;
     hasPersistedAnnotations?: boolean;
     onRequestAnnotationMode?: () => void;
   }) => (
     <div data-testid={`mock-pdf-viewer-${paneId ?? "default"}`}>
+      <span data-testid={`mock-pdf-viewer-runtime-${paneId ?? "default"}`}>{runtimeProfile ?? "unset"}</span>
       <span data-testid={`mock-pdf-viewer-can-annotate-${paneId ?? "default"}`}>{String(Boolean(canAnnotate))}</span>
       <span data-testid={`mock-pdf-viewer-has-persisted-${paneId ?? "default"}`}>{String(Boolean(hasPersistedAnnotations))}</span>
       <button type="button" onClick={onRequestAnnotationMode} data-testid={`mock-pdf-viewer-annotate-${paneId ?? "default"}`}>
@@ -159,6 +162,7 @@ describe("UniversalFileViewer PDF routing", () => {
 
     expect(await screen.findByTestId("mock-pdf-viewer-pane-left")).toBeTruthy();
     await waitFor(() => {
+      expect(screen.getByTestId("mock-pdf-viewer-runtime-pane-left").textContent).toBe("web-rich");
       expect(screen.getByTestId("mock-pdf-viewer-can-annotate-pane-left").textContent).toBe("true");
       expect(screen.getByTestId("mock-pdf-viewer-has-persisted-pane-left").textContent).toBe("false");
       expect(screen.queryByTestId("mock-pdf-highlighter-pane-left")).toBeNull();
@@ -232,6 +236,7 @@ describe("UniversalFileViewer PDF routing", () => {
 
     expect(await screen.findByTestId("mock-pdf-viewer-pane-left")).toBeTruthy();
     await waitFor(() => {
+      expect(screen.getByTestId("mock-pdf-viewer-runtime-pane-left").textContent).toBe("desktop-performance");
       expect(screen.getByTestId("mock-pdf-viewer-has-persisted-pane-left").textContent).toBe("true");
       expect(screen.queryByTestId("mock-pdf-highlighter-pane-left")).toBeNull();
     });
