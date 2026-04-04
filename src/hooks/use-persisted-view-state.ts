@@ -72,6 +72,9 @@ export function usePersistedViewState<TViewState extends Record<string, unknown>
       return;
     }
 
+    let frameId = 0;
+    let timeoutId: number | null = null;
+
     const persist = () => {
       void savePersistedFileViewState(storageKey, {
         scrollTop: container.scrollTop,
@@ -80,9 +83,32 @@ export function usePersistedViewState<TViewState extends Record<string, unknown>
       });
     };
 
-    container.addEventListener("scroll", persist, { passive: true });
+    const schedulePersist = () => {
+      if (frameId) {
+        return;
+      }
+
+      frameId = window.requestAnimationFrame(() => {
+        frameId = 0;
+        if (timeoutId !== null) {
+          window.clearTimeout(timeoutId);
+        }
+        timeoutId = window.setTimeout(() => {
+          timeoutId = null;
+          persist();
+        }, 160);
+      });
+    };
+
+    container.addEventListener("scroll", schedulePersist, { passive: true });
     return () => {
-      container.removeEventListener("scroll", persist);
+      container.removeEventListener("scroll", schedulePersist);
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
     };
   }, [containerRef, storageKey]);
 }

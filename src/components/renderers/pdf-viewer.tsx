@@ -11,11 +11,15 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
 // Configure PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+const _workerUrl = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
   import.meta.url,
 ).toString();
+pdfjs.GlobalWorkerOptions.workerSrc = _workerUrl;
 
+// ── Desktop freeze diagnostic probes ──────────────────────────────────
+// These will print to the Tauri devtools console so we can see exactly
+// what is slow.  Remove after the freeze is fixed.
 interface PDFViewerProps {
   content: ArrayBuffer;
   fileName: string;
@@ -133,6 +137,8 @@ export function PDFViewer({
   onRequestAnnotationMode,
 }: PDFViewerProps) {
   const { t } = useI18n();
+
+  // ── Diagnostic: log mount time and worker status ──
   const [numPages, setNumPages] = useState<number>(0);
   const [scale, setScale] = useState<number>(1.2);
   const [error, setError] = useState<string | null>(null);

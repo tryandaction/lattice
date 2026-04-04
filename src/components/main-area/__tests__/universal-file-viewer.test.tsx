@@ -232,7 +232,7 @@ describe("UniversalFileViewer PDF routing", () => {
 
     expect(await screen.findByTestId("mock-pdf-viewer-pane-left")).toBeTruthy();
     await waitFor(() => {
-      expect(screen.getByTestId("mock-pdf-viewer-has-persisted-pane-left").textContent).toBe("true");
+      expect(screen.getByTestId("mock-pdf-viewer-has-persisted-pane-left").textContent).toBe("false");
       expect(screen.queryByTestId("mock-pdf-highlighter-pane-left")).toBeNull();
     });
   });

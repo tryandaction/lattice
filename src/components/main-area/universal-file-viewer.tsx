@@ -57,6 +57,7 @@ function AdaptivePDFRenderer({
   const hasAnnotationContext = Boolean(fileHandle && rootHandle);
   const isDesktopRuntime = isTauriHost();
   const activePdfKey = `${fileId}:${filePath}`;
+
   const [requestedAnnotationModeKey, setRequestedAnnotationModeKey] = useState<string | null>(null);
   const [annotationPresenceByKey, setAnnotationPresenceByKey] = useState<Record<string, boolean>>({});
   const hasPersistedAnnotations = annotationPresenceByKey[activePdfKey] ?? false;
@@ -65,7 +66,7 @@ function AdaptivePDFRenderer({
   ) ? "highlighter" : "viewer";
 
   useEffect(() => {
-    if (!fileHandle || !rootHandle) {
+    if (isDesktopRuntime || !fileHandle || !rootHandle) {
       return;
     }
 
@@ -105,7 +106,7 @@ function AdaptivePDFRenderer({
     return () => {
       cancelled = true;
     };
-  }, [activePdfKey, fileHandle, fileName, filePath, rootHandle, workspaceIdentity]);
+  }, [activePdfKey, fileHandle, fileName, filePath, isDesktopRuntime, rootHandle, workspaceIdentity]);
 
   const handleRequestAnnotationMode = useCallback(() => {
     if (!hasAnnotationContext) {
