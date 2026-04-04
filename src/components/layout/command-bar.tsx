@@ -396,6 +396,26 @@ export function CommandBar({
     });
   }, [isWindowsDesktop, syncMaximizedState]);
 
+  const swallowDesktopControlPointer = useCallback((event: React.SyntheticEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+  }, []);
+
+  const handleMinimizeClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    swallowDesktopControlPointer(event);
+    void minimizeDesktopWindow();
+  }, [swallowDesktopControlPointer]);
+
+  const handleMaximizeClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    swallowDesktopControlPointer(event);
+    handleToggleMaximize();
+  }, [handleToggleMaximize, swallowDesktopControlPointer]);
+
+  const handleCloseClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    swallowDesktopControlPointer(event);
+    void closeDesktopWindow();
+  }, [swallowDesktopControlPointer]);
+
   const handleDragPointerDown = useCallback((event: React.MouseEvent<HTMLElement>) => {
     if (!isWindowsDesktop || event.button !== 0) {
       return;
@@ -529,8 +549,9 @@ export function CommandBar({
         >
           <button
             type="button"
-            onClick={() => { void minimizeDesktopWindow(); }}
-            onMouseDown={(event) => event.stopPropagation()}
+            onClick={handleMinimizeClick}
+            onMouseDown={swallowDesktopControlPointer}
+            onPointerDown={swallowDesktopControlPointer}
             className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             title={t("workbench.window.minimize")}
             aria-label={t("workbench.window.minimize")}
@@ -542,8 +563,9 @@ export function CommandBar({
           </button>
           <button
             type="button"
-            onClick={handleToggleMaximize}
-            onMouseDown={(event) => event.stopPropagation()}
+            onClick={handleMaximizeClick}
+            onMouseDown={swallowDesktopControlPointer}
+            onPointerDown={swallowDesktopControlPointer}
             className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             title={isMaximized ? t("workbench.window.restore") : t("workbench.window.maximize")}
             aria-label={isMaximized ? t("workbench.window.restore") : t("workbench.window.maximize")}
@@ -555,8 +577,9 @@ export function CommandBar({
           </button>
           <button
             type="button"
-            onClick={() => { void closeDesktopWindow(); }}
-            onMouseDown={(event) => event.stopPropagation()}
+            onClick={handleCloseClick}
+            onMouseDown={swallowDesktopControlPointer}
+            onPointerDown={swallowDesktopControlPointer}
             className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
             title={t("workbench.window.close")}
             aria-label={t("workbench.window.close")}

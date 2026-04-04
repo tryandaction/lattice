@@ -192,13 +192,13 @@ const MarkdownRenderer = dynamic(
 
 const PDFViewer = dynamic(
   () => import("@/components/renderers/pdf-viewer").then((mod) => mod.PDFViewer),
-  { loading: () => <LoadingState message={t("viewer.loading.pdf")} />, ssr: false }
+  { loading: () => null, ssr: false }
 );
 
 // PDF Highlighter Adapter for annotation support
 const PDFHighlighterAdapter = dynamic(
   () => import("@/components/renderers/pdf-highlighter-adapter").then((mod) => mod.PDFHighlighterAdapter),
-  { loading: () => <LoadingState message={t("viewer.loading.pdfAnnotated")} />, ssr: false }
+  { loading: () => null, ssr: false }
 );
 
 const JupyterRenderer = dynamic(
