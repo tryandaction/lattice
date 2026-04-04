@@ -56,11 +56,6 @@ export function PdfSearchOverlay({
           const str = tc.items.map((item: any) => item.str ?? "").join(" ");
           texts.set(i, str.toLowerCase());
         } catch { /* skip page */ }
-
-        // Yield periodically so desktop WebView does not freeze on large PDFs.
-        if (i % 8 === 0) {
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
       }
       if (!cancelled) setPageTexts(texts);
     }

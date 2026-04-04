@@ -37,7 +37,6 @@ const eslintConfig = defineConfig([
     ".next/**",
     "out/**",
     "web-dist/**",
-    "web-dist-browser-regression/**",
     "build/**",
     "output/**",
     "scripts/**",
