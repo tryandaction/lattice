@@ -371,6 +371,7 @@ function FileViewer({
     case "pdf":
       return (
         <AdaptivePDFRenderer
+          key={viewerKey}
           content={content as ArrayBuffer}
           fileName={fileName}
           fileHandle={fileHandle}
