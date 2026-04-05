@@ -39,31 +39,63 @@ export function PdfSearchOverlay({
     }
   }, [isOpen]);
 
-  // Extract text from all pages — only when search is actually open
   useEffect(() => {
-    if (!isOpen || !pdfDocument || numPages === 0) return;
-    // Skip if already extracted
-    if (pageTexts.size === numPages) return;
+    if (!isOpen || !pdfDocument || numPages === 0) {
+      return;
+    }
+    const activeDocument = pdfDocument as PDFDocumentProxy;
+
+    if (pageTexts.size === numPages) {
+      return;
+    }
+
     let cancelled = false;
+
     async function extractTexts() {
       const texts = new Map<number, string>();
-      for (let i = 1; i <= numPages; i++) {
-        if (cancelled) return;
-        try {
-          const page = await pdfDocument!.getPage(i);
-          const tc = await page.getTextContent();
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const str = tc.items.map((item: any) => item.str ?? "").join(" ");
-          texts.set(i, str.toLowerCase());
-        } catch { /* skip page */ }
-      }
-      if (!cancelled) setPageTexts(texts);
-    }
-    extractTexts();
-    return () => { cancelled = true; };
-  }, [isOpen, pdfDocument, numPages, pageTexts.size]);
+      const batchSize = 3;
 
-  // Debounced search
+      for (let i = 1; i <= numPages; i += batchSize) {
+        const pageNumbers = Array.from(
+          { length: Math.min(batchSize, numPages - i + 1) },
+          (_, index) => i + index,
+        );
+
+        for (const pageNumber of pageNumbers) {
+          if (cancelled) {
+            return;
+          }
+
+          try {
+            const page = await activeDocument.getPage(pageNumber);
+            const textContent = await page.getTextContent();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const text = textContent.items.map((item: any) => item.str ?? "").join(" ");
+            texts.set(pageNumber, text.toLowerCase());
+          } catch {
+            // Ignore page extraction failures so search can continue on the rest.
+          }
+        }
+
+        if (i + batchSize <= numPages) {
+          await new Promise<void>((resolve) => {
+            window.requestAnimationFrame(() => resolve());
+          });
+        }
+      }
+
+      if (!cancelled) {
+        setPageTexts(texts);
+      }
+    }
+
+    void extractTexts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, numPages, pageTexts.size, pdfDocument]);
+
   const doSearch = useCallback((q: string) => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
     if (!q.trim()) {
@@ -121,19 +153,19 @@ export function PdfSearchOverlay({
         value={query}
         onChange={(e) => handleQueryChange(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder={t('pdf.search.placeholder')}
+        placeholder={t("pdf.search.placeholder")}
         className="w-48 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
       />
       {query && (
         <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-          {matches.length > 0 ? `${currentMatch + 1}/${matches.length}` : t('pdf.search.noMatch')}
+          {matches.length > 0 ? `${currentMatch + 1}/${matches.length}` : t("pdf.search.noMatch")}
         </span>
       )}
       <button
         onClick={() => goToMatch(-1)}
         disabled={matches.length === 0}
         className="p-0.5 rounded hover:bg-accent disabled:opacity-30 transition-colors"
-        title={t('pdf.search.prevMatch')}
+        title={t("pdf.search.prevMatch")}
       >
         <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
       </button>
@@ -141,14 +173,14 @@ export function PdfSearchOverlay({
         onClick={() => goToMatch(1)}
         disabled={matches.length === 0}
         className="p-0.5 rounded hover:bg-accent disabled:opacity-30 transition-colors"
-        title={t('pdf.search.nextMatch')}
+        title={t("pdf.search.nextMatch")}
       >
         <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
       </button>
       <button
         onClick={onClose}
         className="p-0.5 rounded hover:bg-accent transition-colors"
-        title={t('pdf.search.close')}
+        title={t("pdf.search.close")}
       >
         <X className="h-3.5 w-3.5 text-muted-foreground" />
       </button>

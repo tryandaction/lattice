@@ -7,6 +7,8 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import { PdfSearchOverlay } from "./pdf-search-overlay";
 import { PdfOutlineSidebar } from "./pdf-outline-sidebar";
 import { useI18n } from "@/hooks/use-i18n";
+import { isTauriHost } from "@/lib/storage-adapter";
+import type { BinaryViewerContent } from "@/types/viewer-content";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
@@ -21,7 +23,8 @@ pdfjs.GlobalWorkerOptions.workerSrc = _workerUrl;
 // These will print to the Tauri devtools console so we can see exactly
 // what is slow.  Remove after the freeze is fixed.
 interface PDFViewerProps {
-  content: ArrayBuffer;
+  source: BinaryViewerContent;
+  documentId: string;
   fileName: string;
   paneId?: string;
   canAnnotate?: boolean;
@@ -45,6 +48,7 @@ const ESTIMATED_PAGE_WIDTH = 595;
 interface VirtualPageProps {
   pageNumber: number;
   scale: number;
+  devicePixelRatio?: number;
   isVisible: boolean;
   measuredHeight: number | null;
   measuredWidth: number | null;
@@ -59,6 +63,7 @@ interface VirtualPageProps {
 const VirtualPage = memo(function VirtualPage({
   pageNumber,
   scale,
+  devicePixelRatio,
   isVisible,
   measuredHeight,
   measuredWidth,
@@ -99,6 +104,7 @@ const VirtualPage = memo(function VirtualPage({
         <Page
           pageNumber={pageNumber}
           scale={scale}
+          devicePixelRatio={devicePixelRatio}
           className="shadow-lg"
           renderTextLayer={true}
           renderAnnotationLayer={true}
@@ -128,8 +134,14 @@ const VirtualPage = memo(function VirtualPage({
  * PDF Document Viewer component
  * Uses IntersectionObserver to only render pages near the viewport.
  */
-export function PDFViewer({
-  content,
+export function PDFViewer(props: PDFViewerProps) {
+  const viewerKey = `${props.paneId ?? "default"}:${props.documentId}`;
+  return <PDFViewerInner key={viewerKey} {...props} />;
+}
+
+function PDFViewerInner({
+  source,
+  documentId,
   fileName,
   paneId,
   canAnnotate = false,
@@ -137,9 +149,10 @@ export function PDFViewer({
   onRequestAnnotationMode,
 }: PDFViewerProps) {
   const { t } = useI18n();
+  const isDesktopRuntime = isTauriHost();
   const documentKey = useMemo(
-    () => `${paneId ?? "default"}:${fileName}:${content.byteLength}`,
-    [content.byteLength, fileName, paneId],
+    () => `${paneId ?? "default"}:${documentId}`,
+    [documentId, paneId],
   );
 
   // ── Diagnostic: log mount time and worker status ──
@@ -162,15 +175,14 @@ export function PDFViewer({
 
   // IntersectionObserver: marks pages as visible when within rootMargin
   const observerRef = useRef<IntersectionObserver | null>(null);
+  const pageDevicePixelRatio = useMemo(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
 
-  useEffect(() => {
-    setNumPages(0);
-    setPdfDoc(null);
-    setError(null);
-    setPageInput("1");
-    setVisiblePages(new Set([1, 2, 3]));
-    setPageDimensions(new Map());
-  }, [documentKey]);
+    const runtimeDpr = window.devicePixelRatio || 1;
+    return isDesktopRuntime ? Math.min(runtimeDpr, 2) : runtimeDpr;
+  }, [isDesktopRuntime]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -204,9 +216,12 @@ export function PDFViewer({
 
   // Memoize the file data to prevent unnecessary reloads
   const fileData = useMemo(() => {
-    const copy = new Uint8Array(content).slice();
-    return { data: copy };
-  }, [content]);
+    if (source.kind === "desktop-url") {
+      return source.url;
+    }
+
+    return { data: new Uint8Array(source.data) };
+  }, [source]);
 
   const onDocumentLoadSuccess = useCallback((pdf: { numPages: number }) => {
     setNumPages(pdf.numPages);
@@ -441,6 +456,7 @@ export function PDFViewer({
         {/* PDF Content - Virtualized continuous scroll */}
         <div ref={scrollContainerRef} className="relative flex-1 overflow-auto bg-muted/30 p-4">
           <PdfSearchOverlay
+            key={`${documentKey}:${searchOpen ? "open" : "closed"}`}
             pdfDocument={pdfDoc}
             numPages={numPages}
             onNavigateToPage={jumpToPage}
@@ -468,6 +484,7 @@ export function PDFViewer({
                     key={pageNum}
                     pageNumber={pageNum}
                     scale={scale}
+                    devicePixelRatio={pageDevicePixelRatio}
                     isVisible={renderedPages.has(pageNum)}
                     measuredHeight={dims?.h ?? null}
                     measuredWidth={dims?.w ?? null}

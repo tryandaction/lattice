@@ -45,7 +45,8 @@ import {
   migrateLegacyPdfItemWorkspaces,
   movePdfItemWorkspace,
 } from "@/lib/pdf-item";
-import { createDesktopDirectoryHandle } from "@/lib/desktop-file-system";
+import { createDesktopDirectoryHandle, getDesktopHandlePath } from "@/lib/desktop-file-system";
+import { setDesktopPreviewRoot } from "@/lib/desktop-preview";
 import { isTauri, isTauriHost } from "@/lib/storage-adapter";
 import { isExistingDesktopDirectory, openDesktopDirectoryDialog } from "@/lib/desktop-folder";
 import { emitVaultChange, emitVaultDelete, emitVaultRename } from "@/lib/plugins/runtime";
@@ -409,6 +410,7 @@ export async function applyWorkspaceHandleToStores(
   workspaceStore.setWorkspaceIdentity(resolvedWorkspaceIdentity);
   workspaceStore.setWorkspaceRootPath(resolvedWorkspaceIdentity.displayPath ?? workspaceRootPath ?? handle.name);
   workspaceStore.setFileTree({ root: rootNode });
+  await setDesktopPreviewRoot(getDesktopHandlePath(handle));
 
   await useSettingsStore.getState().rememberWorkspace({
     workspaceKey: resolvedWorkspaceIdentity.workspaceKey,

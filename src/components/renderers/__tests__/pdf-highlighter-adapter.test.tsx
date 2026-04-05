@@ -239,7 +239,7 @@ function renderPdfPane(props: { paneId: 'pane-left' | 'pane-right'; fileId: stri
   return (
     <div className="h-[600px] w-[800px]">
       <PDFHighlighterAdapter
-        content={new Uint8Array([1, 2, 3]).buffer}
+        source={{ kind: 'buffer', data: new Uint8Array([1, 2, 3]).buffer }}
         fileName={`${props.fileId}.pdf`}
         fileHandle={{ name: `${props.fileId}.pdf` } as FileSystemFileHandle}
         rootHandle={{ name: 'workspace' } as FileSystemDirectoryHandle}

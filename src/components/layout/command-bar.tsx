@@ -44,7 +44,6 @@ import {
   isDesktopWindowMaximized,
   isWindowsDesktopHost,
   minimizeDesktopWindow,
-  startDesktopWindowDrag,
   subscribeDesktopWindowState,
   toggleDesktopWindowMaximize,
 } from "@/lib/desktop-window";
@@ -396,44 +395,30 @@ export function CommandBar({
     });
   }, [isWindowsDesktop, syncMaximizedState]);
 
-  const swallowDesktopControlPointer = useCallback((event: React.SyntheticEvent<HTMLElement>) => {
-    event.preventDefault();
+  const stopDesktopControlPropagation = useCallback((event: React.SyntheticEvent<HTMLElement>) => {
     event.stopPropagation();
   }, []);
 
   const handleMinimizeClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    swallowDesktopControlPointer(event);
+    stopDesktopControlPropagation(event);
     void minimizeDesktopWindow();
-  }, [swallowDesktopControlPointer]);
+  }, [stopDesktopControlPropagation]);
 
   const handleMaximizeClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    swallowDesktopControlPointer(event);
+    stopDesktopControlPropagation(event);
     handleToggleMaximize();
-  }, [handleToggleMaximize, swallowDesktopControlPointer]);
+  }, [handleToggleMaximize, stopDesktopControlPropagation]);
 
   const handleCloseClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    swallowDesktopControlPointer(event);
+    stopDesktopControlPropagation(event);
     void closeDesktopWindow();
-  }, [swallowDesktopControlPointer]);
-
-  const handleDragPointerDown = useCallback((event: React.MouseEvent<HTMLElement>) => {
-    if (!isWindowsDesktop || event.button !== 0) {
-      return;
-    }
-
-    if (event.currentTarget !== event.target) {
-      return;
-    }
-
-    void startDesktopWindowDrag();
-  }, [isWindowsDesktop]);
+  }, [stopDesktopControlPropagation]);
 
   return (
     <div
       className="relative z-[70] grid grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-border bg-background/95 pl-2 pr-0 backdrop-blur"
       style={{ height: DESKTOP_COMMAND_BAR_HEIGHT, WebkitAppRegion: "drag" } as CSSProperties}
       data-tauri-drag-region={isWindowsDesktop ? "true" : undefined}
-      onMouseDown={handleDragPointerDown}
     >
       <div
         className="flex min-w-0 items-center gap-2 pr-3"
@@ -443,7 +428,6 @@ export function CommandBar({
           className="flex shrink-0 select-none items-center gap-2 px-2"
           data-tauri-drag-region={isWindowsDesktop ? "true" : undefined}
           onDoubleClick={handleToggleMaximize}
-          onMouseDown={handleDragPointerDown}
           data-testid="desktop-commandbar-title"
         >
           <Box className="h-4 w-4 text-muted-foreground" />
@@ -550,8 +534,8 @@ export function CommandBar({
           <button
             type="button"
             onClick={handleMinimizeClick}
-            onMouseDown={swallowDesktopControlPointer}
-            onPointerDown={swallowDesktopControlPointer}
+            onMouseDown={stopDesktopControlPropagation}
+            onPointerDown={stopDesktopControlPropagation}
             className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             title={t("workbench.window.minimize")}
             aria-label={t("workbench.window.minimize")}
@@ -564,8 +548,8 @@ export function CommandBar({
           <button
             type="button"
             onClick={handleMaximizeClick}
-            onMouseDown={swallowDesktopControlPointer}
-            onPointerDown={swallowDesktopControlPointer}
+            onMouseDown={stopDesktopControlPropagation}
+            onPointerDown={stopDesktopControlPropagation}
             className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             title={isMaximized ? t("workbench.window.restore") : t("workbench.window.maximize")}
             aria-label={isMaximized ? t("workbench.window.restore") : t("workbench.window.maximize")}
@@ -578,8 +562,8 @@ export function CommandBar({
           <button
             type="button"
             onClick={handleCloseClick}
-            onMouseDown={swallowDesktopControlPointer}
-            onPointerDown={swallowDesktopControlPointer}
+            onMouseDown={stopDesktopControlPropagation}
+            onPointerDown={stopDesktopControlPropagation}
             className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
             title={t("workbench.window.close")}
             aria-label={t("workbench.window.close")}

@@ -4,13 +4,8 @@ import { memo, useCallback, type CSSProperties } from "react";
 import {
   isWindowsDesktopHost,
   startDesktopWindowResize,
-  toggleDesktopWindowMaximize,
   type DesktopResizeDirection,
 } from "@/lib/desktop-window";
-import {
-  DESKTOP_WINDOW_CONTROLS_SAFE_WIDTH,
-  DESKTOP_WINDOW_TOP_STRIP_HEIGHT,
-} from "@/components/layout/desktop-window-metrics";
 
 const RESIZE_HANDLES: Array<{
   direction: DesktopResizeDirection;
@@ -66,26 +61,12 @@ export const DesktopWindowFrame = memo(function DesktopWindowFrame() {
     void startDesktopWindowResize(direction);
   }, []);
 
-  const handleTopStripDoubleClick = useCallback(() => {
-    void toggleDesktopWindowMaximize();
-  }, []);
-
   if (!isDesktop) {
     return null;
   }
 
   return (
     <>
-      <div
-        className="pointer-events-auto absolute left-0 top-0 z-[80]"
-        data-tauri-drag-region="true"
-        data-testid="desktop-drag-strip"
-        onDoubleClick={handleTopStripDoubleClick}
-        style={{
-          height: DESKTOP_WINDOW_TOP_STRIP_HEIGHT,
-          right: DESKTOP_WINDOW_CONTROLS_SAFE_WIDTH,
-        }}
-      />
       <div className="pointer-events-none absolute inset-0 z-[90]" aria-hidden="true">
         {RESIZE_HANDLES.map((handle) => (
           <button

@@ -158,7 +158,7 @@ export function ImageRendererDiagnostics() {
           ) : content ? (
             <ImageViewer
               key={`${selected.id}:${renderNonce}`}
-              content={content}
+              source={{ kind: "buffer", data: content }}
               fileName={selected.url.replace(/^\//, "")}
               mimeType={selected.mimeType}
             />

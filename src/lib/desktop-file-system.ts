@@ -1,6 +1,6 @@
 "use client";
 
-import { getTauriInvoke, isTauri } from "@/lib/storage-adapter";
+import { isTauri, waitForTauriInvokeReady } from "@/lib/storage-adapter";
 
 interface DesktopDirEntry {
   name: string;
@@ -29,7 +29,7 @@ function joinDesktopPath(parentPath: string, name: string): string {
 }
 
 async function invokeDesktopFs<T>(command: string, args: Record<string, unknown>): Promise<T> {
-  const invoke = getTauriInvoke();
+  const invoke = await waitForTauriInvokeReady();
   if (!isTauri() || !invoke) {
     throw new Error("Desktop file system is unavailable outside Tauri.");
   }
@@ -42,7 +42,15 @@ async function readDesktopDir(path: string): Promise<DesktopDirEntry[]> {
 }
 
 async function readDesktopFileBytes(path: string): Promise<Uint8Array> {
-  const bytes = await invokeDesktopFs<number[]>("desktop_read_file_bytes", { path: normalizeDesktopPath(path) });
+  const bytes = await invokeDesktopFs<Uint8Array | ArrayBuffer | number[]>("desktop_read_file_bytes_raw", {
+    path: normalizeDesktopPath(path),
+  });
+  if (bytes instanceof Uint8Array) {
+    return bytes;
+  }
+  if (bytes instanceof ArrayBuffer) {
+    return new Uint8Array(bytes);
+  }
   return Uint8Array.from(bytes);
 }
 

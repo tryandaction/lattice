@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, FilePlus2, FolderOpen, NotebookPen } from "lucide-react";
+import { ChevronDown, ChevronRight, FilePlus2, FolderOpen, NotebookPen, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useWorkspaceStore, type PaneId } from "@/stores/workspace-store";
@@ -77,8 +77,9 @@ export function PdfItemWorkspacePanel({
   annotations,
 }: PdfItemWorkspacePanelProps) {
   const { t } = useI18n();
-  const { refreshDirectory } = useFileSystem();
+  const { deleteFile, refreshDirectory } = useFileSystem();
   const activePaneId = useWorkspaceStore((state) => state.layout.activePaneId);
+  const closeTabsByPath = useWorkspaceStore((state) => state.closeTabsByPath);
   const splitPane = useWorkspaceStore((state) => state.splitPane);
   const openFileInPane = useWorkspaceStore((state) => state.openFileInPane);
   const toggleDirectory = useWorkspaceStore((state) => state.toggleDirectory);
@@ -215,6 +216,28 @@ export function PdfItemWorkspacePanel({
     }
   }, [openHandleNearPdf, rootHandle, t]);
 
+  const handleDeleteNote = useCallback(async (note: PdfItemNoteSummary) => {
+    if (note.type === "annotation-note") {
+      return;
+    }
+
+    setBusyAction(`delete:${note.path}`);
+    setError(null);
+    try {
+      closeTabsByPath(note.path);
+      const result = await deleteFile(note.path);
+      if (!result.success) {
+        throw new Error(result.error || t("common.error"));
+      }
+      await loadItemState();
+      revealPdfEntry(true);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : String(deleteError));
+    } finally {
+      setBusyAction(null);
+    }
+  }, [closeTabsByPath, deleteFile, loadItemState, revealPdfEntry, t]);
+
   const handleRevealFolder = useCallback(() => {
     if (!manifest) {
       return;
@@ -293,15 +316,30 @@ export function PdfItemWorkspacePanel({
           {!isLoading && notes.length > 0 ? (
             <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
               {notes.map((note) => (
-                <button
+                <div
                   key={note.path}
-                  type="button"
-                  onClick={() => void handleOpenNote(note.path)}
-                  className="rounded border border-border bg-muted/30 px-1.5 py-0.5 transition-colors hover:bg-muted"
-                  title={`${noteLabel(note.type, t)} · ${note.path}`}
+                  className="inline-flex items-center rounded border border-border bg-muted/30 transition-colors hover:bg-muted"
                 >
-                  {noteLabel(note.type, t)}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleOpenNote(note.path)}
+                    className="px-1.5 py-0.5"
+                    title={`${noteLabel(note.type, t)} ${note.path}`}
+                  >
+                    {noteLabel(note.type, t)}
+                  </button>
+                  {note.type !== "annotation-note" ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteNote(note)}
+                      className="border-l border-border/80 px-1 py-0.5 text-muted-foreground transition-colors hover:text-destructive"
+                      title={t("common.delete")}
+                      aria-label={`${t("common.delete")} ${note.path}`}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  ) : null}
+                </div>
               ))}
             </div>
           ) : null}

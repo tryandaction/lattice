@@ -11,6 +11,11 @@ import { useExplorerStore } from "@/stores/explorer-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 
 const refreshDirectoryMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const desktopPreviewMocks = vi.hoisted(() => ({
+  getDesktopPreviewPath: vi.fn((_handle?: unknown) => null as string | null),
+  resolveDesktopPreviewUrl: vi.fn((path: string) => `http://lattice-preview.localhost/${path}`),
+}));
+const universalViewerMock = vi.hoisted(() => vi.fn<(props?: unknown) => React.ReactNode>((_props?: unknown) => null));
 
 vi.mock("@dnd-kit/core", () => ({
   useDndMonitor: () => undefined,
@@ -34,6 +39,15 @@ vi.mock("@/hooks/use-file-system", () => ({
   }),
 }));
 
+vi.mock("@/lib/desktop-preview", () => ({
+  getDesktopPreviewPath: desktopPreviewMocks.getDesktopPreviewPath,
+  resolveDesktopPreviewUrl: desktopPreviewMocks.resolveDesktopPreviewUrl,
+}));
+
+vi.mock("@/lib/storage-adapter", () => ({
+  isTauriHost: vi.fn(() => true),
+}));
+
 vi.mock("@/lib/fast-save", () => ({
   fastSaveFile: vi.fn(async (handle: FileSystemFileHandle, content: string) => {
     const writable = await handle.createWritable();
@@ -48,22 +62,7 @@ vi.mock("@/lib/plugins/runtime", () => ({
 }));
 
 vi.mock("../universal-file-viewer", () => ({
-  UniversalFileViewer: ({
-    onContentChange,
-    onSave,
-  }: {
-    onContentChange?: (content: string) => void;
-    onSave?: () => Promise<void>;
-  }) => (
-    <div>
-      <button type="button" onClick={() => onContentChange?.("# My Title\n\nBody")}>
-        编辑
-      </button>
-      <button type="button" onClick={() => void onSave?.()}>
-        保存
-      </button>
-    </div>
-  ),
+  UniversalFileViewer: universalViewerMock,
 }));
 
 class FakeWritable {
@@ -160,6 +159,27 @@ class FakeDirectoryHandle {
 describe("PaneWrapper", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    universalViewerMock.mockImplementation((props: unknown) => {
+      const {
+        onContentChange,
+        onSave,
+      } = props as {
+        onContentChange?: (content: string) => void;
+        onSave?: () => Promise<void>;
+      };
+
+      return (
+        <div>
+          <button type="button" onClick={() => onContentChange?.("# My Title\n\nBody")}>
+            编辑
+          </button>
+          <button type="button" onClick={() => void onSave?.()}>
+            保存
+          </button>
+        </div>
+      );
+    });
+
     useContentCacheStore.getState().clearCache();
     useExplorerStore.setState({
       selectedPath: "workspace/Untitled.md",
@@ -196,6 +216,8 @@ describe("PaneWrapper", () => {
         },
       },
     }));
+
+    desktopPreviewMocks.getDesktopPreviewPath.mockReturnValue(null);
   });
 
   it("renames untitled markdown files from the first H1 on save and syncs explorer selection", async () => {
@@ -224,5 +246,64 @@ describe("PaneWrapper", () => {
 
     expect(useExplorerStore.getState().selectedPath).toBe("workspace/My Title-1.md");
     expect(refreshDirectoryMock).toHaveBeenCalled();
+  });
+
+  it("uses desktop preview urls for desktop pdf tabs without calling getFile or caching binary content", async () => {
+    const getFileSpy = vi.fn(async () => new File(["%PDF"], "paper.pdf"));
+    const desktopHandle = {
+      name: "paper.pdf",
+      kind: "file" as const,
+      fullPath: "C:/workspace/paper.pdf",
+      __latticeDesktopHandle: true as const,
+      getFile: getFileSpy,
+      createWritable: vi.fn(),
+      isSameEntry: vi.fn(),
+    } as unknown as FileSystemFileHandle;
+
+    desktopPreviewMocks.getDesktopPreviewPath.mockReturnValue("C:/workspace/paper.pdf");
+    useWorkspaceStore.setState((state) => ({
+      ...state,
+      layout: {
+        activePaneId: "pane-left",
+        root: {
+          type: "pane",
+          id: "pane-left",
+          activeTabIndex: 0,
+          tabs: [
+            {
+              id: "tab-pdf",
+              fileHandle: desktopHandle,
+              fileName: "paper.pdf",
+              filePath: "workspace/paper.pdf",
+              isDirty: false,
+              scrollPosition: 0,
+            },
+          ],
+        },
+      },
+    }));
+
+    render(
+      <PaneWrapper
+        paneId="pane-left"
+        isActive={true}
+        onActivate={vi.fn()}
+        onSplitRight={vi.fn()}
+        onSplitDown={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(universalViewerMock).toHaveBeenCalled();
+    });
+
+    const latestProps = universalViewerMock.mock.calls.at(-1)?.[0] as unknown as { content?: { kind: string; url?: string } };
+    expect(latestProps.content).toEqual({
+      kind: "desktop-url",
+      url: "http://lattice-preview.localhost/C:/workspace/paper.pdf",
+    });
+    expect(getFileSpy).not.toHaveBeenCalled();
+    expect(useContentCacheStore.getState().getContent("tab-pdf")).toBeUndefined();
   });
 });

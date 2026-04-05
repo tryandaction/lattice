@@ -40,7 +40,7 @@ describe('ImageViewer', () => {
 
     const { rerender, unmount } = render(
       <ImageViewer
-        content={firstContent}
+        source={{ kind: 'buffer', data: firstContent }}
         fileName="sample.png"
         mimeType="image/png"
       />,
@@ -55,7 +55,7 @@ describe('ImageViewer', () => {
 
     rerender(
       <ImageViewer
-        content={secondContent}
+        source={{ kind: 'buffer', data: secondContent }}
         fileName="sample.png"
         mimeType="image/png"
       />,
@@ -80,7 +80,7 @@ describe('ImageViewer', () => {
 
     const { rerender } = render(
       <ImageViewer
-        content={content}
+        source={{ kind: 'buffer', data: content }}
         fileName="stable.png"
         mimeType="image/png"
       />,
@@ -96,7 +96,7 @@ describe('ImageViewer', () => {
 
     rerender(
       <ImageViewer
-        content={content}
+        source={{ kind: 'buffer', data: content }}
         fileName="stable.png"
         mimeType="image/png"
       />,
@@ -108,5 +108,21 @@ describe('ImageViewer', () => {
     expect(revokeObjectURL).not.toHaveBeenCalled();
 
     vi.useRealTimers();
+  });
+
+  it('uses desktop preview urls without creating blob urls', async () => {
+    render(
+      <ImageViewer
+        source={{ kind: 'desktop-url', url: 'http://lattice-preview.localhost/images/sample.png', mimeType: 'image/png' }}
+        fileName="desktop.png"
+        mimeType="image/png"
+      />,
+    );
+
+    const image = await screen.findByRole('img', { name: 'desktop.png' });
+    expect(image.getAttribute('src')).toBe('http://lattice-preview.localhost/images/sample.png');
+
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
   });
 });

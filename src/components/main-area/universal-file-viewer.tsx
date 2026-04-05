@@ -12,7 +12,9 @@ import { t } from "@/lib/i18n";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 import { isTauriHost } from "@/lib/storage-adapter";
 import { resolveFileIdentity } from "@/lib/file-identity";
-import { loadAnnotationsForFileIdentity } from "@/lib/universal-annotation-storage";
+import { generateFileId, loadAnnotationsForFileIdentity } from "@/lib/universal-annotation-storage";
+import type { FileIdentity } from "@/types/workspace-identity";
+import type { BinaryViewerContent, BufferViewerContent, ViewerContent } from "@/types/viewer-content";
 
 /**
  * LRU cache for normalizeScientificText results.
@@ -35,7 +37,7 @@ function cachedNormalizeScientificText(raw: string): string {
 }
 
 interface AdaptivePDFRendererProps {
-  content: ArrayBuffer;
+  source: BinaryViewerContent;
   fileName: string;
   fileHandle?: FileSystemFileHandle;
   rootHandle?: FileSystemDirectoryHandle | null;
@@ -45,7 +47,7 @@ interface AdaptivePDFRendererProps {
 }
 
 function AdaptivePDFRenderer({
-  content,
+  source,
   fileName,
   fileHandle,
   rootHandle,
@@ -62,11 +64,13 @@ function AdaptivePDFRenderer({
   const [annotationPresenceByKey, setAnnotationPresenceByKey] = useState<Record<string, boolean>>({});
   const hasPersistedAnnotations = annotationPresenceByKey[activePdfKey] ?? false;
   const renderMode: "viewer" | "highlighter" = (
-    requestedAnnotationModeKey === activePdfKey || (!isDesktopRuntime && hasPersistedAnnotations)
+    (isDesktopRuntime && hasAnnotationContext) ||
+    requestedAnnotationModeKey === activePdfKey ||
+    (!isDesktopRuntime && hasPersistedAnnotations)
   ) ? "highlighter" : "viewer";
 
   useEffect(() => {
-    if (isDesktopRuntime || !fileHandle || !rootHandle) {
+    if (!rootHandle || (isDesktopRuntime && hasAnnotationContext)) {
       return;
     }
 
@@ -74,18 +78,35 @@ function AdaptivePDFRenderer({
 
     const detectPersistedAnnotations = async () => {
       try {
-        const fileIdentity = await resolveFileIdentity({
-          fileHandle,
-          filePath,
-          fileName,
-          workspaceIdentity,
-        });
-        const detected = (await loadAnnotationsForFileIdentity({
+        const fileIdentity: FileIdentity = isDesktopRuntime
+          ? {
+              primaryFileId: generateFileId(filePath),
+              fileIdCandidates: Array.from(new Set([
+                generateFileId(filePath),
+                generateFileId(fileName),
+              ])),
+              canonicalPath: filePath,
+              relativePathFromRoot: filePath,
+              fileName,
+              fileFingerprint: null,
+              versionFingerprint: null,
+              size: null,
+              lastModified: null,
+            }
+          : await resolveFileIdentity({
+              fileHandle,
+              filePath,
+              fileName,
+              workspaceIdentity,
+            });
+        const loaded = await loadAnnotationsForFileIdentity({
           rootHandle,
           fileIdentity,
           workspaceKey: workspaceIdentity?.workspaceKey ?? null,
           fileType: "pdf",
-        })).annotationFile.annotations.some((annotation) => annotation.target.type === "pdf");
+        });
+        const pdfAnnotations = loaded.annotationFile.annotations.filter((annotation) => annotation.target.type === "pdf");
+        const detected = pdfAnnotations.length > 0;
         if (!cancelled) {
           setAnnotationPresenceByKey((current) => (
             current[activePdfKey] === detected
@@ -106,7 +127,7 @@ function AdaptivePDFRenderer({
     return () => {
       cancelled = true;
     };
-  }, [activePdfKey, fileHandle, fileName, filePath, isDesktopRuntime, rootHandle, workspaceIdentity]);
+  }, [activePdfKey, fileHandle, fileName, filePath, hasAnnotationContext, isDesktopRuntime, rootHandle, workspaceIdentity]);
 
   const handleRequestAnnotationMode = useCallback(() => {
     if (!hasAnnotationContext) {
@@ -118,7 +139,7 @@ function AdaptivePDFRenderer({
   if (renderMode === "highlighter" && fileHandle && rootHandle) {
     return (
       <PDFHighlighterAdapter
-        content={content}
+        source={source}
         fileName={fileName}
         fileHandle={fileHandle}
         rootHandle={rootHandle}
@@ -131,8 +152,9 @@ function AdaptivePDFRenderer({
 
   return (
     <PDFViewer
-      content={content}
+      source={source}
       fileName={fileName}
+      documentId={activePdfKey}
       paneId={paneId}
       canAnnotate={hasAnnotationContext}
       hasPersistedAnnotations={hasPersistedAnnotations}
@@ -276,7 +298,7 @@ function FileViewer({
   paneId,
   executionScopeId,
 }: {
-  content: string | ArrayBuffer;
+  content: ViewerContent;
   fileName: string;
   rendererType: RendererType;
   fileHandle?: FileSystemFileHandle;
@@ -292,14 +314,29 @@ function FileViewer({
   const extension = getFileExtension(fileName);
   const viewerKey = fileId || fileName;
   const isSystemIndexFile = fileName === "_annotations.md" || fileName === "_overview.md";
+  const decodeBufferToText = (buffer: ArrayBuffer) => new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+  const getTextContent = () => {
+    if (content.kind === "text") {
+      return content.text;
+    }
+
+    if (content.kind === "buffer") {
+      return decodeBufferToText(content.data);
+    }
+
+    return "";
+  };
+  const getBinaryContent = (): BufferViewerContent | null => {
+    return content.kind === "buffer" ? content : null;
+  };
   
   switch (rendererType) {
     case "markdown": {
       // Ensure content is a string for markdown/text editors
       let textContent: string;
-      if (content instanceof ArrayBuffer) {
+      if (content.kind === "buffer") {
         // Check if it's binary data first
-        const bytes = new Uint8Array(content);
+        const bytes = new Uint8Array(content.data);
         const isPng = bytes.length > 4 &&
                       bytes[0] === 0x89 && bytes[1] === 0x50 &&
                       bytes[2] === 0x4E && bytes[3] === 0x47;
@@ -322,10 +359,9 @@ function FileViewer({
         }
 
         // Use non-fatal decoder to avoid throwing errors
-        const decoder = new TextDecoder('utf-8', { fatal: false });
-        textContent = decoder.decode(content);
+        textContent = decodeBufferToText(content.data);
       } else {
-        textContent = content;
+        textContent = getTextContent();
       }
 
       // Normalize content: convert HTML to Markdown, fix LaTeX delimiters, etc.
@@ -369,10 +405,13 @@ function FileViewer({
       );
     }
     case "pdf":
+      if (content.kind === "text") {
+        return <ErrorState error={t("viewer.error.binaryText")} />;
+      }
       return (
         <AdaptivePDFRenderer
           key={viewerKey}
-          content={content as ArrayBuffer}
+          source={content}
           fileName={fileName}
           fileHandle={fileHandle}
           rootHandle={rootHandle}
@@ -383,18 +422,7 @@ function FileViewer({
       );
     case "jupyter": {
       // Ensure content is a string for notebook editors
-      let notebookContent: string;
-      if (content instanceof ArrayBuffer) {
-        console.warn('[FileViewer] Jupyter received ArrayBuffer, converting to string');
-        try {
-          notebookContent = new TextDecoder('utf-8').decode(content);
-        } catch (e) {
-          console.error('[FileViewer] Failed to decode ArrayBuffer:', e);
-          notebookContent = '{}';
-        }
-      } else {
-        notebookContent = content;
-      }
+      const notebookContent = getTextContent() || "{}";
 
       // Use NotebookEditor for editable notebooks
       if (onContentChange) {
@@ -424,18 +452,7 @@ function FileViewer({
     }
     case "code": {
       // Ensure content is a string for code editors
-      let codeContent: string;
-      if (content instanceof ArrayBuffer) {
-        console.warn('[FileViewer] Code received ArrayBuffer, converting to string');
-        try {
-          codeContent = new TextDecoder('utf-8').decode(content);
-        } catch (e) {
-          console.error('[FileViewer] Failed to decode ArrayBuffer:', e);
-          codeContent = '';
-        }
-      } else {
-        codeContent = content;
-      }
+      const codeContent = getTextContent();
 
       // Use CodeEditorViewer for editable code files (Requirements 4.1-4.4)
       if (onContentChange && isEditableCodeFile(extension)) {
@@ -456,32 +473,36 @@ function FileViewer({
       return <CodeReader content={codeContent} fileName={fileName} paneId={paneId} filePath={filePath ?? fileName} />;
     }
     case "word":
-      return <WordViewer content={content as ArrayBuffer} fileName={fileName} paneId={paneId} filePath={filePath ?? fileName} />;
+      return <WordViewer content={getBinaryContent()?.data ?? new ArrayBuffer(0)} fileName={fileName} paneId={paneId} filePath={filePath ?? fileName} />;
     case "powerpoint":
-      return <PowerPointViewer content={content as ArrayBuffer} fileName={fileName} />;
+      return <PowerPointViewer content={getBinaryContent()?.data ?? new ArrayBuffer(0)} fileName={fileName} />;
     case "html": {
       // Ensure content is a string for HTML viewer
-      let htmlContent: string;
-      if (content instanceof ArrayBuffer) {
-        console.warn('[FileViewer] HTML received ArrayBuffer, converting to string');
-        try {
-          htmlContent = new TextDecoder('utf-8').decode(content);
-        } catch (e) {
-          console.error('[FileViewer] Failed to decode ArrayBuffer:', e);
-          htmlContent = '';
-        }
-      } else {
-        htmlContent = content;
-      }
+      const htmlContent = getTextContent();
       return <HTMLViewer content={htmlContent} fileName={fileName} paneId={paneId} filePath={filePath ?? fileName} />;
     }
     case "image":
+      if (content.kind === "text") {
+        return <ErrorState error={t("viewer.error.binaryText")} />;
+      }
+      if (content.kind === "desktop-url") {
+        return (
+          <ImageViewer
+            key={viewerKey}
+            source={content}
+            fileName={fileName}
+            mimeType={content.mimeType ?? getImageMimeType(extension)}
+            paneId={paneId}
+            filePath={filePath ?? fileName}
+          />
+        );
+      }
       // Use ImageTldrawAdapter if we have file handles for annotation support
-      if (fileHandle && rootHandle) {
+      if (fileHandle && rootHandle && content.kind === "buffer") {
         return (
           <ImageTldrawAdapter
             key={viewerKey}
-            content={content as ArrayBuffer}
+            content={content.data}
             fileName={fileName}
             mimeType={getImageMimeType(extension)}
             fileHandle={fileHandle}
@@ -495,7 +516,7 @@ function FileViewer({
       return (
         <ImageViewer
           key={viewerKey}
-          content={content as ArrayBuffer}
+          source={content}
           fileName={fileName}
           mimeType={getImageMimeType(extension)}
           paneId={paneId}
@@ -504,17 +525,7 @@ function FileViewer({
       );
     case "handwriting": {
       // Ensure content is a string for handwriting editor
-      let handwritingContent: string;
-      if (content instanceof ArrayBuffer) {
-        try {
-          handwritingContent = new TextDecoder('utf-8').decode(content);
-        } catch (e) {
-          console.error('[FileViewer] Failed to decode ArrayBuffer:', e);
-          handwritingContent = '';
-        }
-      } else {
-        handwritingContent = content;
-      }
+      const handwritingContent = getTextContent();
       return (
         <HandwritingViewer
           filePath={fileName}
@@ -538,7 +549,7 @@ export interface UniversalFileViewerProps {
   paneId: PaneId;
   handle: FileSystemFileHandle | null;
   rootHandle?: FileSystemDirectoryHandle | null;
-  content: string | ArrayBuffer | null;
+  content: ViewerContent | null;
   isLoading: boolean;
   error: string | null;
   onContentChange?: (content: string) => void;

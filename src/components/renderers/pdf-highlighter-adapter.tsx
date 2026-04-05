@@ -58,6 +58,7 @@ import { useObjectUrl } from "@/hooks/use-object-url";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useI18n } from "@/hooks/use-i18n";
 import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
+import { getDesktopPreviewPath, readDesktopFileBytesRaw } from "@/lib/desktop-preview";
 import {
   ensurePdfItemWorkspace,
   loadPdfItemManifest,
@@ -117,6 +118,7 @@ import {
   selectionToAnnotation,
   type PdfPageDimensionsMap,
 } from "@/lib/pdf-highlight-mapping";
+import type { BinaryViewerContent } from "@/types/viewer-content";
 
 import "react-pdf-highlighter/dist/style.css";
 import "./pdf-highlighter-adapter.css";
@@ -126,7 +128,7 @@ import "./pdf-highlighter-adapter.css";
 // ============================================================================
 
 interface PDFHighlighterAdapterProps {
-  content: ArrayBuffer;
+  source: BinaryViewerContent;
   fileName: string;
   fileHandle: FileSystemFileHandle;
   rootHandle: FileSystemDirectoryHandle;
@@ -1542,7 +1544,7 @@ function PdfTransientSelectionPortal({ selection, paneId, page, paneRootRef, col
 // ============================================================================
 
 export function PDFHighlighterAdapter({
-  content,
+  source,
   fileName,
   fileHandle,
   rootHandle,
@@ -1596,7 +1598,7 @@ export function PDFHighlighterAdapter({
   const [pendingPin, setPendingPin] = useState<{ x: number; y: number; page: number } | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string | null>(null);
-  const [showSidebar, setShowSidebar] = useState(cachedPdfViewState?.showSidebar ?? false);
+  const [showSidebar, setShowSidebar] = useState(false);
   const [sidebarSize, setSidebarSize] = useState(cachedPdfViewState?.sidebarSize ?? 28);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(cachedPdfViewState?.selectedAnnotationId ?? null);
   const [currentAnchorDebug, setCurrentAnchorDebug] = useState<PdfViewAnchor | null>(cachedPdfViewState?.anchor ?? null);
@@ -1724,7 +1726,6 @@ export function PDFHighlighterAdapter({
 
     setScale(persistedPdfViewState.scale);
     setZoomMode(persistedPdfViewState.zoomMode);
-    setShowSidebar(persistedPdfViewState.showSidebar);
     setSidebarSize(persistedPdfViewState.sidebarSize ?? 28);
     setSelectedAnnotationId(persistedPdfViewState.selectedAnnotationId ?? null);
     setCurrentAnchorDebug(persistedPdfViewState.anchor ?? null);
@@ -1809,13 +1810,19 @@ export function PDFHighlighterAdapter({
   } | null>(null);
   const pathname = usePathname();
   const isDiagnosticsMode = pathname?.startsWith("/diagnostics") ?? false;
-  const pdfBlob = useMemo(() => new Blob([content], { type: 'application/pdf' }), [content]);
-  const pdfUrl = useObjectUrl(pdfBlob);
+  const bufferSource = source.kind === "buffer" ? source.data : null;
+  const pdfBlob = useMemo(
+    () => (bufferSource ? new Blob([bufferSource], { type: "application/pdf" }) : null),
+    [bufferSource],
+  );
+  const generatedPdfUrl = useObjectUrl(pdfBlob);
+  const pdfUrl = source.kind === "desktop-url" ? source.url : generatedPdfUrl;
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const hasRestoredScrollRef = useRef(false);
   const timeoutIdsRef = useRef<number[]>([]);
   const persistTimeoutRef = useRef<number | null>(null);
+  const persistIdleRef = useRef<number | null>(null);
   const lastPersistSignatureRef = useRef<string | null>(null);
   const lastPersistedEditorStateRef = useRef<ReturnType<typeof buildPdfEditorState> | null>(null);
   const anchorCaptureRevisionRef = useRef(0);
@@ -2232,6 +2239,14 @@ export function PDFHighlighterAdapter({
       window.clearTimeout(persistTimeoutRef.current);
       persistTimeoutRef.current = null;
     }
+
+    if (persistIdleRef.current !== null) {
+      const idleWindow = window as Window & {
+        cancelIdleCallback?: (handle: number) => void;
+      };
+      idleWindow.cancelIdleCallback?.(persistIdleRef.current);
+      persistIdleRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
@@ -2377,10 +2392,21 @@ export function PDFHighlighterAdapter({
     void savePersistedFileViewState(persistedPdfViewStateKey, lastKnownState);
   }, [fileId, persistedPdfViewStateKey, saveEditorState]);
 
-  const schedulePersistPdfViewState = useCallback((delay = 180) => {
+  const schedulePersistPdfViewState = useCallback((delay = 320) => {
     clearScheduledPersist();
     persistTimeoutRef.current = window.setTimeout(() => {
       persistTimeoutRef.current = null;
+      const idleWindow = window as Window & {
+        requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      };
+      if (idleWindow.requestIdleCallback) {
+        persistIdleRef.current = idleWindow.requestIdleCallback(() => {
+          persistIdleRef.current = null;
+          persistPdfViewStateNow();
+        }, { timeout: 1000 });
+        return;
+      }
+
       persistPdfViewStateNow();
     }, delay);
   }, [clearScheduledPersist, persistPdfViewStateNow]);
@@ -2416,6 +2442,32 @@ export function PDFHighlighterAdapter({
       }
     };
   }, [buildCurrentPdfEditorStateSnapshot, getViewerScrollContainer, persistLastKnownPdfViewState, persistPdfViewStateNow, schedulePersistPdfViewState]);
+
+  useEffect(() => {
+    const flushPersist = () => {
+      if (lastPersistedEditorStateRef.current) {
+        persistLastKnownPdfViewState();
+        return;
+      }
+
+      persistPdfViewStateNow();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        flushPersist();
+      }
+    };
+
+    window.addEventListener("blur", flushPersist);
+    window.addEventListener("pagehide", flushPersist);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("blur", flushPersist);
+      window.removeEventListener("pagehide", flushPersist);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [persistLastKnownPdfViewState, persistPdfViewStateNow]);
 
   useEffect(() => {
     if (!hasRestoredScrollRef.current) {
@@ -2863,6 +2915,23 @@ export function PDFHighlighterAdapter({
     setZoomMode('manual');
   }, []);
 
+  const handleExportPdf = useCallback(async () => {
+    const pdfBytes = source.kind === "buffer"
+      ? source.data
+      : await (async () => {
+          const desktopPath = getDesktopPreviewPath(fileHandle);
+          if (!desktopPath) {
+            const file = await fileHandle.getFile();
+            return file.arrayBuffer();
+          }
+
+          const rawBytes = await readDesktopFileBytesRaw(desktopPath);
+          return rawBytes.buffer.slice(rawBytes.byteOffset, rawBytes.byteOffset + rawBytes.byteLength) as ArrayBuffer;
+        })();
+
+    await exportPdfWithAnnotations(pdfBytes, annotations, fileName);
+  }, [annotations, fileHandle, fileName, source]);
+
   const commandBarState = useMemo<CommandBarState>(() => {
     const breadcrumbs = filePath.split("/").filter(Boolean).map((segment) => ({ label: segment }));
     return {
@@ -2983,18 +3052,16 @@ export function PDFHighlighterAdapter({
           priority: 40,
           group: "secondary",
           onTrigger: () => {
-            void exportPdfWithAnnotations(content, annotations, fileName);
+            void handleExportPdf();
           },
         },
       ],
     };
   }, [
     activeTool,
-    annotations,
     applyZoomMode,
-    content,
-    fileName,
     filePath,
+    handleExportPdf,
     showSidebar,
     t,
     zoomIn,

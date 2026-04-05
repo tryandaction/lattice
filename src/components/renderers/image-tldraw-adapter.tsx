@@ -697,7 +697,7 @@ export function ImageTldrawAdapter({
           <AlertCircle className="h-4 w-4" />
           {t("image.drawingUnavailable")}: {tldrawError.message}
         </div>
-        <ImageViewer content={content} fileName={fileName} mimeType={mimeType} />
+        <ImageViewer source={{ kind: "buffer", data: content }} fileName={fileName} mimeType={mimeType} />
       </div>
     );
   }

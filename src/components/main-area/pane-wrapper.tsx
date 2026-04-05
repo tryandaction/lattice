@@ -12,10 +12,13 @@ import { useWorkspaceStore, type PaneId } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { findPane } from "@/lib/layout-utils";
-import { getFileExtension, isBinaryFile, isEditableFile } from "@/lib/file-utils";
+import { getFileExtension, getRendererForExtension, isBinaryFile, isEditableFile } from "@/lib/file-utils";
 import { saveWorkspaceTabContent } from "@/lib/workspace-save";
 import type { TabState } from "@/types/layout";
 import { useI18n } from "@/hooks/use-i18n";
+import { getDesktopPreviewPath, resolveDesktopPreviewUrl } from "@/lib/desktop-preview";
+import { isTauriHost } from "@/lib/storage-adapter";
+import type { ViewerContent } from "@/types/viewer-content";
 
 const EMPTY_TABS: TabState[] = [];
 
@@ -61,9 +64,12 @@ export function PaneWrapper({
   const activeTab = activeTabIndex >= 0 && activeTabIndex < tabs.length 
     ? tabs[activeTabIndex] 
     : null;
+  const activeRendererType = activeTab
+    ? getRendererForExtension(getFileExtension(activeTab.fileName))
+    : null;
 
   // Content loading state
-  const [content, setContent] = useState<string | ArrayBuffer | null>(null);
+  const [content, setContent] = useState<ViewerContent | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -72,7 +78,7 @@ export function PaneWrapper({
   // Track which tab is currently being loaded (for race condition prevention)
   const loadingTabIdRef = useRef<string | null>(null);
   // Track the original content for dirty state comparison
-  const originalContentRef = useRef<string | ArrayBuffer | null>(null);
+  const originalContentRef = useRef<string | null>(null);
 
   // Content cache store - use getState() for non-reactive access in effects
   // NOTE: getContent/setContent/markAsSaved are accessed via getState() inside effects
@@ -113,6 +119,12 @@ export function PaneWrapper({
 
     const hasLoadedCurrent = loadedTabId === currentTabId;
     const isLoadingCurrent = loadingTabIdRef.current === currentTabId;
+    const desktopPreviewPath = getDesktopPreviewPath(activeTab.fileHandle);
+    const shouldUseDesktopPreview = Boolean(
+      isTauriHost() &&
+      desktopPreviewPath &&
+      (activeRendererType === "pdf" || activeRendererType === "image"),
+    );
 
     // Same tab already loaded with content and no active load - no need to reload
     if (hasLoadedCurrent && !isLoadingCurrent) {
@@ -122,14 +134,32 @@ export function PaneWrapper({
       return;
     }
 
+    if (shouldUseDesktopPreview && desktopPreviewPath) {
+      setLoadedTabId(currentTabId);
+      loadingTabIdRef.current = null;
+      setContent({
+        kind: "desktop-url",
+        url: resolveDesktopPreviewUrl(desktopPreviewPath),
+      });
+      originalContentRef.current = null;
+      setTabDirty(paneId, activeTabIndex, false);
+      setIsLoading(false);
+      setError(null);
+      return;
+    }
+
     // PRIORITY 1: Check cache first - this preserves unsaved changes
     const cached = useContentCacheStore.getState().getContent(currentTabId);
     if (cached) {
       // Immediately update state for cached content
       setLoadedTabId(currentTabId);
       loadingTabIdRef.current = null;
-      setContent(cached.content);
-      originalContentRef.current = cached.originalContent;
+      setContent(
+        cached.content instanceof ArrayBuffer
+          ? { kind: "buffer", data: cached.content }
+          : { kind: "text", text: cached.content },
+      );
+      originalContentRef.current = typeof cached.originalContent === "string" ? cached.originalContent : null;
       // Keep tab dirty state in sync with cache
       setTabDirty(paneId, activeTabIndex, cached.isDirty);
       setIsLoading(false);
@@ -162,7 +192,7 @@ export function PaneWrapper({
         // File size validation (warn for very large files)
         const MAX_TEXT_FILE_SIZE = 50 * 1024 * 1024; // 50MB
         if (!isBinaryFile(extension) && file.size > MAX_TEXT_FILE_SIZE) {
-          console.warn(`Large text file detected: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
+          // Large text files still go through the text path, but we avoid extra work here.
         }
 
         const fileContent = isBinaryFile(extension)
@@ -174,19 +204,23 @@ export function PaneWrapper({
         if (loadingTabIdRef.current === loadingForTabId) {
           loadingTabIdRef.current = null;
           setLoadedTabId(loadingForTabId);
-          setContent(fileContent);
+          setContent(
+            fileContent instanceof ArrayBuffer
+              ? { kind: "buffer", data: fileContent }
+              : { kind: "text", text: fileContent },
+          );
           if (typeof fileContent === 'string') {
             originalContentRef.current = fileContent;
+            useContentCacheStore.getState().setContent(loadingForTabId, fileContent, fileContent);
+          } else {
+            originalContentRef.current = null;
           }
-          // Initialize cache with original content (supports both string and ArrayBuffer)
-          useContentCacheStore.getState().setContent(loadingForTabId, fileContent, fileContent);
           // Loaded from disk, so not dirty
           setTabDirty(paneId, activeTabIndex, false);
           setIsLoading(false);
         }
         // If tab changed during load, discard this result silently
       } catch (err) {
-        console.error('[PaneWrapper] Failed to load file:', err);
         // Only update error if this is still the tab we're loading for
         if (loadingTabIdRef.current === loadingForTabId) {
           setLoadedTabId(null);
@@ -204,6 +238,7 @@ export function PaneWrapper({
     activeTab?.id,
     activeTab?.fileHandle,
     activeTabIndex,
+    activeRendererType,
     error,
     paneId,
     setTabDirty,
@@ -301,7 +336,7 @@ export function PaneWrapper({
   }, []);
 
   // Ref to track current content for comparison (avoids stale closure issues)
-  const contentRef = useRef<string | ArrayBuffer | null>(content);
+  const contentRef = useRef<ViewerContent | null>(content);
   const activeTabIdRef = useRef<string | null>(activeTab?.id ?? null);
 
   useEffect(() => {
@@ -321,9 +356,9 @@ export function PaneWrapper({
       }
 
       // Don't update if content is the same (use ref to avoid stale closure)
-      if (newContent === contentRef.current) return;
+      if (contentRef.current?.kind === "text" && newContent === contentRef.current.text) return;
 
-      setContent(newContent);
+      setContent({ kind: "text", text: newContent });
 
       const originalContent = originalContentRef.current ?? newContent;
       useContentCacheStore.getState().setContent(tabId, newContent, originalContent);
@@ -341,24 +376,23 @@ export function PaneWrapper({
 
   // Handle file save - optimized with fast save
   const handleSave = useCallback(async () => {
-    if (!activeTab || typeof content !== 'string') return;
+    if (!activeTab || content?.kind !== "text") return;
     
     try {
       const persistedTab = await saveWorkspaceTabContent({
         tab: activeTab,
-        content,
+        content: content.text,
         rootHandle,
         refreshDirectory,
       });
       
       // Update cache - mark as saved with new original content
-      useContentCacheStore.getState().markAsSaved(persistedTab.id, content);
-      originalContentRef.current = content;
+      useContentCacheStore.getState().markAsSaved(persistedTab.id, content.text);
+      originalContentRef.current = content.text;
 
       // Clear dirty state
       setTabDirty(paneId, activeTabIndex, false);
     } catch (err) {
-      console.error('Failed to save file:', err);
       throw err;
     }
   }, [activeTab, activeTabIndex, content, paneId, refreshDirectory, rootHandle, setTabDirty]);

@@ -9,11 +9,12 @@ use std::{
     collections::{HashMap, HashSet},
     env,
     fs,
+    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     process::{Command as StdCommand, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex as StdMutex,
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -21,9 +22,10 @@ use std::{
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{ipc::Response as TauriResponse, AppHandle, Emitter, Manager, State};
 use tauri_plugin_store::StoreExt;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -187,6 +189,11 @@ struct PythonSessions {
     sessions: Mutex<HashMap<String, ManagedPythonSession>>,
 }
 
+#[derive(Default)]
+struct DesktopPreviewState {
+    workspace_root: StdMutex<Option<PathBuf>>,
+}
+
 #[derive(Debug, Clone)]
 struct CleanupArtifacts {
     bootstrap_path: PathBuf,
@@ -232,6 +239,224 @@ fn normalize_optional_path(path: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+fn decode_preview_request_path(path: &str) -> Result<String, String> {
+    let trimmed = path.strip_prefix('/').unwrap_or(path);
+    let decoded = percent_decode_str(trimmed)
+        .decode_utf8()
+        .map_err(|error| error.to_string())?
+        .to_string();
+
+    #[cfg(windows)]
+    {
+        if decoded.len() >= 3 && decoded.as_bytes()[1] == b':' {
+            return Ok(decoded);
+        }
+
+        if decoded.len() >= 4 && decoded.starts_with('/') && decoded.as_bytes()[2] == b':' {
+            return Ok(decoded[1..].to_string());
+        }
+    }
+
+    Ok(decoded)
+}
+
+fn canonicalize_directory_path(path: &str) -> Result<PathBuf, String> {
+    let canonical = fs::canonicalize(path).map_err(|error| error.to_string())?;
+    if !canonical.is_dir() {
+        return Err(format!("Preview root is not a directory: {path}"));
+    }
+    Ok(canonical)
+}
+
+fn canonicalize_file_path(path: &str) -> Result<PathBuf, String> {
+    let canonical = fs::canonicalize(path).map_err(|error| error.to_string())?;
+    if !canonical.is_file() {
+        return Err(format!("Preview path is not a file: {path}"));
+    }
+    Ok(canonical)
+}
+
+fn is_path_within_root(path: &Path, root: &Path) -> bool {
+    path == root || path.starts_with(root)
+}
+
+fn get_preview_content_type(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("pdf") => "application/pdf",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("svg") => "image/svg+xml",
+        Some("avif") => "image/avif",
+        Some("tif") | Some("tiff") => "image/tiff",
+        _ => "application/octet-stream",
+    }
+}
+
+fn parse_range_header(range_header: &str, file_len: u64) -> Option<(u64, u64)> {
+    if file_len == 0 || !range_header.starts_with("bytes=") {
+        return None;
+    }
+
+    let first_range = range_header[6..].split(',').next()?.trim();
+    let (start_raw, end_raw) = first_range.split_once('-')?;
+
+    if start_raw.is_empty() {
+        let suffix_len = end_raw.parse::<u64>().ok()?.min(file_len);
+        if suffix_len == 0 {
+            return None;
+        }
+        return Some((file_len - suffix_len, file_len - 1));
+    }
+
+    let start = start_raw.parse::<u64>().ok()?;
+    if start >= file_len {
+        return None;
+    }
+
+    let end = if end_raw.is_empty() {
+        file_len - 1
+    } else {
+        end_raw.parse::<u64>().ok()?.min(file_len - 1)
+    };
+
+    if start > end {
+        return None;
+    }
+
+    Some((start, end))
+}
+
+fn preview_error_response(
+    status: http::StatusCode,
+    message: impl Into<String>,
+) -> http::Response<Vec<u8>> {
+    let mut response = http::Response::builder()
+        .status(status)
+        .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(message.into().into_bytes())
+        .unwrap();
+    append_preview_cors_headers(&mut response);
+    response
+}
+
+fn append_preview_cors_headers(response: &mut http::Response<Vec<u8>>) {
+    let headers = response.headers_mut();
+    headers.insert(
+        http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        http::HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        http::header::ACCESS_CONTROL_ALLOW_METHODS,
+        http::HeaderValue::from_static("GET, HEAD, OPTIONS"),
+    );
+    headers.insert(
+        http::header::ACCESS_CONTROL_ALLOW_HEADERS,
+        http::HeaderValue::from_static("Content-Type, Range"),
+    );
+    headers.insert(
+        http::header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        http::HeaderValue::from_static("Accept-Ranges, Content-Length, Content-Range, Content-Type"),
+    );
+}
+
+fn build_preview_file_response(
+    path: &Path,
+    request: &http::Request<Vec<u8>>,
+) -> Result<http::Response<Vec<u8>>, String> {
+    if request.method() == http::Method::OPTIONS {
+        let mut response = http::Response::builder()
+            .status(http::StatusCode::NO_CONTENT)
+            .body(Vec::new())
+            .unwrap();
+        append_preview_cors_headers(&mut response);
+        return Ok(response);
+    }
+
+    let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    let file_len = metadata.len();
+    let content_type = get_preview_content_type(path);
+
+    if let Some(range_header) = request
+        .headers()
+        .get(http::header::RANGE)
+        .and_then(|value| value.to_str().ok())
+    {
+        if let Some((start, end)) = parse_range_header(range_header, file_len) {
+            let chunk_len = end - start + 1;
+            let mut buffer = vec![0; chunk_len as usize];
+            file.seek(SeekFrom::Start(start)).map_err(|error| error.to_string())?;
+            file.read_exact(&mut buffer).map_err(|error| error.to_string())?;
+
+            let mut response = http::Response::builder()
+                .status(http::StatusCode::PARTIAL_CONTENT)
+                .header(http::header::CONTENT_TYPE, content_type)
+                .header(http::header::ACCEPT_RANGES, "bytes")
+                .header(http::header::CONTENT_LENGTH, chunk_len.to_string())
+                .header(http::header::CONTENT_RANGE, format!("bytes {start}-{end}/{file_len}"))
+                .body(buffer)
+                .unwrap();
+            append_preview_cors_headers(&mut response);
+            return Ok(response);
+        }
+
+        let mut response = http::Response::builder()
+            .status(http::StatusCode::RANGE_NOT_SATISFIABLE)
+            .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .header(http::header::CONTENT_RANGE, format!("bytes */{file_len}"))
+            .body(b"invalid range".to_vec())
+            .unwrap();
+        append_preview_cors_headers(&mut response);
+        return Ok(response);
+    }
+
+    let mut buffer = Vec::new();
+    if request.method() != http::Method::HEAD {
+        file.read_to_end(&mut buffer).map_err(|error| error.to_string())?;
+    }
+
+    let mut response = http::Response::builder()
+        .status(http::StatusCode::OK)
+        .header(http::header::CONTENT_TYPE, content_type)
+        .header(http::header::ACCEPT_RANGES, "bytes")
+        .header(http::header::CONTENT_LENGTH, file_len.to_string())
+        .body(buffer)
+        .unwrap();
+    append_preview_cors_headers(&mut response);
+    Ok(response)
+}
+
+fn resolve_preview_path(
+    preview_state: &DesktopPreviewState,
+    request: &http::Request<Vec<u8>>,
+) -> Result<PathBuf, String> {
+    let raw_path = decode_preview_request_path(request.uri().path())?;
+    let canonical_file = canonicalize_file_path(&raw_path)?;
+    let workspace_root = preview_state
+        .workspace_root
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone()
+        .ok_or_else(|| "Preview root has not been configured.".to_string())?;
+
+    if !is_path_within_root(&canonical_file, &workspace_root) {
+        return Err(format!(
+            "Preview path is outside the current workspace: {}",
+            canonical_file.to_string_lossy()
+        ));
+    }
+
+    Ok(canonical_file)
 }
 
 fn normalize_recent_workspace_paths(paths: Vec<String>) -> Vec<String> {
@@ -581,8 +806,9 @@ fn desktop_read_dir(path: String) -> Result<Vec<DesktopDirEntry>, String> {
 }
 
 #[tauri::command]
-fn desktop_read_file_bytes(path: String) -> Result<Vec<u8>, String> {
-    fs::read(PathBuf::from(path)).map_err(|error| error.to_string())
+fn desktop_read_file_bytes_raw(path: String) -> Result<TauriResponse, String> {
+    let bytes = fs::read(PathBuf::from(path)).map_err(|error| error.to_string())?;
+    Ok(TauriResponse::new(bytes))
 }
 
 #[tauri::command]
@@ -624,6 +850,24 @@ fn desktop_remove_path(path: String, recursive: bool) -> Result<(), String> {
     } else {
         fs::remove_file(target).map_err(|error| error.to_string())?;
     }
+    Ok(())
+}
+
+#[tauri::command]
+fn desktop_set_preview_root(
+    preview_state: State<'_, DesktopPreviewState>,
+    path: Option<String>,
+) -> Result<(), String> {
+    let normalized_root = match path {
+        Some(path) if !path.trim().is_empty() => Some(canonicalize_directory_path(&path)?),
+        _ => None,
+    };
+
+    let mut workspace_root = preview_state
+        .workspace_root
+        .lock()
+        .map_err(|error| error.to_string())?;
+    *workspace_root = normalized_root;
     Ok(())
 }
 
@@ -1040,11 +1284,22 @@ async fn stop_python_session(
 
 fn main() {
     tauri::Builder::default()
+        .register_uri_scheme_protocol("lattice-preview", |ctx, request| {
+            let preview_state = ctx.app_handle().state::<DesktopPreviewState>();
+            let result = resolve_preview_path(&preview_state, &request)
+                .and_then(|path| build_preview_file_response(&path, &request));
+
+            match result {
+                Ok(response) => response,
+                Err(message) => preview_error_response(http::StatusCode::FORBIDDEN, message),
+            }
+        })
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .manage(DesktopPreviewState::default())
         .manage(ExecutionSessions::default())
         .manage(PythonSessions::default())
         .invoke_handler(tauri::generate_handler![
@@ -1060,12 +1315,13 @@ fn main() {
             resolve_startup_workspace,
             clear_default_folder,
             desktop_read_dir,
-            desktop_read_file_bytes,
+            desktop_read_file_bytes_raw,
             desktop_write_file_bytes,
             desktop_exists_path,
             desktop_is_directory,
             desktop_create_dir,
             desktop_remove_path,
+            desktop_set_preview_root,
             desktop_window_minimize,
             desktop_window_start_dragging,
             desktop_window_toggle_maximize,
@@ -1792,6 +2048,21 @@ mod tests {
             .insert("onboardingCompleted".to_string(), json!(true));
 
         assert!(has_persisted_app_settings(&settings));
+    }
+
+    #[test]
+    fn preview_request_path_decodes_percent_escaped_paths() {
+        let decoded = decode_preview_request_path("/C:/Research%20Notes/paper.pdf")
+            .expect("path should decode");
+        assert_eq!(decoded, "C:/Research Notes/paper.pdf");
+    }
+
+    #[test]
+    fn byte_range_parser_supports_open_and_suffix_ranges() {
+        assert_eq!(parse_range_header("bytes=10-19", 100), Some((10, 19)));
+        assert_eq!(parse_range_header("bytes=10-", 100), Some((10, 99)));
+        assert_eq!(parse_range_header("bytes=-15", 100), Some((85, 99)));
+        assert_eq!(parse_range_header("bytes=150-200", 100), None);
     }
 }
 

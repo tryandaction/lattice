@@ -70,7 +70,6 @@ describe("CommandBar desktop interactions", () => {
     desktopWindowMocks.toggleDesktopWindowMaximize.mockClear();
     desktopWindowMocks.minimizeDesktopWindow.mockClear();
     desktopWindowMocks.closeDesktopWindow.mockClear();
-    desktopWindowMocks.startDesktopWindowDrag.mockClear();
     desktopWindowMocks.startDesktopWindowResize.mockClear();
     desktopWindowMocks.subscribeDesktopWindowState.mockClear();
     workspaceState.commandBarByPane = {};
@@ -103,7 +102,7 @@ describe("CommandBar desktop interactions", () => {
     });
   });
 
-  it("starts dragging from the title bar region on mouse down", async () => {
+  it("keeps title mouse down out of the JS dragging path", async () => {
     render(
       <CommandBar
         onOpenWorkspace={() => {}}
@@ -113,7 +112,23 @@ describe("CommandBar desktop interactions", () => {
     fireEvent.mouseDown(screen.getByTestId("desktop-commandbar-title"));
 
     await waitFor(() => {
-      expect(desktopWindowMocks.startDesktopWindowDrag).toHaveBeenCalledTimes(1);
+      expect(desktopWindowMocks.startDesktopWindowDrag).not.toHaveBeenCalled();
+    });
+  });
+
+  it("does not route window button clicks into the dragging path", async () => {
+    render(
+      <CommandBar
+        onOpenWorkspace={() => {}}
+      />,
+    );
+
+    fireEvent.mouseDown(screen.getByTestId("desktop-window-control-minimize"));
+    fireEvent.click(screen.getByTestId("desktop-window-control-minimize"));
+
+    await waitFor(() => {
+      expect(desktopWindowMocks.minimizeDesktopWindow).toHaveBeenCalledTimes(1);
+      expect(desktopWindowMocks.startDesktopWindowDrag).not.toHaveBeenCalled();
     });
   });
 

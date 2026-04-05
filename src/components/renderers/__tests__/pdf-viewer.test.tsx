@@ -11,6 +11,8 @@ const mockPdfDocument = vi.hoisted(() => ({
   numPages: 3,
   getPage: vi.fn(),
   getOutline: vi.fn(async () => []),
+  mountCount: 0,
+  unmountCount: 0,
 }));
 
 vi.mock("react-pdf", async () => {
@@ -24,15 +26,21 @@ vi.mock("react-pdf", async () => {
     Document: ({
       children,
       onLoadSuccess,
+      file,
     }: {
       children: React.ReactNode;
       onLoadSuccess?: (pdf: typeof mockPdfDocument) => void;
+      file?: unknown;
     }) => {
       ReactModule.useEffect(() => {
+        mockPdfDocument.mountCount += 1;
         onLoadSuccess?.(mockPdfDocument);
+        return () => {
+          mockPdfDocument.unmountCount += 1;
+        };
       }, [onLoadSuccess]);
 
-      return <div data-testid="mock-react-pdf-document">{children}</div>;
+      return <div data-testid="mock-react-pdf-document" data-file-type={typeof file}>{children}</div>;
     },
     Page: ({
       pageNumber,
@@ -70,6 +78,8 @@ vi.mock("@/hooks/use-i18n", () => ({
 describe("PDFViewer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPdfDocument.mountCount = 0;
+    mockPdfDocument.unmountCount = 0;
     mockPdfDocument.getPage.mockResolvedValue({
       getTextContent: vi.fn(async () => ({ items: [{ str: "match" }] })),
     });
@@ -92,7 +102,8 @@ describe("PDFViewer", () => {
   it("does not extract page text while the search overlay is closed", async () => {
     render(
       <PDFViewer
-        content={new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer}
+        source={{ kind: "buffer", data: new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer }}
+        documentId="paper-1"
         fileName="paper.pdf"
         paneId="pane-left"
       />,
@@ -110,7 +121,8 @@ describe("PDFViewer", () => {
 
     render(
       <PDFViewer
-        content={new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer}
+        source={{ kind: "buffer", data: new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer }}
+        documentId="paper-1"
         fileName="paper.pdf"
         paneId="pane-left"
         canAnnotate={true}
@@ -121,5 +133,34 @@ describe("PDFViewer", () => {
     fireEvent.click(await screen.findByTestId("pdf-annotate-trigger-pane-left"));
 
     expect(onRequestAnnotationMode).toHaveBeenCalledTimes(1);
+  });
+
+  it("remounts the document when documentId changes even if filename stays the same", async () => {
+    const source = { kind: "buffer" as const, data: new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer };
+    const { rerender } = render(
+      <PDFViewer
+        source={source}
+        documentId="paper-1"
+        fileName="paper.pdf"
+        paneId="pane-left"
+      />,
+    );
+
+    await screen.findByTestId("mock-react-pdf-document");
+    expect(mockPdfDocument.mountCount).toBe(1);
+
+    rerender(
+      <PDFViewer
+        source={source}
+        documentId="paper-2"
+        fileName="paper.pdf"
+        paneId="pane-left"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockPdfDocument.mountCount).toBe(2);
+      expect(mockPdfDocument.unmountCount).toBe(1);
+    });
   });
 });

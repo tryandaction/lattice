@@ -520,7 +520,7 @@ export function PdfRegressionDiagnostics() {
             paneId="pdf-left-pane"
             handle={workspace.left.fileHandle}
             rootHandle={workspace.rootHandle}
-            content={workspace.left.content}
+            content={{ kind: "buffer", data: workspace.left.content }}
             isLoading={false}
             error={null}
             fileId={workspace.left.fileId}
@@ -534,7 +534,7 @@ export function PdfRegressionDiagnostics() {
             paneId="pdf-right-pane"
             handle={rightFixture.fileHandle}
             rootHandle={workspace.rootHandle}
-            content={rightFixture.content}
+            content={{ kind: "buffer", data: rightFixture.content }}
             isLoading={false}
             error={null}
             fileId={rightFixture.fileId}
@@ -548,7 +548,7 @@ export function PdfRegressionDiagnostics() {
             paneId="pdf-plain-pane"
             handle={workspace.plain.fileHandle}
             rootHandle={workspace.rootHandle}
-            content={workspace.plain.content}
+            content={{ kind: "buffer", data: workspace.plain.content }}
             isLoading={false}
             error={null}
             fileId={workspace.plain.fileId}

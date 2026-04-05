@@ -10,9 +10,10 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import type { CommandBarState, PaneId } from "@/types/layout";
 import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
 import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
+import type { BinaryViewerContent } from "@/types/viewer-content";
 
 interface ImageViewerProps {
-  content: ArrayBuffer;
+  source: BinaryViewerContent;
   fileName: string;
   mimeType: string;
   paneId?: PaneId;
@@ -26,10 +27,15 @@ type FitMode = "fit" | "width" | "height" | "actual";
  * Displays images with zoom, rotate, pan, and fullscreen controls
  * Optimized for large images and long images
  */
-export function ImageViewer({ content, fileName, mimeType, paneId, filePath }: ImageViewerProps) {
+export function ImageViewer({ source, fileName, mimeType, paneId, filePath }: ImageViewerProps) {
   const { t } = useI18n();
-  const imageBlob = useMemo(() => new Blob([content], { type: mimeType }), [content, mimeType]);
-  const imageUrl = useObjectUrl(imageBlob);
+  const bufferSource = source.kind === "buffer" ? source.data : null;
+  const imageBlob = useMemo(
+    () => (bufferSource ? new Blob([bufferSource], { type: mimeType }) : null),
+    [bufferSource, mimeType],
+  );
+  const generatedImageUrl = useObjectUrl(imageBlob);
+  const imageUrl = source.kind === "desktop-url" ? source.url : generatedImageUrl;
   const [manualZoom, setManualZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });

@@ -129,7 +129,7 @@ function renderPdfViewer() {
       paneId="pane-left"
       handle={createPdfHandle()}
       rootHandle={{ name: "workspace" } as FileSystemDirectoryHandle}
-      content={new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer}
+      content={{ kind: "buffer", data: new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer }}
       isLoading={false}
       error={null}
       fileId="paper-id"
@@ -205,7 +205,7 @@ describe("UniversalFileViewer PDF routing", () => {
     });
   });
 
-  it("keeps desktop PDFs on the lightweight viewer until annotation mode is explicitly requested", async () => {
+  it("routes desktop annotatable PDFs directly to the highlighter toolbar state", async () => {
     isTauriHostMock.mockReturnValue(true);
     loadAnnotationsForFileIdentityMock.mockResolvedValue({
       annotationFile: {
@@ -230,10 +230,8 @@ describe("UniversalFileViewer PDF routing", () => {
 
     renderPdfViewer();
 
-    expect(await screen.findByTestId("mock-pdf-viewer-pane-left")).toBeTruthy();
     await waitFor(() => {
-      expect(screen.getByTestId("mock-pdf-viewer-has-persisted-pane-left").textContent).toBe("false");
-      expect(screen.queryByTestId("mock-pdf-highlighter-pane-left")).toBeNull();
+      expect(screen.getByTestId("mock-pdf-highlighter-pane-left")).toBeTruthy();
     });
   });
 });

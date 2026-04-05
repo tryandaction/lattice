@@ -36,6 +36,7 @@ import { emitFileOpen, emitFileClose, emitWorkspaceOpen, emitActiveFileChange } 
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 import { destroyExecutionScope, destroyExecutionScopes } from "@/stores/execution-session-store";
 import type { WorkspaceIdentity } from "@/types/workspace-identity";
+import { setDesktopPreviewRoot } from "@/lib/desktop-preview";
 
 /**
  * Create initial layout with a single empty pane
@@ -244,6 +245,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       runnerPreferences: createInitialRunnerPreferences(),
       commandBarByPane: {},
     });
+    void setDesktopPreviewRoot(null);
     void destroyExecutionScopes(scopeIds);
   },
 
