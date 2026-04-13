@@ -10,7 +10,7 @@ import type {
   AnnotationFileType 
 } from '../types/universal-annotation';
 import { 
-  isUniversalAnnotationFile,
+  normalizeUniversalAnnotationFile,
   validateUniversalAnnotationFile 
 } from '../types/universal-annotation';
 import type { AnnotationLocationAlias, AnnotationSourceRecord } from '@/types/annotation-registry';
@@ -30,7 +30,7 @@ export const ANNOTATIONS_DIR = '.lattice/annotations';
 /**
  * Current annotation file version
  */
-export const ANNOTATION_FILE_VERSION = 2;
+export const ANNOTATION_FILE_VERSION = 3;
 
 // ============================================================================
 // FileId Derivation
@@ -195,13 +195,7 @@ export function serializeAnnotationFile(file: UniversalAnnotationFile): string {
 export function deserializeAnnotationFile(json: string): UniversalAnnotationFile | null {
   try {
     const parsed = JSON.parse(json);
-    
-    // Validate the structure
-    if (!isUniversalAnnotationFile(parsed)) {
-      return null;
-    }
-    
-    return parsed;
+    return normalizeUniversalAnnotationFile(parsed);
   } catch {
     return null;
   }
@@ -220,13 +214,14 @@ export function deserializeAnnotationFileWithValidation(json: string): {
 } {
   try {
     const parsed = JSON.parse(json);
-    const validation = validateUniversalAnnotationFile(parsed);
+    const normalized = normalizeUniversalAnnotationFile(parsed);
+    const validation = validateUniversalAnnotationFile(normalized);
     
-    if (!validation.valid) {
+    if (!validation.valid || !normalized) {
       return { file: null, errors: validation.errors };
     }
     
-    return { file: parsed as UniversalAnnotationFile, errors: [] };
+    return { file: normalized, errors: [] };
   } catch (error) {
     return {
       file: null,
@@ -248,10 +243,12 @@ export function deserializeAnnotationFileWithValidation(json: string): {
  */
 export function createUniversalAnnotationFile(
   fileId: string,
-  fileType: AnnotationFileType = 'unknown'
+  fileType: AnnotationFileType = 'unknown',
+  documentId: string = fileId,
 ): UniversalAnnotationFile {
   return {
-    version: 2,
+    version: 3,
+    documentId,
     fileId,
     fileType,
     annotations: [],
@@ -282,9 +279,97 @@ export async function ensureAnnotationsDirectory(
   return annotationsDir;
 }
 
+function normalizeLoadedAnnotationFile(input: {
+  annotationFile: UniversalAnnotationFile;
+  canonicalFileId: string;
+  fileType: AnnotationFileType;
+  fallbackDocumentId?: string | null;
+}): UniversalAnnotationFile {
+  const documentId = (
+    input.annotationFile.documentId ||
+    input.fallbackDocumentId ||
+    input.annotationFile.fileId ||
+    input.canonicalFileId
+  );
+
+  return {
+    ...input.annotationFile,
+    version: ANNOTATION_FILE_VERSION,
+    documentId,
+    fileId: input.canonicalFileId,
+    fileType: input.fileType,
+  };
+}
+
+async function mirrorAnnotationFileToCurrentRoot(input: {
+  annotationFile: UniversalAnnotationFile;
+  rootHandle: FileSystemDirectoryHandle;
+  currentFileId: string;
+}): Promise<void> {
+  if (input.annotationFile.fileId === input.currentFileId) {
+    await saveAnnotationsToDisk(input.annotationFile, input.rootHandle);
+    return;
+  }
+
+  await saveAnnotationsToDisk({
+    ...input.annotationFile,
+    fileId: input.currentFileId,
+  }, input.rootHandle);
+}
+
+function buildAnnotationSourceRecord(input: {
+  documentId: string;
+  workspaceKey: string | null;
+  sourcePath: string;
+  sourceKind: AnnotationSourceRecord["sourceKind"];
+  fileId: string;
+  canonicalPath: string | null;
+  relativePathFromRoot: string | null;
+  fileFingerprint: string | null;
+  versionFingerprint?: string | null;
+  updatedAt?: number;
+}): AnnotationSourceRecord {
+  return {
+    documentId: input.documentId,
+    workspaceKey: input.workspaceKey,
+    sourcePath: input.sourcePath,
+    sourceKind: input.sourceKind,
+    fileId: input.fileId,
+    canonicalPath: input.canonicalPath,
+    relativePathFromRoot: input.relativePathFromRoot,
+    fileFingerprint: input.fileFingerprint,
+    versionFingerprint: input.versionFingerprint ?? null,
+    updatedAt: input.updatedAt ?? Date.now(),
+  };
+}
+
+async function registerCurrentRootAnnotationLocation(input: {
+  documentId: string;
+  fileIdentity: FileIdentity;
+  workspaceKey: string | null;
+  fileId: string;
+  sourcePath?: string;
+}): Promise<void> {
+  await registerAnnotationLocation({
+    documentId: input.documentId,
+    alias: {
+      sourcePath: input.sourcePath ?? `${ANNOTATIONS_DIR}/${input.fileId}.json`,
+      canonicalPath: input.fileIdentity.canonicalPath,
+      relativePathFromRoot: input.fileIdentity.relativePathFromRoot,
+      fileId: input.fileId,
+      workspaceKey: input.workspaceKey,
+      fileFingerprint: input.fileIdentity.fileFingerprint,
+      versionFingerprint: input.fileIdentity.versionFingerprint,
+      updatedAt: Date.now(),
+    },
+    fileFingerprint: input.fileIdentity.fileFingerprint,
+    versionFingerprint: input.fileIdentity.versionFingerprint,
+  });
+}
+
 interface NestedAnnotationMatch {
   fileHandle: FileSystemFileHandle;
-  source: AnnotationSourceRecord;
+  source: Omit<AnnotationSourceRecord, "documentId">;
 }
 
 async function loadAnnotationFileHandleFromDirectory(
@@ -431,7 +516,7 @@ async function tryResolveRegistryAnnotationMatch(
           fileId: alias.fileId,
           canonicalPath: alias.canonicalPath,
           relativePathFromRoot: alias.relativePathFromRoot,
-          fileFingerprint: null,
+          fileFingerprint: alias.fileFingerprint ?? null,
           versionFingerprint: alias.versionFingerprint ?? null,
           updatedAt: alias.updatedAt,
         },
@@ -463,24 +548,32 @@ export async function loadAnnotationsForFileIdentity(input: {
       const content = await file.text();
       const parsed = deserializeAnnotationFile(content);
       if (parsed) {
-        await registerAnnotationLocation(input.fileIdentity.fileFingerprint, {
-          sourcePath: `${ANNOTATIONS_DIR}/${currentMatch.fileId}.json`,
-          canonicalPath: input.fileIdentity.canonicalPath,
-          relativePathFromRoot: input.fileIdentity.relativePathFromRoot,
-          fileId: currentMatch.fileId,
+        const normalized = normalizeLoadedAnnotationFile({
+          annotationFile: parsed,
+          canonicalFileId: input.fileIdentity.primaryFileId,
+          fileType,
+        });
+        if (
+          currentMatch.fileId !== input.fileIdentity.primaryFileId ||
+          parsed.fileId !== input.fileIdentity.primaryFileId ||
+          parsed.version !== ANNOTATION_FILE_VERSION
+        ) {
+          await mirrorAnnotationFileToCurrentRoot({
+            annotationFile: normalized,
+            rootHandle: input.rootHandle,
+            currentFileId: input.fileIdentity.primaryFileId,
+          });
+        }
+        await registerCurrentRootAnnotationLocation({
+          documentId: normalized.documentId,
+          fileIdentity: input.fileIdentity,
           workspaceKey: input.workspaceKey,
-          versionFingerprint: input.fileIdentity.versionFingerprint,
-          updatedAt: Date.now(),
-        }, {
-          versionFingerprint: input.fileIdentity.versionFingerprint,
+          fileId: input.fileIdentity.primaryFileId,
         });
         return {
-          annotationFile: {
-            ...parsed,
-            fileId: input.fileIdentity.primaryFileId,
-            fileType,
-          },
-          source: {
+          annotationFile: normalized,
+          source: buildAnnotationSourceRecord({
+            documentId: normalized.documentId,
             workspaceKey: input.workspaceKey,
             sourcePath: `${ANNOTATIONS_DIR}/${currentMatch.fileId}.json`,
             sourceKind: "current-root",
@@ -489,50 +582,12 @@ export async function loadAnnotationsForFileIdentity(input: {
             relativePathFromRoot: input.fileIdentity.relativePathFromRoot,
             fileFingerprint: input.fileIdentity.fileFingerprint,
             versionFingerprint: input.fileIdentity.versionFingerprint,
-            updatedAt: Date.now(),
-          },
+          }),
         };
       }
     }
   } catch {
-    // Fall through to nested / registry.
-  }
-
-  const nestedMatch = await findNestedAnnotationMatch(
-    input.rootHandle,
-    input.fileIdentity.fileIdCandidates,
-    input.workspaceKey,
-  );
-  if (nestedMatch) {
-    try {
-      const file = await nestedMatch.fileHandle.getFile();
-      const parsed = deserializeAnnotationFile(await file.text());
-      if (parsed) {
-        const mirrored = {
-          ...parsed,
-          fileId: input.fileIdentity.primaryFileId,
-          fileType,
-        };
-        await saveAnnotationsToDisk(mirrored, input.rootHandle);
-        await registerAnnotationLocation(input.fileIdentity.fileFingerprint, {
-          sourcePath: `${ANNOTATIONS_DIR}/${input.fileIdentity.primaryFileId}.json`,
-          canonicalPath: input.fileIdentity.canonicalPath,
-          relativePathFromRoot: input.fileIdentity.relativePathFromRoot,
-          fileId: input.fileIdentity.primaryFileId,
-          workspaceKey: input.workspaceKey,
-          versionFingerprint: input.fileIdentity.versionFingerprint,
-          updatedAt: Date.now(),
-        }, {
-          versionFingerprint: input.fileIdentity.versionFingerprint,
-        });
-        return {
-          annotationFile: mirrored,
-          source: nestedMatch.source,
-        };
-      }
-    } catch {
-      // Ignore nested source failure.
-    }
+    // Fall through to registry / nested recovery.
   }
 
   const registryMatchCandidate = await resolveAnnotationRegistryMatch({
@@ -546,26 +601,29 @@ export async function loadAnnotationsForFileIdentity(input: {
       const file = await registryMatch.fileHandle.getFile();
       const parsed = deserializeAnnotationFile(await file.text());
       if (parsed) {
-        const mirrored = {
-          ...parsed,
-          fileId: input.fileIdentity.primaryFileId,
+        const normalized = normalizeLoadedAnnotationFile({
+          annotationFile: parsed,
+          canonicalFileId: input.fileIdentity.primaryFileId,
           fileType,
-        };
-        await saveAnnotationsToDisk(mirrored, input.rootHandle);
-        await registerAnnotationLocation(input.fileIdentity.fileFingerprint, {
-          sourcePath: `${ANNOTATIONS_DIR}/${input.fileIdentity.primaryFileId}.json`,
-          canonicalPath: input.fileIdentity.canonicalPath,
-          relativePathFromRoot: input.fileIdentity.relativePathFromRoot,
-          fileId: input.fileIdentity.primaryFileId,
+          fallbackDocumentId: registryMatchCandidate.documentId,
+        });
+        await mirrorAnnotationFileToCurrentRoot({
+          annotationFile: normalized,
+          rootHandle: input.rootHandle,
+          currentFileId: input.fileIdentity.primaryFileId,
+        });
+        await registerCurrentRootAnnotationLocation({
+          documentId: normalized.documentId,
+          fileIdentity: input.fileIdentity,
           workspaceKey: input.workspaceKey,
-          versionFingerprint: input.fileIdentity.versionFingerprint,
-          updatedAt: Date.now(),
-        }, {
-          versionFingerprint: input.fileIdentity.versionFingerprint,
+          fileId: input.fileIdentity.primaryFileId,
         });
         return {
-          annotationFile: mirrored,
-          source: registryMatch.source,
+          annotationFile: normalized,
+          source: buildAnnotationSourceRecord({
+            documentId: normalized.documentId,
+            ...registryMatch.source,
+          }),
         };
       }
     } catch {
@@ -573,8 +631,51 @@ export async function loadAnnotationsForFileIdentity(input: {
     }
   }
 
+  const nestedMatch = await findNestedAnnotationMatch(
+    input.rootHandle,
+    input.fileIdentity.fileIdCandidates,
+    input.workspaceKey,
+  );
+  if (nestedMatch) {
+    try {
+      const file = await nestedMatch.fileHandle.getFile();
+      const parsed = deserializeAnnotationFile(await file.text());
+      if (parsed) {
+        const normalized = normalizeLoadedAnnotationFile({
+          annotationFile: parsed,
+          canonicalFileId: input.fileIdentity.primaryFileId,
+          fileType,
+        });
+        await mirrorAnnotationFileToCurrentRoot({
+          annotationFile: normalized,
+          rootHandle: input.rootHandle,
+          currentFileId: input.fileIdentity.primaryFileId,
+        });
+        await registerCurrentRootAnnotationLocation({
+          documentId: normalized.documentId,
+          fileIdentity: input.fileIdentity,
+          workspaceKey: input.workspaceKey,
+          fileId: input.fileIdentity.primaryFileId,
+        });
+        return {
+          annotationFile: normalized,
+          source: buildAnnotationSourceRecord({
+            documentId: normalized.documentId,
+            ...nestedMatch.source,
+          }),
+        };
+      }
+    } catch {
+      // Ignore nested source failure.
+    }
+  }
+
   return {
-    annotationFile: createUniversalAnnotationFile(input.fileIdentity.primaryFileId, fileType),
+    annotationFile: createUniversalAnnotationFile(
+      input.fileIdentity.primaryFileId,
+      fileType,
+      input.fileIdentity.primaryFileId,
+    ),
     source: null,
   };
 }
@@ -640,6 +741,8 @@ export async function saveAnnotationsToDisk(
   // Update lastModified timestamp
   const fileToSave: UniversalAnnotationFile = {
     ...annotationFile,
+    version: ANNOTATION_FILE_VERSION,
+    documentId: annotationFile.documentId || annotationFile.fileId,
     lastModified: Date.now(),
   };
   
@@ -744,6 +847,7 @@ export async function copyAnnotationSidecar(
   const nextFileId = resolveAnnotationFileCandidates(targetPath.split("/").pop() ?? targetPath, targetPath)[0];
   await saveAnnotationsToDisk({
     ...current,
+    documentId: nextFileId,
     fileId: nextFileId,
     fileType: current.fileType || fileType,
   }, rootHandle);

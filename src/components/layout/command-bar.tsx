@@ -54,6 +54,8 @@ import {
 
 interface CommandBarProps {
   onOpenWorkspace: () => void;
+  recentWorkspaces?: string[];
+  onOpenRecentWorkspace?: (path: string) => void;
 }
 
 function extractWorkspaceRootName(rootHandleName: string | null | undefined, workspaceRootPath: string | null | undefined): string | null {
@@ -272,6 +274,8 @@ function BreadcrumbScroller({
 
 export function CommandBar({
   onOpenWorkspace,
+  recentWorkspaces = [],
+  onOpenRecentWorkspace,
 }: CommandBarProps) {
   const { t } = useI18n();
   const activePaneId = useWorkspaceStore((state) => state.layout.activePaneId);
@@ -290,10 +294,25 @@ export function CommandBar({
     : null;
   const [isMaximized, setIsMaximized] = useState(false);
   const [overflowOpen, setOverflowOpen] = useState(false);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement | null>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const isWindowsDesktop = isWindowsDesktopHost();
   const workspaceLabel = rootHandle?.name ?? t("shell.workspace.none");
   const workspaceDescription = workspaceRootPath ?? t("shell.workspace.none");
+  const workspaceHistory = useMemo(() => {
+    const normalizedCurrent = (workspaceRootPath ?? "").replace(/\\/g, "/");
+    return recentWorkspaces.filter((path, index, all) => {
+      const normalized = path.replace(/\\/g, "/");
+      if (!normalized) {
+        return false;
+      }
+      if (normalizedCurrent && normalized === normalizedCurrent) {
+        return false;
+      }
+      return all.findIndex((candidate) => candidate.replace(/\\/g, "/") === normalized) === index;
+    }).slice(0, 8);
+  }, [recentWorkspaces, workspaceRootPath]);
   const breadcrumbs = (() => {
     if (scopedRegisteredState?.breadcrumbs?.length) {
       return normalizeBreadcrumbs(scopedRegisteredState.breadcrumbs, rootHandle?.name, workspaceRootPath);
@@ -381,6 +400,21 @@ export function CommandBar({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [overflowOpen]);
 
+  useEffect(() => {
+    if (!workspaceMenuOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!workspaceMenuRef.current?.contains(event.target as Node)) {
+        setWorkspaceMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [workspaceMenuOpen]);
+
   const handleToggleMaximize = useCallback(() => {
     if (!isWindowsDesktop) {
       return;
@@ -446,19 +480,77 @@ export function CommandBar({
           data-tauri-drag-region="false"
           style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
         >
-          <button
-            type="button"
-            onClick={onOpenWorkspace}
-            onMouseDown={(event) => event.stopPropagation()}
-            className="inline-flex max-w-40 shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-2 text-left transition-colors hover:bg-accent"
-            title={workspaceDescription}
-            data-tauri-drag-region="false"
-            data-testid="desktop-commandbar-workspace"
-            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-          >
-            <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="truncate text-sm font-medium text-foreground">{workspaceLabel}</span>
-          </button>
+          <div className="relative shrink-0" ref={workspaceMenuRef}>
+            <button
+              type="button"
+              onClick={() => setWorkspaceMenuOpen((value) => !value)}
+              onMouseDown={(event) => event.stopPropagation()}
+              className="inline-flex max-w-48 shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-2 text-left transition-colors hover:bg-accent"
+              title={t("shell.workspace.switch")}
+              aria-label={t("shell.workspace.switch")}
+              data-tauri-drag-region="false"
+              data-testid="desktop-commandbar-workspace"
+              style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+            >
+              <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="truncate text-sm font-medium text-foreground">{workspaceLabel}</span>
+              <ChevronRight className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", workspaceMenuOpen && "rotate-90")} />
+            </button>
+            {workspaceMenuOpen ? (
+              <div
+                className="absolute left-0 top-[calc(100%+0.5rem)] z-[140] min-w-80 max-w-[28rem] rounded-lg border border-border bg-popover p-2 shadow-xl"
+                data-testid="desktop-commandbar-workspace-menu"
+              >
+                <div className="px-2 py-1">
+                  <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                    {t("shell.workspace.current")}
+                  </div>
+                  <div className="mt-1 truncate text-sm font-medium text-foreground" title={workspaceDescription}>
+                    {workspaceDescription}
+                  </div>
+                </div>
+                <div className="my-2 h-px bg-border" />
+                <div className="px-2 pb-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                  {t("settings.recentWorkspaces")}
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  {workspaceHistory.length > 0 ? workspaceHistory.map((workspacePath) => (
+                    <button
+                      key={workspacePath}
+                      type="button"
+                      onClick={() => {
+                        onOpenRecentWorkspace?.(workspacePath);
+                        setWorkspaceMenuOpen(false);
+                      }}
+                      className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent"
+                      title={workspacePath}
+                      data-testid={`desktop-commandbar-workspace-recent-${workspacePath}`}
+                    >
+                      <FolderOpen className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="truncate text-sm text-foreground">{workspacePath}</span>
+                    </button>
+                  )) : (
+                    <div className="px-2 py-3 text-sm text-muted-foreground">
+                      {t("settings.recentWorkspaces.empty")}
+                    </div>
+                  )}
+                </div>
+                <div className="my-2 h-px bg-border" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenWorkspace();
+                    setWorkspaceMenuOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent"
+                  data-testid="desktop-commandbar-workspace-open-folder"
+                >
+                  <FolderOpen className="h-4 w-4 text-muted-foreground" />
+                  <span>{t("explorer.openFolder")}</span>
+                </button>
+              </div>
+            ) : null}
+          </div>
           {breadcrumbs.length > 0 ? (
             <BreadcrumbScroller breadcrumbs={breadcrumbs} />
           ) : (

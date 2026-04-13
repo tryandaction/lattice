@@ -20,25 +20,31 @@ import { tags } from "@lezer/highlight";
  * Academic theme color palette
  */
 const colors = {
-  background: "transparent",
-  backgroundAlt: "#f9fafb",
-  foreground: "#1f2937",
-  foregroundMuted: "#6b7280",
-  activeLine: "#e5e7eb",
-  selection: "#bfdbfe",
-  selectionFocused: "#93c5fd",
-  cursor: "#374151",
-  gutter: "#9ca3af",
-  // Syntax colors
-  keyword: "#7c3aed",
-  string: "#059669",
-  number: "#d97706",
-  comment: "#9ca3af",
-  function: "#2563eb",
-  variable: "#1f2937",
-  type: "#0891b2",
-  operator: "#6b7280",
-  bracket: "#6b7280",
+  background: "var(--code-surface)",
+  backgroundAlt: "var(--code-gutter-bg)",
+  foreground: "var(--code-fg)",
+  foregroundMuted: "var(--code-fg-soft)",
+  activeLine: "var(--code-active-line)",
+  selection: "var(--code-selection)",
+  selectionFocused: "var(--code-selection-focused)",
+  cursor: "var(--code-cursor)",
+  gutter: "var(--code-fg-soft)",
+  gutterActive: "var(--code-fg-muted)",
+  border: "var(--code-border)",
+  borderStrong: "var(--code-border-strong)",
+  keyword: "var(--code-token-keyword)",
+  string: "var(--code-token-string)",
+  number: "var(--code-token-number)",
+  comment: "var(--code-token-comment)",
+  function: "var(--code-token-function)",
+  variable: "var(--code-token-variable)",
+  type: "var(--code-token-type)",
+  operator: "var(--code-token-operator)",
+  bracket: "var(--code-token-bracket)",
+  matchingBracketBg: "color-mix(in srgb, var(--code-cursor) 14%, transparent)",
+  matchingBracketOutline: "color-mix(in srgb, var(--code-cursor) 48%, transparent)",
+  searchMatch: "rgba(250, 204, 21, 0.18)",
+  searchMatchSelected: "rgba(250, 204, 21, 0.30)",
 };
 
 /**
@@ -57,12 +63,13 @@ export const academicTheme = EditorView.theme({
     fontFamily: "'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     caretColor: colors.cursor,
     padding: "8px 0",
+    color: colors.foreground,
   },
   
   // Gutters (line numbers area)
   ".cm-gutters": {
     backgroundColor: colors.backgroundAlt,
-    borderRight: "none",
+    borderRight: `1px solid ${colors.border}`,
     color: colors.gutter,
   },
   
@@ -70,6 +77,10 @@ export const academicTheme = EditorView.theme({
   ".cm-lineNumbers .cm-gutterElement": {
     padding: "0 12px 0 8px",
     minWidth: "40px",
+  },
+
+  ".cm-foldGutter .cm-gutterElement": {
+    color: colors.gutter,
   },
   
   // Remove focus outline (Requirement 3.5)
@@ -85,6 +96,7 @@ export const academicTheme = EditorView.theme({
   // Active line gutter highlighting
   ".cm-activeLineGutter": {
     backgroundColor: colors.activeLine,
+    color: colors.gutterActive,
   },
   
   // Selection styling
@@ -105,8 +117,8 @@ export const academicTheme = EditorView.theme({
   
   // Matching bracket highlight
   ".cm-matchingBracket": {
-    backgroundColor: "#dbeafe",
-    outline: "1px solid #93c5fd",
+    backgroundColor: colors.matchingBracketBg,
+    outline: `1px solid ${colors.matchingBracketOutline}`,
   },
   
   // Scrollbar styling
@@ -121,12 +133,12 @@ export const academicTheme = EditorView.theme({
   
   // Search match highlighting
   ".cm-searchMatch": {
-    backgroundColor: "#fef08a",
-    outline: "1px solid #facc15",
+    backgroundColor: colors.searchMatch,
+    outline: `1px solid ${colors.matchingBracketOutline}`,
   },
   
   ".cm-searchMatch.cm-searchMatch-selected": {
-    backgroundColor: "#fde047",
+    backgroundColor: colors.searchMatchSelected,
   },
 });
 

@@ -205,11 +205,12 @@ describe('Property 5: Legacy Migration Round-Trip', () => {
       );
     });
 
-    it('sets version to 2', () => {
+    it('sets version to 3', () => {
       fc.assert(
         fc.property(annotationFileArb, (legacyFile) => {
           const migrated = migrateLegacyAnnotationFile(legacyFile);
-          expect(migrated.version).toBe(2);
+          expect(migrated.version).toBe(3);
+          expect(migrated.documentId).toBe(legacyFile.fileId);
         }),
         { numRuns: 100 }
       );
@@ -258,7 +259,8 @@ describe('Property 5: Legacy Migration Round-Trip', () => {
           const migrated = tryMigrateLegacyJson(json);
           
           expect(migrated).not.toBeNull();
-          expect(migrated?.version).toBe(2);
+          expect(migrated?.version).toBe(3);
+          expect(migrated?.documentId).toBe(legacyFile.fileId);
           expect(migrated?.fileId).toBe(legacyFile.fileId);
         }),
         { numRuns: 100 }
@@ -298,7 +300,8 @@ describe('Migration Edge Cases', () => {
     
     const migrated = migrateLegacyAnnotationFile(emptyFile);
     expect(migrated.annotations).toHaveLength(0);
-    expect(migrated.version).toBe(2);
+    expect(migrated.version).toBe(3);
+    expect(migrated.documentId).toBe(emptyFile.fileId);
   });
 
   it('handles annotation with empty comment', () => {

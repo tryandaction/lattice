@@ -133,17 +133,15 @@ export const CodeCell = memo(function CodeCell({
   return (
     <div className="space-y-2" onKeyDown={handleKeyDown}>
       <div className="flex items-center justify-between">
-        <div className="text-xs text-muted-foreground font-mono">
+        <div className="code-workbench-soft-text font-mono text-xs">
           [{executionCount ?? " "}]:
         </div>
 
         <button
           onClick={() => void handleRun()}
           disabled={isExecuting || !canRun || !onRunCell || !content.trim()}
-          className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md
-                     bg-primary/10 hover:bg-primary/20 text-primary
-                     disabled:opacity-50 disabled:cursor-not-allowed
-                     transition-colors"
+          className="code-workbench-button flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium
+                     disabled:cursor-not-allowed disabled:opacity-50"
           title={canRun ? t("notebook.cell.runShortcut") : t("notebook.cell.runtimeNotReady")}
         >
           <PlayIcon className="w-3 h-3" />
@@ -152,7 +150,7 @@ export const CodeCell = memo(function CodeCell({
       </div>
 
       <div
-        className={`rounded-lg overflow-hidden border-2 transition-colors ${isActive ? "border-primary" : "border-border"}`}
+        className={`code-workbench-panel rounded-lg overflow-hidden border-2 transition-colors ${isActive ? "border-primary" : ""}`}
         onClick={onFocus}
       >
         <CodeEditor
@@ -176,14 +174,14 @@ export const CodeCell = memo(function CodeCell({
 
       {problems.length > 0 ? (
         <div className="space-y-1">
-          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t("workbench.dock.problems")}</div>
+          <div className="code-workbench-soft-text text-[11px] uppercase tracking-wide">{t("workbench.dock.problems")}</div>
           <ProblemsPanel problems={problems} variant="compact" onSelectProblem={navigateToProblem} />
         </div>
       ) : null}
 
       {executionOutputs.length > 0 ? (
         <div className="space-y-1">
-          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t("workbench.dock.run")}</div>
+          <div className="code-workbench-soft-text text-[11px] uppercase tracking-wide">{t("workbench.dock.run")}</div>
           <OutputArea outputs={executionOutputs} meta={executionMeta} variant="compact" showDiagnosticsInline={false} />
         </div>
       ) : null}

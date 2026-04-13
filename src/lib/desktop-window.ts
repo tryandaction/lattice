@@ -1,7 +1,7 @@
 "use client";
 
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { isTauriHost, waitForTauriInvokeReady } from "@/lib/storage-adapter";
+import { invokeTauriCommand, isTauriHost } from "@/lib/storage-adapter";
 
 export type DesktopResizeDirection =
   | "north"
@@ -63,13 +63,8 @@ async function invokeDesktopWindowCommand<T>(
   command: string,
   args?: Record<string, unknown>,
 ): Promise<T | null> {
-  const invoke = await waitForTauriInvokeReady();
-  if (!invoke) {
-    return null;
-  }
-
   try {
-    return await invoke<T>(command, args);
+    return await invokeTauriCommand<T>(command, args, { timeoutMs: 4000 });
   } catch (error) {
     console.error(`[DesktopWindow] ${command} failed:`, error);
     return null;

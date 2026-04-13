@@ -13,6 +13,7 @@ import {
   File,
   Presentation,
   BookOpen,
+  Loader2,
 } from "lucide-react";
 import type { TreeNode, FileNode, DirectoryNode } from "@/types/file-system";
 import { isFileNode, isDirectoryNode } from "@/types/file-system";
@@ -179,7 +180,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   const closeTabsByPath = useWorkspaceStore((state) => state.closeTabsByPath);
   const updateTabPath = useWorkspaceStore((state) => state.updateTabPath);
   const layout = useWorkspaceStore((state) => state.layout);
-  const { deleteFile, renameFile, refreshDirectory, rootHandle } = useFileSystem();
+  const { deleteFile, renameFile, refreshDirectory, rootHandle, hydratePdfVirtualChildren } = useFileSystem();
   const selectedPath = useExplorerStore((state) => state.selectedPath);
   const renamingPath = useExplorerStore((state) => state.renamingPath);
   const clipboard = useExplorerStore((state) => state.clipboard);
@@ -198,8 +199,9 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   const isRenaming = renamingPath === node.path;
   const isSelected = selectedPath === node.path;
   const isCutItem = clipboard?.mode === "cut" && clipboard.path === node.path;
-  const hasChildren = Boolean(node.children?.length);
-  const ChevronIcon = node.isExpanded ? ChevronDown : ChevronRight;
+  const hasChildren = Boolean(node.children?.length || node.canExpandVirtualChildren);
+  const childNodes = node.children ?? [];
+  const ChevronIcon = node.virtualChildrenState === "loading" ? Loader2 : node.isExpanded ? ChevronDown : ChevronRight;
 
   const { openCount, isActiveFile } = useMemo(() => {
     const paneIds = getAllPaneIds(layout.root);
@@ -230,6 +232,19 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
       selectFileName(inputRef.current, node.name);
     }
   }, [isRenaming, node.name]);
+
+  useEffect(() => {
+    if (
+      node.extension === "pdf" &&
+      !node.isVirtual &&
+      node.canExpandVirtualChildren &&
+      node.isExpanded &&
+      node.virtualChildrenState !== "loading" &&
+      node.virtualChildrenState !== "ready"
+    ) {
+      void hydratePdfVirtualChildren(node.path, { expand: true });
+    }
+  }, [hydratePdfVirtualChildren, node.canExpandVirtualChildren, node.extension, node.isExpanded, node.isVirtual, node.path, node.virtualChildrenState]);
 
   const handleRename = useCallback(async () => {
     const trimmedName = renameValue.trim();
@@ -308,8 +323,9 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
     const baseName = type === "note" ? "Untitled" : "Lab Notebook";
     const created = await createPdfItemNote(rootHandle, manifest, type, baseName);
     await refreshDirectory({ silent: true });
+    await hydratePdfVirtualChildren(node.path, { force: true, expand: true });
     openFileInPane(layout.activePaneId, created.handle, created.path);
-  }, [ensurePdfWorkspace, layout.activePaneId, openFileInPane, refreshDirectory, rootHandle]);
+  }, [ensurePdfWorkspace, hydratePdfVirtualChildren, layout.activePaneId, openFileInPane, refreshDirectory, rootHandle, node.path]);
 
   const handleRenameKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
@@ -395,7 +411,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
               className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
               title={node.isExpanded ? t("explorer.pdf.collapseChildren") : t("explorer.pdf.expandChildren")}
             >
-              <ChevronIcon className="h-4 w-4 shrink-0" />
+              <ChevronIcon className={`h-4 w-4 shrink-0${node.virtualChildrenState === "loading" ? " animate-spin" : ""}`} />
             </button>
           ) : (
             <span className="w-4 shrink-0" />
@@ -433,7 +449,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
 
       {hasChildren && node.isExpanded ? (
         <div className="animate-in fade-in-0 slide-in-from-top-1 duration-150">
-          {node.children!.map((child) => (
+          {childNodes.map((child) => (
             <TreeNodeComponent
               key={`${node.path}::${child.path}`}
               node={child}

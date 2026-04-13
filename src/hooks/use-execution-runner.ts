@@ -96,6 +96,32 @@ function deriveCommandState(session: {
   };
 }
 
+function isSameCapability(left: RunnerCapabilityModel, right: RunnerCapabilityModel): boolean {
+  return (
+    left.supportsSelection === right.supportsSelection &&
+    left.supportsPersistentSession === right.supportsPersistentSession &&
+    left.supportsNotebook === right.supportsNotebook &&
+    left.supportsLocalExecution === right.supportsLocalExecution &&
+    left.supportsPyodide === right.supportsPyodide &&
+    left.canRun === right.canRun &&
+    left.canStop === right.canStop &&
+    left.canInterrupt === right.canInterrupt &&
+    left.canRestart === right.canRestart
+  );
+}
+
+function isSameCommandState(left: ExecutionCommandState, right: ExecutionCommandState): boolean {
+  return (
+    left.canRun === right.canRun &&
+    left.canRerun === right.canRerun &&
+    left.canStop === right.canStop &&
+    left.canInterrupt === right.canInterrupt &&
+    left.canRestart === right.canRestart &&
+    left.canVerifyRuntime === right.canVerifyRuntime &&
+    left.canSelectRuntime === right.canSelectRuntime
+  );
+}
+
 function setCodeFailure(
   scopeId: string,
   stage: ExecutionFailureStage,
@@ -345,18 +371,26 @@ export function useExecutionRunner(options: UseExecutionRunnerOptions = {}): Use
       ...options.capability,
     };
     patchExecutionSession(scope.scopeId, (state) => {
+      const commandState = deriveCommandState({
+        activeRunId: state.activeRunId,
+        lastRequest: state.lastRequest,
+        capability,
+        lifecyclePhase: state.lifecyclePhase,
+      });
+      if (
+        isSameCapability(state.capability, capability) &&
+        isSameCommandState(state.commandState, commandState)
+      ) {
+        return state;
+      }
+
       const next = {
         ...state,
         capability,
       };
       return {
         ...next,
-        commandState: deriveCommandState({
-          activeRunId: next.activeRunId,
-          lastRequest: next.lastRequest,
-          capability: next.capability,
-          lifecyclePhase: next.lifecyclePhase,
-        }),
+        commandState,
       };
     });
   }, [fallbackState.capability, options.capability, scope.scopeId]);

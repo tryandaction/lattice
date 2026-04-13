@@ -22,15 +22,26 @@ import {
   resolveAnnotationFileCandidates,
   saveAnnotationsToDisk,
 } from "@/lib/universal-annotation-storage";
+import { removeAnnotationDocumentAliases } from "@/lib/annotation-registry";
 import type { AnnotationBacklink } from "@/lib/annotation-backlinks";
-import type { AnnotationItem, UniversalAnnotationFile } from "@/types/universal-annotation";
+import { getCanonicalPdfAnnotationText, type AnnotationItem, type UniversalAnnotationFile } from "@/types/universal-annotation";
+import type { ResolvedPdfDocumentBinding } from "@/lib/pdf-document-binding";
 
-const PDF_ITEM_MANIFEST_VERSION = 3;
+const PDF_ITEM_MANIFEST_VERSION = 4;
 const PDF_ITEM_MANIFEST_NAME = "manifest.json";
 const PDF_ITEMS_DIR = ".lattice/items";
 const LEGACY_PDF_ITEMS_DIR = ".lattice/pdf-items";
 const LEGACY_OVERVIEW_NOTE_NAME = "_overview.md";
 const DEFAULT_ANNOTATIONS_NOTE_NAME = "_annotations.md";
+
+export interface PdfItemManifestIndex {
+  byDocumentId: Map<string, PdfItemManifest>;
+  byKnownPdfPath: Map<string, PdfItemManifest>;
+  byCurrentItemFolder: Map<string, PdfItemManifest>;
+}
+
+const pdfItemManifestIndexCache = new WeakMap<FileSystemDirectoryHandle, PdfItemManifestIndex>();
+const pdfItemManifestIndexPromiseCache = new WeakMap<FileSystemDirectoryHandle, Promise<PdfItemManifestIndex>>();
 
 interface LegacyPdfItemManifest {
   version: 1;
@@ -43,11 +54,14 @@ interface LegacyPdfItemManifest {
 }
 
 export interface PdfItemManifest {
-  version: 3;
-  itemId: string;
+  version: 4;
+  itemId: string;                // Stable documentId
   pdfPath: string;
   itemFolderPath: string;
   annotationIndexPath: string | null;
+  fileFingerprint: string | null;
+  versionFingerprint: string | null;
+  knownPdfPaths: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -83,11 +97,14 @@ function isPdfItemManifest(value: unknown): value is PdfItemManifest {
 
   const candidate = value as Record<string, unknown>;
   return (
-    (candidate.version === 2 || candidate.version === PDF_ITEM_MANIFEST_VERSION) &&
+    (candidate.version === 2 || candidate.version === 3 || candidate.version === PDF_ITEM_MANIFEST_VERSION) &&
     typeof candidate.itemId === "string" &&
     typeof candidate.pdfPath === "string" &&
     typeof candidate.itemFolderPath === "string" &&
     (candidate.annotationIndexPath === null || typeof candidate.annotationIndexPath === "string") &&
+    (candidate.fileFingerprint === null || candidate.fileFingerprint === undefined || typeof candidate.fileFingerprint === "string") &&
+    (candidate.versionFingerprint === null || candidate.versionFingerprint === undefined || typeof candidate.versionFingerprint === "string") &&
+    (candidate.knownPdfPaths === undefined || Array.isArray(candidate.knownPdfPaths)) &&
     typeof candidate.createdAt === "number" &&
     typeof candidate.updatedAt === "number"
   );
@@ -140,14 +157,21 @@ function normalizePdfItemManifest(input: {
   pdfPath: string;
   itemFolderPath: string;
   annotationIndexPath?: string | null;
+  fileFingerprint?: string | null;
+  versionFingerprint?: string | null;
+  knownPdfPaths?: string[];
   createdAt?: number;
   updatedAt?: number;
 }): PdfItemManifest {
   const normalizedPdfPath = normalizeWorkspacePath(input.pdfPath);
   const normalizedFolderPath = normalizeWorkspacePath(input.itemFolderPath);
   const createdAt = input.createdAt ?? Date.now();
+  const knownPdfPaths = Array.from(new Set([
+    normalizedPdfPath,
+    ...(input.knownPdfPaths ?? []).map((path) => normalizeWorkspacePath(path)),
+  ]));
   return {
-    version: 3,
+    version: 4,
     itemId: input.itemId,
     pdfPath: normalizedPdfPath,
     itemFolderPath: normalizedFolderPath,
@@ -156,6 +180,9 @@ function normalizePdfItemManifest(input: {
       : input.annotationIndexPath
         ? normalizeWorkspacePath(input.annotationIndexPath)
         : null,
+    fileFingerprint: input.fileFingerprint ?? null,
+    versionFingerprint: input.versionFingerprint ?? null,
+    knownPdfPaths,
     createdAt,
     updatedAt: input.updatedAt ?? createdAt,
   };
@@ -342,9 +369,12 @@ async function loadManifestFromItemFolder(
     if (isPdfItemManifest(parsed)) {
       return normalizePdfItemManifest({
         itemId: parsed.itemId,
-        pdfPath: fallbackPdfPath,
+        pdfPath: parsed.pdfPath || fallbackPdfPath,
         itemFolderPath: parsed.itemFolderPath || itemFolderPath,
         annotationIndexPath: parsed.annotationIndexPath ?? getPdfItemAnnotationIndexPath(itemFolderPath),
+        fileFingerprint: typeof parsed.fileFingerprint === "string" ? parsed.fileFingerprint : null,
+        versionFingerprint: typeof parsed.versionFingerprint === "string" ? parsed.versionFingerprint : null,
+        knownPdfPaths: Array.isArray(parsed.knownPdfPaths) ? parsed.knownPdfPaths.filter((path): path is string => typeof path === "string") : [fallbackPdfPath],
         createdAt: parsed.createdAt,
         updatedAt: parsed.updatedAt,
       });
@@ -371,6 +401,88 @@ async function loadLegacyManifest(
   } catch {
     return null;
   }
+}
+
+async function collectCurrentPdfItemManifests(
+  rootHandle: FileSystemDirectoryHandle,
+): Promise<PdfItemManifest[]> {
+  const itemsRoot = await resolveDirectoryHandle(rootHandle, PDF_ITEMS_DIR);
+  if (!itemsRoot) {
+    return [];
+  }
+
+  const manifests: PdfItemManifest[] = [];
+  for await (const entry of itemsRoot.values()) {
+    if (entry.kind !== "directory") {
+      continue;
+    }
+
+    const candidate = await loadManifestFromItemFolder(
+      rootHandle,
+      joinPath(PDF_ITEMS_DIR, entry.name),
+      joinPath(PDF_ITEMS_DIR, entry.name),
+    );
+    if (candidate) {
+      manifests.push(candidate);
+    }
+  }
+
+  return manifests;
+}
+
+function buildPdfItemManifestIndex(manifests: PdfItemManifest[]): PdfItemManifestIndex {
+  const byDocumentId = new Map<string, PdfItemManifest>();
+  const byKnownPdfPath = new Map<string, PdfItemManifest>();
+  const byCurrentItemFolder = new Map<string, PdfItemManifest>();
+
+  manifests.forEach((manifest) => {
+    byDocumentId.set(manifest.itemId, manifest);
+    byCurrentItemFolder.set(normalizeWorkspacePath(manifest.itemFolderPath), manifest);
+    manifest.knownPdfPaths.forEach((path) => {
+      byKnownPdfPath.set(normalizeWorkspacePath(path), manifest);
+    });
+    byKnownPdfPath.set(normalizeWorkspacePath(manifest.pdfPath), manifest);
+  });
+
+  return {
+    byDocumentId,
+    byKnownPdfPath,
+    byCurrentItemFolder,
+  };
+}
+
+export function invalidatePdfItemManifestIndex(rootHandle: FileSystemDirectoryHandle): void {
+  pdfItemManifestIndexCache.delete(rootHandle);
+  pdfItemManifestIndexPromiseCache.delete(rootHandle);
+}
+
+export async function getPdfItemManifestIndex(
+  rootHandle: FileSystemDirectoryHandle,
+): Promise<PdfItemManifestIndex> {
+  const cached = pdfItemManifestIndexCache.get(rootHandle);
+  if (cached) {
+    return cached;
+  }
+
+  const pending = pdfItemManifestIndexPromiseCache.get(rootHandle);
+  if (pending) {
+    return pending;
+  }
+
+  const nextPromise = collectCurrentPdfItemManifests(rootHandle)
+    .then((manifests) => {
+      const index = buildPdfItemManifestIndex(manifests);
+      pdfItemManifestIndexCache.set(rootHandle, index);
+      pdfItemManifestIndexPromiseCache.delete(rootHandle);
+      return index;
+    })
+    .catch((error) => {
+      pdfItemManifestIndexPromiseCache.delete(rootHandle);
+      throw error;
+    });
+
+  pdfItemManifestIndexPromiseCache.set(rootHandle, nextPromise);
+  return nextPromise;
 }
 
 async function hasLegacyPdfItemWorkspace(
@@ -422,6 +534,25 @@ function buildPdfMarkdownTemplate(input: {
     "",
     "",
   ].join("\n");
+}
+
+function stripLegacyPdfNoteFrontmatter(content: string, fallbackTitle: string): string {
+  const frontmatterMatch = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?/);
+  if (!frontmatterMatch) {
+    return content;
+  }
+
+  const frontmatter = frontmatterMatch[1];
+  if (!/^\s*type:\s*"?pdf-note"?\s*$/m.test(frontmatter)) {
+    return content;
+  }
+
+  const remainder = content.slice(frontmatterMatch[0].length).trimStart();
+  if (remainder.length > 0) {
+    return remainder;
+  }
+
+  return buildPdfMarkdownTemplate({ title: fallbackTitle });
 }
 
 function buildPdfNotebookTemplate(input: {
@@ -509,7 +640,7 @@ function syncPdfNotebookContent(
   }
 }
 
-async function syncPdfManagedFiles(
+export async function syncPdfManagedFiles(
   rootHandle: FileSystemDirectoryHandle,
   manifest: PdfItemManifest,
 ): Promise<void> {
@@ -540,6 +671,11 @@ async function syncPdfManagedFiles(
 
     if (lowerName.endsWith(".ipynb")) {
       nextContent = syncPdfNotebookContent(content, manifest, filePath);
+    } else if (lowerName.endsWith(".md")) {
+      nextContent = stripLegacyPdfNoteFrontmatter(
+        content,
+        fileName.replace(/\.md$/i, "") || "Reading Note",
+      );
     }
 
     if (nextContent !== content) {
@@ -621,8 +757,9 @@ export function buildPdfAnnotationsMarkdown(input: {
     lines.push(`### ${index + 1}. ${getAnnotationTypeLabel(annotation)}`);
     lines.push(`- Page Link: [Page ${annotation.target.page}](${relativePdfPath}#page=${annotation.target.page})`);
     lines.push(`- Annotation Link: [${annotation.id}](${relativePdfPath}#annotation=${annotation.id})`);
-    if (annotation.content?.trim()) {
-      lines.push(`- Quote: ${annotation.content.trim()}`);
+    const quoteText = getCanonicalPdfAnnotationText(annotation);
+    if (quoteText) {
+      lines.push(`- Quote: ${quoteText}`);
     }
     if (annotation.comment?.trim()) {
       lines.push(`- Comment: ${annotation.comment.trim()}`);
@@ -646,21 +783,81 @@ export async function loadPdfItemManifest(
   rootHandle: FileSystemDirectoryHandle,
   fileId: string,
   pdfPath: string,
+  options?: {
+    documentId?: string | null;
+    knownPdfPaths?: string[];
+    fileFingerprint?: string | null;
+    versionFingerprint?: string | null;
+  },
 ): Promise<PdfItemManifest> {
   const normalizedPdfPath = normalizeWorkspacePath(pdfPath);
   const targetFolderPath = getDefaultPdfItemFolderPath(normalizedPdfPath);
+  const documentId = options?.documentId ?? fileId;
+  const knownPdfPaths = Array.from(new Set([
+    normalizedPdfPath,
+    ...(options?.knownPdfPaths ?? []).map((path) => normalizeWorkspacePath(path)),
+  ]));
 
   const hiddenManifest = await loadManifestFromItemFolder(rootHandle, targetFolderPath, normalizedPdfPath);
   if (hiddenManifest) {
-    return hiddenManifest;
+    return normalizePdfItemManifest({
+      ...hiddenManifest,
+      itemId: hiddenManifest.itemId || documentId,
+      pdfPath: normalizedPdfPath,
+      itemFolderPath: hiddenManifest.itemFolderPath,
+      annotationIndexPath: hiddenManifest.annotationIndexPath,
+      fileFingerprint: options?.fileFingerprint ?? hiddenManifest.fileFingerprint,
+      versionFingerprint: options?.versionFingerprint ?? hiddenManifest.versionFingerprint,
+      knownPdfPaths: [...hiddenManifest.knownPdfPaths, ...knownPdfPaths],
+      createdAt: hiddenManifest.createdAt,
+      updatedAt: hiddenManifest.updatedAt,
+    });
   }
 
   const hiddenFolder = await resolveDirectoryHandle(rootHandle, targetFolderPath);
   if (hiddenFolder) {
     return normalizePdfItemManifest({
-      itemId: fileId,
+      itemId: documentId,
       pdfPath: normalizedPdfPath,
       itemFolderPath: targetFolderPath,
+      fileFingerprint: options?.fileFingerprint ?? null,
+      versionFingerprint: options?.versionFingerprint ?? null,
+      knownPdfPaths,
+    });
+  }
+
+  const manifestIndex = await getPdfItemManifestIndex(rootHandle);
+  const exactDocumentMatch = manifestIndex.byDocumentId.get(documentId) ?? null;
+  if (exactDocumentMatch) {
+    return normalizePdfItemManifest({
+      ...exactDocumentMatch,
+      pdfPath: normalizedPdfPath,
+      itemFolderPath: exactDocumentMatch.itemFolderPath,
+      annotationIndexPath: exactDocumentMatch.annotationIndexPath,
+      fileFingerprint: options?.fileFingerprint ?? exactDocumentMatch.fileFingerprint,
+      versionFingerprint: options?.versionFingerprint ?? exactDocumentMatch.versionFingerprint,
+      knownPdfPaths: [...exactDocumentMatch.knownPdfPaths, ...knownPdfPaths],
+      createdAt: exactDocumentMatch.createdAt,
+      updatedAt: exactDocumentMatch.updatedAt,
+    });
+  }
+
+  const knownPathMatch = knownPdfPaths
+    .map((path) => manifestIndex.byKnownPdfPath.get(path))
+    .find((manifest): manifest is PdfItemManifest => Boolean(manifest))
+    ?? manifestIndex.byCurrentItemFolder.get(targetFolderPath)
+    ?? null;
+  if (knownPathMatch) {
+    return normalizePdfItemManifest({
+      ...knownPathMatch,
+      pdfPath: normalizedPdfPath,
+      itemFolderPath: knownPathMatch.itemFolderPath,
+      annotationIndexPath: knownPathMatch.annotationIndexPath,
+      fileFingerprint: options?.fileFingerprint ?? knownPathMatch.fileFingerprint,
+      versionFingerprint: options?.versionFingerprint ?? knownPathMatch.versionFingerprint,
+      knownPdfPaths: [...knownPathMatch.knownPdfPaths, ...knownPdfPaths],
+      createdAt: knownPathMatch.createdAt,
+      updatedAt: knownPathMatch.updatedAt,
     });
   }
 
@@ -672,9 +869,12 @@ export async function loadPdfItemManifest(
     const legacyFolder = await resolveDirectoryHandle(rootHandle, legacyFolderPath);
     if (legacyFolder) {
       return normalizePdfItemManifest({
-        itemId: legacyManifest.fileId || fileId,
+        itemId: legacyManifest.fileId || documentId,
         pdfPath: normalizedPdfPath,
         itemFolderPath: legacyFolderPath,
+        fileFingerprint: options?.fileFingerprint ?? null,
+        versionFingerprint: options?.versionFingerprint ?? null,
+        knownPdfPaths,
         createdAt: legacyManifest.createdAt,
         updatedAt: legacyManifest.updatedAt,
       });
@@ -685,9 +885,12 @@ export async function loadPdfItemManifest(
   const legacyHiddenFolder = await resolveDirectoryHandle(rootHandle, legacyHiddenFolderPath);
   if (legacyHiddenFolder) {
     return normalizePdfItemManifest({
-      itemId: fileId,
+      itemId: documentId,
       pdfPath: normalizedPdfPath,
       itemFolderPath: legacyHiddenFolderPath,
+      fileFingerprint: options?.fileFingerprint ?? null,
+      versionFingerprint: options?.versionFingerprint ?? null,
+      knownPdfPaths,
     });
   }
 
@@ -695,13 +898,35 @@ export async function loadPdfItemManifest(
   const legacyFolder = await resolveDirectoryHandle(rootHandle, legacyFolderPath);
   if (legacyFolder) {
     return normalizePdfItemManifest({
-      itemId: fileId,
+      itemId: documentId,
       pdfPath: normalizedPdfPath,
       itemFolderPath: legacyFolderPath,
+      fileFingerprint: options?.fileFingerprint ?? null,
+      versionFingerprint: options?.versionFingerprint ?? null,
+      knownPdfPaths,
     });
   }
 
-  return createDefaultPdfItemManifest(fileId, normalizedPdfPath);
+  return createDefaultPdfItemManifest(documentId, normalizedPdfPath);
+}
+
+export async function loadPdfItemManifestForBinding(
+  rootHandle: FileSystemDirectoryHandle,
+  binding: Pick<ResolvedPdfDocumentBinding, "documentId" | "fileIdentity">,
+): Promise<PdfItemManifest> {
+  return loadPdfItemManifest(
+    rootHandle,
+    binding.fileIdentity.primaryFileId,
+    binding.fileIdentity.relativePathFromRoot,
+    {
+      documentId: binding.documentId,
+      knownPdfPaths: [
+        binding.fileIdentity.relativePathFromRoot,
+      ],
+      fileFingerprint: binding.fileIdentity.fileFingerprint,
+      versionFingerprint: binding.fileIdentity.versionFingerprint,
+    },
+  );
 }
 
 export async function hasPersistedPdfAnnotations(
@@ -751,11 +976,15 @@ export async function savePdfItemManifest(
     pdfPath: manifest.pdfPath,
     itemFolderPath: manifest.itemFolderPath,
     annotationIndexPath: manifest.annotationIndexPath,
+    fileFingerprint: manifest.fileFingerprint,
+    versionFingerprint: manifest.versionFingerprint,
+    knownPdfPaths: manifest.knownPdfPaths,
     createdAt: manifest.createdAt,
     updatedAt: Date.now(),
   });
   const dirHandle = await ensureNestedDirectory(rootHandle, normalizedManifest.itemFolderPath);
   await writeTextFile(dirHandle, PDF_ITEM_MANIFEST_NAME, JSON.stringify(normalizedManifest, null, 2));
+  invalidatePdfItemManifestIndex(rootHandle);
   return normalizedManifest;
 }
 
@@ -770,14 +999,24 @@ export async function ensurePdfItemWorkspace(
   rootHandle: FileSystemDirectoryHandle,
   fileId: string,
   pdfPath: string,
+  options?: {
+    documentId?: string | null;
+    knownPdfPaths?: string[];
+    fileFingerprint?: string | null;
+    versionFingerprint?: string | null;
+  },
 ): Promise<PdfItemManifest> {
   const normalizedPdfPath = normalizeWorkspacePath(pdfPath);
-  const loadedManifest = await loadPdfItemManifest(rootHandle, fileId, normalizedPdfPath);
+  const loadedManifest = await loadPdfItemManifest(rootHandle, fileId, normalizedPdfPath, options);
   const targetFolderPath = getDefaultPdfItemFolderPath(normalizedPdfPath);
   const nextManifest = normalizePdfItemManifest({
     itemId: loadedManifest.itemId,
     pdfPath: normalizedPdfPath,
     itemFolderPath: targetFolderPath,
+    annotationIndexPath: loadedManifest.annotationIndexPath,
+    fileFingerprint: options?.fileFingerprint ?? loadedManifest.fileFingerprint,
+    versionFingerprint: options?.versionFingerprint ?? loadedManifest.versionFingerprint,
+    knownPdfPaths: [...loadedManifest.knownPdfPaths, ...(options?.knownPdfPaths ?? []), normalizedPdfPath],
     createdAt: loadedManifest.createdAt,
     updatedAt: loadedManifest.updatedAt,
   });
@@ -799,6 +1038,23 @@ export async function ensurePdfItemWorkspace(
   await removeFileIfExists(rootHandle, getLegacyPdfItemManifestPath(fileId));
   await removeDirectoryIfExists(rootHandle, getLegacyHiddenPdfItemFolderPath(normalizedPdfPath));
   return persistedManifest;
+}
+
+export async function ensurePdfItemWorkspaceForBinding(
+  rootHandle: FileSystemDirectoryHandle,
+  binding: Pick<ResolvedPdfDocumentBinding, "documentId" | "fileIdentity">,
+): Promise<PdfItemManifest> {
+  return ensurePdfItemWorkspace(
+    rootHandle,
+    binding.fileIdentity.primaryFileId,
+    binding.fileIdentity.relativePathFromRoot,
+    {
+      documentId: binding.documentId,
+      knownPdfPaths: [binding.fileIdentity.relativePathFromRoot],
+      fileFingerprint: binding.fileIdentity.fileFingerprint,
+      versionFingerprint: binding.fileIdentity.versionFingerprint,
+    },
+  );
 }
 
 export async function migrateLegacyPdfItemWorkspaces(
@@ -958,6 +1214,7 @@ async function cloneAnnotationFileWithNewId(
   const sourceAnnotationFile = await loadAnnotationsFromDisk(sourceItemId, rootHandle, "pdf");
   const clonedAnnotationFile: UniversalAnnotationFile = {
     ...sourceAnnotationFile,
+    documentId: targetItemId,
     fileId: targetItemId,
     lastModified: Date.now(),
   };
@@ -992,6 +1249,9 @@ export async function movePdfItemWorkspace(
     annotationIndexPath: sourceManifest.annotationIndexPath
       ? getPdfItemAnnotationIndexPath(targetFolderPath)
       : null,
+    fileFingerprint: sourceManifest.fileFingerprint,
+    versionFingerprint: sourceManifest.versionFingerprint,
+    knownPdfPaths: [...sourceManifest.knownPdfPaths, targetPath],
     createdAt: sourceManifest.createdAt,
     updatedAt: Date.now(),
   });
@@ -1034,6 +1294,9 @@ export async function copyPdfItemWorkspace(
     annotationIndexPath: clonedAnnotationFile.annotations.some((annotation) => annotation.target.type === "pdf")
       ? getPdfItemAnnotationIndexPath(targetFolderPath)
       : null,
+    fileFingerprint: sourceManifest.fileFingerprint,
+    versionFingerprint: sourceManifest.versionFingerprint,
+    knownPdfPaths: [targetPath],
     createdAt: Date.now(),
     updatedAt: Date.now(),
   });
@@ -1060,7 +1323,9 @@ export async function deletePdfItemWorkspace(
   if (manifest.itemId !== fallbackFileId) {
     await deleteAnnotationsFromDisk(fallbackFileId, rootHandle);
   }
+  await removeAnnotationDocumentAliases({ documentId: manifest.itemId });
   await removeFileIfExists(rootHandle, getLegacyPdfItemManifestPath(fallbackFileId));
   await removeDirectoryIfExists(rootHandle, getLegacyHiddenPdfItemFolderPath(normalizedPdfPath));
   await removeDirectoryIfExists(rootHandle, getLegacyPdfItemFolderPath(normalizedPdfPath));
+  invalidatePdfItemManifestIndex(rootHandle);
 }

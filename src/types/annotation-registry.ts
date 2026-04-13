@@ -1,4 +1,5 @@
 export interface AnnotationSourceRecord {
+  documentId: string;
   workspaceKey: string | null;
   sourcePath: string;
   sourceKind: "current-root" | "nested-lattice" | "registry";
@@ -11,17 +12,20 @@ export interface AnnotationSourceRecord {
 }
 
 export interface AnnotationLocationAlias {
+  documentId: string;
   sourcePath: string;
   canonicalPath: string | null;
   relativePathFromRoot: string | null;
   fileId: string;
   workspaceKey: string | null;
+  fileFingerprint?: string | null;
   versionFingerprint?: string | null;
   updatedAt: number;
 }
 
 export interface AnnotationRegistryConflict {
   canonicalPath: string;
+  contenderDocumentIds: string[];
   contenderFingerprints: string[];
   contenderVersionFingerprints: string[];
   workspaceKeys: Array<string | null>;
@@ -32,7 +36,8 @@ export interface AnnotationRegistryConflict {
 }
 
 export interface AnnotationRegistryEntry {
-  fileFingerprint: string;
+  documentId: string;
+  fileFingerprints: string[];
   versionFingerprints: string[];
   canonicalPaths: string[];
   aliases: AnnotationLocationAlias[];

@@ -1,5 +1,4 @@
-import type { Content, ScaledPosition } from "react-pdf-highlighter";
-import type { ImageAnnotationPreview } from "@/types/universal-annotation";
+import type { BoundingBox, ImageAnnotationPreview, PdfTextQuote } from "@/types/universal-annotation";
 
 export type PdfSelectionPhase =
   | "idle"
@@ -7,8 +6,6 @@ export type PdfSelectionPhase =
   | "frozen"
   | "committed"
   | "cancelled";
-
-export type PdfSelectionSourceTrust = "native" | "library";
 
 export interface PdfSelectionClientRect {
   left: number;
@@ -33,14 +30,21 @@ export interface PdfTransientSelectionRect {
   pageNumber: number;
 }
 
+export interface PdfCanonicalSelection {
+  pageNumber: number;
+  startOffset: number;
+  endOffset: number;
+  text: string;
+  textQuote: PdfTextQuote;
+  pageRects: BoundingBox[];
+  viewportRects: PdfTransientSelectionRect[];
+}
+
 export type PdfOverlayRectsByPage = Record<number, PdfTransientSelectionRect[]>;
 
-export interface PdfSelectionSnapshot {
-  text: string;
-  scaledPosition: ScaledPosition;
+export interface PdfSelectionSnapshot extends PdfCanonicalSelection {
   overlayRectsByPage: PdfOverlayRectsByPage;
   pageNumbers: number[];
-  sourceTrust: PdfSelectionSourceTrust;
   signature: string;
 }
 
@@ -58,7 +62,7 @@ function round(value: number, precision = 4): string {
 }
 
 function normalizeText(text: string | undefined): string {
-  return (text ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+  return (text ?? "").replace(/\s+/g, " ").trim().slice(0, 240);
 }
 
 function sortSelectionRects(rects: PdfTransientSelectionRect[]): PdfTransientSelectionRect[] {
@@ -80,55 +84,26 @@ function buildOverlayRectsByPage(rects: PdfTransientSelectionRect[]): PdfOverlay
   return grouped;
 }
 
-function collectPageNumbers(input: {
-  scaledPosition: ScaledPosition;
-  overlayRectsByPage: PdfOverlayRectsByPage;
-}): number[] {
-  const pageNumbers = new Set<number>();
-  const scaledPages = [
-    input.scaledPosition.pageNumber,
-    ...input.scaledPosition.rects.map((rect) => rect.pageNumber ?? input.scaledPosition.pageNumber),
-  ];
-
-  scaledPages.forEach((pageNumber) => {
-    if (Number.isInteger(pageNumber) && pageNumber > 0) {
-      pageNumbers.add(pageNumber);
-    }
-  });
-
-  Object.keys(input.overlayRectsByPage).forEach((page) => {
-    const pageNumber = Number(page);
-    if (Number.isInteger(pageNumber) && pageNumber > 0) {
-      pageNumbers.add(pageNumber);
-    }
-  });
-
-  return [...pageNumbers].sort((left, right) => left - right);
-}
-
 export function buildPdfSelectionSignature(input: {
   tool: "highlight" | "underline" | "area" | "select";
-  position: ScaledPosition;
-  content: Content;
+  selection: Pick<PdfCanonicalSelection, "pageNumber" | "startOffset" | "endOffset" | "text" | "pageRects">;
 }): string {
-  const rectSignature = input.position.rects
+  const rectSignature = input.selection.pageRects
     .map((rect) => [
       round(rect.x1),
       round(rect.y1),
       round(rect.x2),
       round(rect.y2),
-      round(rect.width),
-      round(rect.height),
-      rect.pageNumber ?? input.position.pageNumber,
     ].join(":"))
     .join("|");
 
   return [
     input.tool,
-    input.position.pageNumber,
+    input.selection.pageNumber,
+    input.selection.startOffset,
+    input.selection.endOffset,
     rectSignature,
-    normalizeText(input.content.text),
-    input.content.image ? "image:1" : "image:0",
+    normalizeText(input.selection.text),
   ].join("::");
 }
 
@@ -154,22 +129,20 @@ export function beginPdfSelectionSession(
 }
 
 export function createPdfSelectionSnapshot(input: {
-  text: string;
-  scaledPosition: ScaledPosition;
-  overlayRects: PdfTransientSelectionRect[];
-  sourceTrust: PdfSelectionSourceTrust;
+  selection: PdfCanonicalSelection;
   signature: string;
 }): PdfSelectionSnapshot {
-  const overlayRectsByPage = buildOverlayRectsByPage(input.overlayRects);
+  const overlayRectsByPage = buildOverlayRectsByPage(input.selection.viewportRects);
   return {
-    text: normalizeText(input.text),
-    scaledPosition: input.scaledPosition,
+    ...input.selection,
+    text: normalizeText(input.selection.text),
+    textQuote: {
+      ...input.selection.textQuote,
+      exact: normalizeText(input.selection.textQuote.exact),
+    },
+    viewportRects: sortSelectionRects(input.selection.viewportRects),
     overlayRectsByPage,
-    pageNumbers: collectPageNumbers({
-      scaledPosition: input.scaledPosition,
-      overlayRectsByPage,
-    }),
-    sourceTrust: input.sourceTrust,
+    pageNumbers: [input.selection.pageNumber],
     signature: input.signature,
   };
 }
@@ -228,7 +201,7 @@ export function flattenPdfOverlayRectsByPage(overlayRectsByPage: PdfOverlayRects
 }
 
 export function getPdfSelectionSnapshotText(snapshot: PdfSelectionSnapshot | null | undefined): string {
-  return normalizeText(snapshot?.text);
+  return normalizeText(snapshot?.textQuote?.exact || snapshot?.text);
 }
 
 export function projectPdfSelectionRectsToPages(input: {
@@ -266,14 +239,30 @@ export function projectPdfSelectionRectsToPages(input: {
 }
 
 export function projectPdfScaledSelectionToViewportRects(input: {
-  scaledPosition: ScaledPosition;
+  scaledPosition: {
+    boundingRect: {
+      width: number;
+      height: number;
+      pageNumber?: number;
+    };
+    rects: Array<{
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      width: number;
+      height: number;
+      pageNumber?: number;
+    }>;
+    pageNumber: number;
+  };
   pages: Array<Pick<PdfSelectionPageGeometry, "pageNumber" | "width" | "height">>;
 }): PdfTransientSelectionRect[] {
   const pageGeometryByNumber = new Map<number, Pick<PdfSelectionPageGeometry, "pageNumber" | "width" | "height">>(
     input.pages.map((page) => [page.pageNumber, page]),
   );
 
-  const rects: PdfTransientSelectionRect[] = input.scaledPosition.rects
+  const rects = input.scaledPosition.rects
     .map((rect) => {
       const pageNumber = rect.pageNumber ?? input.scaledPosition.pageNumber;
       const page = pageGeometryByNumber.get(pageNumber);
@@ -310,12 +299,17 @@ export function resolvePdfCopySelectionText(input: {
   nativeText: string;
   frozenSnapshot: PdfSelectionSnapshot | null | undefined;
 }): string {
+  const snapshotText = getPdfSelectionSnapshotText(input.frozenSnapshot);
+  if (snapshotText) {
+    return snapshotText;
+  }
+
   const nativeText = normalizeText(input.nativeText);
   if (nativeText) {
     return nativeText;
   }
 
-  return getPdfSelectionSnapshotText(input.frozenSnapshot);
+  return snapshotText;
 }
 
 export function buildPdfAreaPreview(input: {

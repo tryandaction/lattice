@@ -19,6 +19,18 @@ export interface BoundingBox {
   y2: number;  // Bottom edge (0-1)
 }
 
+export type PdfTextQuoteSource = 'pdfjs-text-model' | 'dom-selection' | 'pdfium-native' | 'validated-native-fallback';
+
+export type PdfTextQuoteConfidence = 'exact' | 'validated-native';
+
+export interface PdfTextQuote {
+  exact: string;
+  prefix: string;
+  suffix: string;
+  source: PdfTextQuoteSource;
+  confidence: PdfTextQuoteConfidence;
+}
+
 // ============================================================================
 // Annotation Target Types (Discriminated Union)
 // ============================================================================
@@ -30,6 +42,7 @@ export interface PdfTarget {
   type: 'pdf';
   page: number;           // 1-indexed page number
   rects: BoundingBox[];   // Selection rectangles
+  textQuote?: PdfTextQuote;
 }
 
 /**
@@ -173,17 +186,42 @@ export interface AnnotationItem {
   createdAt: number;             // Unix timestamp (ms)
 }
 
+export function getCanonicalPdfAnnotationText(annotation: Pick<AnnotationItem, 'target' | 'content'>): string | undefined {
+  if (annotation.target.type === 'pdf') {
+    const exact = annotation.target.textQuote?.exact;
+    if (exact) {
+      return exact;
+    }
+  }
+
+  return annotation.content !== undefined && annotation.content !== null && annotation.content.length > 0
+    ? annotation.content
+    : undefined;
+}
+
 /**
  * File types supported by the annotation system
  */
 export type AnnotationFileType = 'pdf' | 'image' | 'pptx' | 'code' | 'html' | 'unknown';
 
 /**
- * Annotation file structure for sidecar JSON (Version 2)
+ * Legacy annotation file structure for sidecar JSON (Version 2)
+ */
+export interface LegacyUniversalAnnotationFileV2 {
+  version: 2;
+  fileId: string;
+  fileType: AnnotationFileType;
+  annotations: AnnotationItem[];
+  lastModified: number;
+}
+
+/**
+ * Current annotation file structure for sidecar JSON (Version 3)
  */
 export interface UniversalAnnotationFile {
-  version: 2;                    // Version 2 for universal format
-  fileId: string;
+  version: 3;
+  documentId: string;           // Stable document identity across move/rename
+  fileId: string;               // Canonical storage file id for the current root
   fileType: AnnotationFileType;
   annotations: AnnotationItem[];
   lastModified: number;
@@ -217,6 +255,20 @@ export function isBoundingBox(value: unknown): value is BoundingBox {
   );
 }
 
+export function isPdfTextQuote(value: unknown): value is PdfTextQuote {
+  if (typeof value !== 'object' || value === null) return false;
+  const quote = value as Record<string, unknown>;
+
+  return (
+    typeof quote.exact === 'string' &&
+    quote.exact.length > 0 &&
+    typeof quote.prefix === 'string' &&
+    typeof quote.suffix === 'string' &&
+    (quote.source === 'pdfjs-text-model' || quote.source === 'dom-selection' || quote.source === 'pdfium-native' || quote.source === 'validated-native-fallback') &&
+    (quote.confidence === 'exact' || quote.confidence === 'validated-native')
+  );
+}
+
 /**
  * Type guard for PdfTarget
  */
@@ -227,6 +279,7 @@ export function isPdfTarget(value: unknown): value is PdfTarget {
   if (target.type !== 'pdf') return false;
   if (typeof target.page !== 'number' || !Number.isInteger(target.page) || target.page < 1) return false;
   if (!Array.isArray(target.rects)) return false;
+  if (target.textQuote !== undefined && target.textQuote !== null && !isPdfTextQuote(target.textQuote)) return false;
   
   return target.rects.every(isBoundingBox);
 }
@@ -366,6 +419,19 @@ export function isAnnotationFileType(value: unknown): value is AnnotationFileTyp
   );
 }
 
+export function isLegacyUniversalAnnotationFileV2(value: unknown): value is LegacyUniversalAnnotationFileV2 {
+  if (typeof value !== 'object' || value === null) return false;
+  const file = value as Record<string, unknown>;
+
+  if (file.version !== 2) return false;
+  if (typeof file.fileId !== 'string') return false;
+  if (!isAnnotationFileType(file.fileType)) return false;
+  if (typeof file.lastModified !== 'number') return false;
+  if (!Array.isArray(file.annotations)) return false;
+
+  return file.annotations.every(isAnnotationItem);
+}
+
 /**
  * Type guard for UniversalAnnotationFile
  */
@@ -373,13 +439,41 @@ export function isUniversalAnnotationFile(value: unknown): value is UniversalAnn
   if (typeof value !== 'object' || value === null) return false;
   const file = value as Record<string, unknown>;
   
-  if (file.version !== 2) return false;
+  if (file.version !== 3) return false;
+  if (typeof file.documentId !== 'string' || file.documentId.length === 0) return false;
   if (typeof file.fileId !== 'string') return false;
   if (!isAnnotationFileType(file.fileType)) return false;
   if (typeof file.lastModified !== 'number') return false;
   if (!Array.isArray(file.annotations)) return false;
   
   return file.annotations.every(isAnnotationItem);
+}
+
+export function normalizeUniversalAnnotationFile(
+  value: unknown,
+  fallbackDocumentId?: string | null,
+): UniversalAnnotationFile | null {
+  if (isUniversalAnnotationFile(value)) {
+    return value;
+  }
+
+  if (!isLegacyUniversalAnnotationFileV2(value)) {
+    return null;
+  }
+
+  const documentId = (fallbackDocumentId && fallbackDocumentId.trim()) || value.fileId;
+  if (!documentId) {
+    return null;
+  }
+
+  return {
+    version: 3,
+    documentId,
+    fileId: value.fileId,
+    fileType: value.fileType,
+    annotations: value.annotations,
+    lastModified: value.lastModified,
+  };
 }
 
 // ============================================================================
@@ -424,6 +518,9 @@ export function validateAnnotationTarget(value: unknown): ValidationResult {
             errors.push(`PDF target rects[${i}] is invalid: coordinates must be numbers in range 0-1`);
           }
         });
+      }
+      if (target.textQuote !== undefined && target.textQuote !== null && !isPdfTextQuote(target.textQuote)) {
+        errors.push('PDF target textQuote must be a valid quote anchor if provided');
       }
       break;
       
@@ -552,38 +649,41 @@ export function validateAnnotationItem(value: unknown): ValidationResult {
 export function validateUniversalAnnotationFile(value: unknown): ValidationResult {
   const errors: string[] = [];
   
-  if (typeof value !== 'object' || value === null) {
-    return { valid: false, errors: ['Annotation file must be an object'] };
+  const normalized = normalizeUniversalAnnotationFile(value);
+  if (!normalized) {
+    return { valid: false, errors: ['Annotation file must be a valid universal annotation file'] };
   }
-  
-  const file = value as Record<string, unknown>;
-  
-  if (file.version !== 2) {
-    errors.push('Annotation file version must be 2');
+
+  if (normalized.version !== 3) {
+    errors.push('Annotation file version must be 3');
   }
-  
-  if (typeof file.fileId !== 'string') {
+
+  if (typeof normalized.documentId !== 'string' || normalized.documentId.length === 0) {
+    errors.push('Annotation file documentId must be a non-empty string');
+  }
+
+  if (typeof normalized.fileId !== 'string') {
     errors.push('Annotation file fileId must be a string');
   }
-  
-  if (!isAnnotationFileType(file.fileType)) {
+
+  if (!isAnnotationFileType(normalized.fileType)) {
     errors.push('Annotation file fileType must be one of: pdf, image, pptx, code, html, unknown');
   }
-  
-  if (typeof file.lastModified !== 'number') {
+
+  if (typeof normalized.lastModified !== 'number') {
     errors.push('Annotation file lastModified must be a number (timestamp)');
   }
-  
-  if (!Array.isArray(file.annotations)) {
+
+  if (!Array.isArray(normalized.annotations)) {
     errors.push('Annotation file annotations must be an array');
   } else {
-    file.annotations.forEach((ann, i) => {
+    normalized.annotations.forEach((ann, i) => {
       const result = validateAnnotationItem(ann);
       if (!result.valid) {
         errors.push(...result.errors.map(e => `annotations[${i}]: ${e}`));
       }
     });
   }
-  
+
   return { valid: errors.length === 0, errors };
 }

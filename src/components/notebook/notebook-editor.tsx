@@ -66,9 +66,9 @@ function SaveIndicator({
     <div
       className={cn(
         "fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-lg px-3 py-2 shadow-lg transition-all",
-        status === "saving" && "bg-muted text-muted-foreground",
-        status === "saved" && "bg-green-500/10 text-green-600 dark:text-green-400",
-        status === "error" && "bg-destructive/10 text-destructive",
+        status === "saving" && "code-workbench-pill",
+        status === "saved" && "code-workbench-status-success",
+        status === "error" && "code-workbench-status-error",
       )}
     >
       {status === "saving" && (
@@ -693,14 +693,14 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
           : t("workbench.notebook.runtime.unverified");
 
   const runtimeStatusTone = runtimeAvailability === "ready"
-    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+    ? "code-workbench-status-success"
     : runtimeAvailability === "checking"
-      ? "bg-blue-500/10 text-blue-700 dark:text-blue-300"
+      ? "code-workbench-status-info"
       : runtimeAvailability === "error"
-        ? "bg-destructive/10 text-destructive"
+        ? "code-workbench-status-error"
         : runtimeAvailability === "unsupported"
-          ? "bg-yellow-500/10 text-yellow-700 dark:text-yellow-300"
-          : "bg-muted text-muted-foreground";
+          ? "code-workbench-status-warning"
+          : "code-workbench-pill";
 
   const notebookKernelStatus = executionState === "running" ? "running" : runtimeStatus;
 
@@ -735,7 +735,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   const runCellHandler = isPythonNotebook ? handleRunCell : undefined;
 
   return (
-    <div ref={containerRef} className="h-full overflow-auto bg-background">
+    <div ref={containerRef} className="code-workbench-shell h-full overflow-auto">
       <SelectionContextMenu
         state={selectionMenuState}
         onClose={closeSelectionMenu}
@@ -749,9 +749,9 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
         onClose={() => setSelectionHubState(null)}
       />
 
-      <div className="mx-auto max-w-4xl border-b border-border px-6 py-3">
+      <div className="code-workbench-elevated mx-auto max-w-4xl border-b px-6 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0 flex flex-1 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <div className="code-workbench-muted-text min-w-0 flex flex-1 flex-wrap items-center gap-2 text-xs">
             <KernelSelector
               currentKernel={currentKernel}
               onKernelChange={handleKernelChange}
@@ -760,18 +760,18 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
               notebookLanguage={notebookLanguage}
               notebookKernelLabel={notebookKernelLabel}
             />
-            <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">
+            <span className="code-workbench-pill rounded-full px-2 py-0.5 font-medium">
               {currentKernel?.displayName ?? (isPythonNotebook ? t("workbench.notebook.runtime.unselected") : t("workbench.notebook.runtime.unsupportedShort"))}
             </span>
             {currentKernel?.sourceLabel ? (
-              <span className="rounded-full border border-border px-2 py-0.5">
+              <span className="code-workbench-pill rounded-full px-2 py-0.5">
                 {currentKernel.sourceLabel}
               </span>
             ) : null}
             <span className={`rounded-full px-2 py-0.5 ${runtimeStatusTone}`}>
               {runtimeStatusLabel}
             </span>
-            <span className="rounded-full border border-border px-2 py-0.5">
+            <span className="code-workbench-pill rounded-full px-2 py-0.5">
               {state.cells.length} cell{state.cells.length !== 1 ? "s" : ""}
             </span>
           </div>
@@ -788,16 +788,16 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
         </div>
 
         {!isPythonNotebook ? (
-          <div className="mt-2 text-sm text-yellow-700 dark:text-yellow-300">
+          <div className="code-workbench-status-warning mt-2 rounded-md px-3 py-2 text-sm">
             {t("workbench.notebook.runtime.unsupported", { kernel: notebookKernelLabel ?? notebookLanguage })}
           </div>
         ) : null}
         {hasValidatedRuntime && runtimeError ? (
-          <div className="mt-2 text-sm text-destructive">{runtimeError}</div>
+          <div className="code-workbench-status-error mt-2 rounded-md px-3 py-2 text-sm">{runtimeError}</div>
         ) : null}
         {showNotebookProblems && notebookProblems.length > 0 ? (
           <div className="mt-3">
-            <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+            <div className="code-workbench-soft-text mb-1 flex items-center gap-2 text-[11px] uppercase tracking-wide">
               <AlertTriangle className="h-3.5 w-3.5" />
               <span>{t("workbench.notebook.problems")}</span>
               <span>{notebookProblems.length}</span>

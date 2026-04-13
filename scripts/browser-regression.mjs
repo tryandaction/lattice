@@ -1,7 +1,7 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import process from "node:process";
@@ -11,6 +11,7 @@ const DEFAULT_PORT = Number(process.env.LATTICE_BROWSER_REGRESSION_PORT ?? 3217)
 const HOST = "127.0.0.1";
 const OUTPUT_DIR = path.resolve(process.cwd(), "output", "playwright");
 const REGRESSION_DIST_DIR = process.env.LATTICE_BROWSER_REGRESSION_DIST_DIR?.trim() || "web-dist-browser-regression";
+const TSCONFIG_PATH = path.resolve(process.cwd(), "tsconfig.json");
 
 async function ensureOutputDir() {
   await mkdir(OUTPUT_DIR, { recursive: true });
@@ -18,6 +19,14 @@ async function ensureOutputDir() {
 
 async function prepareRegressionDistDir() {
   await rm(path.resolve(process.cwd(), REGRESSION_DIST_DIR), { recursive: true, force: true });
+}
+
+async function backupTsconfig() {
+  return readFile(TSCONFIG_PATH, "utf8");
+}
+
+async function restoreTsconfig(originalContent) {
+  await writeFile(TSCONFIG_PATH, originalContent, "utf8");
 }
 
 function startNextDevServer(port) {
@@ -392,12 +401,34 @@ async function testPdfRegression(page, baseUrl) {
       throw new Error("Right PDF pane overflowed the viewport.");
     }
 
-    console.log("[pdf-regression] verify default viewer route");
-    await page.getByTestId("pdf-viewer-pdf-plain-pane").waitFor({ timeout: 120000 });
-    await page.getByTestId("pdf-annotate-trigger-pdf-plain-pane").click();
+    console.log("[pdf-regression] verify default annotation route");
     await page.getByTestId("pdf-pane-pdf-plain-pane").waitFor({ timeout: 120000 });
     await page.getByTestId("pdf-pane-pdf-left-pane").hover();
     await page.getByTestId("activate-left-pane").click();
+    console.log("[pdf-regression] open left annotation sidebar");
+    await page.keyboard.press("Control+Shift+A");
+    await page.waitForTimeout(800);
+    await waitForNumericTextAtLeast(page, "pdf-left-state-visible-page", 1, "Left pane visible page after sidebar toggle");
+    await page.waitForFunction(() => {
+      const shell = document.querySelector('[data-testid="pdf-left-shell"]');
+      return (shell?.querySelectorAll('canvas').length ?? 0) > 0;
+    }, { timeout: 120000 });
+    const leftSidebarWidthCoverage = await page.evaluate(() => {
+      const shell = document.querySelector('[data-testid="pdf-left-shell"]');
+      const viewer = shell?.querySelector('[data-testid="pdf-viewer-container-pdf-left-pane"]');
+      const firstPage = shell?.querySelector('[data-page-number="1"]');
+      if (!(viewer instanceof HTMLElement) || !(firstPage instanceof HTMLElement)) {
+        return 0;
+      }
+      const viewerWidth = viewer.getBoundingClientRect().width;
+      const pageWidth = firstPage.getBoundingClientRect().width;
+      return viewerWidth > 0 ? pageWidth / viewerWidth : 0;
+    });
+    if (leftSidebarWidthCoverage < 0.58) {
+      throw new Error(`Left PDF page width coverage dropped too far after sidebar toggle: ${leftSidebarWidthCoverage.toFixed(3)}`);
+    }
+    await page.keyboard.press("Control+Shift+A");
+    await page.waitForTimeout(500);
 
     const initialLeftZoom = (await page.getByTestId("pdf-zoom-label-pdf-left-pane").textContent())?.trim() ?? "";
     const initialRightZoom = (await page.getByTestId("pdf-zoom-label-pdf-right-pane").textContent())?.trim() ?? "";
@@ -407,14 +438,21 @@ async function testPdfRegression(page, baseUrl) {
 
     console.log("[pdf-regression] keyboard zoom left");
     await page.keyboard.press("Control+=");
-    await expectText(page.getByTestId("pdf-zoom-label-pdf-left-pane"), "145%", "Left pane keyboard zoom");
+    await page.waitForFunction(() => {
+      const left = document.querySelector('[data-testid="pdf-zoom-label-pdf-left-pane"]')?.textContent?.trim() ?? "";
+      return left.endsWith("%");
+    }, { timeout: 120000 });
+    const leftManualZoom = (await page.getByTestId("pdf-zoom-label-pdf-left-pane").textContent())?.trim() ?? "";
+    if (!leftManualZoom || leftManualZoom === initialLeftZoom || !leftManualZoom.endsWith("%")) {
+      throw new Error(`Expected left pane keyboard zoom to enter manual percentage mode, got "${leftManualZoom}" from initial "${initialLeftZoom}"`);
+    }
     await expectText(page.getByTestId("pdf-zoom-label-pdf-right-pane"), initialRightZoom, "Right pane unchanged after left keyboard zoom");
 
     console.log("[pdf-regression] keyboard zoom right");
     await page.getByTestId("pdf-pane-pdf-right-pane").hover();
     await page.keyboard.press("Control+=");
-    await expectText(page.getByTestId("pdf-zoom-label-pdf-left-pane"), "145%", "Left pane remains stable after right hover keyboard zoom");
-    await expectText(page.getByTestId("pdf-zoom-label-pdf-right-pane"), "145%", "Right pane keyboard zoom after hover");
+    await expectText(page.getByTestId("pdf-zoom-label-pdf-left-pane"), leftManualZoom, "Left pane remains stable after right hover keyboard zoom");
+    await expectText(page.getByTestId("pdf-zoom-label-pdf-right-pane"), leftManualZoom, "Right pane keyboard zoom after hover");
 
     console.log("[pdf-regression] scroll right deep");
     await page.getByTestId("scroll-right-to-page-6").click();
@@ -429,7 +467,7 @@ async function testPdfRegression(page, baseUrl) {
     await page.getByTestId("toggle-right-file").click();
     await expectText(page.getByTestId("right-file-indicator"), "right-fixture-a.pdf", "Right pane switched back to fixture A");
     await waitForRestoreReady(page, "pdf-right-state", "Right pane restore after file switch");
-    await expectText(page.getByTestId("pdf-zoom-label-pdf-right-pane"), "145%", "Right pane restored manual zoom after file switch");
+    await expectText(page.getByTestId("pdf-zoom-label-pdf-right-pane"), leftManualZoom, "Right pane restored manual zoom after file switch");
     await waitForNumericTextAtLeast(page, "pdf-right-state-anchor-page", 5, "Right pane anchor page restored after file switch");
     await waitForNumericTextAtMost(page, "pdf-right-state-restore-delta-top", 0.08, "Right pane anchor top delta after manual restore");
 
@@ -554,6 +592,7 @@ async function testPerformanceBaseline(page, baseUrl) {
 async function main() {
   await ensureOutputDir();
   await prepareRegressionDistDir();
+  const originalTsconfig = await backupTsconfig();
 
   const port = await findAvailablePort(DEFAULT_PORT);
   const baseUrl = `http://${HOST}:${port}`;
@@ -591,6 +630,7 @@ async function main() {
       await browser.close();
     }
     await stopServer(server);
+    await restoreTsconfig(originalTsconfig);
   }
 }
 

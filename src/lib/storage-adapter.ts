@@ -5,10 +5,13 @@
  * Web (localStorage) and Desktop (Tauri store) environments.
  */
 
+import { withTimeout } from "@/lib/async-task-guard";
+
 export type TauriInvoke = <T = unknown>(command: string, args?: Record<string, unknown>, options?: unknown) => Promise<T>;
 
 const TAURI_INVOKE_READY_TIMEOUT_MS = 5000;
 const TAURI_INVOKE_READY_POLL_MS = 25;
+const DEFAULT_TAURI_COMMAND_TIMEOUT_MS = 10000;
 
 function resolveTauriInvoke(
   win: Window & {
@@ -77,6 +80,26 @@ export async function waitForTauriInvokeReady(options?: {
 
     check();
   });
+}
+
+export async function invokeTauriCommand<T>(
+  command: string,
+  args?: Record<string, unknown>,
+  options?: {
+    timeoutMs?: number;
+    invokeOptions?: unknown;
+  },
+): Promise<T> {
+  const invoke = await waitForTauriInvokeReady();
+  if (!invoke) {
+    throw new Error("Tauri invoke bridge unavailable");
+  }
+
+  return withTimeout(
+    invoke<T>(command, args, options?.invokeOptions),
+    options?.timeoutMs ?? DEFAULT_TAURI_COMMAND_TIMEOUT_MS,
+    `Tauri command ${command}`,
+  );
 }
 
 /**
@@ -164,18 +187,14 @@ class TauriStorageAdapter implements StorageAdapter {
 
   async get<T>(key: string): Promise<T | null> {
     try {
-      const invoke = await waitForTauriInvokeReady();
-      if (!invoke) {
-        throw new Error("Tauri invoke bridge unavailable");
-      }
-      const value = await invoke<T | null>("get_setting", { key });
+      const value = await invokeTauriCommand<T | null>("get_setting", { key }, { timeoutMs: 4000 });
       if (value !== null && value !== undefined) {
         return value;
       }
 
       const fallbackValue = await this.webFallback.get<T>(key);
       if (fallbackValue !== null) {
-        await invoke("set_setting", { key, value: fallbackValue });
+        await invokeTauriCommand("set_setting", { key, value: fallbackValue }, { timeoutMs: 4000 });
         await this.webFallback.remove(key);
       }
       return fallbackValue;
@@ -187,11 +206,7 @@ class TauriStorageAdapter implements StorageAdapter {
 
   async set<T>(key: string, value: T): Promise<void> {
     try {
-      const invoke = await waitForTauriInvokeReady();
-      if (!invoke) {
-        throw new Error("Tauri invoke bridge unavailable");
-      }
-      await invoke("set_setting", { key, value });
+      await invokeTauriCommand("set_setting", { key, value }, { timeoutMs: 4000 });
       await this.webFallback.remove(key);
     } catch (error) {
       console.error(`Failed to set ${key} in Tauri store`, error);
@@ -201,11 +216,7 @@ class TauriStorageAdapter implements StorageAdapter {
 
   async remove(key: string): Promise<void> {
     try {
-      const invoke = await waitForTauriInvokeReady();
-      if (!invoke) {
-        throw new Error("Tauri invoke bridge unavailable");
-      }
-      await invoke("remove_setting", { key });
+      await invokeTauriCommand("remove_setting", { key }, { timeoutMs: 4000 });
       await this.webFallback.remove(key);
     } catch (error) {
       console.error(`Failed to remove ${key} from Tauri store`, error);
@@ -215,11 +226,7 @@ class TauriStorageAdapter implements StorageAdapter {
 
   async clear(): Promise<void> {
     try {
-      const invoke = await waitForTauriInvokeReady();
-      if (!invoke) {
-        throw new Error("Tauri invoke bridge unavailable");
-      }
-      await invoke("clear_settings");
+      await invokeTauriCommand("clear_settings", undefined, { timeoutMs: 4000 });
       await this.webFallback.clear();
     } catch (error) {
       console.error("Failed to clear Tauri store", error);

@@ -21,7 +21,8 @@ const resolveFileIdentityMock = vi.hoisted(() => vi.fn(async (_input?: unknown) 
 })));
 const loadAnnotationsForFileIdentityMock = vi.hoisted(() => vi.fn(async (_input?: unknown) => ({
   annotationFile: {
-    version: 2 as const,
+    version: 3 as const,
+    documentId: "paper-id",
     fileId: "paper-id",
     fileType: "pdf" as const,
     annotations: [],
@@ -29,6 +30,45 @@ const loadAnnotationsForFileIdentityMock = vi.hoisted(() => vi.fn(async (_input?
   },
   source: null,
 } as any)));
+const resolvePdfDocumentBindingMock = vi.hoisted(() => vi.fn(async (_input?: unknown) => ({
+  documentId: "paper-id",
+  fileIdentity: {
+    primaryFileId: "paper-id",
+    fileIdCandidates: ["paper-id"],
+    canonicalPath: "workspace:docs/paper.pdf",
+    relativePathFromRoot: "docs/paper.pdf",
+    fileName: "paper.pdf",
+    fileFingerprint: null,
+    versionFingerprint: null,
+    size: null,
+    lastModified: null,
+  },
+  canonicalStorageFileId: "paper-id",
+  storageCandidates: ["paper-id"],
+  annotationFile: {
+    version: 3 as const,
+    documentId: "paper-id",
+    fileId: "paper-id",
+    fileType: "pdf" as const,
+    annotations: [],
+    lastModified: Date.now(),
+  },
+  resolvedSource: null,
+})));
+
+function createMockFileIdentity() {
+  return {
+    primaryFileId: "paper-id",
+    fileIdCandidates: ["paper-id"],
+    canonicalPath: "workspace:docs/paper.pdf",
+    relativePathFromRoot: "docs/paper.pdf",
+    fileName: "paper.pdf",
+    fileFingerprint: null,
+    versionFingerprint: null,
+    size: null,
+    lastModified: null,
+  };
+}
 
 vi.mock("next/dynamic", async () => {
   const ReactModule = await import("react");
@@ -67,6 +107,10 @@ vi.mock("@/lib/file-identity", () => ({
 
 vi.mock("@/lib/universal-annotation-storage", () => ({
   loadAnnotationsForFileIdentity: (input: unknown) => loadAnnotationsForFileIdentityMock(input),
+}));
+
+vi.mock("@/lib/pdf-document-binding", () => ({
+  resolvePdfDocumentBinding: (input: unknown) => resolvePdfDocumentBindingMock(input),
 }));
 
 vi.mock("@/lib/i18n", () => ({
@@ -138,13 +182,29 @@ function renderPdfViewer() {
   );
 }
 
+function renderPdfViewerWithoutAnnotationContext() {
+  return render(
+    <UniversalFileViewer
+      paneId="pane-left"
+      handle={createPdfHandle()}
+      rootHandle={null}
+      content={{ kind: "buffer", data: new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer }}
+      isLoading={false}
+      error={null}
+      fileId="paper-id"
+      filePath="docs/paper.pdf"
+    />,
+  );
+}
+
 describe("UniversalFileViewer PDF routing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     isTauriHostMock.mockReturnValue(false);
     loadAnnotationsForFileIdentityMock.mockResolvedValue({
       annotationFile: {
-        version: 2 as const,
+        version: 3 as const,
+        documentId: "paper-id",
         fileId: "paper-id",
         fileType: "pdf" as const,
         annotations: [],
@@ -152,23 +212,47 @@ describe("UniversalFileViewer PDF routing", () => {
       },
       source: null,
     } as any);
+    resolvePdfDocumentBindingMock.mockResolvedValue({
+      documentId: "paper-id",
+      fileIdentity: createMockFileIdentity(),
+      canonicalStorageFileId: "paper-id",
+      storageCandidates: ["paper-id"],
+      annotationFile: {
+        version: 3 as const,
+        documentId: "paper-id",
+        fileId: "paper-id",
+        fileType: "pdf" as const,
+        annotations: [],
+        lastModified: Date.now(),
+      },
+      resolvedSource: null,
+    });
   });
 
-  it("defaults to the lightweight PDF viewer when no persisted annotations exist", async () => {
+  it("defaults to the highlighter when annotation context is available", async () => {
     renderPdfViewer();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mock-pdf-highlighter-pane-left")).toBeTruthy();
+    });
+  });
+
+  it("falls back to the lightweight viewer when annotation context is missing", async () => {
+    renderPdfViewerWithoutAnnotationContext();
 
     expect(await screen.findByTestId("mock-pdf-viewer-pane-left")).toBeTruthy();
     await waitFor(() => {
-      expect(screen.getByTestId("mock-pdf-viewer-can-annotate-pane-left").textContent).toBe("true");
+      expect(screen.getByTestId("mock-pdf-viewer-can-annotate-pane-left").textContent).toBe("false");
       expect(screen.getByTestId("mock-pdf-viewer-has-persisted-pane-left").textContent).toBe("false");
       expect(screen.queryByTestId("mock-pdf-highlighter-pane-left")).toBeNull();
     });
   });
 
-  it("auto-upgrades to the highlighter path when persisted annotations are detected", async () => {
+  it("still upgrades to the highlighter path when persisted annotations are detected", async () => {
     loadAnnotationsForFileIdentityMock.mockResolvedValue({
       annotationFile: {
-        version: 2 as const,
+        version: 3 as const,
+        documentId: "paper-id",
         fileId: "paper-id",
         fileType: "pdf" as const,
         annotations: [
@@ -186,22 +270,46 @@ describe("UniversalFileViewer PDF routing", () => {
       },
       source: { sourceKind: "nested-lattice" } as unknown,
     } as any);
+    resolvePdfDocumentBindingMock.mockResolvedValue({
+      documentId: "paper-id",
+      fileIdentity: createMockFileIdentity(),
+      canonicalStorageFileId: "paper-id",
+      storageCandidates: ["paper-id"],
+      annotationFile: {
+        version: 3 as const,
+        documentId: "paper-id",
+        fileId: "paper-id",
+        fileType: "pdf" as const,
+        annotations: [
+          {
+            id: "ann-1",
+            target: { type: "pdf" as const, page: 1, rects: [{ x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 }] },
+            style: { color: "#FFEB3B", type: "highlight" as const },
+            content: undefined,
+            comment: undefined,
+            author: "user",
+            createdAt: Date.now(),
+          },
+        ],
+        lastModified: Date.now(),
+      },
+      resolvedSource: null,
+    } as any);
 
     renderPdfViewer();
 
-    expect(await screen.findByTestId("mock-pdf-viewer-pane-left")).toBeTruthy();
     await waitFor(() => {
       expect(screen.getByTestId("mock-pdf-highlighter-pane-left")).toBeTruthy();
     });
   });
 
-  it("enters annotation mode on explicit user request", async () => {
-    renderPdfViewer();
+  it("still allows explicit upgrade from the lightweight viewer path", async () => {
+    renderPdfViewerWithoutAnnotationContext();
 
     fireEvent.click(await screen.findByTestId("mock-pdf-viewer-annotate-pane-left"));
 
     await waitFor(() => {
-      expect(screen.getByTestId("mock-pdf-highlighter-pane-left")).toBeTruthy();
+      expect(screen.getByTestId("mock-pdf-viewer-pane-left")).toBeTruthy();
     });
   });
 
@@ -209,7 +317,8 @@ describe("UniversalFileViewer PDF routing", () => {
     isTauriHostMock.mockReturnValue(true);
     loadAnnotationsForFileIdentityMock.mockResolvedValue({
       annotationFile: {
-        version: 2 as const,
+        version: 3 as const,
+        documentId: "paper-id",
         fileId: "paper-id",
         fileType: "pdf" as const,
         annotations: [
@@ -226,6 +335,31 @@ describe("UniversalFileViewer PDF routing", () => {
         lastModified: Date.now(),
       },
       source: { sourceKind: "nested-lattice" } as unknown,
+    } as any);
+    resolvePdfDocumentBindingMock.mockResolvedValue({
+      documentId: "paper-id",
+      fileIdentity: createMockFileIdentity(),
+      canonicalStorageFileId: "paper-id",
+      storageCandidates: ["paper-id"],
+      annotationFile: {
+        version: 3 as const,
+        documentId: "paper-id",
+        fileId: "paper-id",
+        fileType: "pdf" as const,
+        annotations: [
+          {
+            id: "ann-1",
+            target: { type: "pdf" as const, page: 1, rects: [{ x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 }] },
+            style: { color: "#FFEB3B", type: "highlight" as const },
+            content: undefined,
+            comment: undefined,
+            author: "user",
+            createdAt: Date.now(),
+          },
+        ],
+        lastModified: Date.now(),
+      },
+      resolvedSource: null,
     } as any);
 
     renderPdfViewer();

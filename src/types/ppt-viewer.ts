@@ -18,6 +18,13 @@ export interface PowerPointViewerProps {
 export interface SlideData {
   index: number;
   element: HTMLElement | null;
+  declaredWidth?: number;
+  declaredHeight?: number;
+  contentWidth?: number;
+  contentHeight?: number;
+  renderedTextContent?: string;
+  hasImages?: boolean;
+  hasSvg?: boolean;
   thumbnailElement: HTMLElement | null;
   hasError: boolean;
   errorMessage?: string;

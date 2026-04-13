@@ -40,6 +40,7 @@ describe("resolveAutoOpenWorkspacePath", () => {
 describe("useAutoOpenFolder", () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     useSettingsStore.setState((state) => ({
       ...state,
       isInitialized: true,
@@ -191,5 +192,17 @@ describe("useAutoOpenFolder", () => {
     expect(nextSettings.lastWorkspacePath).toBe("C:/vault-valid");
     expect(nextSettings.lastOpenedFolder).toBe("C:/vault-valid");
     expect(nextSettings.recentWorkspacePaths).toEqual(["C:/vault-valid"]);
+  });
+
+  it("does not auto-restore a workspace when another desktop window is already active", async () => {
+    localStorage.setItem("lattice-desktop-window-sessions", JSON.stringify({
+      "other-window": Date.now(),
+    }));
+
+    renderHook(() => useAutoOpenFolder());
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().workspaceRootPath).toBeNull();
+    });
   });
 });

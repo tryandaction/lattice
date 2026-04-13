@@ -23,6 +23,10 @@ import { loadWorkspaceHandleRegistration } from '@/lib/workspace-identity';
 const DB_NAME = 'lattice-handles';
 const STORE_NAME = 'directory-handles';
 const HANDLE_KEY = 'last-opened-folder';
+const DESKTOP_WINDOW_SESSIONS_KEY = 'lattice-desktop-window-sessions';
+const DESKTOP_WINDOW_SESSION_ID_KEY = 'lattice-desktop-window-session-id';
+const DESKTOP_WINDOW_STALE_MS = 15_000;
+const DESKTOP_WINDOW_HEARTBEAT_MS = 4_000;
 
 // ============================================================================
 // IndexedDB helpers for persisting FileSystemDirectoryHandle
@@ -49,6 +53,88 @@ async function loadHandleFromDB(): Promise<FileSystemDirectoryHandle | null> {
   });
 }
 
+function createDesktopWindowSessionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `desktop-window-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function getDesktopWindowSessionId(): string {
+  if (typeof window === 'undefined') {
+    return 'desktop-window-ssr';
+  }
+
+  const existing = sessionStorage.getItem(DESKTOP_WINDOW_SESSION_ID_KEY);
+  if (existing) {
+    return existing;
+  }
+
+  const next = createDesktopWindowSessionId();
+  sessionStorage.setItem(DESKTOP_WINDOW_SESSION_ID_KEY, next);
+  return next;
+}
+
+function readDesktopWindowSessions(): Record<string, number> {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+
+  try {
+    const raw = localStorage.getItem(DESKTOP_WINDOW_SESSIONS_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter(([, value]) => typeof value === 'number' && Number.isFinite(value))
+        .map(([key, value]) => [key, value as number]),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeDesktopWindowSessions(sessions: Record<string, number>): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  if (Object.keys(sessions).length === 0) {
+    localStorage.removeItem(DESKTOP_WINDOW_SESSIONS_KEY);
+    return;
+  }
+
+  localStorage.setItem(DESKTOP_WINDOW_SESSIONS_KEY, JSON.stringify(sessions));
+}
+
+function pruneDesktopWindowSessions(now = Date.now()): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(readDesktopWindowSessions())
+      .filter(([, timestamp]) => now - timestamp <= DESKTOP_WINDOW_STALE_MS),
+  );
+}
+
+function touchDesktopWindowSession(sessionId: string, now = Date.now()): Record<string, number> {
+  const nextSessions = pruneDesktopWindowSessions(now);
+  nextSessions[sessionId] = now;
+  writeDesktopWindowSessions(nextSessions);
+  return nextSessions;
+}
+
+function removeDesktopWindowSession(sessionId: string): void {
+  const nextSessions = pruneDesktopWindowSessions();
+  delete nextSessions[sessionId];
+  writeDesktopWindowSessions(nextSessions);
+}
+
+function hasOtherActiveDesktopWindowSessions(sessionId: string, now = Date.now()): boolean {
+  const activeSessions = touchDesktopWindowSession(sessionId, now);
+  return Object.keys(activeSessions).some((candidate) => candidate !== sessionId);
+}
+
 // ============================================================================
 // Hook
 // ============================================================================
@@ -72,6 +158,7 @@ export function useAutoOpenFolder() {
   const setError = useWorkspaceStore((state) => state.setError);
 
   const hasAttemptedAutoOpen = useRef(false);
+  const desktopWindowSessionIdRef = useRef<string>(getDesktopWindowSessionId());
 
   const restoreWorkspaceFromHandle = useCallback(async (
     handle: FileSystemDirectoryHandle,
@@ -102,6 +189,11 @@ export function useAutoOpenFolder() {
 
     try {
       if (isTauri()) {
+        if (hasOtherActiveDesktopWindowSessions(desktopWindowSessionIdRef.current)) {
+          logger.info('[AutoOpen] Skipping startup workspace restore because another desktop window is already active');
+          return;
+        }
+
         const startupWorkspace = await resolveDesktopStartupWorkspace();
         await loadSettings();
         if (!startupWorkspace?.path) {
@@ -157,6 +249,23 @@ export function useAutoOpenFolder() {
     rootHandle,
     settings,
   ]);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    const sessionId = desktopWindowSessionIdRef.current;
+    touchDesktopWindowSession(sessionId);
+    const heartbeatId = window.setInterval(() => {
+      touchDesktopWindowSession(sessionId);
+    }, DESKTOP_WINDOW_HEARTBEAT_MS);
+
+    return () => {
+      window.clearInterval(heartbeatId);
+      removeDesktopWindowSession(sessionId);
+    };
+  }, []);
 
   useEffect(() => {
     if (isInitialized) {

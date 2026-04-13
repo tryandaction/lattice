@@ -8,6 +8,13 @@ import type { EditorView } from '@codemirror/view';
 import type { ComponentProps } from 'react';
 import { TableEditor, type TableAlignment } from '../table-editor';
 
+class MockResizeObserver {
+  observe() {}
+  disconnect() {}
+}
+
+globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+
 function createViewStub(): EditorView {
   return {
     state: {
@@ -41,14 +48,14 @@ function renderTableEditor(overrides?: Partial<ComponentProps<typeof TableEditor
 }
 
 describe('TableEditor', () => {
-  it('does not render the legacy full-width column toolbar labels or default active cell state', () => {
+  it('does not render the legacy full-width toolbar labels or default selected cell state', () => {
     const { container } = renderTableEditor();
 
     expect(screen.queryByText('列 1')).toBeNull();
     expect(screen.queryByText('列 2')).toBeNull();
     expect(container.querySelectorAll('.selected').length).toBe(0);
     expect(container.querySelectorAll('.row-toolbar').length).toBe(0);
-    expect(screen.queryByRole('button', { name: '表格操作' })).toBeNull();
+    expect(container.querySelector('.table-editor-perimeter-panel')).toBeNull();
   });
 
   it('starts editing immediately when typing even without an initial selected cell', () => {
@@ -76,13 +83,27 @@ describe('TableEditor', () => {
     expect(screen.queryByDisplayValue('A1 updated')).toBeNull();
   });
 
-  it('removes the perimeter handle and action menu in the simplified editing mode', () => {
+  it('shows perimeter handles and column actions on hover', () => {
     const { container } = renderTableEditor();
     const wrapper = screen.getByRole('group', { name: 'Markdown table editor' });
 
-    fireEvent.focus(wrapper);
+    fireEvent.mouseEnter(wrapper);
 
-    expect(screen.queryByRole('button', { name: '表格操作' })).toBeNull();
-    expect(container.querySelector('.table-editor-perimeter-panel')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Table actions' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Column 1 actions' }));
+    expect(screen.getByText('Insert Right')).toBeTruthy();
+    expect(container.querySelector('.table-editor-perimeter-panel')).toBeTruthy();
+  });
+
+  it('supports highlighting a selected cell from the table action menu', () => {
+    const onUpdate = vi.fn();
+    renderTableEditor({ onUpdate });
+
+    fireEvent.click(screen.getByText('A1'));
+    fireEvent.mouseEnter(screen.getByRole('group', { name: 'Markdown table editor' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Table actions' }));
+    fireEvent.click(screen.getByText('Highlight'));
+
+    expect(onUpdate).toHaveBeenCalledWith('| 标题 A | 标题 B |\n| --- | --- |\n| ==A1== | B1 |');
   });
 });

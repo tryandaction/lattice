@@ -52,7 +52,7 @@ describe('KernelStatus', () => {
       const { container } = render(<KernelStatus status="loading" />);
 
       // Should have a progress bar element
-      const progressBar = container.querySelector('.bg-primary');
+      const progressBar = container.querySelector('.loading-progress-bar');
       expect(progressBar).toBeTruthy();
     });
   });
@@ -62,6 +62,7 @@ describe('KernelStatus', () => {
       const { container } = render(<KernelStatus status="running" />);
 
       expect(container.textContent).toContain('Executing...');
+      expect(container.querySelector('.code-workbench-muted-text')).toBeTruthy();
     });
 
     it('should show spinner during running', () => {

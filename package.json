@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:docs": "node scripts/check-docs.mjs",
+    "test:pdf-ab": "node scripts/pdf-selection-ab-regression.mjs",
     "test:run": "vitest run --maxWorkers=2",
     "test:browser-regression": "node scripts/browser-regression.mjs",
     "qa:workspace-annotation-manual": "node scripts/workspace-annotation-manual-smoke.mjs",

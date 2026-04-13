@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   beginPdfSelectionSession,
   createPdfSelectionSnapshot,
-  projectPdfScaledSelectionToViewportRects,
   resolvePdfCopySelectionText,
   isDuplicatePdfSelection,
   projectPdfSelectionRectsToPages,
@@ -11,36 +10,32 @@ import {
 
 describe("pdf-selection-session", () => {
   const snapshot = createPdfSelectionSnapshot({
-    text: "Selected PDF text",
-    scaledPosition: {
-      boundingRect: {
-        x1: 10,
-        y1: 20,
-        x2: 110,
-        y2: 40,
-        width: 640,
-        height: 960,
-        pageNumber: 1,
+    selection: {
+      pageNumber: 1,
+      startOffset: 10,
+      endOffset: 27,
+      text: "Selected PDF text",
+      textQuote: {
+        exact: "Selected PDF text",
+        prefix: "prefix",
+        suffix: "suffix",
+        source: "pdfjs-text-model",
+        confidence: "exact",
       },
-      rects: [{
-        x1: 10,
-        y1: 20,
-        x2: 110,
-        y2: 40,
-        width: 640,
-        height: 960,
+      pageRects: [{
+        x1: 0.01875,
+        y1: 0.025,
+        x2: 0.175,
+        y2: 0.0458333333,
+      }],
+      viewportRects: [{
+        left: 12,
+        top: 24,
+        width: 100,
+        height: 20,
         pageNumber: 1,
       }],
-      pageNumber: 1,
     },
-    overlayRects: [{
-      left: 12,
-      top: 24,
-      width: 100,
-      height: 20,
-      pageNumber: 1,
-    }],
-    sourceTrust: "native",
     signature: "sig-1",
   });
 
@@ -121,41 +116,11 @@ describe("pdf-selection-session", () => {
     ]);
   });
 
-  it("projects scaled selection rects into rendered page viewport coordinates", () => {
-    const rects = projectPdfScaledSelectionToViewportRects({
-      scaledPosition: {
-        boundingRect: {
-          x1: 0,
-          y1: 0,
-          x2: 0,
-          y2: 0,
-          width: 640,
-          height: 960,
-          pageNumber: 1,
-        },
-        rects: [
-          { x1: 64, y1: 96, x2: 192, y2: 144, width: 640, height: 960, pageNumber: 1 },
-          { x1: 32, y1: 48, x2: 96, y2: 96, width: 320, height: 640, pageNumber: 2 },
-        ],
-        pageNumber: 1,
-      },
-      pages: [
-        { pageNumber: 1, width: 800, height: 1200 },
-        { pageNumber: 2, width: 400, height: 800 },
-      ],
-    });
-
-    expect(rects).toEqual([
-      { left: 80, top: 120, width: 160, height: 60, pageNumber: 1 },
-      { left: 40, top: 60, width: 80, height: 60, pageNumber: 2 },
-    ]);
-  });
-
-  it("resolves copy text with credible native selection first and frozen snapshot second", () => {
+  it("resolves copy text with frozen snapshot first and native selection second", () => {
     expect(resolvePdfCopySelectionText({
       nativeText: " Native PDF text ",
       frozenSnapshot: snapshot,
-    })).toBe("Native PDF text");
+    })).toBe("Selected PDF text");
 
     expect(resolvePdfCopySelectionText({
       nativeText: "",

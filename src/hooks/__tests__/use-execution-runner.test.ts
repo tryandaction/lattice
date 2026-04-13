@@ -219,4 +219,43 @@ describe("useExecutionRunner", () => {
 
     second.unmount();
   });
+  it("does not loop when rerendered with an equivalent capability object", async () => {
+    const session = createSessionMock();
+    mockCreateSession.mockReturnValue(session);
+
+    const createCapability = () => ({
+      supportsSelection: true,
+      supportsPersistentSession: false,
+      supportsNotebook: false,
+      supportsLocalExecution: true,
+      supportsPyodide: false,
+      canRun: true,
+      canStop: true,
+      canInterrupt: false,
+      canRestart: false,
+    });
+
+    const hook = renderHook(
+      ({ capability }: { capability: ReturnType<typeof createCapability> }) => useExecutionRunner({
+        scope,
+        capability,
+      }),
+      {
+        initialProps: {
+          capability: createCapability(),
+        },
+      },
+    );
+
+    hook.rerender({ capability: createCapability() });
+    hook.rerender({ capability: createCapability() });
+
+    await waitFor(() => {
+      expect(hook.result.current.commandState.canRun).toBe(true);
+    });
+
+    expect(mockCreateSession).toHaveBeenCalledTimes(1);
+
+    hook.unmount();
+  });
 });

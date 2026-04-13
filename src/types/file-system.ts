@@ -17,6 +17,8 @@ export interface FileNode {
   displayName?: string;
   children?: TreeNode[];
   isExpanded?: boolean;
+  canExpandVirtualChildren?: boolean;
+  virtualChildrenState?: "idle" | "loading" | "ready";
   isVirtual?: boolean;
   parentPdfPath?: string;
   entryRole?: "pdf-note" | "pdf-notebook" | "pdf-annotations";

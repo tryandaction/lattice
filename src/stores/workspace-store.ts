@@ -72,7 +72,7 @@ function toggleNodeExpansion(
   targetPath: string
 ): TreeNode {
   if (node.kind === "file") {
-    if (node.path === targetPath && node.children?.length) {
+    if (node.path === targetPath && (node.children?.length || node.canExpandVirtualChildren)) {
       return {
         ...node,
         isExpanded: !node.isExpanded,

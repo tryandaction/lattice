@@ -12,7 +12,11 @@ import type { ComponentPropsWithoutRef, CSSProperties, JSX, ReactNode } from "re
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import type { PluggableList } from "unified";
-import type { AnnotationItem, AnnotationTarget } from "@/types/universal-annotation";
+import {
+  getCanonicalPdfAnnotationText,
+  type AnnotationItem,
+  type AnnotationTarget,
+} from "@/types/universal-annotation";
 import type { EvidenceRef } from "@/lib/ai/types";
 import { exportFile, type ExportResult } from "@/lib/export-adapter";
 import { loadAnnotationsFromDisk, generateFileId } from "@/lib/universal-annotation-storage";
@@ -170,7 +174,7 @@ function toExportEntries(
       locator,
       sourcePath,
       sourceLabel: titleFromPath(sourcePath || fileName),
-      excerpt: annotation.content,
+      excerpt: getCanonicalPdfAnnotationText(annotation),
       note: annotation.comment,
       createdAt: annotation.createdAt,
     };

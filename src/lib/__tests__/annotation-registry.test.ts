@@ -37,15 +37,18 @@ describe("annotation-registry", () => {
   });
 
   it("rebinding by canonical path works when there is a single historical owner", async () => {
-    await registerAnnotationLocation("fingerprint-v1", {
-      sourcePath: ".lattice/annotations/paper-id.json",
-      canonicalPath: "desktop:C:/Course/docs/paper.pdf",
-      relativePathFromRoot: "docs/paper.pdf",
-      fileId: "paper-id",
-      workspaceKey: "desktop:C:/Course",
-      versionFingerprint: "version-v1",
-      updatedAt: 1,
-    }, {
+    await registerAnnotationLocation({
+      documentId: "paper-id",
+      alias: {
+        sourcePath: ".lattice/annotations/paper-id.json",
+        canonicalPath: "desktop:C:/Course/docs/paper.pdf",
+        relativePathFromRoot: "docs/paper.pdf",
+        fileId: "paper-id",
+        workspaceKey: "desktop:C:/Course",
+        versionFingerprint: "version-v1",
+        updatedAt: 1,
+      },
+      fileFingerprint: "fingerprint-v1",
       versionFingerprint: "version-v1",
     });
 
@@ -61,27 +64,33 @@ describe("annotation-registry", () => {
   });
 
   it("marks canonical path reuse as conflict and blocks silent auto-binding", async () => {
-    await registerAnnotationLocation("fingerprint-a", {
-      sourcePath: ".lattice/annotations/paper-a.json",
-      canonicalPath: "desktop:C:/Course/docs/paper.pdf",
-      relativePathFromRoot: "docs/paper.pdf",
-      fileId: "paper-a",
-      workspaceKey: "desktop:C:/Course",
-      versionFingerprint: "version-a",
-      updatedAt: 1,
-    }, {
+    await registerAnnotationLocation({
+      documentId: "paper-a",
+      alias: {
+        sourcePath: ".lattice/annotations/paper-a.json",
+        canonicalPath: "desktop:C:/Course/docs/paper.pdf",
+        relativePathFromRoot: "docs/paper.pdf",
+        fileId: "paper-a",
+        workspaceKey: "desktop:C:/Course",
+        versionFingerprint: "version-a",
+        updatedAt: 1,
+      },
+      fileFingerprint: "fingerprint-a",
       versionFingerprint: "version-a",
     });
 
-    await registerAnnotationLocation("fingerprint-b", {
-      sourcePath: ".lattice/annotations/paper-b.json",
-      canonicalPath: "desktop:C:/Course/docs/paper.pdf",
-      relativePathFromRoot: "docs/paper.pdf",
-      fileId: "paper-b",
-      workspaceKey: "desktop:C:/Archive",
-      versionFingerprint: "version-b",
-      updatedAt: 2,
-    }, {
+    await registerAnnotationLocation({
+      documentId: "paper-b",
+      alias: {
+        sourcePath: ".lattice/annotations/paper-b.json",
+        canonicalPath: "desktop:C:/Course/docs/paper.pdf",
+        relativePathFromRoot: "docs/paper.pdf",
+        fileId: "paper-b",
+        workspaceKey: "desktop:C:/Archive",
+        versionFingerprint: "version-b",
+        updatedAt: 2,
+      },
+      fileFingerprint: "fingerprint-b",
       versionFingerprint: "version-b",
     });
 
@@ -96,6 +105,46 @@ describe("annotation-registry", () => {
 
     expect(match.strategy).toBe("none");
     expect(match.aliases).toHaveLength(0);
-    expect(match.conflict?.contenderFingerprints.sort()).toEqual(["fingerprint-a", "fingerprint-b"]);
+    expect(match.conflict?.contenderDocumentIds.sort()).toEqual(["paper-a", "paper-b"]);
+  });
+
+  it("does not auto-bind by fingerprint when copied PDFs branch into multiple document ids", async () => {
+    await registerAnnotationLocation({
+      documentId: "paper-origin",
+      alias: {
+        sourcePath: ".lattice/annotations/paper-origin.json",
+        canonicalPath: "desktop:C:/Course/docs/paper.pdf",
+        relativePathFromRoot: "docs/paper.pdf",
+        fileId: "paper-origin",
+        workspaceKey: "desktop:C:/Course",
+        updatedAt: 1,
+      },
+      fileFingerprint: "shared-fingerprint",
+      versionFingerprint: "version-a",
+    });
+
+    await registerAnnotationLocation({
+      documentId: "paper-copy",
+      alias: {
+        sourcePath: ".lattice/annotations/paper-copy.json",
+        canonicalPath: "desktop:C:/Course/archive/paper-copy.pdf",
+        relativePathFromRoot: "archive/paper-copy.pdf",
+        fileId: "paper-copy",
+        workspaceKey: "desktop:C:/Course",
+        updatedAt: 2,
+      },
+      fileFingerprint: "shared-fingerprint",
+      versionFingerprint: "version-a",
+    });
+
+    const match = await resolveAnnotationRegistryMatch({
+      fileFingerprint: "shared-fingerprint",
+      versionFingerprint: "version-a",
+      canonicalPath: "desktop:C:/Course/elsewhere/paper.pdf",
+    });
+
+    expect(match.strategy).toBe("none");
+    expect(match.documentId).toBeNull();
+    expect(match.aliases).toHaveLength(0);
   });
 });

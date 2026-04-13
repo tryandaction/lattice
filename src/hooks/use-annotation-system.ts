@@ -29,6 +29,7 @@ import {
 import { logger } from '../lib/logger';
 import { resolveFileIdentity } from '@/lib/file-identity';
 import { useWorkspaceStore } from '@/stores/workspace-store';
+import type { ResolvedPdfDocumentBinding } from '@/lib/pdf-document-binding';
 
 // ============================================================================
 // Types
@@ -61,6 +62,8 @@ export interface UseAnnotationSystemOptions {
   rootHandle: FileSystemDirectoryHandle;
   /** Optional file type override */
   fileType?: AnnotationFileType;
+  /** Optional resolved document binding for PDF annotations */
+  binding?: ResolvedPdfDocumentBinding | null;
   /** Debounce delay for auto-save (default: 1000ms) */
   saveDelay?: number;
   /** Author identifier for new annotations */
@@ -114,6 +117,22 @@ export interface AnnotationNavigationEvent {
   target: AnnotationTarget;
 }
 
+function dedupeAnnotationsById(annotations: AnnotationItem[]): AnnotationItem[] {
+  const seen = new Set<string>();
+  const deduped: AnnotationItem[] = [];
+
+  for (let index = annotations.length - 1; index >= 0; index -= 1) {
+    const annotation = annotations[index];
+    if (seen.has(annotation.id)) {
+      continue;
+    }
+    seen.add(annotation.id);
+    deduped.unshift(annotation);
+  }
+
+  return deduped;
+}
+
 /**
  * Custom event name for annotation navigation
  */
@@ -152,6 +171,7 @@ export function useAnnotationSystem({
   deferLoad = false,
   rootHandle,
   fileType: fileTypeOverride,
+  binding = null,
   saveDelay = 1000,
   author: _author = 'user',
 }: UseAnnotationSystemOptions): UseAnnotationSystemReturn {
@@ -185,8 +205,8 @@ export function useAnnotationSystem({
       try {
         const fileName = filePath || fileHandle.name;
         const preferredPath = (filePath && filePath.trim()) ? filePath : fileHandle.name;
-        const candidateIds = resolveAnnotationFileCandidates(fileHandle.name, filePath, storageFileId);
-        const preferredFileId = storageFileId ?? candidateIds[0];
+        const candidateIds = binding?.storageCandidates ?? resolveAnnotationFileCandidates(fileHandle.name, filePath, storageFileId);
+        const preferredFileId = binding?.canonicalStorageFileId ?? storageFileId ?? candidateIds[0];
         if (!preferredFileId) {
           throw new Error("Unable to derive annotation storage id");
         }
@@ -196,6 +216,30 @@ export function useAnnotationSystem({
         const detected = detectFileType(fileName);
         setDetectedFileType(detected);
         
+        // A resolved binding is the PDF identity source, but not the annotation content source.
+        // The binding snapshot can be stale after edits, so always refresh current annotations from disk.
+        if (binding && !cancelled) {
+          const resolved = await loadAnnotationsForFileIdentity({
+            rootHandle,
+            fileIdentity: binding.fileIdentity,
+            workspaceKey: workspaceIdentity?.workspaceKey ?? null,
+            fileType: fileTypeOverride || detected,
+          });
+          const freshestAnnotationFile = resolved.source
+            ? resolved.annotationFile
+            : binding.annotationFile;
+          const dedupedAnnotations = dedupeAnnotationsById(freshestAnnotationFile.annotations);
+          annotationFileRef.current = {
+            ...freshestAnnotationFile,
+            annotations: dedupedAnnotations,
+            fileId: preferredFileId,
+            fileType: fileTypeOverride || detected,
+          };
+          setAnnotations(dedupedAnnotations);
+          setError(null);
+          return;
+        }
+
         // Try to load existing annotations
         const annotationsDir = await ensureAnnotationsDirectory(rootHandle);
         let loadedExistingFile = false;
@@ -225,9 +269,17 @@ export function useAnnotationSystem({
               };
 
               if (!cancelled) {
+                const dedupedAnnotations = dedupeAnnotationsById(normalizedMigrated.annotations);
                 annotationFileRef.current = normalizedMigrated;
-                setAnnotations(normalizedMigrated.annotations);
-                await saveWithRetry(normalizedMigrated, rootHandle);
+                annotationFileRef.current = {
+                  ...normalizedMigrated,
+                  annotations: dedupedAnnotations,
+                };
+                setAnnotations(dedupedAnnotations);
+                await saveWithRetry({
+                  ...normalizedMigrated,
+                  annotations: dedupedAnnotations,
+                }, rootHandle);
               }
               loadedExistingFile = true;
               break;
@@ -235,13 +287,15 @@ export function useAnnotationSystem({
 
             const universalFile = deserializeAnnotationFile(content);
             if (universalFile && !cancelled) {
+              const dedupedAnnotations = dedupeAnnotationsById(universalFile.annotations);
               const normalizedFile = {
                 ...universalFile,
+                annotations: dedupedAnnotations,
                 fileId: preferredFileId,
                 fileType: fileTypeOverride || detected,
               };
               annotationFileRef.current = normalizedFile;
-              setAnnotations(normalizedFile.annotations);
+              setAnnotations(dedupedAnnotations);
 
               if (candidateFileId !== preferredFileId || universalFile.fileId !== preferredFileId) {
                 await saveWithRetry(normalizedFile, rootHandle);
@@ -269,13 +323,15 @@ export function useAnnotationSystem({
           });
 
           if (resolved.source) {
+            const dedupedAnnotations = dedupeAnnotationsById(resolved.annotationFile.annotations);
             const resolvedFile = {
               ...resolved.annotationFile,
+              annotations: dedupedAnnotations,
               fileId: preferredFileId,
               fileType: fileTypeOverride || detected,
             };
             annotationFileRef.current = resolvedFile;
-            setAnnotations(resolvedFile.annotations);
+            setAnnotations(dedupedAnnotations);
             loadedExistingFile = true;
           }
         }
@@ -301,7 +357,7 @@ export function useAnnotationSystem({
     return () => {
       cancelled = true;
     };
-  }, [deferLoad, fileHandle, filePath, rootHandle, fileTypeOverride, storageFileId, workspaceIdentity]);
+  }, [binding, deferLoad, fileHandle, filePath, rootHandle, fileTypeOverride, storageFileId, workspaceIdentity]);
 
   // Debounced save function
   const scheduleSave = useCallback((newAnnotations: AnnotationItem[]) => {
@@ -317,7 +373,7 @@ export function useAnnotationSystem({
     // Update the annotation file reference
     annotationFileRef.current = {
       ...annotationFileRef.current,
-      annotations: newAnnotations,
+      annotations: dedupeAnnotationsById(newAnnotations),
       lastModified: Date.now(),
     };
     
@@ -364,8 +420,9 @@ export function useAnnotationSystem({
     
     setAnnotations(prev => {
       const updated = [...prev, newAnnotation];
-      scheduleSave(updated);
-      return updated;
+      const deduped = dedupeAnnotationsById(updated);
+      scheduleSave(deduped);
+      return deduped;
     });
     
     return newAnnotation.id;
@@ -420,10 +477,10 @@ export function useAnnotationSystem({
       
       const newAnnotations = [...prev];
       newAnnotations[index] = updated;
-      
-      scheduleSave(newAnnotations);
+      const deduped = dedupeAnnotationsById(newAnnotations);
+      scheduleSave(deduped);
       success = true;
-      return newAnnotations;
+      return deduped;
     });
     
     // Handle validation error outside of setState
@@ -449,9 +506,10 @@ export function useAnnotationSystem({
       if (index === -1) return prev;
       
       const newAnnotations = prev.filter(a => a.id !== id);
-      scheduleSave(newAnnotations);
+      const deduped = dedupeAnnotationsById(newAnnotations);
+      scheduleSave(deduped);
       success = true;
-      return newAnnotations;
+      return deduped;
     });
     
     return success;

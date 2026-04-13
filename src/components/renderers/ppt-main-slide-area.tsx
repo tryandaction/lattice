@@ -34,7 +34,7 @@ export function MainSlideArea({
       const clone = currentSlide.element.cloneNode(true) as HTMLElement;
 
       // Check if the slide has formulas that need to be displayed
-      const textContent = clone.textContent?.trim() || '';
+      const textContent = currentSlide.renderedTextContent ?? (clone.textContent?.trim() || '');
       
       // STEP 1: Determine what content is missing
       // Compare extracted text with rendered text to find missing content
@@ -85,73 +85,8 @@ export function MainSlideArea({
       allElements.forEach((el) => removeOverflowHidden(el as HTMLElement));
       
       // Get the ORIGINAL dimensions from the source element
-      const sourceElement = currentSlide.element;
-      
-      // Get declared dimensions from pptx-preview - this is the PRIMARY source of truth
-      const declaredWidth = parseFloat(sourceElement.style.width) || sourceElement.offsetWidth || 960;
-      const declaredHeight = parseFloat(sourceElement.style.height) || sourceElement.offsetHeight || 540;
-
-      // Check for content overflow using scrollWidth/scrollHeight
-      // These are reliable even in off-screen containers
-      const scrollWidth = sourceElement.scrollWidth;
-      const scrollHeight = sourceElement.scrollHeight;
-      
-      // Only scan children if scroll dimensions suggest overflow
-      let contentWidth = scrollWidth;
-      let contentHeight = scrollHeight;
-      
-      // If scroll dimensions are larger than declared, scan children for precise bounds
-      if (scrollWidth > declaredWidth || scrollHeight > declaredHeight) {
-        // Scan children to find actual content bounds
-        const children = sourceElement.querySelectorAll('*');
-        let maxRight = 0;
-        let maxBottom = 0;
-        
-        children.forEach((child) => {
-          const el = child as HTMLElement;
-          
-          // Skip invisible elements
-          if (el.offsetWidth === 0 && el.offsetHeight === 0) return;
-          
-          // Use offsetLeft/offsetTop + dimensions for position
-          // This is more reliable than getBoundingClientRect for off-screen elements
-          const left = el.offsetLeft;
-          const top = el.offsetTop;
-          const width = el.offsetWidth;
-          const height = el.offsetHeight;
-          
-          // Also check inline styles for absolute positioned elements
-          const styleLeft = parseFloat(el.style.left) || 0;
-          const styleTop = parseFloat(el.style.top) || 0;
-          const styleWidth = parseFloat(el.style.width) || 0;
-          const styleHeight = parseFloat(el.style.height) || 0;
-          
-          // Use the larger of offset or style values
-          const effectiveLeft = Math.max(left, styleLeft);
-          const effectiveTop = Math.max(top, styleTop);
-          const effectiveWidth = Math.max(width, styleWidth);
-          const effectiveHeight = Math.max(height, styleHeight);
-          
-          const right = effectiveLeft + effectiveWidth;
-          const bottom = effectiveTop + effectiveHeight;
-          
-          if (right > maxRight) maxRight = right;
-          if (bottom > maxBottom) maxBottom = bottom;
-        });
-        
-        contentWidth = Math.max(scrollWidth, maxRight);
-        contentHeight = Math.max(scrollHeight, maxBottom);
-      }
-
-      // FINAL DIMENSIONS: Use declared size, but expand if content overflows
-      // Add small padding only if we're expanding beyond declared size
-      const OVERFLOW_PADDING = 10;
-      const originalWidth = contentWidth > declaredWidth 
-        ? contentWidth + OVERFLOW_PADDING 
-        : declaredWidth;
-      const originalHeight = contentHeight > declaredHeight 
-        ? contentHeight + OVERFLOW_PADDING 
-        : declaredHeight;
+      const originalWidth = currentSlide.contentWidth || currentSlide.declaredWidth || 960;
+      const originalHeight = currentSlide.contentHeight || currentSlide.declaredHeight || 540;
       
       
       // Calculate scale to fit container while preserving aspect ratio

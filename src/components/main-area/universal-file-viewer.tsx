@@ -11,9 +11,8 @@ import { navigateLink } from "@/lib/link-router/navigate-link";
 import { t } from "@/lib/i18n";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 import { isTauriHost } from "@/lib/storage-adapter";
-import { resolveFileIdentity } from "@/lib/file-identity";
-import { generateFileId, loadAnnotationsForFileIdentity } from "@/lib/universal-annotation-storage";
-import type { FileIdentity } from "@/types/workspace-identity";
+import { resolvePdfDocumentBinding } from "@/lib/pdf-document-binding";
+import type { ResolvedPdfDocumentBinding } from "@/lib/pdf-document-binding";
 import type { BinaryViewerContent, BufferViewerContent, ViewerContent } from "@/types/viewer-content";
 
 /**
@@ -61,16 +60,18 @@ function AdaptivePDFRenderer({
   const activePdfKey = `${fileId}:${filePath}`;
 
   const [requestedAnnotationModeKey, setRequestedAnnotationModeKey] = useState<string | null>(null);
+  const [bindingByKey, setBindingByKey] = useState<Record<string, ResolvedPdfDocumentBinding | null>>({});
   const [annotationPresenceByKey, setAnnotationPresenceByKey] = useState<Record<string, boolean>>({});
+  const resolvedBinding = bindingByKey[activePdfKey] ?? null;
   const hasPersistedAnnotations = annotationPresenceByKey[activePdfKey] ?? false;
   const renderMode: "viewer" | "highlighter" = (
-    (isDesktopRuntime && hasAnnotationContext) ||
+    hasAnnotationContext ||
     requestedAnnotationModeKey === activePdfKey ||
     (!isDesktopRuntime && hasPersistedAnnotations)
   ) ? "highlighter" : "viewer";
 
   useEffect(() => {
-    if (!rootHandle || (isDesktopRuntime && hasAnnotationContext)) {
+    if (!rootHandle || !fileHandle) {
       return;
     }
 
@@ -78,36 +79,21 @@ function AdaptivePDFRenderer({
 
     const detectPersistedAnnotations = async () => {
       try {
-        const fileIdentity: FileIdentity = isDesktopRuntime
-          ? {
-              primaryFileId: generateFileId(filePath),
-              fileIdCandidates: Array.from(new Set([
-                generateFileId(filePath),
-                generateFileId(fileName),
-              ])),
-              canonicalPath: filePath,
-              relativePathFromRoot: filePath,
-              fileName,
-              fileFingerprint: null,
-              versionFingerprint: null,
-              size: null,
-              lastModified: null,
-            }
-          : await resolveFileIdentity({
-              fileHandle,
-              filePath,
-              fileName,
-              workspaceIdentity,
-            });
-        const loaded = await loadAnnotationsForFileIdentity({
+        const binding = await resolvePdfDocumentBinding({
           rootHandle,
-          fileIdentity,
-          workspaceKey: workspaceIdentity?.workspaceKey ?? null,
+          fileHandle,
+          filePath,
+          fileName,
+          workspaceIdentity,
           fileType: "pdf",
         });
-        const pdfAnnotations = loaded.annotationFile.annotations.filter((annotation) => annotation.target.type === "pdf");
+        const pdfAnnotations = binding.annotationFile.annotations.filter((annotation) => annotation.target.type === "pdf");
         const detected = pdfAnnotations.length > 0;
         if (!cancelled) {
+          setBindingByKey((current) => ({
+            ...current,
+            [activePdfKey]: binding,
+          }));
           setAnnotationPresenceByKey((current) => (
             current[activePdfKey] === detected
               ? current
@@ -146,6 +132,7 @@ function AdaptivePDFRenderer({
         paneId={paneId}
         fileId={fileId}
         filePath={filePath}
+        binding={resolvedBinding}
       />
     );
   }
@@ -155,6 +142,7 @@ function AdaptivePDFRenderer({
       source={source}
       fileName={fileName}
       documentId={activePdfKey}
+      fileHandle={fileHandle}
       paneId={paneId}
       canAnnotate={hasAnnotationContext}
       hasPersistedAnnotations={hasPersistedAnnotations}

@@ -39,23 +39,38 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { HIGHLIGHT_COLORS, BACKGROUND_COLORS, TEXT_COLORS, TEXT_FONT_SIZES, DEFAULT_TEXT_STYLE } from "@/lib/annotation-colors";
-import type { AnnotationItem, PdfTarget } from "@/types/universal-annotation";
+import { HIGHLIGHT_COLORS, BACKGROUND_COLORS, TEXT_COLORS, TEXT_FONT_SIZES, DEFAULT_TEXT_STYLE, resolveHighlightColor } from "@/lib/annotation-colors";
+import { getCanonicalPdfAnnotationText, type AnnotationItem, type PdfTarget } from "@/types/universal-annotation";
 import { cn } from "@/lib/utils";
 import type { PaneId } from "@/types/layout";
 import type { AnnotationBacklink } from "@/lib/annotation-backlinks";
 import { useI18n } from "@/hooks/use-i18n";
 import { getLocale, t as translate } from "@/lib/i18n";
 
+function dedupePdfAnnotations(annotations: AnnotationItem[]): AnnotationItem[] {
+  const seen = new Set<string>();
+  return annotations.filter((annotation) => {
+    if (annotation.target.type !== "pdf") {
+      return false;
+    }
+    if (seen.has(annotation.id)) {
+      return false;
+    }
+    seen.add(annotation.id);
+    return true;
+  });
+}
+
 // Helper function to export annotations to Markdown format
 function exportAnnotationsToMarkdown(annotations: AnnotationItem[]): string {
+  const pdfAnnotations = dedupePdfAnnotations(annotations);
   const locale = getLocale();
   const lines: string[] = [
     `# ${translate("pdf.sidebar.export.title")}`,
     '',
     `*${translate("pdf.sidebar.export.time", { time: new Date().toLocaleString(locale) })}*`,
     '',
-    translate("pdf.sidebar.export.count", { count: annotations.length }),
+    translate("pdf.sidebar.export.count", { count: pdfAnnotations.length }),
     '',
     '---',
     '',
@@ -63,7 +78,7 @@ function exportAnnotationsToMarkdown(annotations: AnnotationItem[]): string {
 
   // Group by page
   const byPage = new Map<number, AnnotationItem[]>();
-  for (const ann of annotations) {
+  for (const ann of pdfAnnotations) {
     const page = (ann.target as PdfTarget).page;
     if (!byPage.has(page)) {
       byPage.set(page, []);
@@ -80,6 +95,7 @@ function exportAnnotationsToMarkdown(annotations: AnnotationItem[]): string {
     lines.push('');
 
     for (const ann of pageAnnotations) {
+      const quoteText = getCanonicalPdfAnnotationText(ann);
       const typeLabel = {
         highlight: `🟡 ${translate("pdf.command.highlight")}`,
         underline: `📝 ${translate("pdf.command.underline")}`,
@@ -90,9 +106,9 @@ function exportAnnotationsToMarkdown(annotations: AnnotationItem[]): string {
 
       lines.push(`### ${typeLabel}`);
       
-      if (ann.content) {
+      if (quoteText) {
         lines.push('');
-        lines.push(`> ${ann.content}`);
+        lines.push(`> ${quoteText}`);
       }
       
       if (ann.comment) {
@@ -447,6 +463,7 @@ function AnnotationContextMenu({
   onUpdateTextStyle?: (textColor: string, fontSize: number, bgColor: string) => void;
 }) {
   const { t } = useI18n();
+  const quoteText = getCanonicalPdfAnnotationText(annotation);
   const menuRef = useRef<HTMLDivElement>(null);
   const [showTextStyleEditor, setShowTextStyleEditor] = useState(false);
   const [textColor, setTextColor] = useState(annotation.style.textStyle?.textColor || DEFAULT_TEXT_STYLE.textColor);
@@ -705,7 +722,7 @@ function AnnotationContextMenu({
         </button>
       )}
 
-      {annotation.content && (
+      {quoteText && (
         <button
           className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2"
           onClick={() => {
@@ -785,6 +802,7 @@ function AnnotationCard({
   const isTextAnnotation = annotation.style.type === 'text';
   const textStyle = annotation.style.textStyle || { textColor: '#000000', fontSize: 14 };
   const resolvedBacklinks = backlinks ?? [];
+  const quoteText = getCanonicalPdfAnnotationText(annotation);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -798,10 +816,10 @@ function AnnotationCard({
   }, [editComment, onUpdateComment]);
 
   const handleCopyText = useCallback(() => {
-    if (annotation.content) {
-      navigator.clipboard.writeText(annotation.content);
+    if (quoteText) {
+      navigator.clipboard.writeText(quoteText);
     }
-  }, [annotation.content]);
+  }, [quoteText]);
 
   const handleClick = useCallback((e: React.MouseEvent) => {
     // Ctrl/Cmd + Click toggles multi-select
@@ -845,7 +863,7 @@ function AnnotationCard({
 
   const getPreviewText = () => {
     if (annotation.style.type === 'ink') return t("pdf.sidebar.preview.ink");
-    if (annotation.content) return annotation.content;
+    if (quoteText) return quoteText;
     if (annotation.comment) return annotation.comment;
     return annotation.style.type === 'area' ? t("pdf.sidebar.preview.area") : t("workbench.annotations.panelTitle");
   };
@@ -858,9 +876,9 @@ function AnnotationCard({
       if (!bgColor || bgColor === 'transparent') {
         return textStyle.textColor || '#000000';
       }
-      return bgColor;
+      return resolveHighlightColor(bgColor);
     }
-    return annotation.style.color;
+    return resolveHighlightColor(annotation.style.color);
   };
 
   return (
@@ -928,7 +946,7 @@ function AnnotationCard({
           </div>
 
           {/* Text annotation - show with actual styling */}
-          {isTextAnnotation && annotation.content && (
+          {isTextAnnotation && quoteText && (
             <div 
               className="text-sm leading-relaxed mb-2 px-2 py-1.5 rounded border"
               style={{ 
@@ -949,13 +967,13 @@ function AnnotationCard({
                 }}
                 className="line-clamp-3"
               >
-                {annotation.content}
+                {quoteText}
               </span>
             </div>
           )}
 
           {/* Highlighted text with background (Zotero style) - for non-text annotations */}
-          {!isTextAnnotation && annotation.content && annotation.style.type !== 'ink' && (
+          {!isTextAnnotation && quoteText && annotation.style.type !== 'ink' && (
             <div 
               className="text-sm leading-relaxed mb-2 px-1.5 py-1 rounded"
               style={{ 
@@ -1179,11 +1197,14 @@ export function PdfAnnotationSidebar({
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<AnnotationTypeFilter>('all');
   const [colorFilter, setColorFilter] = useState<ColorFilter>('all');
+  const pdfAnnotations = useMemo(
+    () => dedupePdfAnnotations(annotations),
+    [annotations],
+  );
 
   // Filter and sort annotations
   const filteredAnnotations = useMemo(() => {
-    return annotations
-      .filter(a => a.target.type === 'pdf')
+    return pdfAnnotations
       .filter(a => {
         // Type filter
         if (typeFilter !== 'all' && a.style.type !== typeFilter) {
@@ -1196,7 +1217,7 @@ export function PdfAnnotationSidebar({
         // Search filter
         if (searchQuery.trim()) {
           const query = searchQuery.toLowerCase();
-          const content = (a.content || '').toLowerCase();
+          const content = (getCanonicalPdfAnnotationText(a) || '').toLowerCase();
           const comment = (a.comment || '').toLowerCase();
           if (!content.includes(query) && !comment.includes(query)) {
             return false;
@@ -1204,7 +1225,7 @@ export function PdfAnnotationSidebar({
         }
         return true;
       });
-  }, [annotations, typeFilter, colorFilter, searchQuery]);
+  }, [pdfAnnotations, typeFilter, colorFilter, searchQuery]);
 
   // Sort annotations by page, then by position (top to bottom)
   const sortedAnnotations = useMemo(() => {
@@ -1218,9 +1239,12 @@ export function PdfAnnotationSidebar({
         const rectA = (a.target as PdfTarget).rects[0];
         const rectB = (b.target as PdfTarget).rects[0];
         if (rectA && rectB) {
-          return rectA.y1 - rectB.y1;
+          const byTop = rectA.y1 - rectB.y1;
+          if (Math.abs(byTop) > 0.0005) return byTop;
+          const byLeft = rectA.x1 - rectB.x1;
+          if (Math.abs(byLeft) > 0.0005) return byLeft;
         }
-        return a.createdAt - b.createdAt;
+        return a.createdAt - b.createdAt || a.id.localeCompare(b.id);
       });
   }, [filteredAnnotations]);
 
@@ -1294,7 +1318,7 @@ export function PdfAnnotationSidebar({
     card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [selectedId]);
 
-  if (annotations.length === 0) {
+  if (pdfAnnotations.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-6 text-center">
         <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
@@ -1328,7 +1352,7 @@ export function PdfAnnotationSidebar({
               )}
             </Button>
             <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-              {annotations.length}
+              {pdfAnnotations.length}
             </span>
           </div>
         </div>
@@ -1341,7 +1365,7 @@ export function PdfAnnotationSidebar({
           colorFilter={colorFilter}
           onColorFilterChange={setColorFilter}
           resultCount={sortedAnnotations.length}
-          totalCount={annotations.filter(a => a.target.type === 'pdf').length}
+          totalCount={pdfAnnotations.length}
         />
 
         <BatchSelectionToolbar

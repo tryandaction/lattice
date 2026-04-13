@@ -598,9 +598,9 @@ export function CodeEditorViewer({
   });
 
   const renderDock = useCallback((expanded: boolean) => (
-    <div className={expanded ? "flex h-full min-h-0 flex-col border-t border-border bg-background" : "border-t border-border bg-background"}>
+    <div className={expanded ? "code-workbench-elevated flex h-full min-h-0 flex-col border-t" : "code-workbench-elevated border-t"}>
       <HorizontalScrollStrip
-        className="border-b border-border bg-muted/50"
+        className="border-b border-border bg-[var(--code-surface-muted)]"
         viewportClassName="px-3 py-1.5"
         contentClassName="min-w-full w-max justify-between gap-3"
         ariaLabel={t("workbench.runner.managerCode")}
@@ -608,7 +608,7 @@ export function CodeEditorViewer({
         <div className="flex shrink-0 items-center gap-2">
           <button
             onClick={() => setShowOutput((value) => !value)}
-            className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            className="code-workbench-inline-button flex items-center gap-1 text-xs transition-colors"
           >
             {showOutput ? (
               <ChevronDown className="h-3 w-3" />
@@ -617,18 +617,18 @@ export function CodeEditorViewer({
             )}
             <span>{showOutput ? t("workbench.dock.hide") : t("workbench.dock.show")}</span>
           </button>
-          <div className="flex items-center gap-1 rounded-md border border-border bg-background p-0.5">
+          <div className="code-workbench-panel flex items-center gap-1 rounded-md p-0.5">
             <button
               type="button"
               onClick={() => {
                 setActiveDockTab("run");
                 setShowOutput(true);
               }}
-              className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "run" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+              className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "run" ? "code-workbench-status-info" : "code-workbench-inline-button"}`}
             >
               {t("workbench.dock.run")}
               {outputs.length > 0 ? (
-                <span className="ml-1 rounded bg-primary/10 px-1 py-0.5 text-[10px]">{outputs.length}</span>
+                <span className="code-workbench-status-info ml-1 rounded px-1 py-0.5 text-[10px]">{outputs.length}</span>
               ) : null}
             </button>
             <button
@@ -637,22 +637,22 @@ export function CodeEditorViewer({
                 setActiveDockTab("problems");
                 setShowOutput(true);
               }}
-              className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "problems" ? "bg-destructive/10 text-destructive" : "text-muted-foreground hover:text-foreground"}`}
+              className={`rounded px-2 py-1 text-[11px] transition-colors ${activeDockTab === "problems" ? "code-workbench-status-error" : "code-workbench-inline-button"}`}
             >
               {t("workbench.dock.problems")}
               {problems.length > 0 ? (
-                <span className="ml-1 rounded bg-destructive/10 px-1 py-0.5 text-[10px]">{problems.length}</span>
+                <span className="code-workbench-status-error ml-1 rounded px-1 py-0.5 text-[10px]">{problems.length}</span>
               ) : null}
             </button>
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2 text-[10px] text-muted-foreground">
+        <div className="code-workbench-soft-text flex shrink-0 items-center gap-2 text-[10px]">
           {summary.startedAt && <span>{t("workbench.runner.started")}</span>}
           {durationLabel && <span>{durationLabel}</span>}
           {summary.exitCode !== null && <span>{t("workbench.runner.exit", { code: summary.exitCode })}</span>}
           {runnerHealthSnapshot.issues.length > 0 && (
-            <span className="inline-flex items-center gap-1 text-yellow-700 dark:text-yellow-300">
+            <span className="code-workbench-status-warning inline-flex items-center gap-1 rounded px-2 py-1">
               <AlertTriangle className="h-3 w-3" />
               <span>{t("workbench.runner.health", { count: runnerHealthSnapshot.issues.length })}</span>
             </span>
@@ -667,7 +667,7 @@ export function CodeEditorViewer({
           {expanded && (outputs.length > 0 || problems.length > 0) && (
             <button
               onClick={clearOutputs}
-              className="p-1 text-muted-foreground transition-colors hover:text-foreground"
+              className="code-workbench-inline-button rounded p-1 transition-colors"
               title={t("workbench.dock.clearFeedback")}
             >
               <Trash2 className="w-3 h-3" />
@@ -677,13 +677,13 @@ export function CodeEditorViewer({
       </HorizontalScrollStrip>
 
       {expanded ? (
-        <div className="h-full min-h-0 overflow-auto p-3">
-          <KernelStatus status={runnerStatus} error={runnerError} />
-          {activeDockTab === "run" ? (
+          <div className="h-full min-h-0 overflow-auto p-3">
+            <KernelStatus status={runnerStatus} error={runnerError} />
+            {activeDockTab === "run" ? (
             <>
               <OutputArea outputs={outputs} meta={panelMeta} showDiagnosticsInline={false} />
               {outputs.length === 0 && !runnerError && runnerStatus !== "loading" && runnerStatus !== "running" && (
-                <p className="py-4 text-center text-xs text-muted-foreground">
+                <p className="code-workbench-muted-text py-4 text-center text-xs">
                   {t("workbench.runner.noOutput")}
                 </p>
               )}
@@ -692,7 +692,7 @@ export function CodeEditorViewer({
             <>
               <ProblemsPanel problems={problems} onSelectProblem={navigateToProblem} />
               {problems.length === 0 ? (
-                <p className="py-4 text-center text-xs text-muted-foreground">
+                <p className="code-workbench-muted-text py-4 text-center text-xs">
                   {t("workbench.runner.noProblems")}
                 </p>
               ) : null}
@@ -726,7 +726,7 @@ export function CodeEditorViewer({
   return (
     <div
       ref={editorContainerRef}
-      className="h-full flex flex-col overflow-hidden"
+      className="code-workbench-shell h-full flex flex-col overflow-hidden"
       onKeyDown={handleKeyDown}
     >
       {aiSelection && (

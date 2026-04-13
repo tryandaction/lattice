@@ -26,6 +26,43 @@
   --input: 240 5.9% 90%;
   --ring: 240 5.9% 10%;
   --radius: 0.5rem;
+
+  /* Code Workbench Theme - Light */
+  --code-shell-bg: #f5f7fb;
+  --code-surface: #ffffff;
+  --code-surface-elevated: #fcfdff;
+  --code-surface-muted: #eef3f9;
+  --code-surface-hover: #e7edf6;
+  --code-gutter-bg: #f3f6fb;
+  --code-gutter-active-bg: #e6edf8;
+  --code-border: #d6e0ec;
+  --code-border-strong: #b7c6d8;
+  --code-fg: #162235;
+  --code-fg-muted: #5c6b7e;
+  --code-fg-soft: #7b8795;
+  --code-selection: rgba(96, 165, 250, 0.24);
+  --code-selection-focused: rgba(59, 130, 246, 0.34);
+  --code-active-line: rgba(37, 99, 235, 0.08);
+  --code-cursor: #2563eb;
+  --code-badge-bg: #edf3fb;
+  --code-badge-fg: #35516f;
+  --code-token-keyword: #7c3aed;
+  --code-token-string: #047857;
+  --code-token-number: #b45309;
+  --code-token-comment: #7c8798;
+  --code-token-function: #1d4ed8;
+  --code-token-variable: #162235;
+  --code-token-type: #0f766e;
+  --code-token-operator: #526171;
+  --code-token-bracket: #48586a;
+  --code-status-info-bg: rgba(37, 99, 235, 0.10);
+  --code-status-info-fg: #1d4ed8;
+  --code-status-success-bg: rgba(16, 185, 129, 0.12);
+  --code-status-success-fg: #047857;
+  --code-status-warning-bg: rgba(245, 158, 11, 0.14);
+  --code-status-warning-fg: #b45309;
+  --code-status-error-bg: rgba(239, 68, 68, 0.12);
+  --code-status-error-fg: #b91c1c;
 }
 
 .dark {
@@ -49,6 +86,43 @@
   --border: 240 3.7% 15.9%;
   --input: 240 3.7% 15.9%;
   --ring: 240 4.9% 83.9%;
+
+  /* Code Workbench Theme - Dark */
+  --code-shell-bg: #0b1120;
+  --code-surface: #0f172a;
+  --code-surface-elevated: #111b31;
+  --code-surface-muted: #162033;
+  --code-surface-hover: #1b2940;
+  --code-gutter-bg: #111827;
+  --code-gutter-active-bg: #18243a;
+  --code-border: #23314b;
+  --code-border-strong: #334764;
+  --code-fg: #e8eef8;
+  --code-fg-muted: #b7c3d6;
+  --code-fg-soft: #91a0b6;
+  --code-selection: rgba(59, 130, 246, 0.32);
+  --code-selection-focused: rgba(59, 130, 246, 0.44);
+  --code-active-line: rgba(148, 163, 184, 0.10);
+  --code-cursor: #93c5fd;
+  --code-badge-bg: #18243a;
+  --code-badge-fg: #c7d6ea;
+  --code-token-keyword: #c084fc;
+  --code-token-string: #86efac;
+  --code-token-number: #fdba74;
+  --code-token-comment: #94a3b8;
+  --code-token-function: #7dd3fc;
+  --code-token-variable: #e8eef8;
+  --code-token-type: #67e8f9;
+  --code-token-operator: #d5deea;
+  --code-token-bracket: #c3cfdf;
+  --code-status-info-bg: rgba(59, 130, 246, 0.18);
+  --code-status-info-fg: #93c5fd;
+  --code-status-success-bg: rgba(16, 185, 129, 0.18);
+  --code-status-success-fg: #86efac;
+  --code-status-warning-bg: rgba(245, 158, 11, 0.18);
+  --code-status-warning-fg: #fcd34d;
+  --code-status-error-bg: rgba(239, 68, 68, 0.18);
+  --code-status-error-fg: #fca5a5;
 }
 
 @layer base {
@@ -601,16 +675,126 @@ code[class*="language-"] {
 }
 
 /* CodeMirror Overrides */
+.code-workbench-shell {
+  background-color: var(--code-shell-bg);
+  color: var(--code-fg);
+}
+
+.code-workbench-panel {
+  background-color: var(--code-surface);
+  border: 1px solid var(--code-border);
+  color: var(--code-fg);
+}
+
+.code-workbench-elevated {
+  background-color: var(--code-surface-elevated);
+  border: 1px solid var(--code-border);
+  color: var(--code-fg);
+}
+
+.code-workbench-subtle {
+  background-color: var(--code-surface-muted);
+  border: 1px solid var(--code-border);
+  color: var(--code-fg);
+}
+
+.code-workbench-muted-text {
+  color: var(--code-fg-muted);
+}
+
+.code-workbench-soft-text {
+  color: var(--code-fg-soft);
+}
+
+.code-workbench-pill {
+  background-color: var(--code-badge-bg);
+  border: 1px solid var(--code-border);
+  color: var(--code-badge-fg);
+}
+
+.code-workbench-button {
+  background-color: var(--code-surface-elevated);
+  border: 1px solid var(--code-border);
+  color: var(--code-fg-muted);
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.code-workbench-button:hover {
+  background-color: var(--code-surface-hover);
+  border-color: var(--code-border-strong);
+  color: var(--code-fg);
+}
+
+.code-workbench-inline-button {
+  color: var(--code-fg-muted);
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.code-workbench-inline-button:hover {
+  color: var(--code-fg);
+  background-color: var(--code-surface-hover);
+}
+
+.code-workbench-status-info {
+  background-color: var(--code-status-info-bg);
+  color: var(--code-status-info-fg);
+  border: 1px solid color-mix(in srgb, var(--code-status-info-fg) 20%, transparent);
+}
+
+.code-workbench-status-success {
+  background-color: var(--code-status-success-bg);
+  color: var(--code-status-success-fg);
+  border: 1px solid color-mix(in srgb, var(--code-status-success-fg) 20%, transparent);
+}
+
+.code-workbench-status-warning {
+  background-color: var(--code-status-warning-bg);
+  color: var(--code-status-warning-fg);
+  border: 1px solid color-mix(in srgb, var(--code-status-warning-fg) 24%, transparent);
+}
+
+.code-workbench-status-error {
+  background-color: var(--code-status-error-bg);
+  color: var(--code-status-error-fg);
+  border: 1px solid color-mix(in srgb, var(--code-status-error-fg) 24%, transparent);
+}
+
+.code-output-block {
+  background-color: var(--code-surface-muted);
+  color: var(--code-fg);
+  border: 1px solid var(--code-border);
+}
+
+.code-output-media {
+  background-color: var(--code-surface-muted);
+  border: 1px solid var(--code-border);
+}
+
+.code-output-html {
+  background-color: var(--code-surface);
+  border: 1px solid var(--code-border);
+}
+
 .cm-editor {
-  @apply rounded-lg border border-border;
+  border-radius: 0.75rem;
+  border: 1px solid var(--code-border);
+  background-color: var(--code-surface);
+  color: var(--code-fg);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
 }
 
 .cm-editor.cm-focused {
-  @apply outline-none ring-1 ring-primary;
+  outline: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--code-cursor) 72%, transparent);
 }
 
 .cm-scroller {
   font-family: var(--font-mono);
+}
+
+.code-editor {
+  background-color: var(--code-surface);
+  color: var(--code-fg);
 }
 
 /* Enhanced Math Editing Styles */

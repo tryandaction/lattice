@@ -31,13 +31,38 @@ function ThumbnailItem({
   slideTexts = [],
 }: ThumbnailItemPropsExtended) {
   const thumbnailRef = useRef<HTMLDivElement>(null);
-  const [isRendered, setIsRendered] = useState(false);
-  const [contentStatus, setContentStatus] = useState<'loading' | 'normal' | 'empty' | 'formula'>('loading');
+  const renderedSignatureRef = useRef<string | null>(null);
+  const contentStatus = useMemo<'loading' | 'normal' | 'empty' | 'formula'>(() => {
+    if (!slide.element) {
+      return 'loading';
+    }
+    const textContent = slide.renderedTextContent ?? (slide.element.textContent?.trim() || '');
+    const hasImages = slide.hasImages ?? slide.element.querySelectorAll('img').length > 0;
+    const hasSvg = slide.hasSvg ?? slide.element.querySelectorAll('svg').length > 0;
+    const hasVisiblePptxContent = textContent.length > 10 || hasImages || hasSvg;
+
+    if (hasFormulas && !hasVisiblePptxContent) {
+      return 'formula';
+    }
+    if (!hasVisiblePptxContent && !hasFormulas) {
+      return 'empty';
+    }
+    return 'normal';
+  }, [hasFormulas, slide.element, slide.hasImages, slide.hasSvg, slide.renderedTextContent]);
 
   // Clone and scale the slide content for thumbnail
   useEffect(() => {
     if (!thumbnailRef.current || !slide.element) return;
-    if (isRendered) return;
+    const renderSignature = [
+      slide.index,
+      width,
+      height,
+      slide.declaredWidth ?? 0,
+      slide.declaredHeight ?? 0,
+      contentStatus,
+    ].join(':');
+    if (renderedSignatureRef.current === renderSignature) return;
+    renderedSignatureRef.current = renderSignature;
 
     // Clear previous content
     thumbnailRef.current.innerHTML = '';
@@ -46,34 +71,24 @@ function ThumbnailItem({
     const clone = slide.element.cloneNode(true) as HTMLElement;
     
     // Get original dimensions
-    const originalWidth = slide.element.offsetWidth || 960;
-    const originalHeight = slide.element.offsetHeight || 540;
+    const originalWidth = slide.declaredWidth || 960;
+    const originalHeight = slide.declaredHeight || 540;
     
     // Check if the slide has visible content from pptx-preview
-    const textContent = clone.textContent?.trim() || '';
-    const hasImages = clone.querySelectorAll('img').length > 0;
-    const hasSvg = clone.querySelectorAll('svg').length > 0;
+    const textContent = slide.renderedTextContent ?? (clone.textContent?.trim() || '');
+    const hasImages = slide.hasImages ?? clone.querySelectorAll('img').length > 0;
+    const hasSvg = slide.hasSvg ?? clone.querySelectorAll('svg').length > 0;
     
     // Determine content status
     const hasVisiblePptxContent = textContent.length > 10 || hasImages || hasSvg;
     
     if (hasFormulas && !hasVisiblePptxContent) {
-      // Slide has formulas but pptx-preview couldn't render content
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setContentStatus('formula');
-      setIsRendered(true);
       return;
     }
     
     if (!hasVisiblePptxContent && !hasFormulas) {
-      // Truly empty slide
-      setContentStatus('empty');
-      setIsRendered(true);
       return;
     }
-    
-    // Normal slide with visible content
-    setContentStatus('normal');
     
     // Calculate scale to fit thumbnail
     const scaleX = width / originalWidth;
@@ -103,8 +118,19 @@ function ThumbnailItem({
     
     wrapper.appendChild(clone);
     thumbnailRef.current.appendChild(wrapper);
-    setIsRendered(true);
-  }, [slide.element, width, height, isRendered, hasFormulas]);
+  }, [
+    contentStatus,
+    hasFormulas,
+    height,
+    slide.element,
+    slide.index,
+    slide.declaredHeight,
+    slide.declaredWidth,
+    slide.hasImages,
+    slide.hasSvg,
+    slide.renderedTextContent,
+    width,
+  ]);
 
   // Get title from slide texts
   const slideTitle = useMemo(() => {

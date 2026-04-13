@@ -1,6 +1,6 @@
 "use client";
 
-import { isTauriHost, waitForTauriInvokeReady } from "@/lib/storage-adapter";
+import { invokeTauriCommand, isTauriHost } from "@/lib/storage-adapter";
 
 export interface DesktopWorkspacePathSettings {
   lastWorkspacePath?: string | null;
@@ -24,6 +24,8 @@ type DialogSelectionPayload =
       paths?: string[];
       name?: string;
     };
+
+let pendingDesktopDirectoryDialogPromise: Promise<string | null> | null = null;
 
 function normalizePath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -72,40 +74,60 @@ export async function openDesktopDirectoryDialog(options?: {
   title?: string;
   defaultPath?: string | null;
 }): Promise<string | null> {
-  const invoke = await waitForTauriInvokeReady();
-  if (!isTauriHost() || !invoke) {
+  if (!isTauriHost()) {
     return null;
   }
 
-  const selected = await invoke<DialogSelectionPayload>("plugin:dialog|open", {
-    options: {
-      directory: true,
-      multiple: false,
-      title: options?.title,
-      ...(options?.defaultPath ? { defaultPath: normalizePath(options.defaultPath) } : {}),
-    },
-  });
+  if (pendingDesktopDirectoryDialogPromise) {
+    return pendingDesktopDirectoryDialogPromise;
+  }
 
-  return normalizeDesktopDirectorySelection(selected);
+  pendingDesktopDirectoryDialogPromise = (async () => {
+    try {
+      const selected = await invokeTauriCommand<DialogSelectionPayload>("plugin:dialog|open", {
+        options: {
+          directory: true,
+          multiple: false,
+          title: options?.title,
+          ...(options?.defaultPath ? { defaultPath: normalizePath(options.defaultPath) } : {}),
+        },
+      }, {
+        timeoutMs: 30000,
+      });
+
+      return normalizeDesktopDirectorySelection(selected);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/plugin:dialog\|open timed out/i.test(message)) {
+        console.warn("[DesktopFolder] Directory dialog timed out; treating as a cancelled selection");
+        return null;
+      }
+      throw error;
+    } finally {
+      pendingDesktopDirectoryDialogPromise = null;
+    }
+  })();
+
+  return pendingDesktopDirectoryDialogPromise;
 }
 
 export async function isExistingDesktopDirectory(path: string | null | undefined): Promise<boolean> {
   const normalized = normalizeOptionalPath(path);
-  const invoke = await waitForTauriInvokeReady();
-  if (!normalized || !isTauriHost() || !invoke) {
+  if (!normalized || !isTauriHost()) {
     return false;
   }
 
-  return invoke<boolean>("desktop_is_directory", { path: normalized });
+  return invokeTauriCommand<boolean>("desktop_is_directory", { path: normalized }, { timeoutMs: 4000 });
 }
 
 export async function resolveDesktopStartupWorkspace(): Promise<DesktopStartupWorkspaceResolution | null> {
-  const invoke = await waitForTauriInvokeReady();
-  if (!isTauriHost() || !invoke) {
+  if (!isTauriHost()) {
     return null;
   }
 
-  const resolution = await invoke<DesktopStartupWorkspaceResolution>("resolve_startup_workspace");
+  const resolution = await invokeTauriCommand<DesktopStartupWorkspaceResolution>("resolve_startup_workspace", undefined, {
+    timeoutMs: 5000,
+  });
   if (!resolution) {
     return null;
   }

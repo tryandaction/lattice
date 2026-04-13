@@ -107,7 +107,7 @@ describe("readDirectoryRecursive", () => {
     delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
   });
 
-  it("projects pdf item companion files under the pdf node and hides the raw hidden companion directory", async () => {
+  it("marks pdf nodes as lazily expandable and hides the raw hidden companion directory", async () => {
     const root = new FakeDirectoryHandle("workspace");
     root.addFile(new FakeFileHandle("paper.pdf"));
     root.addFile(new FakeFileHandle("notes.md"));
@@ -134,16 +134,12 @@ describe("readDirectoryRecursive", () => {
 
     expect(hiddenItemDir).toBeUndefined();
     expect(pdfNode && isFileNode(pdfNode)).toBe(true);
-    expect(pdfNode?.children?.map((child) => child.name)).toEqual([
-      "Reading Note.md",
-      "Lab Notebook.ipynb",
-      "_annotations.md",
-    ]);
-    expect(pdfNode?.children?.map((child) => isFileNode(child) ? child.entryRole : null)).toEqual([
-      "pdf-note",
-      "pdf-notebook",
-      "pdf-annotations",
-    ]);
+    if (!pdfNode || !isFileNode(pdfNode)) {
+      throw new Error("Expected pdf node");
+    }
+    expect(pdfNode.children).toBeUndefined();
+    expect(pdfNode.canExpandVirtualChildren).toBe(true);
+    expect(pdfNode.virtualChildrenState).toBe("idle");
   });
 
   it("opens a desktop workspace in Tauri mode and rebuilds the file tree", async () => {
@@ -207,6 +203,54 @@ describe("readDirectoryRecursive", () => {
     expect(workspace.rootHandle?.name).toBe("vault");
     expect(workspace.fileTree.root?.children.map((node) => node.name)).toEqual(["docs", "notes.md"]);
     expect(useSettingsStore.getState().settings.lastOpenedFolder).toBe("C:/vault");
+  });
+
+  it("keeps the current workspace visible when desktop dialog opening times out", async () => {
+    const root = new FakeDirectoryHandle("existing");
+    root.addFile(new FakeFileHandle("notes.md"));
+
+    useWorkspaceStore.setState((state) => ({
+      ...state,
+      rootHandle: root as unknown as FileSystemDirectoryHandle,
+      workspaceRootPath: "C:/existing",
+      fileTree: {
+        root: {
+          name: "existing",
+          kind: "directory",
+          handle: root as unknown as FileSystemDirectoryHandle,
+          path: "existing",
+          isExpanded: true,
+          children: [],
+        },
+      },
+      error: null,
+    }));
+
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "plugin:dialog|open") {
+        throw new Error("Tauri command plugin:dialog|open timed out after 30000ms");
+      }
+      throw new Error(`Unexpected invoke: ${command}`);
+    });
+
+    (window as Window & {
+      __TAURI__?: { core: { invoke: typeof window.__TAURI__ extends { core: { invoke: infer U } } ? U : never } };
+    }).__TAURI__ = {
+      core: { invoke: invoke as never },
+    };
+
+    const { result } = renderHook(() => useFileSystem());
+
+    await waitFor(() => {
+      expect(result.current.isSupported).toBe(true);
+    });
+
+    await act(async () => {
+      await result.current.openDirectory();
+    });
+
+    expect(useWorkspaceStore.getState().workspaceRootPath).toBe("C:/existing");
+    expect(useWorkspaceStore.getState().error).toBeNull();
   });
 
   it("drops a missing recent desktop workspace before reopening", async () => {
@@ -280,5 +324,64 @@ describe("readDirectoryRecursive", () => {
     expect(useWorkspaceStore.getState().workspaceRootPath).toBe("Course/选修/概统");
     expect(useWorkspaceStore.getState().rootHandle?.name).toBe("概统");
     expect(useWorkspaceStore.getState().workspaceIdentity?.workspaceKey).toContain("web:");
+  });
+
+  it("hydrates pdf virtual children on demand", async () => {
+    const root = new FakeDirectoryHandle("workspace");
+    root.addFile(new FakeFileHandle("paper.pdf"));
+
+    const latticeDir = root.addDirectory(new FakeDirectoryHandle(".lattice"));
+    const itemsDir = latticeDir.addDirectory(new FakeDirectoryHandle("items"));
+    const itemDir = itemsDir.addDirectory(new FakeDirectoryHandle("workspace-paper.pdf"));
+    itemDir.addFile(new FakeFileHandle("manifest.json", JSON.stringify({
+      version: 4,
+      itemId: "workspace-paper.pdf",
+      pdfPath: "workspace/paper.pdf",
+      itemFolderPath: ".lattice/items/workspace-paper.pdf",
+      annotationIndexPath: ".lattice/items/workspace-paper.pdf/_annotations.md",
+      fileFingerprint: null,
+      versionFingerprint: null,
+      knownPdfPaths: ["workspace/paper.pdf"],
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    })));
+    itemDir.addFile(new FakeFileHandle("Reading Note.md"));
+
+    useWorkspaceStore.setState((state) => ({
+      ...state,
+      rootHandle: root as unknown as FileSystemDirectoryHandle,
+      fileTree: {
+        root: {
+          name: "workspace",
+          kind: "directory",
+          handle: root as unknown as FileSystemDirectoryHandle,
+          path: "workspace",
+          isExpanded: true,
+          children: [
+            {
+              name: "paper.pdf",
+              kind: "file",
+              handle: {} as FileSystemFileHandle,
+              extension: "pdf",
+              path: "workspace/paper.pdf",
+              canExpandVirtualChildren: true,
+              virtualChildrenState: "idle",
+              isExpanded: true,
+            },
+          ],
+        },
+      },
+    }));
+
+    const { result } = renderHook(() => useFileSystem());
+
+    await act(async () => {
+      await result.current.hydratePdfVirtualChildren("workspace/paper.pdf", { expand: true });
+    });
+
+    const pdfNode = useWorkspaceStore.getState().fileTree.root?.children[0];
+    expect(isFileNode(pdfNode as never) && pdfNode?.children?.map((child) => child.name)).toEqual([
+      "Reading Note.md",
+    ]);
   });
 });

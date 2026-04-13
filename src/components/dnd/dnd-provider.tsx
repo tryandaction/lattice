@@ -4,6 +4,7 @@ import { useState, useCallback, type ReactNode } from "react";
 import {
   DndContext,
   DragOverlay,
+  closestCenter,
   useSensor,
   useSensors,
   PointerSensor,
@@ -92,9 +93,16 @@ export function DndProvider({ children }: DndProviderProps) {
       paneId?: PaneId;
       direction?: SplitDirection;
       index?: number;
+      tabIndex?: number;
     } | undefined;
 
     if (overData?.type === 'tab-bar' && overData.paneId) {
+      setDragState(prev => ({
+        ...prev,
+        overPaneId: overData.paneId!,
+        overDropZone: 'center',
+      }));
+    } else if (overData?.type === 'tab' && overData.paneId) {
       setDragState(prev => ({
         ...prev,
         overPaneId: overData.paneId!,
@@ -130,15 +138,18 @@ export function DndProvider({ children }: DndProviderProps) {
       paneId?: PaneId;
       direction?: SplitDirection;
       index?: number;
+      tabIndex?: number;
     } | undefined;
 
     if (!overData) return;
 
     // Handle drop on tab bar (reorder or move)
-    if (overData.type === 'tab-bar' && overData.paneId) {
+    if ((overData.type === 'tab-bar' || overData.type === 'tab') && overData.paneId) {
+      const toIndex = overData.type === 'tab'
+        ? overData.tabIndex ?? 0
+        : overData.index ?? 0;
       if (dragData.paneId === overData.paneId) {
         // Reorder within same pane
-        const toIndex = overData.index ?? 0;
         if (dragData.tabIndex !== toIndex) {
           reorderTabs(dragData.paneId, dragData.tabIndex, toIndex);
         }
@@ -161,6 +172,7 @@ export function DndProvider({ children }: DndProviderProps) {
   return (
     <DndContext
       sensors={sensors}
+      collisionDetection={closestCenter}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
@@ -179,6 +191,7 @@ export function DndProvider({ children }: DndProviderProps) {
               paneId={dragState.activeTab.paneId}
               onClick={() => {}}
               onClose={() => {}}
+              isDraggable={false}
             />
           </div>
         )}

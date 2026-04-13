@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { renameFile } from "@/lib/file-operations";
+import { findParentDirectory, renameFile } from "@/lib/file-operations";
 
 describe("file-operations renameFile", () => {
   it("同名重命名应直接成功，不应报已存在", async () => {
@@ -28,3 +28,41 @@ describe("file-operations renameFile", () => {
   });
 });
 
+describe("file-operations findParentDirectory", () => {
+  it("resolves root-relative lattice paths without requiring the workspace root prefix", async () => {
+    const itemsHandle = {
+      name: "items",
+      getDirectoryHandle: vi.fn(async (name: string) => {
+        if (name === "paper.pdf") {
+          return { name: "paper.pdf" } as FileSystemDirectoryHandle;
+        }
+        throw new Error("not found");
+      }),
+    } as unknown as FileSystemDirectoryHandle;
+
+    const latticeHandle = {
+      name: ".lattice",
+      getDirectoryHandle: vi.fn(async (name: string) => {
+        if (name === "items") {
+          return itemsHandle;
+        }
+        throw new Error("not found");
+      }),
+    } as unknown as FileSystemDirectoryHandle;
+
+    const rootHandle = {
+      name: "workspace",
+      getDirectoryHandle: vi.fn(async (name: string) => {
+        if (name === ".lattice") {
+          return latticeHandle;
+        }
+        throw new Error("not found");
+      }),
+    } as unknown as FileSystemDirectoryHandle;
+
+    const parent = await findParentDirectory(rootHandle, ".lattice/items/paper.pdf/_annotations.md");
+
+    expect(parent).toBeTruthy();
+    expect((parent as FileSystemDirectoryHandle).name).toBe("paper.pdf");
+  });
+});

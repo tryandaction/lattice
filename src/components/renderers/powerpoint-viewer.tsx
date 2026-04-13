@@ -7,6 +7,7 @@ import { PowerPointViewerProps, SlideData, LAYOUT_CONSTANTS } from "@/types/ppt-
 import { calculateViewerLayout, detectSlideAspectRatio } from "@/lib/ppt-viewer-layout";
 import { navigate, getJumpFromKeyboard } from "@/lib/ppt-navigation";
 import { extractFormulasFromPptx, extractTextFromPptx, SlideFormulas, SlideTextContent } from "@/lib/pptx-formula-extractor";
+import { createPptSlideSnapshot } from "@/lib/ppt-render-snapshot";
 import { PPTLoadingIndicator } from "./ppt-loading-indicator";
 import { ThumbnailPanel } from "./ppt-thumbnail-panel";
 import { MainSlideArea } from "./ppt-main-slide-area";
@@ -38,6 +39,7 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const pptxContainerRef = useRef<HTMLDivElement>(null);
   const previewerRef = useRef<ReturnType<typeof init> | null>(null);
+  const loadGenerationRef = useRef(0);
 
   // Calculate layout based on container size
   const layout = useMemo(() => {
@@ -77,6 +79,8 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
     if (!content || !container) return;
 
     const loadPPTX = async () => {
+      const generation = loadGenerationRef.current + 1;
+      loadGenerationRef.current = generation;
       try {
         setIsLoading(true);
         setLoadingProgress(10);
@@ -125,6 +129,9 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
 
         // Wait for DOM to be fully rendered
         await new Promise(resolve => setTimeout(resolve, 500));
+        if (loadGenerationRef.current !== generation) {
+          return;
+        }
 
         // Extract rendered slides from the container
         // Check if container is still available (component might have unmounted)
@@ -170,21 +177,34 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
         setLoadingProgress(85);
 
         // Create slide data array
-        const slideDataArray: SlideData[] = slideDivs.map((element, index) => ({
-          index,
-          element: element as HTMLElement,
-          thumbnailElement: null,
-          hasError: false,
-        }));
+        const slideDataArray: SlideData[] = slideDivs.map((element, index) => {
+          const snapshot = createPptSlideSnapshot(element as HTMLElement);
+          return {
+            index,
+            element: snapshot.element,
+            declaredWidth: snapshot.metrics.declaredWidth,
+            declaredHeight: snapshot.metrics.declaredHeight,
+            contentWidth: snapshot.metrics.contentWidth,
+            contentHeight: snapshot.metrics.contentHeight,
+            renderedTextContent: snapshot.metrics.renderedTextContent,
+            hasImages: snapshot.metrics.hasImages,
+            hasSvg: snapshot.metrics.hasSvg,
+            thumbnailElement: null,
+            hasError: false,
+          };
+        });
 
         // Detect aspect ratio from first slide if available
         if (slideDivs.length > 0) {
-          const firstSlide = slideDivs[0] as HTMLElement;
-          const width = firstSlide.offsetWidth || 960;
-          const height = firstSlide.offsetHeight || 540;
+          const firstSlide = slideDataArray[0];
+          const width = firstSlide?.declaredWidth || 960;
+          const height = firstSlide?.declaredHeight || 540;
           setSlideAspectRatio(detectSlideAspectRatio(width, height));
         }
 
+        if (loadGenerationRef.current !== generation) {
+          return;
+        }
         setSlides(slideDataArray);
         // Ensure we start from the first slide
         setCurrentSlideIndex(0);
@@ -197,6 +217,9 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
         }, 300);
 
       } catch (err) {
+        if (loadGenerationRef.current !== generation) {
+          return;
+        }
         console.error("Error loading PPTX:", err);
         setError(err instanceof Error ? err.message : "Failed to load presentation");
         setIsLoading(false);
@@ -206,6 +229,7 @@ export function PowerPointViewer({ content, fileName }: PowerPointViewerProps) {
     loadPPTX();
 
     return () => {
+      loadGenerationRef.current += 1;
       // Cleanup - safely clear the container
       if (container) {
         container.innerHTML = '';

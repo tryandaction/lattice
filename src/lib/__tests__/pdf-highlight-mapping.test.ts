@@ -10,20 +10,16 @@ import * as fc from 'fast-check';
 import {
   annotationToHighlight,
   annotationsToHighlights,
-  selectionToAnnotation,
-  highlightToAnnotation,
   createPinAnnotation,
   isPinAnnotation,
   getPinCenter,
-  type PDFHighlight,
-  type PDFSelection,
 } from '../pdf-highlight-mapping';
 import type { 
   AnnotationItem, 
   PdfTarget, 
   BoundingBox 
 } from '../../types/universal-annotation';
-import { HIGHLIGHT_COLORS } from '../annotation-colors';
+import { HIGHLIGHT_COLORS, resolveHighlightColor } from '../annotation-colors';
 
 // ============================================================================
 // Arbitrary Generators
@@ -142,21 +138,19 @@ describe('Property 2: Annotation-to-Highlight Mapping Round-Trip', () => {
       );
     });
 
-    it('preserves rectangle coordinates in round-trip', () => {
+    it('maps rect coordinates into scaled page geometry', () => {
       fc.assert(
         fc.property(pdfAnnotationArb, (annotation) => {
           const highlight = annotationToHighlight(annotation);
           expect(highlight).not.toBeNull();
-
-          const restored = highlightToAnnotation(highlight!, annotation.author);
           const originalRects = (annotation.target as PdfTarget).rects;
-          const restoredRects = (restored.target as PdfTarget).rects;
+          const mappedRects = highlight!.position.rects;
 
           for (let i = 0; i < originalRects.length; i++) {
-            expect(restoredRects[i].x1).toBeCloseTo(originalRects[i].x1, 5);
-            expect(restoredRects[i].y1).toBeCloseTo(originalRects[i].y1, 5);
-            expect(restoredRects[i].x2).toBeCloseTo(originalRects[i].x2, 5);
-            expect(restoredRects[i].y2).toBeCloseTo(originalRects[i].y2, 5);
+            expect(mappedRects[i].x1 / mappedRects[i].width).toBeCloseTo(originalRects[i].x1, 5);
+            expect(mappedRects[i].y1 / mappedRects[i].height).toBeCloseTo(originalRects[i].y1, 5);
+            expect(mappedRects[i].x2 / mappedRects[i].width).toBeCloseTo(originalRects[i].x2, 5);
+            expect(mappedRects[i].y2 / mappedRects[i].height).toBeCloseTo(originalRects[i].y2, 5);
           }
         }),
         { numRuns: 100 }
@@ -168,7 +162,7 @@ describe('Property 2: Annotation-to-Highlight Mapping Round-Trip', () => {
         fc.property(pdfAnnotationArb, (annotation) => {
           const highlight = annotationToHighlight(annotation);
           expect(highlight).not.toBeNull();
-          expect(highlight!.color).toBe(annotation.style.color);
+          expect(highlight!.color).toBe(resolveHighlightColor(annotation.style.color));
         }),
         { numRuns: 100 }
       );
@@ -206,45 +200,6 @@ describe('Property 2: Annotation-to-Highlight Mapping Round-Trip', () => {
         fc.property(nonPdfAnnotationArb, (annotation) => {
           const highlight = annotationToHighlight(annotation);
           expect(highlight).toBeNull();
-        }),
-        { numRuns: 100 }
-      );
-    });
-  });
-
-  describe('highlightToAnnotation (reverse mapping)', () => {
-    /**
-     * For any valid PDF annotation, converting to highlight and back
-     * should produce an equivalent annotation (for preserved fields)
-     */
-    it('annotation -> highlight -> annotation preserves key fields', () => {
-      fc.assert(
-        fc.property(pdfAnnotationArb, (original) => {
-          const highlight = annotationToHighlight(original);
-          expect(highlight).not.toBeNull();
-          
-          const restored = highlightToAnnotation(highlight!, original.author);
-          
-          // Check target
-          expect(restored.target.type).toBe('pdf');
-          const originalTarget = original.target as PdfTarget;
-          const restoredTarget = restored.target as PdfTarget;
-          
-          expect(restoredTarget.page).toBe(originalTarget.page);
-          expect(restoredTarget.rects.length).toBe(originalTarget.rects.length);
-          
-          // Check rects
-          for (let i = 0; i < originalTarget.rects.length; i++) {
-            expect(restoredTarget.rects[i].x1).toBeCloseTo(originalTarget.rects[i].x1, 5);
-            expect(restoredTarget.rects[i].y1).toBeCloseTo(originalTarget.rects[i].y1, 5);
-            expect(restoredTarget.rects[i].x2).toBeCloseTo(originalTarget.rects[i].x2, 5);
-            expect(restoredTarget.rects[i].y2).toBeCloseTo(originalTarget.rects[i].y2, 5);
-          }
-          
-          // Check content and comment
-          expect(restored.content).toBe(original.content);
-          expect(restored.comment).toBe(original.comment);
-          expect(restored.author).toBe(original.author);
         }),
         { numRuns: 100 }
       );
@@ -410,107 +365,3 @@ describe('Pin Annotations', () => {
   });
 });
 
-// ============================================================================
-// Selection to Annotation Tests
-// ============================================================================
-
-describe('selectionToAnnotation', () => {
-  const createMockSelection = (
-    page: number,
-    rects: BoundingBox[],
-    text?: string
-  ): PDFSelection => {
-    const pageWidth = 1000;
-    const pageHeight = 1600;
-
-    return {
-      content: { text },
-      position: {
-        boundingRect: {
-          x1: Math.min(...rects.map(r => r.x1)) * pageWidth,
-          y1: Math.min(...rects.map(r => r.y1)) * pageHeight,
-          x2: Math.max(...rects.map(r => r.x2)) * pageWidth,
-          y2: Math.max(...rects.map(r => r.y2)) * pageHeight,
-          width: pageWidth,
-          height: pageHeight,
-          pageNumber: page,
-        },
-        rects: rects.map((r) => ({
-          x1: r.x1 * pageWidth,
-          y1: r.y1 * pageHeight,
-          x2: r.x2 * pageWidth,
-          y2: r.y2 * pageHeight,
-          width: pageWidth,
-          height: pageHeight,
-          pageNumber: page,
-        })),
-        pageNumber: page,
-      },
-      scaledPosition: {
-        boundingRect: {
-          x1: Math.min(...rects.map(r => r.x1)) * pageWidth,
-          y1: Math.min(...rects.map(r => r.y1)) * pageHeight,
-          x2: Math.max(...rects.map(r => r.x2)) * pageWidth,
-          y2: Math.max(...rects.map(r => r.y2)) * pageHeight,
-          width: pageWidth,
-          height: pageHeight,
-          pageNumber: page,
-        },
-        rects: rects.map((r) => ({
-          x1: r.x1 * pageWidth,
-          y1: r.y1 * pageHeight,
-          x2: r.x2 * pageWidth,
-          y2: r.y2 * pageHeight,
-          width: pageWidth,
-          height: pageHeight,
-          pageNumber: page,
-        })),
-        pageNumber: page,
-      },
-    };
-  };
-
-  it('creates PDF target annotation from selection', () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 1, max: 100 }),
-        fc.array(boundingBoxArb, { minLength: 1, maxLength: 3 }),
-        fc.option(fc.string({ minLength: 1, maxLength: 50 }), { nil: undefined }),
-        highlightColorArb,
-        fc.string({ minLength: 1, maxLength: 20 }),
-        (page, rects, text, color, author) => {
-          const selection = createMockSelection(page, rects, text);
-          const annotation = selectionToAnnotation(selection, color, author);
-          
-          expect(annotation.target.type).toBe('pdf');
-          expect((annotation.target as PdfTarget).page).toBe(page);
-          expect((annotation.target as PdfTarget).rects.length).toBe(rects.length);
-          expect(annotation.style.color).toBe(color);
-          expect(annotation.style.type).toBe('highlight');
-          expect(annotation.content).toBe(text);
-          expect(annotation.author).toBe(author);
-        }
-      ),
-      { numRuns: 100 }
-    );
-  });
-
-  it('preserves rect coordinates from selection', () => {
-    const rects: BoundingBox[] = [
-      { x1: 0.1, y1: 0.2, x2: 0.3, y2: 0.4 },
-      { x1: 0.1, y1: 0.5, x2: 0.3, y2: 0.6 },
-    ];
-    const selection = createMockSelection(1, rects, 'test');
-    const annotation = selectionToAnnotation(selection, 'yellow', 'user');
-    
-    const target = annotation.target as PdfTarget;
-    expect(target.rects.length).toBe(2);
-    
-    for (let i = 0; i < rects.length; i++) {
-      expect(target.rects[i].x1).toBeCloseTo(rects[i].x1, 5);
-      expect(target.rects[i].y1).toBeCloseTo(rects[i].y1, 5);
-      expect(target.rects[i].x2).toBeCloseTo(rects[i].x2, 5);
-      expect(target.rects[i].y2).toBeCloseTo(rects[i].y2, 5);
-    }
-  });
-});

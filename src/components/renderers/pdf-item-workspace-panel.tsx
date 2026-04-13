@@ -19,14 +19,16 @@ import { getParentPath, resolveEntry, resolveDirectoryHandle } from "@/lib/file-
 import type { AnnotationItem } from "@/types/universal-annotation";
 import type { FileNode, TreeNode } from "@/types/file-system";
 import { useI18n } from "@/hooks/use-i18n";
+import { generateFileId } from "@/lib/universal-annotation-storage";
 
 interface PdfItemWorkspacePanelProps {
   rootHandle: FileSystemDirectoryHandle;
-  fileId: string;
+  documentId?: string | null;
   fileName: string;
   filePath: string;
   paneId: PaneId;
   annotations: AnnotationItem[];
+  manifest?: PdfItemManifest | null;
 }
 
 function noteLabel(type: PdfItemNoteSummary["type"], t: ReturnType<typeof useI18n>["t"]) {
@@ -70,11 +72,12 @@ function ActionIconButton({
 
 export function PdfItemWorkspacePanel({
   rootHandle,
-  fileId,
+  documentId,
   fileName,
   filePath,
   paneId,
   annotations,
+  manifest: initialManifest = null,
 }: PdfItemWorkspacePanelProps) {
   const { t } = useI18n();
   const { deleteFile, refreshDirectory } = useFileSystem();
@@ -84,7 +87,7 @@ export function PdfItemWorkspacePanel({
   const openFileInPane = useWorkspaceStore((state) => state.openFileInPane);
   const toggleDirectory = useWorkspaceStore((state) => state.toggleDirectory);
   const setSelectedDirectoryPath = useWorkspaceStore((state) => state.setSelectedDirectoryPath);
-  const [manifest, setManifest] = useState<PdfItemManifest | null>(null);
+  const [manifest, setManifest] = useState<PdfItemManifest | null>(initialManifest);
   const [notes, setNotes] = useState<PdfItemNoteSummary[]>([]);
   const [itemFolderExists, setItemFolderExists] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -101,10 +104,13 @@ export function PdfItemWorkspacePanel({
     setIsLoading(true);
     setError(null);
     try {
-      const nextManifest = await loadPdfItemManifest(rootHandle, fileId, filePath);
-      const directoryHandle = await resolveDirectoryHandle(rootHandle, nextManifest.itemFolderPath);
-      const nextNotes = directoryHandle ? await listPdfItemNotes(rootHandle, nextManifest) : [];
-      setManifest(nextManifest);
+      const nextManifest = await loadPdfItemManifest(rootHandle, generateFileId(filePath), filePath, {
+        documentId: documentId ?? initialManifest?.itemId ?? null,
+      });
+      const resolvedManifest = initialManifest ?? nextManifest;
+      const directoryHandle = await resolveDirectoryHandle(rootHandle, resolvedManifest.itemFolderPath);
+      const nextNotes = directoryHandle ? await listPdfItemNotes(rootHandle, resolvedManifest) : [];
+      setManifest(resolvedManifest);
       setItemFolderExists(Boolean(directoryHandle));
       setNotes(nextNotes);
     } catch (loadError) {
@@ -112,7 +118,11 @@ export function PdfItemWorkspacePanel({
     } finally {
       setIsLoading(false);
     }
-  }, [fileId, filePath, rootHandle]);
+  }, [documentId, filePath, initialManifest, rootHandle]);
+
+  useEffect(() => {
+    setManifest(initialManifest);
+  }, [initialManifest]);
 
   const findTreeNodeByPath = useCallback((node: TreeNode | null, targetPath: string): TreeNode | null => {
     if (!node) {
@@ -168,12 +178,14 @@ export function PdfItemWorkspacePanel({
   }, [activePaneId, openFileInPane, paneId, splitPane]);
 
   const ensureWorkspace = useCallback(async () => {
-    const currentManifest = await ensurePdfItemWorkspace(rootHandle, fileId, filePath);
+    const currentManifest = await ensurePdfItemWorkspace(rootHandle, generateFileId(filePath), filePath, {
+      documentId: documentId ?? initialManifest?.itemId ?? null,
+    });
     setManifest(currentManifest);
     setItemFolderExists(true);
     await refreshDirectory({ silent: true });
     return currentManifest;
-  }, [fileId, filePath, refreshDirectory, rootHandle]);
+  }, [documentId, filePath, initialManifest?.itemId, refreshDirectory, rootHandle]);
 
   const runAction = useCallback(async (actionId: string, task: (resolvedManifest: PdfItemManifest) => Promise<void>) => {
     setBusyAction(actionId);

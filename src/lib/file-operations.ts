@@ -371,29 +371,12 @@ export async function findParentDirectory(
   rootHandle: FileSystemDirectoryHandle,
   filePath: string
 ): Promise<FileSystemDirectoryHandle | null> {
-  const parts = filePath.split('/');
-  
-  // Remove the filename to get directory path
-  parts.pop();
-  
-  // If only root remains, return root
-  if (parts.length <= 1) {
+  const parentPath = getParentPath(filePath);
+  if (!parentPath) {
     return rootHandle;
   }
 
-  // Navigate to the parent directory
-  let currentHandle = rootHandle;
-  
-  // Skip the root name (first part)
-  for (let i = 1; i < parts.length; i++) {
-    try {
-      currentHandle = await currentHandle.getDirectoryHandle(parts[i]);
-    } catch {
-      return null;
-    }
-  }
-
-  return currentHandle;
+  return resolveDirectoryHandle(rootHandle, parentPath);
 }
 
 /**

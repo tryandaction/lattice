@@ -133,7 +133,8 @@ const annotationItemArb: fc.Arbitrary<AnnotationItem> = fc.record({
  * Generator for UniversalAnnotationFile
  */
 const universalAnnotationFileArb: fc.Arbitrary<UniversalAnnotationFile> = fc.record({
-  version: fc.constant(2 as const),
+  version: fc.constant(3 as const),
+  documentId: fc.string({ minLength: 1, maxLength: 100 }),
   fileId: fc.string({ minLength: 1, maxLength: 100 }),
   fileType: fc.constantFrom('pdf', 'image', 'pptx', 'code', 'html', 'unknown'),
   annotations: fc.array(annotationItemArb, { minLength: 0, maxLength: 10 }),
@@ -401,7 +402,8 @@ describe('createUniversalAnnotationFile', () => {
       fc.property(fc.string({ minLength: 1 }), (fileId) => {
         const file = createUniversalAnnotationFile(fileId);
         
-        expect(file.version).toBe(2);
+        expect(file.version).toBe(3);
+        expect(file.documentId).toBe(fileId);
         expect(file.fileId).toBe(fileId);
         expect(file.fileType).toBe('unknown');
         expect(file.annotations).toHaveLength(0);
@@ -587,7 +589,8 @@ describe('annotation sidecar moves', () => {
     annotationsDir.addFile(new NestedTestFileHandle(
       `${oldFileId}.json`,
       JSON.stringify({
-        version: 2,
+        version: 3,
+        documentId: oldFileId,
         fileId: oldFileId,
         fileType: 'pdf',
         annotations: [

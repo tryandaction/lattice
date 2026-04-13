@@ -2,7 +2,7 @@
  * Annotation Migration Utilities
  * 
  * Handles migration from legacy PDF annotation format (version 1)
- * to the new universal annotation format (version 2).
+ * to the new universal annotation format (version 3).
  */
 
 import type { LatticeAnnotation, AnnotationFile } from '../types/annotation';
@@ -132,7 +132,8 @@ export function migrateLegacyAnnotation(legacy: LatticeAnnotation): AnnotationIt
  */
 export function migrateLegacyAnnotationFile(legacyFile: AnnotationFile): UniversalAnnotationFile {
   return {
-    version: 2,
+    version: 3,
+    documentId: legacyFile.fileId,
     fileId: legacyFile.fileId,
     fileType: 'pdf', // Legacy format was PDF-only
     annotations: legacyFile.annotations.map(migrateLegacyAnnotation),
@@ -200,12 +201,20 @@ export function loadAnnotationWithMigration(
     }
     
     // Check if it's already a universal file
-    if (typeof parsed === 'object' && parsed !== null && parsed.version === 2) {
+    if (typeof parsed === 'object' && parsed !== null && (parsed.version === 2 || parsed.version === 3)) {
       const validation = validateUniversalAnnotationFile(parsed);
       
       if (validation.valid) {
         return {
-          file: parsed as UniversalAnnotationFile,
+          file: (parsed.version === 3
+            ? parsed
+            : {
+                ...(parsed as Record<string, unknown>),
+                version: 3,
+                documentId: typeof (parsed as Record<string, unknown>).fileId === "string"
+                  ? (parsed as Record<string, unknown>).fileId
+                  : defaultFileId,
+              }) as UniversalAnnotationFile,
           wasMigrated: false,
           errors: [],
         };

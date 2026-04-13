@@ -160,7 +160,11 @@ export const useExecutionSessionStore = create<ExecutionSessionStoreState>((set)
     })),
   updateSession: (scopeId, updater) =>
     set((state) => {
-      const next = updater(state.sessions[scopeId] ?? null);
+      const current = state.sessions[scopeId] ?? null;
+      const next = updater(current);
+      if (next === current) {
+        return state;
+      }
       if (!next) {
         if (!(scopeId in state.sessions)) {
           return state;

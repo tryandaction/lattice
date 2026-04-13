@@ -35,6 +35,7 @@ describe('OutputArea', () => {
       expect(textElement).toBeTruthy();
       expect(textElement?.textContent).toBe('Hello, World!');
       expect(textElement?.className).toContain('font-mono');
+      expect(textElement?.className).toContain('code-output-block');
     });
 
     it('should group consecutive text outputs from the same stream', () => {
@@ -101,8 +102,7 @@ describe('OutputArea', () => {
       expect(container.textContent).toContain('NameError');
       // Error message should be displayed
       expect(container.textContent).toContain('name "x" is not defined');
-      // Should have destructive styling
-      expect(container.querySelector('.text-destructive')).toBeTruthy();
+      expect(container.querySelector('.code-workbench-status-error')).toBeTruthy();
     });
 
     it('should render error with traceback', () => {
@@ -185,6 +185,7 @@ describe('OutputArea', () => {
 
       expect(container.textContent).toContain('本地解释器');
       expect(container.textContent).toContain('C:/Python312/python.exe');
+      expect(container.querySelector('.code-workbench-pill')).toBeTruthy();
       expect(container.textContent).toContain('解释器已切换');
     });
   });

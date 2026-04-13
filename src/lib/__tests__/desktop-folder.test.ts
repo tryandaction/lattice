@@ -8,13 +8,13 @@ import { openDesktopDirectoryDialog } from "../desktop-folder";
 const storageMocks = vi.hoisted(() => {
   return {
     isTauriHost: vi.fn(() => true),
-    waitForTauriInvokeReady: vi.fn(),
+    invokeTauriCommand: vi.fn(),
   };
 });
 
 vi.mock("@/lib/storage-adapter", () => ({
   isTauriHost: storageMocks.isTauriHost,
-  waitForTauriInvokeReady: storageMocks.waitForTauriInvokeReady,
+  invokeTauriCommand: storageMocks.invokeTauriCommand,
 }));
 
 describe("openDesktopDirectoryDialog", () => {
@@ -23,29 +23,35 @@ describe("openDesktopDirectoryDialog", () => {
   });
 
   it("calls the Tauri dialog plugin with the v2 options payload", async () => {
-    const invoke = vi.fn(async () => "C:\\vault\\");
-    storageMocks.waitForTauriInvokeReady.mockResolvedValue(invoke);
+    storageMocks.invokeTauriCommand.mockResolvedValue("C:\\vault\\");
 
     const selected = await openDesktopDirectoryDialog({
       title: "Open Folder",
       defaultPath: "C:\\workspace\\",
     });
 
-    expect(invoke).toHaveBeenCalledWith("plugin:dialog|open", {
+    expect(storageMocks.invokeTauriCommand).toHaveBeenCalledWith("plugin:dialog|open", {
       options: {
         directory: true,
         multiple: false,
         title: "Open Folder",
         defaultPath: "C:/workspace",
       },
+    }, {
+      timeoutMs: 30000,
     });
     expect(selected).toBe("C:/vault");
   });
 
   it("normalizes object payloads returned by the desktop dialog", async () => {
-    const invoke = vi.fn(async () => ({ path: "C:\\vault\\" }));
-    storageMocks.waitForTauriInvokeReady.mockResolvedValue(invoke);
+    storageMocks.invokeTauriCommand.mockResolvedValue({ path: "C:\\vault\\" });
 
     await expect(openDesktopDirectoryDialog()).resolves.toBe("C:/vault");
+  });
+
+  it("treats dialog timeout as a cancelled selection", async () => {
+    storageMocks.invokeTauriCommand.mockRejectedValue(new Error("Tauri command plugin:dialog|open timed out after 30000ms"));
+
+    await expect(openDesktopDirectoryDialog()).resolves.toBeNull();
   });
 });

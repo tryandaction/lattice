@@ -637,7 +637,7 @@ function CodeEditorComponent({
   // Error state
   if (error) {
     return (
-      <div className={`p-4 text-destructive bg-destructive/10 rounded ${className}`}>
+      <div className={`code-workbench-status-error rounded p-4 ${className}`}>
         <p className="font-medium">Failed to load code editor</p>
         <pre className="text-xs mt-2 overflow-auto">{error.message}</pre>
       </div>

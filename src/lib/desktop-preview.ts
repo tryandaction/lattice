@@ -2,7 +2,7 @@
 
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getDesktopHandlePath } from "@/lib/desktop-file-system";
-import { isTauriHost, waitForTauriInvokeReady } from "@/lib/storage-adapter";
+import { invokeTauriCommand, isTauriHost } from "@/lib/storage-adapter";
 
 const PREVIEW_PROTOCOL = "lattice-preview";
 
@@ -24,14 +24,11 @@ export async function setDesktopPreviewRoot(path: string | null | undefined): Pr
     return;
   }
 
-  const invoke = await waitForTauriInvokeReady();
-  if (!invoke) {
-    return;
-  }
-
   try {
-    await invoke("desktop_set_preview_root", {
+    await invokeTauriCommand("desktop_set_preview_root", {
       path: path ? normalizeDesktopPath(path) : null,
+    }, {
+      timeoutMs: 4000,
     });
   } catch {
     // The preview root command is a performance optimization; startup and tests
@@ -40,13 +37,10 @@ export async function setDesktopPreviewRoot(path: string | null | undefined): Pr
 }
 
 export async function readDesktopFileBytesRaw(path: string): Promise<Uint8Array> {
-  const invoke = await waitForTauriInvokeReady();
-  if (!invoke) {
-    throw new Error("Desktop preview bridge unavailable.");
-  }
-
-  const response = await invoke<Uint8Array | ArrayBuffer | number[]>("desktop_read_file_bytes_raw", {
+  const response = await invokeTauriCommand<Uint8Array | ArrayBuffer | number[]>("desktop_read_file_bytes_raw", {
     path: normalizeDesktopPath(path),
+  }, {
+    timeoutMs: 15000,
   });
 
   if (response instanceof Uint8Array) {

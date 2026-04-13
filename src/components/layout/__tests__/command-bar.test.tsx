@@ -160,16 +160,47 @@ describe("CommandBar desktop interactions", () => {
 
   it("opens the workspace switcher from the workspace chip", async () => {
     const onOpenWorkspace = vi.fn();
+    const onOpenRecentWorkspace = vi.fn();
 
     render(
       <CommandBar
         onOpenWorkspace={onOpenWorkspace}
+        recentWorkspaces={["C:/workspace", "C:/archive"]}
+        onOpenRecentWorkspace={onOpenRecentWorkspace}
       />,
     );
 
-    fireEvent.click(screen.getByTestId("desktop-commandbar-workspace"));
-    expect(onOpenWorkspace).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("desktop-commandbar-workspace"));
+    });
+    expect(screen.getByTestId("desktop-commandbar-workspace-menu")).not.toBeNull();
+    expect(onOpenWorkspace).not.toHaveBeenCalled();
     expect(screen.getByTestId("desktop-commandbar-workspace").textContent).toContain("workspace");
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("C:/archive"));
+    });
+    expect(onOpenRecentWorkspace).toHaveBeenCalledWith("C:/archive");
+  });
+
+  it("opens the system folder picker from the workspace menu", async () => {
+    const onOpenWorkspace = vi.fn();
+
+    render(
+      <CommandBar
+        onOpenWorkspace={onOpenWorkspace}
+        recentWorkspaces={["C:/workspace"]}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("desktop-commandbar-workspace"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("desktop-commandbar-workspace-open-folder"));
+    });
+
+    expect(onOpenWorkspace).toHaveBeenCalledTimes(1);
   });
 
   it("shows breadcrumbs relative to the workspace root", () => {

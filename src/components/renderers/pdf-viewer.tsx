@@ -7,6 +7,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import { PdfSearchOverlay } from "./pdf-search-overlay";
 import { PdfOutlineSidebar } from "./pdf-outline-sidebar";
 import { useI18n } from "@/hooks/use-i18n";
+import { useObjectUrl } from "@/hooks/use-object-url";
 import { isTauriHost } from "@/lib/storage-adapter";
 import type { BinaryViewerContent } from "@/types/viewer-content";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -26,6 +27,7 @@ interface PDFViewerProps {
   source: BinaryViewerContent;
   documentId: string;
   fileName: string;
+  fileHandle?: FileSystemFileHandle | null;
   paneId?: string;
   canAnnotate?: boolean;
   hasPersistedAnnotations?: boolean;
@@ -53,7 +55,7 @@ interface VirtualPageProps {
   measuredHeight: number | null;
   measuredWidth: number | null;
   onMeasure: (pageNumber: number, width: number, height: number) => void;
-  observerRef: React.RefObject<IntersectionObserver | null>;
+  observer: IntersectionObserver | null;
 }
 
 /**
@@ -68,18 +70,17 @@ const VirtualPage = memo(function VirtualPage({
   measuredHeight,
   measuredWidth,
   onMeasure,
-  observerRef,
+  observer,
 }: VirtualPageProps) {
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Register with IntersectionObserver
   useEffect(() => {
     const el = sentinelRef.current;
-    const observer = observerRef.current;
     if (!el || !observer) return;
     observer.observe(el);
     return () => observer.unobserve(el);
-  }, [observerRef]);
+  }, [observer]);
 
   const placeholderW = measuredWidth ? measuredWidth * scale : ESTIMATED_PAGE_WIDTH * scale;
   const placeholderH = measuredHeight ? measuredHeight * scale : ESTIMATED_PAGE_HEIGHT * scale;
@@ -143,6 +144,7 @@ function PDFViewerInner({
   source,
   documentId,
   fileName,
+  fileHandle,
   paneId,
   canAnnotate = false,
   hasPersistedAnnotations = false,
@@ -174,7 +176,7 @@ function PDFViewerInner({
   const [pageDimensions, setPageDimensions] = useState<Map<number, { w: number; h: number }>>(new Map());
 
   // IntersectionObserver: marks pages as visible when within rootMargin
-  const observerRef = useRef<IntersectionObserver | null>(null);
+  const [pageObserver, setPageObserver] = useState<IntersectionObserver | null>(null);
   const pageDevicePixelRatio = useMemo(() => {
     if (typeof window === "undefined") {
       return undefined;
@@ -210,18 +212,25 @@ function PDFViewerInner({
         threshold: 0,
       },
     );
-    observerRef.current = observer;
-    return () => observer.disconnect();
+    setPageObserver(observer);
+    return () => {
+      observer.disconnect();
+      setPageObserver((current) => (current === observer ? null : current));
+    };
   }, []);
 
   // Memoize the file data to prevent unnecessary reloads
-  const fileData = useMemo(() => {
-    if (source.kind === "desktop-url") {
-      return source.url;
-    }
-
-    return { data: new Uint8Array(source.data) };
-  }, [source]);
+  const isDesktopUrlSource = source.kind === "desktop-url";
+  const fileDataSource = isDesktopUrlSource ? source.url : source.data;
+  const pdfBlob = useMemo(() => (
+    isDesktopUrlSource ? null : new Blob([(fileDataSource as ArrayBuffer).slice(0)], { type: "application/pdf" })
+  ), [fileDataSource, isDesktopUrlSource]);
+  const objectUrl = useObjectUrl(pdfBlob);
+  const fileData = useMemo(() => (
+    isDesktopUrlSource
+      ? fileDataSource
+      : objectUrl
+  ), [fileDataSource, isDesktopUrlSource, objectUrl]);
 
   const onDocumentLoadSuccess = useCallback((pdf: { numPages: number }) => {
     setNumPages(pdf.numPages);
@@ -458,6 +467,7 @@ function PDFViewerInner({
           <PdfSearchOverlay
             key={`${documentKey}:${searchOpen ? "open" : "closed"}`}
             pdfDocument={pdfDoc}
+            fileHandle={fileHandle}
             numPages={numPages}
             onNavigateToPage={jumpToPage}
             isOpen={searchOpen}
@@ -475,7 +485,7 @@ function PDFViewerInner({
               </div>
             }
           >
-            <div className="flex flex-col items-center gap-4">
+            <div className="flex min-w-full flex-col items-center gap-4">
               {Array.from({ length: numPages }, (_, index) => {
                 const pageNum = index + 1;
                 const dims = pageDimensions.get(pageNum);
@@ -489,7 +499,7 @@ function PDFViewerInner({
                     measuredHeight={dims?.h ?? null}
                     measuredWidth={dims?.w ?? null}
                     onMeasure={handlePageMeasure}
-                    observerRef={observerRef}
+                    observer={pageObserver}
                   />
                 );
               })}

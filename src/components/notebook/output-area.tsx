@@ -39,10 +39,10 @@ function CopyButton({ content }: { content: string }) {
     <button
       type="button"
       onClick={handleCopy}
-      className="rounded p-1 hover:bg-background/60 transition-colors"
+      className="code-workbench-inline-button rounded p-1 transition-colors"
       title={t("workbench.output.copy")}
     >
-      {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
+      {copied ? <Check className="h-3 w-3" style={{ color: "var(--code-status-success-fg)" }} /> : <Copy className="h-3 w-3 code-workbench-soft-text" />}
     </button>
   );
 }
@@ -99,14 +99,14 @@ function SourceBadge({ meta }: { meta: ExecutionPanelMeta | undefined }) {
   }
 
   return (
-    <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-      <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
+    <div className="code-workbench-soft-text flex items-center gap-2 text-[11px]">
+      <span className="code-workbench-pill inline-flex items-center gap-1 rounded-full px-2 py-0.5">
         <Terminal className="h-3 w-3" />
         {meta.origin.sourceLabel}
       </span>
       <span className="truncate">{meta.origin.detailLabel}</span>
       {meta.origin.selectionLabel ? (
-        <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5">
+        <span className="code-workbench-pill inline-flex items-center rounded-full px-2 py-0.5">
           {meta.origin.selectionLabel}
         </span>
       ) : null}
@@ -118,10 +118,10 @@ function DiagnosticBanner({ diagnostic }: { diagnostic: ExecutionDiagnostic }) {
   const { t } = useI18n();
   const tone =
     diagnostic.severity === "error"
-      ? "border-destructive/40 bg-destructive/10 text-destructive"
+      ? "code-workbench-status-error"
       : diagnostic.severity === "warning"
-        ? "border-yellow-500/30 bg-yellow-500/10 text-yellow-700 dark:text-yellow-300"
-        : "border-border bg-muted/50 text-muted-foreground";
+        ? "code-workbench-status-warning"
+        : "code-workbench-status-info";
 
   return (
     <div className={cn("rounded-md border px-3 py-2 text-xs", tone)}>
@@ -152,7 +152,7 @@ function TextOutput({ content, channel, compact }: { content: string; channel?: 
         <span
           className={cn(
             "text-[10px] uppercase tracking-wide",
-            channel === "stderr" ? "text-yellow-700 dark:text-yellow-300" : "text-muted-foreground",
+            channel === "stderr" ? "code-workbench-status-warning" : "code-workbench-soft-text",
           )}
         >
           {channel || t("workbench.output.output")}
@@ -160,9 +160,11 @@ function TextOutput({ content, channel, compact }: { content: string; channel?: 
       </div>
       <pre
         className={cn(
-          "whitespace-pre-wrap break-words font-mono rounded-md pr-8",
+          "whitespace-pre-wrap break-words font-mono rounded-md pr-8 border",
           compact ? "text-xs p-2.5" : "text-sm p-3",
-          channel === "stderr" ? "bg-yellow-500/10 text-yellow-900 dark:text-yellow-100" : "bg-muted text-foreground",
+          channel === "stderr"
+            ? "code-workbench-status-warning"
+            : "code-output-block",
         )}
       >
         {displayContent}
@@ -174,7 +176,7 @@ function TextOutput({ content, channel, compact }: { content: string; channel?: 
         <button
           type="button"
           onClick={() => setIsCollapsed((value) => !value)}
-          className="mt-1 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          className="code-workbench-inline-button mt-1 flex items-center gap-1 text-xs transition-colors"
         >
           {isCollapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
           <span>{isCollapsed ? t("workbench.output.showMore", { count: lines.length - COLLAPSE_THRESHOLD }) : t("workbench.output.collapse")}</span>
@@ -189,7 +191,7 @@ function ImageOutput({ src, compact }: { src: string; compact: boolean }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   return (
-    <div className="rounded-md overflow-hidden bg-white dark:bg-gray-900 p-2">
+    <div className="code-output-media rounded-md overflow-hidden p-2">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={src}
@@ -243,7 +245,7 @@ export function HtmlOutput({ content }: { content: string }) {
   }, []);
 
   return (
-    <div className="rounded-md overflow-hidden border border-border">
+    <div className="code-output-html rounded-md overflow-hidden">
       <iframe
         ref={iframeRef}
         sandbox="allow-scripts"
@@ -266,7 +268,7 @@ function sanitizeSvg(svg: string): string {
 function SvgOutput({ content }: { content: string }) {
   return (
     <div
-      className="rounded-md overflow-hidden bg-white dark:bg-gray-900 p-2 max-w-full overflow-x-auto"
+      className="code-output-media rounded-md overflow-hidden p-2 max-w-full overflow-x-auto"
       dangerouslySetInnerHTML={{ __html: sanitizeSvg(content) }}
     />
   );
@@ -279,12 +281,12 @@ function ErrorOutput({ output, compact }: { output: ExecutionOutput & { type: "e
   const hasTraceback = traceback.length > 0;
 
   return (
-    <div className="rounded-md overflow-hidden border border-destructive/40">
-      <div className={cn("flex items-start gap-2 bg-destructive/10", compact ? "p-2.5" : "p-3")}>
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+    <div className="code-workbench-status-error rounded-md overflow-hidden">
+      <div className={cn("flex items-start gap-2", compact ? "p-2.5" : "p-3")}>
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-destructive">{type}</div>
-          <pre className={cn("mt-1 whitespace-pre-wrap break-words font-mono text-destructive", compact ? "text-xs" : "text-sm")}>
+          <div className="text-sm font-semibold">{type}</div>
+          <pre className={cn("mt-1 whitespace-pre-wrap break-words font-mono", compact ? "text-xs" : "text-sm")}>
             {message}
           </pre>
         </div>
@@ -294,13 +296,21 @@ function ErrorOutput({ output, compact }: { output: ExecutionOutput & { type: "e
           <button
             type="button"
             onClick={() => setShowTraceback((value) => !value)}
-            className="flex w-full items-center gap-1 border-t border-destructive/30 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 transition-colors"
+            className="code-workbench-inline-button flex w-full items-center gap-1 border-t px-3 py-1.5 text-xs transition-colors"
+            style={{ borderColor: "color-mix(in srgb, var(--code-status-error-fg) 24%, transparent)" }}
           >
             {showTraceback ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
             <span>{showTraceback ? t("workbench.output.hideTraceback") : t("workbench.output.showTraceback", { count: traceback.length })}</span>
           </button>
           {showTraceback ? (
-            <pre className={cn("max-h-[300px] overflow-auto whitespace-pre-wrap break-words border-t border-destructive/30 bg-muted/30 font-mono text-destructive/80", compact ? "p-2.5 text-[11px]" : "p-3 text-xs")}>
+            <pre
+              className={cn("max-h-[300px] overflow-auto whitespace-pre-wrap break-words border-t font-mono", compact ? "p-2.5 text-[11px]" : "p-3 text-xs")}
+              style={{
+                borderColor: "color-mix(in srgb, var(--code-status-error-fg) 24%, transparent)",
+                backgroundColor: "var(--code-surface-muted)",
+                color: "var(--code-status-error-fg)",
+              }}
+            >
               {traceback.join("\n")}
             </pre>
           ) : null}
@@ -352,7 +362,7 @@ export const OutputArea = memo(function OutputArea({
           <button
             type="button"
             onClick={onClear}
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            className="code-workbench-inline-button inline-flex items-center gap-1 text-xs transition-colors"
           >
             <Trash2 className="h-3 w-3" />
             <span>{t("common.clear")}</span>

@@ -22,10 +22,11 @@ interface KernelStatusProps {
  */
 function LoadingIndicator() {
   return (
-    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-      <div className="relative w-32 h-1.5 bg-muted rounded-full overflow-hidden">
+    <div className="code-workbench-muted-text flex items-center gap-2 text-sm">
+      <div className="relative h-1.5 w-32 overflow-hidden rounded-full" style={{ backgroundColor: "var(--code-surface-muted)" }}>
         <div 
-          className="absolute inset-y-0 left-0 bg-primary rounded-full loading-progress-bar"
+          className="loading-progress-bar absolute inset-y-0 left-0 rounded-full"
+          style={{ backgroundColor: "var(--code-cursor)" }}
         />
       </div>
       <span className="text-xs">Initializing Python kernel...</span>
@@ -38,9 +39,10 @@ function LoadingIndicator() {
  */
 function RunningIndicator() {
   return (
-    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+    <div className="code-workbench-muted-text flex items-center gap-2 text-sm">
       <svg 
-        className="animate-spin h-4 w-4 text-primary" 
+        className="h-4 w-4 animate-spin" 
+        style={{ color: "var(--code-cursor)" }}
         xmlns="http://www.w3.org/2000/svg" 
         fill="none" 
         viewBox="0 0 24 24"
@@ -76,11 +78,11 @@ function ReadyIndicator() {
   if (!visible) return null;
   return (
     <div
-      className="flex items-center transition-opacity duration-500"
+      className="code-workbench-status-success flex items-center rounded-full px-2 py-1 transition-opacity duration-500"
       role="status"
       aria-label="Kernel ready"
     >
-      <CheckCircle2 className="h-3 w-3 text-green-600 dark:text-green-400" />
+      <CheckCircle2 className="h-3 w-3" />
       <span className="sr-only">Kernel ready</span>
     </div>
   );
@@ -91,7 +93,7 @@ function ReadyIndicator() {
  */
 function ErrorIndicator({ error }: { error?: string | null }) {
   return (
-    <div className="flex items-center gap-1.5 text-xs text-red-400">
+    <div className="code-workbench-status-error flex items-center gap-1.5 rounded-full px-2 py-1 text-xs">
       <AlertCircle className="h-3 w-3" />
       <span>{error || 'Kernel error'}</span>
     </div>

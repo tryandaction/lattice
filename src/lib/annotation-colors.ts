@@ -205,6 +205,36 @@ export function getHexForNamedColor(colorName: string): string {
   return found?.hex ?? DEFAULT_HIGHLIGHT_COLOR.hex;
 }
 
+export function resolveHighlightColor(color: string | null | undefined): string {
+  if (!color) {
+    return DEFAULT_HIGHLIGHT_COLOR.hex;
+  }
+
+  const normalized = color.trim();
+  if (!normalized) {
+    return DEFAULT_HIGHLIGHT_COLOR.hex;
+  }
+
+  if (normalized === "transparent") {
+    return "transparent";
+  }
+
+  const found = HIGHLIGHT_COLORS.find((candidate) => (
+    candidate.hex.toLowerCase() === normalized.toLowerCase() ||
+    candidate.value.toLowerCase() === normalized.toLowerCase() ||
+    candidate.name.toLowerCase() === normalized.toLowerCase()
+  ));
+  if (found) {
+    return found.hex;
+  }
+
+  if (/^#[0-9A-Fa-f]{6}$/.test(normalized)) {
+    return normalized.toUpperCase();
+  }
+
+  return DEFAULT_HIGHLIGHT_COLOR.hex;
+}
+
 /**
  * Validates if a color string is a valid highlight color
  */

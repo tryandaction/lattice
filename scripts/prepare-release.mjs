@@ -106,6 +106,33 @@ function runCommand(command, args, label) {
   });
 }
 
+function runCommandCapture(command, args, label) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: ROOT_DIR,
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: process.platform === "win32",
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve(stdout.trim());
+        return;
+      }
+      reject(new Error(`${label} failed with exit code ${code}: ${stderr.trim()}`));
+    });
+  });
+}
+
 async function ensureArtifacts(options) {
   if (options.artifactsDir) {
     return path.resolve(ROOT_DIR, options.artifactsDir);
@@ -245,11 +272,12 @@ async function copyArtifacts(artifacts, outputDir, sourceDirectory, dryRun) {
   return copied;
 }
 
-function buildReleaseSummary(version, artifacts) {
+function buildReleaseSummary(version, artifacts, gitRevision) {
   return [
     `# Release Summary v${version}`,
     "",
     `Generated: ${new Date().toISOString()}`,
+    `Git Revision: ${gitRevision ?? "unknown"}`,
     "",
     "## Artifacts",
     "",
@@ -260,11 +288,12 @@ function buildReleaseSummary(version, artifacts) {
   ].join("\n");
 }
 
-async function writeReleaseMetadata(outputDir, version, artifacts, dryRun) {
+async function writeReleaseMetadata(outputDir, version, artifacts, gitRevision, dryRun) {
   const checksums = artifacts.map((artifact) => `${artifact.sha256}  ${artifact.fileName}`).join("\n");
   const manifest = {
     version,
     generatedAt: new Date().toISOString(),
+    gitRevision: gitRevision ?? null,
     artifacts: artifacts.map((artifact) => ({
       fileName: artifact.fileName,
       size: artifact.size,
@@ -273,7 +302,7 @@ async function writeReleaseMetadata(outputDir, version, artifacts, dryRun) {
       outputPath: path.relative(ROOT_DIR, artifact.outputPath),
     })),
   };
-  const summary = buildReleaseSummary(version, artifacts);
+  const summary = buildReleaseSummary(version, artifacts, gitRevision);
 
   if (dryRun) {
     return { manifest, checksums, summary };
@@ -317,6 +346,7 @@ async function uploadDraftRelease(version, artifacts, outputDir) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const version = await ensureVersionConsistency(options.version);
+  const gitRevision = await runCommandCapture("git", ["rev-parse", "HEAD"], "git rev-parse HEAD").catch(() => null);
   const artifactsRoot = await ensureArtifacts(options);
   const discoveredArtifacts = await findArtifacts(artifactsRoot, version);
 
@@ -328,7 +358,7 @@ async function main() {
     ? path.resolve(ROOT_DIR, options.outputDir)
     : path.join(DEFAULT_RELEASES_DIR, `v${version}`);
   const artifacts = await copyArtifacts(discoveredArtifacts, outputDir, artifactsRoot, options.dryRun);
-  const metadata = await writeReleaseMetadata(outputDir, version, artifacts, options.dryRun);
+  const metadata = await writeReleaseMetadata(outputDir, version, artifacts, gitRevision, options.dryRun);
 
   if (options.upload && !options.dryRun) {
     const canUpload = await canUseGhCli();
@@ -342,6 +372,7 @@ async function main() {
     JSON.stringify(
       {
         version,
+        gitRevision,
         outputDir: path.relative(ROOT_DIR, outputDir),
         artifacts: artifacts.map((artifact) => ({
           fileName: artifact.fileName,

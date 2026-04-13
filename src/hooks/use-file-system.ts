@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useEffect } from "react";
+import { startTransition, useCallback, useState, useEffect } from "react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -40,6 +40,7 @@ import {
 import {
   copyPdfItemWorkspace,
   deletePdfItemWorkspace,
+  invalidatePdfItemManifestIndex,
   listPdfItemNotes,
   loadPdfItemManifest,
   migrateLegacyPdfItemWorkspaces,
@@ -73,6 +74,7 @@ interface UseFileSystemReturn {
   renameFile: (path: string, newName: string) => Promise<EntryOperationResult>;
   copyEntry: (sourcePath: string, targetDirectoryPath: string) => Promise<EntryOperationResult>;
   moveEntry: (sourcePath: string, targetDirectoryPath: string) => Promise<EntryOperationResult>;
+  hydratePdfVirtualChildren: (pdfPath: string, options?: { force?: boolean; expand?: boolean }) => Promise<void>;
   refreshDirectory: (options?: { silent?: boolean }) => Promise<void>;
 
   // Derived
@@ -96,6 +98,10 @@ const QA_TEXT_FIXTURES = [
 const QA_BINARY_FIXTURES = [
   { name: "qa-image.png", url: "/icons/icon-192x192.png" },
 ];
+
+let refreshInFlightPromise: Promise<void> | null = null;
+let refreshQueuedOptions: { silent?: boolean } | null = null;
+const pdfHydrationGeneration = new Map<string, number>();
 
 async function getOpfsRoot(): Promise<FileSystemDirectoryHandle | null> {
   if (typeof window === "undefined") return null;
@@ -203,41 +209,108 @@ function buildPdfVirtualChildNode(summary: Awaited<ReturnType<typeof listPdfItem
   };
 }
 
-async function attachPdfItemChildren(
-  rootHandle: FileSystemDirectoryHandle,
-  node: FileNode,
-): Promise<FileNode> {
-  if (node.extension !== "pdf" || node.isVirtual) {
+function isHydratablePdfNode(node: FileNode): boolean {
+  return node.extension === "pdf" && !node.isVirtual;
+}
+
+function collectFileExpansionState(node: TreeNode | null, expanded: Set<string> = new Set()): Set<string> {
+  if (!node) {
+    return expanded;
+  }
+
+  if (node.kind === "file") {
+    if (node.isExpanded && (node.children?.length || node.canExpandVirtualChildren)) {
+      expanded.add(node.path);
+    }
+    node.children?.forEach((child) => collectFileExpansionState(child, expanded));
+    return expanded;
+  }
+
+  if (node.isExpanded) {
+    expanded.add(node.path);
+  }
+  node.children.forEach((child) => collectFileExpansionState(child, expanded));
+  return expanded;
+}
+
+function updateFileNodeByPath(
+  node: TreeNode,
+  targetPath: string,
+  updater: (file: FileNode) => FileNode,
+): TreeNode {
+  if (node.kind === "file") {
+    if (node.path === targetPath) {
+      return updater(node);
+    }
+    if (node.children?.length) {
+      return {
+        ...node,
+        children: node.children.map((child) => updateFileNodeByPath(child, targetPath, updater)),
+      };
+    }
     return node;
   }
 
-  try {
-    const manifest = await loadPdfItemManifest(rootHandle, generateFileId(node.path), node.path);
-    const notes = await listPdfItemNotes(rootHandle, manifest);
-    const children = notes
-      .map((summary) => buildPdfVirtualChildNode(summary, node.path))
-      .filter((child): child is FileNode => child !== null);
+  return {
+    ...node,
+    children: node.children.map((child) => updateFileNodeByPath(child, targetPath, updater)),
+  };
+}
 
-    if (children.length === 0) {
-      return {
-        ...node,
-        children: [],
-        isExpanded: false,
-      };
+function patchWorkspaceFileTree(
+  targetPath: string,
+  updater: (file: FileNode) => FileNode,
+): void {
+  useWorkspaceStore.setState((state) => {
+    if (!state.fileTree.root) {
+      return state;
     }
 
     return {
-      ...node,
-      children,
-      isExpanded: node.isExpanded ?? false,
+      fileTree: {
+        root: updateFileNodeByPath(state.fileTree.root, targetPath, updater) as DirectoryNode,
+      },
     };
-  } catch {
-    return {
-      ...node,
-      children: [],
-      isExpanded: false,
-    };
+  });
+}
+
+function findFileNodeByPath(node: TreeNode | null, targetPath: string): FileNode | null {
+  if (!node) {
+    return null;
   }
+
+  if (node.kind === "file") {
+    if (node.path === targetPath) {
+      return node;
+    }
+    for (const child of node.children ?? []) {
+      const match = findFileNodeByPath(child, targetPath);
+      if (match) {
+        return match;
+      }
+    }
+    return null;
+  }
+
+  for (const child of node.children) {
+    const match = findFileNodeByPath(child, targetPath);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+async function loadPdfVirtualChildren(
+  rootHandle: FileSystemDirectoryHandle,
+  pdfPath: string,
+): Promise<TreeNode[]> {
+  const manifest = await loadPdfItemManifest(rootHandle, generateFileId(pdfPath), pdfPath);
+  const notes = await listPdfItemNotes(rootHandle, manifest);
+  return notes
+    .map((summary) => buildPdfVirtualChildNode(summary, pdfPath))
+    .filter((child): child is FileNode => child !== null);
 }
 
 /**
@@ -250,7 +323,8 @@ const MAX_TREE_DEPTH = 12;
 async function readDirectoryRecursive(
   handle: FileSystemDirectoryHandle,
   parentPath: string = "",
-  rootHandle: FileSystemDirectoryHandle = handle,
+  _rootHandle: FileSystemDirectoryHandle = handle,
+  expandedPaths: Set<string> = new Set(),
   depth: number = 0,
 ): Promise<TreeNode[]> {
   if (depth > MAX_TREE_DEPTH) {
@@ -268,7 +342,7 @@ async function readDirectoryRecursive(
       }
 
       const dirHandle = entry as FileSystemDirectoryHandle;
-      const dirChildren = await readDirectoryRecursive(dirHandle, currentPath, rootHandle, depth + 1);
+      const dirChildren = await readDirectoryRecursive(dirHandle, currentPath, _rootHandle, expandedPaths, depth + 1);
 
       // Only include directories that have allowed files
       if (dirChildren.length > 0) {
@@ -294,23 +368,21 @@ async function readDirectoryRecursive(
           handle: entry as FileSystemFileHandle,
           extension,
           path: `${currentPath}/${entry.name}`,
-          children: [],
-          isExpanded: false,
+          ...(extension === "pdf"
+            ? {
+                canExpandVirtualChildren: true,
+                virtualChildrenState: "idle" as const,
+                isExpanded: expandedPaths.has(`${currentPath}/${entry.name}`),
+              }
+            : {}),
         };
         children.push(fileNode);
       }
     }
   }
 
-  const projectedChildren = await Promise.all(children.map(async (child) => {
-    if (child.kind === "file") {
-      return attachPdfItemChildren(rootHandle, child);
-    }
-    return child;
-  }));
-
   // Sort: directories first, then files, alphabetically
-  return projectedChildren.sort((a, b) => {
+  return children.sort((a, b) => {
     if (a.kind !== b.kind) {
       return a.kind === "directory" ? -1 : 1;
     }
@@ -319,39 +391,26 @@ async function readDirectoryRecursive(
 }
 
 function collectExpandedDirectoryPaths(node: DirectoryNode | null): Set<string> {
-  const expandedPaths = new Set<string>();
-
-  const visit = (current: TreeNode) => {
-    if (current.kind === "file") {
-      if (current.children?.length && current.isExpanded) {
-        expandedPaths.add(current.path);
-      }
-      return;
-    }
-
-    if (current.isExpanded) {
-      expandedPaths.add(current.path);
-    }
-
-    current.children.forEach(visit);
-  };
-
-  if (node) {
-    visit(node);
-  }
-
-  return expandedPaths;
+  return collectFileExpansionState(node);
 }
 
 function applyExpandedState(children: TreeNode[], expandedPaths: Set<string>): TreeNode[] {
   return children.map((child) => {
     if (child.kind === "file") {
-      return child.children?.length
-        ? {
-            ...child,
-            isExpanded: expandedPaths.has(child.path),
-          }
-        : child;
+      if (child.children?.length || child.canExpandVirtualChildren) {
+        return {
+          ...child,
+          isExpanded: expandedPaths.has(child.path),
+          ...(child.canExpandVirtualChildren && expandedPaths.has(child.path)
+            ? {
+                virtualChildrenState: child.virtualChildrenState === "ready"
+                  ? child.virtualChildrenState
+                  : "idle" as const,
+              }
+            : {}),
+        };
+      }
+      return child;
     }
 
     return {
@@ -396,7 +455,8 @@ export async function applyWorkspaceHandleToStores(
     console.warn("Failed to migrate legacy PDF item workspaces:", error);
   }
 
-  const children = await readDirectoryRecursive(handle);
+  invalidatePdfItemManifestIndex(handle);
+  const children = await readDirectoryRecursive(handle, "", handle, new Set());
   const rootNode: DirectoryNode = {
     name: handle.name,
     kind: "directory",
@@ -409,7 +469,9 @@ export async function applyWorkspaceHandleToStores(
   workspaceStore.setRootHandle(handle);
   workspaceStore.setWorkspaceIdentity(resolvedWorkspaceIdentity);
   workspaceStore.setWorkspaceRootPath(resolvedWorkspaceIdentity.displayPath ?? workspaceRootPath ?? handle.name);
-  workspaceStore.setFileTree({ root: rootNode });
+  startTransition(() => {
+    workspaceStore.setFileTree({ root: rootNode });
+  });
   await setDesktopPreviewRoot(getDesktopHandlePath(handle));
 
   await useSettingsStore.getState().rememberWorkspace({
@@ -459,13 +521,18 @@ export function useFileSystem(): UseFileSystemReturn {
     options: { validateExists?: boolean } = {},
   ) => {
     const normalizedPath = normalizeWorkspacePathInput(path);
+    const hadWorkspace = Boolean(useWorkspaceStore.getState().rootHandle);
     if (!normalizedPath) {
-      setError("Workspace path is empty.");
+      if (!hadWorkspace) {
+        setError("Workspace path is empty.");
+      }
       return false;
     }
 
     if (!isTauri()) {
-      setError("Recent workspace reopening is only available in the desktop app.");
+      if (!hadWorkspace) {
+        setError("Recent workspace reopening is only available in the desktop app.");
+      }
       return false;
     }
 
@@ -477,7 +544,9 @@ export function useFileSystem(): UseFileSystemReturn {
         const exists = await isExistingDesktopDirectory(normalizedPath);
         if (!exists) {
           await removeRecentWorkspacePath(normalizedPath);
-          setError(`Workspace path no longer exists: ${normalizedPath}`);
+          if (!hadWorkspace) {
+            setError(`Workspace path no longer exists: ${normalizedPath}`);
+          }
           return false;
         }
       }
@@ -487,7 +556,11 @@ export function useFileSystem(): UseFileSystemReturn {
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to open workspace";
-      setError(message);
+      if (!hadWorkspace) {
+        setError(message);
+      } else {
+        console.warn("[FileSystem] Failed to switch workspace:", err);
+      }
       return false;
     } finally {
       setLoading(false);
@@ -500,35 +573,117 @@ export function useFileSystem(): UseFileSystemReturn {
   const refreshDirectory = useCallback(async (options: { silent?: boolean } = {}) => {
     if (!rootHandle) return;
 
-    try {
-      if (!options.silent) {
-        setLoading(true);
-      }
-      
-      // Rebuild the file tree
-      const children = await readDirectoryRecursive(rootHandle);
-      const expandedPaths = collectExpandedDirectoryPaths(fileTree.root);
-      const preservedChildren = applyExpandedState(children, expandedPaths);
+    refreshQueuedOptions = {
+      silent: Boolean(options.silent),
+    };
 
-      const rootNode: DirectoryNode = {
-        name: rootHandle.name,
-        kind: "directory",
-        handle: rootHandle,
-        children: preservedChildren,
-        path: rootHandle.name,
-        isExpanded: true,
-      };
-
-      setFileTree({ root: rootNode });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to refresh directory";
-      setError(message);
-    } finally {
-      if (!options.silent) {
-        setLoading(false);
-      }
+    if (refreshInFlightPromise) {
+      await refreshInFlightPromise;
+      return;
     }
+
+    const pump = async () => {
+      while (refreshQueuedOptions) {
+        const currentOptions = refreshQueuedOptions;
+        refreshQueuedOptions = null;
+
+        try {
+          if (!currentOptions.silent) {
+            setLoading(true);
+          }
+
+          invalidatePdfItemManifestIndex(rootHandle);
+          const expandedPaths = collectExpandedDirectoryPaths(fileTree.root);
+          const children = await readDirectoryRecursive(rootHandle, "", rootHandle, expandedPaths);
+          const preservedChildren = applyExpandedState(children, expandedPaths);
+
+          const rootNode: DirectoryNode = {
+            name: rootHandle.name,
+            kind: "directory",
+            handle: rootHandle,
+            children: preservedChildren,
+            path: rootHandle.name,
+            isExpanded: true,
+          };
+
+          startTransition(() => {
+            setFileTree({ root: rootNode });
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Failed to refresh directory";
+          setError(message);
+        } finally {
+          if (!currentOptions.silent) {
+            setLoading(false);
+          }
+        }
+      }
+    };
+
+    refreshInFlightPromise = pump().finally(() => {
+      refreshInFlightPromise = null;
+    });
+    await refreshInFlightPromise;
   }, [rootHandle, fileTree.root, setFileTree, setLoading, setError]);
+
+  const hydratePdfVirtualChildren = useCallback(async (
+    pdfPath: string,
+    options: { force?: boolean; expand?: boolean } = {},
+  ) => {
+    if (!rootHandle) {
+      return;
+    }
+
+    const currentFileNode = findFileNodeByPath(useWorkspaceStore.getState().fileTree.root, pdfPath);
+    if (!currentFileNode || !isHydratablePdfNode(currentFileNode)) {
+      return;
+    }
+
+    if (!options.force && currentFileNode.virtualChildrenState === "ready") {
+      if (options.expand && !currentFileNode.isExpanded) {
+        useWorkspaceStore.getState().toggleDirectory(pdfPath);
+      }
+      return;
+    }
+
+    const hydrationKey = `${rootHandle.name}:${pdfPath}`;
+    const generation = (pdfHydrationGeneration.get(hydrationKey) ?? 0) + 1;
+    pdfHydrationGeneration.set(hydrationKey, generation);
+
+    patchWorkspaceFileTree(pdfPath, (file) => ({
+      ...file,
+      canExpandVirtualChildren: true,
+      virtualChildrenState: "loading",
+      ...(options.expand ? { isExpanded: true } : {}),
+    }));
+
+    try {
+      const children = await loadPdfVirtualChildren(rootHandle, pdfPath);
+      if (pdfHydrationGeneration.get(hydrationKey) !== generation) {
+        return;
+      }
+
+      patchWorkspaceFileTree(pdfPath, (file) => ({
+        ...file,
+        canExpandVirtualChildren: true,
+        virtualChildrenState: "ready",
+        children,
+        isExpanded: options.expand ?? file.isExpanded ?? false,
+      }));
+    } catch {
+      if (pdfHydrationGeneration.get(hydrationKey) !== generation) {
+        return;
+      }
+
+      patchWorkspaceFileTree(pdfPath, (file) => ({
+        ...file,
+        canExpandVirtualChildren: true,
+        virtualChildrenState: "idle",
+        children: [],
+        isExpanded: options.expand ?? file.isExpanded ?? false,
+      }));
+    }
+  }, [rootHandle]);
 
   /**
    * Open a directory using the File System Access API
@@ -541,7 +696,10 @@ export function useFileSystem(): UseFileSystemReturn {
 
     try {
       setLoading(true);
-      setError(null);
+      const hadWorkspace = Boolean(useWorkspaceStore.getState().rootHandle);
+      if (!hadWorkspace) {
+        setError(null);
+      }
 
       if (isTauri()) {
         const selected = await openDesktopDirectoryDialog({
@@ -569,7 +727,11 @@ export function useFileSystem(): UseFileSystemReturn {
 
       // Handle other errors
       const message = err instanceof Error ? err.message : "Failed to open directory";
-      setError(message);
+      if (!useWorkspaceStore.getState().rootHandle) {
+        setError(message);
+      } else {
+        console.warn("[FileSystem] Open directory failed while a workspace is already open:", err);
+      }
     } finally {
       setLoading(false);
     }
@@ -1037,6 +1199,7 @@ export function useFileSystem(): UseFileSystemReturn {
     renameFile,
     copyEntry,
     moveEntry,
+    hydratePdfVirtualChildren,
     refreshDirectory,
     fileTree,
     rootHandle,

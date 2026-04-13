@@ -1,17 +1,17 @@
 /**
  * PDF Highlight Mapping Utilities
  *
- * Converts between Universal Annotation format and react-pdf-highlighter format.
- * The runtime and tests should share this file as the single coordinate mapping source.
+ * Converts persisted PDF annotation geometry into viewport highlight geometry.
+ * Selection creation and reverse mapping are intentionally not supported here.
  */
 
 import type {
   AnnotationItem,
   PdfTarget,
   BoundingBox,
-  AnnotationStyleType,
 } from "../types/universal-annotation";
-import { HIGHLIGHT_COLORS, DEFAULT_HIGHLIGHT_COLOR } from "./annotation-colors";
+import { getCanonicalPdfAnnotationText } from "../types/universal-annotation";
+import { HIGHLIGHT_COLORS, resolveHighlightColor } from "./annotation-colors";
 
 export interface PdfPageDimensions {
   width: number;
@@ -26,11 +26,11 @@ const DEFAULT_PAGE_DIMENSIONS: PdfPageDimensions = {
 };
 
 // ============================================================================
-// Types for react-pdf-highlighter
+// Viewport highlight geometry types
 // ============================================================================
 
 /**
- * Scaled position from react-pdf-highlighter
+ * Viewport highlight geometry derived from persisted PDF rects
  */
 export interface ScaledPosition {
   boundingRect: {
@@ -55,7 +55,7 @@ export interface ScaledPosition {
 }
 
 /**
- * Highlight format used by react-pdf-highlighter
+ * Highlight format consumed by the PDF annotation renderer
  */
 export interface PDFHighlight {
   id: string;
@@ -69,18 +69,6 @@ export interface PDFHighlight {
     emoji?: string;
   };
   color?: string;
-}
-
-/**
- * Selection result from react-pdf-highlighter onSelectionFinished
- */
-export interface PDFSelection {
-  content: {
-    text?: string;
-    image?: string;
-  };
-  position: ScaledPosition;
-  scaledPosition: ScaledPosition;
 }
 
 function resolvePageDimensions(
@@ -179,10 +167,10 @@ export function annotationToHighlight(
     id: annotation.id,
     position: boundingBoxesToScaledPosition(target, pageDimensions),
     content: {
-      text: annotation.content,
+      text: getCanonicalPdfAnnotationText(annotation),
       image: annotation.preview?.type === "image" ? annotation.preview.dataUrl : undefined,
     },
-    color: annotation.style.color,
+    color: resolveHighlightColor(annotation.style.color),
   };
 
   if (annotation.comment) {
@@ -201,41 +189,6 @@ export function annotationsToHighlights(
   return annotations
     .map((annotation) => annotationToHighlight(annotation, pageDimensions))
     .filter((highlight): highlight is PDFHighlight => highlight !== null);
-}
-
-// ============================================================================
-// Selection to Annotation Conversion
-// ============================================================================
-
-export function selectionToAnnotation(
-  selection: PDFSelection,
-  color: string,
-  author: string,
-  styleType: AnnotationStyleType = "highlight",
-): Omit<AnnotationItem, "id" | "createdAt"> {
-  const position = selection.scaledPosition || selection.position;
-  const rects = scaledPositionToBoundingBoxes(position);
-
-  const target: PdfTarget = {
-    type: "pdf",
-    page: position.pageNumber,
-    rects: rects.length > 0 ? rects : [{
-      x1: toNormalizedCoordinate(position.boundingRect.x1, position.boundingRect.width),
-      y1: toNormalizedCoordinate(position.boundingRect.y1, position.boundingRect.height),
-      x2: toNormalizedCoordinate(position.boundingRect.x2, position.boundingRect.width),
-      y2: toNormalizedCoordinate(position.boundingRect.y2, position.boundingRect.height),
-    }],
-  };
-
-  return {
-    target,
-    style: {
-      color,
-      type: styleType,
-    },
-    content: selection.content.text,
-    author,
-  };
 }
 
 export function createPinAnnotation(
@@ -262,34 +215,10 @@ export function createPinAnnotation(
   return {
     target,
     style: {
-      color,
+      color: resolveHighlightColor(color),
       type: "area",
     },
     comment,
-    author,
-  };
-}
-
-// ============================================================================
-// Highlight to Annotation Conversion (reverse mapping)
-// ============================================================================
-
-export function highlightToAnnotation(
-  highlight: PDFHighlight,
-  author: string,
-): Omit<AnnotationItem, "id" | "createdAt"> {
-  return {
-    target: {
-      type: "pdf",
-      page: highlight.position.pageNumber,
-      rects: scaledPositionToBoundingBoxes(highlight.position),
-    },
-    style: {
-      color: highlight.color || DEFAULT_HIGHLIGHT_COLOR.hex,
-      type: "highlight",
-    },
-    content: highlight.content.text,
-    comment: highlight.comment?.text,
     author,
   };
 }

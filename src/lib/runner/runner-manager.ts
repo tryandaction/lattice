@@ -1,13 +1,12 @@
 "use client";
 
-import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   pythonWorkerManager,
   type WorkerOutMessage,
 } from "@/lib/python-worker-manager";
 import { runnerEventToExecutionOutputs } from "@/lib/runner/output-utils";
-import { isTauriHost } from "@/lib/storage-adapter";
+import { invokeTauriCommand, isTauriHost } from "@/lib/storage-adapter";
 import type {
   CommandAvailability,
   ExecutionDisplayData,
@@ -302,7 +301,7 @@ export class ExecutionSession {
     }
 
     if (isTauriHost()) {
-      await invoke("terminate_local_execution", { session_id: this.currentSessionId });
+      await invokeTauriCommand("terminate_local_execution", { session_id: this.currentSessionId }, { timeoutMs: 5000 });
     } else {
       pythonWorkerManager.terminate();
       this.setStatus("idle");
@@ -346,7 +345,7 @@ export class ExecutionSession {
           }
         });
 
-        await invoke("start_local_execution", {
+        await invokeTauriCommand("start_local_execution", {
           request: {
             session_id: sessionId,
             runner_type: request.runnerType,
@@ -358,7 +357,7 @@ export class ExecutionSession {
             env: request.env,
             mode: request.mode,
           },
-        });
+        }, { timeoutMs: 10000 });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.setStatus("error", message);
@@ -533,14 +532,14 @@ export class PersistentPythonSession {
       });
 
       try {
-        await invoke("start_python_session", {
+        await invokeTauriCommand("start_python_session", {
           request: {
             session_id: sessionId,
             command: this.options.command,
             cwd: this.options.cwd,
             env: this.options.env,
           },
-        });
+        }, { timeoutMs: 10000 });
         return await startupPromise;
       } catch (error) {
         window.clearTimeout(startupTimeout);
@@ -572,12 +571,12 @@ export class PersistentPythonSession {
     return new Promise<ExecutionRunResult>(async (resolve, reject) => {
       this.pendingExecution = { resolve, reject, onEvent };
       try {
-        await invoke("execute_python_session", {
+        await invokeTauriCommand("execute_python_session", {
           request: {
             session_id: sessionId,
             code: request.code,
           },
-        });
+        }, { timeoutMs: 10000 });
       } catch (error) {
         this.pendingExecution = null;
         reject(error);
@@ -589,7 +588,7 @@ export class PersistentPythonSession {
     if (!this.sessionId || !isTauriHost()) {
       return;
     }
-    await invoke("stop_python_session", { session_id: this.sessionId });
+    await invokeTauriCommand("stop_python_session", { session_id: this.sessionId }, { timeoutMs: 5000 });
     this.ready = false;
     this.sessionId = null;
   }
@@ -661,7 +660,7 @@ export class RunnerManager {
       return [];
     }
 
-    const result = await invoke<
+    const result = await invokeTauriCommand<
       Array<{
         path: string;
         version: string;
@@ -669,7 +668,7 @@ export class RunnerManager {
         name?: string;
         source: string;
       }>
-    >("detect_python_environments", { cwd });
+    >("detect_python_environments", { cwd }, { timeoutMs: 10000 });
     return result.map(mapPythonEnvironment);
   }
 
@@ -682,13 +681,13 @@ export class RunnerManager {
       };
     }
 
-    const result = await invoke<{
+    const result = await invokeTauriCommand<{
       command: string;
       available: boolean;
       resolved_path?: string | null;
       version?: string | null;
       error?: string | null;
-    }>("probe_command_availability", { command });
+    }>("probe_command_availability", { command }, { timeoutMs: 5000 });
     return mapCommandAvailability(result);
   }
 }

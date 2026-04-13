@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { startTransition, useState, useCallback, useRef, useEffect } from "react";
 import { X, ChevronUp, ChevronDown } from "lucide-react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useI18n } from "@/hooks/use-i18n";
+import { getPreferredPdfPageSearchText } from "@/lib/pdf-page-text-engine";
 
 interface SearchMatch {
   page: number;
@@ -12,6 +13,7 @@ interface SearchMatch {
 
 interface PdfSearchOverlayProps {
   pdfDocument: PDFDocumentProxy | null;
+  fileHandle?: FileSystemFileHandle | null;
   numPages: number;
   onNavigateToPage: (page: number) => void;
   isOpen: boolean;
@@ -20,6 +22,7 @@ interface PdfSearchOverlayProps {
 
 export function PdfSearchOverlay({
   pdfDocument,
+  fileHandle,
   numPages,
   onNavigateToPage,
   isOpen,
@@ -32,6 +35,7 @@ export function PdfSearchOverlay({
   const [pageTexts, setPageTexts] = useState<Map<number, string>>(new Map());
   const inputRef = useRef<HTMLInputElement>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const documentTokenRef = useRef(0);
 
   useEffect(() => {
     if (isOpen && inputRef.current) {
@@ -40,10 +44,20 @@ export function PdfSearchOverlay({
   }, [isOpen]);
 
   useEffect(() => {
+    documentTokenRef.current += 1;
+    startTransition(() => {
+      setPageTexts(new Map());
+      setMatches([]);
+      setCurrentMatch(-1);
+    });
+  }, [pdfDocument]);
+
+  useEffect(() => {
     if (!isOpen || !pdfDocument || numPages === 0) {
       return;
     }
     const activeDocument = pdfDocument as PDFDocumentProxy;
+    const activeToken = documentTokenRef.current;
 
     if (pageTexts.size === numPages) {
       return;
@@ -67,10 +81,11 @@ export function PdfSearchOverlay({
           }
 
           try {
-            const page = await activeDocument.getPage(pageNumber);
-            const textContent = await page.getTextContent();
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const text = textContent.items.map((item: any) => item.str ?? "").join(" ");
+            const text = await getPreferredPdfPageSearchText({
+              pdfDocument: activeDocument,
+              fileHandle,
+              pageNumber,
+            });
             texts.set(pageNumber, text.toLowerCase());
           } catch {
             // Ignore page extraction failures so search can continue on the rest.
@@ -84,7 +99,7 @@ export function PdfSearchOverlay({
         }
       }
 
-      if (!cancelled) {
+      if (!cancelled && documentTokenRef.current === activeToken) {
         setPageTexts(texts);
       }
     }
@@ -94,7 +109,7 @@ export function PdfSearchOverlay({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, numPages, pageTexts.size, pdfDocument]);
+  }, [fileHandle, isOpen, numPages, pageTexts.size, pdfDocument]);
 
   const doSearch = useCallback((q: string) => {
     if (searchTimer.current) clearTimeout(searchTimer.current);

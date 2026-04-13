@@ -40,7 +40,7 @@ describe("storage-adapter desktop bridge readiness", () => {
     await vi.runAllTimersAsync();
 
     await expect(pending).resolves.toEqual({ onboardingCompleted: true });
-    expect(invoke).toHaveBeenCalledWith("get_setting", { key: "lattice-settings" });
+    expect(invoke).toHaveBeenCalledWith("get_setting", { key: "lattice-settings" }, undefined);
     expect(localStorage.getItem("lattice-settings")).toContain("false");
 
     vi.useRealTimers();

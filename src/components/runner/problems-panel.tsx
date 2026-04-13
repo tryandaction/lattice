@@ -14,12 +14,12 @@ interface ProblemsPanelProps {
 
 function severityTone(problem: ExecutionProblem): string {
   if (problem.severity === "error") {
-    return "border-destructive/40 bg-destructive/10";
+    return "code-workbench-status-error";
   }
   if (problem.severity === "warning") {
-    return "border-yellow-500/40 bg-yellow-500/10";
+    return "code-workbench-status-warning";
   }
-  return "border-border bg-muted/40";
+  return "code-workbench-status-info";
 }
 
 function sourceLabel(problem: ExecutionProblem): string {
@@ -98,17 +98,17 @@ export function ProblemsPanel({
             className={cn(
               "rounded-md border px-3 py-2",
               severityTone(problem),
-              clickable && "cursor-pointer transition-colors hover:bg-muted/60",
+              clickable && "cursor-pointer transition-colors hover:bg-[var(--code-surface-hover)]",
             )}
           >
             <div className="flex items-start gap-2">
               {problem.severity === "info" ? (
-                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <Info className="code-workbench-soft-text mt-0.5 h-3.5 w-3.5 shrink-0" />
               ) : (
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-current" />
               )}
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+                <div className="code-workbench-soft-text flex items-center gap-2 text-[11px] uppercase tracking-wide">
                   <span className="inline-flex items-center gap-1">
                     <TerminalSquare className="h-3 w-3" />
                     {sourceLabel(problem)}
@@ -116,11 +116,11 @@ export function ProblemsPanel({
                   {location ? <span className="truncate normal-case tracking-normal">{location}</span> : null}
                 </div>
                 <div className={cn("mt-1 font-medium", compact ? "text-xs" : "text-sm")}>{problem.title}</div>
-                <div className={cn("mt-1 whitespace-pre-wrap break-words text-muted-foreground", compact ? "text-[11px]" : "text-xs")}>
+                <div className={cn("code-workbench-muted-text mt-1 whitespace-pre-wrap break-words", compact ? "text-[11px]" : "text-xs")}>
                   {problem.message}
                 </div>
                 {problem.hint ? (
-                  <div className={cn("mt-2 whitespace-pre-wrap break-words", compact ? "text-[11px]" : "text-xs")}>
+                  <div className={cn("code-workbench-muted-text mt-2 whitespace-pre-wrap break-words", compact ? "text-[11px]" : "text-xs")}>
                     建议：{problem.hint}
                   </div>
                 ) : null}
@@ -134,7 +134,7 @@ export function ProblemsPanel({
                           event.stopPropagation();
                           onAction?.(problem, action);
                         }}
-                        className="rounded border border-border bg-background/70 px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        className="code-workbench-button rounded px-2 py-1 text-[11px]"
                       >
                         {action.label}
                       </button>

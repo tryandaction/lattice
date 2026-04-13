@@ -5,6 +5,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod pdf_native;
+
 use std::{
     collections::{HashMap, HashSet},
     env,
@@ -30,9 +32,11 @@ use tauri_plugin_store::StoreExt;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
-    sync::Mutex,
+    sync::{Mutex, Semaphore},
 };
 use uuid::Uuid;
+
+use crate::pdf_native::desktop_extract_pdf_page_text_layout;
 
 const SETTINGS_STORE: &str = "settings.json";
 const RUNNER_EVENT_NAME: &str = "runner://event";
@@ -192,6 +196,22 @@ struct PythonSessions {
 #[derive(Default)]
 struct DesktopPreviewState {
     workspace_root: StdMutex<Option<PathBuf>>,
+}
+
+struct DesktopFsState {
+    read_dir_permits: Arc<Semaphore>,
+    read_file_permits: Arc<Semaphore>,
+    mutate_path_permits: Arc<Semaphore>,
+}
+
+impl Default for DesktopFsState {
+    fn default() -> Self {
+        Self {
+            read_dir_permits: Arc::new(Semaphore::new(2)),
+            read_file_permits: Arc::new(Semaphore::new(4)),
+            mutate_path_permits: Arc::new(Semaphore::new(1)),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -786,28 +806,59 @@ fn clear_settings(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn desktop_read_dir(path: String) -> Result<Vec<DesktopDirEntry>, String> {
+async fn desktop_read_dir(
+    fs_state: State<'_, DesktopFsState>,
+    path: String,
+) -> Result<Vec<DesktopDirEntry>, String> {
     let normalized = PathBuf::from(path);
-    let entries = fs::read_dir(&normalized).map_err(|error| error.to_string())?;
-    let mut results = Vec::new();
+    let permit = fs_state
+        .read_dir_permits
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|error| error.to_string())?;
 
-    for entry in entries {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let file_type = entry.file_type().map_err(|error| error.to_string())?;
-        results.push(DesktopDirEntry {
-            name: entry.file_name().to_string_lossy().to_string(),
-            is_directory: file_type.is_dir(),
-            is_file: file_type.is_file(),
-            is_symlink: file_type.is_symlink(),
-        });
-    }
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let entries = fs::read_dir(&normalized).map_err(|error| error.to_string())?;
+        let mut results = Vec::new();
 
-    Ok(results)
+        for entry in entries {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let file_type = entry.file_type().map_err(|error| error.to_string())?;
+            results.push(DesktopDirEntry {
+                name: entry.file_name().to_string_lossy().to_string(),
+                is_directory: file_type.is_dir(),
+                is_file: file_type.is_file(),
+                is_symlink: file_type.is_symlink(),
+            });
+        }
+
+        Ok(results)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn desktop_read_file_bytes_raw(path: String) -> Result<TauriResponse, String> {
-    let bytes = fs::read(PathBuf::from(path)).map_err(|error| error.to_string())?;
+async fn desktop_read_file_bytes_raw(
+    fs_state: State<'_, DesktopFsState>,
+    path: String,
+) -> Result<TauriResponse, String> {
+    let permit = fs_state
+        .read_file_permits
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let bytes = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        fs::read(PathBuf::from(path)).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+
     Ok(TauriResponse::new(bytes))
 }
 
@@ -817,40 +868,102 @@ fn desktop_write_file_bytes(path: String, data: Vec<u8>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn desktop_exists_path(path: String) -> Result<bool, String> {
-    Ok(PathBuf::from(path).exists())
+async fn desktop_exists_path(
+    fs_state: State<'_, DesktopFsState>,
+    path: String,
+) -> Result<bool, String> {
+    let permit = fs_state
+        .read_dir_permits
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        Ok(PathBuf::from(path).exists())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn desktop_is_directory(path: String) -> Result<bool, String> {
-    Ok(PathBuf::from(path).is_dir())
+async fn desktop_is_directory(
+    fs_state: State<'_, DesktopFsState>,
+    path: String,
+) -> Result<bool, String> {
+    let permit = fs_state
+        .read_dir_permits
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        Ok(PathBuf::from(path).is_dir())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn desktop_create_dir(path: String, recursive: bool) -> Result<(), String> {
-    let target = PathBuf::from(path);
-    if recursive {
-        fs::create_dir_all(target).map_err(|error| error.to_string())?;
-    } else {
-        fs::create_dir(target).map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
+async fn desktop_create_dir(
+    fs_state: State<'_, DesktopFsState>,
+    path: String,
+    recursive: bool,
+) -> Result<(), String> {
+    let permit = fs_state
+        .mutate_path_permits
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|error| error.to_string())?;
 
-#[tauri::command]
-fn desktop_remove_path(path: String, recursive: bool) -> Result<(), String> {
-    let target = PathBuf::from(path);
-    let metadata = fs::symlink_metadata(&target).map_err(|error| error.to_string())?;
-    if metadata.is_dir() {
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let target = PathBuf::from(path);
         if recursive {
-            fs::remove_dir_all(target).map_err(|error| error.to_string())?;
+            fs::create_dir_all(target).map_err(|error| error.to_string())?;
         } else {
-            fs::remove_dir(target).map_err(|error| error.to_string())?;
+            fs::create_dir(target).map_err(|error| error.to_string())?;
         }
-    } else {
-        fs::remove_file(target).map_err(|error| error.to_string())?;
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn desktop_remove_path(
+    fs_state: State<'_, DesktopFsState>,
+    path: String,
+    recursive: bool,
+) -> Result<(), String> {
+    let permit = fs_state
+        .mutate_path_permits
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let target = PathBuf::from(path);
+        let metadata = fs::symlink_metadata(&target).map_err(|error| error.to_string())?;
+        if metadata.is_dir() {
+            if recursive {
+                fs::remove_dir_all(target).map_err(|error| error.to_string())?;
+            } else {
+                fs::remove_dir(target).map_err(|error| error.to_string())?;
+            }
+        } else {
+            fs::remove_file(target).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1300,6 +1413,7 @@ fn main() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(DesktopPreviewState::default())
+        .manage(DesktopFsState::default())
         .manage(ExecutionSessions::default())
         .manage(PythonSessions::default())
         .invoke_handler(tauri::generate_handler![
@@ -1334,6 +1448,7 @@ fn main() {
             start_python_session,
             execute_python_session,
             stop_python_session,
+            desktop_extract_pdf_page_text_layout,
         ])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {

@@ -204,11 +204,12 @@ function AppLayoutContent() {
   const loadPlugins = usePluginStore((state) => state.loadPlugins);
   const aiChatOpen = useAiChatStore((state) => state.isOpen);
   const setAiChatOpen = useAiChatStore((state) => state.setOpen);
-  const { openDirectory } = useFileSystem();
+  const { openDirectory, openWorkspacePath } = useFileSystem();
   const { toggleTheme } = useTheme();
   const { t } = useI18n();
   const router = useRouter();
   const isDesktopLayout = !isMobile && !isTablet;
+  const recentWorkspaces = settings.recentWorkspacePaths ?? [];
   const openGuide = useCallback(() => {
     router.push(resolveAppRoute("/guide"));
   }, [router]);
@@ -775,6 +776,8 @@ function AppLayoutContent() {
       <DesktopWindowFrame />
       <CommandBar
         onOpenWorkspace={() => void openDirectory()}
+        recentWorkspaces={recentWorkspaces}
+        onOpenRecentWorkspace={(path) => void openWorkspacePath(path)}
       />
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div className="flex w-14 shrink-0 flex-col items-center border-r border-border bg-card/90 px-1 py-2">
