@@ -34,6 +34,7 @@ const PDF_ITEMS_DIR = ".lattice/items";
 const LEGACY_PDF_ITEMS_DIR = ".lattice/pdf-items";
 const LEGACY_OVERVIEW_NOTE_NAME = "_overview.md";
 const DEFAULT_ANNOTATIONS_NOTE_NAME = "_annotations.md";
+const PDF_ANNOTATION_PREVIEW_DIR_NAME = "_annotation_previews";
 
 export interface PdfItemManifestIndex {
   byDocumentId: Map<string, PdfItemManifest>;
@@ -153,6 +154,10 @@ function getPdfItemAnnotationIndexPath(itemFolderPath: string): string {
   return joinPath(itemFolderPath, DEFAULT_ANNOTATIONS_NOTE_NAME);
 }
 
+function getPdfItemAnnotationPreviewDirPath(itemFolderPath: string): string {
+  return joinPath(itemFolderPath, PDF_ANNOTATION_PREVIEW_DIR_NAME);
+}
+
 function normalizePdfItemManifest(input: {
   itemId: string;
   pdfPath: string;
@@ -261,6 +266,31 @@ async function writeTextFile(
   await writable.write(content);
   await writable.close();
   return handle;
+}
+
+async function writeBinaryFile(
+  dirHandle: FileSystemDirectoryHandle,
+  fileName: string,
+  content: Uint8Array,
+): Promise<FileSystemFileHandle> {
+  const handle = await dirHandle.getFileHandle(fileName, { create: true });
+  const writable = await handle.createWritable();
+  const bytes = Uint8Array.from(content);
+  await writable.write(new Blob([bytes.buffer], { type: "image/png" }));
+  await writable.close();
+  return handle;
+}
+
+async function dataUrlToBytes(dataUrl: string): Promise<Uint8Array | null> {
+  try {
+    const response = await fetch(dataUrl);
+    if (!response.ok) {
+      return null;
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  } catch {
+    return null;
+  }
 }
 
 async function removeDirectoryIfExists(
@@ -740,7 +770,10 @@ function getAnnotationTypeLabel(annotation: AnnotationItem): string {
   }
 }
 
-function buildAnnotationPreviewMarkdown(annotation: AnnotationItem): string | null {
+function buildAnnotationPreviewMarkdown(
+  annotation: AnnotationItem,
+  previewPathByAnnotationId?: Record<string, string>,
+): string | null {
   if (
     annotation.target.type !== "pdf" ||
     (annotation.style.type !== "area" && annotation.style.type !== "ink") ||
@@ -756,7 +789,8 @@ function buildAnnotationPreviewMarkdown(annotation: AnnotationItem): string | nu
   const height = Math.round(annotation.preview.height);
   const alt = `${getAnnotationTypeLabel(annotation)} ${labels.screenshot} ${annotation.id} ${translate("pdf.sidebar.page", { page })}`;
   const details = formatPdfAnnotationMarkdownLabel(labels.screenshotDetails, { page, width, height });
-  return `![${alt}](${annotation.preview.dataUrl})\n\n  _${details}_`;
+  const previewSource = previewPathByAnnotationId?.[annotation.id] ?? annotation.preview.dataUrl;
+  return `![${alt}](${previewSource})\n\n  _${details}_`;
 }
 
 export function buildPdfAnnotationsMarkdown(input: {
@@ -764,6 +798,7 @@ export function buildPdfAnnotationsMarkdown(input: {
   manifest: PdfItemManifest;
   annotations: AnnotationItem[];
   backlinksByAnnotation?: Record<string, AnnotationBacklink[]>;
+  previewPathByAnnotationId?: Record<string, string>;
 }): string {
   const locale = getLocale();
   const labels = getPdfAnnotationsMarkdownLabels();
@@ -824,7 +859,7 @@ export function buildPdfAnnotationsMarkdown(input: {
     if (annotation.comment?.trim()) {
       lines.push(`- ${labels.comment}: ${annotation.comment.trim()}`);
     }
-    const previewMarkdown = buildAnnotationPreviewMarkdown(annotation);
+    const previewMarkdown = buildAnnotationPreviewMarkdown(annotation, input.previewPathByAnnotationId);
     if (previewMarkdown) {
       lines.push(`- ${labels.screenshot}:`);
       lines.push(`  ${previewMarkdown.replace(/\n/g, "\n  ")}`);
@@ -1181,6 +1216,7 @@ export async function syncPdfAnnotationsMarkdown(
 
   if (pdfAnnotations.length === 0) {
     await removeFileIfExists(rootHandle, annotationPath);
+    await removeDirectoryIfExists(rootHandle, getPdfItemAnnotationPreviewDirPath(manifest.itemFolderPath));
     const nextManifest = await savePdfItemManifest(rootHandle, {
       ...manifest,
       annotationIndexPath: null,
@@ -1193,6 +1229,45 @@ export async function syncPdfAnnotationsMarkdown(
   }
 
   const dirHandle = await ensurePdfItemFolder(rootHandle, manifest);
+  const previewDirPath = getPdfItemAnnotationPreviewDirPath(manifest.itemFolderPath);
+  const previewDirHandle = await ensureNestedDirectory(rootHandle, previewDirPath);
+  const previewPathByAnnotationId: Record<string, string> = {};
+  const retainedPreviewFileNames = new Set<string>();
+
+  for (const annotation of pdfAnnotations) {
+    if (
+      annotation.target.type !== "pdf" ||
+      (annotation.style.type !== "area" && annotation.style.type !== "ink") ||
+      annotation.preview?.type !== "image" ||
+      !annotation.preview.dataUrl
+    ) {
+      continue;
+    }
+
+    const previewBytes = await dataUrlToBytes(annotation.preview.dataUrl);
+    if (!previewBytes) {
+      continue;
+    }
+
+    const previewFileName = `${annotation.id}.png`;
+    retainedPreviewFileNames.add(previewFileName);
+    await writeBinaryFile(previewDirHandle, previewFileName, previewBytes);
+    previewPathByAnnotationId[annotation.id] = buildRelativeWorkspacePath(
+      annotationPath,
+      joinPath(previewDirPath, previewFileName),
+    );
+  }
+
+  for await (const entry of previewDirHandle.values()) {
+    if (entry.kind !== "file") {
+      continue;
+    }
+    if (retainedPreviewFileNames.has(entry.name)) {
+      continue;
+    }
+    await previewDirHandle.removeEntry(entry.name);
+  }
+
   const markdown = buildPdfAnnotationsMarkdown({
     fileName,
     manifest: {
@@ -1201,6 +1276,7 @@ export async function syncPdfAnnotationsMarkdown(
     },
     annotations: pdfAnnotations,
     backlinksByAnnotation,
+    previewPathByAnnotationId,
   });
   const handle = await writeTextFile(dirHandle, DEFAULT_ANNOTATIONS_NOTE_NAME, markdown);
   const nextManifest = await savePdfItemManifest(rootHandle, {

@@ -174,6 +174,10 @@ describe("pdf-item utils", () => {
         updatedAt: 1710000000000,
       },
       annotations,
+      previewPathByAnnotationId: {
+        "ann-area": "./_annotation_previews/ann-area.png",
+        "ann-ink": "./_annotation_previews/ann-ink.png",
+      },
     });
 
     expect(markdown).toContain("# rydberg-review.pdf Annotations");
@@ -184,8 +188,8 @@ describe("pdf-item utils", () => {
     expect(markdown).toContain("../../../papers/rydberg-review.pdf#page=2");
     expect(markdown).toContain("../../../papers/rydberg-review.pdf#annotation=ann-1");
     expect(markdown).toContain("- Screenshot:");
-    expect(markdown).toContain("![Area Screenshot ann-area Page 4](data:image/png;base64,ZmFrZS1wcmV2aWV3)");
-    expect(markdown).toContain("![Ink Screenshot ann-ink Page 4](data:image/png;base64,aW5rLXByZXZpZXc=)");
+    expect(markdown).toContain("![Area Screenshot ann-area Page 4](./_annotation_previews/ann-area.png)");
+    expect(markdown).toContain("![Ink Screenshot ann-ink Page 4](./_annotation_previews/ann-ink.png)");
   });
 
   it("localizes generated pdf annotation markdown labels", () => {

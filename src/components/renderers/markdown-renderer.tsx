@@ -44,6 +44,115 @@ type MarkdownProps<T extends keyof JSX.IntrinsicElements> = ComponentPropsWithou
 type MarkdownCodeProps = MarkdownProps<"code"> & { inline?: boolean };
 type RehypeKatexPlugin = typeof import("rehype-katex").default;
 
+function resolveMarkdownImagePath(currentFilePath: string, imageUrl: string): string {
+  if (imageUrl.startsWith("/")) {
+    return imageUrl.slice(1);
+  }
+  const baseParts = currentFilePath.replace(/\\/g, "/").split("/");
+  baseParts.pop();
+  const targetParts = imageUrl.replace(/\\/g, "/").split("/");
+  const resolved = [...baseParts];
+  for (const part of targetParts) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      resolved.pop();
+      continue;
+    }
+    resolved.push(part);
+  }
+  return resolved.join("/");
+}
+
+async function resolveMarkdownFileHandleFromRoot(
+  root: FileSystemDirectoryHandle,
+  filePath: string,
+): Promise<FileSystemFileHandle> {
+  const parts = filePath.replace(/\\/g, "/").split("/").filter(Boolean);
+  const startIndex = parts[0] === root.name ? 1 : 0;
+  let current: FileSystemDirectoryHandle | FileSystemFileHandle = root;
+  for (let index = startIndex; index < parts.length; index += 1) {
+    const isLast = index === parts.length - 1;
+    current = isLast
+      ? await (current as FileSystemDirectoryHandle).getFileHandle(parts[index])
+      : await (current as FileSystemDirectoryHandle).getDirectoryHandle(parts[index]);
+  }
+  return current as FileSystemFileHandle;
+}
+
+function ResolvedMarkdownImage({
+  src,
+  alt,
+  filePath,
+  rootHandle,
+  className,
+  node: _node,
+  ...props
+}: MarkdownProps<"img"> & {
+  src?: string;
+  filePath?: string;
+  rootHandle?: FileSystemDirectoryHandle | null;
+}) {
+  const directSrc = typeof src === "string" ? src : undefined;
+  const isLocalImage = Boolean(
+    directSrc &&
+    !/^(https?:|data:|blob:)/i.test(directSrc) &&
+    rootHandle &&
+    filePath,
+  );
+  const localImageKey = isLocalImage ? `${filePath}:${directSrc}` : "";
+  const [resolvedState, setResolvedState] = useState<{ key: string; src?: string }>({
+    key: "",
+    src: undefined,
+  });
+  const resolvedSrc = isLocalImage
+    ? (resolvedState.key === localImageKey ? resolvedState.src : undefined)
+    : directSrc;
+
+  useEffect(() => {
+    if (!isLocalImage || !directSrc || !rootHandle || !filePath) {
+      return;
+    }
+
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    const resolveLocalImage = async () => {
+      try {
+        const resolvedPath = resolveMarkdownImagePath(filePath, directSrc);
+        const fileHandle = await resolveMarkdownFileHandleFromRoot(rootHandle, resolvedPath);
+        const file = await fileHandle.getFile();
+        objectUrl = URL.createObjectURL(file);
+        if (!cancelled) {
+          setResolvedState({ key: localImageKey, src: objectUrl });
+        }
+      } catch {
+        if (!cancelled) {
+          setResolvedState({ key: localImageKey, src: directSrc });
+        }
+      }
+    };
+
+    void resolveLocalImage();
+    return () => {
+      cancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [directSrc, filePath, isLocalImage, localImageKey, rootHandle]);
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={resolvedSrc}
+      alt={alt || ""}
+      className={className}
+      loading="lazy"
+      {...props}
+    />
+  );
+}
+
 /**
  * Copy button component for code blocks
  */
@@ -596,6 +705,18 @@ export function MarkdownRenderer({
         >
           {children}
         </AppMarkdownLink>
+      );
+    },
+    img({ src, alt, node: _node, ...props }: MarkdownProps<"img">) {
+      return (
+        <ResolvedMarkdownImage
+          src={typeof src === "string" ? src : undefined}
+          alt={alt}
+          filePath={filePath}
+          rootHandle={rootHandle}
+          className="rounded-lg my-4 max-w-full h-auto"
+          {...props}
+        />
       );
     },
     code({ inline, className, children, style: _style, node: _node, ...props }: MarkdownCodeProps) {

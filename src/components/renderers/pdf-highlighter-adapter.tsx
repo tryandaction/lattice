@@ -72,6 +72,7 @@ import {
 import { generateFileId } from "@/lib/universal-annotation-storage";
 import {
   buildBacklinkNavigationTarget,
+  getBacklinkIndex,
   getBacklinksForAnnotation,
   scanWorkspaceMarkdownBacklinks,
   type AnnotationBacklink,
@@ -2320,9 +2321,25 @@ export function PDFHighlighterAdapter({
     };
   }, [binding, fileHandle, fileName, filePath, rootHandle]);
 
+  const hydrateBacklinksFromIndex = useCallback((): Record<string, AnnotationBacklink[]> => {
+    const nextBacklinks: Record<string, AnnotationBacklink[]> = {};
+    dedupedAnnotations.forEach((annotation) => {
+      if (annotation.target.type !== "pdf") {
+        return;
+      }
+      nextBacklinks[annotation.id] = getBacklinksForAnnotation(annotation.id);
+    });
+    setBacklinksByAnnotation(nextBacklinks);
+    return nextBacklinks;
+  }, [dedupedAnnotations]);
+
   const refreshAnnotationBacklinks = useCallback(async (): Promise<Record<string, AnnotationBacklink[]>> => {
     if (!pdfItemManifest || !canManagePdfItemWorkspace || !showSidebar || pdfAnnotationCount === 0) {
       return {};
+    }
+
+    if (Date.now() - getBacklinkIndex().lastScan < 30_000) {
+      return hydrateBacklinksFromIndex();
     }
 
     const runId = backlinkRunGuardRef.current.begin();
@@ -2340,19 +2357,35 @@ export function PDFHighlighterAdapter({
       return {};
     }
 
-    const nextBacklinks: Record<string, AnnotationBacklink[]> = {};
-    dedupedAnnotations.forEach((annotation) => {
-      if (annotation.target.type !== "pdf") {
-        return;
-      }
-      nextBacklinks[annotation.id] = getBacklinksForAnnotation(annotation.id);
-    });
+    const nextBacklinks = hydrateBacklinksFromIndex();
     if (!backlinkRunGuardRef.current.isCurrent(runId)) {
       return {};
     }
-    setBacklinksByAnnotation(nextBacklinks);
     return nextBacklinks;
-  }, [canManagePdfItemWorkspace, dedupedAnnotations, pdfAnnotationCount, pdfItemManifest, rootHandle, showSidebar]);
+  }, [canManagePdfItemWorkspace, hydrateBacklinksFromIndex, pdfAnnotationCount, pdfItemManifest, rootHandle, showSidebar]);
+
+  const scheduleBacklinkRefresh = useCallback(() => {
+    if (!showSidebar || !pdfItemManifest || !canManagePdfItemWorkspace || pdfAnnotationCount === 0) {
+      return;
+    }
+    if (backlinkRefreshIdleHandleRef.current !== null) {
+      return;
+    }
+
+    hydrateBacklinksFromIndex();
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    const runRefresh = () => {
+      backlinkRefreshIdleHandleRef.current = null;
+      void refreshAnnotationBacklinks();
+    };
+
+    backlinkRefreshIdleHandleRef.current = idleWindow.requestIdleCallback
+      ? idleWindow.requestIdleCallback(runRefresh, { timeout: 2000 })
+      : window.setTimeout(runRefresh, 180);
+  }, [canManagePdfItemWorkspace, hydrateBacklinksFromIndex, pdfAnnotationCount, pdfItemManifest, refreshAnnotationBacklinks, showSidebar]);
 
   useEffect(() => {
     if (!canManagePdfItemWorkspace) {
@@ -2401,16 +2434,24 @@ export function PDFHighlighterAdapter({
       return;
     }
 
-    void refreshAnnotationBacklinks();
+    scheduleBacklinkRefresh();
     const handleWindowFocus = () => {
-      void refreshAnnotationBacklinks();
+      scheduleBacklinkRefresh();
     };
 
     window.addEventListener("focus", handleWindowFocus);
     return () => {
+      if (backlinkRefreshIdleHandleRef.current !== null) {
+        const idleWindow = window as Window & {
+          cancelIdleCallback?: (handle: number) => void;
+        };
+        idleWindow.cancelIdleCallback?.(backlinkRefreshIdleHandleRef.current);
+        window.clearTimeout(backlinkRefreshIdleHandleRef.current);
+        backlinkRefreshIdleHandleRef.current = null;
+      }
       window.removeEventListener("focus", handleWindowFocus);
     };
-  }, [canManagePdfItemWorkspace, pdfItemManifest, refreshAnnotationBacklinks, showSidebar]);
+  }, [canManagePdfItemWorkspace, pdfItemManifest, scheduleBacklinkRefresh, showSidebar]);
 
   useEffect(() => {
     if (!persistedPdfViewStateKey) {
@@ -2484,8 +2525,11 @@ export function PDFHighlighterAdapter({
           }
 
           const nextBacklinks = hasPdfAnnotations && showSidebar
-            ? await withTimeout(refreshAnnotationBacklinks(), 15000, "PDF annotation backlink refresh")
+            ? hydrateBacklinksFromIndex()
             : {};
+          if (hasPdfAnnotations && showSidebar) {
+            scheduleBacklinkRefresh();
+          }
           if (!annotationSyncRunGuard.isCurrent(runId)) {
             return;
           }
@@ -2550,7 +2594,7 @@ export function PDFHighlighterAdapter({
       }
       annotationSyncRunGuard.invalidate();
     };
-  }, [canManagePdfItemWorkspace, dedupedAnnotations, effectiveBinding, fileName, filePath, manifestSeedId, pdfAnnotationCount, pdfItemManifest, pdfManifestSyncKey, refreshAnnotationBacklinks, refreshDirectory, rootHandle, showSidebar]);
+  }, [canManagePdfItemWorkspace, dedupedAnnotations, effectiveBinding, fileName, filePath, hydrateBacklinksFromIndex, manifestSeedId, pdfAnnotationCount, pdfItemManifest, pdfManifestSyncKey, refreshDirectory, rootHandle, scheduleBacklinkRefresh, showSidebar]);
   const [restoreDebugState, setRestoreDebugState] = useState<PdfRestoreDebugState>(createIdleRestoreDebugState);
   
   // Current stroke state (for real-time drawing preview)
@@ -2646,6 +2690,7 @@ export function PDFHighlighterAdapter({
   const backlinkRunGuardRef = useRef(createLatestRunGuard());
   const annotationSyncRunGuardRef = useRef(createLatestRunGuard());
   const pendingAnnotationScrollFrameRef = useRef<number | null>(null);
+  const backlinkRefreshIdleHandleRef = useRef<number | null>(null);
   const pendingFitPageNumberRef = useRef<number | null>(null);
   const pdfSelectionSessionRef = useRef<PdfSelectionSessionState>(pdfSelectionSession);
   const frozenPdfSelection = pdfSelectionSession.phase === "frozen" ? pdfSelectionSession.snapshot : null;
@@ -5215,6 +5260,63 @@ export function PDFHighlighterAdapter({
       }
 
       const isReadyForPreciseScroll = target.isVisible && target.isMeasured;
+      const animateIntoPosition = () => {
+        const startTop = target.container.scrollTop;
+        const startLeft = target.container.scrollLeft;
+        const deltaTop = target.top - startTop;
+        const deltaLeft = target.left - startLeft;
+        const shouldAnimate = Math.abs(deltaTop) > 24 || Math.abs(deltaLeft) > 24;
+
+        if (!shouldAnimate) {
+          target.container.scrollTo({
+            top: target.top,
+            left: target.left,
+            behavior: "auto",
+          });
+          if (input.flashPage && !target.hasRectTarget) {
+            scheduleTimeout(() => flashPdfElement(target.pageElement), 120);
+          }
+          pendingAnnotationScrollFrameRef.current = null;
+          return;
+        }
+
+        const durationMs = 180;
+        let startTime: number | null = null;
+        const easeOutCubic = (value: number) => 1 - Math.pow(1 - value, 3);
+        const animate = (timestamp: number) => {
+          if (startTime === null) {
+            startTime = timestamp;
+          }
+          const progress = Math.min(1, (timestamp - startTime) / durationMs);
+          const eased = easeOutCubic(progress);
+          target.container.scrollTo({
+            top: startTop + (deltaTop * eased),
+            left: startLeft + (deltaLeft * eased),
+            behavior: "auto",
+          });
+          if (progress < 1) {
+            pendingAnnotationScrollFrameRef.current = window.requestAnimationFrame(animate);
+            return;
+          }
+          target.container.scrollTo({
+            top: target.top,
+            left: target.left,
+            behavior: "auto",
+          });
+          if (input.flashPage && !target.hasRectTarget) {
+            scheduleTimeout(() => flashPdfElement(target.pageElement), 120);
+          }
+          pendingAnnotationScrollFrameRef.current = null;
+        };
+
+        pendingAnnotationScrollFrameRef.current = window.requestAnimationFrame(animate);
+      };
+
+      if (isReadyForPreciseScroll && settledFrames >= 2) {
+        animateIntoPosition();
+        return;
+      }
+
       target.container.scrollTo({
         top: target.top,
         left: target.left,
@@ -5230,11 +5332,7 @@ export function PDFHighlighterAdapter({
         }
       }
 
-      if (input.flashPage && !target.hasRectTarget) {
-        scheduleTimeout(() => flashPdfElement(target.pageElement), 120);
-      }
-
-      pendingAnnotationScrollFrameRef.current = null;
+      animateIntoPosition();
     };
 
     attemptScroll();
