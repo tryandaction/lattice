@@ -358,16 +358,18 @@ function FileViewer({
 
       if (isSystemIndexFile) {
         return (
-          <MarkdownRenderer
-            key={viewerKey}
-            content={normalizedContent}
-            fileName={fileName}
-            paneId={paneId}
-            filePath={filePath}
-            rootHandle={rootHandle}
-            variant="system-index"
-            enableCodeExecution={false}
-          />
+          <div className="h-full overflow-auto px-6 py-4">
+            <MarkdownRenderer
+              key={viewerKey}
+              content={normalizedContent}
+              fileName={fileName}
+              paneId={paneId}
+              filePath={filePath}
+              rootHandle={rootHandle}
+              variant="system-index"
+              enableCodeExecution={false}
+            />
+          </div>
         );
       }
 

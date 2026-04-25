@@ -35,6 +35,7 @@ import {
   deleteAnnotationSidecarsForPath,
   detectFileType,
   generateFileId,
+  loadAnnotationsFromDisk,
   moveAnnotationSidecar,
 } from "@/lib/universal-annotation-storage";
 import {
@@ -42,9 +43,11 @@ import {
   deletePdfItemWorkspace,
   invalidatePdfItemManifestIndex,
   listPdfItemNotes,
+  syncPdfAnnotationsMarkdown,
   loadPdfItemManifest,
   migrateLegacyPdfItemWorkspaces,
   movePdfItemWorkspace,
+  getPdfFileName,
 } from "@/lib/pdf-item";
 import { createDesktopDirectoryHandle, getDesktopHandlePath } from "@/lib/desktop-file-system";
 import { setDesktopPreviewRoot } from "@/lib/desktop-preview";
@@ -307,6 +310,13 @@ async function loadPdfVirtualChildren(
   pdfPath: string,
 ): Promise<TreeNode[]> {
   const manifest = await loadPdfItemManifest(rootHandle, generateFileId(pdfPath), pdfPath);
+  const annotationFile = await loadAnnotationsFromDisk(manifest.itemId, rootHandle, "pdf");
+  await syncPdfAnnotationsMarkdown(
+    rootHandle,
+    manifest,
+    getPdfFileName(pdfPath),
+    annotationFile.annotations,
+  );
   const notes = await listPdfItemNotes(rootHandle, manifest);
   return notes
     .map((summary) => buildPdfVirtualChildNode(summary, pdfPath))

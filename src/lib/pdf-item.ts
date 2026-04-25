@@ -112,7 +112,7 @@ function isPdfItemManifest(value: unknown): value is PdfItemManifest {
   );
 }
 
-function getPdfFileName(pdfPath: string): string {
+export function getPdfFileName(pdfPath: string): string {
   const normalized = normalizeWorkspacePath(pdfPath);
   return normalized.split("/").pop() ?? "document.pdf";
 }
