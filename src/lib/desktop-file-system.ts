@@ -14,6 +14,9 @@ interface DesktopHandleMarker {
   readonly fullPath: string;
 }
 
+const DESKTOP_DIR_CACHE_TTL_MS = 1500;
+const desktopDirCache = new Map<string, { entries: DesktopDirEntry[]; cachedAt: number }>();
+
 function normalizeDesktopPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "");
 }
@@ -28,6 +31,15 @@ function joinDesktopPath(parentPath: string, name: string): string {
   return `${normalizeDesktopPath(parentPath)}/${name}`;
 }
 
+function getDesktopParentPath(path: string): string | null {
+  const normalized = normalizeDesktopPath(path);
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length <= 1) {
+    return null;
+  }
+  return parts.slice(0, -1).join("/");
+}
+
 async function invokeDesktopFs<T>(command: string, args: Record<string, unknown>): Promise<T> {
   if (!isTauri()) {
     throw new Error("Desktop file system is unavailable outside Tauri.");
@@ -40,6 +52,30 @@ async function invokeDesktopFs<T>(command: string, args: Record<string, unknown>
 
 async function readDesktopDir(path: string): Promise<DesktopDirEntry[]> {
   return invokeDesktopFs<DesktopDirEntry[]>("desktop_read_dir", { path: normalizeDesktopPath(path) });
+}
+
+async function readDesktopDirCached(path: string, options?: { force?: boolean }): Promise<DesktopDirEntry[]> {
+  const normalizedPath = normalizeDesktopPath(path);
+  const cached = desktopDirCache.get(normalizedPath);
+  if (!options?.force && cached && (Date.now() - cached.cachedAt) < DESKTOP_DIR_CACHE_TTL_MS) {
+    return cached.entries;
+  }
+
+  const entries = await readDesktopDir(normalizedPath);
+  desktopDirCache.set(normalizedPath, {
+    entries,
+    cachedAt: Date.now(),
+  });
+  return entries;
+}
+
+function invalidateDesktopDirCache(path: string): void {
+  const normalizedPath = normalizeDesktopPath(path);
+  desktopDirCache.delete(normalizedPath);
+  const parentPath = getDesktopParentPath(normalizedPath);
+  if (parentPath) {
+    desktopDirCache.delete(parentPath);
+  }
 }
 
 async function readDesktopFileBytes(path: string): Promise<Uint8Array> {
@@ -60,10 +96,7 @@ async function writeDesktopFileBytes(path: string, bytes: Uint8Array): Promise<v
     path: normalizeDesktopPath(path),
     data: Array.from(bytes),
   });
-}
-
-async function desktopPathExists(path: string): Promise<boolean> {
-  return invokeDesktopFs<boolean>("desktop_exists_path", { path: normalizeDesktopPath(path) });
+  invalidateDesktopDirCache(path);
 }
 
 async function createDesktopDir(path: string, recursive = false): Promise<void> {
@@ -71,6 +104,7 @@ async function createDesktopDir(path: string, recursive = false): Promise<void> 
     path: normalizeDesktopPath(path),
     recursive,
   });
+  invalidateDesktopDirCache(path);
 }
 
 async function removeDesktopPath(path: string, recursive = false): Promise<void> {
@@ -78,6 +112,7 @@ async function removeDesktopPath(path: string, recursive = false): Promise<void>
     path: normalizeDesktopPath(path),
     recursive,
   });
+  invalidateDesktopDirCache(path);
 }
 
 async function ensureDesktopFile(path: string): Promise<void> {
@@ -197,7 +232,7 @@ export class DesktopDirectoryHandle implements FileSystemDirectoryHandle, Deskto
   ) {}
 
   async *values(): AsyncGenerator<FileSystemDirectoryHandle | FileSystemFileHandle> {
-    const entries = await readDesktopDir(this.fullPath);
+    const entries = await readDesktopDirCached(this.fullPath);
     for (const entry of entries) {
       const entryPath = joinDesktopPath(this.fullPath, entry.name);
       if (entry.isDirectory) {
@@ -213,8 +248,9 @@ export class DesktopDirectoryHandle implements FileSystemDirectoryHandle, Deskto
 
   async getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<FileSystemDirectoryHandle> {
     const nextPath = joinDesktopPath(this.fullPath, name);
-    const exists = await desktopPathExists(nextPath);
-    if (!exists) {
+    const entries = await readDesktopDirCached(this.fullPath, { force: Boolean(options?.create) });
+    const matchedEntry = entries.find((entry) => entry.name === name);
+    if (!matchedEntry || !matchedEntry.isDirectory) {
       if (!options?.create) {
         throw new DOMException(`Directory not found: ${name}`, "NotFoundError");
       }
@@ -226,8 +262,9 @@ export class DesktopDirectoryHandle implements FileSystemDirectoryHandle, Deskto
 
   async getFileHandle(name: string, options?: { create?: boolean }): Promise<FileSystemFileHandle> {
     const nextPath = joinDesktopPath(this.fullPath, name);
-    const exists = await desktopPathExists(nextPath);
-    if (!exists) {
+    const entries = await readDesktopDirCached(this.fullPath, { force: Boolean(options?.create) });
+    const matchedEntry = entries.find((entry) => entry.name === name);
+    if (!matchedEntry || !matchedEntry.isFile) {
       if (!options?.create) {
         throw new DOMException(`File not found: ${name}`, "NotFoundError");
       }
