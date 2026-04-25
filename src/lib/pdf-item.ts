@@ -283,11 +283,24 @@ async function writeBinaryFile(
 
 async function dataUrlToBytes(dataUrl: string): Promise<Uint8Array | null> {
   try {
-    const response = await fetch(dataUrl);
-    if (!response.ok) {
+    const trimmed = dataUrl.trim();
+    const match = trimmed.match(/^data:([^;,]+)?(?:;charset=[^;,]+)?(;base64)?,(.*)$/i);
+    if (!match) {
       return null;
     }
-    return new Uint8Array(await response.arrayBuffer());
+
+    const payload = match[3] ?? "";
+    if (match[2]) {
+      const decoded = atob(payload);
+      const bytes = new Uint8Array(decoded.length);
+      for (let index = 0; index < decoded.length; index += 1) {
+        bytes[index] = decoded.charCodeAt(index);
+      }
+      return bytes;
+    }
+
+    const decodedText = decodeURIComponent(payload);
+    return new TextEncoder().encode(decodedText);
   } catch {
     return null;
   }

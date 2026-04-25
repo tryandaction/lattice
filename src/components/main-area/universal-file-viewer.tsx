@@ -356,6 +356,21 @@ function FileViewer({
       // Uses LRU cache to avoid re-running expensive regex chains on unchanged content
       const normalizedContent = cachedNormalizeScientificText(textContent);
 
+      if (isSystemIndexFile) {
+        return (
+          <MarkdownRenderer
+            key={viewerKey}
+            content={normalizedContent}
+            fileName={fileName}
+            paneId={paneId}
+            filePath={filePath}
+            rootHandle={rootHandle}
+            variant="system-index"
+            enableCodeExecution={false}
+          />
+        );
+      }
+
       // Use ObsidianMarkdownViewer for Obsidian-like experience (default render, click to edit)
       if (onContentChange) {
         // CRITICAL: Use fileId as key to force re-mount when switching between different files
@@ -373,8 +388,8 @@ function FileViewer({
             paneId={paneId}
             rootHandle={rootHandle}
             filePath={filePath}
-            variant={isSystemIndexFile ? "system-index" : "document"}
-            initialMode={isSystemIndexFile ? "reading" : undefined}
+            variant="document"
+            initialMode={undefined}
           />
         );
       }
