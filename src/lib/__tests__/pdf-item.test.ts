@@ -115,6 +115,26 @@ describe("pdf-item utils", () => {
         author: "user",
         createdAt: 1710000005000,
       },
+      {
+        id: "ann-area",
+        target: {
+          type: "pdf",
+          page: 4,
+          rects: [{ x1: 0.45, y1: 0.5, x2: 0.75, y2: 0.68 }],
+        },
+        style: {
+          color: "#2ea8e5",
+          type: "area",
+        },
+        preview: {
+          type: "image",
+          dataUrl: "data:image/png;base64,ZmFrZS1wcmV2aWV3",
+          width: 320,
+          height: 180,
+        },
+        author: "user",
+        createdAt: 1710000006000,
+      },
     ];
 
     const markdown = buildPdfAnnotationsMarkdown({
@@ -141,6 +161,8 @@ describe("pdf-item utils", () => {
     expect(markdown).toContain("Move this into the reading note.");
     expect(markdown).toContain("../../../papers/rydberg-review.pdf#page=2");
     expect(markdown).toContain("../../../papers/rydberg-review.pdf#annotation=ann-1");
+    expect(markdown).toContain("- Screenshot:");
+    expect(markdown).toContain("![Area annotation ann-area page 4](data:image/png;base64,ZmFrZS1wcmV2aWV3)");
   });
 
   it("recovers an existing workspace by stable document id after the pdf path changes", async () => {

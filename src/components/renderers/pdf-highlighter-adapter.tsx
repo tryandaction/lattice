@@ -326,6 +326,47 @@ function buildPdfSelectionMenuSnapshot(
   };
 }
 
+function buildPdfAreaPreviewFromPageElement(
+  pageElement: HTMLElement,
+  rect: PdfTarget["rects"][number],
+): AnnotationItem["preview"] | undefined {
+  const canvas = pageElement.querySelector("canvas");
+  if (!(canvas instanceof HTMLCanvasElement)) {
+    return undefined;
+  }
+
+  const cropX = Math.max(0, Math.floor(rect.x1 * canvas.width));
+  const cropY = Math.max(0, Math.floor(rect.y1 * canvas.height));
+  const cropWidth = Math.max(1, Math.ceil((rect.x2 - rect.x1) * canvas.width));
+  const cropHeight = Math.max(1, Math.ceil((rect.y2 - rect.y1) * canvas.height));
+  const previewCanvas = document.createElement("canvas");
+  previewCanvas.width = cropWidth;
+  previewCanvas.height = cropHeight;
+  const context = previewCanvas.getContext("2d");
+
+  if (!context) {
+    return undefined;
+  }
+
+  context.drawImage(
+    canvas,
+    cropX,
+    cropY,
+    cropWidth,
+    cropHeight,
+    0,
+    0,
+    cropWidth,
+    cropHeight,
+  );
+
+  return buildPdfAreaPreview({
+    dataUrl: previewCanvas.toDataURL("image/png"),
+    width: cropWidth,
+    height: cropHeight,
+  }) ?? undefined;
+}
+
 function findPdfPageElementInScope(
   scopeRoot: ParentNode | null | undefined,
   pageNumber: number,
@@ -596,6 +637,13 @@ function useMeasuredPopupSize(
 
 // Annotation tool types (Zotero-style)
 type AnnotationTool = 'select' | 'highlight' | 'underline' | 'note' | 'text' | 'area' | 'ink';
+type PdfAnnotationDefaultTool = Exclude<AnnotationTool, 'select'>;
+
+interface PdfAnnotationDefaultsMenuState {
+  tool: PdfAnnotationDefaultTool;
+  position: { x: number; y: number };
+}
+
 const MIN_INK_POINT_DELTA_SQUARED = 0.000004;
 const MIN_SCROLL_OVERFLOW_PX = 24;
 const DOM_SELECTION_SETTLE_WINDOW_MS = 140;
@@ -659,6 +707,8 @@ const AdapterVirtualPage = memo(function AdapterVirtualPage({
     <div
       ref={sentinelRef}
       data-page-number={pageNumber}
+      data-pdf-page-visible={isVisible ? "true" : "false"}
+      data-pdf-page-measured={measuredHeight && measuredWidth ? "true" : "false"}
       className="relative"
       style={{ minHeight: placeholderHeight, minWidth: placeholderWidth }}
     >
@@ -853,6 +903,91 @@ function ColorPicker({
         {t("common.cancel")}
       </button>
     </div>
+  );
+}
+
+interface PdfAnnotationDefaultsMenuProps {
+  state: PdfAnnotationDefaultsMenuState;
+  activeColor: string;
+  onSelectColor: (color: string) => void;
+  onClose: () => void;
+}
+
+function PdfAnnotationDefaultsMenu({
+  state,
+  activeColor,
+  onSelectColor,
+  onClose,
+}: PdfAnnotationDefaultsMenuProps) {
+  const { t } = useI18n();
+  const menuRef = useRef<HTMLDivElement>(null);
+  const adjustedPosition = adjustPopupPosition(state.position, { width: 224, height: 360 }, 12);
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target instanceof Node ? event.target : null;
+      if (target && menuRef.current?.contains(target)) {
+        return;
+      }
+      onClose();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [onClose]);
+
+  return ReactDOM.createPortal(
+    <div
+      ref={menuRef}
+      className="rounded-lg border border-border bg-popover py-1 text-sm shadow-xl"
+      style={{
+        position: "fixed",
+        left: adjustedPosition.x,
+        top: adjustedPosition.y,
+        zIndex: 150,
+        minWidth: 208,
+      }}
+      role="menu"
+      data-testid="pdf-annotation-defaults-menu"
+    >
+      <div className="border-b border-border px-3 py-2">
+        <div className="text-xs font-medium text-foreground">{t("pdf.annotationDefaults.title")}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">{t(`pdf.command.${state.tool}`)}</div>
+      </div>
+      <div className="px-2 py-1">
+        <div className="px-1 py-1 text-xs text-muted-foreground">{t("pdf.color.default")}</div>
+        {HIGHLIGHT_COLORS.map((color) => (
+          <button
+            key={color.value}
+            type="button"
+            onClick={() => {
+              onSelectColor(color.hex);
+              onClose();
+            }}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted"
+            role="menuitemradio"
+            aria-checked={resolveHighlightColor(activeColor) === color.hex}
+          >
+            <span
+              className="h-4 w-4 rounded-sm border border-black/10"
+              style={{ backgroundColor: color.hex }}
+            />
+            <span className="flex-1">{color.name}</span>
+            {resolveHighlightColor(activeColor) === color.hex ? <Check className="h-3.5 w-3.5" /> : null}
+          </button>
+        ))}
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -2007,7 +2142,8 @@ export function PDFHighlighterAdapter({
   const [scale, setScale] = useState(cachedPdfViewState?.scale ?? 1.2);
   const [zoomMode, setZoomMode] = useState<PdfZoomMode>(cachedPdfViewState?.zoomMode ?? 'fit-width');
   const [activeTool, setActiveTool] = useState<AnnotationTool>('select');
-  const [activeColor] = useState(DEFAULT_HIGHLIGHT_COLOR.hex);
+  const [activeColor, setActiveColor] = useState(DEFAULT_HIGHLIGHT_COLOR.hex);
+  const [annotationDefaultsMenu, setAnnotationDefaultsMenu] = useState<PdfAnnotationDefaultsMenuState | null>(null);
   const [pendingPin, setPendingPin] = useState<{ x: number; y: number; page: number } | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string | null>(null);
@@ -3943,6 +4079,10 @@ export function PDFHighlighterAdapter({
     updateManualScale(1.0);
   }, [updateManualScale]);
 
+  const openAnnotationDefaultsMenu = useCallback((tool: PdfAnnotationDefaultTool, position: { x: number; y: number }) => {
+    setAnnotationDefaultsMenu({ tool, position });
+  }, []);
+
   const handleExportPdf = useCallback(async () => {
     const pdfBytes = source.kind === "buffer"
       ? source.data
@@ -3991,6 +4131,7 @@ export function PDFHighlighterAdapter({
           priority: 10,
           group: "primary",
           onTrigger: () => setActiveTool((value) => (value === "highlight" ? "select" : "highlight")),
+          onContextMenu: (position) => openAnnotationDefaultsMenu("highlight", position),
         },
         {
           id: "tool-underline",
@@ -4000,6 +4141,7 @@ export function PDFHighlighterAdapter({
           priority: 11,
           group: "primary",
           onTrigger: () => setActiveTool((value) => (value === "underline" ? "select" : "underline")),
+          onContextMenu: (position) => openAnnotationDefaultsMenu("underline", position),
         },
         {
           id: "tool-note",
@@ -4009,6 +4151,7 @@ export function PDFHighlighterAdapter({
           priority: 20,
           group: "secondary",
           onTrigger: () => setActiveTool((value) => (value === "note" ? "select" : "note")),
+          onContextMenu: (position) => openAnnotationDefaultsMenu("note", position),
         },
         {
           id: "tool-text",
@@ -4018,6 +4161,7 @@ export function PDFHighlighterAdapter({
           priority: 13,
           group: "primary",
           onTrigger: () => setActiveTool((value) => (value === "text" ? "select" : "text")),
+          onContextMenu: (position) => openAnnotationDefaultsMenu("text", position),
         },
         {
           id: "tool-area",
@@ -4027,6 +4171,7 @@ export function PDFHighlighterAdapter({
           priority: 14,
           group: "primary",
           onTrigger: () => setActiveTool((value) => (value === "area" ? "select" : "area")),
+          onContextMenu: (position) => openAnnotationDefaultsMenu("area", position),
         },
         {
           id: "tool-draw",
@@ -4036,6 +4181,7 @@ export function PDFHighlighterAdapter({
           priority: 21,
           group: "secondary",
           onTrigger: () => setActiveTool((value) => (value === "ink" ? "select" : "ink")),
+          onContextMenu: (position) => openAnnotationDefaultsMenu("ink", position),
         },
         {
           id: "fit-width",
@@ -4090,6 +4236,7 @@ export function PDFHighlighterAdapter({
     applyZoomMode,
     filePath,
     handleExportPdf,
+    openAnnotationDefaultsMenu,
     showSidebar,
     t,
     zoomIn,
@@ -4340,46 +4487,14 @@ export function PDFHighlighterAdapter({
       const target = annotation.target as PdfTarget;
       const rect = target.rects[0];
       const pageElement = findPdfPageElementInScope(containerRef.current, target.page);
-      const canvas = pageElement?.querySelector("canvas");
-      if (!(pageElement instanceof HTMLElement) || !(canvas instanceof HTMLCanvasElement) || !rect) {
+      if (!(pageElement instanceof HTMLElement) || !rect) {
         return;
       }
 
       pendingAreaPreviewBackfillRef.current.add(annotation.id);
       window.requestAnimationFrame(() => {
         try {
-          const cropX = Math.max(0, Math.floor(rect.x1 * canvas.width));
-          const cropY = Math.max(0, Math.floor(rect.y1 * canvas.height));
-          const cropWidth = Math.max(1, Math.ceil((rect.x2 - rect.x1) * canvas.width));
-          const cropHeight = Math.max(1, Math.ceil((rect.y2 - rect.y1) * canvas.height));
-          const previewCanvas = document.createElement("canvas");
-          previewCanvas.width = cropWidth;
-          previewCanvas.height = cropHeight;
-          const context = previewCanvas.getContext("2d");
-
-          if (!context) {
-            pendingAreaPreviewBackfillRef.current.delete(annotation.id);
-            return;
-          }
-
-          context.drawImage(
-            canvas,
-            cropX,
-            cropY,
-            cropWidth,
-            cropHeight,
-            0,
-            0,
-            cropWidth,
-            cropHeight,
-          );
-
-          const preview = buildPdfAreaPreview({
-            dataUrl: previewCanvas.toDataURL("image/png"),
-            width: cropWidth,
-            height: cropHeight,
-          });
-
+          const preview = buildPdfAreaPreviewFromPageElement(pageElement, rect);
           if (preview) {
             updateAnnotation(annotation.id, { preview });
           }
@@ -4698,16 +4813,18 @@ export function PDFHighlighterAdapter({
       return;
     }
 
+    const rect = {
+      x1: Math.max(0, Math.min(1, draft.left / pageRect.width)),
+      y1: Math.max(0, Math.min(1, draft.top / pageRect.height)),
+      x2: Math.max(0, Math.min(1, (draft.left + draft.width) / pageRect.width)),
+      y2: Math.max(0, Math.min(1, (draft.top + draft.height) / pageRect.height)),
+    };
+
     const annotation: Omit<AnnotationItem, 'id' | 'createdAt'> = {
       target: {
         type: 'pdf',
         page: draft.page,
-        rects: [{
-          x1: Math.max(0, Math.min(1, draft.left / pageRect.width)),
-          y1: Math.max(0, Math.min(1, draft.top / pageRect.height)),
-          x2: Math.max(0, Math.min(1, (draft.left + draft.width) / pageRect.width)),
-          y2: Math.max(0, Math.min(1, (draft.top + draft.height) / pageRect.height)),
-        }],
+        rects: [rect],
       },
       style: {
         color: activeColor,
@@ -4715,6 +4832,11 @@ export function PDFHighlighterAdapter({
       },
       author: 'user',
     };
+
+    const preview = buildPdfAreaPreviewFromPageElement(pageElement, rect);
+    if (preview) {
+      annotation.preview = preview;
+    }
 
     addAnnotation(annotation);
     resetAreaSelectionDraft();
@@ -4954,8 +5076,10 @@ export function PDFHighlighterAdapter({
       top: Math.max(0, Math.min(targetScrollTop, Math.max(0, container.scrollHeight - container.clientHeight))),
       left: Math.max(0, Math.min(targetScrollLeft, Math.max(0, container.scrollWidth - container.clientWidth))),
       hasRectTarget,
+      isMeasured: pageElement.dataset.pdfPageMeasured === "true" || pageDimensions.has(page),
+      isVisible: pageElement.dataset.pdfPageVisible === "true",
     };
-  }, [getViewerScrollContainer]);
+  }, [getViewerScrollContainer, pageDimensions]);
 
   const scrollPdfTargetIntoView = useCallback((input: {
     page: number;
@@ -4965,7 +5089,8 @@ export function PDFHighlighterAdapter({
     cancelPendingAnnotationScroll();
     warmVisiblePages(input.page);
 
-    let attemptsLeft = 60;
+    let attemptsLeft = 180;
+    let settledFrames = 0;
     const attemptScroll = () => {
       const target = buildPdfNavigationScrollTarget(input.page, input.rects ?? []);
       if (!target) {
@@ -4978,11 +5103,21 @@ export function PDFHighlighterAdapter({
         return;
       }
 
+      const isReadyForPreciseScroll = target.isVisible && target.isMeasured;
       target.container.scrollTo({
         top: target.top,
         left: target.left,
-        behavior: "smooth",
+        behavior: isReadyForPreciseScroll ? "smooth" : "auto",
       });
+
+      if (!isReadyForPreciseScroll || settledFrames < 2) {
+        attemptsLeft -= 1;
+        settledFrames = isReadyForPreciseScroll ? settledFrames + 1 : 0;
+        if (attemptsLeft > 0) {
+          pendingAnnotationScrollFrameRef.current = window.requestAnimationFrame(attemptScroll);
+          return;
+        }
+      }
 
       if (input.flashPage && !target.hasRectTarget) {
         scheduleTimeout(() => flashPdfElement(target.pageElement), 120);
@@ -5351,6 +5486,15 @@ export function PDFHighlighterAdapter({
         returnFocusTo={selectionHubState?.returnFocusTo}
         onClose={() => setSelectionHubState(null)}
       />
+
+      {annotationDefaultsMenu ? (
+        <PdfAnnotationDefaultsMenu
+          state={annotationDefaultsMenu}
+          activeColor={activeColor}
+          onSelectColor={setActiveColor}
+          onClose={() => setAnnotationDefaultsMenu(null)}
+        />
+      ) : null}
 
       {pendingSelectionDraft ? (
         <PdfSelectionDraftMenu

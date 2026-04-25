@@ -687,18 +687,35 @@ export async function syncPdfManagedFiles(
 function getAnnotationTypeLabel(annotation: AnnotationItem): string {
   switch (annotation.style.type) {
     case "highlight":
-      return "高亮";
+      return "Highlight";
     case "underline":
-      return "下划线";
+      return "Underline";
     case "area":
-      return "区域";
+      return "Area";
     case "ink":
-      return "手绘";
+      return "Ink";
     case "text":
-      return "文字";
+      return "Text";
     default:
-      return "批注";
+      return "Annotation";
   }
+}
+
+function buildAnnotationPreviewMarkdown(annotation: AnnotationItem): string | null {
+  if (
+    annotation.target.type !== "pdf" ||
+    annotation.style.type !== "area" ||
+    annotation.preview?.type !== "image" ||
+    !annotation.preview.dataUrl
+  ) {
+    return null;
+  }
+
+  const page = annotation.target.page;
+  const width = Math.round(annotation.preview.width);
+  const height = Math.round(annotation.preview.height);
+  const alt = `Area annotation ${annotation.id} page ${page}`;
+  return `![${alt}](${annotation.preview.dataUrl})\n\n  _Screenshot: page ${page}, ${width}x${height}px_`;
 }
 
 export function buildPdfAnnotationsMarkdown(input: {
@@ -763,6 +780,11 @@ export function buildPdfAnnotationsMarkdown(input: {
     }
     if (annotation.comment?.trim()) {
       lines.push(`- Comment: ${annotation.comment.trim()}`);
+    }
+    const previewMarkdown = buildAnnotationPreviewMarkdown(annotation);
+    if (previewMarkdown) {
+      lines.push("- Screenshot:");
+      lines.push(`  ${previewMarkdown.replace(/\n/g, "\n  ")}`);
     }
     lines.push(`- Created: ${new Date(annotation.createdAt).toLocaleString("zh-CN")}`);
     if (backlinks.length > 0) {

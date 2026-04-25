@@ -237,6 +237,27 @@ describe("CommandBar desktop interactions", () => {
     expect(fitWidthButton.innerHTML).not.toBe(fitPageButton.innerHTML);
   });
 
+  it("passes command bar action context menu positions to the active pane", () => {
+    const onContextMenu = vi.fn();
+    const commandBarByPane = workspaceState.commandBarByPane as Record<string, unknown>;
+    commandBarByPane["pane-1"] = {
+      breadcrumbs: [],
+      actions: [
+        { id: "tool-highlight", label: "Highlight", group: "primary", onContextMenu },
+      ],
+    };
+
+    render(
+      <CommandBar
+        onOpenWorkspace={() => {}}
+      />,
+    );
+
+    fireEvent.contextMenu(screen.getByLabelText("Highlight"), { clientX: 42, clientY: 64 });
+
+    expect(onContextMenu).toHaveBeenCalledWith({ x: 42, y: 64 });
+  });
+
   it("忽略不属于当前 active scope 的旧 command bar 动作", () => {
     const commandBarByPane = workspaceState.commandBarByPane as Record<string, unknown>;
     commandBarByPane["pane-1"] = {

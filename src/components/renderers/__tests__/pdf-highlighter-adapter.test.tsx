@@ -830,6 +830,7 @@ describe('PDFHighlighterAdapter', () => {
         ...state.layout,
         activePaneId: 'pane-left',
       },
+      commandBarByPane: {},
     }));
     useAnnotationSystemMock.mockReturnValue({
       annotations: [],
@@ -1471,6 +1472,60 @@ describe('PDFHighlighterAdapter', () => {
     expect(pageElement?.style.minWidth).toBe('928px');
   });
 
+  it('opens annotation defaults from command bar right click and applies the default color to new area annotations', async () => {
+    const addAnnotation = vi.fn();
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [],
+      error: null,
+      addAnnotation,
+      updateAnnotation: vi.fn(),
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().commandBarByPane['pane-left']).toBeTruthy();
+    });
+
+    const getAction = (id: string) => {
+      const action = useWorkspaceStore.getState().commandBarByPane['pane-left']?.actions.find((item) => item.id === id);
+      if (!action) {
+        throw new Error(`Missing command bar action: ${id}`);
+      }
+      return action;
+    };
+
+    await act(async () => {
+      getAction('tool-area').onContextMenu?.({ x: 32, y: 48 });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-annotation-defaults-menu')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('Red'));
+
+    await act(async () => {
+      getAction('tool-area').onTrigger?.();
+    });
+
+    const pageElement = document.querySelector<HTMLElement>('[data-page-number="1"]');
+    if (!pageElement) {
+      throw new Error('Missing PDF page element');
+    }
+
+    fireEvent.mouseDown(pageElement, { clientX: 80, clientY: 120 });
+    fireEvent.mouseMove(pageElement, { clientX: 180, clientY: 220 });
+    fireEvent.mouseUp(pageElement);
+
+    expect(addAnnotation).toHaveBeenCalledTimes(1);
+    expect(addAnnotation.mock.calls[0][0].style).toEqual({
+      color: '#FF6666',
+      type: 'area',
+    });
+  });
+
   it('scrolls sidebar annotation selection to the union rect center on the first click', async () => {
     const annotation = {
       id: 'ann-multi',
@@ -1611,6 +1666,18 @@ describe('PDFHighlighterAdapter', () => {
     await waitFor(() => {
       expect(screen.getByTestId('mock-react-pdf-page-5')).toBeTruthy();
       expect(viewerContainer.scrollTo).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      const preciseCall = viewerContainer.scrollTo.mock.calls.find((call) => {
+        const options = call[0] as { top?: number; left?: number } | undefined;
+        return (
+          options?.top !== undefined &&
+          options.top > 3500 &&
+          options.left === 0
+        );
+      });
+      expect(preciseCall).toBeTruthy();
     });
   });
 

@@ -100,6 +100,7 @@ export interface CommandBarAction {
   priority?: number;
   group?: "primary" | "secondary" | "utility";
   onTrigger?: () => void;
+  onContextMenu?: (position: { x: number; y: number }) => void;
 }
 
 export interface CommandBarState {

@@ -200,6 +200,7 @@ function CommandBarActionButton({
     disabled?: boolean;
     group?: "primary" | "secondary" | "utility";
     onTrigger?: () => void;
+    onContextMenu?: (position: { x: number; y: number }) => void;
   };
 }) {
   const iconKey = resolveActionIcon(action) as ActionIconKey;
@@ -210,6 +211,14 @@ function CommandBarActionButton({
       type="button"
       onClick={action.onTrigger}
       onMouseDown={(event) => event.stopPropagation()}
+      onContextMenu={(event) => {
+        if (!action.onContextMenu) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        action.onContextMenu({ x: event.clientX, y: event.clientY });
+      }}
       disabled={action.disabled}
       title={action.label}
       aria-label={action.label}
@@ -594,6 +603,15 @@ export function CommandBar({
                       type="button"
                       onClick={() => {
                         action.onTrigger?.();
+                        setOverflowOpen(false);
+                      }}
+                      onContextMenu={(event) => {
+                        if (!action.onContextMenu) {
+                          return;
+                        }
+                        event.preventDefault();
+                        event.stopPropagation();
+                        action.onContextMenu({ x: event.clientX, y: event.clientY });
                         setOverflowOpen(false);
                       }}
                       disabled={action.disabled}
