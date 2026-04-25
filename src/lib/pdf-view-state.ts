@@ -54,6 +54,12 @@ export interface PdfVisiblePageCandidate {
   rect: RectLike;
 }
 
+export interface PdfPageDimension {
+  pageNumber: number;
+  width: number;
+  height: number;
+}
+
 export interface PdfAnchorComparison {
   ok: boolean;
   pageMatch: boolean;
@@ -67,6 +73,7 @@ export const DEFAULT_PDF_VIEWPORT_ANCHOR = {
 } as const;
 
 const DEFAULT_ANCHOR_TOLERANCE = 0.08;
+const DEFAULT_FIT_PADDING = 32;
 
 let scopedPdfPaneId: string | null = null;
 
@@ -356,4 +363,79 @@ export function clampPdfScale(scale: number, min: number, max: number): number {
 
 export function getPdfWheelZoomDelta(deltaY: number, step: number): number {
   return deltaY > 0 ? -step : step;
+}
+
+export function calculatePdfFitScale(input: {
+  zoomMode: Exclude<PdfZoomMode, 'manual'>;
+  containerWidth: number;
+  containerHeight: number;
+  pageDimensions: PdfPageDimension[];
+  targetPageNumber?: number | null;
+  minScale: number;
+  maxScale: number;
+  padding?: number;
+}): number | null {
+  const {
+    zoomMode,
+    containerWidth,
+    containerHeight,
+    pageDimensions,
+    targetPageNumber,
+    minScale,
+    maxScale,
+    padding = DEFAULT_FIT_PADDING,
+  } = input;
+
+  if (
+    !Number.isFinite(containerWidth) ||
+    !Number.isFinite(containerHeight) ||
+    containerWidth <= 0 ||
+    containerHeight <= 0 ||
+    pageDimensions.length === 0
+  ) {
+    return null;
+  }
+
+  const availableWidth = Math.max(1, containerWidth - padding);
+  const availableHeight = Math.max(1, containerHeight - padding);
+
+  if (zoomMode === 'fit-width') {
+    const widestPage = pageDimensions.reduce<PdfPageDimension | null>((widest, page) => {
+      if (!Number.isFinite(page.width) || page.width <= 0) {
+        return widest;
+      }
+      if (!widest || page.width > widest.width) {
+        return page;
+      }
+      return widest;
+    }, null);
+
+    if (!widestPage) {
+      return null;
+    }
+
+    return clampPdfScale(availableWidth / widestPage.width, minScale, maxScale);
+  }
+
+  const targetPage = (
+    (targetPageNumber
+      ? pageDimensions.find((page) => page.pageNumber === targetPageNumber)
+      : null) ?? pageDimensions[0]
+  );
+
+  if (
+    !targetPage ||
+    !Number.isFinite(targetPage.width) ||
+    !Number.isFinite(targetPage.height) ||
+    targetPage.width <= 0 ||
+    targetPage.height <= 0
+  ) {
+    return null;
+  }
+
+  return clampPdfScale(
+    Math.min(availableWidth / targetPage.width, availableHeight / targetPage.height),
+    minScale,
+    maxScale,
+  );
 }

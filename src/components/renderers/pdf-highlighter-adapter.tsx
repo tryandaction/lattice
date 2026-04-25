@@ -80,6 +80,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { copyToClipboard } from "@/lib/clipboard";
 import {
   buildPdfEditorState,
+  calculatePdfFitScale,
   capturePdfViewAnchor,
   clearScopedPdfPaneId,
   comparePdfViewAnchor,
@@ -2063,11 +2064,6 @@ export function PDFHighlighterAdapter({
       next.set(pageNumber, { width, height });
       return next;
     });
-
-    if (pageNumber === 1) {
-      setPageWidth(width);
-      setPageHeight(height);
-    }
   }, []);
 
   useEffect(() => {
@@ -2351,8 +2347,6 @@ export function PDFHighlighterAdapter({
   const [editingTextAnnotation, setEditingTextAnnotation] = useState<{ annotation: AnnotationItem; position: { x: number; y: number } } | null>(null);
   const [pdfLoadError, setPdfLoadError] = useState<string | null>(null);
   const [numPages, setNumPages] = useState<number>(0);
-  const [pageWidth, setPageWidth] = useState<number>(612);
-  const [pageHeight, setPageHeight] = useState<number>(792);
   const [fitScale, setFitScale] = useState<number>(cachedPdfViewState?.scale ?? 1.2);
   const [pageDimensions, setPageDimensions] = useState<Map<number, { width: number; height: number }>>(new Map());
   const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set([1, 2, 3]));
@@ -2428,8 +2422,25 @@ export function PDFHighlighterAdapter({
   const manifestRunGuardRef = useRef(createLatestRunGuard());
   const backlinkRunGuardRef = useRef(createLatestRunGuard());
   const annotationSyncRunGuardRef = useRef(createLatestRunGuard());
+  const pendingAnnotationScrollFrameRef = useRef<number | null>(null);
+  const pendingFitPageNumberRef = useRef<number | null>(null);
   const pdfSelectionSessionRef = useRef<PdfSelectionSessionState>(pdfSelectionSession);
   const frozenPdfSelection = pdfSelectionSession.phase === "frozen" ? pdfSelectionSession.snapshot : null;
+  const measuredPageDimensions = useMemo(() => (
+    Array.from(pageDimensions.entries())
+      .map(([pageNumber, dimensions]) => ({
+        pageNumber,
+        width: dimensions.width,
+        height: dimensions.height,
+      }))
+      .sort((left, right) => left.pageNumber - right.pageNumber)
+  ), [pageDimensions]);
+  const widestMeasuredPageWidth = useMemo(() => {
+    const widest = measuredPageDimensions.reduce((maxWidth, page) => (
+      page.width > maxWidth ? page.width : maxWidth
+    ), 0);
+    return widest > 0 ? widest : ESTIMATED_PAGE_WIDTH;
+  }, [measuredPageDimensions]);
   const pageDevicePixelRatio = useMemo(() => {
     if (typeof window === "undefined") {
       return undefined;
@@ -3656,6 +3667,10 @@ export function PDFHighlighterAdapter({
     return () => {
       cancelScheduledNativePdfSelectionClear();
       clearScheduledPersist();
+      if (pendingAnnotationScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(pendingAnnotationScrollFrameRef.current);
+        pendingAnnotationScrollFrameRef.current = null;
+      }
       if (inkPreviewFrameRef.current !== null) {
         window.cancelAnimationFrame(inkPreviewFrameRef.current);
         inkPreviewFrameRef.current = null;
@@ -3740,40 +3755,122 @@ export function PDFHighlighterAdapter({
     viewerContainerRef.current?.setAttribute("data-testid", `pdf-viewer-container-${paneId}`);
   }, [getViewerScrollContainer, isDiagnosticsMode, paneId]);
 
+  const warmVisiblePages = useCallback((pageNumber: number) => {
+    setVisiblePages((previous) => {
+      const next = new Set(previous);
+      let changed = false;
+
+      for (let candidate = pageNumber - PAGE_BUFFER; candidate <= pageNumber + PAGE_BUFFER; candidate += 1) {
+        if (candidate >= 1 && candidate <= numPages && !next.has(candidate)) {
+          next.add(candidate);
+          changed = true;
+        }
+      }
+
+      return changed ? next : previous;
+    });
+  }, [numPages]);
+
+  const updateManualScale = useCallback((updater: number | ((current: number) => number)) => {
+    pendingViewportRestoreAnchorRef.current = captureCurrentPdfAnchor();
+    setScale((current) => {
+      const resolved = typeof updater === "function"
+        ? (updater as (current: number) => number)(current)
+        : updater;
+      const nextScale = clampPdfScale(resolved, ZOOM_MIN, ZOOM_MAX);
+      setFitScale(nextScale);
+      return nextScale;
+    });
+    setZoomMode("manual");
+  }, [captureCurrentPdfAnchor]);
+
+  const applyZoomMode = useCallback((mode: 'manual' | 'fit-width' | 'fit-page') => {
+    pendingViewportRestoreAnchorRef.current = captureCurrentPdfAnchor();
+    setZoomMode(mode);
+  }, [captureCurrentPdfAnchor]);
+
+  const updateFitScaleForLayout = useCallback((overridePageNumber?: number | null) => {
+    if (zoomMode === "manual") {
+      return;
+    }
+
+    const viewerContainer = getViewerScrollContainer();
+    if (!viewerContainer || measuredPageDimensions.length === 0) {
+      return;
+    }
+
+    const targetPageNumber = zoomMode === "fit-page"
+      ? (overridePageNumber ?? getPrimaryVisiblePageState()?.pageNumber ?? measuredPageDimensions[0]?.pageNumber ?? null)
+      : null;
+    const nextScale = calculatePdfFitScale({
+      zoomMode,
+      containerWidth: viewerContainer.clientWidth,
+      containerHeight: viewerContainer.clientHeight,
+      pageDimensions: measuredPageDimensions,
+      targetPageNumber,
+      minScale: ZOOM_MIN,
+      maxScale: ZOOM_MAX,
+    });
+
+    if (nextScale === null) {
+      return;
+    }
+
+    const fitScaleChanged = Math.abs(fitScale - nextScale) >= 0.01;
+    const scaleChanged = Math.abs(scale - nextScale) >= 0.01;
+    if (!fitScaleChanged && !scaleChanged) {
+      if (zoomMode === "fit-page") {
+        pendingFitPageNumberRef.current = targetPageNumber ?? null;
+      }
+      return;
+    }
+
+    pendingViewportRestoreAnchorRef.current = captureCurrentPdfAnchor();
+    if (zoomMode === "fit-page") {
+      pendingFitPageNumberRef.current = targetPageNumber ?? null;
+    }
+    setFitScale((previous) => Math.abs(previous - nextScale) < 0.01 ? previous : nextScale);
+    setScale((previous) => Math.abs(previous - nextScale) < 0.01 ? previous : nextScale);
+  }, [
+    captureCurrentPdfAnchor,
+    fitScale,
+    getPrimaryVisiblePageState,
+    getViewerScrollContainer,
+    measuredPageDimensions,
+    scale,
+    zoomMode,
+  ]);
+
   useEffect(() => {
     if (zoomMode === "manual") {
       return;
     }
 
-    const viewerContainer = viewerContainerRef.current;
-    if (!viewerContainer || pageWidth <= 0 || pageHeight <= 0) {
+    const viewerContainer = getViewerScrollContainer();
+    if (!viewerContainer) {
       return;
     }
 
-    const updateScale = () => {
-      const contentWidth = viewerContainer.clientWidth - 32;
-      const contentHeight = viewerContainer.clientHeight - 32;
-      const nextScale = zoomMode === "fit-width"
-        ? Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, contentWidth / pageWidth))
-        : Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(contentWidth / pageWidth, contentHeight / pageHeight)));
+    updateFitScaleForLayout();
 
-      setFitScale((previous) => {
-        if (Math.abs(previous - nextScale) < 0.01) {
-          return previous;
-        }
-        pendingViewportRestoreAnchorRef.current = captureCurrentPdfAnchor();
-        return nextScale;
+    let frameId = 0;
+    const observer = new ResizeObserver(() => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+
+      frameId = window.requestAnimationFrame(() => {
+        updateFitScaleForLayout();
       });
-      setScale((previous) => (
-        Math.abs(previous - nextScale) < 0.01 ? previous : nextScale
-      ));
-    };
-
-    updateScale();
-    const observer = new ResizeObserver(updateScale);
+    });
     observer.observe(viewerContainer);
-    return () => observer.disconnect();
-  }, [captureCurrentPdfAnchor, pageHeight, pageWidth, showSidebar, sidebarSize, zoomMode]);
+    return () => {
+      observer.disconnect();
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [getViewerScrollContainer, showSidebar, sidebarSize, updateFitScaleForLayout, zoomMode]);
 
   useEffect(() => {
     const viewerContainer = getViewerScrollContainer();
@@ -3799,7 +3896,7 @@ export function PDFHighlighterAdapter({
   }, [fileId, fitScale, getViewerScrollContainer, restorePdfAnchor, scale, showSidebar, sidebarSize, zoomMode]);
 
   useEffect(() => {
-    if (zoomMode === "manual") {
+    if (zoomMode !== "fit-page") {
       return;
     }
 
@@ -3809,55 +3906,42 @@ export function PDFHighlighterAdapter({
     }
 
     let frameId = 0;
-    const observer = new ResizeObserver(() => {
+    const handleScroll = () => {
       if (frameId) {
         window.cancelAnimationFrame(frameId);
       }
 
       frameId = window.requestAnimationFrame(() => {
-        const anchor = captureCurrentPdfAnchor();
-        const scrollState = captureRelativeScrollPosition(viewerContainer);
-        restorePdfAnchor({
-          viewerContainer,
-          anchor,
-          fallbackScrollState: scrollState,
-        });
+        const currentPageNumber = getPrimaryVisiblePageState()?.pageNumber ?? null;
+        if (currentPageNumber === pendingFitPageNumberRef.current) {
+          return;
+        }
+        pendingFitPageNumberRef.current = currentPageNumber;
+        updateFitScaleForLayout(currentPageNumber);
       });
-    });
+    };
 
-    observer.observe(viewerContainer);
+    viewerContainer.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
-      observer.disconnect();
+      viewerContainer.removeEventListener("scroll", handleScroll);
       if (frameId) {
         window.cancelAnimationFrame(frameId);
       }
     };
-  }, [captureCurrentPdfAnchor, getViewerScrollContainer, restorePdfAnchor, showSidebar, sidebarSize, zoomMode]);
-
-  // Apply zoom mode
-  const applyZoomMode = useCallback((mode: 'manual' | 'fit-width' | 'fit-page') => {
-    pendingViewportRestoreAnchorRef.current = captureCurrentPdfAnchor();
-    setZoomMode(mode);
-  }, [captureCurrentPdfAnchor]);
+  }, [getPrimaryVisiblePageState, getViewerScrollContainer, updateFitScaleForLayout, zoomMode]);
 
   // Simple zoom functions
   const zoomIn = useCallback(() => {
-    pendingViewportRestoreAnchorRef.current = captureCurrentPdfAnchor();
-    setScale((s) => clampPdfScale(s + ZOOM_STEP, ZOOM_MIN, ZOOM_MAX));
-    setZoomMode('manual');
-  }, [captureCurrentPdfAnchor]);
+    updateManualScale((current) => current + ZOOM_STEP);
+  }, [updateManualScale]);
 
   const zoomOut = useCallback(() => {
-    pendingViewportRestoreAnchorRef.current = captureCurrentPdfAnchor();
-    setScale((s) => clampPdfScale(s - ZOOM_STEP, ZOOM_MIN, ZOOM_MAX));
-    setZoomMode('manual');
-  }, [captureCurrentPdfAnchor]);
+    updateManualScale((current) => current - ZOOM_STEP);
+  }, [updateManualScale]);
 
   const resetZoom = useCallback(() => {
-    pendingViewportRestoreAnchorRef.current = captureCurrentPdfAnchor();
-    setScale(1.0);
-    setZoomMode('manual');
-  }, [captureCurrentPdfAnchor]);
+    updateManualScale(1.0);
+  }, [updateManualScale]);
 
   const handleExportPdf = useCallback(async () => {
     const pdfBytes = source.kind === "buffer"
@@ -4319,8 +4403,7 @@ export function PDFHighlighterAdapter({
       }
       e.preventDefault();
       const delta = getPdfWheelZoomDelta(e.deltaY, ZOOM_STEP);
-      setScale((s) => clampPdfScale(s + delta, ZOOM_MIN, ZOOM_MAX));
-      setZoomMode('manual');
+      updateManualScale((current) => current + delta);
     };
 
     let wheelAttached = false;
@@ -4357,7 +4440,7 @@ export function PDFHighlighterAdapter({
       document.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
     };
-  }, []);
+  }, [updateManualScale]);
 
   // Handle keyboard shortcuts for zoom and tools
   useEffect(() => {
@@ -4831,6 +4914,86 @@ export function PDFHighlighterAdapter({
     [pendingPin, addAnnotation]
   );
 
+  const cancelPendingAnnotationScroll = useCallback(() => {
+    if (pendingAnnotationScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(pendingAnnotationScrollFrameRef.current);
+      pendingAnnotationScrollFrameRef.current = null;
+    }
+  }, []);
+
+  const buildPdfNavigationScrollTarget = useCallback((page: number, rects: PdfTarget["rects"] = []) => {
+    const container = getViewerScrollContainer();
+    const pageElement = findPdfPageElementInScope(containerRef.current, page);
+    if (!container || !pageElement) {
+      return null;
+    }
+
+    const pageRect = pageElement.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    const pageOffsetTop = pageRect.top - containerRect.top + container.scrollTop;
+    const pageOffsetLeft = pageRect.left - containerRect.left + container.scrollLeft;
+
+    let targetScrollTop = pageOffsetTop + Math.max(0, (pageRect.height - container.clientHeight) / 2);
+    let targetScrollLeft = pageOffsetLeft + Math.max(0, (pageRect.width - container.clientWidth) / 2);
+    const hasRectTarget = rects.length > 0;
+
+    if (hasRectTarget) {
+      const unionLeft = Math.min(...rects.map((rect) => rect.x1));
+      const unionTop = Math.min(...rects.map((rect) => rect.y1));
+      const unionRight = Math.max(...rects.map((rect) => rect.x2));
+      const unionBottom = Math.max(...rects.map((rect) => rect.y2));
+      const centerX = ((unionLeft + unionRight) / 2) * pageRect.width;
+      const centerY = ((unionTop + unionBottom) / 2) * pageRect.height;
+      targetScrollTop = pageOffsetTop + centerY - (container.clientHeight / 2);
+      targetScrollLeft = pageOffsetLeft + centerX - (container.clientWidth / 2);
+    }
+
+    return {
+      container,
+      pageElement,
+      top: Math.max(0, Math.min(targetScrollTop, Math.max(0, container.scrollHeight - container.clientHeight))),
+      left: Math.max(0, Math.min(targetScrollLeft, Math.max(0, container.scrollWidth - container.clientWidth))),
+      hasRectTarget,
+    };
+  }, [getViewerScrollContainer]);
+
+  const scrollPdfTargetIntoView = useCallback((input: {
+    page: number;
+    rects?: PdfTarget["rects"];
+    flashPage?: boolean;
+  }) => {
+    cancelPendingAnnotationScroll();
+    warmVisiblePages(input.page);
+
+    let attemptsLeft = 60;
+    const attemptScroll = () => {
+      const target = buildPdfNavigationScrollTarget(input.page, input.rects ?? []);
+      if (!target) {
+        attemptsLeft -= 1;
+        if (attemptsLeft <= 0) {
+          pendingAnnotationScrollFrameRef.current = null;
+          return;
+        }
+        pendingAnnotationScrollFrameRef.current = window.requestAnimationFrame(attemptScroll);
+        return;
+      }
+
+      target.container.scrollTo({
+        top: target.top,
+        left: target.left,
+        behavior: "smooth",
+      });
+
+      if (input.flashPage && !target.hasRectTarget) {
+        scheduleTimeout(() => flashPdfElement(target.pageElement), 120);
+      }
+
+      pendingAnnotationScrollFrameRef.current = null;
+    };
+
+    attemptScroll();
+  }, [buildPdfNavigationScrollTarget, cancelPendingAnnotationScroll, flashPdfElement, scheduleTimeout, warmVisiblePages]);
+
   // Handle sidebar annotation selection - scroll to exact annotation position
   const handleSidebarSelect = useCallback((annotation: AnnotationItem) => {
     setShowSidebar(true);
@@ -4839,75 +5002,14 @@ export function PDFHighlighterAdapter({
 
     if (annotation.target.type === 'pdf') {
       const target = annotation.target as PdfTarget;
-      const pageElement = findPdfPageElementInScope(containerRef.current, target.page);
-      const container = getViewerScrollContainer();
-
-      if (!pageElement || !container) {
-        // Fallback: try scrolling to page later
-        scheduleTimeout(() => {
-          const retryPage = findPdfPageElementInScope(containerRef.current, target.page);
-          if (retryPage) {
-            retryPage.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-        }, 100);
-        scheduleTimeout(() => setHighlightedId(null), 2000);
-        return;
-      }
-
-      // Use IntersectionObserver for more reliable scroll completion detection
-      const observer = new IntersectionObserver((entries) => {
-        const entry = entries[0];
-        if (entry.isIntersecting && entry.intersectionRatio > 0.3) {
-          observer.disconnect();
-
-          // Wait a frame for rendering to stabilize
-          requestAnimationFrame(() => {
-            if (target.rects.length > 0) {
-              const pageRect = pageElement.getBoundingClientRect();
-              const firstRect = target.rects[0];
-
-              // Calculate the center of the annotation in page coordinates
-              const annotationCenterX = (firstRect.x1 + firstRect.x2) / 2;
-              const annotationCenterY = (firstRect.y1 + firstRect.y2) / 2;
-
-              // Convert to pixel position within the page
-              const annotationPixelX = annotationCenterX * pageRect.width;
-              const annotationPixelY = annotationCenterY * pageRect.height;
-
-              // Get page position relative to container
-              const containerRect = container.getBoundingClientRect();
-              const pageOffsetTop = pageRect.top - containerRect.top + container.scrollTop;
-              const pageOffsetLeft = pageRect.left - containerRect.left + container.scrollLeft;
-
-              // Calculate target scroll position to center the annotation
-              const targetScrollTop = pageOffsetTop + annotationPixelY - container.clientHeight / 2;
-              const targetScrollLeft = pageOffsetLeft + annotationPixelX - container.clientWidth / 2;
-
-              // Second scroll to fine-tune position after page is visible
-              container.scrollTo({
-                top: Math.max(0, targetScrollTop),
-                left: Math.max(0, targetScrollLeft),
-                behavior: 'smooth'
-              });
-            }
-          });
-        }
-      }, { threshold: [0.3, 0.5, 0.8] });
-
-      observer.observe(pageElement);
-
-      // Initial scroll to bring page into view
-      pageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-      // Timeout fallback to disconnect observer if page never becomes visible
-      scheduleTimeout(() => {
-        observer.disconnect();
-      }, 3000);
+      scrollPdfTargetIntoView({
+        page: target.page,
+        rects: target.rects,
+      });
     }
 
-    // Clear highlight after animation
     scheduleTimeout(() => setHighlightedId(null), 2500);
-  }, [getViewerScrollContainer, scheduleTimeout]);
+  }, [scheduleTimeout, scrollPdfTargetIntoView]);
 
   // Handle sidebar delete
   const handleSidebarDelete = useCallback((id: string) => {
@@ -4927,14 +5029,13 @@ export function PDFHighlighterAdapter({
           return;
         }
 
-        const pageElement = findPdfPageElementInScope(containerRef.current, page);
-        if (pageElement) {
-          setSelectedAnnotationId(annotationId);
-          setHighlightedId(annotationId);
-          pageElement.scrollIntoView({ behavior: "smooth", block: "center" });
-          scheduleTimeout(() => flashPdfElement(pageElement), 120);
-          scheduleTimeout(() => setHighlightedId(null), 2000);
-        }
+        setSelectedAnnotationId(annotationId);
+        setHighlightedId(annotationId);
+        scrollPdfTargetIntoView({
+          page,
+          flashPage: true,
+        });
+        scheduleTimeout(() => setHighlightedId(null), 2000);
       },
     },
   });
@@ -4948,10 +5049,10 @@ export function PDFHighlighterAdapter({
       const pendingTarget = pendingNavigation.target;
 
       if (pendingTarget.type === "pdf_page") {
-        const pageElement = findPdfPageElementInScope(containerRef.current, pendingTarget.page);
-        if (!pageElement) return false;
-        pageElement.scrollIntoView({ behavior: "smooth", block: "center" });
-        scheduleTimeout(() => flashPdfElement(pageElement), 120);
+        scrollPdfTargetIntoView({
+          page: pendingTarget.page,
+          flashPage: true,
+        });
         consumePendingNavigation(paneId, filePath);
         return true;
       }
@@ -4987,7 +5088,7 @@ export function PDFHighlighterAdapter({
         window.cancelAnimationFrame(frameId);
       }
     };
-  }, [annotationById, consumePendingNavigation, filePath, flashPdfElement, handleSidebarSelect, paneId, pendingNavigation, scheduleTimeout]);
+  }, [annotationById, consumePendingNavigation, filePath, handleSidebarSelect, paneId, pendingNavigation, scrollPdfTargetIntoView]);
 
   if (annotationsError) {
     console.error('Annotation error:', annotationsError);
@@ -5066,7 +5167,10 @@ export function PDFHighlighterAdapter({
               </div>
             }
           >
-            <div className="flex min-w-full flex-col items-center gap-4">
+            <div
+              className="flex min-w-full flex-col items-center gap-4"
+              style={{ minWidth: `${widestMeasuredPageWidth * renderScale}px` }}
+            >
               {Array.from({ length: numPages }, (_, index) => {
                 const pageNumber = index + 1;
                 const dimensions = pageDimensions.get(pageNumber);

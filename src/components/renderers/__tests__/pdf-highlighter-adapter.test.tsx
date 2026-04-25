@@ -11,11 +11,15 @@ import { useContentCacheStore } from '@/stores/content-cache-store';
 import { resetPersistedFileViewStateCache } from '@/lib/file-view-state';
 import { clearPdfPageTextCache, getPdfPageTextModel } from '@/lib/pdf-page-text-cache';
 
+const resizeObserverCallbacks: ResizeObserverCallback[] = [];
+
 const {
   inkStoreState,
+  pdfMockState,
   selectionMockState,
   mockPdfDocument,
   mockPdfGetPage,
+  useAnnotationNavigationMock,
   useAnnotationSystemMock,
   useObjectUrlMock,
   useInkAnnotationStoreMock,
@@ -65,10 +69,28 @@ const {
     pageTextItems: null as string[] | null,
   };
 
+  const pdfMockState = {
+    numPages: 2,
+    viewerMetrics: {
+      width: 800,
+      height: 600,
+      scrollWidth: 1200,
+      scrollHeight: 1800,
+      scrollTop: 240,
+      scrollLeft: 48,
+    },
+    pageMetrics: {
+      1: { width: 640, height: 960, top: 0, left: 0 },
+      2: { width: 640, height: 960, top: 1000, left: 0 },
+    } as Record<number, { width: number; height: number; top: number; left: number }>,
+    sidebarProps: null as null | Record<string, unknown>,
+    navigationOptions: null as null | Record<string, unknown>,
+  };
+
   const mockPdfGetPage = vi.fn(async (pageNumber: number) => ({
     getViewport: vi.fn(({ scale = 1 }: { scale?: number } = {}) => ({
-      width: 640 * scale,
-      height: 960 * scale,
+      width: (pdfMockState.pageMetrics[pageNumber]?.width ?? 640) * scale,
+      height: (pdfMockState.pageMetrics[pageNumber]?.height ?? 960) * scale,
       transform: [scale, 0, 0, scale, 0, 0],
     })),
     getTextContent: vi.fn(async () => ({
@@ -98,15 +120,21 @@ const {
   }));
 
   const mockPdfDocument = {
-    numPages: 2,
+    get numPages() {
+      return pdfMockState.numPages;
+    },
     getPage: mockPdfGetPage,
   };
 
   return {
     inkStoreState: state,
+    pdfMockState,
     selectionMockState: selectionState,
     mockPdfDocument,
     mockPdfGetPage,
+    useAnnotationNavigationMock: vi.fn((input?: unknown) => {
+      pdfMockState.navigationOptions = (input ?? null) as Record<string, unknown> | null;
+    }),
     useAnnotationSystemMock: vi.fn(),
     useObjectUrlMock: vi.fn((_input?: unknown) => 'blob:pdf'),
     resolvePdfDocumentBindingMock: vi.fn(async (_input?: unknown) => ({
@@ -226,6 +254,12 @@ function dispatchSelectionChange() {
   document.dispatchEvent(new Event('selectionchange'));
 }
 
+function triggerResizeObservers() {
+  resizeObserverCallbacks.forEach((callback) => {
+    callback([], {} as ResizeObserver);
+  });
+}
+
 function applyMockTextLayerSelection() {
   const selection = window.getSelection();
   selection?.removeAllRanges();
@@ -316,17 +350,23 @@ vi.mock('react-pdf', async () => {
       onLoadSuccess?: (page: { width: number; height: number; getViewport: (options: { scale: number }) => { width: number; height: number } }) => void;
     }) => {
       const pageRef = ReactModule.useRef<HTMLDivElement>(null);
+      const pageMetrics = pdfMockState.pageMetrics[pageNumber] ?? {
+        width: 640,
+        height: 960,
+        top: (pageNumber - 1) * 1000,
+        left: 0,
+      };
 
       ReactModule.useEffect(() => {
         onLoadSuccess?.({
-          width: 640,
-          height: 960,
+          width: pageMetrics.width,
+          height: pageMetrics.height,
           getViewport: ({ scale: viewportScale }: { scale: number }) => ({
-            width: 640 * viewportScale,
-            height: 960 * viewportScale,
+            width: pageMetrics.width * viewportScale,
+            height: pageMetrics.height * viewportScale,
           }),
         });
-      }, [onLoadSuccess]);
+      }, [onLoadSuccess, pageMetrics.height, pageMetrics.width]);
 
       ReactModule.useEffect(() => {
         if (!pageRef.current) {
@@ -334,14 +374,15 @@ vi.mock('react-pdf', async () => {
         }
 
         const viewerContainer = pageRef.current.closest<HTMLElement>('[data-testid^="pdf-viewer-container-"]');
+        const scrollContainer = pageRef.current.closest<HTMLElement>('[data-testid^="pdf-scroll-container-"]');
         if (viewerContainer) {
           Object.defineProperties(viewerContainer, {
-            scrollTop: { value: 240, writable: true, configurable: true },
-            scrollLeft: { value: 48, writable: true, configurable: true },
-            scrollHeight: { value: 1800, configurable: true },
-            clientHeight: { value: 600, configurable: true },
-            scrollWidth: { value: 1200, configurable: true },
-            clientWidth: { value: 800, configurable: true },
+            scrollTop: { value: pdfMockState.viewerMetrics.scrollTop, writable: true, configurable: true },
+            scrollLeft: { value: pdfMockState.viewerMetrics.scrollLeft, writable: true, configurable: true },
+            scrollHeight: { value: pdfMockState.viewerMetrics.scrollHeight, configurable: true },
+            clientHeight: { value: pdfMockState.viewerMetrics.height, configurable: true },
+            scrollWidth: { value: pdfMockState.viewerMetrics.scrollWidth, configurable: true },
+            clientWidth: { value: pdfMockState.viewerMetrics.width, configurable: true },
             scrollTo: {
               value: vi.fn(function scrollTo(
                 this: HTMLElement & { scrollTop: number; scrollLeft: number },
@@ -360,10 +401,10 @@ vi.mock('react-pdf', async () => {
               value: () => ({
                 left: 0,
                 top: 0,
-                right: 800,
-                bottom: 600,
-                width: 800,
-                height: 600,
+                right: pdfMockState.viewerMetrics.width,
+                bottom: pdfMockState.viewerMetrics.height,
+                width: pdfMockState.viewerMetrics.width,
+                height: pdfMockState.viewerMetrics.height,
                 x: 0,
                 y: 0,
                 toJSON: () => ({}),
@@ -372,20 +413,36 @@ vi.mock('react-pdf', async () => {
             },
           });
         }
+        if (scrollContainer) {
+          Object.defineProperty(scrollContainer, "getBoundingClientRect", {
+            configurable: true,
+            value: () => ({
+              left: 0,
+              top: 0,
+              right: pdfMockState.viewerMetrics.width,
+              bottom: pdfMockState.viewerMetrics.height,
+              width: pdfMockState.viewerMetrics.width,
+              height: pdfMockState.viewerMetrics.height,
+              x: 0,
+              y: 0,
+              toJSON: () => ({}),
+            }),
+          });
+        }
 
         const pageElement = pageRef.current.closest<HTMLElement>('[data-page-number]') ?? pageRef.current;
-        const pageIndex = pageNumber - 1;
+        const renderedScale = scale ?? 1;
         Object.defineProperty(pageElement, "getBoundingClientRect", {
           configurable: true,
           value: () => ({
-            left: 0,
-            top: pageIndex * 1000,
-            right: 640,
-            bottom: pageIndex * 1000 + 960,
-            width: 640,
-            height: 960,
-            x: 0,
-            y: pageIndex * 1000,
+            left: pageMetrics.left,
+            top: pageMetrics.top,
+            right: pageMetrics.left + (pageMetrics.width * renderedScale),
+            bottom: pageMetrics.top + (pageMetrics.height * renderedScale),
+            width: pageMetrics.width * renderedScale,
+            height: pageMetrics.height * renderedScale,
+            x: pageMetrics.left,
+            y: pageMetrics.top,
             toJSON: () => ({}),
           }),
         });
@@ -411,7 +468,7 @@ vi.mock('react-pdf', async () => {
             }),
           });
         });
-      }, [pageNumber]);
+      }, [pageMetrics.height, pageMetrics.left, pageMetrics.top, pageMetrics.width, pageNumber, scale]);
 
       const dispatchSelectionInteraction = (duplicate = false) => {
         const scrollContainer = pageRef.current?.closest<HTMLElement>('[data-testid^="pdf-scroll-container-"]');
@@ -492,7 +549,7 @@ vi.mock('@/hooks/use-annotation-system', () => ({
 }));
 
 vi.mock('@/hooks/use-annotation-navigation', () => ({
-  useAnnotationNavigation: () => {},
+  useAnnotationNavigation: (input: unknown) => useAnnotationNavigationMock(input),
 }));
 
 vi.mock('@/hooks/use-ink-annotation', () => ({
@@ -529,7 +586,10 @@ vi.mock('../pdf-export-button', () => ({
 }));
 
 vi.mock('../pdf-annotation-sidebar', () => ({
-  PdfAnnotationSidebar: () => <div data-testid="mock-annotation-sidebar" />,
+  PdfAnnotationSidebar: (props: Record<string, unknown>) => {
+    pdfMockState.sidebarProps = props;
+    return <div data-testid="mock-annotation-sidebar" />;
+  },
 }));
 
 vi.mock('../pdf-item-workspace-panel', () => ({
@@ -693,6 +753,22 @@ describe('PDFHighlighterAdapter', () => {
     localStorage.clear();
     mockPdfGetPage.mockClear();
     clearPdfPageTextCache(mockPdfDocument as never);
+    resizeObserverCallbacks.length = 0;
+    pdfMockState.numPages = 2;
+    pdfMockState.viewerMetrics = {
+      width: 800,
+      height: 600,
+      scrollWidth: 1200,
+      scrollHeight: 1800,
+      scrollTop: 240,
+      scrollLeft: 48,
+    };
+    pdfMockState.pageMetrics = {
+      1: { width: 640, height: 960, top: 0, left: 0 },
+      2: { width: 640, height: 960, top: 1000, left: 0 },
+    };
+    pdfMockState.sidebarProps = null;
+    pdfMockState.navigationOptions = null;
     selectionMockState.rawText = 'Selected PDF text';
     selectionMockState.position = {
       boundingRect: {
@@ -722,8 +798,21 @@ describe('PDFHighlighterAdapter', () => {
     selectionMockState.autoApplyDomSelection = true;
     selectionMockState.pageTextItems = null;
     class MockResizeObserver {
+      private callback: ResizeObserverCallback;
+
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+        resizeObserverCallbacks.push(callback);
+      }
+
       observe() {}
-      disconnect() {}
+
+      disconnect() {
+        const index = resizeObserverCallbacks.indexOf(this.callback);
+        if (index >= 0) {
+          resizeObserverCallbacks.splice(index, 1);
+        }
+      }
     }
 
     class MockIntersectionObserver {
@@ -1306,6 +1395,222 @@ describe('PDFHighlighterAdapter', () => {
       const shellContainer = screen.getByTestId('pdf-scroll-container-pane-left');
       expect(diagnosticsContainer).toBeTruthy();
       expect(diagnosticsContainer).not.toBe(shellContainer);
+    });
+  });
+
+  it('uses the widest measured page for fit-width zoom', async () => {
+    pdfMockState.pageMetrics[2] = { width: 720, height: 960, top: 1000, left: 0 };
+    pdfMockState.viewerMetrics.scrollWidth = 1600;
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-react-pdf-page-2').getAttribute('data-scale')).toBe('1.0666666666666667');
+    });
+  });
+
+  it('keeps the current anchor stable when fit zoom relayout shrinks the viewer width', async () => {
+    useContentCacheStore.getState().saveEditorState('paper-left', {
+      cursorPosition: 0,
+      scrollTop: 240,
+      scrollLeft: 48,
+      viewState: {
+        pdf: {
+          scale: 1.2,
+          zoomMode: 'fit-width',
+          showSidebar: true,
+        },
+      },
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-anchor-page-pane-left').textContent).toBe('1');
+    });
+
+    pdfMockState.viewerMetrics.width = 680;
+    pdfMockState.viewerMetrics.scrollWidth = 1600;
+    await act(async () => {
+      triggerResizeObservers();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-restore-actual-page-pane-left').textContent).toBe('1');
+      expect(Number(screen.getByTestId('pdf-restore-delta-top-pane-left').textContent)).toBeLessThan(0.01);
+      expect(Number(screen.getByTestId('pdf-restore-delta-left-pane-left').textContent)).toBeLessThan(0.01);
+    });
+  });
+
+  it('keeps manual zoom when the viewer width becomes narrower', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-zoom-label-pane-left').textContent).toBe('适宽');
+    });
+
+    fireEvent.keyDown(document, { ctrlKey: true, key: '=' });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-zoom-label-pane-left').textContent).toBe('145%');
+    });
+
+    pdfMockState.viewerMetrics.width = 500;
+    pdfMockState.viewerMetrics.scrollWidth = 2000;
+    await act(async () => {
+      triggerResizeObservers();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-zoom-label-pane-left').textContent).toBe('145%');
+    });
+
+    const pageElement = document.querySelector<HTMLElement>('[data-page-number="1"]');
+    expect(pageElement?.style.minWidth).toBe('928px');
+  });
+
+  it('scrolls sidebar annotation selection to the union rect center on the first click', async () => {
+    const annotation = {
+      id: 'ann-multi',
+      target: {
+        type: 'pdf',
+        page: 1,
+        rects: [
+          { x1: 0.10, y1: 0.10, x2: 0.22, y2: 0.14 },
+          { x1: 0.24, y1: 0.20, x2: 0.35, y2: 0.24 },
+        ],
+      },
+      style: { color: '#FFEB3B', type: 'highlight' },
+      content: 'multi-line highlight',
+      author: 'user',
+      createdAt: 1,
+    } as const;
+
+    useContentCacheStore.getState().saveEditorState('paper-left', {
+      cursorPosition: 0,
+      scrollTop: 240,
+      scrollLeft: 48,
+      viewState: {
+        pdf: {
+          scale: 1.2,
+          zoomMode: 'fit-width',
+          showSidebar: true,
+        },
+      },
+    });
+
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [annotation],
+      error: null,
+      addAnnotation: vi.fn(),
+      updateAnnotation: vi.fn(),
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(pdfMockState.sidebarProps).toBeTruthy();
+    });
+
+    const viewerContainer = document.querySelector('[data-testid="pdf-viewer-container-pane-left"]') as HTMLElement & {
+      scrollTo: ReturnType<typeof vi.fn>;
+    };
+    viewerContainer.scrollTo.mockClear();
+
+    await act(async () => {
+      const onSelect = pdfMockState.sidebarProps?.onSelect as ((annotationItem: typeof annotation) => void);
+      onSelect(annotation);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(viewerContainer.scrollTo).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      const matchedCall = viewerContainer.scrollTo.mock.calls.find((call) => {
+        const options = call[0] as { top?: number; left?: number } | undefined;
+        return (
+          options?.top !== undefined &&
+          Math.abs(options.top - 135.84) < 0.01 &&
+          options.left !== undefined &&
+          Math.abs(options.left - 0) < 0.01
+        );
+      });
+      expect(matchedCall).toBeTruthy();
+    });
+  });
+
+  it('navigates to an annotation on an initially unrendered page on the first sidebar click', async () => {
+    pdfMockState.numPages = 6;
+    pdfMockState.viewerMetrics.scrollHeight = 7200;
+    pdfMockState.viewerMetrics.scrollWidth = 1600;
+    pdfMockState.pageMetrics = {
+      1: { width: 640, height: 960, top: 0, left: 0 },
+      2: { width: 640, height: 960, top: 1000, left: 0 },
+      3: { width: 640, height: 960, top: 2000, left: 0 },
+      4: { width: 640, height: 960, top: 3000, left: 0 },
+      5: { width: 640, height: 960, top: 4000, left: 0 },
+      6: { width: 640, height: 960, top: 5000, left: 0 },
+    };
+
+    const annotation = {
+      id: 'ann-page-5',
+      target: {
+        type: 'pdf',
+        page: 5,
+        rects: [{ x1: 0.20, y1: 0.20, x2: 0.40, y2: 0.26 }],
+      },
+      style: { color: '#FFEB3B', type: 'highlight' },
+      content: 'page five',
+      author: 'user',
+      createdAt: 1,
+    } as const;
+
+    useContentCacheStore.getState().saveEditorState('paper-left', {
+      cursorPosition: 0,
+      scrollTop: 240,
+      scrollLeft: 48,
+      viewState: {
+        pdf: {
+          scale: 1.2,
+          zoomMode: 'fit-width',
+          showSidebar: true,
+        },
+      },
+    });
+
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [annotation],
+      error: null,
+      addAnnotation: vi.fn(),
+      updateAnnotation: vi.fn(),
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(pdfMockState.sidebarProps).toBeTruthy();
+    });
+
+    const viewerContainer = document.querySelector('[data-testid="pdf-viewer-container-pane-left"]') as HTMLElement & {
+      scrollTo: ReturnType<typeof vi.fn>;
+    };
+    viewerContainer.scrollTo.mockClear();
+
+    await act(async () => {
+      const onSelect = pdfMockState.sidebarProps?.onSelect as ((annotationItem: typeof annotation) => void);
+      onSelect(annotation);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-react-pdf-page-5')).toBeTruthy();
+      expect(viewerContainer.scrollTo).toHaveBeenCalled();
     });
   });
 
