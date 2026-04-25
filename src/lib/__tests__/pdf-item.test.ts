@@ -6,12 +6,14 @@ import {
   getDefaultPdfItemFolderPath,
   invalidatePdfItemManifestIndex,
   loadPdfItemManifest,
+  syncPdfAnnotationsMarkdown,
   syncPdfManagedFiles,
 } from "@/lib/pdf-item";
 import { setLocale } from "@/lib/i18n";
 
 class TestFileHandle {
   kind = "file" as const;
+  writeCount = 0;
 
   constructor(public name: string, private content: string) {}
 
@@ -21,11 +23,20 @@ class TestFileHandle {
 
   async createWritable() {
     return {
-      write: async (nextContent: string) => {
-        this.content = typeof nextContent === "string" ? nextContent : this.content;
+      write: async (nextContent: string | Blob) => {
+        this.writeCount += 1;
+        if (typeof nextContent === "string") {
+          this.content = nextContent;
+          return;
+        }
+        this.content = await nextContent.text();
       },
       close: async () => undefined,
     } as unknown as FileSystemWritableFileStream;
+  }
+
+  resetWriteCount() {
+    this.writeCount = 0;
   }
 }
 
@@ -311,5 +322,67 @@ describe("pdf-item utils", () => {
 
     expect(firstIndex).toBe(secondIndex);
     expect(firstIndex.byDocumentId.get("doc-a")?.pdfPath).toBe("papers/a.pdf");
+  });
+
+  it("skips rewriting unchanged annotation markdown and preview files", async () => {
+    setLocale("en-US");
+
+    const root = new TestDirectoryHandle("workspace");
+    const lattice = root.addDirectory(new TestDirectoryHandle(".lattice"));
+    const items = lattice.addDirectory(new TestDirectoryHandle("items"));
+    const itemDir = items.addDirectory(new TestDirectoryHandle("paper"));
+    const previewDir = itemDir.addDirectory(new TestDirectoryHandle("_annotation_previews"));
+    const previewFile = previewDir.addFile(new TestFileHandle("ann-area.png", "existing-preview"));
+    const annotation: AnnotationItem = {
+      id: "ann-area",
+      target: {
+        type: "pdf",
+        page: 4,
+        rects: [{ x1: 0.45, y1: 0.5, x2: 0.75, y2: 0.68 }],
+      },
+      style: {
+        color: "#2ea8e5",
+        type: "area",
+      },
+      preview: {
+        type: "image",
+        dataUrl: "data:image/png;base64,bmV3LXByZXZpZXc=",
+        width: 320,
+        height: 180,
+      },
+      author: "user",
+      createdAt: 1710000006000,
+    };
+    const manifest = {
+      version: 4 as const,
+      itemId: "paper",
+      pdfPath: "docs/paper.pdf",
+      itemFolderPath: ".lattice/items/paper",
+      annotationIndexPath: ".lattice/items/paper/_annotations.md",
+      fileFingerprint: null,
+      versionFingerprint: null,
+      knownPdfPaths: ["docs/paper.pdf"],
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    };
+    const markdownFile = itemDir.addFile(new TestFileHandle("_annotations.md", ""));
+
+    await syncPdfAnnotationsMarkdown(
+      root as unknown as FileSystemDirectoryHandle,
+      manifest,
+      "paper.pdf",
+      [annotation],
+    );
+    markdownFile.resetWriteCount();
+
+    await syncPdfAnnotationsMarkdown(
+      root as unknown as FileSystemDirectoryHandle,
+      manifest,
+      "paper.pdf",
+      [annotation],
+    );
+
+    expect(previewFile.writeCount).toBe(0);
+    expect(markdownFile.writeCount).toBe(0);
   });
 });

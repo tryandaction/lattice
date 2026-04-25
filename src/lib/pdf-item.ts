@@ -281,6 +281,17 @@ async function writeBinaryFile(
   return handle;
 }
 
+async function getExistingFileHandle(
+  dirHandle: FileSystemDirectoryHandle,
+  fileName: string,
+): Promise<FileSystemFileHandle | null> {
+  try {
+    return await dirHandle.getFileHandle(fileName);
+  } catch {
+    return null;
+  }
+}
+
 async function dataUrlToBytes(dataUrl: string): Promise<Uint8Array | null> {
   try {
     const trimmed = dataUrl.trim();
@@ -1257,14 +1268,16 @@ export async function syncPdfAnnotationsMarkdown(
       continue;
     }
 
-    const previewBytes = await dataUrlToBytes(annotation.preview.dataUrl);
-    if (!previewBytes) {
-      continue;
-    }
-
     const previewFileName = `${annotation.id}.png`;
     retainedPreviewFileNames.add(previewFileName);
-    await writeBinaryFile(previewDirHandle, previewFileName, previewBytes);
+    const existingPreview = await getExistingFileHandle(previewDirHandle, previewFileName);
+    if (!existingPreview) {
+      const previewBytes = await dataUrlToBytes(annotation.preview.dataUrl);
+      if (!previewBytes) {
+        continue;
+      }
+      await writeBinaryFile(previewDirHandle, previewFileName, previewBytes);
+    }
     previewPathByAnnotationId[annotation.id] = buildRelativeWorkspacePath(
       annotationPath,
       joinPath(previewDirPath, previewFileName),
@@ -1291,11 +1304,17 @@ export async function syncPdfAnnotationsMarkdown(
     backlinksByAnnotation,
     previewPathByAnnotationId,
   });
-  const handle = await writeTextFile(dirHandle, DEFAULT_ANNOTATIONS_NOTE_NAME, markdown);
-  const nextManifest = await savePdfItemManifest(rootHandle, {
-    ...manifest,
-    annotationIndexPath: annotationPath,
-  });
+  let handle = await getExistingFileHandle(dirHandle, DEFAULT_ANNOTATIONS_NOTE_NAME);
+  const existingMarkdown = handle ? await readTextFile(handle) : null;
+  if (existingMarkdown !== markdown) {
+    handle = await writeTextFile(dirHandle, DEFAULT_ANNOTATIONS_NOTE_NAME, markdown);
+  }
+  const nextManifest = manifest.annotationIndexPath === annotationPath
+    ? manifest
+    : await savePdfItemManifest(rootHandle, {
+        ...manifest,
+        annotationIndexPath: annotationPath,
+      });
 
   return {
     handle,

@@ -15,6 +15,15 @@ const desktopPreviewMocks = vi.hoisted(() => ({
   getDesktopPreviewPath: vi.fn((_handle?: unknown) => null as string | null),
   resolveDesktopPreviewUrl: vi.fn((path: string) => `http://lattice-preview.localhost/${path}`),
 }));
+const desktopFileSystemMocks = vi.hoisted(() => ({
+  readDesktopTextFile: vi.fn(async (_path: string) => "full text"),
+  readDesktopTextFileChunk: vi.fn(async (_path: string, _maxBytes: number) => ({
+    text: "preview text\n",
+    bytesRead: 13,
+    totalBytes: 24,
+    hasMore: true,
+  })),
+}));
 const universalViewerMock = vi.hoisted(() => vi.fn<(props?: unknown) => React.ReactNode>((_props?: unknown) => null));
 
 vi.mock("@dnd-kit/core", () => ({
@@ -42,6 +51,11 @@ vi.mock("@/hooks/use-file-system", () => ({
 vi.mock("@/lib/desktop-preview", () => ({
   getDesktopPreviewPath: desktopPreviewMocks.getDesktopPreviewPath,
   resolveDesktopPreviewUrl: desktopPreviewMocks.resolveDesktopPreviewUrl,
+}));
+
+vi.mock("@/lib/desktop-file-system", () => ({
+  readDesktopTextFile: desktopFileSystemMocks.readDesktopTextFile,
+  readDesktopTextFileChunk: desktopFileSystemMocks.readDesktopTextFileChunk,
 }));
 
 vi.mock("@/lib/storage-adapter", () => ({
@@ -218,6 +232,13 @@ describe("PaneWrapper", () => {
     }));
 
     desktopPreviewMocks.getDesktopPreviewPath.mockReturnValue(null);
+    desktopFileSystemMocks.readDesktopTextFile.mockResolvedValue("full text");
+    desktopFileSystemMocks.readDesktopTextFileChunk.mockResolvedValue({
+      text: "preview text\n",
+      bytesRead: 13,
+      totalBytes: 24,
+      hasMore: true,
+    });
   });
 
   it("renames untitled markdown files from the first H1 on save and syncs explorer selection", async () => {
@@ -305,5 +326,94 @@ describe("PaneWrapper", () => {
     });
     expect(getFileSpy).not.toHaveBeenCalled();
     expect(useContentCacheStore.getState().getContent("tab-pdf")).toBeUndefined();
+  });
+
+  it("renders desktop annotation index preview before the full file finishes loading", async () => {
+    let resolveFullText!: (value: string) => void;
+    const fullTextPromise = new Promise<string>((resolve) => {
+      resolveFullText = resolve;
+    });
+    desktopFileSystemMocks.readDesktopTextFileChunk.mockResolvedValue({
+      text: "# Preview\n\nFirst annotation\n",
+      bytesRead: 28,
+      totalBytes: 80,
+      hasMore: true,
+    });
+    desktopFileSystemMocks.readDesktopTextFile.mockReturnValue(fullTextPromise);
+
+    const getFileSpy = vi.fn(async () => new File(["# Full"], "_annotations.md"));
+    const desktopHandle = {
+      name: "_annotations.md",
+      kind: "file" as const,
+      fullPath: "C:/workspace/.lattice/items/paper/_annotations.md",
+      __latticeDesktopHandle: true as const,
+      getFile: getFileSpy,
+      createWritable: vi.fn(),
+      isSameEntry: vi.fn(),
+    } as unknown as FileSystemFileHandle;
+
+    desktopPreviewMocks.getDesktopPreviewPath.mockReturnValue("C:/workspace/.lattice/items/paper/_annotations.md");
+    useWorkspaceStore.setState((state) => ({
+      ...state,
+      layout: {
+        activePaneId: "pane-left",
+        root: {
+          type: "pane",
+          id: "pane-left",
+          activeTabIndex: 0,
+          tabs: [
+            {
+              id: "tab-annotations",
+              fileHandle: desktopHandle,
+              fileName: "_annotations.md",
+              filePath: "workspace/.lattice/items/paper/_annotations.md",
+              isDirty: false,
+              scrollPosition: 0,
+            },
+          ],
+        },
+      },
+    }));
+
+    render(
+      <PaneWrapper
+        paneId="pane-left"
+        isActive={true}
+        onActivate={vi.fn()}
+        onSplitRight={vi.fn()}
+        onSplitDown={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      const latestProps = universalViewerMock.mock.calls.at(-1)?.[0] as unknown as {
+        content?: { kind: string; text?: string };
+        isLoading?: boolean;
+      };
+      expect(latestProps.isLoading).toBe(false);
+      expect(latestProps.content).toEqual({
+        kind: "text",
+        text: "# Preview\n\nFirst annotation",
+      });
+    });
+
+    expect(getFileSpy).not.toHaveBeenCalled();
+    expect(desktopFileSystemMocks.readDesktopTextFileChunk).toHaveBeenCalledWith(
+      "C:/workspace/.lattice/items/paper/_annotations.md",
+      128 * 1024,
+    );
+
+    resolveFullText("# Full\n\nAll annotations");
+
+    await waitFor(() => {
+      const latestProps = universalViewerMock.mock.calls.at(-1)?.[0] as unknown as {
+        content?: { kind: string; text?: string };
+      };
+      expect(latestProps.content).toEqual({
+        kind: "text",
+        text: "# Full\n\nAll annotations",
+      });
+    });
   });
 });

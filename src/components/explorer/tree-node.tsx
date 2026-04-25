@@ -233,19 +233,6 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
     }
   }, [isRenaming, node.name]);
 
-  useEffect(() => {
-    if (
-      node.extension === "pdf" &&
-      !node.isVirtual &&
-      node.canExpandVirtualChildren &&
-      node.isExpanded &&
-      node.virtualChildrenState !== "loading" &&
-      node.virtualChildrenState !== "ready"
-    ) {
-      void hydratePdfVirtualChildren(node.path, { expand: true });
-    }
-  }, [hydratePdfVirtualChildren, node.canExpandVirtualChildren, node.extension, node.isExpanded, node.isVirtual, node.path, node.virtualChildrenState]);
-
   const handleRename = useCallback(async () => {
     const trimmedName = renameValue.trim();
     if (!trimmedName) {
@@ -406,6 +393,16 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                if (
+                  node.extension === "pdf" &&
+                  !node.isVirtual &&
+                  node.canExpandVirtualChildren &&
+                  node.virtualChildrenState !== "loading" &&
+                  node.virtualChildrenState !== "ready"
+                ) {
+                  void hydratePdfVirtualChildren(node.path, { expand: true });
+                  return;
+                }
                 toggleDirectory(node.path);
               }}
               className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"

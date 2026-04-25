@@ -17,10 +17,12 @@ import { saveWorkspaceTabContent } from "@/lib/workspace-save";
 import type { TabState } from "@/types/layout";
 import { useI18n } from "@/hooks/use-i18n";
 import { getDesktopPreviewPath, resolveDesktopPreviewUrl } from "@/lib/desktop-preview";
+import { readDesktopTextFile, readDesktopTextFileChunk } from "@/lib/desktop-file-system";
 import { isTauriHost } from "@/lib/storage-adapter";
 import type { ViewerContent } from "@/types/viewer-content";
 
 const EMPTY_TABS: TabState[] = [];
+const SYSTEM_INDEX_TEXT_PREVIEW_BYTES = 128 * 1024;
 
 export interface PaneWrapperProps {
   paneId: PaneId;
@@ -67,6 +69,9 @@ export function PaneWrapper({
   const activeRendererType = activeTab
     ? getRendererForExtension(getFileExtension(activeTab.fileName))
     : null;
+  const isActiveSystemIndexFile = activeTab
+    ? activeTab.fileName === "_annotations.md" || activeTab.fileName === "_overview.md"
+    : false;
 
   // Content loading state
   const [content, setContent] = useState<ViewerContent | null>(null);
@@ -125,6 +130,12 @@ export function PaneWrapper({
       desktopPreviewPath &&
       (activeRendererType === "pdf" || activeRendererType === "image"),
     );
+    const shouldUseProgressiveDesktopText = Boolean(
+      isTauriHost() &&
+      desktopPreviewPath &&
+      activeRendererType === "markdown" &&
+      isActiveSystemIndexFile,
+    );
 
     // Same tab already loaded with content and no active load - no need to reload
     if (hasLoadedCurrent && !isLoadingCurrent) {
@@ -145,6 +156,60 @@ export function PaneWrapper({
       setTabDirty(paneId, activeTabIndex, false);
       setIsLoading(false);
       setError(null);
+      return;
+    }
+
+    if (shouldUseProgressiveDesktopText && desktopPreviewPath) {
+      loadingTabIdRef.current = currentTabId;
+      setContent(null);
+      setIsLoading(true);
+      setError(null);
+
+      const loadProgressiveTextFile = async () => {
+        const loadingForTabId = currentTabId;
+
+        try {
+          const preview = await readDesktopTextFileChunk(desktopPreviewPath, SYSTEM_INDEX_TEXT_PREVIEW_BYTES);
+          if (loadingTabIdRef.current !== loadingForTabId) {
+            return;
+          }
+
+          const previewText = preview.hasMore
+            ? preview.text.slice(0, Math.max(preview.text.lastIndexOf("\n"), 0))
+            : preview.text;
+          setLoadedTabId(loadingForTabId);
+          setContent({ kind: "text", text: previewText || preview.text });
+          setTabDirty(paneId, activeTabIndex, false);
+          setIsLoading(false);
+          setError(null);
+
+          if (!preview.hasMore) {
+            loadingTabIdRef.current = null;
+            originalContentRef.current = preview.text;
+            useContentCacheStore.getState().setContent(loadingForTabId, preview.text, preview.text);
+            return;
+          }
+
+          const fullText = await readDesktopTextFile(desktopPreviewPath);
+          if (loadingTabIdRef.current !== loadingForTabId) {
+            return;
+          }
+          loadingTabIdRef.current = null;
+          setContent({ kind: "text", text: fullText });
+          originalContentRef.current = fullText;
+          useContentCacheStore.getState().setContent(loadingForTabId, fullText, fullText);
+          setTabDirty(paneId, activeTabIndex, false);
+        } catch (err) {
+          if (loadingTabIdRef.current === loadingForTabId) {
+            setLoadedTabId(null);
+            loadingTabIdRef.current = null;
+            setError(err instanceof Error ? err.message : "Failed to read file");
+            setIsLoading(false);
+          }
+        }
+      };
+
+      void loadProgressiveTextFile();
       return;
     }
 
@@ -240,6 +305,7 @@ export function PaneWrapper({
     activeTabIndex,
     activeRendererType,
     error,
+    isActiveSystemIndexFile,
     paneId,
     setTabDirty,
     loadedTabId,

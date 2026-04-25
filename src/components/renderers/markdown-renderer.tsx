@@ -92,6 +92,7 @@ function ResolvedMarkdownImage({
   filePath?: string;
   rootHandle?: FileSystemDirectoryHandle | null;
 }) {
+  const imageRef = useRef<HTMLImageElement>(null);
   const directSrc = typeof src === "string" ? src : undefined;
   const isLocalImage = Boolean(
     directSrc &&
@@ -104,12 +105,41 @@ function ResolvedMarkdownImage({
     key: "",
     src: undefined,
   });
+  const [visibleLocalImageKey, setVisibleLocalImageKey] = useState("");
+  const shouldResolveLocalImage = !isLocalImage || visibleLocalImageKey === localImageKey;
   const resolvedSrc = isLocalImage
     ? (resolvedState.key === localImageKey ? resolvedState.src : undefined)
     : directSrc;
 
   useEffect(() => {
-    if (!isLocalImage || !directSrc || !rootHandle || !filePath) {
+    if (!isLocalImage) {
+      return;
+    }
+    if (visibleLocalImageKey === localImageKey) {
+      return;
+    }
+
+    const imageElement = imageRef.current;
+    if (!imageElement || typeof IntersectionObserver === "undefined") {
+      window.setTimeout(() => setVisibleLocalImageKey(localImageKey), 0);
+      return;
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) {
+        return;
+      }
+      setVisibleLocalImageKey(localImageKey);
+      observer.disconnect();
+    }, {
+      rootMargin: "900px 0px",
+    });
+    observer.observe(imageElement);
+    return () => observer.disconnect();
+  }, [isLocalImage, localImageKey, visibleLocalImageKey]);
+
+  useEffect(() => {
+    if (!isLocalImage || !shouldResolveLocalImage || !directSrc || !rootHandle || !filePath) {
       return;
     }
 
@@ -139,11 +169,12 @@ function ResolvedMarkdownImage({
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [directSrc, filePath, isLocalImage, localImageKey, rootHandle]);
+  }, [directSrc, filePath, isLocalImage, localImageKey, rootHandle, shouldResolveLocalImage]);
 
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
+      ref={imageRef}
       src={resolvedSrc}
       alt={alt || ""}
       className={className}

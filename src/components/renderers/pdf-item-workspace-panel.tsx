@@ -167,8 +167,11 @@ export function PdfItemWorkspacePanel({
   }, [filePath, findTreeNodeByPath, setSelectedDirectoryPath, toggleDirectory]);
 
   useEffect(() => {
+    if (!isExpanded) {
+      return;
+    }
     void loadItemState();
-  }, [loadItemState]);
+  }, [isExpanded, loadItemState]);
 
   const openHandleNearPdf = useCallback((handle: FileSystemFileHandle, path: string) => {
     const targetPaneId = activePaneId === paneId

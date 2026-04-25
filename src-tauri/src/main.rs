@@ -99,6 +99,15 @@ struct DesktopDirEntry {
     is_symlink: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopTextChunk {
+    text: String,
+    bytes_read: usize,
+    total_bytes: u64,
+    has_more: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "kebab-case")]
 enum RunnerType {
@@ -207,7 +216,7 @@ struct DesktopFsState {
 impl Default for DesktopFsState {
     fn default() -> Self {
         Self {
-            read_dir_permits: Arc::new(Semaphore::new(2)),
+            read_dir_permits: Arc::new(Semaphore::new(8)),
             read_file_permits: Arc::new(Semaphore::new(4)),
             mutate_path_permits: Arc::new(Semaphore::new(1)),
         }
@@ -863,6 +872,60 @@ async fn desktop_read_file_bytes_raw(
 }
 
 #[tauri::command]
+async fn desktop_read_text_file(
+    fs_state: State<'_, DesktopFsState>,
+    path: String,
+) -> Result<String, String> {
+    let permit = fs_state
+        .read_file_permits
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        fs::read_to_string(PathBuf::from(path)).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn desktop_read_text_file_chunk(
+    fs_state: State<'_, DesktopFsState>,
+    path: String,
+    max_bytes: usize,
+) -> Result<DesktopTextChunk, String> {
+    let permit = fs_state
+        .read_file_permits
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let target = PathBuf::from(path);
+        let mut file = fs::File::open(&target).map_err(|error| error.to_string())?;
+        let total_bytes = file.metadata().map_err(|error| error.to_string())?.len();
+        let read_limit = max_bytes.max(1).min(1024 * 1024);
+        let mut buffer = vec![0; read_limit];
+        let bytes_read = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        buffer.truncate(bytes_read);
+
+        Ok(DesktopTextChunk {
+            text: String::from_utf8_lossy(&buffer).to_string(),
+            bytes_read,
+            total_bytes,
+            has_more: (bytes_read as u64) < total_bytes,
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 fn desktop_write_file_bytes(path: String, data: Vec<u8>) -> Result<(), String> {
     fs::write(PathBuf::from(path), data).map_err(|error| error.to_string())
 }
@@ -1421,6 +1484,8 @@ fn main() {
             clear_default_folder,
             desktop_read_dir,
             desktop_read_file_bytes_raw,
+            desktop_read_text_file,
+            desktop_read_text_file_chunk,
             desktop_write_file_bytes,
             desktop_exists_path,
             desktop_is_directory,

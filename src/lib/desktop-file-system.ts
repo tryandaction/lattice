@@ -14,7 +14,14 @@ interface DesktopHandleMarker {
   readonly fullPath: string;
 }
 
-const DESKTOP_DIR_CACHE_TTL_MS = 1500;
+export interface DesktopTextChunk {
+  text: string;
+  bytesRead: number;
+  totalBytes: number;
+  hasMore: boolean;
+}
+
+const DESKTOP_DIR_CACHE_TTL_MS = 10_000;
 const desktopDirCache = new Map<string, { entries: DesktopDirEntry[]; cachedAt: number }>();
 
 function normalizeDesktopPath(path: string): string {
@@ -46,7 +53,10 @@ async function invokeDesktopFs<T>(command: string, args: Record<string, unknown>
   }
 
   return invokeTauriCommand<T>(command, args, {
-    timeoutMs: command === "desktop_read_file_bytes_raw" ? 15000 : 10000,
+    timeoutMs: (
+      command === "desktop_read_file_bytes_raw" ||
+      command === "desktop_read_text_file"
+    ) ? 15000 : command === "desktop_read_dir" ? 30000 : 10000,
   });
 }
 
@@ -61,12 +71,20 @@ async function readDesktopDirCached(path: string, options?: { force?: boolean })
     return cached.entries;
   }
 
-  const entries = await readDesktopDir(normalizedPath);
-  desktopDirCache.set(normalizedPath, {
-    entries,
-    cachedAt: Date.now(),
-  });
-  return entries;
+  try {
+    const entries = await readDesktopDir(normalizedPath);
+    desktopDirCache.set(normalizedPath, {
+      entries,
+      cachedAt: Date.now(),
+    });
+    return entries;
+  } catch (error) {
+    if (cached) {
+      console.warn("[DesktopFS] Using stale directory cache after read failure:", error);
+      return cached.entries;
+    }
+    throw error;
+  }
 }
 
 function invalidateDesktopDirCache(path: string): void {
@@ -89,6 +107,22 @@ async function readDesktopFileBytes(path: string): Promise<Uint8Array> {
     return new Uint8Array(bytes);
   }
   return Uint8Array.from(bytes);
+}
+
+export async function readDesktopTextFile(path: string): Promise<string> {
+  return invokeDesktopFs<string>("desktop_read_text_file", {
+    path: normalizeDesktopPath(path),
+  });
+}
+
+export async function readDesktopTextFileChunk(
+  path: string,
+  maxBytes: number,
+): Promise<DesktopTextChunk> {
+  return invokeDesktopFs<DesktopTextChunk>("desktop_read_text_file_chunk", {
+    path: normalizeDesktopPath(path),
+    maxBytes,
+  });
 }
 
 async function writeDesktopFileBytes(path: string, bytes: Uint8Array): Promise<void> {
@@ -324,6 +358,11 @@ export class DesktopDirectoryHandle implements FileSystemDirectoryHandle, Deskto
 export function createDesktopDirectoryHandle(path: string): FileSystemDirectoryHandle {
   const normalizedPath = normalizeDesktopPath(path);
   return new DesktopDirectoryHandle(getPathName(normalizedPath), normalizedPath) as unknown as FileSystemDirectoryHandle;
+}
+
+export function createDesktopFileHandle(path: string): FileSystemFileHandle {
+  const normalizedPath = normalizeDesktopPath(path);
+  return new DesktopFileHandle(getPathName(normalizedPath), normalizedPath) as unknown as FileSystemFileHandle;
 }
 
 export function isDesktopDirectoryHandle(handle: unknown): handle is DesktopDirectoryHandle {

@@ -41,6 +41,7 @@ import {
 import {
   copyPdfItemWorkspace,
   deletePdfItemWorkspace,
+  getDefaultPdfItemFolderPath,
   invalidatePdfItemManifestIndex,
   listPdfItemNotes,
   syncPdfAnnotationsMarkdown,
@@ -49,12 +50,13 @@ import {
   movePdfItemWorkspace,
   getPdfFileName,
 } from "@/lib/pdf-item";
-import { createDesktopDirectoryHandle, getDesktopHandlePath } from "@/lib/desktop-file-system";
+import { createDesktopDirectoryHandle, createDesktopFileHandle, getDesktopHandlePath } from "@/lib/desktop-file-system";
 import { setDesktopPreviewRoot } from "@/lib/desktop-preview";
 import { isTauri, isTauriHost } from "@/lib/storage-adapter";
 import { isExistingDesktopDirectory, openDesktopDirectoryDialog } from "@/lib/desktop-folder";
 import { emitVaultChange, emitVaultDelete, emitVaultRename } from "@/lib/plugins/runtime";
 import { resolveWorkspaceIdentity } from "@/lib/workspace-identity";
+import { withTimeout } from "@/lib/async-task-guard";
 
 /**
  * Return type for the useFileSystem hook
@@ -105,6 +107,7 @@ const QA_BINARY_FIXTURES = [
 let refreshInFlightPromise: Promise<void> | null = null;
 let refreshQueuedOptions: { silent?: boolean } | null = null;
 const pdfHydrationGeneration = new Map<string, number>();
+const pdfAnnotationMarkdownSyncInFlight = new Map<string, Promise<void>>();
 
 async function getOpfsRoot(): Promise<FileSystemDirectoryHandle | null> {
   if (typeof window === "undefined") return null;
@@ -212,6 +215,35 @@ function buildPdfVirtualChildNode(summary: Awaited<ReturnType<typeof listPdfItem
   };
 }
 
+function buildFallbackPdfAnnotationChild(
+  rootHandle: FileSystemDirectoryHandle,
+  pdfPath: string,
+  annotationPath: string,
+): FileNode | null {
+  const rootDesktopPath = getDesktopHandlePath(rootHandle);
+  if (!rootDesktopPath) {
+    return null;
+  }
+
+  const normalizedPath = annotationPath.replace(/\\/g, "/").replace(/^\/+/, "");
+  const relativePath = normalizedPath.startsWith(`${rootHandle.name}/`)
+    ? normalizedPath.slice(rootHandle.name.length + 1)
+    : normalizedPath;
+  const absolutePath = `${rootDesktopPath.replace(/\\/g, "/").replace(/\/+$/, "")}/${relativePath}`;
+  return {
+    name: "_annotations.md",
+    displayName: "_annotations.md",
+    kind: "file",
+    handle: createDesktopFileHandle(absolutePath),
+    extension: "md",
+    path: normalizedPath,
+    isVirtual: true,
+    parentPdfPath: pdfPath,
+    entryRole: "pdf-annotations",
+    badgeLabel: "批注",
+  };
+}
+
 function isHydratablePdfNode(node: FileNode): boolean {
   return node.extension === "pdf" && !node.isVirtual;
 }
@@ -308,19 +340,84 @@ function findFileNodeByPath(node: TreeNode | null, targetPath: string): FileNode
 async function loadPdfVirtualChildren(
   rootHandle: FileSystemDirectoryHandle,
   pdfPath: string,
-): Promise<TreeNode[]> {
-  const manifest = await loadPdfItemManifest(rootHandle, generateFileId(pdfPath), pdfPath);
-  const annotationFile = await loadAnnotationsFromDisk(manifest.itemId, rootHandle, "pdf");
-  await syncPdfAnnotationsMarkdown(
-    rootHandle,
-    manifest,
-    getPdfFileName(pdfPath),
-    annotationFile.annotations,
-  );
-  const notes = await listPdfItemNotes(rootHandle, manifest);
-  return notes
+): Promise<{ manifest: Awaited<ReturnType<typeof loadPdfItemManifest>>; children: TreeNode[] }> {
+  const fallbackManifest = {
+    version: 4 as const,
+    itemId: generateFileId(pdfPath),
+    pdfPath,
+    itemFolderPath: getDefaultPdfItemFolderPath(pdfPath),
+    annotationIndexPath: `${getDefaultPdfItemFolderPath(pdfPath)}/_annotations.md`,
+    fileFingerprint: null,
+    versionFingerprint: null,
+    knownPdfPaths: [pdfPath],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  let usedFallbackManifest = false;
+  let notesListFailed = false;
+  const manifest = await withTimeout(
+    loadPdfItemManifest(rootHandle, generateFileId(pdfPath), pdfPath),
+    1500,
+    "PDF item manifest quick load",
+  ).catch(() => {
+    usedFallbackManifest = true;
+    return fallbackManifest;
+  });
+  const notes = await withTimeout(
+    listPdfItemNotes(rootHandle, manifest),
+    1500,
+    "PDF item notes quick list",
+  ).catch(() => {
+    notesListFailed = true;
+    return [];
+  });
+  const children = notes
     .map((summary) => buildPdfVirtualChildNode(summary, pdfPath))
     .filter((child): child is FileNode => child !== null);
+  if (children.some((child) => child.entryRole === "pdf-annotations")) {
+    return { manifest, children };
+  }
+  if (notesListFailed || usedFallbackManifest || manifest.annotationIndexPath) {
+    const fallbackChild = buildFallbackPdfAnnotationChild(
+      rootHandle,
+      pdfPath,
+      manifest.annotationIndexPath ?? `${manifest.itemFolderPath}/_annotations.md`,
+    );
+    if (fallbackChild) {
+      children.push(fallbackChild);
+    }
+  }
+  return { manifest, children };
+}
+
+function syncPdfAnnotationMarkdownInBackground(
+  rootHandle: FileSystemDirectoryHandle,
+  manifest: Awaited<ReturnType<typeof loadPdfItemManifest>>,
+  pdfPath: string,
+): Promise<void> {
+  const syncKey = `${rootHandle.name}:${manifest.itemId}:${manifest.itemFolderPath}`;
+  const pending = pdfAnnotationMarkdownSyncInFlight.get(syncKey);
+  if (pending) {
+    return pending;
+  }
+
+  const syncPromise = (async () => {
+    const annotationFile = await loadAnnotationsFromDisk(manifest.itemId, rootHandle, "pdf");
+    if (!annotationFile.annotations.some((annotation) => annotation.target.type === "pdf")) {
+      return;
+    }
+    await syncPdfAnnotationsMarkdown(
+      rootHandle,
+      manifest,
+      getPdfFileName(pdfPath),
+      annotationFile.annotations,
+    );
+  })().finally(() => {
+    pdfAnnotationMarkdownSyncInFlight.delete(syncKey);
+  });
+
+  pdfAnnotationMarkdownSyncInFlight.set(syncKey, syncPromise);
+  return syncPromise;
 }
 
 /**
@@ -668,7 +765,7 @@ export function useFileSystem(): UseFileSystemReturn {
     }));
 
     try {
-      const children = await loadPdfVirtualChildren(rootHandle, pdfPath);
+      const { manifest, children } = await loadPdfVirtualChildren(rootHandle, pdfPath);
       if (pdfHydrationGeneration.get(hydrationKey) !== generation) {
         return;
       }
@@ -680,6 +777,27 @@ export function useFileSystem(): UseFileSystemReturn {
         children,
         isExpanded: options.expand ?? file.isExpanded ?? false,
       }));
+
+      void syncPdfAnnotationMarkdownInBackground(rootHandle, manifest, pdfPath)
+        .then(async () => {
+          if (pdfHydrationGeneration.get(hydrationKey) !== generation) {
+            return;
+          }
+          const notes = await listPdfItemNotes(rootHandle, manifest);
+          const refreshedChildren = notes
+            .map((summary) => buildPdfVirtualChildNode(summary, pdfPath))
+            .filter((child): child is FileNode => child !== null);
+          patchWorkspaceFileTree(pdfPath, (file) => ({
+            ...file,
+            canExpandVirtualChildren: true,
+            virtualChildrenState: "ready",
+            children: refreshedChildren,
+            isExpanded: file.isExpanded ?? options.expand ?? false,
+          }));
+        })
+        .catch((error) => {
+          console.warn("Failed to refresh PDF annotation index in background:", error);
+        });
     } catch {
       if (pdfHydrationGeneration.get(hydrationKey) !== generation) {
         return;

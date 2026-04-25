@@ -352,9 +352,11 @@ function FileViewer({
         textContent = getTextContent();
       }
 
-      // Normalize content: convert HTML to Markdown, fix LaTeX delimiters, etc.
-      // Uses LRU cache to avoid re-running expensive regex chains on unchanged content
-      const normalizedContent = cachedNormalizeScientificText(textContent);
+      // System-generated index files are already Markdown. Running the full
+      // scientific normalizer over large annotation indexes is pure startup cost.
+      const normalizedContent = isSystemIndexFile
+        ? textContent
+        : cachedNormalizeScientificText(textContent);
 
       if (isSystemIndexFile) {
         return (

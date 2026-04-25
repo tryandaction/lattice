@@ -2393,6 +2393,7 @@ export function PDFHighlighterAdapter({
     }
 
     let cancelled = false;
+    let timerId: number | null = null;
     const manifestRunGuard = manifestRunGuardRef.current;
     const runId = manifestRunGuard.begin();
 
@@ -2403,28 +2404,34 @@ export function PDFHighlighterAdapter({
           effectiveBinding
             ? loadPdfItemManifestForBinding(rootHandle, effectiveBinding)
             : loadPdfItemManifest(rootHandle, manifestSeedId, filePath),
-          10000,
+          20000,
           "PDF item manifest load",
         );
         if (cancelled || !manifestRunGuard.isCurrent(runId)) {
           return;
         }
-        await withTimeout(syncPdfManagedFiles(rootHandle, manifest), 10000, "PDF managed file sync");
-        if (cancelled || !manifestRunGuard.isCurrent(runId)) {
-          return;
-        }
         setPdfItemManifest(manifest);
+        void withTimeout(syncPdfManagedFiles(rootHandle, manifest), 20000, "PDF managed file sync")
+          .catch((error) => {
+            logger.warn("[PDF] Managed file sync skipped:", error);
+          });
       } catch (error) {
         if (!cancelled && manifestRunGuard.isCurrent(runId)) {
-          setPdfItemError(error instanceof Error ? error.message : String(error));
+          logger.warn("[PDF] PDF item manifest load skipped:", error);
+          setPdfItemError(null);
         }
       }
     };
 
-    void loadWorkspaceManifest();
+    timerId = window.setTimeout(() => {
+      void loadWorkspaceManifest();
+    }, 250);
 
     return () => {
       cancelled = true;
+      if (timerId !== null) {
+        window.clearTimeout(timerId);
+      }
       manifestRunGuard.invalidate();
     };
   }, [canManagePdfItemWorkspace, effectiveBinding, filePath, manifestSeedId, rootHandle]);

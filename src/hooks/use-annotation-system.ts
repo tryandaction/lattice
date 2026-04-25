@@ -31,6 +31,11 @@ import { resolveFileIdentity } from '@/lib/file-identity';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 import type { ResolvedPdfDocumentBinding } from '@/lib/pdf-document-binding';
 
+function isDesktopDirectoryTimeout(error: unknown): boolean {
+  return error instanceof Error &&
+    /Tauri command desktop_read_dir timed out/i.test(error.message);
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -343,6 +348,19 @@ export function useAnnotationSystem({
         }
       } catch (err) {
         if (!cancelled) {
+          if (isDesktopDirectoryTimeout(err)) {
+            logger.warn("[Annotations] Desktop directory read timed out; continuing without blocking viewer.", err);
+            const fallbackFileId = storageFileId ?? resolveAnnotationFileCandidates(fileHandle.name, filePath)[0] ?? fileHandle.name;
+            const fallbackFile = createUniversalAnnotationFile(
+              fallbackFileId,
+              fileTypeOverride || detectFileType(filePath || fileHandle.name),
+            );
+            annotationFileRef.current = fallbackFile;
+            setFileId(fallbackFileId);
+            setAnnotations([]);
+            setError(null);
+            return;
+          }
           setError(err instanceof Error ? err.message : 'Failed to load annotations');
         }
       } finally {
