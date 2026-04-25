@@ -8,6 +8,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { PDFHighlighterAdapter } from '../pdf-highlighter-adapter';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 import { useContentCacheStore } from '@/stores/content-cache-store';
+import { useLinkNavigationStore } from '@/stores/link-navigation-store';
 import { resetPersistedFileViewStateCache } from '@/lib/file-view-state';
 import { clearPdfPageTextCache, getPdfPageTextModel } from '@/lib/pdf-page-text-cache';
 
@@ -825,6 +826,7 @@ describe('PDFHighlighterAdapter', () => {
     globalThis.IntersectionObserver = MockIntersectionObserver as unknown as typeof IntersectionObserver;
     resetPersistedFileViewStateCache();
     useContentCacheStore.getState().clearCache();
+    useLinkNavigationStore.setState({ pendingByPane: {} });
     useWorkspaceStore.setState((state) => ({
       layout: {
         ...state.layout,
@@ -1678,6 +1680,61 @@ describe('PDFHighlighterAdapter', () => {
         );
       });
       expect(preciseCall).toBeTruthy();
+    });
+  });
+
+  it('keeps a markdown annotation navigation pending until annotations finish loading', async () => {
+    const annotation = {
+      id: 'ann-delayed',
+      target: {
+        type: 'pdf',
+        page: 2,
+        rects: [{ x1: 0.25, y1: 0.30, x2: 0.45, y2: 0.36 }],
+      },
+      style: { color: '#FFEB3B', type: 'highlight' },
+      content: 'delayed annotation',
+      author: 'user',
+      createdAt: 1,
+    } as const;
+    let loadedAnnotations: readonly [typeof annotation] | [] = [];
+
+    useAnnotationSystemMock.mockImplementation(() => ({
+      annotations: loadedAnnotations,
+      error: null,
+      addAnnotation: vi.fn(),
+      updateAnnotation: vi.fn(),
+      deleteAnnotation: vi.fn(),
+    }));
+
+    useLinkNavigationStore.getState().setPendingNavigation('pane-left', {
+      filePath: 'docs/paper-left.pdf',
+      target: {
+        type: 'pdf_annotation',
+        path: 'docs/paper-left.pdf',
+        annotationId: 'ann-delayed',
+      },
+    });
+
+    const { rerender } = render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    const viewerContainer = await waitFor(() => (
+      document.querySelector('[data-testid="pdf-viewer-container-pane-left"]') as HTMLElement & {
+        scrollTo: ReturnType<typeof vi.fn>;
+      }
+    ));
+    viewerContainer.scrollTo.mockClear();
+
+    await waitFor(() => {
+      expect(useLinkNavigationStore.getState().pendingByPane['pane-left']).toBeUndefined();
+    });
+    expect(viewerContainer.scrollTo).not.toHaveBeenCalled();
+
+    loadedAnnotations = [annotation];
+    rerender(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(document.querySelector('.pdf-stored-annotation-overlay-ann-delayed')).toBeTruthy();
+      expect(pdfMockState.sidebarProps?.selectedId).toBe('ann-delayed');
     });
   });
 

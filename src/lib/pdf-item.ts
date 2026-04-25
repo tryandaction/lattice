@@ -26,6 +26,7 @@ import { removeAnnotationDocumentAliases } from "@/lib/annotation-registry";
 import type { AnnotationBacklink } from "@/lib/annotation-backlinks";
 import { getCanonicalPdfAnnotationText, type AnnotationItem, type UniversalAnnotationFile } from "@/types/universal-annotation";
 import type { ResolvedPdfDocumentBinding } from "@/lib/pdf-document-binding";
+import { getLocale, t as translate } from "@/lib/i18n";
 
 const PDF_ITEM_MANIFEST_VERSION = 4;
 const PDF_ITEM_MANIFEST_NAME = "manifest.json";
@@ -506,11 +507,6 @@ function buildRelativePdfLink(currentFilePath: string, pdfPath: string): string 
   return buildRelativeWorkspacePath(currentFilePath, pdfPath);
 }
 
-function buildSourcePdfLine(currentFilePath: string, pdfPath: string): string {
-  const pdfFileName = getPdfFileName(pdfPath);
-  return `Source PDF: [${pdfFileName}](${buildRelativePdfLink(currentFilePath, pdfPath)})`;
-}
-
 function replaceOrInsertLine(content: string, prefix: string, nextLine: string): string {
   const pattern = new RegExp(`^${prefix}.*$`, "m");
   if (pattern.test(content)) {
@@ -684,38 +680,83 @@ export async function syncPdfManagedFiles(
   }
 }
 
+const PDF_ANNOTATIONS_MARKDOWN_LABELS = {
+  "zh-CN": {
+    annotationsTitle: "批注",
+    sourcePdf: "源 PDF",
+    pageLink: "页面链接",
+    annotationLink: "批注链接",
+    quote: "引用",
+    comment: "评论",
+    screenshot: "截图",
+    screenshotDetails: "截图：第 {page} 页，{width}x{height}px",
+    created: "创建时间",
+    backlinks: "反向链接",
+    noAnnotations: "暂无批注。",
+  },
+  "en-US": {
+    annotationsTitle: "Annotations",
+    sourcePdf: "Source PDF",
+    pageLink: "Page Link",
+    annotationLink: "Annotation Link",
+    quote: "Quote",
+    comment: "Comment",
+    screenshot: "Screenshot",
+    screenshotDetails: "Screenshot: page {page}, {width}x{height}px",
+    created: "Created",
+    backlinks: "Backlinks",
+    noAnnotations: "No annotations yet.",
+  },
+} as const;
+
+function getPdfAnnotationsMarkdownLabels() {
+  return PDF_ANNOTATIONS_MARKDOWN_LABELS[getLocale()] ?? PDF_ANNOTATIONS_MARKDOWN_LABELS["zh-CN"];
+}
+
+function formatPdfAnnotationMarkdownLabel(
+  template: string,
+  params: Record<string, string | number>,
+): string {
+  return Object.entries(params).reduce(
+    (text, [key, value]) => text.replace(`{${key}}`, String(value)),
+    template,
+  );
+}
+
 function getAnnotationTypeLabel(annotation: AnnotationItem): string {
   switch (annotation.style.type) {
     case "highlight":
-      return "Highlight";
+      return translate("pdf.command.highlight");
     case "underline":
-      return "Underline";
+      return translate("pdf.command.underline");
     case "area":
-      return "Area";
+      return translate("pdf.command.area");
     case "ink":
-      return "Ink";
+      return translate("pdf.sidebar.filter.type.ink");
     case "text":
-      return "Text";
+      return translate("pdf.command.text");
     default:
-      return "Annotation";
+      return translate("workbench.annotations.panelTitle");
   }
 }
 
 function buildAnnotationPreviewMarkdown(annotation: AnnotationItem): string | null {
   if (
     annotation.target.type !== "pdf" ||
-    annotation.style.type !== "area" ||
+    (annotation.style.type !== "area" && annotation.style.type !== "ink") ||
     annotation.preview?.type !== "image" ||
     !annotation.preview.dataUrl
   ) {
     return null;
   }
 
+  const labels = getPdfAnnotationsMarkdownLabels();
   const page = annotation.target.page;
   const width = Math.round(annotation.preview.width);
   const height = Math.round(annotation.preview.height);
-  const alt = `Area annotation ${annotation.id} page ${page}`;
-  return `![${alt}](${annotation.preview.dataUrl})\n\n  _Screenshot: page ${page}, ${width}x${height}px_`;
+  const alt = `${getAnnotationTypeLabel(annotation)} ${labels.screenshot} ${annotation.id} ${translate("pdf.sidebar.page", { page })}`;
+  const details = formatPdfAnnotationMarkdownLabel(labels.screenshotDetails, { page, width, height });
+  return `![${alt}](${annotation.preview.dataUrl})\n\n  _${details}_`;
 }
 
 export function buildPdfAnnotationsMarkdown(input: {
@@ -724,6 +765,8 @@ export function buildPdfAnnotationsMarkdown(input: {
   annotations: AnnotationItem[];
   backlinksByAnnotation?: Record<string, AnnotationBacklink[]>;
 }): string {
+  const locale = getLocale();
+  const labels = getPdfAnnotationsMarkdownLabels();
   const currentFilePath = input.manifest.annotationIndexPath ?? getPdfItemAnnotationIndexPath(input.manifest.itemFolderPath);
   const relativePdfPath = buildRelativePdfLink(currentFilePath, input.manifest.pdfPath);
   const pdfAnnotations = input.annotations
@@ -745,16 +788,16 @@ export function buildPdfAnnotationsMarkdown(input: {
     `updated: "${new Date().toISOString()}"`,
     "---",
     "",
-    `# ${input.fileName} Annotations`,
+    `# ${input.fileName} ${labels.annotationsTitle}`,
     "",
-    buildSourcePdfLine(currentFilePath, input.manifest.pdfPath),
+    `${labels.sourcePdf}: [${getPdfFileName(input.manifest.pdfPath)}](${relativePdfPath})`,
     "",
-    `Total annotations: ${pdfAnnotations.length}`,
+    translate("pdf.sidebar.export.count", { count: pdfAnnotations.length }),
     "",
   ];
 
   if (pdfAnnotations.length === 0) {
-    lines.push("_No annotations yet._");
+    lines.push(`_${labels.noAnnotations}_`);
     return lines.join("\n");
   }
 
@@ -766,29 +809,29 @@ export function buildPdfAnnotationsMarkdown(input: {
 
     if (annotation.target.page !== currentPage) {
       currentPage = annotation.target.page;
-      lines.push(`## Page ${currentPage}`);
+      lines.push(`## ${translate("pdf.sidebar.page", { page: currentPage })}`);
       lines.push("");
     }
 
     const backlinks = input.backlinksByAnnotation?.[annotation.id] ?? [];
     lines.push(`### ${index + 1}. ${getAnnotationTypeLabel(annotation)}`);
-    lines.push(`- Page Link: [Page ${annotation.target.page}](${relativePdfPath}#page=${annotation.target.page})`);
-    lines.push(`- Annotation Link: [${annotation.id}](${relativePdfPath}#annotation=${annotation.id})`);
+    lines.push(`- ${labels.pageLink}: [${translate("pdf.sidebar.page", { page: annotation.target.page })}](${relativePdfPath}#page=${annotation.target.page})`);
+    lines.push(`- ${labels.annotationLink}: [${annotation.id}](${relativePdfPath}#annotation=${annotation.id})`);
     const quoteText = getCanonicalPdfAnnotationText(annotation);
     if (quoteText) {
-      lines.push(`- Quote: ${quoteText}`);
+      lines.push(`- ${labels.quote}: ${quoteText}`);
     }
     if (annotation.comment?.trim()) {
-      lines.push(`- Comment: ${annotation.comment.trim()}`);
+      lines.push(`- ${labels.comment}: ${annotation.comment.trim()}`);
     }
     const previewMarkdown = buildAnnotationPreviewMarkdown(annotation);
     if (previewMarkdown) {
-      lines.push("- Screenshot:");
+      lines.push(`- ${labels.screenshot}:`);
       lines.push(`  ${previewMarkdown.replace(/\n/g, "\n  ")}`);
     }
-    lines.push(`- Created: ${new Date(annotation.createdAt).toLocaleString("zh-CN")}`);
+    lines.push(`- ${labels.created}: ${new Date(annotation.createdAt).toLocaleString(locale)}`);
     if (backlinks.length > 0) {
-      lines.push(`- Backlinks: ${backlinks.length}`);
+      lines.push(`- ${labels.backlinks}: ${backlinks.length}`);
       backlinks.forEach((backlink) => {
         const backlinkTarget = `${buildRelativeWorkspacePath(currentFilePath, backlink.sourceFile)}#line=${backlink.lineNumber}`;
         const label = backlink.displayText?.trim() || `${backlink.sourceFile}:${backlink.lineNumber}`;

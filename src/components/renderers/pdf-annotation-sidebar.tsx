@@ -803,6 +803,10 @@ function AnnotationCard({
   const textStyle = annotation.style.textStyle || { textColor: '#000000', fontSize: 14 };
   const resolvedBacklinks = backlinks ?? [];
   const quoteText = getCanonicalPdfAnnotationText(annotation);
+  const imagePreview = (
+    (annotation.style.type === 'area' || annotation.style.type === 'ink') &&
+    annotation.preview?.type === 'image'
+  ) ? annotation.preview : null;
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -984,13 +988,13 @@ function AnnotationCard({
             </div>
           )}
 
-          {annotation.style.type === 'area' && annotation.preview?.type === 'image' && (
-            <div className="mb-2 overflow-hidden rounded-md border border-border bg-muted/20">
+          {imagePreview && (
+            <div className="mb-2 overflow-hidden rounded-md border border-border bg-background">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={annotation.preview.dataUrl}
+                src={imagePreview.dataUrl}
                 alt={t("pdf.sidebar.previewImageAlt", { page })}
-                className="block h-24 w-full object-cover"
+                className="block max-h-40 min-h-20 w-full object-contain"
                 loading="lazy"
               />
             </div>

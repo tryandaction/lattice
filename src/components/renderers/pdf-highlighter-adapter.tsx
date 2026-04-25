@@ -39,6 +39,7 @@ import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
 import type { CommandBarState, PaneId } from "@/types/layout";
 import { useLinkNavigationStore } from "@/stores/link-navigation-store";
+import type { PendingPaneNavigation } from "@/stores/link-navigation-store";
 import { isSameWorkspacePath } from "@/lib/link-router/path-utils";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
 import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
@@ -326,19 +327,104 @@ function buildPdfSelectionMenuSnapshot(
   };
 }
 
-function buildPdfAreaPreviewFromPageElement(
-  pageElement: HTMLElement,
-  rect: PdfTarget["rects"][number],
+function buildPdfPreviewRect(input: {
+  rects: PdfTarget["rects"];
+  pageWidth: number;
+  pageHeight: number;
+  paddingRatio: number;
+  minCssWidth: number;
+  minCssHeight: number;
+}): PdfTarget["rects"][number] | null {
+  const validRects = input.rects.filter((rect) => (
+    Number.isFinite(rect.x1) &&
+    Number.isFinite(rect.y1) &&
+    Number.isFinite(rect.x2) &&
+    Number.isFinite(rect.y2) &&
+    rect.x2 > rect.x1 &&
+    rect.y2 > rect.y1
+  ));
+
+  if (validRects.length === 0 || input.pageWidth <= 0 || input.pageHeight <= 0) {
+    return null;
+  }
+
+  const unionLeft = Math.max(0, Math.min(...validRects.map((rect) => rect.x1)));
+  const unionTop = Math.max(0, Math.min(...validRects.map((rect) => rect.y1)));
+  const unionRight = Math.min(1, Math.max(...validRects.map((rect) => rect.x2)));
+  const unionBottom = Math.min(1, Math.max(...validRects.map((rect) => rect.y2)));
+  if (unionRight <= unionLeft || unionBottom <= unionTop) {
+    return null;
+  }
+
+  const minWidth = Math.min(1, input.minCssWidth / input.pageWidth);
+  const minHeight = Math.min(1, input.minCssHeight / input.pageHeight);
+  const centerX = (unionLeft + unionRight) / 2;
+  const centerY = (unionTop + unionBottom) / 2;
+  const halfWidth = Math.max((unionRight - unionLeft) / 2 + input.paddingRatio, minWidth / 2);
+  const halfHeight = Math.max((unionBottom - unionTop) / 2 + input.paddingRatio, minHeight / 2);
+
+  let x1 = centerX - halfWidth;
+  let x2 = centerX + halfWidth;
+  let y1 = centerY - halfHeight;
+  let y2 = centerY + halfHeight;
+
+  if (x1 < 0) {
+    x2 = Math.min(1, x2 - x1);
+    x1 = 0;
+  }
+  if (x2 > 1) {
+    x1 = Math.max(0, x1 - (x2 - 1));
+    x2 = 1;
+  }
+  if (y1 < 0) {
+    y2 = Math.min(1, y2 - y1);
+    y1 = 0;
+  }
+  if (y2 > 1) {
+    y1 = Math.max(0, y1 - (y2 - 1));
+    y2 = 1;
+  }
+
+  return { x1, y1, x2, y2 };
+}
+
+function buildPdfAnnotationPreviewFromPageElement(
+  pageElement: HTMLElement | null,
+  rects: PdfTarget["rects"],
+  options?: {
+    paddingRatio?: number;
+    minCssWidth?: number;
+    minCssHeight?: number;
+  },
 ): AnnotationItem["preview"] | undefined {
+  if (!pageElement) {
+    return undefined;
+  }
+
   const canvas = pageElement.querySelector("canvas");
   if (!(canvas instanceof HTMLCanvasElement)) {
     return undefined;
   }
 
-  const cropX = Math.max(0, Math.floor(rect.x1 * canvas.width));
-  const cropY = Math.max(0, Math.floor(rect.y1 * canvas.height));
-  const cropWidth = Math.max(1, Math.ceil((rect.x2 - rect.x1) * canvas.width));
-  const cropHeight = Math.max(1, Math.ceil((rect.y2 - rect.y1) * canvas.height));
+  const pageRect = pageElement.getBoundingClientRect();
+  const previewRect = buildPdfPreviewRect({
+    rects,
+    pageWidth: pageRect.width,
+    pageHeight: pageRect.height,
+    paddingRatio: options?.paddingRatio ?? 0.012,
+    minCssWidth: options?.minCssWidth ?? 96,
+    minCssHeight: options?.minCssHeight ?? 72,
+  });
+  if (!previewRect) {
+    return undefined;
+  }
+
+  const cropX = Math.max(0, Math.floor(previewRect.x1 * canvas.width));
+  const cropY = Math.max(0, Math.floor(previewRect.y1 * canvas.height));
+  const cropRight = Math.min(canvas.width, Math.ceil(previewRect.x2 * canvas.width));
+  const cropBottom = Math.min(canvas.height, Math.ceil(previewRect.y2 * canvas.height));
+  const cropWidth = Math.max(1, cropRight - cropX);
+  const cropHeight = Math.max(1, cropBottom - cropY);
   const previewCanvas = document.createElement("canvas");
   previewCanvas.width = cropWidth;
   previewCanvas.height = cropHeight;
@@ -2498,6 +2584,7 @@ export function PDFHighlighterAdapter({
     anchorRect: DOMRect | null;
     token: number;
   } | null>(null);
+  const [deferredNavigation, setDeferredNavigation] = useState<PendingPaneNavigation | null>(null);
   const pathname = usePathname();
   const isDiagnosticsMode = pathname?.startsWith("/diagnostics") ?? false;
   const isDesktopUrlSource = source.kind === "desktop-url";
@@ -3742,6 +3829,20 @@ export function PDFHighlighterAdapter({
       content: merged.content,
       author: 'user',
     };
+    const pageElement = findPdfPageElementInScope(containerRef.current, merged.page);
+    const preview = buildPdfAnnotationPreviewFromPageElement(
+      pageElement,
+      (inkAnnotation.target as PdfTarget).rects,
+      {
+        paddingRatio: 0.035,
+        minCssWidth: 180,
+        minCssHeight: 120,
+      },
+    );
+    if (preview) {
+      inkAnnotation.preview = preview;
+    }
+
     addAnnotation(inkAnnotation);
   }, [addAnnotation]);
 
@@ -4476,7 +4577,7 @@ export function PDFHighlighterAdapter({
     dedupedAnnotations.forEach((annotation) => {
       if (
         annotation.target.type !== "pdf" ||
-        annotation.style.type !== "area" ||
+        (annotation.style.type !== "area" && annotation.style.type !== "ink") ||
         annotation.preview ||
         isPinAnnotation(annotation) ||
         pendingAreaPreviewBackfillRef.current.has(annotation.id)
@@ -4494,7 +4595,13 @@ export function PDFHighlighterAdapter({
       pendingAreaPreviewBackfillRef.current.add(annotation.id);
       window.requestAnimationFrame(() => {
         try {
-          const preview = buildPdfAreaPreviewFromPageElement(pageElement, rect);
+          const preview = buildPdfAnnotationPreviewFromPageElement(
+            pageElement,
+            [rect],
+            annotation.style.type === "ink"
+              ? { paddingRatio: 0.035, minCssWidth: 180, minCssHeight: 120 }
+              : { paddingRatio: 0.012, minCssWidth: 96, minCssHeight: 72 },
+          );
           if (preview) {
             updateAnnotation(annotation.id, { preview });
           }
@@ -4833,7 +4940,11 @@ export function PDFHighlighterAdapter({
       author: 'user',
     };
 
-    const preview = buildPdfAreaPreviewFromPageElement(pageElement, rect);
+    const preview = buildPdfAnnotationPreviewFromPageElement(pageElement, [rect], {
+      paddingRatio: 0.012,
+      minCssWidth: 96,
+      minCssHeight: 72,
+    });
     if (preview) {
       annotation.preview = preview;
     }
@@ -5107,7 +5218,7 @@ export function PDFHighlighterAdapter({
       target.container.scrollTo({
         top: target.top,
         left: target.left,
-        behavior: isReadyForPreciseScroll ? "smooth" : "auto",
+        behavior: "auto",
       });
 
       if (!isReadyForPreciseScroll || settledFrames < 2) {
@@ -5129,6 +5240,28 @@ export function PDFHighlighterAdapter({
     attemptScroll();
   }, [buildPdfNavigationScrollTarget, cancelPendingAnnotationScroll, flashPdfElement, scheduleTimeout, warmVisiblePages]);
 
+  const schedulePdfTargetIntoViewAfterLayout = useCallback((input: {
+    page: number;
+    rects?: PdfTarget["rects"];
+    flashPage?: boolean;
+  }) => {
+    cancelPendingAnnotationScroll();
+
+    let framesLeft = 2;
+    const run = () => {
+      if (framesLeft > 0) {
+        framesLeft -= 1;
+        pendingAnnotationScrollFrameRef.current = window.requestAnimationFrame(run);
+        return;
+      }
+
+      pendingAnnotationScrollFrameRef.current = null;
+      scrollPdfTargetIntoView(input);
+    };
+
+    pendingAnnotationScrollFrameRef.current = window.requestAnimationFrame(run);
+  }, [cancelPendingAnnotationScroll, scrollPdfTargetIntoView]);
+
   // Handle sidebar annotation selection - scroll to exact annotation position
   const handleSidebarSelect = useCallback((annotation: AnnotationItem) => {
     setShowSidebar(true);
@@ -5137,14 +5270,14 @@ export function PDFHighlighterAdapter({
 
     if (annotation.target.type === 'pdf') {
       const target = annotation.target as PdfTarget;
-      scrollPdfTargetIntoView({
+      schedulePdfTargetIntoViewAfterLayout({
         page: target.page,
         rects: target.rects,
       });
     }
 
     scheduleTimeout(() => setHighlightedId(null), 2500);
-  }, [scheduleTimeout, scrollPdfTargetIntoView]);
+  }, [schedulePdfTargetIntoViewAfterLayout, scheduleTimeout]);
 
   // Handle sidebar delete
   const handleSidebarDelete = useCallback((id: string) => {
@@ -5166,7 +5299,7 @@ export function PDFHighlighterAdapter({
 
         setSelectedAnnotationId(annotationId);
         setHighlightedId(annotationId);
-        scrollPdfTargetIntoView({
+        schedulePdfTargetIntoViewAfterLayout({
           page,
           flashPage: true,
         });
@@ -5180,23 +5313,51 @@ export function PDFHighlighterAdapter({
       return;
     }
 
-    const attemptNavigation = () => {
-      const pendingTarget = pendingNavigation.target;
+    const consumed = consumePendingNavigation(paneId, filePath);
+    if (consumed) {
+      setDeferredNavigation(consumed);
+    }
+  }, [consumePendingNavigation, filePath, paneId, pendingNavigation]);
 
+  useEffect(() => {
+    if (!deferredNavigation || !isSameWorkspacePath(deferredNavigation.filePath, filePath)) {
+      return;
+    }
+
+    const pendingTarget = deferredNavigation.target;
+    let frameId = 0;
+
+    const finish = () => {
+      setDeferredNavigation((current) => (
+        current?.requestedAt === deferredNavigation.requestedAt ? null : current
+      ));
+    };
+
+    const attemptNavigation = () => {
       if (pendingTarget.type === "pdf_page") {
-        scrollPdfTargetIntoView({
+        schedulePdfTargetIntoViewAfterLayout({
           page: pendingTarget.page,
           flashPage: true,
         });
-        consumePendingNavigation(paneId, filePath);
+        finish();
         return true;
       }
 
       if (pendingTarget.type === "pdf_annotation") {
         const annotation = annotationById.get(pendingTarget.annotationId);
-        if (!annotation) return false;
+        if (!annotation) {
+          if (Date.now() - deferredNavigation.requestedAt > 15000) {
+            setShowSidebar(true);
+            setSelectedAnnotationId(pendingTarget.annotationId);
+            setHighlightedId(pendingTarget.annotationId);
+            scheduleTimeout(() => setHighlightedId(null), 2000);
+            finish();
+            return true;
+          }
+          return false;
+        }
         handleSidebarSelect(annotation);
-        consumePendingNavigation(paneId, filePath);
+        finish();
         return true;
       }
 
@@ -5207,11 +5368,8 @@ export function PDFHighlighterAdapter({
       return;
     }
 
-    let attemptsLeft = 24;
-    let frameId = 0;
     const retry = () => {
-      attemptsLeft -= 1;
-      if (attemptNavigation() || attemptsLeft <= 0) {
+      if (attemptNavigation()) {
         return;
       }
       frameId = window.requestAnimationFrame(retry);
@@ -5223,7 +5381,7 @@ export function PDFHighlighterAdapter({
         window.cancelAnimationFrame(frameId);
       }
     };
-  }, [annotationById, consumePendingNavigation, filePath, handleSidebarSelect, paneId, pendingNavigation, scrollPdfTargetIntoView]);
+  }, [annotationById, deferredNavigation, filePath, handleSidebarSelect, schedulePdfTargetIntoViewAfterLayout, scheduleTimeout]);
 
   if (annotationsError) {
     console.error('Annotation error:', annotationsError);

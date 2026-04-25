@@ -868,20 +868,11 @@ fn desktop_write_file_bytes(path: String, data: Vec<u8>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn desktop_exists_path(
-    fs_state: State<'_, DesktopFsState>,
-    path: String,
-) -> Result<bool, String> {
-    let permit = fs_state
-        .read_dir_permits
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|error| error.to_string())?;
-
+async fn desktop_exists_path(path: String) -> Result<bool, String> {
     tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        Ok(PathBuf::from(path).exists())
+        PathBuf::from(path)
+            .try_exists()
+            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?

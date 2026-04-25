@@ -8,6 +8,7 @@ import {
   loadPdfItemManifest,
   syncPdfManagedFiles,
 } from "@/lib/pdf-item";
+import { setLocale } from "@/lib/i18n";
 
 class TestFileHandle {
   kind = "file" as const;
@@ -83,6 +84,7 @@ describe("pdf-item utils", () => {
   });
 
   it("builds markdown output for pdf annotations", () => {
+    setLocale("en-US");
     const annotations: AnnotationItem[] = [
       {
         id: "ann-1",
@@ -135,6 +137,26 @@ describe("pdf-item utils", () => {
         author: "user",
         createdAt: 1710000006000,
       },
+      {
+        id: "ann-ink",
+        target: {
+          type: "pdf",
+          page: 4,
+          rects: [{ x1: 0.46, y1: 0.52, x2: 0.58, y2: 0.59 }],
+        },
+        style: {
+          color: "#ff5252",
+          type: "ink",
+        },
+        preview: {
+          type: "image",
+          dataUrl: "data:image/png;base64,aW5rLXByZXZpZXc=",
+          width: 240,
+          height: 120,
+        },
+        author: "user",
+        createdAt: 1710000007000,
+      },
     ];
 
     const markdown = buildPdfAnnotationsMarkdown({
@@ -162,7 +184,34 @@ describe("pdf-item utils", () => {
     expect(markdown).toContain("../../../papers/rydberg-review.pdf#page=2");
     expect(markdown).toContain("../../../papers/rydberg-review.pdf#annotation=ann-1");
     expect(markdown).toContain("- Screenshot:");
-    expect(markdown).toContain("![Area annotation ann-area page 4](data:image/png;base64,ZmFrZS1wcmV2aWV3)");
+    expect(markdown).toContain("![Area Screenshot ann-area Page 4](data:image/png;base64,ZmFrZS1wcmV2aWV3)");
+    expect(markdown).toContain("![Ink Screenshot ann-ink Page 4](data:image/png;base64,aW5rLXByZXZpZXc=)");
+  });
+
+  it("localizes generated pdf annotation markdown labels", () => {
+    setLocale("zh-CN");
+
+    const markdown = buildPdfAnnotationsMarkdown({
+      fileName: "论文.pdf",
+      manifest: {
+        version: 4,
+        itemId: "paper",
+        pdfPath: "docs/论文.pdf",
+        itemFolderPath: ".lattice/items/paper",
+        annotationIndexPath: ".lattice/items/paper/_annotations.md",
+        fileFingerprint: null,
+        versionFingerprint: null,
+        knownPdfPaths: ["docs/论文.pdf"],
+        createdAt: 1710000000000,
+        updatedAt: 1710000000000,
+      },
+      annotations: [],
+    });
+
+    expect(markdown).toContain("# 论文.pdf 批注");
+    expect(markdown).toContain("源 PDF: [论文.pdf]");
+    expect(markdown).toContain("共 0 条批注");
+    expect(markdown).toContain("_暂无批注。_");
   });
 
   it("recovers an existing workspace by stable document id after the pdf path changes", async () => {
