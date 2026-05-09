@@ -1988,7 +1988,7 @@ function parseDocument(
       const lineText = line.text;
 
       // 尝试从缓存获取
-      const cacheKey = `${lineNum}:${lineText}:${referenceSignature}`;
+      const cacheKey = `${lineNum}:${line.from}:${line.to}:${lineText}:${referenceSignature}`;
       const cached = lineElementCache.get(cacheKey);
 
       if (cached) {

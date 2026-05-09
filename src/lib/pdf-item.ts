@@ -838,13 +838,17 @@ export function buildPdfAnnotationsMarkdown(input: {
       }
       return left.createdAt - right.createdAt;
     });
+  const stableUpdatedAt = pdfAnnotations.reduce(
+    (latest, annotation) => Math.max(latest, annotation.createdAt || 0),
+    input.manifest.updatedAt || input.manifest.createdAt || 0,
+  );
 
   const lines: string[] = [
     "---",
     'type: "pdf-annotations"',
     `itemId: "${input.manifest.itemId}"`,
     `pdf: "${relativePdfPath}"`,
-    `updated: "${new Date().toISOString()}"`,
+    `updated: "${new Date(stableUpdatedAt).toISOString()}"`,
     "---",
     "",
     `# ${input.fileName} ${labels.annotationsTitle}`,

@@ -54,6 +54,10 @@ type BlockContext = {
 
 const DOUBLE_CLICK_DELAY = 260;
 
+function getLivePreviewKaTeXOptions(displayMode: boolean) {
+  return getKaTeXOptions(displayMode, { output: 'html' });
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -436,7 +440,7 @@ export class FormattedTextWidget extends WidgetType {
 
         if (katex) {
           try {
-            katex.render(latex, mathSpan, getKaTeXOptions(false));
+            katex.render(latex, mathSpan, getLivePreviewKaTeXOptions(false));
           } catch {
             mathSpan.textContent = part;
           }
@@ -447,7 +451,7 @@ export class FormattedTextWidget extends WidgetType {
             () => loadKaTeX().then((k) => {
               try {
                 mathSpan.innerHTML = '';
-                k.render(latex, mathSpan, getKaTeXOptions(false));
+                k.render(latex, mathSpan, getLivePreviewKaTeXOptions(false));
               } catch {
                 mathSpan.textContent = part;
               }
@@ -1327,7 +1331,7 @@ export class HeadingContentWidget extends WidgetType {
 
         if (katexForHeading) {
           try {
-            katexForHeading.render(latex, mathSpan, getKaTeXOptions(false));
+            katexForHeading.render(latex, mathSpan, getLivePreviewKaTeXOptions(false));
           } catch {
             mathSpan.textContent = part;
           }
@@ -1339,7 +1343,7 @@ export class HeadingContentWidget extends WidgetType {
               katexForHeading = k;
               try {
                 mathSpan.innerHTML = '';
-                k.render(latex, mathSpan, getKaTeXOptions(false));
+                k.render(latex, mathSpan, getLivePreviewKaTeXOptions(false));
               } catch {
                 mathSpan.textContent = part;
               }
@@ -1646,7 +1650,7 @@ export class MathWidget extends WidgetType {
     // 渲染公式
     if (katex) {
       try {
-        katex.render(this.latex, container, getKaTeXOptions(this.isBlock));
+        katex.render(this.latex, container, getLivePreviewKaTeXOptions(this.isBlock));
 
         // CRITICAL FIX: Even for synchronous render, request measure for block math
         // This ensures CodeMirror recalculates coordinates after initial render
@@ -1707,7 +1711,7 @@ export class MathWidget extends WidgetType {
 
           try {
             container.innerHTML = '';
-            k.render(latexStr, container, getKaTeXOptions(isBlock));
+            k.render(latexStr, container, getLivePreviewKaTeXOptions(isBlock));
             container.classList.remove('cm-math-loading');
 
             // CRITICAL FIX: Notify CodeMirror to recalculate coordinates after async render
@@ -2108,7 +2112,7 @@ function parseInlineMarkdown(
   const renderMathSpan = (source: string, formula: string, displayMode: boolean) => {
     try {
       if (katex) {
-        return katex.renderToString(formula.trim(), getKaTeXOptions(displayMode));
+        return katex.renderToString(formula.trim(), getLivePreviewKaTeXOptions(displayMode));
       }
       return `<span class="${displayMode ? 'cm-math-block-table' : 'cm-math-inline-table'}">${escapeHtml(source)}</span>`;
     } catch {
@@ -2346,7 +2350,7 @@ export class TableWidget extends WidgetType {
 
   toDOM(view: EditorView) {
     const wrapper = document.createElement('div') as TableWidgetRootHost;
-    wrapper.className = 'cm-table-widget-wrapper';
+    wrapper.className = 'cm-table-widget-wrapper cm-table-widget';
     wrapper.dataset.from = String(this.from);
     wrapper.dataset.to = String(this.to);
     applyBlockContext(wrapper, this.context);
