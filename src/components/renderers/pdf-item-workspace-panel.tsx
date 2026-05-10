@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 import { ChevronDown, ChevronRight, FilePlus2, FolderOpen, NotebookPen, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFileSystem } from "@/hooks/use-file-system";
@@ -20,6 +21,15 @@ import type { AnnotationItem } from "@/types/universal-annotation";
 import type { FileNode, TreeNode } from "@/types/file-system";
 import { useI18n } from "@/hooks/use-i18n";
 import { generateFileId } from "@/lib/universal-annotation-storage";
+import { extractPdfBibliographicSummary, type PdfBibliographicSummary } from "@/lib/pdf-metadata";
+import {
+  buildSimpleBibtex,
+  buildSimpleCitation,
+  enrichPdfBibliography,
+  type PdfBibliographicEnrichment,
+} from "@/lib/pdf-bibliography-enrichment";
+import { openExternalUrl } from "@/lib/link-router/open-external";
+import { copyToClipboard } from "@/lib/clipboard";
 
 interface PdfItemWorkspacePanelProps {
   rootHandle: FileSystemDirectoryHandle;
@@ -29,6 +39,7 @@ interface PdfItemWorkspacePanelProps {
   paneId: PaneId;
   annotations: AnnotationItem[];
   manifest?: PdfItemManifest | null;
+  pdfDocument?: PDFDocumentProxy | null;
 }
 
 function noteLabel(type: PdfItemNoteSummary["type"], t: ReturnType<typeof useI18n>["t"]) {
@@ -78,6 +89,7 @@ export function PdfItemWorkspacePanel({
   paneId,
   annotations,
   manifest: initialManifest = null,
+  pdfDocument = null,
 }: PdfItemWorkspacePanelProps) {
   const { t } = useI18n();
   const { deleteFile, refreshDirectory } = useFileSystem();
@@ -94,6 +106,8 @@ export function PdfItemWorkspacePanel({
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [summary, setSummary] = useState<PdfBibliographicSummary | null>(null);
+  const [enrichment, setEnrichment] = useState<PdfBibliographicEnrichment | null>(null);
 
   const pdfAnnotations = useMemo(
     () => annotations.filter((annotation) => annotation.target.type === "pdf"),
@@ -172,6 +186,42 @@ export function PdfItemWorkspacePanel({
     }
     void loadItemState();
   }, [isExpanded, loadItemState]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!pdfDocument) {
+      setSummary(null);
+      setEnrichment(null);
+      return;
+    }
+
+    void extractPdfBibliographicSummary({
+      pdfDocument,
+      fileName,
+    }).then((nextSummary) => {
+      if (!cancelled) {
+        setSummary(nextSummary);
+        void enrichPdfBibliography(nextSummary).then((nextEnrichment) => {
+          if (!cancelled) {
+            setEnrichment(nextEnrichment);
+          }
+        }).catch(() => {
+          if (!cancelled) {
+            setEnrichment(null);
+          }
+        });
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setSummary(null);
+        setEnrichment(null);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fileName, pdfDocument]);
 
   const openHandleNearPdf = useCallback((handle: FileSystemFileHandle, path: string) => {
     const targetPaneId = activePaneId === paneId
@@ -260,6 +310,47 @@ export function PdfItemWorkspacePanel({
     revealPdfEntry(true);
   }, [manifest, revealPdfEntry]);
 
+  const handleOpenDoi = useCallback(async (doi: string) => {
+    await openExternalUrl(`https://doi.org/${doi}`);
+  }, []);
+
+  const handleOpenArxiv = useCallback(async (arxivId: string) => {
+    await openExternalUrl(`https://arxiv.org/abs/${arxivId}`);
+  }, []);
+
+  const handleCopySummary = useCallback(async () => {
+    if (!summary) {
+      return;
+    }
+
+    const lines = [
+      enrichment?.title ?? summary.title,
+      (enrichment?.authors ?? summary.authors).length > 0 ? `Authors: ${(enrichment?.authors ?? summary.authors).join(", ")}` : null,
+      (enrichment?.year ?? summary.year) ? `Year: ${enrichment?.year ?? summary.year}` : null,
+      (enrichment?.doi ?? summary.doi) ? `DOI: ${enrichment?.doi ?? summary.doi}` : null,
+      (enrichment?.arxivId ?? summary.arxivId) ? `arXiv: ${enrichment?.arxivId ?? summary.arxivId}` : null,
+      (enrichment?.subject ?? summary.subject) ? `Subject: ${enrichment?.subject ?? summary.subject}` : null,
+      enrichment?.venue ? `Venue: ${enrichment.venue}` : null,
+      enrichment?.abstract ? `Abstract: ${enrichment.abstract}` : null,
+    ].filter(Boolean).join("\n");
+
+    await copyToClipboard(lines);
+  }, [enrichment, summary]);
+
+  const handleCopyCitation = useCallback(async () => {
+    if (!summary) {
+      return;
+    }
+    await copyToClipboard(buildSimpleCitation({ summary, enrichment }));
+  }, [enrichment, summary]);
+
+  const handleCopyBibtex = useCallback(async () => {
+    if (!summary) {
+      return;
+    }
+    await copyToClipboard(buildSimpleBibtex({ fileName, summary, enrichment }));
+  }, [enrichment, fileName, summary]);
+
   const actionsDisabled = Boolean(busyAction);
 
   return (
@@ -314,10 +405,80 @@ export function PdfItemWorkspacePanel({
         <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5">
           {t("pdf.workspace.count.notes", { count: notes.length })}
         </span>
+        {summary ? (
+          <button
+            type="button"
+            onClick={() => void handleCopySummary()}
+            className="rounded border border-border bg-muted/40 px-1.5 py-0.5 transition-colors hover:bg-muted"
+          >
+            {t("pdf.workspace.meta.copy")}
+          </button>
+        ) : null}
+        {summary ? (
+          <button
+            type="button"
+            onClick={() => void handleCopyCitation()}
+            className="rounded border border-border bg-muted/40 px-1.5 py-0.5 transition-colors hover:bg-muted"
+          >
+            {t("pdf.workspace.meta.copyCitation")}
+          </button>
+        ) : null}
+        {summary ? (
+          <button
+            type="button"
+            onClick={() => void handleCopyBibtex()}
+            className="rounded border border-border bg-muted/40 px-1.5 py-0.5 transition-colors hover:bg-muted"
+          >
+            {t("pdf.workspace.meta.copyBibtex")}
+          </button>
+        ) : null}
       </div>
 
       {isExpanded ? (
         <>
+          {summary ? (
+            <div className="mt-2 rounded-md border border-border bg-muted/20 px-2 py-2 text-[11px] text-muted-foreground">
+              <div className="font-medium text-foreground truncate">{enrichment?.title ?? summary.title}</div>
+              {(enrichment?.authors ?? summary.authors).length > 0 ? <div className="mt-1"><span className="font-medium">{t("pdf.workspace.meta.authors")}:</span> {(enrichment?.authors ?? summary.authors).join(", ")}</div> : null}
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {(enrichment?.year ?? summary.year) ? <span className="rounded border border-border bg-background/80 px-1.5 py-0.5">{t("pdf.workspace.meta.year")} {enrichment?.year ?? summary.year}</span> : null}
+                {summary.pageCount ? <span className="rounded border border-border bg-background/80 px-1.5 py-0.5">{t("pdf.workspace.meta.pages")} {summary.pageCount}</span> : null}
+                {(enrichment?.doi ?? summary.doi) ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleOpenDoi((enrichment?.doi ?? summary.doi)!)}
+                    className="rounded border border-border bg-background/80 px-1.5 py-0.5 text-left transition-colors hover:bg-muted"
+                  >
+                    DOI {enrichment?.doi ?? summary.doi}
+                  </button>
+                ) : null}
+                {(enrichment?.arxivId ?? summary.arxivId) ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleOpenArxiv((enrichment?.arxivId ?? summary.arxivId)!)}
+                    className="rounded border border-border bg-background/80 px-1.5 py-0.5 text-left transition-colors hover:bg-muted"
+                  >
+                    arXiv {enrichment?.arxivId ?? summary.arxivId}
+                  </button>
+                ) : null}
+                {enrichment?.venue ? <span className="rounded border border-border bg-background/80 px-1.5 py-0.5">{enrichment.venue}</span> : null}
+              </div>
+              {(enrichment?.subject ?? summary.subject) ? <div className="mt-1 truncate"><span className="font-medium">{t("pdf.workspace.meta.subject")}:</span> {enrichment?.subject ?? summary.subject}</div> : null}
+              {(enrichment?.keywords ?? summary.keywords).length > 0 ? (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {(enrichment?.keywords ?? summary.keywords).slice(0, 6).map((keyword) => (
+                    <span key={keyword} className="rounded bg-background/80 px-1.5 py-0.5">{keyword}</span>
+                  ))}
+                </div>
+              ) : null}
+              {enrichment?.abstract ? (
+                <div className="mt-2 line-clamp-4 text-[10px] leading-5 text-muted-foreground">
+                  {enrichment.abstract}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           {error ? (
             <div className="mt-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
               {error}

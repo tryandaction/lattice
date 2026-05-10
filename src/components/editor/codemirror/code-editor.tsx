@@ -17,6 +17,7 @@ import { defaultKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, syntaxTree } from "@codemirror/language";
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
 import { linter, type Diagnostic as CodeMirrorDiagnostic } from "@codemirror/lint";
+import { openSearchPanel } from "@codemirror/search";
 import { academicThemeExtension } from "./academic-theme";
 import { registerCodeMirrorView, unregisterCodeMirrorView, setActiveInputTargetFromElement } from "@/lib/unified-input-handler";
 import type { ExecutionContextRef, ExecutionProblem } from "@/lib/runner/types";
@@ -71,6 +72,8 @@ export interface CodeEditorRef {
   getEditorState: () => CodeEditorStateSnapshot | null;
   /** Restore editor state (cursor/selection/scroll) */
   restoreEditorState: (state: CodeEditorStateSnapshot) => void;
+  /** Open the built-in search panel */
+  openSearch: () => void;
 }
 
 /**
@@ -612,6 +615,12 @@ function CodeEditorComponent({
     return !viewRef.current.state.selection.main.empty;
   }, []);
 
+  const openSearch = useCallback(() => {
+    if (!viewRef.current) return;
+    openSearchPanel(viewRef.current);
+    viewRef.current.focus();
+  }, []);
+
   // Expose methods via ref
   useEffect(() => {
     if (editorRef && 'current' in editorRef) {
@@ -625,6 +634,7 @@ function CodeEditorComponent({
         hasSelection,
         getEditorState,
         restoreEditorState,
+        openSearch,
       };
     }
     return () => {
@@ -632,7 +642,7 @@ function CodeEditorComponent({
         editorRef.current = null;
       }
     };
-  }, [editorRef, flashLine, focus, getContent, getEditorState, getSelection, getSelectionDetails, hasSelection, restoreEditorState, scrollToLine]);
+  }, [editorRef, flashLine, focus, getContent, getEditorState, getSelection, getSelectionDetails, hasSelection, openSearch, restoreEditorState, scrollToLine]);
 
   // Error state
   if (error) {

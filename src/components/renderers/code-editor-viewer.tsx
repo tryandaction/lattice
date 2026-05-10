@@ -559,6 +559,13 @@ export function CodeEditorViewer({
           onTrigger: () => { void onSave?.(); },
         },
         {
+          id: "search",
+          label: t("workbench.search.title"),
+          priority: 15,
+          group: "secondary",
+          onTrigger: () => editorRef.current?.openSearch(),
+        },
+        {
           id: isRunning ? "stop" : "run",
           label: isRunning ? t("workbench.commandBar.stop") : t("workbench.commandBar.run"),
           priority: 20,

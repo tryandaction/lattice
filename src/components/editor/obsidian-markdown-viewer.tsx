@@ -457,6 +457,13 @@ export function ObsidianMarkdownViewer({
           onTrigger: () => setShowExportDialog(true),
         },
         {
+          id: "search",
+          label: t("workbench.search.title"),
+          priority: 25,
+          group: "secondary",
+          onTrigger: () => editorRef.current?.openSearch(),
+        },
+        {
           id: "outline",
           label: showOutline ? t("workbench.commandBar.hideOutline") : t("workbench.commandBar.showOutline"),
           priority: 30,

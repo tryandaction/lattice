@@ -17,6 +17,8 @@ export const ALLOWED_EXTENSIONS = new Set([
   "pdf",
   "ppt",
   "pptx",
+  "doc",
+  "docx",
   "md",
   "txt",
   "py",
@@ -51,6 +53,8 @@ export const IGNORED_DIRECTORIES = new Set([
 export const FILE_ICONS: Record<string, LucideIcon> = {
   // Documents
   pdf: FileText,
+  doc: FileText,
+  docx: FileText,
   txt: FileText,
   
   // Presentations

@@ -1601,6 +1601,34 @@ describe('PDFHighlighterAdapter', () => {
     });
   });
 
+  it('registers a search action in the PDF command bar', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().commandBarByPane['pane-left']).toBeTruthy();
+    });
+
+    const searchAction = useWorkspaceStore
+      .getState()
+      .commandBarByPane['pane-left']
+      ?.actions.find((item) => item.id === 'search');
+
+    expect(searchAction).toBeTruthy();
+    expect(searchAction?.active).toBe(false);
+
+    await act(async () => {
+      searchAction?.onTrigger?.();
+    });
+
+    await waitFor(() => {
+      const updated = useWorkspaceStore
+        .getState()
+        .commandBarByPane['pane-left']
+        ?.actions.find((item) => item.id === 'search');
+      expect(updated?.active).toBe(true);
+    });
+  });
+
   it('navigates to an annotation on an initially unrendered page on the first sidebar click', async () => {
     pdfMockState.numPages = 6;
     pdfMockState.viewerMetrics.scrollHeight = 7200;

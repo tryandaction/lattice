@@ -32,6 +32,9 @@ import { exportPdfWithAnnotations } from "./pdf-export-button";
 import { PdfAnnotationSidebar } from "./pdf-annotation-sidebar";
 import { PdfItemWorkspacePanel } from "./pdf-item-workspace-panel";
 import { InkSessionIndicator } from "./ink-session-indicator";
+import { InkWidthPicker } from "./ink-color-picker";
+import { PdfSearchOverlay } from "./pdf-search-overlay";
+import { DEFAULT_INK_STYLE } from "@/types/ink-annotation";
 import { adjustPopupPosition, type PopupSize } from "@/lib/coordinate-adapter";
 import type { AnnotationItem, PdfTarget } from "@/types/universal-annotation";
 import { useInkAnnotationStore } from "@/stores/ink-annotation-store";
@@ -125,6 +128,7 @@ import {
   resolvePdfSelectionFromNativeRange,
   type PdfResolvedSelection,
 } from "@/lib/pdf-selection-reconciler";
+import type { PdfSearchMatch } from "@/lib/pdf-search";
 
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -996,19 +1000,23 @@ function ColorPicker({
 interface PdfAnnotationDefaultsMenuProps {
   state: PdfAnnotationDefaultsMenuState;
   activeColor: string;
+  activeInkWidth: number;
   onSelectColor: (color: string) => void;
+  onSelectInkWidth: (width: number) => void;
   onClose: () => void;
 }
 
 function PdfAnnotationDefaultsMenu({
   state,
   activeColor,
+  activeInkWidth,
   onSelectColor,
+  onSelectInkWidth,
   onClose,
 }: PdfAnnotationDefaultsMenuProps) {
   const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
-  const adjustedPosition = adjustPopupPosition(state.position, { width: 224, height: 360 }, 12);
+  const adjustedPosition = adjustPopupPosition(state.position, { width: 248, height: state.tool === "ink" ? 432 : 360 }, 12);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -1072,6 +1080,18 @@ function PdfAnnotationDefaultsMenu({
             {resolveHighlightColor(activeColor) === color.hex ? <Check className="h-3.5 w-3.5" /> : null}
           </button>
         ))}
+        {state.tool === "ink" ? (
+          <div className="mt-2 border-t border-border px-1 pt-2">
+            <div className="px-1 pb-2 text-xs text-muted-foreground">{t("pdf.draw.width")}</div>
+            <InkWidthPicker
+              currentWidth={activeInkWidth}
+              onWidthChange={onSelectInkWidth}
+            />
+            <div className="px-1 pt-2 text-[11px] text-muted-foreground">
+              {t("pdf.draw.widthHint")}
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>,
     document.body,
@@ -1550,6 +1570,14 @@ interface InkAnnotationOverlayProps {
   scale: number;
 }
 
+type StoredInkPath = { x: number; y: number }[];
+type StoredInkAnnotationContent =
+  | StoredInkPath[]
+  | {
+      paths: StoredInkPath[];
+      width?: number;
+    };
+
 /**
  * Text annotation overlay component - renders text directly on PDF page
  */
@@ -1651,19 +1679,25 @@ function InkAnnotationOverlay({ annotation, scale }: InkAnnotationOverlayProps) 
     return null;
   }
 
-  let paths: { x: number; y: number }[][] | null = null;
+  let paths: StoredInkPath[] | null = null;
+  let strokeWidth = 1.8;
   try {
-    const content = JSON.parse(annotation.content || '[]');
+    const content = JSON.parse(annotation.content || '[]') as StoredInkAnnotationContent;
 
     if (Array.isArray(content) && content.length > 0) {
       // Check if it's the old format (array of points) or new format (array of arrays)
-      if (typeof content[0].x === 'number') {
+      if (!Array.isArray(content[0]) && typeof content[0] === "object" && content[0] !== null && 'x' in content[0]) {
         // Old format: single path
-        paths = [content as { x: number; y: number }[]];
+        paths = [content as unknown as StoredInkPath];
       } else if (Array.isArray(content[0])) {
         // New format: array of paths
-        paths = content as { x: number; y: number }[][];
+        paths = content as StoredInkPath[];
       }
+    } else if (content && typeof content === 'object' && 'paths' in content && Array.isArray(content.paths)) {
+      paths = content.paths;
+      strokeWidth = typeof content.width === 'number' && Number.isFinite(content.width)
+        ? Math.max(1, content.width)
+        : strokeWidth;
     }
   } catch {
     return null;
@@ -1696,7 +1730,7 @@ function InkAnnotationOverlay({ annotation, scale }: InkAnnotationOverlayProps) 
             d={pathData}
             fill="none"
             stroke={annotation.style.color}
-            strokeWidth={0.3 / scale}
+            strokeWidth={strokeWidth / scale}
             strokeLinecap="round"
             strokeLinejoin="round"
             vectorEffect="non-scaling-stroke"
@@ -1741,9 +1775,10 @@ interface CurrentInkPathOverlayProps {
   path: { x: number; y: number }[];
   color: string;
   scale: number;
+  strokeWidth: number;
 }
 
-function CurrentInkPathOverlay({ path, color, scale }: CurrentInkPathOverlayProps) {
+function CurrentInkPathOverlay({ path, color, scale, strokeWidth }: CurrentInkPathOverlayProps) {
   if (path.length < 2) return null;
 
   const pathData = path.map((point, i) => {
@@ -1762,7 +1797,7 @@ function CurrentInkPathOverlay({ path, color, scale }: CurrentInkPathOverlayProp
         d={pathData}
         fill="none"
         stroke={color}
-        strokeWidth={0.3 / scale}
+        strokeWidth={strokeWidth / scale}
         strokeLinecap="round"
         strokeLinejoin="round"
         vectorEffect="non-scaling-stroke"
@@ -1779,10 +1814,11 @@ interface CurrentInkPathPortalProps {
   page: number;
   color: string;
   scale: number;
+  strokeWidth: number;
   paneRootRef: React.RefObject<HTMLElement | null>;
 }
 
-function CurrentInkPathPortal({ path, page, color, scale, paneRootRef }: CurrentInkPathPortalProps) {
+function CurrentInkPathPortal({ path, page, color, scale, strokeWidth, paneRootRef }: CurrentInkPathPortalProps) {
   const container = usePdfPageOverlayContainer({
     paneRootRef,
     page,
@@ -1794,7 +1830,7 @@ function CurrentInkPathPortal({ path, page, color, scale, paneRootRef }: Current
   if (!container) return null;
 
   return ReactDOM.createPortal(
-    <CurrentInkPathOverlay path={path} color={color} scale={scale} />,
+    <CurrentInkPathOverlay path={path} color={color} scale={scale} strokeWidth={strokeWidth} />,
     container
   );
 }
@@ -1879,6 +1915,59 @@ function PdfTransientSelectionPortal({ selection, paneId, page, paneRootRef, col
       color={color}
       styleType={styleType}
     />,
+    container,
+  );
+}
+
+interface PdfSearchMatchOverlayProps {
+  match: PdfSearchMatch;
+}
+
+function PdfSearchMatchOverlay({ match }: PdfSearchMatchOverlayProps) {
+  if (match.rects.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 11 }}>
+      {match.rects.map((rect, index) => (
+        <div
+          key={`${match.page}-${match.index}-${index}`}
+          className="absolute rounded-sm"
+          style={{
+            left: `${rect.left * 100}%`,
+            top: `${rect.top * 100}%`,
+            width: `${rect.width * 100}%`,
+            height: `${rect.height * 100}%`,
+            backgroundColor: "rgba(59, 130, 246, 0.18)",
+            boxShadow: "inset 0 0 0 1px rgba(59, 130, 246, 0.45)",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+interface PdfSearchMatchPortalProps {
+  match: PdfSearchMatch;
+  paneRootRef: React.RefObject<HTMLElement | null>;
+}
+
+function PdfSearchMatchPortal({ match, paneRootRef }: PdfSearchMatchPortalProps) {
+  const container = usePdfPageOverlayContainer({
+    paneRootRef,
+    page: match.page,
+    overlayClassName: `pdf-search-match-overlay-${match.page}`,
+    overlayStyle: 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:11;',
+    dependencyKey: `${match.page}:${match.index}:${match.preview}`,
+  });
+
+  if (!container) {
+    return null;
+  }
+
+  return ReactDOM.createPortal(
+    <PdfSearchMatchOverlay match={match} />,
     container,
   );
 }
@@ -2230,11 +2319,14 @@ export function PDFHighlighterAdapter({
   const [zoomMode, setZoomMode] = useState<PdfZoomMode>(cachedPdfViewState?.zoomMode ?? 'fit-width');
   const [activeTool, setActiveTool] = useState<AnnotationTool>('select');
   const [activeColor, setActiveColor] = useState(DEFAULT_HIGHLIGHT_COLOR.hex);
+  const activeInkWidth = useInkAnnotationStore((state) => state.currentStyle.width);
+  const setInkCurrentStyle = useInkAnnotationStore((state) => state.setCurrentStyle);
   const [annotationDefaultsMenu, setAnnotationDefaultsMenu] = useState<PdfAnnotationDefaultsMenuState | null>(null);
   const [pendingPin, setPendingPin] = useState<{ x: number; y: number; page: number } | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [sidebarSize, setSidebarSize] = useState(cachedPdfViewState?.sidebarSize ?? 28);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   const [annotationMenuState, setAnnotationMenuState] = useState<{
@@ -2262,14 +2354,38 @@ export function PDFHighlighterAdapter({
     const candidate = rootHandle as Partial<FileSystemDirectoryHandle> | null;
     return Boolean(candidate && typeof candidate.getDirectoryHandle === "function" && typeof candidate.values === "function");
   }, [rootHandle]);
+  const inkWidthInitializedRef = useRef(false);
 
   const handlePdfDocumentReady = useCallback((pdfDocument: PDFDocumentProxy) => {
     setPdfLoadError(null);
+    setPdfDocument(pdfDocument);
     setNumPages(pdfDocument.numPages);
   }, []);
 
+  useEffect(() => {
+    if (!inkWidthInitializedRef.current && activeInkWidth === DEFAULT_INK_STYLE.width) {
+      inkWidthInitializedRef.current = true;
+      setInkCurrentStyle({ width: 5 });
+      return;
+    }
+    inkWidthInitializedRef.current = true;
+  }, [activeInkWidth, setInkCurrentStyle]);
+
   const handlePdfDocumentError = useCallback((error: Error) => {
     setPdfLoadError(error.message || "Failed to load PDF");
+    setPdfDocument(null);
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, []);
 
   const handlePageMeasure = useCallback((pageNumber: number, width: number, height: number) => {
@@ -2620,6 +2736,7 @@ export function PDFHighlighterAdapter({
   const [editingTextAnnotation, setEditingTextAnnotation] = useState<{ annotation: AnnotationItem; position: { x: number; y: number } } | null>(null);
   const [pdfLoadError, setPdfLoadError] = useState<string | null>(null);
   const [numPages, setNumPages] = useState<number>(0);
+  const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null);
   const [fitScale, setFitScale] = useState<number>(cachedPdfViewState?.scale ?? 1.2);
   const [pageDimensions, setPageDimensions] = useState<Map<number, { width: number; height: number }>>(new Map());
   const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set([1, 2, 3]));
@@ -2629,6 +2746,7 @@ export function PDFHighlighterAdapter({
     mode: SelectionAiMode;
     returnFocusTo?: HTMLElement | null;
   } | null>(null);
+  const [activeSearchMatch, setActiveSearchMatch] = useState<PdfSearchMatch | null>(null);
   const [pendingSelectionDraft, setPendingSelectionDraft] = useState<{
     selection: PdfResolvedSelection;
     position: { x: number; y: number };
@@ -3877,8 +3995,11 @@ export function PDFHighlighterAdapter({
         color: merged.color,
         type: 'ink',
       },
-      // Store all stroke paths as JSON for rendering
-      content: merged.content,
+      // Store stroke geometry plus width so rendering and export stay stable.
+      content: JSON.stringify({
+        paths: JSON.parse(merged.content),
+        width: activeInkWidth,
+      }),
       author: 'user',
     };
     const pageElement = findPdfPageElementInScope(containerRef.current, merged.page);
@@ -3896,7 +4017,7 @@ export function PDFHighlighterAdapter({
     }
 
     addAnnotation(inkAnnotation);
-  }, [addAnnotation]);
+  }, [activeInkWidth, addAnnotation]);
 
   // Use ink annotation merge hook
   const {
@@ -4373,6 +4494,15 @@ export function PDFHighlighterAdapter({
           onTrigger: zoomOut,
         },
         {
+          id: "search",
+          label: t("pdf.search.open"),
+          icon: "search",
+          active: searchOpen,
+          priority: 34,
+          group: "secondary",
+          onTrigger: () => setSearchOpen((value) => !value),
+        },
+        {
           id: "export",
           label: t("workbench.commandBar.export"),
           icon: "file-output",
@@ -4390,6 +4520,7 @@ export function PDFHighlighterAdapter({
     filePath,
     handleExportPdf,
     openAnnotationDefaultsMenu,
+    searchOpen,
     showSidebar,
     t,
     zoomIn,
@@ -5102,7 +5233,7 @@ export function PDFHighlighterAdapter({
     setIsDrawingStroke(false);
     setCurrentInkPath([]);
     setCurrentInkPage(null);
-  }, [isDrawingStroke, activeColor, addInkStroke]);
+  }, [isDrawingStroke, activeColor, activeInkWidth, addInkStroke]);
 
   // Handle text annotation save
   const handleSaveTextAnnotation = useCallback((text: string, textColor: string, fontSize: number, bgColor: string) => {
@@ -5367,6 +5498,25 @@ export function PDFHighlighterAdapter({
     pendingAnnotationScrollFrameRef.current = window.requestAnimationFrame(run);
   }, [cancelPendingAnnotationScroll, scrollPdfTargetIntoView]);
 
+  const jumpToPdfPage = useCallback((pageNumber: number, rects?: PdfSearchMatch["rects"]) => {
+    if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > numPages) {
+      return;
+    }
+
+    schedulePdfTargetIntoViewAfterLayout({
+      page: pageNumber,
+      rects: rects?.length
+        ? rects.map((rect) => ({
+            x1: rect.left,
+            y1: rect.top,
+            x2: rect.left + rect.width,
+            y2: rect.top + rect.height,
+          }))
+        : undefined,
+      flashPage: true,
+    });
+  }, [numPages, schedulePdfTargetIntoViewAfterLayout]);
+
   // Handle sidebar annotation selection - scroll to exact annotation position
   const handleSidebarSelect = useCallback((annotation: AnnotationItem) => {
     setShowSidebar(true);
@@ -5553,6 +5703,19 @@ export function PDFHighlighterAdapter({
           className="relative h-full w-full min-w-0 overflow-auto bg-muted/30 p-4"
           data-testid={isDiagnosticsMode ? `pdf-viewer-container-${paneId}` : undefined}
         >
+          <PdfSearchOverlay
+            key={`${paneId}:${searchOpen ? "open" : "closed"}`}
+            pdfDocument={pdfDocument}
+            fileHandle={fileHandle}
+            numPages={numPages}
+            onNavigateToPage={jumpToPdfPage}
+            onActiveMatchChange={setActiveSearchMatch}
+            isOpen={searchOpen}
+            onClose={() => {
+              setSearchOpen(false);
+              setActiveSearchMatch(null);
+            }}
+          />
           <Document
             key={`${paneId}:${fileId}`}
             file={pdfFileData}
@@ -5657,6 +5820,13 @@ export function PDFHighlighterAdapter({
         />
       ))}
 
+      {activeSearchMatch ? (
+        <PdfSearchMatchPortal
+          match={activeSearchMatch}
+          paneRootRef={containerRef}
+        />
+      ) : null}
+
       {inkAnnotations.map((ann) => {
         if (ann.target.type !== 'pdf') return null;
         const target = ann.target as PdfTarget;
@@ -5715,6 +5885,7 @@ export function PDFHighlighterAdapter({
           page={currentInkPage}
           color={activeColor}
           scale={renderScale}
+          strokeWidth={activeInkWidth}
           paneRootRef={containerRef}
         />
       )}
@@ -5754,7 +5925,9 @@ export function PDFHighlighterAdapter({
         <PdfAnnotationDefaultsMenu
           state={annotationDefaultsMenu}
           activeColor={activeColor}
+          activeInkWidth={activeInkWidth}
           onSelectColor={setActiveColor}
+          onSelectInkWidth={(width) => setInkCurrentStyle({ width })}
           onClose={() => setAnnotationDefaultsMenu(null)}
         />
       ) : null}
@@ -5849,6 +6022,7 @@ export function PDFHighlighterAdapter({
                   paneId={paneId}
                   annotations={dedupedAnnotations}
                   manifest={pdfItemManifest}
+                  pdfDocument={pdfDocument}
                 />
                 <div className="min-h-0 flex-1 overflow-hidden">
                   <PdfAnnotationSidebar

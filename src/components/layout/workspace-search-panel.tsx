@@ -7,6 +7,7 @@ import { isDirectoryNode, isFileNode, type FileNode, type TreeNode } from "@/typ
 import { useI18n } from "@/hooks/use-i18n";
 import { navigateLink } from "@/lib/link-router/navigate-link";
 import { useSettingsStore } from "@/stores/settings-store";
+import { extractSearchableTextForFile } from "@/lib/searchable-text";
 
 interface SearchMatch {
   id: string;
@@ -39,6 +40,9 @@ const SEARCHABLE_EXTENSIONS = new Set([
   "json",
   "css",
   "html",
+  "htm",
+  "ipynb",
+  "docx",
 ]);
 
 const LINE_NAVIGABLE_EXTENSIONS = new Set([
@@ -180,7 +184,10 @@ export function WorkspaceSearchPanel() {
         if (mode === "name_and_content" && SEARCHABLE_EXTENSIONS.has(file.extension)) {
           try {
             const blob = await file.handle.getFile();
-            const text = await blob.text();
+            const text = await extractSearchableTextForFile({
+              extension: file.extension,
+              file: blob,
+            });
             const lineMatches = buildLineMatches(text, keyword);
             for (const match of lineMatches) {
               if (totalMatches >= MAX_TOTAL_MATCHES || matches.length >= MAX_MATCHES_PER_FILE + 1) {

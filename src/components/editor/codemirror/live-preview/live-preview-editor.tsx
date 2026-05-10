@@ -17,7 +17,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { markdown } from '@codemirror/lang-markdown';
 import { bracketMatching } from '@codemirror/language';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
-import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import { search, searchKeymap, highlightSelectionMatches, openSearchPanel } from '@codemirror/search';
 import { logger } from '@/lib/logger';
 
 import { cursorContextExtension, setEditorFocus } from './cursor-context-plugin';
@@ -187,6 +187,8 @@ export interface LivePreviewEditorRef {
   restoreEditorState: (state: EditorStateSnapshot) => void;
   /** Reveal a code block and focus a target line inside it */
   revealCodeBlockLine: (request: LivePreviewCodeBlockRevealRequest) => void;
+  /** Open the built-in search panel */
+  openSearch: () => void;
 }
 
 /**
@@ -905,6 +907,12 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
       }
     });
   }, []);
+
+  const openSearch = useCallback(() => {
+    if (!viewRef.current) return;
+    openSearchPanel(viewRef.current);
+    viewRef.current.focus();
+  }, []);
   
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
@@ -914,7 +922,8 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     getEditorState,
     restoreEditorState: applyEditorState,
     revealCodeBlockLine,
-  }), [scrollToLine, flashLine, focus, getEditorState, applyEditorState, revealCodeBlockLine]);
+    openSearch,
+  }), [scrollToLine, flashLine, focus, getEditorState, applyEditorState, revealCodeBlockLine, openSearch]);
 
   if (!librariesLoaded) {
     return (
