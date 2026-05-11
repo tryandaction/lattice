@@ -8,6 +8,7 @@ import {
   Code2,
   Command,
   Copy,
+  Eraser,
   Eye,
   FileCode2,
   FileOutput,
@@ -113,6 +114,7 @@ const ACTION_ICON_MAP = {
   stickyNote: StickyNote,
   type: Type,
   pencil: Pencil,
+  eraser: Eraser,
   mousePointer2: MousePointer2,
   command: Command,
 } as const;
@@ -152,6 +154,8 @@ function resolveActionIcon(action: { id: string; icon?: string; label: string })
       return "square";
     case "pencil":
       return "pencil";
+    case "eraser":
+      return "eraser";
     case "mouse-pointer-2":
       return "mousePointer2";
     case "file-output":
@@ -186,6 +190,7 @@ function resolveActionIcon(action: { id: string; icon?: string; label: string })
   if (actionId === "tool-text") return "type";
   if (actionId === "tool-area") return "square";
   if (actionId === "tool-draw") return "pencil";
+  if (actionId === "tool-eraser") return "eraser";
   return "command";
 }
 

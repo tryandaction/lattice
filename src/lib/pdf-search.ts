@@ -1,4 +1,4 @@
-import type { PdfPageTextModel, PdfPageTextSegment } from "@/lib/pdf-page-text-cache";
+import type { PdfPageTextModel } from "@/lib/pdf-page-text-cache";
 
 export interface PdfSearchMatchRect {
   left: number;

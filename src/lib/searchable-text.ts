@@ -1,4 +1,7 @@
 import mammoth from "mammoth";
+import { isCodeFile } from "@/lib/file-utils";
+
+const NON_LINE_NAVIGABLE_SEARCH_EXTENSIONS = new Set(["html", "htm", "ipynb", "docx"]);
 
 function htmlToPlainText(html: string): string {
   return html
@@ -14,13 +17,23 @@ function htmlToPlainText(html: string): string {
     .trim();
 }
 
+export function isSearchableTextExtension(extension: string): boolean {
+  const ext = extension.toLowerCase();
+  return ext === "md" || ext === "ipynb" || ext === "docx" || isCodeFile(ext);
+}
+
+export function isLineNavigableSearchExtension(extension: string): boolean {
+  const ext = extension.toLowerCase();
+  return isSearchableTextExtension(ext) && !NON_LINE_NAVIGABLE_SEARCH_EXTENSIONS.has(ext);
+}
+
 export async function extractSearchableTextForFile(input: {
   extension: string;
   file: File;
 }): Promise<string> {
   const extension = input.extension.toLowerCase();
 
-  if (["md", "txt", "py", "js", "jsx", "ts", "tsx", "json", "css", "html", "htm"].includes(extension)) {
+  if (extension === "md" || isCodeFile(extension)) {
     const text = await input.file.text();
     return extension === "html" || extension === "htm"
       ? htmlToPlainText(text)

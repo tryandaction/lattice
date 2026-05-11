@@ -226,6 +226,41 @@ describe("pdf-selection-reconciler", () => {
     }
   });
 
+  it("uses substring geometry instead of the whole text-layer span", () => {
+    const page = createPageContext({
+      fragments: [
+        { text: "Here we demonstrate a new neutral atom qubit", left: 40, top: 24, width: 420, height: 24 },
+      ],
+    });
+    const range = createRangeWithinFragment(
+      "Here we demonstrate a new neutral atom qubit",
+      "new neutral atom qubit",
+    );
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: range.toString(),
+      pages: [page],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const fullText = "Here we demonstrate a new neutral atom qubit";
+      const selectedText = "new neutral atom qubit";
+      const startRatio = fullText.indexOf(selectedText) / fullText.length;
+      const expectedLeft = (40 + (420 * startRatio)) / 640;
+      const expectedWidth = (420 * (selectedText.length / fullText.length)) / 640;
+
+      expect(result.selection.textQuote.exact).toBe(selectedText);
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(expectedLeft, 3);
+      expect(result.selection.pageRects[0] ? result.selection.pageRects[0].x2 - result.selection.pageRects[0].x1 : 0)
+        .toBeCloseTo(expectedWidth, 3);
+      expect(result.selection.pageRects[0]?.x1).toBeGreaterThan(40 / 640);
+      expect(result.selection.pageRects[0] ? result.selection.pageRects[0].x2 - result.selection.pageRects[0].x1 : 1)
+        .toBeLessThan(420 / 640);
+    }
+  });
+
   it("extracts multi-fragment text as a single canonical phrase", () => {
     const page = createPageContext({
       fragments: [
@@ -519,6 +554,50 @@ describe("pdf-selection-reconciler", () => {
       expect(result.selection.text).toBe("computation");
       expect(result.selection.textQuote.exact).toBe("computation");
       expect(result.selection.textQuote.source).toBe("pdfium-native");
+    }
+  });
+
+  it("keeps the full DOM quote when native text recognition only resolves an inner substring", () => {
+    const selectedText = "Here we demonstrate a new neutral atom qubit using the nuclear spin";
+    const innerText = "new neutral atom qubit using the nuclear spin";
+    const page = createPageContext({
+      fragments: [
+        { text: "Here we demonstrate a", left: 80, top: 120, width: 210, height: 24 },
+        { text: "new neutral atom qubit using the nuclear spin", left: 306, top: 120, width: 360, height: 24 },
+      ],
+    });
+    const range = createRangeAcrossFragments({
+      startFragment: "Here we demonstrate a",
+      endFragment: "new neutral atom qubit using the nuclear spin",
+    });
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: selectedText,
+      pages: [page],
+      nativeLayout: {
+        source: "pdfium",
+        pageNumber: 1,
+        width: 640,
+        height: 960,
+        text: innerText,
+        chars: Array.from(innerText).map((character, index) => ({
+          charIndex: index,
+          text: character,
+          x1: 306 + (index * 8),
+          y1: 120,
+          x2: 312 + (index * 8),
+          y2: 144,
+          fontSize: 24,
+        })),
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(selectedText);
+      expect(result.selection.textQuote.source).toBe("pdfjs-text-model");
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(80 / 640, 3);
     }
   });
 

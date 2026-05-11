@@ -141,28 +141,39 @@ function buildNormalizedOffsetMap(text: string): {
   const rawToNormalizedOffsets = new Array(text.length + 1).fill(0);
   let normalizedText = "";
   let sawNonWhitespace = false;
-  let pendingWhitespace = false;
+  let pendingWhitespaceStart: number | null = null;
 
   for (let index = 0; index < text.length; index += 1) {
     rawToNormalizedOffsets[index] = normalizedText.length;
     const character = text[index];
     if (/\s/.test(character)) {
-      if (sawNonWhitespace) {
-        pendingWhitespace = true;
+      if (sawNonWhitespace && pendingWhitespaceStart === null) {
+        pendingWhitespaceStart = index;
       }
+      rawToNormalizedOffsets[index + 1] = normalizedText.length;
       continue;
     }
 
-    if (pendingWhitespace && normalizedText.length > 0) {
+    if (pendingWhitespaceStart !== null && normalizedText.length > 0) {
       normalizedText += " ";
+      for (let boundary = pendingWhitespaceStart + 1; boundary <= index; boundary += 1) {
+        rawToNormalizedOffsets[boundary] = normalizedText.length;
+      }
+      pendingWhitespaceStart = null;
     }
 
+    rawToNormalizedOffsets[index] = normalizedText.length;
     normalizedText += character;
     sawNonWhitespace = true;
-    pendingWhitespace = false;
+    rawToNormalizedOffsets[index + 1] = normalizedText.length;
   }
 
   rawToNormalizedOffsets[text.length] = normalizedText.length;
+  if (pendingWhitespaceStart !== null) {
+    for (let boundary = pendingWhitespaceStart + 1; boundary <= text.length; boundary += 1) {
+      rawToNormalizedOffsets[boundary] = normalizedText.length;
+    }
+  }
 
   return {
     normalizedText,

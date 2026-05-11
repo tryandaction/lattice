@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { extractSearchableTextForFile } from "../searchable-text";
+import {
+  extractSearchableTextForFile,
+  isLineNavigableSearchExtension,
+  isSearchableTextExtension,
+} from "../searchable-text";
 
 const extractRawTextMock = vi.fn();
 
@@ -53,5 +57,20 @@ describe("searchable text extraction", () => {
 
     expect(text).toContain("keyword body");
     expect(text).not.toContain("<h1>");
+  });
+
+  it("treats project code extensions as searchable text", () => {
+    expect(isSearchableTextExtension("rs")).toBe(true);
+    expect(isSearchableTextExtension("yaml")).toBe(true);
+    expect(isSearchableTextExtension("md")).toBe(true);
+    expect(isSearchableTextExtension("pdf")).toBe(false);
+  });
+
+  it("marks only line-addressable text formats as line navigable", () => {
+    expect(isLineNavigableSearchExtension("ts")).toBe(true);
+    expect(isLineNavigableSearchExtension("md")).toBe(true);
+    expect(isLineNavigableSearchExtension("html")).toBe(false);
+    expect(isLineNavigableSearchExtension("ipynb")).toBe(false);
+    expect(isLineNavigableSearchExtension("docx")).toBe(false);
   });
 });

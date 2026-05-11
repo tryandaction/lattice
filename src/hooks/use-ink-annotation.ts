@@ -62,6 +62,7 @@ export interface UseInkAnnotationReturn {
   addStroke: (stroke: InkStroke) => void;
   isDrawing: boolean;
   strokeCount: number;
+  pendingStrokes: InkStroke[];
   finalizeNow: () => void;
   cancelDrawing: () => void;
 }
@@ -285,6 +286,7 @@ export function useInkAnnotation(options: UseInkAnnotationOptions): UseInkAnnota
     addStroke,
     isDrawing: buffer !== null && buffer.strokes.length > 0,
     strokeCount: buffer?.strokes.length ?? 0,
+    pendingStrokes: buffer?.strokes ?? [],
     finalizeNow,
     cancelDrawing,
   };

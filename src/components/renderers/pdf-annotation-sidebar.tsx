@@ -46,6 +46,7 @@ import type { PaneId } from "@/types/layout";
 import type { AnnotationBacklink } from "@/lib/annotation-backlinks";
 import { useI18n } from "@/hooks/use-i18n";
 import { getLocale, t as translate } from "@/lib/i18n";
+import { getPdfInkBoundingBox, parsePdfInkContent, type ParsedPdfInkContent } from "@/lib/pdf-ink";
 
 function dedupePdfAnnotations(annotations: AnnotationItem[]): AnnotationItem[] {
   const seen = new Set<string>();
@@ -751,6 +752,61 @@ function AnnotationContextMenu({
   );
 }
 
+function PdfInkSidebarPreview({
+  parsed,
+  color,
+}: {
+  parsed: ParsedPdfInkContent;
+  color: string;
+}) {
+  const boundingBox = getPdfInkBoundingBox(parsed.paths, 0.035);
+  if (!boundingBox) {
+    return null;
+  }
+
+  const viewWidth = Math.max(0.01, boundingBox.x2 - boundingBox.x1);
+  const viewHeight = Math.max(0.01, boundingBox.y2 - boundingBox.y1);
+  const aspectRatio = Math.max(1.25, Math.min(2.4, viewWidth / viewHeight));
+  const strokeWidth = Math.max(3, Math.min(9, parsed.width * 0.75));
+
+  return (
+    <div
+      className="mb-2 overflow-hidden rounded-md border border-border bg-gradient-to-br from-background to-muted/35"
+      data-testid="pdf-ink-sidebar-preview"
+      style={{ aspectRatio }}
+    >
+      <svg
+        className="block h-full w-full"
+        viewBox="0 0 100 100"
+        preserveAspectRatio="xMidYMid meet"
+        aria-hidden="true"
+      >
+        {parsed.paths.map((path, pathIndex) => {
+          const pathData = path.map((point, pointIndex) => {
+            const command = pointIndex === 0 ? "M" : "L";
+            const x = ((point.x - boundingBox.x1) / viewWidth) * 100;
+            const y = ((point.y - boundingBox.y1) / viewHeight) * 100;
+            return `${command} ${x} ${y}`;
+          }).join(" ");
+
+          return (
+            <path
+              key={`${pathIndex}-${path.length}`}
+              d={pathData}
+              fill="none"
+              stroke={resolveHighlightColor(color)}
+              strokeWidth={strokeWidth}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 // Zotero-style annotation card
 function AnnotationCard({
   annotation,
@@ -807,6 +863,9 @@ function AnnotationCard({
     (annotation.style.type === 'area' || annotation.style.type === 'ink') &&
     annotation.preview?.type === 'image'
   ) ? annotation.preview : null;
+  const inkPreview = annotation.style.type === 'ink'
+    ? parsePdfInkContent(annotation.content)
+    : null;
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -988,7 +1047,11 @@ function AnnotationCard({
             </div>
           )}
 
-          {imagePreview && (
+          {inkPreview ? (
+            <PdfInkSidebarPreview parsed={inkPreview} color={annotation.style.color} />
+          ) : null}
+
+          {imagePreview && annotation.style.type !== 'ink' && (
             <div className="mb-2 overflow-hidden rounded-md border border-border bg-background">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img

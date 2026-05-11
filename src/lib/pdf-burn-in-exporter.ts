@@ -8,6 +8,7 @@
 import { PDFDocument, rgb, PDFPage } from 'pdf-lib';
 import type { AnnotationItem, PdfTarget, BoundingBox } from '@/types/universal-annotation';
 import { hexToRGB } from './annotation-colors';
+import { mergePdfTargetRectsForTextMarkup } from './pdf-text-rects';
 
 // ============================================================================
 // Constants
@@ -131,7 +132,11 @@ export function drawHighlightAnnotation(
   const color = annotation.style.color;
   let rectCount = 0;
   
-  for (const rect of target.rects) {
+  const drawRects = annotation.style.type === 'highlight' || annotation.style.type === 'underline'
+    ? mergePdfTargetRectsForTextMarkup(target.rects)
+    : target.rects;
+
+  for (const rect of drawRects) {
     drawHighlightRect(page, rect, color, opacity);
     rectCount++;
   }

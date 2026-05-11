@@ -12,6 +12,7 @@ import ReactDOM from "react-dom";
 import { usePathname } from "next/navigation";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { Document, Page, pdfjs } from "react-pdf";
+import type { CSSProperties } from "react";
 import {
   Loader2,
   StickyNote,
@@ -31,7 +32,6 @@ import { HIGHLIGHT_COLORS, BACKGROUND_COLORS, TEXT_COLORS, TEXT_FONT_SIZES, DEFA
 import { exportPdfWithAnnotations } from "./pdf-export-button";
 import { PdfAnnotationSidebar } from "./pdf-annotation-sidebar";
 import { PdfItemWorkspacePanel } from "./pdf-item-workspace-panel";
-import { InkSessionIndicator } from "./ink-session-indicator";
 import { InkWidthPicker } from "./ink-color-picker";
 import { PdfSearchOverlay } from "./pdf-search-overlay";
 import { DEFAULT_INK_STYLE } from "@/types/ink-annotation";
@@ -124,11 +124,28 @@ import {
 } from "@/lib/pdf-highlight-mapping";
 import type { BinaryViewerContent } from "@/types/viewer-content";
 import { getCanonicalPdfAnnotationText } from "@/types/universal-annotation";
+import type { UnderlineStyleType } from "@/types/universal-annotation";
 import {
   resolvePdfSelectionFromNativeRange,
   type PdfResolvedSelection,
 } from "@/lib/pdf-selection-reconciler";
 import type { PdfSearchMatch } from "@/lib/pdf-search";
+import {
+  mergePageRelativePdfTargetRects,
+  mergePdfTargetRectsForTextMarkup,
+  mergePdfTextOverlayRects,
+  type PdfMergedTextOverlaySegment,
+} from "@/lib/pdf-text-rects";
+import {
+  DEFAULT_PDF_INK_ERASER_SIZE,
+  DEFAULT_PDF_INK_WIDTH,
+  getPdfInkBoundingBox,
+  parsePdfInkContent,
+  serializePdfInkContent,
+  updatePdfInkAnnotationAfterErase,
+  type PdfInkEraserMode,
+  type PdfInkPath,
+} from "@/lib/pdf-ink";
 
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -400,6 +417,11 @@ function buildPdfAnnotationPreviewFromPageElement(
     paddingRatio?: number;
     minCssWidth?: number;
     minCssHeight?: number;
+    ink?: {
+      paths: PdfInkPath[];
+      color: string;
+      width: number;
+    };
   },
 ): AnnotationItem["preview"] | undefined {
   if (!pageElement) {
@@ -450,6 +472,41 @@ function buildPdfAnnotationPreviewFromPageElement(
     cropWidth,
     cropHeight,
   );
+
+  if (options?.ink && options.ink.paths.length > 0) {
+    const scaleX = canvas.width;
+    const scaleY = canvas.height;
+    const deviceScale = pageRect.width > 0 ? canvas.width / pageRect.width : 1;
+    const lineWidth = Math.max(3 * deviceScale, options.ink.width * deviceScale);
+
+    context.save();
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.strokeStyle = resolveHighlightColor(options.ink.color);
+    context.lineWidth = lineWidth;
+    context.shadowColor = "rgba(0, 0, 0, 0.18)";
+    context.shadowBlur = Math.max(1, lineWidth * 0.25);
+
+    for (const path of options.ink.paths) {
+      if (path.length < 2) {
+        continue;
+      }
+
+      context.beginPath();
+      path.forEach((point, index) => {
+        const x = (point.x * scaleX) - cropX;
+        const y = (point.y * scaleY) - cropY;
+        if (index === 0) {
+          context.moveTo(x, y);
+          return;
+        }
+        context.lineTo(x, y);
+      });
+      context.stroke();
+    }
+
+    context.restore();
+  }
 
   return buildPdfAreaPreview({
     dataUrl: previewCanvas.toDataURL("image/png"),
@@ -727,13 +784,15 @@ function useMeasuredPopupSize(
 }
 
 // Annotation tool types (Zotero-style)
-type AnnotationTool = 'select' | 'highlight' | 'underline' | 'note' | 'text' | 'area' | 'ink';
+type AnnotationTool = 'select' | 'highlight' | 'underline' | 'note' | 'text' | 'area' | 'ink' | 'eraser';
 type PdfAnnotationDefaultTool = Exclude<AnnotationTool, 'select'>;
 
 interface PdfAnnotationDefaultsMenuState {
   tool: PdfAnnotationDefaultTool;
   position: { x: number; y: number };
 }
+
+const DEFAULT_UNDERLINE_STYLE: UnderlineStyleType = "solid";
 
 const MIN_INK_POINT_DELTA_SQUARED = 0.000004;
 const MIN_SCROLL_OVERFLOW_PX = 24;
@@ -747,6 +806,44 @@ const reactPdfWorkerUrl = new URL(
   import.meta.url,
 ).toString();
 pdfjs.GlobalWorkerOptions.workerSrc = reactPdfWorkerUrl;
+
+function buildPdfUnderlineDecorationStyle(input: {
+  color: string;
+  underlineStyle: UnderlineStyleType;
+  isActive: boolean;
+  segment: PdfMergedTextOverlaySegment;
+}): CSSProperties {
+  const baseColor = input.color;
+  const opacity = input.isActive ? 1 : 0.92;
+  const baselineHeight = Math.max(1.5, Math.min(3, input.segment.baselineHeight * 0.12));
+  const baselineTop = Math.max(0, input.segment.baselineTop - input.segment.top + input.segment.baselineHeight - baselineHeight);
+
+  if (input.underlineStyle === "wavy") {
+    const waveHeight = Math.max(4, Math.min(8, input.segment.baselineHeight * 0.28));
+    const strokeWidth = Math.max(1.5, Math.min(2.5, input.segment.baselineHeight * 0.08));
+    const waveY = waveHeight / 2;
+    const wavePath = `M0 ${waveY} Q 4 0 8 ${waveY} T 16 ${waveY}`;
+    const encoded = encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="${waveHeight}" viewBox="0 0 16 ${waveHeight}"><path d="${wavePath}" fill="none" stroke="${baseColor}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    );
+
+    return {
+      backgroundColor: "transparent",
+      backgroundImage: `url("data:image/svg+xml,${encoded}")`,
+      backgroundRepeat: "repeat-x",
+      backgroundPosition: `left ${baselineTop}px`,
+      backgroundSize: `16px ${waveHeight}px`,
+      opacity,
+    };
+  }
+
+  return {
+    backgroundColor: "transparent",
+    borderBottom: `${baselineHeight}px solid ${baseColor}`,
+    paddingBottom: Math.max(0, input.segment.height - baselineTop - baselineHeight),
+    opacity,
+  };
+}
 
 interface AdapterVirtualPageProps {
   pageNumber: number;
@@ -836,17 +933,19 @@ function resolvedTextSelectionToAnnotationData(input: {
   color: string;
   author: string;
   styleType: 'highlight' | 'underline';
+  underlineStyle?: UnderlineStyleType;
 }): Omit<AnnotationItem, 'id' | 'createdAt'> {
   return {
     target: {
       type: 'pdf',
       page: input.selection.pageNumber,
-      rects: input.selection.pageRects,
+      rects: mergePdfTargetRectsForTextMarkup(input.selection.pageRects),
       textQuote: input.selection.textQuote,
     },
     style: {
       color: resolveHighlightColor(input.color),
       type: input.styleType,
+      underlineStyle: input.styleType === "underline" ? (input.underlineStyle ?? "solid") : undefined,
     },
     content: input.selection.textQuote.exact,
     author: input.author,
@@ -1001,8 +1100,14 @@ interface PdfAnnotationDefaultsMenuProps {
   state: PdfAnnotationDefaultsMenuState;
   activeColor: string;
   activeInkWidth: number;
+  activeEraserMode: PdfInkEraserMode;
+  activeEraserSize: number;
+  activeUnderlineStyle: UnderlineStyleType;
   onSelectColor: (color: string) => void;
   onSelectInkWidth: (width: number) => void;
+  onSelectEraserMode: (mode: PdfInkEraserMode) => void;
+  onSelectEraserSize: (size: number) => void;
+  onSelectUnderlineStyle: (style: UnderlineStyleType) => void;
   onClose: () => void;
 }
 
@@ -1010,13 +1115,23 @@ function PdfAnnotationDefaultsMenu({
   state,
   activeColor,
   activeInkWidth,
+  activeEraserMode,
+  activeEraserSize,
+  activeUnderlineStyle,
   onSelectColor,
   onSelectInkWidth,
+  onSelectEraserMode,
+  onSelectEraserSize,
+  onSelectUnderlineStyle,
   onClose,
 }: PdfAnnotationDefaultsMenuProps) {
   const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
-  const adjustedPosition = adjustPopupPosition(state.position, { width: 248, height: state.tool === "ink" ? 432 : 360 }, 12);
+  const adjustedPosition = adjustPopupPosition(
+    state.position,
+    { width: 248, height: state.tool === "eraser" ? 220 : state.tool === "ink" ? 432 : 360 },
+    12,
+  );
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -1059,27 +1174,31 @@ function PdfAnnotationDefaultsMenu({
         <div className="mt-0.5 text-xs text-muted-foreground">{t(`pdf.command.${state.tool}`)}</div>
       </div>
       <div className="px-2 py-1">
-        <div className="px-1 py-1 text-xs text-muted-foreground">{t("pdf.color.default")}</div>
-        {HIGHLIGHT_COLORS.map((color) => (
-          <button
-            key={color.value}
-            type="button"
-            onClick={() => {
-              onSelectColor(color.hex);
-              onClose();
-            }}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted"
-            role="menuitemradio"
-            aria-checked={resolveHighlightColor(activeColor) === color.hex}
-          >
-            <span
-              className="h-4 w-4 rounded-sm border border-black/10"
-              style={{ backgroundColor: color.hex }}
-            />
-            <span className="flex-1">{color.name}</span>
-            {resolveHighlightColor(activeColor) === color.hex ? <Check className="h-3.5 w-3.5" /> : null}
-          </button>
-        ))}
+        {state.tool !== "eraser" ? (
+          <>
+            <div className="px-1 py-1 text-xs text-muted-foreground">{t("pdf.color.default")}</div>
+            {HIGHLIGHT_COLORS.map((color) => (
+              <button
+                key={color.value}
+                type="button"
+                onClick={() => {
+                  onSelectColor(color.hex);
+                  onClose();
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted"
+                role="menuitemradio"
+                aria-checked={resolveHighlightColor(activeColor) === color.hex}
+              >
+                <span
+                  className="h-4 w-4 rounded-sm border border-black/10"
+                  style={{ backgroundColor: color.hex }}
+                />
+                <span className="flex-1">{color.name}</span>
+                {resolveHighlightColor(activeColor) === color.hex ? <Check className="h-3.5 w-3.5" /> : null}
+              </button>
+            ))}
+          </>
+        ) : null}
         {state.tool === "ink" ? (
           <div className="mt-2 border-t border-border px-1 pt-2">
             <div className="px-1 pb-2 text-xs text-muted-foreground">{t("pdf.draw.width")}</div>
@@ -1090,6 +1209,65 @@ function PdfAnnotationDefaultsMenu({
             <div className="px-1 pt-2 text-[11px] text-muted-foreground">
               {t("pdf.draw.widthHint")}
             </div>
+          </div>
+        ) : null}
+        {state.tool === "eraser" ? (
+          <div className="px-1 pt-1">
+            <div className="px-1 pb-2 text-xs text-muted-foreground">{t("pdf.eraser.mode")}</div>
+            {([
+              { value: "stroke", label: t("pdf.eraser.mode.stroke") },
+              { value: "partial", label: t("pdf.eraser.mode.partial") },
+            ] as const).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => onSelectEraserMode(option.value)}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted"
+                role="menuitemradio"
+                aria-checked={activeEraserMode === option.value}
+              >
+                <span className="flex-1">{option.label}</span>
+                {activeEraserMode === option.value ? <Check className="h-3.5 w-3.5" /> : null}
+              </button>
+            ))}
+            <div className="mt-3 px-1 pb-2 text-xs text-muted-foreground">{t("pdf.eraser.size")}</div>
+            <div className="flex items-center gap-3 px-1 pb-1">
+              <input
+                type="range"
+                min={8}
+                max={64}
+                step={2}
+                value={activeEraserSize}
+                onChange={(event) => onSelectEraserSize(Number(event.currentTarget.value))}
+                className="w-full accent-primary"
+                aria-label={t("pdf.eraser.size")}
+              />
+              <span className="min-w-8 text-right text-xs text-muted-foreground">{Math.round(activeEraserSize)}px</span>
+            </div>
+          </div>
+        ) : null}
+        {state.tool === "underline" ? (
+          <div className="mt-2 border-t border-border px-1 pt-2">
+            <div className="px-1 pb-2 text-xs text-muted-foreground">{t("pdf.underline.style")}</div>
+            {([
+              { value: "solid", label: t("pdf.underline.style.solid") },
+              { value: "wavy", label: t("pdf.underline.style.wavy") },
+            ] as const).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  onSelectUnderlineStyle(option.value);
+                  onClose();
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted"
+                role="menuitemradio"
+                aria-checked={activeUnderlineStyle === option.value}
+              >
+                <span className="flex-1">{option.label}</span>
+                {activeUnderlineStyle === option.value ? <Check className="h-3.5 w-3.5" /> : null}
+              </button>
+            ))}
           </div>
         ) : null}
       </div>
@@ -1104,7 +1282,9 @@ interface HighlightPopupProps {
   onAddComment: (comment: string) => void;
   onChangeColor?: (color: string) => void;
   onConvertToUnderline?: () => void;
+  onChangeUnderlineStyle?: (style: UnderlineStyleType) => void;
   currentColor?: string;
+  currentUnderlineStyle?: UnderlineStyleType;
   styleType?: 'highlight' | 'underline' | 'area' | 'ink';
   highlightText?: string;
 }
@@ -1119,7 +1299,9 @@ function HighlightPopupContent({
   onAddComment,
   onChangeColor,
   onConvertToUnderline,
+  onChangeUnderlineStyle,
   currentColor,
+  currentUnderlineStyle = DEFAULT_UNDERLINE_STYLE,
   styleType = 'highlight',
   highlightText,
 }: HighlightPopupProps) {
@@ -1284,13 +1466,33 @@ function HighlightPopupContent({
       
       {/* Convert to highlight (only for underlines) */}
       {styleType === 'underline' && onConvertToUnderline && (
-        <button
-          onClick={onConvertToUnderline}
-          className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
-        >
-          <Highlighter className="h-4 w-4" />
-          <span>{t("pdf.convert.highlight")}</span>
-        </button>
+        <>
+          <button
+            onClick={onConvertToUnderline}
+            className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
+          >
+            <Highlighter className="h-4 w-4" />
+            <span>{t("pdf.convert.highlight")}</span>
+          </button>
+          {onChangeUnderlineStyle ? (
+            <>
+              <div className="px-3 pt-1 text-[11px] text-muted-foreground">{t("pdf.underline.style")}</div>
+              {([
+                { value: "solid", label: t("pdf.underline.style.solid") },
+                { value: "wavy", label: t("pdf.underline.style.wavy") },
+              ] as const).map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => onChangeUnderlineStyle(option.value)}
+                  className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
+                >
+                  <span className="flex-1">{option.label}</span>
+                  {currentUnderlineStyle === option.value ? <Check className="h-3.5 w-3.5" /> : null}
+                </button>
+              ))}
+            </>
+          ) : null}
+        </>
       )}
       
       <div className="border-t border-border my-1" />
@@ -1570,14 +1772,6 @@ interface InkAnnotationOverlayProps {
   scale: number;
 }
 
-type StoredInkPath = { x: number; y: number }[];
-type StoredInkAnnotationContent =
-  | StoredInkPath[]
-  | {
-      paths: StoredInkPath[];
-      width?: number;
-    };
-
 /**
  * Text annotation overlay component - renders text directly on PDF page
  */
@@ -1679,34 +1873,13 @@ function InkAnnotationOverlay({ annotation, scale }: InkAnnotationOverlayProps) 
     return null;
   }
 
-  let paths: StoredInkPath[] | null = null;
-  let strokeWidth = 1.8;
-  try {
-    const content = JSON.parse(annotation.content || '[]') as StoredInkAnnotationContent;
-
-    if (Array.isArray(content) && content.length > 0) {
-      // Check if it's the old format (array of points) or new format (array of arrays)
-      if (!Array.isArray(content[0]) && typeof content[0] === "object" && content[0] !== null && 'x' in content[0]) {
-        // Old format: single path
-        paths = [content as unknown as StoredInkPath];
-      } else if (Array.isArray(content[0])) {
-        // New format: array of paths
-        paths = content as StoredInkPath[];
-      }
-    } else if (content && typeof content === 'object' && 'paths' in content && Array.isArray(content.paths)) {
-      paths = content.paths;
-      strokeWidth = typeof content.width === 'number' && Number.isFinite(content.width)
-        ? Math.max(1, content.width)
-        : strokeWidth;
-    }
-  } catch {
+  const parsed = parsePdfInkContent(annotation.content);
+  if (!parsed) {
     return null;
   }
 
-  if (!paths || paths.length === 0) return null;
-
   // Filter out paths with less than 2 points
-  const validPaths = paths.filter(path => path.length >= 2);
+  const validPaths = parsed.paths.filter(path => path.length >= 2);
   if (validPaths.length === 0) return null;
 
   return (
@@ -1730,7 +1903,7 @@ function InkAnnotationOverlay({ annotation, scale }: InkAnnotationOverlayProps) 
             d={pathData}
             fill="none"
             stroke={annotation.style.color}
-            strokeWidth={strokeWidth / scale}
+            strokeWidth={parsed.width / scale}
             strokeLinecap="round"
             strokeLinejoin="round"
             vectorEffect="non-scaling-stroke"
@@ -1806,6 +1979,137 @@ function CurrentInkPathOverlay({ path, color, scale, strokeWidth }: CurrentInkPa
   );
 }
 
+interface PendingInkStrokesOverlayProps {
+  strokes: InkStroke[];
+  scale: number;
+  strokeWidth: number;
+}
+
+function PendingInkStrokesOverlay({ strokes, scale, strokeWidth }: PendingInkStrokesOverlayProps) {
+  const visibleStrokes = strokes.filter((stroke) => stroke.points.length >= 2);
+  if (visibleStrokes.length === 0) {
+    return null;
+  }
+
+  return (
+    <svg
+      className="absolute inset-0 pointer-events-none z-19"
+      data-testid="pdf-pending-ink-strokes"
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+      style={{ width: '100%', height: '100%' }}
+    >
+      {visibleStrokes.map((stroke, index) => {
+        const pathData = stroke.points.map((point, pointIndex) => {
+          const cmd = pointIndex === 0 ? 'M' : 'L';
+          return `${cmd} ${point.x * 100} ${point.y * 100}`;
+        }).join(' ');
+
+        return (
+          <path
+            key={`${stroke.page}-${index}-${stroke.points.length}`}
+            d={pathData}
+            fill="none"
+            stroke={stroke.color}
+            strokeWidth={strokeWidth / scale}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+interface PendingInkStrokesPortalProps {
+  strokes: InkStroke[];
+  page: number;
+  scale: number;
+  strokeWidth: number;
+  paneRootRef: React.RefObject<HTMLElement | null>;
+}
+
+function PendingInkStrokesPortal({ strokes, page, scale, strokeWidth, paneRootRef }: PendingInkStrokesPortalProps) {
+  const pageStrokes = strokes.filter((stroke) => stroke.page === page);
+  const container = usePdfPageOverlayContainer({
+    paneRootRef,
+    page,
+    overlayClassName: `pending-ink-overlay-${page}`,
+    overlayStyle: 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:19;',
+    dependencyKey: `${page}:${pageStrokes.length}:${pageStrokes.map((stroke) => stroke.points.length).join(":")}`,
+  });
+
+  if (!container || pageStrokes.length === 0) return null;
+
+  return ReactDOM.createPortal(
+    <PendingInkStrokesOverlay strokes={pageStrokes} scale={scale} strokeWidth={strokeWidth} />,
+    container,
+  );
+}
+
+interface InkEraserCursorOverlayProps {
+  point: {
+    x: number;
+    y: number;
+    radius: number;
+  };
+}
+
+function InkEraserCursorOverlay({ point }: InkEraserCursorOverlayProps) {
+  const radius = Math.max(0.5, point.radius * 100);
+
+  return (
+    <svg
+      className="absolute inset-0 pointer-events-none z-30"
+      data-testid="pdf-ink-eraser-cursor"
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+      style={{ width: '100%', height: '100%' }}
+    >
+      <circle
+        cx={point.x * 100}
+        cy={point.y * 100}
+        r={radius}
+        fill="rgba(255, 255, 255, 0.25)"
+        stroke="rgba(15, 23, 42, 0.75)"
+        strokeWidth={1.5}
+        strokeDasharray="3 2"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}
+
+interface InkEraserCursorPortalProps {
+  point: {
+    page: number;
+    x: number;
+    y: number;
+    radius: number;
+  } | null;
+  paneRootRef: React.RefObject<HTMLElement | null>;
+}
+
+function InkEraserCursorPortal({ point, paneRootRef }: InkEraserCursorPortalProps) {
+  const container = usePdfPageOverlayContainer({
+    paneRootRef,
+    page: point?.page ?? 0,
+    overlayClassName: `ink-eraser-cursor-overlay-${point?.page ?? 0}`,
+    overlayStyle: 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:30;',
+    dependencyKey: point ? `${point.page}:${point.x}:${point.y}:${point.radius}` : "none",
+  });
+
+  if (!container || !point) {
+    return null;
+  }
+
+  return ReactDOM.createPortal(
+    <InkEraserCursorOverlay point={point} />,
+    container,
+  );
+}
+
 /**
  * Portal component to render current ink path on the correct page
  */
@@ -1849,13 +2153,15 @@ function PdfTransientSelectionOverlay({ selection, paneId, page, color, styleTyp
     return null;
   }
 
+  const mergedRects = mergePdfTextOverlayRects(rects);
+
   return (
     <div
       className="absolute inset-0 pointer-events-none"
       data-testid={`pdf-transient-selection-${paneId}-page-${page}`}
       style={{ zIndex: 12 }}
     >
-      {rects.map((rect, index) => (
+      {mergedRects.map((rect, index) => (
         <div
           key={`${selection.signature}-${page}-${index}`}
           className="absolute rounded-sm"
@@ -1866,9 +2172,12 @@ function PdfTransientSelectionOverlay({ selection, paneId, page, color, styleTyp
                 top: rect.top,
                 width: rect.width,
                 height: rect.height,
-                borderBottom: `2px solid ${color}`,
-                boxShadow: `inset 0 -1px 0 ${color}`,
-                opacity: 0.95,
+                ...buildPdfUnderlineDecorationStyle({
+                  color,
+                  underlineStyle: "solid",
+                  isActive: true,
+                  segment: rect,
+                }),
               }
             : {
                 left: rect.left,
@@ -1876,7 +2185,7 @@ function PdfTransientSelectionOverlay({ selection, paneId, page, color, styleTyp
                 width: rect.width,
                 height: rect.height,
                 backgroundColor: `${color}33`,
-                boxShadow: `inset 0 0 0 1px ${color}55`,
+                boxShadow: `inset 0 0 0 1px ${color}44`,
                 opacity: 0.95,
               }}
         />
@@ -2023,6 +2332,7 @@ interface PdfStoredAnnotationMenuProps {
   onDelete: () => void;
   onAddComment: (comment: string) => void;
   onChangeColor: (color: string) => void;
+  onChangeUnderlineStyle?: (style: UnderlineStyleType) => void;
   onConvertStyle?: () => void;
 }
 
@@ -2034,6 +2344,7 @@ function PdfStoredAnnotationMenu({
   onDelete,
   onAddComment,
   onChangeColor,
+  onChangeUnderlineStyle,
   onConvertStyle,
 }: PdfStoredAnnotationMenuProps) {
   const popupRef = useRef<HTMLDivElement>(null);
@@ -2093,6 +2404,8 @@ function PdfStoredAnnotationMenu({
           onChangeColor(color);
           onClose();
         }}
+        onChangeUnderlineStyle={annotation.style.type === "underline" ? onChangeUnderlineStyle : undefined}
+        currentUnderlineStyle={annotation.style.underlineStyle ?? DEFAULT_UNDERLINE_STYLE}
         onConvertToUnderline={onConvertStyle
           ? () => {
               onConvertStyle();
@@ -2126,6 +2439,7 @@ function PdfStoredAnnotationOverlay({
   const resolvedColor = resolveHighlightColor(annotation.style.color);
   const isTransparent = resolvedColor === "transparent";
   const isPin = isPinAnnotation(annotation);
+  const mergedRects = mergePageRelativePdfTargetRects(target.rects);
 
   if (isPin) {
     const rect = target.rects[0];
@@ -2175,13 +2489,13 @@ function PdfStoredAnnotationOverlay({
 
   return (
     <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 14 }}>
-      {target.rects.map((rect, index) => {
+      {mergedRects.map((rect, index) => {
         const style: React.CSSProperties = {
           position: "absolute",
-          left: `${rect.x1 * 100}%`,
-          top: `${rect.y1 * 100}%`,
-          width: `${Math.max(0, rect.x2 - rect.x1) * 100}%`,
-          height: `${Math.max(0, rect.y2 - rect.y1) * 100}%`,
+          left: `${rect.left}%`,
+          top: `${rect.top}%`,
+          width: `${rect.width}%`,
+          height: `${rect.height}%`,
           pointerEvents: "none",
           cursor: "default",
           transition: "opacity 0.2s ease-in-out, box-shadow 0.2s ease-in-out, border-color 0.2s ease-in-out",
@@ -2190,9 +2504,12 @@ function PdfStoredAnnotationOverlay({
         };
 
         if (annotation.style.type === "underline") {
-          style.backgroundColor = "transparent";
-          style.borderBottom = `2px solid ${isTransparent ? "#666666" : resolvedColor}`;
-          style.opacity = isActive ? 1 : 0.9;
+          Object.assign(style, buildPdfUnderlineDecorationStyle({
+            color: isTransparent ? "#666666" : resolvedColor,
+            underlineStyle: annotation.style.underlineStyle ?? "solid",
+            isActive,
+            segment: rect,
+          }));
         } else if (annotation.style.type === "area") {
           style.backgroundColor = isTransparent ? "transparent" : `${resolvedColor}${isActive ? "24" : "18"}`;
           style.border = `${isActive ? 3 : 2}px solid ${isTransparent ? "#666666" : resolvedColor}`;
@@ -2319,6 +2636,9 @@ export function PDFHighlighterAdapter({
   const [zoomMode, setZoomMode] = useState<PdfZoomMode>(cachedPdfViewState?.zoomMode ?? 'fit-width');
   const [activeTool, setActiveTool] = useState<AnnotationTool>('select');
   const [activeColor, setActiveColor] = useState(DEFAULT_HIGHLIGHT_COLOR.hex);
+  const [activeUnderlineStyle, setActiveUnderlineStyle] = useState<UnderlineStyleType>(DEFAULT_UNDERLINE_STYLE);
+  const [activeEraserMode, setActiveEraserMode] = useState<PdfInkEraserMode>("stroke");
+  const [activeEraserSize, setActiveEraserSize] = useState(DEFAULT_PDF_INK_ERASER_SIZE);
   const activeInkWidth = useInkAnnotationStore((state) => state.currentStyle.width);
   const setInkCurrentStyle = useInkAnnotationStore((state) => state.setCurrentStyle);
   const [annotationDefaultsMenu, setAnnotationDefaultsMenu] = useState<PdfAnnotationDefaultsMenuState | null>(null);
@@ -2334,6 +2654,10 @@ export function PDFHighlighterAdapter({
     position: { x: number; y: number };
     anchorRect: DOMRect | null;
   } | null>(null);
+  const closeAnnotationMenu = useCallback(() => {
+    setAnnotationMenuState(null);
+    setSelectedAnnotationId(null);
+  }, []);
   const [currentAnchorDebug, setCurrentAnchorDebug] = useState<PdfViewAnchor | null>(cachedPdfViewState?.anchor ?? null);
   const [persistedPdfViewState, setPersistedPdfViewState] = useState(() => cachedPdfViewState ?? null);
   const dedupedAnnotations = useMemo(
@@ -2365,7 +2689,7 @@ export function PDFHighlighterAdapter({
   useEffect(() => {
     if (!inkWidthInitializedRef.current && activeInkWidth === DEFAULT_INK_STYLE.width) {
       inkWidthInitializedRef.current = true;
-      setInkCurrentStyle({ width: 5 });
+      setInkCurrentStyle({ width: DEFAULT_PDF_INK_WIDTH });
       return;
     }
     inkWidthInitializedRef.current = true;
@@ -2724,6 +3048,13 @@ export function PDFHighlighterAdapter({
   const [currentInkPath, setCurrentInkPath] = useState<{ x: number; y: number }[]>([]);
   const [currentInkPage, setCurrentInkPage] = useState<number | null>(null);
   const [isDrawingStroke, setIsDrawingStroke] = useState(false);
+  const [isErasingInk, setIsErasingInk] = useState(false);
+  const [inkEraserCursor, setInkEraserCursor] = useState<{
+    page: number;
+    x: number;
+    y: number;
+    radius: number;
+  } | null>(null);
   const [areaSelectionDraft, setAreaSelectionDraft] = useState<{
     page: number;
     left: number;
@@ -2783,6 +3114,7 @@ export function PDFHighlighterAdapter({
   const currentInkPathRef = useRef<{ x: number; y: number }[]>([]);
   const currentInkPageRef = useRef<number | null>(null);
   const currentInkPageElementRef = useRef<HTMLElement | null>(null);
+  const isErasingInkRef = useRef(false);
   const areaSelectionDraftRef = useRef<{
     page: number;
     left: number;
@@ -2956,7 +3288,7 @@ export function PDFHighlighterAdapter({
   }, [readCurrentNativePdfSelection]);
 
   const freezeNativePdfSelectionSnapshot = useCallback((event?: React.PointerEvent<HTMLDivElement>) => {
-    if (activeTool === 'note' || activeTool === 'text' || activeTool === 'ink' || activeTool === 'area') {
+    if (activeTool === 'note' || activeTool === 'text' || activeTool === 'ink' || activeTool === 'eraser' || activeTool === 'area') {
       return;
     }
 
@@ -3241,6 +3573,7 @@ export function PDFHighlighterAdapter({
         color: activeColor,
         author: 'user',
         styleType,
+        underlineStyle: activeUnderlineStyle,
       });
       addAnnotation(annotationData);
       clearNativePdfSelectionLater();
@@ -3267,6 +3600,7 @@ export function PDFHighlighterAdapter({
   }, [
     activeColor,
     activeTool,
+    activeUnderlineStyle,
     activateTransientSelection,
     addAnnotation,
     buildSelectionDraftMenuPosition,
@@ -3282,7 +3616,7 @@ export function PDFHighlighterAdapter({
   }, [finalizePdfSelectionFromSnapshot]);
 
   const beginNativePdfSelectionInteraction = useCallback((event?: React.PointerEvent<HTMLDivElement>) => {
-    if (activeTool === 'note' || activeTool === 'text' || activeTool === 'ink' || activeTool === 'area') {
+    if (activeTool === 'note' || activeTool === 'text' || activeTool === 'ink' || activeTool === 'eraser' || activeTool === 'area') {
       return;
     }
 
@@ -3980,15 +4314,24 @@ export function PDFHighlighterAdapter({
 
   // Ink annotation merge callback - creates merged annotation from buffered strokes
   const handleCreateMergedInkAnnotation = useCallback((merged: MergedInkAnnotation) => {
+    const paths = merged.strokes
+      .map((stroke) => stroke.points)
+      .filter((path) => path.length >= 2);
+    const boundingBox = getPdfInkBoundingBox(paths, activeInkWidth / 1000) ?? {
+      x1: merged.boundingBox.x1,
+      y1: merged.boundingBox.y1,
+      x2: merged.boundingBox.x2,
+      y2: merged.boundingBox.y2,
+    };
     const inkAnnotation: Omit<AnnotationItem, 'id' | 'createdAt'> = {
       target: {
         type: 'pdf',
         page: merged.page,
         rects: [{
-          x1: Math.max(0, merged.boundingBox.x1),
-          y1: Math.max(0, merged.boundingBox.y1),
-          x2: Math.min(1, merged.boundingBox.x2),
-          y2: Math.min(1, merged.boundingBox.y2),
+          x1: Math.max(0, boundingBox.x1),
+          y1: Math.max(0, boundingBox.y1),
+          x2: Math.min(1, boundingBox.x2),
+          y2: Math.min(1, boundingBox.y2),
         }],
       } as PdfTarget,
       style: {
@@ -3996,8 +4339,8 @@ export function PDFHighlighterAdapter({
         type: 'ink',
       },
       // Store stroke geometry plus width so rendering and export stay stable.
-      content: JSON.stringify({
-        paths: JSON.parse(merged.content),
+      content: serializePdfInkContent({
+        paths,
         width: activeInkWidth,
       }),
       author: 'user',
@@ -4010,6 +4353,11 @@ export function PDFHighlighterAdapter({
         paddingRatio: 0.035,
         minCssWidth: 180,
         minCssHeight: 120,
+        ink: {
+          paths,
+          color: merged.color,
+          width: activeInkWidth,
+        },
       },
     );
     if (preview) {
@@ -4022,10 +4370,8 @@ export function PDFHighlighterAdapter({
   // Use ink annotation merge hook
   const {
     addStroke: addInkStroke,
-    isDrawing: isInkBuffering,
-    strokeCount: inkStrokeCount,
+    pendingStrokes: pendingInkStrokes,
     finalizeNow: finalizeInkNow,
-    cancelDrawing: cancelInkDrawing,
   } = useInkAnnotation({
     onCreateAnnotation: handleCreateMergedInkAnnotation,
     mergeCriteria: {
@@ -4033,6 +4379,12 @@ export function PDFHighlighterAdapter({
       distanceThreshold: 0.1,
     },
   });
+
+  useEffect(() => {
+    if (activeTool === "eraser") {
+      finalizeInkNow();
+    }
+  }, [activeTool, finalizeInkNow]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -4458,6 +4810,16 @@ export function PDFHighlighterAdapter({
           onContextMenu: (position) => openAnnotationDefaultsMenu("ink", position),
         },
         {
+          id: "tool-eraser",
+          label: t("pdf.command.eraser"),
+          icon: "eraser",
+          active: activeTool === "eraser",
+          priority: 22,
+          group: "secondary",
+          onTrigger: () => setActiveTool((value) => (value === "eraser" ? "select" : "eraser")),
+          onContextMenu: (position) => openAnnotationDefaultsMenu("eraser", position),
+        },
+        {
           id: "fit-width",
           label: t("pdf.fitWidth"),
           icon: "arrow-left-right",
@@ -4660,7 +5022,7 @@ export function PDFHighlighterAdapter({
 
     const annotation = annotationById.get(annotationMenuState.annotationId);
     if (!annotation) {
-      setAnnotationMenuState(null);
+      closeAnnotationMenu();
       return;
     }
 
@@ -4683,7 +5045,7 @@ export function PDFHighlighterAdapter({
             }
         : current
     ));
-  }, [annotationById, annotationMenuState, buildAnnotationMenuPosition, renderScale, zoomMode]);
+  }, [annotationById, annotationMenuState, buildAnnotationMenuPosition, closeAnnotationMenu, renderScale, zoomMode]);
 
   useEffect(() => {
     const viewerContainer = getViewerScrollContainer();
@@ -4699,6 +5061,7 @@ export function PDFHighlighterAdapter({
       if (annotationMenuState) {
         const annotation = annotationById.get(annotationMenuState.annotationId);
         if (!annotation) {
+          closeAnnotationMenu();
           return;
         }
         const placement = annotation ? buildAnnotationMenuPosition(annotation) : null;
@@ -4751,6 +5114,7 @@ export function PDFHighlighterAdapter({
     annotationById,
     annotationMenuState,
     buildAnnotationMenuPosition,
+    closeAnnotationMenu,
     buildSelectionDraftMenuPosition,
     getViewerScrollContainer,
     pendingSelectionDraft,
@@ -4919,6 +5283,9 @@ export function PDFHighlighterAdapter({
           case 'd':
             setActiveTool(t => t === 'ink' ? 'select' : 'ink');
             break;
+          case 'e':
+            setActiveTool(t => t === 'eraser' ? 'select' : 'eraser');
+            break;
           case 'escape':
             setActiveTool('select');
             break;
@@ -4945,6 +5312,18 @@ export function PDFHighlighterAdapter({
       annotation.style.type === 'ink'
     ));
   }, [dedupedAnnotations]);
+  const pendingInkPages = useMemo(
+    () => Array.from(new Set(pendingInkStrokes.map((stroke) => stroke.page))).sort((left, right) => left - right),
+    [pendingInkStrokes],
+  );
+
+  useEffect(() => {
+    if (activeTool !== "eraser") {
+      isErasingInkRef.current = false;
+      setIsErasingInk(false);
+      setInkEraserCursor(null);
+    }
+  }, [activeTool]);
 
   // Get text annotations for custom rendering
   const textAnnotations = useMemo(() => {
@@ -4965,6 +5344,98 @@ export function PDFHighlighterAdapter({
       setCurrentInkPage(currentInkPageRef.current);
     });
   }, []);
+
+  const getInkPointFromMouseEvent = useCallback((event: React.MouseEvent) => {
+    const target = event.target as HTMLElement;
+    const pageElement = target.closest('.react-pdf__Page') || target.closest('[data-page-number]');
+    if (!(pageElement instanceof HTMLElement)) {
+      return null;
+    }
+
+    const pageNumber = Number.parseInt(pageElement.getAttribute('data-page-number') || '1', 10);
+    const pageRect = pageElement.getBoundingClientRect();
+    if (!Number.isFinite(pageNumber) || pageNumber < 1 || pageRect.width <= 0 || pageRect.height <= 0) {
+      return null;
+    }
+
+    const x = Math.max(0, Math.min(1, (event.clientX - pageRect.left) / pageRect.width));
+    const y = Math.max(0, Math.min(1, (event.clientY - pageRect.top) / pageRect.height));
+    const radius = Math.max(1, activeEraserSize) / pageRect.width;
+
+    return {
+      pageElement,
+      pageNumber,
+      pageRect,
+      point: { x, y },
+      radius,
+      yScale: pageRect.height / pageRect.width,
+    };
+  }, [activeEraserSize]);
+
+  const eraseInkAtPoint = useCallback((input: {
+    pageElement: HTMLElement;
+    pageNumber: number;
+    point: { x: number; y: number };
+    radius: number;
+    yScale: number;
+  }) => {
+    let changed = false;
+
+    for (const annotation of inkAnnotations) {
+      if (annotation.target.type !== "pdf") {
+        continue;
+      }
+
+      const target = annotation.target as PdfTarget;
+      if (target.page !== input.pageNumber) {
+        continue;
+      }
+
+      const updated = updatePdfInkAnnotationAfterErase({
+        annotation,
+        point: input.point,
+        radius: input.radius,
+        yScale: input.yScale,
+        mode: activeEraserMode,
+      });
+
+      if (!updated) {
+        continue;
+      }
+
+      changed = true;
+
+      if (updated.rects.length === 0) {
+        deleteAnnotation(annotation.id);
+        continue;
+      }
+
+      const parsed = parsePdfInkContent(updated.content);
+      const preview = parsed
+        ? buildPdfAnnotationPreviewFromPageElement(input.pageElement, updated.rects, {
+            paddingRatio: 0.035,
+            minCssWidth: 180,
+            minCssHeight: 120,
+            ink: {
+              paths: parsed.paths,
+              color: annotation.style.color,
+              width: parsed.width,
+            },
+          })
+        : undefined;
+
+      updateAnnotation(annotation.id, {
+        content: updated.content,
+        target: {
+          ...(annotation.target as PdfTarget),
+          rects: updated.rects,
+        },
+        ...(preview ? { preview } : {}),
+      });
+    }
+
+    return changed;
+  }, [activeEraserMode, deleteAnnotation, inkAnnotations, updateAnnotation]);
 
   // Handle PDF click in note/text mode
   const handlePdfClick = useCallback(
@@ -5003,11 +5474,17 @@ export function PDFHighlighterAdapter({
 
   const handlePdfSurfaceClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (activeTool === 'note' || activeTool === 'text') {
+      if (annotationMenuState) {
+        closeAnnotationMenu();
+      }
       handlePdfClick(event);
       return;
     }
 
     if (activeTool !== 'select' && activeTool !== 'highlight' && activeTool !== 'underline') {
+      if (annotationMenuState) {
+        closeAnnotationMenu();
+      }
       return;
     }
 
@@ -5018,13 +5495,16 @@ export function PDFHighlighterAdapter({
 
     const annotation = findPdfAnnotationAtClientPoint(event);
     if (!annotation) {
+      if (annotationMenuState) {
+        closeAnnotationMenu();
+      }
       return;
     }
 
     event.preventDefault();
     event.stopPropagation();
     openAnnotationMenu(annotation);
-  }, [activeTool, findPdfAnnotationAtClientPoint, handlePdfClick, openAnnotationMenu]);
+  }, [activeTool, annotationMenuState, closeAnnotationMenu, findPdfAnnotationAtClientPoint, handlePdfClick, openAnnotationMenu]);
 
   const handleAreaMouseDown = useCallback((event: React.MouseEvent) => {
     if (activeTool !== 'area') return;
@@ -5233,7 +5713,71 @@ export function PDFHighlighterAdapter({
     setIsDrawingStroke(false);
     setCurrentInkPath([]);
     setCurrentInkPage(null);
-  }, [isDrawingStroke, activeColor, activeInkWidth, addInkStroke]);
+  }, [isDrawingStroke, activeColor, addInkStroke]);
+
+  const handleInkEraserMouseDown = useCallback((event: React.MouseEvent) => {
+    if (activeTool !== "eraser") {
+      return;
+    }
+
+    const inkPoint = getInkPointFromMouseEvent(event);
+    if (!inkPoint) {
+      return;
+    }
+
+    isErasingInkRef.current = true;
+    setIsErasingInk(true);
+    setInkEraserCursor({
+      page: inkPoint.pageNumber,
+      x: inkPoint.point.x,
+      y: inkPoint.point.y,
+      radius: inkPoint.radius,
+    });
+    eraseInkAtPoint({
+      pageElement: inkPoint.pageElement,
+      pageNumber: inkPoint.pageNumber,
+      point: inkPoint.point,
+      radius: inkPoint.radius,
+      yScale: inkPoint.yScale,
+    });
+
+    event.preventDefault();
+    event.stopPropagation();
+  }, [activeTool, eraseInkAtPoint, getInkPointFromMouseEvent]);
+
+  const handleInkEraserMouseMove = useCallback((event: React.MouseEvent) => {
+    if (activeTool !== "eraser" && !isErasingInkRef.current) {
+      return;
+    }
+
+    const inkPoint = getInkPointFromMouseEvent(event);
+    if (!inkPoint) {
+      return;
+    }
+
+    setInkEraserCursor({
+      page: inkPoint.pageNumber,
+      x: inkPoint.point.x,
+      y: inkPoint.point.y,
+      radius: inkPoint.radius,
+    });
+
+    if (isErasingInkRef.current) {
+      eraseInkAtPoint({
+        pageElement: inkPoint.pageElement,
+        pageNumber: inkPoint.pageNumber,
+        point: inkPoint.point,
+        radius: inkPoint.radius,
+        yScale: inkPoint.yScale,
+      });
+      event.preventDefault();
+    }
+  }, [activeTool, eraseInkAtPoint, getInkPointFromMouseEvent]);
+
+  const handleInkEraserMouseUp = useCallback(() => {
+    isErasingInkRef.current = false;
+    setIsErasingInk(false);
+  }, []);
 
   // Handle text annotation save
   const handleSaveTextAnnotation = useCallback((text: string, textColor: string, fontSize: number, bgColor: string) => {
@@ -5658,28 +6202,36 @@ export function PDFHighlighterAdapter({
           ? handleAreaMouseDown
           : activeTool === 'ink'
             ? handleInkMouseDown
-            : undefined
+            : activeTool === 'eraser'
+              ? handleInkEraserMouseDown
+              : undefined
       }
       onMouseMove={
         activeTool === 'area'
           ? handleAreaMouseMove
           : activeTool === 'ink' || isDrawingStroke
             ? handleInkMouseMove
-            : undefined
+            : activeTool === 'eraser' || isErasingInk
+              ? handleInkEraserMouseMove
+              : undefined
       }
       onMouseUp={
         activeTool === 'area'
           ? handleAreaMouseUp
           : activeTool === 'ink' || isDrawingStroke
             ? handleInkMouseUp
-            : undefined
+            : activeTool === 'eraser' || isErasingInk
+              ? handleInkEraserMouseUp
+              : undefined
       }
       onMouseLeave={
         activeTool === 'area'
           ? handleAreaMouseUp
           : activeTool === 'ink' || isDrawingStroke
             ? handleInkMouseUp
-            : undefined
+            : activeTool === 'eraser' || isErasingInk
+              ? handleInkEraserMouseUp
+              : undefined
       }
       style={{
         cursor: activeTool === 'note'
@@ -5688,9 +6240,11 @@ export function PDFHighlighterAdapter({
             ? 'crosshair'
             : activeTool === 'ink'
               ? 'crosshair'
-              : activeTool === 'text'
-                ? 'text'
-                : 'default',
+              : activeTool === 'eraser'
+                ? 'none'
+                : activeTool === 'text'
+                  ? 'text'
+                  : 'default',
       }}
     >
       {pdfLoadError ? (
@@ -5781,7 +6335,7 @@ export function PDFHighlighterAdapter({
               annotation={annotation}
               position={annotationMenuState.position}
               anchorRect={annotationMenuState.anchorRect}
-              onClose={() => setAnnotationMenuState(null)}
+              onClose={closeAnnotationMenu}
               onDelete={() => {
                 deleteAnnotation(annotation.id);
                 if (selectedAnnotationId === annotation.id) {
@@ -5790,6 +6344,7 @@ export function PDFHighlighterAdapter({
               }}
               onAddComment={(comment) => updateAnnotation(annotation.id, { comment })}
               onChangeColor={(color) => updateAnnotation(annotation.id, { style: { color } })}
+              onChangeUnderlineStyle={(style) => updateAnnotation(annotation.id, { style: { underlineStyle: style } })}
               onConvertStyle={annotation.style.type === "highlight" || annotation.style.type === "underline"
                 ? () => {
                     const nextType = annotation.style.type === "highlight" ? "underline" : "highlight";
@@ -5841,6 +6396,17 @@ export function PDFHighlighterAdapter({
         );
       })}
 
+      {pendingInkPages.map((page) => (
+        <PendingInkStrokesPortal
+          key={`pending-ink-${page}`}
+          strokes={pendingInkStrokes}
+          page={page}
+          scale={renderScale}
+          strokeWidth={activeInkWidth}
+          paneRootRef={containerRef}
+        />
+      ))}
+
       {textAnnotations.map((ann) => {
         if (ann.target.type !== 'pdf') return null;
         const target = ann.target as PdfTarget;
@@ -5890,12 +6456,11 @@ export function PDFHighlighterAdapter({
         />
       )}
 
-      <InkSessionIndicator
-        isDrawing={isInkBuffering}
-        strokeCount={inkStrokeCount}
-        onFinalize={finalizeInkNow}
-        onCancel={cancelInkDrawing}
+      <InkEraserCursorPortal
+        point={activeTool === "eraser" ? inkEraserCursor : null}
+        paneRootRef={containerRef}
       />
+
     </div>
   );
 
@@ -5926,8 +6491,14 @@ export function PDFHighlighterAdapter({
           state={annotationDefaultsMenu}
           activeColor={activeColor}
           activeInkWidth={activeInkWidth}
+          activeEraserMode={activeEraserMode}
+          activeEraserSize={activeEraserSize}
+          activeUnderlineStyle={activeUnderlineStyle}
           onSelectColor={setActiveColor}
           onSelectInkWidth={(width) => setInkCurrentStyle({ width })}
+          onSelectEraserMode={setActiveEraserMode}
+          onSelectEraserSize={setActiveEraserSize}
+          onSelectUnderlineStyle={setActiveUnderlineStyle}
           onClose={() => setAnnotationDefaultsMenu(null)}
         />
       ) : null}
@@ -5946,8 +6517,12 @@ export function PDFHighlighterAdapter({
             });
             addAnnotation(annotationData);
             clearTransientSelection({ nextPhase: 'committed' });
+            clearNativePdfSelectionLater();
           }}
-          onCancel={() => clearTransientSelection({ nextPhase: 'cancelled' })}
+          onCancel={() => {
+            clearTransientSelection({ nextPhase: 'cancelled' });
+            clearNativePdfSelectionLater();
+          }}
         />
       ) : null}
 
@@ -5970,7 +6545,9 @@ export function PDFHighlighterAdapter({
                     ? t("pdf.textAnnotation.addTitle")
                     : activeTool === 'area'
                       ? t("pdf.areaHint")
-                      : t("pdf.drawHint")}
+                      : activeTool === 'eraser'
+                        ? t("pdf.eraserHint")
+                        : t("pdf.drawHint")}
           </span>
         </div>
       ) : null}

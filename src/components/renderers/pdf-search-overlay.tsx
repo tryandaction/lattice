@@ -6,7 +6,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useI18n } from "@/hooks/use-i18n";
 import { getPreferredPdfPageSearchText } from "@/lib/pdf-page-text-engine";
 import { searchPdfPageTextModel, type PdfSearchMatch } from "@/lib/pdf-search";
-import { buildRenderedPdfPageTextModel, getPdfPageTextModel } from "@/lib/pdf-page-text-cache";
+import { buildRenderedPdfPageTextModel } from "@/lib/pdf-page-text-cache";
 
 interface PdfSearchOverlayProps {
   pdfDocument: PDFDocumentProxy | null;
@@ -50,7 +50,7 @@ export function PdfSearchOverlay({
       setCurrentMatch(-1);
     });
     onActiveMatchChange?.(null);
-  }, [pdfDocument]);
+  }, [onActiveMatchChange, pdfDocument]);
 
   useEffect(() => {
     if (!isOpen || !pdfDocument || numPages === 0) {

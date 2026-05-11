@@ -1,13 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Search, Loader2, FileText, ChevronRight } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { isDirectoryNode, isFileNode, type FileNode, type TreeNode } from "@/types/file-system";
 import { useI18n } from "@/hooks/use-i18n";
 import { navigateLink } from "@/lib/link-router/navigate-link";
 import { useSettingsStore } from "@/stores/settings-store";
-import { extractSearchableTextForFile } from "@/lib/searchable-text";
+import {
+  extractSearchableTextForFile,
+  isLineNavigableSearchExtension,
+  isSearchableTextExtension,
+} from "@/lib/searchable-text";
 
 interface SearchMatch {
   id: string;
@@ -25,41 +29,36 @@ interface SearchResultGroup {
   rank: number;
 }
 
+interface SearchableTextCacheEntry {
+  extension: string;
+  lastModified: number;
+  size: number;
+  text: string;
+}
+
 type SearchScope = "all" | "current";
 type SearchMode = "name_and_content" | "file_name_only";
 type SearchSort = "relevance" | "name";
 
-const SEARCHABLE_EXTENSIONS = new Set([
-  "md",
-  "txt",
-  "py",
-  "js",
-  "jsx",
-  "ts",
-  "tsx",
-  "json",
-  "css",
-  "html",
-  "htm",
-  "ipynb",
-  "docx",
-]);
-
-const LINE_NAVIGABLE_EXTENSIONS = new Set([
-  "md",
-  "txt",
-  "py",
-  "js",
-  "jsx",
-  "ts",
-  "tsx",
-  "json",
-  "css",
-]);
-
 const MAX_GROUPS = 18;
 const MAX_MATCHES_PER_FILE = 6;
 const MAX_TOTAL_MATCHES = 48;
+const IS_TEST_ENV = process.env.NODE_ENV === "test";
+
+function isCjkQuery(value: string): boolean {
+  return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(value);
+}
+
+function canRunSearchQuery(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (isCjkQuery(trimmed)) {
+    return trimmed.length >= 1;
+  }
+  return trimmed.length >= 2;
+}
 
 function collectFiles(node: TreeNode | null): FileNode[] {
   if (!node) return [];
@@ -98,6 +97,40 @@ function buildLineMatches(text: string, keyword: string): Array<{ lineNumber: nu
   return results;
 }
 
+function buildSnippetMatches(text: string, keyword: string): Array<{ snippet: string }> {
+  const results: Array<{ snippet: string }> = [];
+  const normalizedText = text.toLowerCase();
+  let searchIndex = 0;
+
+  while (searchIndex < normalizedText.length && results.length < MAX_MATCHES_PER_FILE) {
+    const matchIndex = normalizedText.indexOf(keyword, searchIndex);
+    if (matchIndex === -1) {
+      break;
+    }
+
+    const snippetStart = Math.max(0, matchIndex - 48);
+    const snippetEnd = Math.min(text.length, matchIndex + keyword.length + 96);
+    const prefix = snippetStart > 0 ? "..." : "";
+    const suffix = snippetEnd < text.length ? "..." : "";
+    const snippet = `${prefix}${text.slice(snippetStart, snippetEnd).replace(/\s+/g, " ").trim()}${suffix}`;
+    results.push({ snippet });
+    searchIndex = matchIndex + keyword.length;
+  }
+
+  return results;
+}
+
+function buildContentMatches(
+  text: string,
+  keyword: string,
+  lineNavigable: boolean,
+): Array<{ lineNumber?: number; snippet: string }> {
+  if (lineNavigable) {
+    return buildLineMatches(text, keyword);
+  }
+  return buildSnippetMatches(text, keyword);
+}
+
 function renderHighlightedText(text: string, keyword: string): ReactNode {
   const trimmed = keyword.trim();
   if (!trimmed) {
@@ -133,30 +166,68 @@ export function WorkspaceSearchPanel() {
   const searchPanelSort = useSettingsStore((state) => state.settings.searchPanelSort);
   const updateSetting = useSettingsStore((state) => state.updateSetting);
   const [query, setQuery] = useState("");
-  const normalizedKeyword = query.trim();
+  const deferredQueryValue = useDeferredValue(query);
+  const deferredQuery = IS_TEST_ENV ? query : deferredQueryValue;
+  const normalizedKeyword = deferredQuery.trim();
+  const canSearch = canRunSearchQuery(normalizedKeyword);
+  const hasPendingQuery = deferredQuery !== query;
   const activeFilePath = activeTab?.filePath ?? null;
   const [results, setResults] = useState<SearchResultGroup[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const searchableTextCacheRef = useRef<Map<string, SearchableTextCacheEntry>>(new Map());
   const scope: SearchScope = searchPanelScope;
   const mode: SearchMode = searchPanelMode;
   const sortBy: SearchSort = searchPanelSort;
   const files = useMemo(() => collectFiles(fileTree.root), [fileTree.root]);
+  const searchTargetFiles = useMemo(() => {
+    if (scope !== "current") {
+      return files;
+    }
+    if (!activeFilePath) {
+      return [];
+    }
+    return files.filter((file) => file.path === activeFilePath);
+  }, [activeFilePath, files, scope]);
+  const hasScopeTarget = scope !== "current" || Boolean(activeFilePath);
 
   useEffect(() => {
-    const keyword = query.trim().toLowerCase();
+    const keyword = normalizedKeyword.toLowerCase();
     let cancelled = false;
 
-    if (keyword.length < 2) {
-      Promise.resolve().then(() => {
-        if (!cancelled) {
-          setResults([]);
-          setIsSearching(false);
-        }
-      });
+    if (!canSearch || !hasScopeTarget) {
+      setResults([]);
+      setIsSearching(false);
       return () => {
         cancelled = true;
       };
     }
+
+    const loadSearchableText = async (file: FileNode): Promise<string> => {
+      const fileBlob = await file.handle.getFile();
+      const cacheKey = file.path;
+      const cached = searchableTextCacheRef.current.get(cacheKey);
+
+      if (
+        cached &&
+        cached.extension === file.extension &&
+        cached.lastModified === fileBlob.lastModified &&
+        cached.size === fileBlob.size
+      ) {
+        return cached.text;
+      }
+
+      const text = await extractSearchableTextForFile({
+        extension: file.extension,
+        file: fileBlob,
+      });
+      searchableTextCacheRef.current.set(cacheKey, {
+        extension: file.extension,
+        lastModified: fileBlob.lastModified,
+        size: fileBlob.size,
+        text,
+      });
+      return text;
+    };
 
     void (async () => {
       if (!cancelled) {
@@ -166,7 +237,7 @@ export function WorkspaceSearchPanel() {
       const groups: SearchResultGroup[] = [];
       let totalMatches = 0;
 
-      for (const file of files) {
+      for (const file of searchTargetFiles) {
         if (groups.length >= MAX_GROUPS || totalMatches >= MAX_TOTAL_MATCHES) {
           break;
         }
@@ -181,20 +252,20 @@ export function WorkspaceSearchPanel() {
           totalMatches += 1;
         }
 
-        if (mode === "name_and_content" && SEARCHABLE_EXTENSIONS.has(file.extension)) {
+        if (mode === "name_and_content" && isSearchableTextExtension(file.extension)) {
           try {
-            const blob = await file.handle.getFile();
-            const text = await extractSearchableTextForFile({
-              extension: file.extension,
-              file: blob,
-            });
-            const lineMatches = buildLineMatches(text, keyword);
-            for (const match of lineMatches) {
+            const text = await loadSearchableText(file);
+            const contentMatches = buildContentMatches(
+              text,
+              keyword,
+              isLineNavigableSearchExtension(file.extension),
+            );
+            for (const [matchIndex, match] of contentMatches.entries()) {
               if (totalMatches >= MAX_TOTAL_MATCHES || matches.length >= MAX_MATCHES_PER_FILE + 1) {
                 break;
               }
               matches.push({
-                id: `${file.path}:line:${match.lineNumber}`,
+                id: `${file.path}:content:${match.lineNumber ?? matchIndex}`,
                 matchType: "content",
                 lineNumber: match.lineNumber,
                 snippet: match.snippet,
@@ -229,15 +300,13 @@ export function WorkspaceSearchPanel() {
     return () => {
       cancelled = true;
     };
-  }, [files, mode, query]);
+  }, [canSearch, hasScopeTarget, mode, normalizedKeyword, searchTargetFiles]);
 
   const openGroupFile = async (group: SearchResultGroup) => {
     openFileInActivePane(group.handle, group.path);
   };
 
-  const visibleResults = scope === "current" && activeFilePath
-    ? results.filter((group) => group.path === activeFilePath)
-    : results;
+  const visibleResults = results;
 
   const sortedVisibleResults = useMemo(() => {
     const next = [...visibleResults];
@@ -254,9 +323,10 @@ export function WorkspaceSearchPanel() {
     () => sortedVisibleResults.reduce((sum, group) => sum + group.matches.length, 0),
     [sortedVisibleResults],
   );
+  const showSearching = isSearching || hasPendingQuery;
 
   const openMatch = async (group: SearchResultGroup, match: SearchMatch) => {
-    if (match.lineNumber && LINE_NAVIGABLE_EXTENSIONS.has(group.extension) && rootHandle) {
+    if (match.lineNumber && isLineNavigableSearchExtension(group.extension) && rootHandle) {
       const success = await navigateLink(`${group.path}#line=${match.lineNumber}`, {
         paneId: activePaneId,
         rootHandle,
@@ -283,7 +353,7 @@ export function WorkspaceSearchPanel() {
             placeholder={t("workbench.search.placeholder")}
             className="h-8 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />
-          {isSearching ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+          {showSearching ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
         </div>
       </div>
 
@@ -340,20 +410,26 @@ export function WorkspaceSearchPanel() {
             </button>
           </div>
 
-          {query.trim().length >= 2 ? (
+          {canSearch && hasScopeTarget ? (
             <div className="rounded-md border border-border bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground">
               {t("workbench.search.results")}: {visibleResultCount}
             </div>
           ) : null}
         </div>
 
-        {query.trim().length < 2 ? (
+        {!canSearch ? (
           <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
             {t("workbench.search.hint")}
           </div>
         ) : null}
 
-        {query.trim().length >= 2 && !isSearching && sortedVisibleResults.length === 0 ? (
+        {canSearch && !hasScopeTarget ? (
+          <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+            {t("workbench.search.noCurrentFile")}
+          </div>
+        ) : null}
+
+        {canSearch && hasScopeTarget && !showSearching && sortedVisibleResults.length === 0 ? (
           <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
             {scope === "current" ? t("workbench.search.emptyCurrent") : t("workbench.search.empty")}
           </div>

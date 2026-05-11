@@ -90,6 +90,7 @@ export type AnnotationTarget =
  * Valid annotation style types
  */
 export type AnnotationStyleType = 'highlight' | 'underline' | 'area' | 'ink' | 'text';
+export type UnderlineStyleType = 'solid' | 'wavy';
 
 /**
  * Text annotation style configuration
@@ -151,6 +152,7 @@ export const FONT_SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48] as const;
 export interface AnnotationStyle {
   color: string;  // Hex color or named color (background color, 'transparent' for no background)
   type: AnnotationStyleType;
+  underlineStyle?: UnderlineStyleType;
   textStyle?: TextAnnotationStyle;  // Optional text styling for text annotations
 }
 
