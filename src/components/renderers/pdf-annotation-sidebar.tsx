@@ -759,21 +759,22 @@ function PdfInkSidebarPreview({
   parsed: ParsedPdfInkContent;
   color: string;
 }) {
-  const boundingBox = getPdfInkBoundingBox(parsed.paths, 0.035);
+  const boundingBox = getPdfInkBoundingBox(parsed.paths, Math.max(0.035, parsed.width / 700));
   if (!boundingBox) {
     return null;
   }
 
   const viewWidth = Math.max(0.01, boundingBox.x2 - boundingBox.x1);
   const viewHeight = Math.max(0.01, boundingBox.y2 - boundingBox.y1);
-  const aspectRatio = Math.max(1.25, Math.min(2.4, viewWidth / viewHeight));
-  const strokeWidth = Math.max(3, Math.min(9, parsed.width * 0.75));
+  const aspectRatio = Math.max(1.15, Math.min(2.8, viewWidth / viewHeight));
+  const strokeWidth = Math.max(5, Math.min(12, parsed.width * 1.15));
+  const resolvedColor = resolveHighlightColor(color);
 
   return (
     <div
-      className="mb-2 overflow-hidden rounded-md border border-border bg-gradient-to-br from-background to-muted/35"
+      className="mb-2 overflow-hidden rounded-md border border-border bg-gradient-to-br from-background to-muted/35 shadow-inner"
       data-testid="pdf-ink-sidebar-preview"
-      style={{ aspectRatio }}
+      style={{ aspectRatio, minHeight: 116 }}
     >
       <svg
         className="block h-full w-full"
@@ -794,7 +795,7 @@ function PdfInkSidebarPreview({
               key={`${pathIndex}-${path.length}`}
               d={pathData}
               fill="none"
-              stroke={resolveHighlightColor(color)}
+              stroke={resolvedColor}
               strokeWidth={strokeWidth}
               strokeLinecap="round"
               strokeLinejoin="round"

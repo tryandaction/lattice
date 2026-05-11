@@ -195,8 +195,6 @@ export function WorkspaceSearchPanel() {
     let cancelled = false;
 
     if (!canSearch || !hasScopeTarget) {
-      setResults([]);
-      setIsSearching(false);
       return () => {
         cancelled = true;
       };
@@ -306,10 +304,8 @@ export function WorkspaceSearchPanel() {
     openFileInActivePane(group.handle, group.path);
   };
 
-  const visibleResults = results;
-
   const sortedVisibleResults = useMemo(() => {
-    const next = [...visibleResults];
+    const next = canSearch && hasScopeTarget ? [...results] : [];
     next.sort((left, right) => {
       if (sortBy === "name") {
         return left.name.localeCompare(right.name);
@@ -317,13 +313,13 @@ export function WorkspaceSearchPanel() {
       return right.rank - left.rank || left.name.localeCompare(right.name);
     });
     return next;
-  }, [sortBy, visibleResults]);
+  }, [canSearch, hasScopeTarget, results, sortBy]);
 
   const visibleResultCount = useMemo(
     () => sortedVisibleResults.reduce((sum, group) => sum + group.matches.length, 0),
     [sortedVisibleResults],
   );
-  const showSearching = isSearching || hasPendingQuery;
+  const showSearching = (isSearching || hasPendingQuery) && canSearch && hasScopeTarget;
 
   const openMatch = async (group: SearchResultGroup, match: SearchMatch) => {
     if (match.lineNumber && isLineNavigableSearchExtension(group.extension) && rootHandle) {

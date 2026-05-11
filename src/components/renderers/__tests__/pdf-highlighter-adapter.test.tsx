@@ -29,7 +29,9 @@ const {
 } = vi.hoisted(() => {
   const state = {
     currentStyle: { color: '#ffeb3b', width: 2 },
-    setCurrentStyle: vi.fn(),
+    setCurrentStyle: vi.fn((style: Partial<{ color: string; width: number }>) => {
+      state.currentStyle = { ...state.currentStyle, ...style };
+    }),
     canUndo: vi.fn(() => false),
     undo: vi.fn(),
     canRedo: vi.fn(() => false),
@@ -816,6 +818,7 @@ describe('PDFHighlighterAdapter', () => {
     };
     pdfMockState.sidebarProps = null;
     pdfMockState.navigationOptions = null;
+    inkStoreState.currentStyle = { color: '#ffeb3b', width: 2 };
     inkHookState.pendingStrokes = [];
     inkHookState.addStroke.mockClear();
     inkHookState.finalizeNow.mockClear();
@@ -1411,7 +1414,21 @@ describe('PDFHighlighterAdapter', () => {
       }
 
       const top = Number.parseFloat(picker.parentElement.style.top || '0');
-      expect(top).toBeGreaterThan(340);
+      const left = Number.parseFloat(picker.parentElement.style.left || '0');
+      const popupRight = left + 184;
+      const popupBottom = top + 360;
+      const selectionRect = selectionMockState.position.rects[0];
+      const selectionLeft = selectionRect?.x1 ?? 0;
+      const selectionTop = selectionRect?.y1 ?? 0;
+      const selectionRight = selectionRect?.x2 ?? 0;
+      const selectionBottom = selectionRect?.y2 ?? 0;
+      const overlapsSelection = !(
+        popupRight <= selectionLeft ||
+        selectionRight <= left ||
+        popupBottom <= selectionTop ||
+        selectionBottom <= top
+      );
+      expect(overlapsSelection).toBe(false);
     } finally {
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight });
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth });
@@ -1637,6 +1654,45 @@ describe('PDFHighlighterAdapter', () => {
     });
   });
 
+  it('upgrades legacy thin PDF ink width to a clearer default on mount', async () => {
+    inkStoreState.currentStyle = { color: '#ffeb3b', width: 2 };
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(inkStoreState.setCurrentStyle).toHaveBeenCalledWith({ width: 5 });
+    });
+  });
+
+  it('exposes professional underline style defaults from the underline tool menu', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().commandBarByPane['pane-left']).toBeTruthy();
+    });
+
+    const underlineAction = useWorkspaceStore
+      .getState()
+      .commandBarByPane['pane-left']
+      ?.actions.find((item) => item.id === 'tool-underline');
+    if (!underlineAction) {
+      throw new Error('Missing underline command bar action');
+    }
+
+    await act(async () => {
+      underlineAction.onContextMenu?.({ x: 32, y: 48 });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-annotation-defaults-menu')).toBeTruthy();
+    });
+
+    expect(screen.getByText('直线')).toBeTruthy();
+    expect(screen.getByText('波浪线')).toBeTruthy();
+    expect(screen.getByText('双线')).toBeTruthy();
+    expect(screen.getByText('虚线')).toBeTruthy();
+  });
+
   it('keeps finished ink strokes visible while they wait for merge finalization', async () => {
     useAnnotationSystemMock.mockReturnValue({
       annotations: [],
@@ -1674,8 +1730,57 @@ describe('PDFHighlighterAdapter', () => {
       expect(inkHookState.addStroke).toHaveBeenCalledTimes(1);
     });
 
+    expect(inkHookState.addStroke.mock.calls[0][0]).toMatchObject({
+      width: inkStoreState.currentStyle.width,
+    });
     expect(document.querySelector('[data-testid="pdf-pending-ink-strokes"]')).toBeTruthy();
     expect(document.body.textContent).not.toContain('绘制中');
+  });
+
+  it('keeps the live ink overlay mounted while the stroke path changes', async () => {
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [],
+      error: null,
+      addAnnotation: vi.fn(),
+      updateAnnotation: vi.fn(),
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().commandBarByPane['pane-left']).toBeTruthy();
+    });
+
+    const inkAction = useWorkspaceStore.getState().commandBarByPane['pane-left']?.actions.find((item) => item.id === 'tool-draw');
+    if (!inkAction) {
+      throw new Error('Missing ink command bar action');
+    }
+
+    await act(async () => {
+      inkAction.onTrigger?.();
+    });
+
+    const pageElement = document.querySelector<HTMLElement>('[data-page-number="1"]');
+    if (!pageElement) {
+      throw new Error('Missing PDF page element');
+    }
+
+    fireEvent.mouseDown(pageElement, { clientX: 120, clientY: 140 });
+    fireEvent.mouseMove(pageElement, { clientX: 180, clientY: 200 });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const firstOverlay = pageElement.querySelector('.current-ink-overlay');
+    expect(firstOverlay).toBeTruthy();
+
+    fireEvent.mouseMove(pageElement, { clientX: 220, clientY: 240 });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(pageElement.querySelector('.current-ink-overlay')).toBe(firstOverlay);
   });
 
   it('erases a saved ink stroke as a first-class PDF tool', async () => {

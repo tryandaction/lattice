@@ -20,6 +20,7 @@ export function TreeView({ root }: TreeViewProps) {
   const { copyEntry, moveEntry } = useFileSystem();
   const setSelectedDirectoryPath = useWorkspaceStore((state) => state.setSelectedDirectoryPath);
   const updateTabPath = useWorkspaceStore((state) => state.updateTabPath);
+  const updateTabFile = useWorkspaceStore((state) => state.updateTabFile);
   const updateTabPathPrefix = useWorkspaceStore((state) => state.updateTabPathPrefix);
   const selectedPath = useExplorerStore((state) => state.selectedPath);
   const selectedKind = useExplorerStore((state) => state.selectedKind);
@@ -53,7 +54,11 @@ export function TreeView({ root }: TreeViewProps) {
 
     if (clipboard.mode === "cut") {
       if (clipboard.kind === "file") {
-        updateTabPath(clipboard.path, result.path);
+        if (result.handle?.kind === "file") {
+          updateTabFile(clipboard.path, result.path, result.handle as FileSystemFileHandle);
+        } else {
+          updateTabPath(clipboard.path, result.path);
+        }
       } else {
         updateTabPathPrefix(clipboard.path, result.path);
       }
@@ -74,6 +79,7 @@ export function TreeView({ root }: TreeViewProps) {
     selectedPath,
     setSelectedDirectoryPath,
     setSelection,
+    updateTabFile,
     updateTabPath,
     updateTabPathPrefix,
   ]);

@@ -35,7 +35,8 @@ export type CodeEditorLanguage =
   | "latex" 
   | "json" 
   | "javascript" 
-  | "typescript";
+  | "typescript"
+  | "plaintext";
 
 export interface CodeEditorStateSnapshot {
   cursorPosition: number;

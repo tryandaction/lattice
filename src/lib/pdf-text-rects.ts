@@ -23,6 +23,7 @@ export const PDF_TEXT_RECT_MAX_HORIZONTAL_GAP_PX = 96;
 export const PDF_TEXT_RECT_ROW_TOLERANCE_RATIO = 0.003;
 export const PDF_TEXT_RECT_HORIZONTAL_GAP_RATIO = 0.008;
 export const PDF_TEXT_RECT_MAX_HORIZONTAL_GAP_RATIO = 0.08;
+const PDF_TEXT_RECT_MIN_SEGMENT_HEIGHT_RATIO = 0.82;
 
 interface NormalizedPdfTextRect extends PdfTextOverlayRect {
   right: number;
@@ -131,9 +132,16 @@ function buildTextRectRows(rects: NormalizedPdfTextRect[], rowTolerance: number)
 function buildRowSegment(rects: NormalizedPdfTextRect[]): PdfMergedTextOverlaySegment {
   const left = Math.min(...rects.map((rect) => rect.left));
   const right = Math.max(...rects.map((rect) => rect.right));
-  const top = Math.min(...rects.map((rect) => rect.top));
-  const bottom = Math.max(...rects.map((rect) => rect.bottom));
   const medianHeight = Math.max(Number.EPSILON, median(rects.map((rect) => rect.height)));
+  const medianCenterY = median(rects.map((rect) => rect.centerY));
+  const rawTop = Math.min(...rects.map((rect) => rect.top));
+  const rawBottom = Math.max(...rects.map((rect) => rect.bottom));
+  const normalizedHeight = Math.max(
+    rawBottom - rawTop,
+    medianHeight * PDF_TEXT_RECT_MIN_SEGMENT_HEIGHT_RATIO,
+  );
+  const top = Math.max(0, medianCenterY - normalizedHeight / 2);
+  const bottom = top + normalizedHeight;
   const baselineHeight = Math.min(bottom - top, medianHeight);
 
   return {

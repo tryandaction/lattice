@@ -743,6 +743,39 @@ function getSelectionBoundaryDistance(input: {
   );
 }
 
+function getSelectionGeometryOverlapRatio(input: {
+  selection: PdfResolvedSelection | null;
+  viewportRects: PdfCanonicalSelection["viewportRects"];
+}): number {
+  if (!input.selection) {
+    return 0;
+  }
+
+  const candidateRects = normalizeViewportRects(input.selection.viewportRects);
+  const referenceRects = normalizeViewportRects(input.viewportRects);
+  if (candidateRects.length === 0 || referenceRects.length === 0) {
+    return 0;
+  }
+
+  let intersectionArea = 0;
+  let referenceArea = 0;
+
+  for (const referenceRect of referenceRects) {
+    referenceArea += Math.max(0, referenceRect.width) * Math.max(0, referenceRect.height);
+    for (const candidateRect of candidateRects) {
+      const overlapWidth = Math.max(0, Math.min(candidateRect.left + candidateRect.width, referenceRect.left + referenceRect.width) - Math.max(candidateRect.left, referenceRect.left));
+      const overlapHeight = Math.max(0, Math.min(candidateRect.top + candidateRect.height, referenceRect.top + referenceRect.height) - Math.max(candidateRect.top, referenceRect.top));
+      intersectionArea += overlapWidth * overlapHeight;
+    }
+  }
+
+  if (referenceArea <= 0) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, intersectionArea / referenceArea));
+}
+
 function resolveNativeSelectionFromPointerBounds(input: {
   layout: PdfNativePageTextLayout;
   nativeModel: PdfNativeNormalizedModel;
@@ -973,12 +1006,13 @@ function getSelectionDistanceFromDom(selection: PdfResolvedSelection | null, dom
   return distance ?? Number.POSITIVE_INFINITY;
 }
 
-function choosePreferredNativeSelection(input: {
+export function choosePreferredNativeSelection(input: {
   offsetSelection: PdfResolvedSelection | null;
   geometrySelection: PdfResolvedSelection | null;
   textSearchSelection: PdfResolvedSelection | null;
   domSelectedText: string;
   viewportRectCount: number;
+  viewportRects: PdfCanonicalSelection["viewportRects"];
 }): PdfResolvedSelection | null {
   const availableSelections = [
     input.offsetSelection,
@@ -1027,15 +1061,52 @@ function choosePreferredNativeSelection(input: {
   const offsetDistance = getSelectionDistanceFromDom(input.offsetSelection, input.domSelectedText);
   const geometryDistance = getSelectionDistanceFromDom(input.geometrySelection, input.domSelectedText);
   const textSearchDistance = getSelectionDistanceFromDom(input.textSearchSelection, input.domSelectedText);
-  const bestDistance = Math.min(offsetDistance, geometryDistance, textSearchDistance);
-  if (bestDistance === textSearchDistance) {
-    return input.textSearchSelection;
-  }
-  if (bestDistance === geometryDistance) {
-    return input.geometrySelection;
-  }
-  if (bestDistance === offsetDistance) {
-    return input.offsetSelection;
+  const offsetOverlap = getSelectionGeometryOverlapRatio({
+    selection: input.offsetSelection,
+    viewportRects: input.viewportRects,
+  });
+  const geometryOverlap = getSelectionGeometryOverlapRatio({
+    selection: input.geometrySelection,
+    viewportRects: input.viewportRects,
+  });
+  const textSearchOverlap = getSelectionGeometryOverlapRatio({
+    selection: input.textSearchSelection,
+    viewportRects: input.viewportRects,
+  });
+  const candidates = [
+    input.offsetSelection ? {
+      selection: input.offsetSelection,
+      kind: "offset" as const,
+      distance: offsetDistance,
+      overlap: offsetOverlap,
+    } : null,
+    input.geometrySelection ? {
+      selection: input.geometrySelection,
+      kind: "geometry" as const,
+      distance: geometryDistance,
+      overlap: geometryOverlap,
+    } : null,
+    input.textSearchSelection ? {
+      selection: input.textSearchSelection,
+      kind: "textSearch" as const,
+      distance: textSearchDistance,
+      overlap: textSearchOverlap,
+    } : null,
+  ].filter((candidate): candidate is {
+    selection: PdfResolvedSelection;
+    kind: "offset" | "geometry" | "textSearch";
+    distance: number;
+    overlap: number;
+  } => Boolean(candidate));
+
+  const bestDistance = Math.min(...candidates.map((candidate) => candidate.distance));
+  const bestCandidates = candidates.filter((candidate) => candidate.distance === bestDistance);
+  if (bestCandidates.length > 0) {
+    bestCandidates.sort((left, right) => (
+      right.overlap - left.overlap ||
+      (left.kind === "geometry" ? 0 : left.kind === "offset" ? 1 : 2) - (right.kind === "geometry" ? 0 : right.kind === "offset" ? 1 : 2)
+    ));
+    return bestCandidates[0]?.selection ?? null;
   }
 
   if (textSearchCompact.length > Math.max(offsetCompact.length, geometryCompact.length)) {
@@ -1477,6 +1548,7 @@ export function resolvePdfSelectionFromDomRange(input: {
       textSearchSelection,
       domSelectedText,
       viewportRectCount,
+      viewportRects: resolvedViewportRects,
     });
     const nativeSelection = choosePreferredPointerSelection({
       baseSelection: baseNativeSelection,

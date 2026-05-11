@@ -50,5 +50,21 @@ describe("workspace-store execution scope cleanup", () => {
       expect(getExecutionSession(scopeId)).toBeNull();
     });
   });
-});
 
+  it("updates the tab file handle when a renamed file changes extension", () => {
+    const store = useWorkspaceStore.getState();
+    const paneId = store.layout.activePaneId;
+    const oldHandle = createFileHandle("untitled.txt");
+    const newHandle = createFileHandle("note.md");
+
+    store.openFileInPane(paneId, oldHandle, "workspace/untitled.txt");
+    store.updateTabFile("workspace/untitled.txt", "workspace/note.md", newHandle);
+
+    const pane = useWorkspaceStore.getState().getActivePane();
+    const tab = pane?.tabs[0];
+    expect(tab?.fileName).toBe("note.md");
+    expect(tab?.filePath).toBe("workspace/note.md");
+    expect(tab?.fileHandle).toBe(newHandle);
+    expect(tab?.fileHandle.name).toBe("note.md");
+  });
+});

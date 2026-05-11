@@ -587,6 +587,8 @@ export const zhCN = {
   'pdf.underline.style': '下划线样式',
   'pdf.underline.style.solid': '直线',
   'pdf.underline.style.wavy': '波浪线',
+  'pdf.underline.style.double': '双线',
+  'pdf.underline.style.dashed': '虚线',
   'pdf.zoomOutShortcut': '缩小 (Ctrl+-)',
   'pdf.zoomInShortcut': '放大 (Ctrl++)',
   'pdf.highlightHint': '选择文本以添加高亮',

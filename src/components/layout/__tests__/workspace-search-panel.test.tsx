@@ -12,6 +12,7 @@ const navigateLinkMock = vi.fn().mockResolvedValue(true);
 let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 const originalConsoleError = console.error;
 const extractRawTextMock = vi.fn();
+const extractTextFromPptxMock = vi.fn();
 
 vi.mock("@/lib/link-router/navigate-link", () => ({
   navigateLink: (...args: unknown[]) => navigateLinkMock(...args),
@@ -21,6 +22,10 @@ vi.mock("mammoth", () => ({
   default: {
     extractRawText: (...args: unknown[]) => extractRawTextMock(...args),
   },
+}));
+
+vi.mock("@/lib/pptx-formula-extractor", () => ({
+  extractTextFromPptx: (...args: unknown[]) => extractTextFromPptxMock(...args),
 }));
 
 function createFileHandle(name: string, content: string): FileSystemFileHandle {
@@ -395,5 +400,71 @@ describe("WorkspaceSearchPanel", () => {
     });
 
     expect(extractRawTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("searches pptx slide text and shows the slide content in results", async () => {
+    extractTextFromPptxMock.mockResolvedValue([
+      {
+        slideIndex: 0,
+        paragraphs: [
+          { text: "pptx title", isTitle: true },
+          { text: "keyword appears in slide notes" },
+        ],
+      },
+    ]);
+
+    const pptxHandle = {
+      name: "slides.pptx",
+      getFile: vi.fn(async () => new File([new Uint8Array([1, 2, 3])], "slides.pptx", { lastModified: 456 })),
+    } as unknown as FileSystemFileHandle;
+
+    await act(async () => {
+      useWorkspaceStore.setState((state) => ({
+        ...state,
+        rootHandle: { name: "workspace" } as FileSystemDirectoryHandle,
+        fileTree: {
+          root: {
+            name: "workspace",
+            kind: "directory",
+            handle: { name: "workspace" } as FileSystemDirectoryHandle,
+            path: "workspace",
+            isExpanded: true,
+            children: [
+              {
+                name: "slides.pptx",
+                kind: "file",
+                extension: "pptx",
+                path: "workspace/slides.pptx",
+                handle: pptxHandle,
+              },
+            ],
+          },
+        },
+        layout: {
+          activePaneId: "pane-initial",
+          root: {
+            type: "pane",
+            id: "pane-initial",
+            activeTabIndex: 0,
+            tabs: [],
+          },
+        },
+      }));
+    });
+
+    render(<WorkspaceSearchPanel />);
+
+    await runInteraction(() => {
+      fireEvent.change(screen.getByRole("textbox"), {
+        target: { value: "keyword" },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("slides.pptx")).toBeTruthy();
+      const snippetElements = screen.getAllByText((_, element) => element?.className === "mt-1 text-sm text-foreground/85");
+      expect(snippetElements.some((element) => element.textContent?.includes("pptx title"))).toBe(true);
+      expect(snippetElements.some((element) => element.textContent?.includes("keyword appears in slide notes"))).toBe(true);
+    });
   });
 });

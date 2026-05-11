@@ -2,7 +2,7 @@
 
 import { useMemo, useCallback, useEffect, useState } from "react";
 import { Loader2, AlertCircle, FileQuestion } from "lucide-react";
-import { getRendererForExtension, getFileExtension, getImageMimeType, RendererType, isEditableCodeFile } from "@/lib/file-utils";
+import { getRendererForExtension, getFileExtension, getImageMimeType, RendererType, isEditableCodeFile, isEditableFile } from "@/lib/file-utils";
 import dynamic from "next/dynamic";
 import type { PaneId } from "@/stores/workspace-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -33,6 +33,15 @@ function cachedNormalizeScientificText(raw: string): string {
   }
   normalizeCache.set(raw, result);
   return result;
+}
+
+function getDisplayNameFromPath(filePath: string | undefined, fallbackName: string): string {
+  const normalizedPath = filePath?.replace(/\\/g, "/").trim();
+  if (!normalizedPath) {
+    return fallbackName;
+  }
+
+  return normalizedPath.split("/").filter(Boolean).pop() || fallbackName;
 }
 
 interface AdaptivePDFRendererProps {
@@ -462,7 +471,7 @@ function FileViewer({
       const codeContent = getTextContent();
 
       // Use CodeEditorViewer for editable code files (Requirements 4.1-4.4)
-      if (onContentChange && isEditableCodeFile(extension)) {
+      if (onContentChange && (isEditableCodeFile(extension) || isEditableFile(extension))) {
         return (
           <CodeEditorViewer
             content={codeContent}
@@ -486,6 +495,20 @@ function FileViewer({
     case "html": {
       // Ensure content is a string for HTML viewer
       const htmlContent = getTextContent();
+      if (onContentChange) {
+        return (
+          <CodeEditorViewer
+            content={htmlContent}
+            fileName={fileName}
+            onContentChange={onContentChange}
+            onSave={onSave}
+            paneId={paneId}
+            tabId={fileId || fileName}
+            filePath={filePath ?? fileName}
+            executionScopeId={executionScopeId}
+          />
+        );
+      }
       return <HTMLViewer content={htmlContent} fileName={fileName} paneId={paneId} filePath={filePath ?? fileName} />;
     }
     case "image":
@@ -619,7 +642,7 @@ export function UniversalFileViewer({
     return <LoadingState message={t("viewer.loading.preparing")} />;
   }
 
-  const fileName = handle.name;
+  const fileName = getDisplayNameFromPath(filePath, handle.name);
   const extension = getFileExtension(fileName);
   const rendererType = getRendererForExtension(extension);
 

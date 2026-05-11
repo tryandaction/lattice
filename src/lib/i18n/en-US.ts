@@ -589,6 +589,8 @@ export const enUS: Record<TranslationKey, string> = {
   'pdf.underline.style': 'Underline style',
   'pdf.underline.style.solid': 'Solid',
   'pdf.underline.style.wavy': 'Wavy',
+  'pdf.underline.style.double': 'Double',
+  'pdf.underline.style.dashed': 'Dashed',
   'pdf.zoomOutShortcut': 'Zoom out (Ctrl+-)',
   'pdf.zoomInShortcut': 'Zoom in (Ctrl++)',
   'pdf.highlightHint': 'Select text to add a highlight',

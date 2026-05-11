@@ -20,6 +20,7 @@ export interface InkStroke {
   points: InkPoint[];
   page: number;
   color: string;
+  width?: number;
 }
 
 export interface MergeCriteria {
@@ -160,13 +161,16 @@ function shouldMergeWithBuffer(
 function createMergedAnnotation(buffer: StrokeBuffer): MergedInkAnnotation {
   // Combine all stroke paths for rendering
   const allPaths = buffer.strokes.map(s => s.points);
+  const width = buffer.strokes[buffer.strokes.length - 1]?.width;
   
   return {
     page: buffer.page,
     color: buffer.color,
     strokes: buffer.strokes,
     boundingBox: buffer.boundingBox,
-    content: JSON.stringify(allPaths),
+    content: width
+      ? JSON.stringify({ paths: allPaths, width })
+      : JSON.stringify(allPaths),
   };
 }
 

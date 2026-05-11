@@ -179,6 +179,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   const openFileInPane = useWorkspaceStore((state) => state.openFileInPane);
   const closeTabsByPath = useWorkspaceStore((state) => state.closeTabsByPath);
   const updateTabPath = useWorkspaceStore((state) => state.updateTabPath);
+  const updateTabFile = useWorkspaceStore((state) => state.updateTabFile);
   const layout = useWorkspaceStore((state) => state.layout);
   const { deleteFile, renameFile, refreshDirectory, rootHandle, hydratePdfVirtualChildren } = useFileSystem();
   const selectedPath = useExplorerStore((state) => state.selectedPath);
@@ -246,11 +247,15 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
       return;
     }
 
-    updateTabPath(node.path, result.path);
+    if (result.handle?.kind === "file") {
+      updateTabFile(node.path, result.path, result.handle as FileSystemFileHandle);
+    } else {
+      updateTabPath(node.path, result.path);
+    }
     syncExplorerSelectionAfterPathChange(node.path, result.path, "file");
     stopRenaming();
     setRenameError(null);
-  }, [node.path, renameFile, renameValue, stopRenaming, updateTabPath]);
+  }, [node.path, renameFile, renameValue, stopRenaming, updateTabFile, updateTabPath]);
 
   const handleDelete = useCallback(async () => {
     closeTabsByPath(node.path);
@@ -625,7 +630,11 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
 
     if (clipboard.mode === "cut") {
       if (clipboard.kind === "file") {
-        useWorkspaceStore.getState().updateTabPath(clipboard.path, result.path);
+        if (result.handle?.kind === "file") {
+          useWorkspaceStore.getState().updateTabFile(clipboard.path, result.path, result.handle as FileSystemFileHandle);
+        } else {
+          useWorkspaceStore.getState().updateTabPath(clipboard.path, result.path);
+        }
       } else {
         updateTabPathPrefix(clipboard.path, result.path);
       }
@@ -656,7 +665,11 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
     }
 
     if (dragged.kind === "file") {
-      useWorkspaceStore.getState().updateTabPath(dragged.path, result.path);
+      if (result.handle?.kind === "file") {
+        useWorkspaceStore.getState().updateTabFile(dragged.path, result.path, result.handle as FileSystemFileHandle);
+      } else {
+        useWorkspaceStore.getState().updateTabPath(dragged.path, result.path);
+      }
     } else {
       updateTabPathPrefix(dragged.path, result.path);
     }

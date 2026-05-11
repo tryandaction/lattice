@@ -4,9 +4,12 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
+  choosePreferredNativeSelection,
   resolvePdfSelectionFromNativeRange,
   type PdfRenderedPageContext,
+  type PdfResolvedSelection,
 } from "../pdf-selection-reconciler";
+import type { PdfTextQuoteSource } from "@/types/universal-annotation";
 
 const originalRangeGetBoundingClientRect = Range.prototype.getBoundingClientRect;
 const originalRangeGetClientRects = Range.prototype.getClientRects;
@@ -170,6 +173,43 @@ function createRangeAcrossFragments(input: {
   return range;
 }
 
+function createResolvedSelection(input: {
+  text: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  source?: PdfTextQuoteSource;
+}): PdfResolvedSelection {
+  const viewportRect = {
+    left: input.left,
+    top: input.top,
+    width: input.width,
+    height: input.height,
+    pageNumber: 1,
+  };
+  return {
+    pageNumber: 1,
+    startOffset: 0,
+    endOffset: input.text.length,
+    text: input.text,
+    textQuote: {
+      exact: input.text,
+      prefix: "",
+      suffix: "",
+      source: input.source ?? "pdfium-native",
+      confidence: "validated-native",
+    },
+    pageRects: [{
+      x1: input.left / 640,
+      y1: input.top / 960,
+      x2: (input.left + input.width) / 640,
+      y2: (input.top + input.height) / 960,
+    }],
+    viewportRects: [viewportRect],
+  };
+}
+
 beforeAll(() => {
   Range.prototype.getBoundingClientRect = function mockGetBoundingClientRect() {
     const rects = getMockRangeClientRects(this);
@@ -307,6 +347,42 @@ describe("pdf-selection-reconciler", () => {
       expect(result.selection.text).toBe("right column");
       expect(result.selection.pageRects[0]?.x1).toBeCloseTo(340 / 640, 3);
     }
+  });
+
+  it("prefers the candidate that overlaps the selected geometry when text distance ties", () => {
+    const domSelectedText = "repeat phrase";
+    const referenceRects = [{
+      left: 300,
+      top: 120,
+      width: 160,
+      height: 24,
+      pageNumber: 1,
+    }];
+    const geometrySelection = createResolvedSelection({
+      text: domSelectedText,
+      left: 300,
+      top: 120,
+      width: 160,
+      height: 24,
+    });
+    const offsetSelection = createResolvedSelection({
+      text: domSelectedText,
+      left: 24,
+      top: 720,
+      width: 160,
+      height: 24,
+    });
+
+    const result = choosePreferredNativeSelection({
+      offsetSelection,
+      geometrySelection,
+      textSearchSelection: null,
+      domSelectedText,
+      viewportRectCount: referenceRects.length,
+      viewportRects: referenceRects,
+    });
+
+    expect(result).toBe(geometrySelection);
   });
 
   it("resolves the information regression from a long text span", () => {

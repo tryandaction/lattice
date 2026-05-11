@@ -52,6 +52,7 @@ import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useI18n } from "@/hooks/use-i18n";
+import type { TranslationKey } from "@/lib/i18n";
 import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
 import { getDesktopPreviewPath, readDesktopFileBytesRaw } from "@/lib/desktop-preview";
 import {
@@ -575,7 +576,6 @@ function usePdfPageOverlayContainer(input: {
     page,
     overlayClassName,
     overlayStyle,
-    dependencyKey,
   } = input;
 
   useEffect(() => {
@@ -597,33 +597,36 @@ function usePdfPageOverlayContainer(input: {
 
       mountedOverlay = attached.overlay;
       if (!disposed) {
-        setContainer(attached.overlay);
+        setContainer((current) => (current === attached.overlay ? current : attached.overlay));
       }
       return true;
     };
 
-    if (!tryAttach()) {
-      const root = paneRootRef.current;
-      if (root) {
-        observer = new MutationObserver(() => {
-          if (tryAttach()) {
-            observer?.disconnect();
-            observer = null;
-          }
-        });
-        observer.observe(root, { childList: true, subtree: true });
+    const scheduleRetryAttach = () => {
+      if (frameId) {
+        return;
       }
 
-      const retryAttach = () => {
-        if (disposed) {
-          return;
+      frameId = window.requestAnimationFrame(() => {
+        frameId = 0;
+        if (!disposed && !tryAttach()) {
+          scheduleRetryAttach();
         }
-        if (tryAttach()) {
-          return;
+      });
+    };
+
+    const root = paneRootRef.current;
+    if (root) {
+      observer = new MutationObserver(() => {
+        if (!disposed) {
+          tryAttach();
         }
-        frameId = window.requestAnimationFrame(retryAttach);
-      };
-      frameId = window.requestAnimationFrame(retryAttach);
+      });
+      observer.observe(root, { childList: true, subtree: true });
+    }
+
+    if (!tryAttach()) {
+      scheduleRetryAttach();
     }
 
     return () => {
@@ -637,7 +640,7 @@ function usePdfPageOverlayContainer(input: {
       }
       setContainer(null);
     };
-  }, [dependencyKey, overlayClassName, overlayStyle, page, paneRootRef]);
+  }, [overlayClassName, overlayStyle, page, paneRootRef]);
 
   return container;
 }
@@ -663,13 +666,14 @@ function buildPopupRect(x: number, y: number, popupSize: PopupSize): DOMRect {
   return new DOMRect(x, y, popupSize.width, popupSize.height);
 }
 
-function rectsOverlap(left: DOMRect, right: DOMRect): boolean {
-  return !(
-    left.right <= right.left ||
-    right.right <= left.left ||
-    left.bottom <= right.top ||
-    right.bottom <= left.top
-  );
+function rectIntersectionArea(left: DOMRect, right: DOMRect): number {
+  const leftRight = left.left + left.width;
+  const leftBottom = left.top + left.height;
+  const rightRight = right.left + right.width;
+  const rightBottom = right.top + right.height;
+  const width = Math.max(0, Math.min(leftRight, rightRight) - Math.max(left.left, right.left));
+  const height = Math.max(0, Math.min(leftBottom, rightBottom) - Math.max(left.top, right.top));
+  return width * height;
 }
 
 function getAnchoredPopupPosition(
@@ -679,11 +683,17 @@ function getAnchoredPopupPosition(
     gap?: number;
     horizontalAlign?: PopupHorizontalAlign;
     preferredPlacement?: PopupPreferredPlacement;
+    avoidRect?: DOMRect | null;
+    avoidRects?: DOMRect[];
   },
 ): { x: number; y: number } {
   const gap = options?.gap ?? 6;
   const horizontalAlign = options?.horizontalAlign ?? "center";
   const preferredPlacement = options?.preferredPlacement ?? "below";
+  const avoidRects = [
+    ...(options?.avoidRects ?? []),
+    options?.avoidRect ?? null,
+  ].filter((rect): rect is DOMRect => Boolean(rect));
 
   const alignedX = horizontalAlign === "start"
     ? anchorRect.left
@@ -695,7 +705,8 @@ function getAnchoredPopupPosition(
     placement: PopupPreferredPlacement;
     position: { x: number; y: number };
     rect: DOMRect;
-    overlapsAnchor: boolean;
+    overlapsAvoid: boolean;
+    avoidOverlapArea: number;
     distance: number;
     priority: number;
   }> = [];
@@ -717,19 +728,21 @@ function getAnchoredPopupPosition(
   const addCandidate = (placement: PopupPreferredPlacement, desiredX: number, desiredY: number) => {
     const adjusted = adjustPopupPosition({ x: desiredX, y: desiredY }, popupSize, 8);
     const rect = buildPopupRect(adjusted.x, adjusted.y, popupSize);
-    const overlapsAnchor = rectsOverlap(anchorRect, rect);
+    const avoidOverlapArea = avoidRects.reduce((total, avoidRect) => total + rectIntersectionArea(avoidRect, rect), 0);
+    const rectBottom = rect.top + rect.height;
     const distance = placement === "below"
       ? Math.abs(rect.top - (anchorRect.bottom + gap))
       : placement === "above"
-        ? Math.abs(rect.bottom - (anchorRect.top - gap))
+        ? Math.abs(rectBottom - (anchorRect.top - gap))
         : placement === "right"
-          ? Math.abs(rect.left - (anchorRect.right + gap))
+          ? Math.abs(rect.left - (anchorRect.left + anchorRect.width + gap))
           : Math.abs(rect.right - (anchorRect.left - gap));
     candidates.push({
       placement,
       position: adjusted,
       rect,
-      overlapsAnchor,
+      overlapsAvoid: avoidOverlapArea > 0,
+      avoidOverlapArea,
       distance,
       priority: placementOrder.indexOf(placement),
     });
@@ -740,8 +753,24 @@ function getAnchoredPopupPosition(
   addCandidate("right", anchorRect.right + gap, anchorRect.top);
   addCandidate("left", anchorRect.left - popupSize.width - gap, anchorRect.top);
 
+  const clearCandidates = candidates.filter((candidate) => candidate.avoidOverlapArea <= 0);
+  if (clearCandidates.length > 0) {
+    const preferredClearCandidate = placementOrder
+      .map((placement) => clearCandidates.find((candidate) => candidate.placement === placement))
+      .find((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
+    if (preferredClearCandidate) {
+      return preferredClearCandidate.position;
+    }
+
+    clearCandidates.sort((left, right) => (
+      left.priority - right.priority ||
+      left.distance - right.distance
+    ));
+    return clearCandidates[0]?.position ?? adjustPopupPosition({ x: alignedX, y: anchorRect.bottom + gap }, popupSize, 8);
+  }
+
   candidates.sort((left, right) => (
-    Number(left.overlapsAnchor) - Number(right.overlapsAnchor) ||
+    left.avoidOverlapArea - right.avoidOverlapArea ||
     left.priority - right.priority ||
     left.distance - right.distance
   ));
@@ -800,6 +829,12 @@ const DOM_SELECTION_SETTLE_WINDOW_MS = 140;
 const PAGE_BUFFER = 2;
 const ESTIMATED_PAGE_HEIGHT = 842;
 const ESTIMATED_PAGE_WIDTH = 595;
+const UNDERLINE_STYLE_OPTIONS: Array<{ value: UnderlineStyleType; labelKey: TranslationKey }> = [
+  { value: "solid", labelKey: "pdf.underline.style.solid" },
+  { value: "wavy", labelKey: "pdf.underline.style.wavy" },
+  { value: "double", labelKey: "pdf.underline.style.double" },
+  { value: "dashed", labelKey: "pdf.underline.style.dashed" },
+];
 
 const reactPdfWorkerUrl = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
@@ -817,6 +852,8 @@ function buildPdfUnderlineDecorationStyle(input: {
   const opacity = input.isActive ? 1 : 0.92;
   const baselineHeight = Math.max(1.5, Math.min(3, input.segment.baselineHeight * 0.12));
   const baselineTop = Math.max(0, input.segment.baselineTop - input.segment.top + input.segment.baselineHeight - baselineHeight);
+  const cssBaselineHeight = `${baselineHeight}px`;
+  const cssBaselineTop = `${baselineTop}px`;
 
   if (input.underlineStyle === "wavy") {
     const waveHeight = Math.max(4, Math.min(8, input.segment.baselineHeight * 0.28));
@@ -837,10 +874,39 @@ function buildPdfUnderlineDecorationStyle(input: {
     };
   }
 
+  if (input.underlineStyle === "double") {
+    const lineGap = Math.max(1.8, baselineHeight * 1.8);
+    const lowerTop = Math.min(Math.max(0, input.segment.height - baselineHeight), baselineTop + lineGap);
+    const upperTop = Math.max(0, Math.min(baselineTop, lowerTop - lineGap));
+    return {
+      backgroundColor: "transparent",
+      backgroundImage: `linear-gradient(${baseColor}, ${baseColor}), linear-gradient(${baseColor}, ${baseColor})`,
+      backgroundPosition: `left ${upperTop}px, left ${lowerTop}px`,
+      backgroundRepeat: "repeat-x",
+      backgroundSize: `100% ${cssBaselineHeight}, 100% ${cssBaselineHeight}`,
+      opacity,
+    };
+  }
+
+  if (input.underlineStyle === "dashed") {
+    const dashWidth = Math.max(5, input.segment.baselineHeight * 0.5);
+    const dashGap = Math.max(3, input.segment.baselineHeight * 0.24);
+    return {
+      backgroundColor: "transparent",
+      backgroundImage: `repeating-linear-gradient(to right, ${baseColor} 0 ${dashWidth}px, transparent ${dashWidth}px ${dashWidth + dashGap}px)`,
+      backgroundPosition: `left ${cssBaselineTop}`,
+      backgroundRepeat: "repeat-x",
+      backgroundSize: `auto ${cssBaselineHeight}`,
+      opacity,
+    };
+  }
+
   return {
     backgroundColor: "transparent",
-    borderBottom: `${baselineHeight}px solid ${baseColor}`,
-    paddingBottom: Math.max(0, input.segment.height - baselineTop - baselineHeight),
+    backgroundImage: `linear-gradient(${baseColor}, ${baseColor})`,
+    backgroundPosition: `left ${cssBaselineTop}`,
+    backgroundRepeat: "repeat-x",
+    backgroundSize: `100% ${cssBaselineHeight}`,
     opacity,
   };
 }
@@ -982,19 +1048,25 @@ interface PdfSelectionDraftMenuProps {
   selection: PdfResolvedSelection;
   position: { x: number; y: number };
   anchorRect?: DOMRect | null;
+  avoidRect?: DOMRect | null;
   onColorSelect: (color: string) => void;
   onCancel: () => void;
 }
 
-function PdfSelectionDraftMenu({ selection, position, anchorRect, onColorSelect, onCancel }: PdfSelectionDraftMenuProps) {
+function PdfSelectionDraftMenu({ selection, position, anchorRect, avoidRect, onColorSelect, onCancel }: PdfSelectionDraftMenuProps) {
   const popupRef = useRef<HTMLDivElement>(null);
   const popupSize = useMeasuredPopupSize(
     popupRef,
     { width: 184, height: 360 },
-    `${selection.text}:${anchorRect?.left ?? 0}:${anchorRect?.top ?? 0}:${anchorRect?.width ?? 0}:${anchorRect?.height ?? 0}`,
+    `${selection.text}:${anchorRect?.left ?? 0}:${anchorRect?.top ?? 0}:${anchorRect?.width ?? 0}:${anchorRect?.height ?? 0}:${avoidRect?.left ?? 0}:${avoidRect?.top ?? 0}:${avoidRect?.width ?? 0}:${avoidRect?.height ?? 0}`,
   );
   const adjustedPosition = anchorRect
-    ? getAnchoredPopupPosition(anchorRect, popupSize, { gap: 4, horizontalAlign: "start", preferredPlacement: "below" })
+    ? getAnchoredPopupPosition(anchorRect, popupSize, {
+        gap: 4,
+        horizontalAlign: "start",
+        preferredPlacement: "below",
+        avoidRect,
+      })
     : adjustPopupPosition(position, popupSize, 20);
 
   return ReactDOM.createPortal(
@@ -1249,10 +1321,7 @@ function PdfAnnotationDefaultsMenu({
         {state.tool === "underline" ? (
           <div className="mt-2 border-t border-border px-1 pt-2">
             <div className="px-1 pb-2 text-xs text-muted-foreground">{t("pdf.underline.style")}</div>
-            {([
-              { value: "solid", label: t("pdf.underline.style.solid") },
-              { value: "wavy", label: t("pdf.underline.style.wavy") },
-            ] as const).map((option) => (
+            {UNDERLINE_STYLE_OPTIONS.map((option) => (
               <button
                 key={option.value}
                 type="button"
@@ -1264,7 +1333,7 @@ function PdfAnnotationDefaultsMenu({
                 role="menuitemradio"
                 aria-checked={activeUnderlineStyle === option.value}
               >
-                <span className="flex-1">{option.label}</span>
+                <span className="flex-1">{t(option.labelKey)}</span>
                 {activeUnderlineStyle === option.value ? <Check className="h-3.5 w-3.5" /> : null}
               </button>
             ))}
@@ -1477,16 +1546,13 @@ function HighlightPopupContent({
           {onChangeUnderlineStyle ? (
             <>
               <div className="px-3 pt-1 text-[11px] text-muted-foreground">{t("pdf.underline.style")}</div>
-              {([
-                { value: "solid", label: t("pdf.underline.style.solid") },
-                { value: "wavy", label: t("pdf.underline.style.wavy") },
-              ] as const).map((option) => (
+              {UNDERLINE_STYLE_OPTIONS.map((option) => (
                 <button
                   key={option.value}
                   onClick={() => onChangeUnderlineStyle(option.value)}
                   className="w-full px-3 py-1.5 text-left hover:bg-muted flex items-center gap-2"
                 >
-                  <span className="flex-1">{option.label}</span>
+                  <span className="flex-1">{t(option.labelKey)}</span>
                   {currentUnderlineStyle === option.value ? <Check className="h-3.5 w-3.5" /> : null}
                 </button>
               ))}
@@ -1982,10 +2048,9 @@ function CurrentInkPathOverlay({ path, color, scale, strokeWidth }: CurrentInkPa
 interface PendingInkStrokesOverlayProps {
   strokes: InkStroke[];
   scale: number;
-  strokeWidth: number;
 }
 
-function PendingInkStrokesOverlay({ strokes, scale, strokeWidth }: PendingInkStrokesOverlayProps) {
+function PendingInkStrokesOverlay({ strokes, scale }: PendingInkStrokesOverlayProps) {
   const visibleStrokes = strokes.filter((stroke) => stroke.points.length >= 2);
   if (visibleStrokes.length === 0) {
     return null;
@@ -2011,7 +2076,7 @@ function PendingInkStrokesOverlay({ strokes, scale, strokeWidth }: PendingInkStr
             d={pathData}
             fill="none"
             stroke={stroke.color}
-            strokeWidth={strokeWidth / scale}
+            strokeWidth={(stroke.width ?? DEFAULT_PDF_INK_WIDTH) / scale}
             strokeLinecap="round"
             strokeLinejoin="round"
             vectorEffect="non-scaling-stroke"
@@ -2026,11 +2091,10 @@ interface PendingInkStrokesPortalProps {
   strokes: InkStroke[];
   page: number;
   scale: number;
-  strokeWidth: number;
   paneRootRef: React.RefObject<HTMLElement | null>;
 }
 
-function PendingInkStrokesPortal({ strokes, page, scale, strokeWidth, paneRootRef }: PendingInkStrokesPortalProps) {
+function PendingInkStrokesPortal({ strokes, page, scale, paneRootRef }: PendingInkStrokesPortalProps) {
   const pageStrokes = strokes.filter((stroke) => stroke.page === page);
   const container = usePdfPageOverlayContainer({
     paneRootRef,
@@ -2043,7 +2107,7 @@ function PendingInkStrokesPortal({ strokes, page, scale, strokeWidth, paneRootRe
   if (!container || pageStrokes.length === 0) return null;
 
   return ReactDOM.createPortal(
-    <PendingInkStrokesOverlay strokes={pageStrokes} scale={scale} strokeWidth={strokeWidth} />,
+    <PendingInkStrokesOverlay strokes={pageStrokes} scale={scale} />,
     container,
   );
 }
@@ -2145,9 +2209,10 @@ interface PdfTransientSelectionOverlayProps {
   page: number;
   color: string;
   styleType: 'highlight' | 'underline';
+  underlineStyle: UnderlineStyleType;
 }
 
-function PdfTransientSelectionOverlay({ selection, paneId, page, color, styleType }: PdfTransientSelectionOverlayProps) {
+function PdfTransientSelectionOverlay({ selection, paneId, page, color, styleType, underlineStyle }: PdfTransientSelectionOverlayProps) {
   const rects = selection.overlayRectsByPage[page] ?? [];
   if (rects.length === 0) {
     return null;
@@ -2174,7 +2239,7 @@ function PdfTransientSelectionOverlay({ selection, paneId, page, color, styleTyp
                 height: rect.height,
                 ...buildPdfUnderlineDecorationStyle({
                   color,
-                  underlineStyle: "solid",
+                  underlineStyle,
                   isActive: true,
                   segment: rect,
                 }),
@@ -2201,9 +2266,10 @@ interface PdfTransientSelectionPortalProps {
   paneRootRef: React.RefObject<HTMLElement | null>;
   color: string;
   styleType: 'highlight' | 'underline';
+  underlineStyle: UnderlineStyleType;
 }
 
-function PdfTransientSelectionPortal({ selection, paneId, page, paneRootRef, color, styleType }: PdfTransientSelectionPortalProps) {
+function PdfTransientSelectionPortal({ selection, paneId, page, paneRootRef, color, styleType, underlineStyle }: PdfTransientSelectionPortalProps) {
   const container = usePdfPageOverlayContainer({
     paneRootRef,
     page,
@@ -2223,6 +2289,7 @@ function PdfTransientSelectionPortal({ selection, paneId, page, paneRootRef, col
       page={page}
       color={color}
       styleType={styleType}
+      underlineStyle={underlineStyle}
     />,
     container,
   );
@@ -2687,7 +2754,7 @@ export function PDFHighlighterAdapter({
   }, []);
 
   useEffect(() => {
-    if (!inkWidthInitializedRef.current && activeInkWidth === DEFAULT_INK_STYLE.width) {
+    if (!inkWidthInitializedRef.current && activeInkWidth <= DEFAULT_INK_STYLE.width) {
       inkWidthInitializedRef.current = true;
       setInkCurrentStyle({ width: DEFAULT_PDF_INK_WIDTH });
       return;
@@ -3082,6 +3149,7 @@ export function PDFHighlighterAdapter({
     selection: PdfResolvedSelection;
     position: { x: number; y: number };
     anchorRect: DOMRect | null;
+    avoidRect: DOMRect | null;
     token: number;
   } | null>(null);
   const [deferredNavigation, setDeferredNavigation] = useState<PendingPaneNavigation | null>(null);
@@ -3412,7 +3480,7 @@ export function PDFHighlighterAdapter({
     }));
   }, [commitPdfSelectionSession]);
 
-  const buildSelectionDraftMenuPosition = useCallback((selection: PdfResolvedSelection): { position: { x: number; y: number }; anchorRect: DOMRect } | null => {
+  const buildSelectionDraftMenuPosition = useCallback((selection: PdfResolvedSelection): { position: { x: number; y: number }; anchorRect: DOMRect; avoidRect: DOMRect } | null => {
     const pageElement = findPdfPageElementInScope(containerRef.current, selection.pageNumber);
     const pageRects = selection.viewportRects.filter((rect) => rect.pageNumber === selection.pageNumber);
     if (!pageElement || pageRects.length === 0) {
@@ -3430,6 +3498,16 @@ export function PDFHighlighterAdapter({
       1,
       Math.max(1, trailingRect.height),
     );
+    const selectionLeft = Math.min(...pageRects.map((rect) => rect.left));
+    const selectionTop = Math.min(...pageRects.map((rect) => rect.top));
+    const selectionRight = Math.max(...pageRects.map((rect) => rect.left + rect.width));
+    const selectionBottom = Math.max(...pageRects.map((rect) => rect.top + rect.height));
+    const avoidRect = new DOMRect(
+      pageRect.left + selectionLeft,
+      pageRect.top + selectionTop,
+      Math.max(1, selectionRight - selectionLeft),
+      Math.max(1, selectionBottom - selectionTop),
+    );
 
     return {
       position: {
@@ -3437,6 +3515,7 @@ export function PDFHighlighterAdapter({
         y: anchorRect.bottom + 4,
       },
       anchorRect,
+      avoidRect,
     };
   }, []);
 
@@ -3589,6 +3668,7 @@ export function PDFHighlighterAdapter({
         selection: resolvedSelection,
         position: menuPlacement.position,
         anchorRect: menuPlacement.anchorRect,
+        avoidRect: menuPlacement.avoidRect,
         token: selectionToken,
       });
     } else {
@@ -4317,7 +4397,8 @@ export function PDFHighlighterAdapter({
     const paths = merged.strokes
       .map((stroke) => stroke.points)
       .filter((path) => path.length >= 2);
-    const boundingBox = getPdfInkBoundingBox(paths, activeInkWidth / 1000) ?? {
+    const strokeWidth = merged.strokes[merged.strokes.length - 1]?.width ?? activeInkWidth;
+    const boundingBox = getPdfInkBoundingBox(paths, strokeWidth / 1000) ?? {
       x1: merged.boundingBox.x1,
       y1: merged.boundingBox.y1,
       x2: merged.boundingBox.x2,
@@ -4341,7 +4422,7 @@ export function PDFHighlighterAdapter({
       // Store stroke geometry plus width so rendering and export stay stable.
       content: serializePdfInkContent({
         paths,
-        width: activeInkWidth,
+        width: strokeWidth,
       }),
       author: 'user',
     };
@@ -4356,7 +4437,7 @@ export function PDFHighlighterAdapter({
         ink: {
           paths,
           color: merged.color,
-          width: activeInkWidth,
+          width: strokeWidth,
         },
       },
     );
@@ -5087,6 +5168,7 @@ export function PDFHighlighterAdapter({
                   ...current,
                   position: placement.position,
                   anchorRect: placement.anchorRect,
+                  avoidRect: placement.avoidRect,
                 }
               : current
           ));
@@ -5702,6 +5784,7 @@ export function PDFHighlighterAdapter({
       points: inkPath.map(p => ({ x: p.x, y: p.y })),
       page: inkPage,
       color: activeColor,
+      width: activeInkWidth,
     };
     
     addInkStroke(stroke);
@@ -5713,7 +5796,7 @@ export function PDFHighlighterAdapter({
     setIsDrawingStroke(false);
     setCurrentInkPath([]);
     setCurrentInkPage(null);
-  }, [isDrawingStroke, activeColor, addInkStroke]);
+  }, [isDrawingStroke, activeColor, activeInkWidth, addInkStroke]);
 
   const handleInkEraserMouseDown = useCallback((event: React.MouseEvent) => {
     if (activeTool !== "eraser") {
@@ -6372,6 +6455,7 @@ export function PDFHighlighterAdapter({
           paneRootRef={containerRef}
           color={transientSelectionColor}
           styleType={transientSelectionStyleType}
+          underlineStyle={activeUnderlineStyle}
         />
       ))}
 
@@ -6402,7 +6486,6 @@ export function PDFHighlighterAdapter({
           strokes={pendingInkStrokes}
           page={page}
           scale={renderScale}
-          strokeWidth={activeInkWidth}
           paneRootRef={containerRef}
         />
       ))}
@@ -6508,6 +6591,7 @@ export function PDFHighlighterAdapter({
           selection={pendingSelectionDraft.selection}
           position={pendingSelectionDraft.position}
           anchorRect={pendingSelectionDraft.anchorRect}
+          avoidRect={pendingSelectionDraft.avoidRect}
           onColorSelect={(color) => {
             const annotationData = resolvedTextSelectionToAnnotationData({
               selection: pendingSelectionDraft.selection,

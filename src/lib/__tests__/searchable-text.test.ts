@@ -13,6 +13,12 @@ vi.mock("mammoth", () => ({
   },
 }));
 
+const extractTextFromPptxMock = vi.fn();
+
+vi.mock("@/lib/pptx-formula-extractor", () => ({
+  extractTextFromPptx: (...args: unknown[]) => extractTextFromPptxMock(...args),
+}));
+
 describe("searchable text extraction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -48,6 +54,31 @@ describe("searchable text extraction", () => {
     expect(text).toBe("word keyword content");
   });
 
+  it("extracts pptx text via the shared pptx text extractor", async () => {
+    extractTextFromPptxMock.mockResolvedValue([
+      {
+        slideIndex: 0,
+        paragraphs: [
+          { text: "title line", isTitle: true },
+          { text: "keyword slide text" },
+        ],
+      },
+      {
+        slideIndex: 1,
+        paragraphs: [{ text: "second slide" }],
+      },
+    ]);
+
+    const file = new File([new Uint8Array([1, 2, 3])], "slides.pptx");
+    const text = await extractSearchableTextForFile({
+      extension: "pptx",
+      file,
+    });
+
+    expect(text).toContain("keyword slide text");
+    expect(text).toContain("second slide");
+  });
+
   it("strips html tags for searchable text", async () => {
     const file = new File(["<h1>Title</h1><p>keyword body</p>"], "page.html");
     const text = await extractSearchableTextForFile({
@@ -63,6 +94,7 @@ describe("searchable text extraction", () => {
     expect(isSearchableTextExtension("rs")).toBe(true);
     expect(isSearchableTextExtension("yaml")).toBe(true);
     expect(isSearchableTextExtension("md")).toBe(true);
+    expect(isSearchableTextExtension("pptx")).toBe(true);
     expect(isSearchableTextExtension("pdf")).toBe(false);
   });
 
@@ -72,5 +104,6 @@ describe("searchable text extraction", () => {
     expect(isLineNavigableSearchExtension("html")).toBe(false);
     expect(isLineNavigableSearchExtension("ipynb")).toBe(false);
     expect(isLineNavigableSearchExtension("docx")).toBe(false);
+    expect(isLineNavigableSearchExtension("pptx")).toBe(false);
   });
 });

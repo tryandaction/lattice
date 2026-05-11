@@ -240,6 +240,11 @@ export const TEXT_EXTENSIONS = new Set([
 ]);
 
 /**
+ * Editable file extensions (files that can be modified and saved)
+ */
+export const EDITABLE_EXTENSIONS = new Set(['md', 'txt', 'ipynb', 'ink', 'lattice']);
+
+/**
  * Extensions that should be read as binary (ArrayBuffer)
  */
 export const BINARY_EXTENSIONS = new Set([
@@ -326,6 +331,8 @@ export function getRendererForExtension(extension: string): RendererType {
   
   // Check code files
   if (isCodeFile(ext)) return 'code';
+
+  if (EDITABLE_EXTENSIONS.has(ext)) return 'code';
   
   return 'unsupported';
 }
@@ -352,11 +359,6 @@ export function getFileExtension(filename: string): string {
   }
   return filename.slice(lastDot + 1).toLowerCase();
 }
-
-/**
- * Editable file extensions (files that can be modified and saved)
- */
-export const EDITABLE_EXTENSIONS = new Set(['md', 'txt', 'ipynb', 'ink', 'lattice']);
 
 /**
  * Editable code file extensions (code files that can be edited with CodeEditor)
@@ -397,7 +399,7 @@ export const READ_ONLY_EXTENSIONS = new Set([
  */
 export function isEditableFile(extension: string): boolean {
   const ext = extension.toLowerCase();
-  return EDITABLE_EXTENSIONS.has(ext) || EDITABLE_CODE_EXTENSIONS.has(ext);
+  return isTextFile(ext) || EDITABLE_EXTENSIONS.has(ext) || EDITABLE_CODE_EXTENSIONS.has(ext);
 }
 
 /**
@@ -415,7 +417,7 @@ export function isEditableCodeFile(extension: string): boolean {
  * @param extension - File extension without the leading dot
  * @returns The CodeEditor language or 'javascript' as fallback
  */
-export function getCodeEditorLanguage(extension: string): 'python' | 'javascript' | 'typescript' | 'json' | 'latex' | 'markdown' {
+export function getCodeEditorLanguage(extension: string): 'python' | 'javascript' | 'typescript' | 'json' | 'latex' | 'markdown' | 'plaintext' {
   const ext = extension.toLowerCase();
   
   switch (ext) {
@@ -437,8 +439,13 @@ export function getCodeEditorLanguage(extension: string): 'python' | 'javascript
       return 'latex';
     case 'md':
       return 'markdown';
+    case 'txt':
+    case 'log':
+    case 'diff':
+    case 'patch':
+      return 'plaintext';
     default:
-      return 'javascript'; // Fallback
+      return 'plaintext';
   }
 }
 

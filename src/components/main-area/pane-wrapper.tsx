@@ -252,15 +252,20 @@ export function PaneWrapper({
 
       try {
         const file = await activeTab.fileHandle.getFile();
-        const extension = getFileExtension(file.name);
+        const logicalFileName =
+          activeTab.fileName ||
+          activeTab.filePath.split(/[\\/]/).filter(Boolean).pop() ||
+          file.name;
+        const extension = getFileExtension(logicalFileName);
+        const isBinary = isBinaryFile(extension);
 
         // File size validation (warn for very large files)
         const MAX_TEXT_FILE_SIZE = 50 * 1024 * 1024; // 50MB
-        if (!isBinaryFile(extension) && file.size > MAX_TEXT_FILE_SIZE) {
+        if (!isBinary && file.size > MAX_TEXT_FILE_SIZE) {
           // Large text files still go through the text path, but we avoid extra work here.
         }
 
-        const fileContent = isBinaryFile(extension)
+        const fileContent = isBinary
           ? await file.arrayBuffer()
           : await file.text();
 

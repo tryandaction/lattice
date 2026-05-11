@@ -90,7 +90,7 @@ export type AnnotationTarget =
  * Valid annotation style types
  */
 export type AnnotationStyleType = 'highlight' | 'underline' | 'area' | 'ink' | 'text';
-export type UnderlineStyleType = 'solid' | 'wavy';
+export type UnderlineStyleType = 'solid' | 'wavy' | 'double' | 'dashed';
 
 /**
  * Text annotation style configuration

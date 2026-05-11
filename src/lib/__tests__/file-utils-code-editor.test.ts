@@ -13,6 +13,7 @@ import {
   getCodeEditorLanguage,
   EDITABLE_CODE_EXTENSIONS,
   isEditableFile,
+  getRendererForExtension,
 } from "../file-utils";
 
 describe("File Utils - CodeEditor Routing", () => {
@@ -165,6 +166,18 @@ describe("File Utils - CodeEditor Routing", () => {
       expect(isEditableFile("md")).toBe(true);
       expect(isEditableFile("txt")).toBe(true);
       expect(isEditableFile("ipynb")).toBe(true);
+    });
+
+    it("should route plain text files to the editable code editor in plaintext mode", () => {
+      expect(getRendererForExtension("txt")).toBe("code");
+      expect(getCodeEditorLanguage("txt")).toBe("plaintext");
+    });
+
+    it("should treat safe text/code extensions as editable", () => {
+      expect(isEditableFile("yaml")).toBe(true);
+      expect(isEditableFile("css")).toBe(true);
+      expect(isEditableFile("go")).toBe(true);
+      expect(isEditableFile("java")).toBe(true);
     });
   });
 });
