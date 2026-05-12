@@ -14,7 +14,7 @@ import { emitVaultChange } from "@/lib/plugins/runtime";
 import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
 import { openSystemPath } from "@/lib/link-router/open-external";
 import { resolveWorkspaceFilePath } from "@/lib/runner/path-utils";
-import { readDesktopFileBytes } from "@/lib/desktop-file-system";
+import { readDesktopFileBytes, readDesktopFileMetadata, type DesktopFileMetadata } from "@/lib/desktop-file-system";
 import type { CommandBarState, PaneId } from "@/types/layout";
 import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
@@ -29,6 +29,14 @@ const WORD_FIT_WIDTH_GUTTER = 56;
 
 type WordPreviewMode = "docx" | "semantic";
 type WordZoomMode = "fit-width" | "actual";
+
+function isSameWordMetadata(left: DesktopFileMetadata | null, right: DesktopFileMetadata | null): boolean {
+  if (!left || !right) {
+    return false;
+  }
+
+  return left.size === right.size && left.modifiedMs === right.modifiedMs;
+}
 
 interface WordViewerProps {
   content: ArrayBuffer;
@@ -349,6 +357,7 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
   const [warnings, setWarnings] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isReloadingFromDisk, setIsReloadingFromDisk] = useState(false);
+  const [hasExternalChanges, setHasExternalChanges] = useState(false);
   const [lastReloadedAt, setLastReloadedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
@@ -362,6 +371,8 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
   const docxPreviewRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const tRef = useRef(t);
+  const lastKnownMetadataRef = useRef<DesktopFileMetadata | null>(null);
+  const externalEditPendingRef = useRef(false);
 
   const { createFile } = useFileSystem();
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
@@ -425,6 +436,9 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
   useEffect(() => {
     setDocumentContent(content);
     setLastReloadedAt(null);
+    setHasExternalChanges(false);
+    lastKnownMetadataRef.current = null;
+    externalEditPendingRef.current = false;
   }, [content]);
 
   useEffect(() => {
@@ -663,6 +677,9 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     }
 
     try {
+      lastKnownMetadataRef.current = await readDesktopFileMetadata(absoluteFilePath).catch(() => lastKnownMetadataRef.current);
+      externalEditPendingRef.current = true;
+      setHasExternalChanges(false);
       await openSystemPath(absoluteFilePath);
     } catch (err) {
       console.error("Failed to open document in the system editor:", err);
@@ -679,6 +696,9 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
       const bytes = await readDesktopFileBytes(absoluteFilePath);
       const nextContent = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
       setDocumentContent(nextContent);
+      lastKnownMetadataRef.current = await readDesktopFileMetadata(absoluteFilePath).catch(() => null);
+      externalEditPendingRef.current = false;
+      setHasExternalChanges(false);
       setLastReloadedAt(Date.now());
     } catch (err) {
       console.error("Failed to reload Word document from disk:", err);
@@ -711,6 +731,53 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     setZoomMode("actual");
     setManualZoom(clampWordZoom(currentZoom - WORD_ZOOM_STEP));
   }, [currentZoom]);
+
+  const checkForExternalChanges = useCallback(async () => {
+    if (!absoluteFilePath || !externalEditPendingRef.current) {
+      return;
+    }
+
+    try {
+      const currentMetadata = await readDesktopFileMetadata(absoluteFilePath);
+      if (!isSameWordMetadata(lastKnownMetadataRef.current, currentMetadata)) {
+        setHasExternalChanges(true);
+      }
+    } catch (err) {
+      console.warn("Failed to check Word document metadata after external editing:", err);
+    }
+  }, [absoluteFilePath]);
+
+  useEffect(() => {
+    if (!absoluteFilePath) {
+      return;
+    }
+
+    void readDesktopFileMetadata(absoluteFilePath)
+      .then((metadata) => {
+        lastKnownMetadataRef.current = metadata;
+      })
+      .catch(() => {
+        lastKnownMetadataRef.current = null;
+      });
+  }, [absoluteFilePath, documentContent]);
+
+  useEffect(() => {
+    const handleFocus = () => {
+      void checkForExternalChanges();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void checkForExternalChanges();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [checkForExternalChanges]);
 
   const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
     containerRef,
@@ -925,6 +992,23 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
           </div>
         </div>
       </div>
+
+      {hasExternalChanges ? (
+        <div className="mx-auto max-w-4xl px-8 pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-800 dark:text-emerald-200">
+            <span>{t("viewer.word.externalChanges.detected")}</span>
+            <button
+              type="button"
+              onClick={() => { void handleReloadFromDisk(); }}
+              disabled={isReloadingFromDisk}
+              className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              <RefreshCw className={isReloadingFromDisk ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
+              {isReloadingFromDisk ? t("viewer.word.command.reloading") : t("viewer.word.externalChanges.reload")}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="mx-auto max-w-4xl px-8 pt-3">
         <div className="rounded-lg border border-sky-500/20 bg-sky-500/10 p-3 text-xs leading-relaxed text-muted-foreground">

@@ -894,6 +894,8 @@ export const zhCN = {
   'viewer.word.semanticFallback': '文本提取失败；搜索/导入将使用从预览恢复的文本。',
   'viewer.word.reload.failed': '从磁盘重新载入失败。请先保存并关闭外部编辑器，然后重试。',
   'viewer.word.reload.lastReloaded': '已重新载入',
+  'viewer.word.externalChanges.detected': '检测到外部编辑已保存。重新载入文档以预览最新内容。',
+  'viewer.word.externalChanges.reload': '重新载入修改',
   'viewer.word.professional.title': '专业 Word 工作流',
   'viewer.word.professional.description': 'Lattice 提供本地高保真预览，并通过系统 Word 兼容编辑器编辑原始 DOCX 文件。完整内嵌协同编辑需要 Microsoft WOPI、ONLYOFFICE Docs 或 Collabora Online 等 Office 引擎以及文档服务。',
   'viewer.word.zoom.fitWidth': '适合宽度 {percent}%',

@@ -13,6 +13,7 @@ const createFileMock = vi.fn();
 const openFileInActivePaneMock = vi.fn();
 const openSystemPathMock = vi.fn();
 const readDesktopFileBytesMock = vi.fn();
+const readDesktopFileMetadataMock = vi.fn();
 const paneCommandBarStateRef: { current: unknown } = { current: null };
 
 vi.mock("mammoth", () => ({
@@ -31,6 +32,7 @@ vi.mock("@/lib/link-router/open-external", () => ({
 
 vi.mock("@/lib/desktop-file-system", () => ({
   readDesktopFileBytes: (...args: unknown[]) => readDesktopFileBytesMock(...args),
+  readDesktopFileMetadata: (...args: unknown[]) => readDesktopFileMetadataMock(...args),
 }));
 
 vi.mock("@/hooks/use-i18n", () => ({
@@ -94,6 +96,7 @@ describe("WordViewer", () => {
     vi.clearAllMocks();
     paneCommandBarStateRef.current = null;
     readDesktopFileBytesMock.mockResolvedValue(new Uint8Array([9, 8, 7]));
+    readDesktopFileMetadataMock.mockResolvedValue({ size: 3, modifiedMs: 1000 });
     renderDocxAsyncMock.mockImplementation(async (_content, container: HTMLElement) => {
       container.innerHTML = "<div class=\"lattice-docx-wrapper\"><section class=\"lattice-docx\" style=\"width: 1200px;\"><p>Rendered DOCX page</p></section></div>";
     });
@@ -233,6 +236,7 @@ describe("WordViewer", () => {
 
     await waitFor(() => {
       expect(openSystemPathMock).toHaveBeenCalledWith("C:/vault/atom/docs/paper.docx");
+      expect(readDesktopFileMetadataMock).toHaveBeenCalledWith("C:/vault/atom/docs/paper.docx");
     });
   });
 
@@ -266,6 +270,44 @@ describe("WordViewer", () => {
       expect(readDesktopFileBytesMock).toHaveBeenCalledWith("C:/vault/atom/docs/paper.docx");
       expect(renderDocxAsyncMock).toHaveBeenCalledTimes(2);
       expect(screen.getByText("viewer.word.reload.lastReloaded")).toBeTruthy();
+    });
+  });
+
+  it("detects external Word edits when the window regains focus", async () => {
+    convertToHtmlMock.mockResolvedValue({
+      value: "<p>Body</p>",
+      messages: [],
+    });
+    readDesktopFileMetadataMock
+      .mockResolvedValueOnce({ size: 3, modifiedMs: 1000 })
+      .mockResolvedValueOnce({ size: 3, modifiedMs: 1000 })
+      .mockResolvedValueOnce({ size: 4, modifiedMs: 2000 });
+
+    render(
+      <WordViewer
+        content={new Uint8Array([1, 2, 3]).buffer}
+        fileName="paper.docx"
+        paneId="pane-left"
+        filePath="atom/docs/paper.docx"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Rendered DOCX page")).toBeTruthy();
+    });
+
+    const openAction = (paneCommandBarStateRef.current as { state?: { actions?: Array<{ id: string; onTrigger?: () => void | Promise<void> }> } })?.state?.actions?.find((item) => item.id === "open-system-editor");
+    await act(async () => {
+      await openAction?.onTrigger?.();
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("viewer.word.externalChanges.detected")).toBeTruthy();
     });
   });
 });

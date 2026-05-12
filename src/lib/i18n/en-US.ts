@@ -896,6 +896,8 @@ export const enUS: Record<TranslationKey, string> = {
   'viewer.word.semanticFallback': 'Text extraction failed; search/import use text recovered from the preview.',
   'viewer.word.reload.failed': 'Reload from disk failed. Save and close the external editor, then try again.',
   'viewer.word.reload.lastReloaded': 'Reloaded',
+  'viewer.word.externalChanges.detected': 'External edits were detected. Reload the document to preview the saved changes.',
+  'viewer.word.externalChanges.reload': 'Reload changes',
   'viewer.word.professional.title': 'Professional Word workflow',
   'viewer.word.professional.description': 'Lattice provides high-fidelity local preview and opens the original file in your system Word-compatible editor for native DOCX editing. Full embedded co-editing requires an Office engine such as Microsoft WOPI, ONLYOFFICE Docs, or Collabora Online plus a document service.',
   'viewer.word.zoom.fitWidth': 'Fit width {percent}%',

@@ -108,6 +108,13 @@ struct DesktopTextChunk {
     has_more: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopFileMetadata {
+    size: u64,
+    modified_ms: Option<u128>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "kebab-case")]
 enum RunnerType {
@@ -942,6 +949,25 @@ async fn desktop_exists_path(path: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
+async fn desktop_file_metadata(path: String) -> Result<DesktopFileMetadata, String> {
+    tokio::task::spawn_blocking(move || {
+        let metadata = fs::metadata(PathBuf::from(path)).map_err(|error| error.to_string())?;
+        let modified_ms = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis());
+
+        Ok(DesktopFileMetadata {
+            size: metadata.len(),
+            modified_ms,
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn desktop_is_directory(
     fs_state: State<'_, DesktopFsState>,
     path: String,
@@ -1488,6 +1514,7 @@ fn main() {
             desktop_read_text_file_chunk,
             desktop_write_file_bytes,
             desktop_exists_path,
+            desktop_file_metadata,
             desktop_is_directory,
             desktop_create_dir,
             desktop_remove_path,

@@ -474,6 +474,203 @@ describe("pdf-selection-reconciler", () => {
     }
   });
 
+  it("keeps the live DOM quote when PDF offsets drift to later Rydberg text", () => {
+    const line = "fast, high-fidelity excitation to the Rydberg state21 and mid-circuit";
+    const lineLeft = 40;
+    const lineTop = 120;
+    const charWidth = 8;
+    const page = createPageContext({
+      fragments: [
+        { text: line, left: lineLeft, top: lineTop, width: line.length * charWidth, height: 24 },
+      ],
+    });
+    const wrongOffsetText = "to the Rydberg state21";
+    const liveSelectedText = "high-fidelity excitation";
+    const range = createRangeWithinFragment(line, wrongOffsetText);
+    const intendedStart = line.indexOf(liveSelectedText);
+    const intendedLeft = lineLeft + (intendedStart * charWidth);
+    const intendedRight = intendedLeft + (liveSelectedText.length * charWidth);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: liveSelectedText,
+      pages: [page],
+      clientRects: [{
+        left: intendedLeft,
+        right: intendedRight,
+        top: lineTop,
+        bottom: lineTop + 24,
+      }],
+      nativeLayout: {
+        source: "pdfium",
+        pageNumber: 1,
+        width: 640,
+        height: 960,
+        text: line,
+        chars: Array.from(line).map((character, index) => ({
+          charIndex: index,
+          text: character,
+          x1: lineLeft + (index * charWidth),
+          y1: lineTop,
+          x2: lineLeft + ((index + 1) * charWidth),
+          y2: lineTop + 24,
+          fontSize: 24,
+        })),
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.text).toBe(liveSelectedText);
+      expect(result.selection.textQuote.exact).toBe(liveSelectedText);
+      expect(result.selection.textQuote.source).toBe("dom-selection");
+      expect(result.selection.textQuote.exact).not.toContain("Rydberg");
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(intendedLeft / 640, 3);
+      expect(result.selection.pageRects[0]?.x2).toBeCloseTo(intendedRight / 640, 3);
+    }
+  });
+
+  it("does not pull a superscript citation into the selected quote", () => {
+    const page = createPageContext({
+      fragments: [
+        { text: "high-fidelity excitation", left: 80, top: 120, width: 216, height: 24 },
+        { text: "21", left: 300, top: 108, width: 18, height: 10 },
+        { text: "to the Rydberg state", left: 324, top: 120, width: 190, height: 24 },
+      ],
+    });
+    const range = createRangeAcrossFragments({
+      startFragment: "high-fidelity excitation",
+      endFragment: "21",
+    });
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: "high-fidelity excitation",
+      pages: [page],
+      clientRects: [{
+        left: 80,
+        right: 296,
+        top: 120,
+        bottom: 144,
+      }],
+      nativeLayout: {
+        source: "pdfium",
+        pageNumber: 1,
+        width: 640,
+        height: 960,
+        text: "high-fidelity excitation21 to the Rydberg state",
+        chars: [
+          ...Array.from("high-fidelity excitation").map((character, index) => ({
+            charIndex: index,
+            text: character,
+            x1: 80 + (index * 9),
+            y1: 120,
+            x2: 87 + (index * 9),
+            y2: 144,
+            fontSize: 24,
+          })),
+          { charIndex: 24, text: "2", x1: 300, y1: 108, x2: 308, y2: 118, fontSize: 10 },
+          { charIndex: 25, text: "1", x1: 310, y1: 108, x2: 318, y2: 118, fontSize: 10 },
+        ],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe("high-fidelity excitation");
+      expect(result.selection.textQuote.exact).not.toContain("21");
+      expect(result.selection.pageRects[0]?.x2).toBeLessThan(300 / 640);
+    }
+  });
+
+  it("keeps cross-span selections aligned when browser text is authoritative", () => {
+    const page = createPageContext({
+      fragments: [
+        { text: "high-", left: 80, top: 120, width: 45, height: 24 },
+        { text: "fidelity", left: 126, top: 120, width: 68, height: 24 },
+        { text: "excitation", left: 204, top: 120, width: 90, height: 24 },
+        { text: "to the Rydberg state", left: 320, top: 120, width: 180, height: 24 },
+      ],
+    });
+    const range = createRangeAcrossFragments({
+      startFragment: "high-",
+      endFragment: "excitation",
+    });
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: "high-fidelity excitation",
+      pages: [page],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe("high-fidelity excitation");
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(80 / 640, 3);
+      const rightEdge = Math.max(...result.selection.pageRects.map((rect) => rect.x2));
+      expect(rightEdge).toBeCloseTo(294 / 640, 3);
+    }
+  });
+
+  it("uses geometry to disambiguate duplicate text in a two-column layout", () => {
+    const page = createPageContext({
+      fragments: [
+        { text: "high-fidelity excitation", left: 60, top: 160, width: 220, height: 24 },
+        { text: "high-fidelity excitation", left: 360, top: 160, width: 220, height: 24 },
+      ],
+    });
+    const range = createRangeWithinFragment("high-fidelity excitation", "high-fidelity excitation", 0);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: "high-fidelity excitation",
+      pages: [page],
+      clientRects: [{
+        left: 360,
+        right: 580,
+        top: 160,
+        bottom: 184,
+      }],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe("high-fidelity excitation");
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(360 / 640, 3);
+      expect(result.selection.pageRects[0]?.x1).toBeGreaterThan(0.5);
+    }
+  });
+
+  it("projects scaled and scrolled DOM rects back to stable page-relative rects", () => {
+    const pageTop = 520;
+    const page = createPageContext({
+      top: pageTop,
+      fragments: [
+        { text: "scaled high-fidelity excitation", left: 96, top: 180, width: 280, height: 30 },
+      ],
+    });
+    const range = createRangeWithinFragment("scaled high-fidelity excitation", "high-fidelity");
+    const fullText = "scaled high-fidelity excitation";
+    const selectedText = "high-fidelity";
+    const startRatio = fullText.indexOf(selectedText) / fullText.length;
+    const expectedLeft = 96 + (280 * startRatio);
+    const expectedRight = expectedLeft + (280 * (selectedText.length / fullText.length));
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: range.toString(),
+      pages: [page],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(selectedText);
+      expect(result.selection.viewportRects[0]?.top).toBeCloseTo(180, 3);
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(expectedLeft / 640, 3);
+      expect(result.selection.pageRects[0]?.x2).toBeCloseTo(expectedRight / 640, 3);
+    }
+  });
+
   it("resolves the information regression from a long text span", () => {
     const page = createPageContext({
       fragments: [
@@ -761,7 +958,7 @@ describe("pdf-selection-reconciler", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.selection.textQuote.exact).toBe(selectedText);
-      expect(result.selection.textQuote.source).toBe("pdfjs-text-model");
+      expect(result.selection.textQuote.source).toBe("dom-selection");
       expect(result.selection.pageRects[0]?.x1).toBeCloseTo(80 / 640, 3);
     }
   });

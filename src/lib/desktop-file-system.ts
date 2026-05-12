@@ -21,6 +21,11 @@ export interface DesktopTextChunk {
   hasMore: boolean;
 }
 
+export interface DesktopFileMetadata {
+  size: number;
+  modifiedMs: number | null;
+}
+
 const DESKTOP_DIR_CACHE_TTL_MS = 10_000;
 const desktopDirCache = new Map<string, { entries: DesktopDirEntry[]; cachedAt: number }>();
 
@@ -107,6 +112,12 @@ export async function readDesktopFileBytes(path: string): Promise<Uint8Array> {
     return new Uint8Array(bytes);
   }
   return Uint8Array.from(bytes);
+}
+
+export async function readDesktopFileMetadata(path: string): Promise<DesktopFileMetadata> {
+  return invokeDesktopFs<DesktopFileMetadata>("desktop_file_metadata", {
+    path: normalizeDesktopPath(path),
+  });
 }
 
 export async function readDesktopTextFile(path: string): Promise<string> {

@@ -1119,6 +1119,66 @@ function getSelectionDistanceFromDom(selection: PdfResolvedSelection | null, dom
   return distance ?? Number.POSITIVE_INFINITY;
 }
 
+function reconcileSelectionQuoteWithLiveDomText(input: {
+  selection: PdfResolvedSelection;
+  liveSelectedText: string;
+  domOffsetText: string;
+}): PdfResolvedSelection {
+  const liveExact = normalizeComparablePdfText(input.liveSelectedText);
+  const liveCompact = stripPdfWhitespace(liveExact);
+  if (!liveCompact) {
+    return input.selection;
+  }
+
+  const selectionCompact = getCompactSelectionText(input.selection);
+  if (!selectionCompact) {
+    return input.selection;
+  }
+
+  const selectionExact = input.selection.textQuote.exact;
+  const liveOnlyDiffersByWhitespace = liveCompact === selectionCompact;
+  const liveFixesHyphenSpacing =
+    liveOnlyDiffersByWhitespace &&
+    /(?:-\s|\s-)/.test(selectionExact) &&
+    !/(?:-\s|\s-)/.test(liveExact);
+
+  if (
+    (liveExact === selectionExact || liveFixesHyphenSpacing) &&
+    input.selection.textQuote.source !== "dom-selection"
+  ) {
+    return {
+      ...input.selection,
+      text: liveExact,
+      textQuote: {
+        ...input.selection.textQuote,
+        exact: liveExact,
+        source: "dom-selection",
+        confidence: "exact",
+      },
+    };
+  }
+
+  if (liveOnlyDiffersByWhitespace) {
+    return input.selection;
+  }
+
+  const domOffsetCompact = stripPdfWhitespace(normalizeComparablePdfText(input.domOffsetText));
+  if (liveCompact === domOffsetCompact) {
+    return input.selection;
+  }
+
+  return {
+    ...input.selection,
+    text: liveExact,
+    textQuote: {
+      ...input.selection.textQuote,
+      exact: liveExact,
+      source: "dom-selection",
+      confidence: "exact",
+    },
+  };
+}
+
 export function choosePreferredNativeSelection(input: {
   offsetSelection: PdfResolvedSelection | null;
   geometrySelection: PdfResolvedSelection | null;
@@ -1670,24 +1730,25 @@ export function resolvePdfSelectionFromDomRange(input: {
       layout: input.nativeLayout,
       nativeModel,
       viewportRects: selectionViewportRects,
-      selectedText: domSelectedText,
+      selectedText: input.text || domSelectedText,
       pageNumber: startPageNumber,
       pageWidth: page.width,
       pageHeight: page.height,
     });
     const viewportRectCount = selectionViewportRects.filter((rect) => rect.pageNumber === startPageNumber).length;
+    const selectionCandidateText = input.text || domSelectedText;
     const baseNativeSelection = choosePreferredNativeSelection({
       offsetSelection,
       geometrySelection,
       textSearchSelection,
-      domSelectedText,
+      domSelectedText: selectionCandidateText,
       viewportRectCount,
       viewportRects: selectionViewportRects,
     });
     const nativeSelection = choosePreferredPointerSelection({
       baseSelection: baseNativeSelection,
       pointerSelection,
-      domSelectedText,
+      domSelectedText: selectionCandidateText,
       viewportRectCount,
       viewportRects: selectionViewportRects,
       dragDistanceX: input.dragStartPoint && input.dragEndPoint
@@ -1712,7 +1773,11 @@ export function resolvePdfSelectionFromDomRange(input: {
       if (fallbackSelection) {
         return {
           ok: true,
-          selection: fallbackSelection,
+          selection: reconcileSelectionQuoteWithLiveDomText({
+            selection: fallbackSelection,
+            liveSelectedText: input.text,
+            domOffsetText: domSelectedText,
+          }),
         };
       }
 
@@ -1739,14 +1804,22 @@ export function resolvePdfSelectionFromDomRange(input: {
       if (renderedFallbackSelection) {
         return {
           ok: true,
-          selection: renderedFallbackSelection,
+          selection: reconcileSelectionQuoteWithLiveDomText({
+            selection: renderedFallbackSelection,
+            liveSelectedText: input.text,
+            domOffsetText: domSelectedText,
+          }),
         };
       }
     }
 
     return {
       ok: true,
-      selection: nativeSelection,
+      selection: reconcileSelectionQuoteWithLiveDomText({
+        selection: nativeSelection,
+        liveSelectedText: input.text,
+        domOffsetText: domSelectedText,
+      }),
     };
   }
 
@@ -1759,7 +1832,11 @@ export function resolvePdfSelectionFromDomRange(input: {
   if (renderedSelection) {
     return {
       ok: true,
-      selection: renderedSelection,
+      selection: reconcileSelectionQuoteWithLiveDomText({
+        selection: renderedSelection,
+        liveSelectedText: input.text,
+        domOffsetText: domSelectedText,
+      }),
     };
   }
 
@@ -1784,7 +1861,11 @@ export function resolvePdfSelectionFromDomRange(input: {
 
   return {
     ok: true,
-    selection,
+    selection: reconcileSelectionQuoteWithLiveDomText({
+      selection,
+      liveSelectedText: input.text,
+      domOffsetText: domSelectedText,
+    }),
   };
 }
 
