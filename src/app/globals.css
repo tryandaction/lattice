@@ -2390,6 +2390,64 @@ math-field.quantum-keyboard-active {
   color: #111827;
 }
 
+.word-fidelity-stage {
+  min-width: max-content;
+  background:
+    radial-gradient(circle at top left, hsl(var(--muted) / 0.32), transparent 28rem),
+    linear-gradient(180deg, hsl(var(--background)), hsl(var(--muted) / 0.18));
+}
+
+.word-docx-preview {
+  width: max-content;
+  min-width: 100%;
+}
+
+.word-docx-preview .lattice-docx-wrapper {
+  align-items: center;
+  background: transparent !important;
+  color: #111827;
+  display: flex;
+  flex-flow: column nowrap;
+  gap: 24px;
+  padding: 0 0 32px;
+}
+
+.word-docx-preview section.lattice-docx {
+  background: #fff !important;
+  box-shadow: 0 10px 30px rgb(15 23 42 / 0.16);
+  color: #111827;
+  flex-shrink: 0;
+  margin: 0 !important;
+  overflow: visible !important;
+}
+
+.word-docx-preview section.lattice-docx table {
+  border-collapse: collapse;
+}
+
+.word-docx-preview section.lattice-docx img,
+.word-docx-preview section.lattice-docx svg {
+  max-width: none;
+}
+
+.word-search-match {
+  background: rgb(250 204 21 / 0.42);
+  border-radius: 2px;
+  color: inherit;
+  padding: 0 1px;
+}
+
+.word-search-match-active {
+  background: rgb(251 146 60 / 0.55);
+  box-shadow: 0 0 0 1px rgb(234 88 12 / 0.55);
+}
+
+.dark .word-fidelity-stage {
+  background:
+    radial-gradient(circle at top left, rgb(30 41 59 / 0.52), transparent 28rem),
+    linear-gradient(180deg, hsl(var(--background)), rgb(15 23 42 / 0.45));
+}
+
 /* Slide content in PPT viewer - keep white for slide fidelity */
 .dark .ppt-slide-container,
 .dark .pptx-wrapper,

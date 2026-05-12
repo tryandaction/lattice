@@ -237,6 +237,25 @@ describe("CommandBar desktop interactions", () => {
     expect(fitWidthButton.innerHTML).not.toBe(fitPageButton.innerHTML);
   });
 
+  it("renders distinct icons for Word search and import actions", () => {
+    const commandBarByPane = workspaceState.commandBarByPane as Record<string, unknown>;
+    commandBarByPane["pane-1"] = {
+      breadcrumbs: [],
+      actions: [
+        { id: "search", label: "Search", icon: "search", group: "secondary", onTrigger: () => {} },
+        { id: "import-as-note", label: "Import", icon: "file-output", group: "primary", onTrigger: () => {} },
+      ],
+    };
+
+    render(
+      <CommandBar
+        onOpenWorkspace={() => {}}
+      />,
+    );
+
+    expect(screen.getByLabelText("Search").innerHTML).not.toBe(screen.getByLabelText("Import").innerHTML);
+  });
+
   it("passes command bar action context menu positions to the active pane", () => {
     const onContextMenu = vi.fn();
     const commandBarByPane = workspaceState.commandBarByPane as Record<string, unknown>;

@@ -24,6 +24,7 @@ import {
   RotateCcw,
   Save,
   ScanSearch,
+  Search,
   ShieldCheck,
   Square,
   StickyNote,
@@ -104,6 +105,7 @@ const ACTION_ICON_MAP = {
   eye: Eye,
   code2: Code2,
   scanSearch: ScanSearch,
+  search: Search,
   arrowLeftRight: ArrowLeftRight,
   maximize2: Maximize2,
   zoomIn: ZoomIn,
@@ -130,6 +132,7 @@ function resolveActionIcon(action: { id: string; icon?: string; label: string })
       return "shieldCheck";
     case "list-tree":
       return "listTree";
+    case "file-pen-line":
     case "file-text":
       return "filePenLine";
     case "arrow-left-right":
@@ -160,12 +163,15 @@ function resolveActionIcon(action: { id: string; icon?: string; label: string })
       return "mousePointer2";
     case "file-output":
       return "fileOutput";
+    case "search":
+      return "search";
     default:
       break;
   }
 
   const actionId = action.id.toLowerCase();
   if (actionId === "save") return "save";
+  if (actionId === "search" || actionId.includes("search")) return "search";
   if (actionId === "run" || actionId === "run-all") return "play";
   if (actionId === "rerun") return "rotateCcw";
   if (actionId === "restart-kernel") return "rotateCcw";

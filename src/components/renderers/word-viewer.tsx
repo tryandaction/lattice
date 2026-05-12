@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import mammoth from "mammoth";
+import { renderAsync as renderDocxAsync } from "docx-preview";
 import DOMPurify from "dompurify";
-import { Loader2, AlertTriangle, Search, ChevronDown, ChevronUp, X } from "lucide-react";
+import { Loader2, AlertTriangle, Search, ChevronDown, ChevronUp, X, FilePenLine } from "lucide-react";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useI18n } from "@/hooks/use-i18n";
 import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
@@ -11,6 +12,8 @@ import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { emitVaultChange } from "@/lib/plugins/runtime";
 import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
+import { openSystemPath } from "@/lib/link-router/open-external";
+import { resolveWorkspaceFilePath } from "@/lib/runner/path-utils";
 import type { CommandBarState, PaneId } from "@/types/layout";
 import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
@@ -83,6 +86,10 @@ function extractSearchableWordText(html: string): string {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, "text/html");
   return (doc.body.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+function extractContainerText(container: HTMLElement | null): string {
+  return (container?.textContent ?? "").replace(/\s+/g, " ").trim();
 }
 
 function findWordMatches(text: string, query: string): number[] {
@@ -174,15 +181,105 @@ function buildHighlightedWordHtml(html: string, query: string, activeIndex: numb
   return doc.body.innerHTML;
 }
 
+function clearWordSearchMarks(root: HTMLElement | null): void {
+  if (!root) {
+    return;
+  }
+
+  root.querySelectorAll("mark[data-word-search-match-index]").forEach((mark) => {
+    const parent = mark.parentNode;
+    if (!parent) {
+      return;
+    }
+    parent.replaceChild(document.createTextNode(mark.textContent ?? ""), mark);
+    parent.normalize();
+  });
+}
+
+function highlightWordPreviewMatches(root: HTMLElement | null, query: string, activeIndex: number): number {
+  if (!root) {
+    return 0;
+  }
+
+  clearWordSearchMarks(root);
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return 0;
+  }
+
+  const lowerNeedle = trimmed.toLowerCase();
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.textContent?.trim()) {
+        return NodeFilter.FILTER_SKIP;
+      }
+      const parent = node instanceof Text ? node.parentElement : null;
+      if (parent && ["SCRIPT", "STYLE", "MARK"].includes(parent.tagName)) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+
+  const nodes: Text[] = [];
+  let current = walker.nextNode();
+  while (current) {
+    nodes.push(current as Text);
+    current = walker.nextNode();
+  }
+
+  let matchIndex = 0;
+  for (const node of nodes) {
+    const text = node.textContent ?? "";
+    const lowerText = text.toLowerCase();
+    let searchIndex = 0;
+    const fragment = document.createDocumentFragment();
+    let lastIndex = 0;
+    let changed = false;
+
+    while ((searchIndex = lowerText.indexOf(lowerNeedle, searchIndex)) !== -1) {
+      changed = true;
+      if (searchIndex > lastIndex) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex, searchIndex)));
+      }
+
+      const mark = document.createElement("mark");
+      mark.setAttribute("data-word-search-match-index", String(matchIndex));
+      mark.className = matchIndex === activeIndex
+        ? "word-search-match word-search-match-active"
+        : "word-search-match";
+      mark.textContent = text.slice(searchIndex, searchIndex + trimmed.length);
+      fragment.appendChild(mark);
+
+      lastIndex = searchIndex + trimmed.length;
+      searchIndex = lastIndex;
+      matchIndex += 1;
+    }
+
+    if (!changed) {
+      continue;
+    }
+
+    if (lastIndex < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+    }
+
+    node.parentNode?.replaceChild(fragment, node);
+  }
+
+  return matchIndex;
+}
+
 /**
  * Word Document Viewer component
- * Renders Word documents (.doc, .docx) using mammoth.js
- * Includes "Import as Note" functionality
+ * Renders DOCX files with a layout-focused preview and keeps semantic HTML for search/import.
  */
 export function WordViewer({ content, fileName, paneId, filePath }: WordViewerProps) {
   const { t } = useI18n();
   const isLegacyDoc = /\.doc$/i.test(fileName);
   const [htmlContent, setHtmlContent] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState<"docx" | "semantic">("docx");
+  const [previewSearchMatchCount, setPreviewSearchMatchCount] = useState(0);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearchMatch, setActiveSearchMatch] = useState(0);
@@ -196,15 +293,22 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     returnFocusTo?: HTMLElement | null;
   } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const docxPreviewRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const tRef = useRef(t);
 
   const { createFile } = useFileSystem();
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const rootHandleName = useWorkspaceStore((state) => state.rootHandle?.name ?? null);
   const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
+  const absoluteFilePath = useMemo(() => (
+    filePath ? resolveWorkspaceFilePath(workspaceRootPath, filePath, rootHandleName) : null
+  ), [filePath, rootHandleName, workspaceRootPath]);
   const markdownSnapshot = useMemo(() => htmlToMarkdown(htmlContent || ""), [htmlContent]);
   const searchableText = useMemo(() => extractSearchableWordText(htmlContent || ""), [htmlContent]);
   const searchMatches = useMemo(() => findWordMatches(searchableText, searchQuery), [searchableText, searchQuery]);
+  const effectiveSearchMatchCount = previewMode === "docx" ? previewSearchMatchCount : searchMatches.length;
   const renderedHtml = useMemo(() => {
     if (!htmlContent) {
       return "";
@@ -223,23 +327,115 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
   });
 
   useEffect(() => {
+    tRef.current = t;
+  }, [t]);
+
+  useEffect(() => {
+    let disposed = false;
+
     async function convertDocument() {
       setIsLoading(true);
       setError(null);
+      setPreviewMode("docx");
+      setPreviewSearchMatchCount(0);
+      setWarnings([]);
+      setHtmlContent(null);
+      if (docxPreviewRef.current) {
+        docxPreviewRef.current.innerHTML = "";
+      }
 
       try {
-        const result = await mammoth.convertToHtml({ arrayBuffer: content });
-        setHtmlContent(result.value);
-        setWarnings(result.messages.map((m) => m.message));
+        let renderedHighFidelityPreview = false;
+        if (isLegacyDoc) {
+          setPreviewMode("semantic");
+          setWarnings((current) => [
+            ...current,
+            tRef.current("viewer.word.legacyWarning"),
+          ]);
+        } else {
+          const target = docxPreviewRef.current;
+          if (!target) {
+            throw new Error("Word preview container is not ready.");
+          }
+
+          try {
+            await renderDocxAsync(content.slice(0), target, target, {
+              className: "lattice-docx",
+              inWrapper: true,
+              ignoreWidth: false,
+              ignoreHeight: false,
+              ignoreFonts: false,
+              breakPages: true,
+              ignoreLastRenderedPageBreak: false,
+              experimental: true,
+              renderHeaders: true,
+              renderFooters: true,
+              renderFootnotes: true,
+              renderEndnotes: true,
+              renderComments: false,
+              renderAltChunks: true,
+              useBase64URL: false,
+            });
+            renderedHighFidelityPreview = true;
+            if (!disposed) {
+              setPreviewMode("docx");
+            }
+          } catch (previewError) {
+            if (!disposed) {
+              console.warn("[WordViewer] High-fidelity DOCX preview failed; falling back to semantic HTML.", previewError);
+              setPreviewMode("semantic");
+              setWarnings((current) => [
+                ...current,
+                tRef.current("viewer.word.previewFallback"),
+              ]);
+            }
+          }
+        }
+
+        try {
+          const result = await mammoth.convertToHtml({ arrayBuffer: content });
+          if (disposed) {
+            return;
+          }
+          const safeHtml = result.value || `<p>${extractContainerText(docxPreviewRef.current)}</p>`;
+          setHtmlContent(safeHtml);
+          setWarnings((current) => [
+            ...current,
+            ...result.messages.map((m) => m.message),
+          ]);
+        } catch (semanticError) {
+          if (disposed) {
+            return;
+          }
+
+          const previewText = extractContainerText(docxPreviewRef.current);
+          if (renderedHighFidelityPreview && previewText) {
+            setHtmlContent(`<p>${previewText}</p>`);
+            setWarnings((current) => [
+              ...current,
+              tRef.current("viewer.word.semanticFallback"),
+            ]);
+            return;
+          }
+
+          throw semanticError;
+        }
       } catch (err) {
-        setError(err instanceof Error ? err.message : t("viewer.word.errorDescription"));
+        if (!disposed) {
+          setError(err instanceof Error ? err.message : tRef.current("viewer.word.errorDescription"));
+        }
       } finally {
-        setIsLoading(false);
+        if (!disposed) {
+          setIsLoading(false);
+        }
       }
     }
 
     convertDocument();
-  }, [content, t]);
+    return () => {
+      disposed = true;
+    };
+  }, [content, isLegacyDoc]);
 
   useEffect(() => {
     if (!searchOpen) {
@@ -250,10 +446,32 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
   }, [searchOpen]);
 
   useEffect(() => {
-    if (activeSearchMatch >= searchMatches.length) {
+    if (activeSearchMatch >= effectiveSearchMatchCount) {
       setActiveSearchMatch(0);
     }
-  }, [activeSearchMatch, searchMatches.length]);
+  }, [activeSearchMatch, effectiveSearchMatchCount]);
+
+  useEffect(() => {
+    if (previewMode !== "docx") {
+      return;
+    }
+
+    const count = highlightWordPreviewMatches(
+      docxPreviewRef.current,
+      searchOpen ? searchQuery : "",
+      activeSearchMatch,
+    );
+    setPreviewSearchMatchCount(count);
+
+    if (!searchOpen || count === 0) {
+      return;
+    }
+
+    const activeMark = docxPreviewRef.current?.querySelector<HTMLElement>(
+      `[data-word-search-match-index="${activeSearchMatch}"]`,
+    );
+    activeMark?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [activeSearchMatch, previewMode, searchOpen, searchQuery]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -268,7 +486,7 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
   }, []);
 
   useEffect(() => {
-    if (!searchOpen || searchMatches.length === 0) {
+    if (!searchOpen || previewMode === "docx" || searchMatches.length === 0) {
       return;
     }
 
@@ -276,14 +494,14 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
       `[data-word-search-match-index="${activeSearchMatch}"]`,
     );
     activeMark?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [activeSearchMatch, searchMatches.length, searchOpen]);
+  }, [activeSearchMatch, previewMode, searchMatches.length, searchOpen]);
 
   const goToMatch = useCallback((direction: 1 | -1) => {
-    if (searchMatches.length === 0) {
+    if (effectiveSearchMatchCount === 0) {
       return;
     }
-    setActiveSearchMatch((current) => (current + direction + searchMatches.length) % searchMatches.length);
-  }, [searchMatches.length]);
+    setActiveSearchMatch((current) => (current + direction + effectiveSearchMatchCount) % effectiveSearchMatchCount);
+  }, [effectiveSearchMatchCount]);
 
   /**
    * Import the document as a Markdown note
@@ -319,6 +537,18 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     }
   }, [htmlContent, fileName, createFile, openFileInActivePane]);
 
+  const handleOpenInSystemEditor = useCallback(async () => {
+    if (!absoluteFilePath) {
+      return;
+    }
+
+    try {
+      await openSystemPath(absoluteFilePath);
+    } catch (err) {
+      console.error("Failed to open document in the system editor:", err);
+    }
+  }, [absoluteFilePath]);
+
   const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
     containerRef,
     ({ text, eventTarget }) => {
@@ -350,13 +580,24 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
         {
           id: "search",
           label: t("viewer.word.search.open"),
+          icon: "search",
           priority: 8,
           group: "secondary",
           onTrigger: () => setSearchOpen(true),
         },
         {
+          id: "open-system-editor",
+          label: t("viewer.word.command.openSystemEditor"),
+          icon: "file-pen-line",
+          priority: 9,
+          group: "secondary",
+          disabled: !absoluteFilePath,
+          onTrigger: () => { void handleOpenInSystemEditor(); },
+        },
+        {
           id: "import-as-note",
           label: isImporting ? t("viewer.word.command.importing") : t("viewer.word.command.import"),
+          icon: "file-output",
           priority: 10,
           group: "primary",
           disabled: isImporting || !htmlContent,
@@ -367,7 +608,9 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
   }, [
     fileName,
     filePath,
+    absoluteFilePath,
     handleImportAsNote,
+    handleOpenInSystemEditor,
     htmlContent,
     isImporting,
     setSearchOpen,
@@ -379,16 +622,7 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     state: paneId ? commandBarState : null,
   });
 
-  if (isLoading) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center p-8">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        <p className="mt-4 text-sm text-muted-foreground">{t("viewer.word.loading")}</p>
-      </div>
-    );
-  }
-
-  if (error) {
+  if (error && !isLoading) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-8">
         <p className="text-destructive">{t("viewer.word.error", { error })}</p>
@@ -401,6 +635,12 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
 
   return (
     <div ref={containerRef} className="relative h-full overflow-auto">
+      {isLoading ? (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-background/90 p-8 backdrop-blur-sm">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          <p className="mt-4 text-sm text-muted-foreground">{t("viewer.word.loading")}</p>
+        </div>
+      ) : null}
       <SelectionContextMenu
         state={selectionMenuState}
         onClose={closeSelectionMenu}
@@ -416,7 +656,19 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
       {/* Read-only notice */}
       <div className="mx-auto max-w-4xl px-8 pt-4">
         <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-          <p>{t("viewer.word.readOnly")}</p>
+          <p>
+            {t("viewer.word.readOnly")}{" "}
+            {absoluteFilePath ? (
+              <button
+                type="button"
+                onClick={() => { void handleOpenInSystemEditor(); }}
+                className="inline-flex items-center gap-1 rounded px-1 font-medium text-primary hover:bg-primary/10"
+              >
+                <FilePenLine className="h-3.5 w-3.5" />
+                {t("viewer.word.command.openSystemEditor")}
+              </button>
+            ) : null}
+          </p>
         </div>
       </div>
 
@@ -447,15 +699,15 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
             />
             <span className="whitespace-nowrap text-[10px] text-muted-foreground">
               {searchQuery.trim()
-                ? searchMatches.length > 0
-                  ? `${activeSearchMatch + 1}/${searchMatches.length}`
+                ? effectiveSearchMatchCount > 0
+                  ? `${activeSearchMatch + 1}/${effectiveSearchMatchCount}`
                   : t("viewer.word.search.noMatch")
                 : t("viewer.word.search.noMatch")}
             </span>
             <button
               type="button"
               onClick={() => goToMatch(-1)}
-              disabled={searchMatches.length === 0}
+              disabled={effectiveSearchMatchCount === 0}
               className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
               title={t("viewer.word.search.prevMatch")}
             >
@@ -464,7 +716,7 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
             <button
               type="button"
               onClick={() => goToMatch(1)}
-              disabled={searchMatches.length === 0}
+              disabled={effectiveSearchMatchCount === 0}
               className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
               title={t("viewer.word.search.nextMatch")}
             >
@@ -515,9 +767,17 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
       )}
 
       {/* Document content */}
-      <div className="mx-auto max-w-4xl p-8">
+      <div className={previewMode === "docx" ? "word-fidelity-stage px-8 py-6" : "mx-auto max-w-4xl p-8"}>
+        <div
+          ref={docxPreviewRef}
+          data-testid="word-docx-preview"
+          className={previewMode === "docx" ? "word-docx-preview document-container" : "hidden"}
+        />
         <article
-          className="prose prose-slate dark:prose-invert max-w-none prose-headings:font-serif prose-p:font-sans prose-p:leading-relaxed prose-table:border-collapse prose-td:border prose-td:border-border prose-td:p-2 prose-th:border prose-th:border-border prose-th:bg-muted prose-th:p-2"
+          data-testid="word-semantic-preview"
+          className={previewMode === "semantic"
+            ? "prose prose-slate dark:prose-invert max-w-none prose-headings:font-serif prose-p:font-sans prose-p:leading-relaxed prose-table:border-collapse prose-td:border prose-td:border-border prose-td:p-2 prose-th:border prose-th:border-border prose-th:bg-muted prose-th:p-2"
+            : "hidden"}
           dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(renderedHtml || "") }}
         />
       </div>

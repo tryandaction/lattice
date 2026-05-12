@@ -8,14 +8,24 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { WordViewer } from "../word-viewer";
 
 const convertToHtmlMock = vi.fn();
+const renderDocxAsyncMock = vi.fn();
 const createFileMock = vi.fn();
 const openFileInActivePaneMock = vi.fn();
+const openSystemPathMock = vi.fn();
 const paneCommandBarStateRef: { current: unknown } = { current: null };
 
 vi.mock("mammoth", () => ({
   default: {
     convertToHtml: (...args: unknown[]) => convertToHtmlMock(...args),
   },
+}));
+
+vi.mock("docx-preview", () => ({
+  renderAsync: (...args: unknown[]) => renderDocxAsyncMock(...args),
+}));
+
+vi.mock("@/lib/link-router/open-external", () => ({
+  openSystemPath: (...args: unknown[]) => openSystemPathMock(...args),
 }));
 
 vi.mock("@/hooks/use-i18n", () => ({
@@ -36,11 +46,12 @@ vi.mock("@/hooks/use-file-system", () => ({
 }));
 
 vi.mock("@/stores/workspace-store", () => ({
-  useWorkspaceStore: (selector: (state: { openFileInActivePane: typeof openFileInActivePaneMock; workspaceRootPath: string | null; workspaceIdentity: { workspaceKey: string } | null }) => unknown) =>
+  useWorkspaceStore: (selector: (state: { openFileInActivePane: typeof openFileInActivePaneMock; workspaceRootPath: string | null; workspaceIdentity: { workspaceKey: string } | null; rootHandle: { name: string } }) => unknown) =>
     selector({
       openFileInActivePane: openFileInActivePaneMock,
-      workspaceRootPath: "workspace",
+      workspaceRootPath: "C:/vault/atom",
       workspaceIdentity: { workspaceKey: "workspace-key" },
+      rootHandle: { name: "atom" },
     }),
 }));
 
@@ -77,9 +88,12 @@ describe("WordViewer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     paneCommandBarStateRef.current = null;
+    renderDocxAsyncMock.mockImplementation(async (_content, container: HTMLElement) => {
+      container.innerHTML = "<section class=\"lattice-docx\"><p>Rendered DOCX page</p></section>";
+    });
   });
 
-  it("renders converted HTML for docx content", async () => {
+  it("renders high-fidelity docx preview and keeps semantic HTML for text features", async () => {
     convertToHtmlMock.mockResolvedValue({
       value: "<h1>Title</h1><p>Body</p>",
       messages: [],
@@ -95,12 +109,15 @@ describe("WordViewer", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Title")).toBeTruthy();
-      expect(screen.getByText("Body")).toBeTruthy();
+      expect(renderDocxAsyncMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("Rendered DOCX page")).toBeTruthy();
     });
+
+    expect(screen.getByTestId("word-semantic-preview").className).toContain("hidden");
   });
 
   it("shows conversion error details when mammoth fails", async () => {
+    renderDocxAsyncMock.mockRejectedValue(new Error("preview failed"));
     convertToHtmlMock.mockRejectedValue(new Error("conversion failed"));
 
     render(
@@ -143,5 +160,59 @@ describe("WordViewer", () => {
       expect(action?.disabled).toBe(false);
     });
     expect(typeof action?.onTrigger).toBe("function");
+  });
+
+  it("registers distinct command bar icons for search, system editing, and import", async () => {
+    convertToHtmlMock.mockResolvedValue({
+      value: "<p>Body</p>",
+      messages: [],
+    });
+
+    render(
+      <WordViewer
+        content={new Uint8Array([1, 2, 3]).buffer}
+        fileName="paper.docx"
+        paneId="pane-left"
+        filePath="atom/docs/paper.docx"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Rendered DOCX page")).toBeTruthy();
+    });
+
+    const actions = (paneCommandBarStateRef.current as { state?: { actions?: Array<{ id: string; icon?: string; disabled?: boolean; onTrigger?: () => void }> } })?.state?.actions ?? [];
+    expect(actions.find((item) => item.id === "search")?.icon).toBe("search");
+    expect(actions.find((item) => item.id === "open-system-editor")?.icon).toBe("file-pen-line");
+    expect(actions.find((item) => item.id === "import-as-note")?.icon).toBe("file-output");
+    expect(actions.find((item) => item.id === "open-system-editor")?.disabled).toBe(false);
+  });
+
+  it("opens the original docx in the system editor for fidelity-preserving edits", async () => {
+    convertToHtmlMock.mockResolvedValue({
+      value: "<p>Body</p>",
+      messages: [],
+    });
+    openSystemPathMock.mockResolvedValue(true);
+
+    render(
+      <WordViewer
+        content={new Uint8Array([1, 2, 3]).buffer}
+        fileName="paper.docx"
+        paneId="pane-left"
+        filePath="atom/docs/paper.docx"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Rendered DOCX page")).toBeTruthy();
+    });
+
+    const action = (paneCommandBarStateRef.current as { state?: { actions?: Array<{ id: string; onTrigger?: () => void }> } })?.state?.actions?.find((item) => item.id === "open-system-editor");
+    action?.onTrigger?.();
+
+    await waitFor(() => {
+      expect(openSystemPathMock).toHaveBeenCalledWith("C:/vault/atom/docs/paper.docx");
+    });
   });
 });
