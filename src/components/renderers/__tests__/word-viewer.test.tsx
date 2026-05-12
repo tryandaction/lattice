@@ -89,14 +89,14 @@ describe("WordViewer", () => {
     vi.clearAllMocks();
     paneCommandBarStateRef.current = null;
     renderDocxAsyncMock.mockImplementation(async (_content, container: HTMLElement) => {
-      container.innerHTML = "<section class=\"lattice-docx\"><p>Rendered DOCX page</p></section>";
+      container.innerHTML = "<div class=\"lattice-docx-wrapper\"><section class=\"lattice-docx\" style=\"width: 1200px;\"><p>Rendered DOCX page</p></section></div>";
     });
   });
 
   it("renders high-fidelity docx preview and keeps semantic HTML for text features", async () => {
     convertToHtmlMock.mockResolvedValue({
       value: "<h1>Title</h1><p>Body</p>",
-      messages: [],
+      messages: [{ message: "Unrecognised paragraph style: Body Text" }],
     });
 
     render(
@@ -114,6 +114,11 @@ describe("WordViewer", () => {
     });
 
     expect(screen.getByTestId("word-semantic-preview").className).toContain("hidden");
+    expect(screen.queryByText("Unrecognised paragraph style: Body Text")).toBeNull();
+    expect(screen.getByText("viewer.word.diagnostics.show")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("viewer.word.diagnostics.show"));
+    expect(screen.getByText("Unrecognised paragraph style: Body Text")).toBeTruthy();
   });
 
   it("shows conversion error details when mammoth fails", async () => {
@@ -183,6 +188,11 @@ describe("WordViewer", () => {
 
     const actions = (paneCommandBarStateRef.current as { state?: { actions?: Array<{ id: string; icon?: string; disabled?: boolean; onTrigger?: () => void }> } })?.state?.actions ?? [];
     expect(actions.find((item) => item.id === "search")?.icon).toBe("search");
+    expect(actions.find((item) => item.id === "fit-width")?.icon).toBe("arrow-left-right");
+    expect(actions.find((item) => item.id === "fit-width")?.disabled).toBe(false);
+    expect(actions.find((item) => item.id === "actual-size")?.icon).toBe("maximize-2");
+    expect(actions.find((item) => item.id === "zoom-out")?.icon).toBe("zoom-out");
+    expect(actions.find((item) => item.id === "zoom-in")?.icon).toBe("zoom-in");
     expect(actions.find((item) => item.id === "open-system-editor")?.icon).toBe("file-pen-line");
     expect(actions.find((item) => item.id === "import-as-note")?.icon).toBe("file-output");
     expect(actions.find((item) => item.id === "open-system-editor")?.disabled).toBe(false);

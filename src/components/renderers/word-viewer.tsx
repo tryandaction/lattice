@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from "react";
 import mammoth from "mammoth";
 import { renderAsync as renderDocxAsync } from "docx-preview";
 import DOMPurify from "dompurify";
@@ -20,6 +20,14 @@ import { createSelectionContext, type SelectionAiMode, type SelectionContext } f
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
 import { buildBlockSelectionContext } from "@/lib/ai/selection-dom";
+
+const WORD_ZOOM_MIN = 0.35;
+const WORD_ZOOM_MAX = 2;
+const WORD_ZOOM_STEP = 0.1;
+const WORD_FIT_WIDTH_GUTTER = 56;
+
+type WordPreviewMode = "docx" | "semantic";
+type WordZoomMode = "fit-width" | "actual";
 
 interface WordViewerProps {
   content: ArrayBuffer;
@@ -90,6 +98,55 @@ function extractSearchableWordText(html: string): string {
 
 function extractContainerText(container: HTMLElement | null): string {
   return (container?.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+function clampWordZoom(value: number): number {
+  return Math.min(WORD_ZOOM_MAX, Math.max(WORD_ZOOM_MIN, value));
+}
+
+function parseCssLengthToPx(value: string): number {
+  const match = value.trim().match(/^(-?\d+(?:\.\d+)?)(px|pt|in|cm|mm)?$/i);
+  if (!match) {
+    return 0;
+  }
+
+  const amount = Number.parseFloat(match[1]);
+  const unit = match[2]?.toLowerCase() ?? "px";
+  switch (unit) {
+    case "pt":
+      return amount * (96 / 72);
+    case "in":
+      return amount * 96;
+    case "cm":
+      return amount * (96 / 2.54);
+    case "mm":
+      return amount * (96 / 25.4);
+    case "px":
+    default:
+      return amount;
+  }
+}
+
+function measureDocxPageWidth(page: HTMLElement | null): number {
+  if (!page) {
+    return 0;
+  }
+
+  if (page.offsetWidth > 0) {
+    return page.offsetWidth;
+  }
+
+  const inlineWidth = parseCssLengthToPx(page.style.width);
+  if (inlineWidth > 0) {
+    return inlineWidth;
+  }
+
+  const computedWidth = parseCssLengthToPx(window.getComputedStyle(page).width);
+  if (computedWidth > 0) {
+    return computedWidth;
+  }
+
+  return page.getBoundingClientRect().width;
 }
 
 function findWordMatches(text: string, query: string): number[] {
@@ -278,8 +335,12 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
   const { t } = useI18n();
   const isLegacyDoc = /\.doc$/i.test(fileName);
   const [htmlContent, setHtmlContent] = useState<string | null>(null);
-  const [previewMode, setPreviewMode] = useState<"docx" | "semantic">("docx");
+  const [previewMode, setPreviewMode] = useState<WordPreviewMode>("docx");
+  const [zoomMode, setZoomMode] = useState<WordZoomMode>("fit-width");
+  const [manualZoom, setManualZoom] = useState(1);
+  const [fitWidthZoom, setFitWidthZoom] = useState(1);
   const [previewSearchMatchCount, setPreviewSearchMatchCount] = useState(0);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearchMatch, setActiveSearchMatch] = useState(0);
@@ -293,6 +354,7 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     returnFocusTo?: HTMLElement | null;
   } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const docxViewportRef = useRef<HTMLDivElement>(null);
   const docxPreviewRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const tRef = useRef(t);
@@ -309,6 +371,10 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
   const searchableText = useMemo(() => extractSearchableWordText(htmlContent || ""), [htmlContent]);
   const searchMatches = useMemo(() => findWordMatches(searchableText, searchQuery), [searchableText, searchQuery]);
   const effectiveSearchMatchCount = previewMode === "docx" ? previewSearchMatchCount : searchMatches.length;
+  const currentZoom = previewMode === "docx"
+    ? clampWordZoom(zoomMode === "fit-width" ? fitWidthZoom : manualZoom)
+    : 1;
+  const zoomPercent = Math.round(currentZoom * 100);
   const renderedHtml = useMemo(() => {
     if (!htmlContent) {
       return "";
@@ -318,6 +384,28 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     }
     return buildHighlightedWordHtml(htmlContent, searchQuery, activeSearchMatch);
   }, [activeSearchMatch, htmlContent, searchOpen, searchQuery]);
+  const visibleWarnings = previewMode === "semantic" || diagnosticsOpen || isLegacyDoc
+    ? warnings
+    : [];
+  const hiddenDiagnosticsCount = warnings.length - visibleWarnings.length;
+  const docxPreviewStyle = {
+    "--word-docx-zoom": currentZoom,
+  } as CSSProperties;
+  const updateFitWidthZoom = useCallback(() => {
+    if (previewMode !== "docx") {
+      return;
+    }
+
+    const viewportWidth = docxViewportRef.current?.clientWidth ?? 0;
+    const firstPage = docxPreviewRef.current?.querySelector<HTMLElement>("section.lattice-docx") ?? null;
+    const pageWidth = measureDocxPageWidth(firstPage);
+    if (viewportWidth <= 0 || pageWidth <= 0) {
+      return;
+    }
+
+    const availableWidth = Math.max(240, viewportWidth - WORD_FIT_WIDTH_GUTTER);
+    setFitWidthZoom(clampWordZoom(Math.min(1, availableWidth / pageWidth)));
+  }, [previewMode]);
   const persistedViewStateKey = buildPersistedFileViewStateKey({
     kind: "word",
     workspaceKey,
@@ -338,6 +426,8 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
       setError(null);
       setPreviewMode("docx");
       setPreviewSearchMatchCount(0);
+      setFitWidthZoom(1);
+      setDiagnosticsOpen(false);
       setWarnings([]);
       setHtmlContent(null);
       if (docxPreviewRef.current) {
@@ -379,6 +469,7 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
             renderedHighFidelityPreview = true;
             if (!disposed) {
               setPreviewMode("docx");
+              window.requestAnimationFrame(updateFitWidthZoom);
             }
           } catch (previewError) {
             if (!disposed) {
@@ -399,10 +490,13 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
           }
           const safeHtml = result.value || `<p>${extractContainerText(docxPreviewRef.current)}</p>`;
           setHtmlContent(safeHtml);
-          setWarnings((current) => [
-            ...current,
-            ...result.messages.map((m) => m.message),
-          ]);
+          const semanticMessages = result.messages.map((m) => m.message);
+          if (semanticMessages.length > 0) {
+            setWarnings((current) => [
+              ...current,
+              ...semanticMessages,
+            ]);
+          }
         } catch (semanticError) {
           if (disposed) {
             return;
@@ -435,7 +529,24 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     return () => {
       disposed = true;
     };
-  }, [content, isLegacyDoc]);
+  }, [content, isLegacyDoc, updateFitWidthZoom]);
+
+  useEffect(() => {
+    if (previewMode !== "docx") {
+      return;
+    }
+
+    updateFitWidthZoom();
+    const viewport = docxViewportRef.current;
+    if (!viewport || typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateFitWidthZoom);
+      return () => window.removeEventListener("resize", updateFitWidthZoom);
+    }
+
+    const observer = new ResizeObserver(() => updateFitWidthZoom());
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [previewMode, updateFitWidthZoom]);
 
   useEffect(() => {
     if (!searchOpen) {
@@ -549,6 +660,26 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     }
   }, [absoluteFilePath]);
 
+  const handleFitWidth = useCallback(() => {
+    setZoomMode("fit-width");
+    updateFitWidthZoom();
+  }, [updateFitWidthZoom]);
+
+  const handleActualSize = useCallback(() => {
+    setZoomMode("actual");
+    setManualZoom(1);
+  }, []);
+
+  const handleZoomIn = useCallback(() => {
+    setZoomMode("actual");
+    setManualZoom(clampWordZoom(currentZoom + WORD_ZOOM_STEP));
+  }, [currentZoom]);
+
+  const handleZoomOut = useCallback(() => {
+    setZoomMode("actual");
+    setManualZoom(clampWordZoom(currentZoom - WORD_ZOOM_STEP));
+  }, [currentZoom]);
+
   const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
     containerRef,
     ({ text, eventTarget }) => {
@@ -581,15 +712,53 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
           id: "search",
           label: t("viewer.word.search.open"),
           icon: "search",
-          priority: 8,
+          priority: 6,
           group: "secondary",
           onTrigger: () => setSearchOpen(true),
+        },
+        {
+          id: "fit-width",
+          label: t("viewer.word.command.fitWidth"),
+          icon: "arrow-left-right",
+          priority: 7,
+          group: "secondary",
+          active: previewMode === "docx" && zoomMode === "fit-width",
+          disabled: previewMode !== "docx",
+          onTrigger: handleFitWidth,
+        },
+        {
+          id: "actual-size",
+          label: t("viewer.word.command.actualSize"),
+          icon: "maximize-2",
+          priority: 8,
+          group: "secondary",
+          active: previewMode === "docx" && zoomMode === "actual" && Math.abs(currentZoom - 1) < 0.01,
+          disabled: previewMode !== "docx",
+          onTrigger: handleActualSize,
+        },
+        {
+          id: "zoom-out",
+          label: t("viewer.word.command.zoomOut", { percent: zoomPercent }),
+          icon: "zoom-out",
+          priority: 9,
+          group: "secondary",
+          disabled: previewMode !== "docx" || currentZoom <= WORD_ZOOM_MIN + 0.01,
+          onTrigger: handleZoomOut,
+        },
+        {
+          id: "zoom-in",
+          label: t("viewer.word.command.zoomIn", { percent: zoomPercent }),
+          icon: "zoom-in",
+          priority: 10,
+          group: "secondary",
+          disabled: previewMode !== "docx" || currentZoom >= WORD_ZOOM_MAX - 0.01,
+          onTrigger: handleZoomIn,
         },
         {
           id: "open-system-editor",
           label: t("viewer.word.command.openSystemEditor"),
           icon: "file-pen-line",
-          priority: 9,
+          priority: 11,
           group: "secondary",
           disabled: !absoluteFilePath,
           onTrigger: () => { void handleOpenInSystemEditor(); },
@@ -598,7 +767,7 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
           id: "import-as-note",
           label: isImporting ? t("viewer.word.command.importing") : t("viewer.word.command.import"),
           icon: "file-output",
-          priority: 10,
+          priority: 12,
           group: "primary",
           disabled: isImporting || !htmlContent,
           onTrigger: () => { void handleImportAsNote(); },
@@ -609,12 +778,20 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     fileName,
     filePath,
     absoluteFilePath,
+    currentZoom,
+    handleActualSize,
+    handleFitWidth,
     handleImportAsNote,
     handleOpenInSystemEditor,
+    handleZoomIn,
+    handleZoomOut,
     htmlContent,
     isImporting,
+    previewMode,
     setSearchOpen,
     t,
+    zoomMode,
+    zoomPercent,
   ]);
 
   usePaneCommandBar({
@@ -655,20 +832,38 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
 
       {/* Read-only notice */}
       <div className="mx-auto max-w-4xl px-8 pt-4">
-        <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-          <p>
-            {t("viewer.word.readOnly")}{" "}
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+          <p>{t("viewer.word.readOnly")}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            {hiddenDiagnosticsCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => setDiagnosticsOpen((current) => !current)}
+                className="rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent"
+              >
+                {diagnosticsOpen
+                  ? t("viewer.word.diagnostics.hide")
+                  : t("viewer.word.diagnostics.show", { count: hiddenDiagnosticsCount })}
+              </button>
+            ) : null}
+            {previewMode === "docx" ? (
+              <span className="rounded-md bg-background px-2 py-1 text-xs font-medium text-muted-foreground">
+                {zoomMode === "fit-width"
+                  ? t("viewer.word.zoom.fitWidth", { percent: zoomPercent })
+                  : t("viewer.word.zoom.actual", { percent: zoomPercent })}
+              </span>
+            ) : null}
             {absoluteFilePath ? (
               <button
                 type="button"
                 onClick={() => { void handleOpenInSystemEditor(); }}
-                className="inline-flex items-center gap-1 rounded px-1 font-medium text-primary hover:bg-primary/10"
+                className="inline-flex items-center gap-1 rounded-md bg-foreground px-2 py-1 text-xs font-medium text-background hover:bg-foreground/90"
               >
                 <FilePenLine className="h-3.5 w-3.5" />
                 {t("viewer.word.command.openSystemEditor")}
               </button>
             ) : null}
-          </p>
+          </div>
         </div>
       </div>
 
@@ -747,19 +942,21 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
         </div>
       )}
 
-      {warnings.length > 0 && (
+      {visibleWarnings.length > 0 && (
         <div className="mx-auto max-w-4xl px-8 pt-4">
           <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-3">
             <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-500">
               <AlertTriangle className="h-4 w-4" />
-              <span className="text-sm font-medium">{t("viewer.word.warnings")}</span>
+              <span className="text-sm font-medium">
+                {previewMode === "docx" ? t("viewer.word.diagnostics.title") : t("viewer.word.warnings")}
+              </span>
             </div>
             <ul className="mt-2 list-inside list-disc text-xs text-muted-foreground">
-              {warnings.slice(0, 5).map((warning, index) => (
+              {visibleWarnings.slice(0, 5).map((warning, index) => (
                 <li key={index}>{warning}</li>
               ))}
-              {warnings.length > 5 && (
-                <li>{t("viewer.word.warnings.more", { count: warnings.length - 5 })}</li>
+              {visibleWarnings.length > 5 && (
+                <li>{t("viewer.word.warnings.more", { count: visibleWarnings.length - 5 })}</li>
               )}
             </ul>
           </div>
@@ -767,12 +964,17 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
       )}
 
       {/* Document content */}
-      <div className={previewMode === "docx" ? "word-fidelity-stage px-8 py-6" : "mx-auto max-w-4xl p-8"}>
-        <div
-          ref={docxPreviewRef}
-          data-testid="word-docx-preview"
-          className={previewMode === "docx" ? "word-docx-preview document-container" : "hidden"}
-        />
+      <div
+        ref={docxViewportRef}
+        className={previewMode === "docx" ? "word-fidelity-stage px-4 py-6 sm:px-8" : "mx-auto max-w-4xl p-8"}
+      >
+        <div className={previewMode === "docx" ? "word-docx-scale-shell" : "hidden"} style={docxPreviewStyle}>
+          <div
+            ref={docxPreviewRef}
+            data-testid="word-docx-preview"
+            className="word-docx-preview document-container"
+          />
+        </div>
         <article
           data-testid="word-semantic-preview"
           className={previewMode === "semantic"

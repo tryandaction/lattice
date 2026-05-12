@@ -2391,15 +2391,22 @@ math-field.quantum-keyboard-active {
 }
 
 .word-fidelity-stage {
-  min-width: max-content;
   background:
     radial-gradient(circle at top left, hsl(var(--muted) / 0.32), transparent 28rem),
     linear-gradient(180deg, hsl(var(--background)), hsl(var(--muted) / 0.18));
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.word-docx-scale-shell {
+  display: grid;
+  justify-items: center;
+  min-width: 100%;
 }
 
 .word-docx-preview {
-  width: max-content;
-  min-width: 100%;
+  display: block;
+  zoom: var(--word-docx-zoom, 1);
 }
 
 .word-docx-preview .lattice-docx-wrapper {
