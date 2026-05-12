@@ -575,6 +575,119 @@ function buildViewportRectsFromRenderedTextOffsets(input: {
   return normalizeViewportRects(rects);
 }
 
+function clampRatio(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function viewportRectsOverlap(
+  left: Pick<PdfCanonicalSelection["viewportRects"][number], "left" | "top" | "width" | "height">,
+  right: Pick<PdfCanonicalSelection["viewportRects"][number], "left" | "top" | "width" | "height">,
+): boolean {
+  return !(
+    left.left + left.width <= right.left ||
+    right.left + right.width <= left.left ||
+    left.top + left.height <= right.top ||
+    right.top + right.height <= left.top
+  );
+}
+
+function resolveRenderedSelectionFromViewportRects(input: {
+  model: PdfPageTextModel;
+  viewportRects: PdfCanonicalSelection["viewportRects"];
+  pageNumber: number;
+  pageWidth: number;
+  pageHeight: number;
+}): PdfResolvedSelection | null {
+  const sortedRects = normalizeViewportRects(
+    input.viewportRects.filter((rect) => rect.pageNumber === input.pageNumber),
+  );
+  if (sortedRects.length === 0) {
+    return null;
+  }
+
+  const rectByItem = new Map(input.model.itemRects.map((rect) => [rect.itemIndex, rect]));
+  let startOffset = Number.POSITIVE_INFINITY;
+  let endOffset = Number.NEGATIVE_INFINITY;
+
+  for (const segment of input.model.segments) {
+    const itemRect = rectByItem.get(segment.itemIndex);
+    const segmentLength = segment.pageTextEnd - segment.pageTextStart;
+    if (!itemRect || itemRect.width <= 0 || itemRect.height <= 0 || segmentLength <= 0) {
+      continue;
+    }
+
+    for (const selectionRect of sortedRects) {
+      if (!viewportRectsOverlap(itemRect, selectionRect)) {
+        continue;
+      }
+
+      const selectionLeft = clampRatio((selectionRect.left - itemRect.left) / itemRect.width);
+      const selectionRight = clampRatio(((selectionRect.left + selectionRect.width) - itemRect.left) / itemRect.width);
+      if (selectionRight <= selectionLeft) {
+        continue;
+      }
+
+      const segmentStartOffset = segment.pageTextStart + Math.floor(selectionLeft * segmentLength);
+      const segmentEndOffset = segment.pageTextStart + Math.ceil(selectionRight * segmentLength);
+      startOffset = Math.min(startOffset, segmentStartOffset);
+      endOffset = Math.max(endOffset, segmentEndOffset);
+    }
+  }
+
+  if (
+    !Number.isFinite(startOffset) ||
+    !Number.isFinite(endOffset) ||
+    endOffset <= startOffset
+  ) {
+    return null;
+  }
+
+  return buildResolvedSelectionFromOffsets({
+    pageNumber: input.pageNumber,
+    pageText: input.model.normalizedText,
+    startOffset,
+    endOffset,
+    viewportRects: sortedRects,
+    pageWidth: input.pageWidth,
+    pageHeight: input.pageHeight,
+    selectedText: input.model.normalizedText.slice(startOffset, endOffset),
+    source: "pdfjs-text-model",
+    confidence: "exact",
+  });
+}
+
+function choosePreferredRenderedSelection(input: {
+  domSelection: PdfResolvedSelection | null;
+  geometrySelection: PdfResolvedSelection | null;
+  viewportRects: PdfCanonicalSelection["viewportRects"];
+  allowGeometryOverride: boolean;
+}): PdfResolvedSelection | null {
+  if (!input.domSelection) {
+    return input.geometrySelection;
+  }
+  if (!input.geometrySelection) {
+    return input.domSelection;
+  }
+  if (!input.allowGeometryOverride) {
+    return input.domSelection;
+  }
+
+  const domOverlap = getSelectionGeometryOverlapRatio({
+    selection: input.domSelection,
+    viewportRects: input.viewportRects,
+  });
+  const geometryOverlap = getSelectionGeometryOverlapRatio({
+    selection: input.geometrySelection,
+    viewportRects: input.viewportRects,
+  });
+
+  if (geometryOverlap >= 0.55 && geometryOverlap >= domOverlap + 0.2) {
+    return input.geometrySelection;
+  }
+
+  return input.domSelection;
+}
+
 function intersectsViewportRect(
   character: PdfNativeViewportChar,
   rect: PdfCanonicalSelection["viewportRects"][number],
@@ -1038,6 +1151,27 @@ export function choosePreferredNativeSelection(input: {
   const geometryCompact = getCompactSelectionText(input.geometrySelection);
   const textSearchCompact = getCompactSelectionText(input.textSearchSelection);
   const domCompact = stripPdfWhitespace(input.domSelectedText);
+  const offsetOverlap = getSelectionGeometryOverlapRatio({
+    selection: input.offsetSelection,
+    viewportRects: input.viewportRects,
+  });
+  const geometryOverlap = getSelectionGeometryOverlapRatio({
+    selection: input.geometrySelection,
+    viewportRects: input.viewportRects,
+  });
+  const textSearchOverlap = getSelectionGeometryOverlapRatio({
+    selection: input.textSearchSelection,
+    viewportRects: input.viewportRects,
+  });
+
+  if (
+    input.geometrySelection &&
+    geometryCompact &&
+    geometryOverlap >= 0.55 &&
+    geometryOverlap >= Math.max(offsetOverlap, textSearchOverlap) + 0.2
+  ) {
+    return input.geometrySelection;
+  }
 
   if (offsetCompact === domCompact && geometryCompact !== domCompact && textSearchCompact !== domCompact) {
     return input.offsetSelection;
@@ -1061,18 +1195,6 @@ export function choosePreferredNativeSelection(input: {
   const offsetDistance = getSelectionDistanceFromDom(input.offsetSelection, input.domSelectedText);
   const geometryDistance = getSelectionDistanceFromDom(input.geometrySelection, input.domSelectedText);
   const textSearchDistance = getSelectionDistanceFromDom(input.textSearchSelection, input.domSelectedText);
-  const offsetOverlap = getSelectionGeometryOverlapRatio({
-    selection: input.offsetSelection,
-    viewportRects: input.viewportRects,
-  });
-  const geometryOverlap = getSelectionGeometryOverlapRatio({
-    selection: input.geometrySelection,
-    viewportRects: input.viewportRects,
-  });
-  const textSearchOverlap = getSelectionGeometryOverlapRatio({
-    selection: input.textSearchSelection,
-    viewportRects: input.viewportRects,
-  });
   const candidates = [
     input.offsetSelection ? {
       selection: input.offsetSelection,
@@ -1379,12 +1501,16 @@ export function resolvePdfSelectionFromDomRange(input: {
   text: string;
   pages: PdfRenderedPageContext[];
   nativeLayout?: PdfNativePageTextLayout | null;
+  clientRects?: PdfSelectionClientRect[];
   dragStartPoint?: { x: number; y: number };
   dragEndPoint?: { x: number; y: number };
 }): PdfSelectionResolutionResult {
   const startPageElement = findPdfPageElementForNode(input.range.startContainer);
   const endPageElement = findPdfPageElementForNode(input.range.endContainer);
-  const clientRects = rangeToClientRects(input.range);
+  const hasExplicitSelectionClientRects = Boolean(input.clientRects && input.clientRects.length > 0);
+  const clientRects: PdfSelectionClientRect[] = hasExplicitSelectionClientRects && input.clientRects
+    ? input.clientRects
+    : rangeToClientRects(input.range);
   const pageGeometries = input.pages.map((page) => {
     const pageRect = page.element.getBoundingClientRect();
     return {
@@ -1489,16 +1615,24 @@ export function resolvePdfSelectionFromDomRange(input: {
     endOffset,
     pageNumber: startPageNumber,
   });
-  const resolvedViewportRects = offsetViewportRects.length > 0 ? offsetViewportRects : viewportRects;
+  const selectionViewportRects = viewportRects.length > 0 ? viewportRects : offsetViewportRects;
+  const domOffsetViewportRects = offsetViewportRects.length > 0 ? offsetViewportRects : selectionViewportRects;
   const strictDomSelection = buildResolvedSelectionFromOffsets({
     pageNumber: startPageNumber,
     pageText: pageModel.normalizedText,
     startOffset,
     endOffset,
-    viewportRects: resolvedViewportRects,
+    viewportRects: domOffsetViewportRects,
     pageWidth: page.width,
     pageHeight: page.height,
-    selectedText: domSelectedText,
+    selectedText: input.text || domSelectedText,
+  });
+  const renderedGeometrySelection = resolveRenderedSelectionFromViewportRects({
+    model: pageModel,
+    viewportRects: selectionViewportRects,
+    pageNumber: startPageNumber,
+    pageWidth: page.width,
+    pageHeight: page.height,
   });
 
   if (input.nativeLayout) {
@@ -1515,7 +1649,7 @@ export function resolvePdfSelectionFromDomRange(input: {
     const geometrySelection = resolveNativeSelectionFromViewportRects({
       layout: input.nativeLayout,
       nativeModel,
-      viewportRects: resolvedViewportRects,
+      viewportRects: selectionViewportRects,
       pageNumber: startPageNumber,
       pageWidth: page.width,
       pageHeight: page.height,
@@ -1535,44 +1669,50 @@ export function resolvePdfSelectionFromDomRange(input: {
     const textSearchSelection = resolveNativeSelectionFromSelectedTextAndGeometry({
       layout: input.nativeLayout,
       nativeModel,
-      viewportRects: resolvedViewportRects,
+      viewportRects: selectionViewportRects,
       selectedText: domSelectedText,
       pageNumber: startPageNumber,
       pageWidth: page.width,
       pageHeight: page.height,
     });
-    const viewportRectCount = resolvedViewportRects.filter((rect) => rect.pageNumber === startPageNumber).length;
+    const viewportRectCount = selectionViewportRects.filter((rect) => rect.pageNumber === startPageNumber).length;
     const baseNativeSelection = choosePreferredNativeSelection({
       offsetSelection,
       geometrySelection,
       textSearchSelection,
       domSelectedText,
       viewportRectCount,
-      viewportRects: resolvedViewportRects,
+      viewportRects: selectionViewportRects,
     });
     const nativeSelection = choosePreferredPointerSelection({
       baseSelection: baseNativeSelection,
       pointerSelection,
       domSelectedText,
       viewportRectCount,
-      viewportRects: resolvedViewportRects,
+      viewportRects: selectionViewportRects,
       dragDistanceX: input.dragStartPoint && input.dragEndPoint
         ? Math.abs(input.dragEndPoint.x - input.dragStartPoint.x)
         : undefined,
       referenceSpanWidth: viewportRectCount > 0
         ? (
-            Math.max(...resolvedViewportRects.filter((rect) => rect.pageNumber === startPageNumber).map((rect) => rect.left + rect.width)) -
-            Math.min(...resolvedViewportRects.filter((rect) => rect.pageNumber === startPageNumber).map((rect) => rect.left))
+            Math.max(...selectionViewportRects.filter((rect) => rect.pageNumber === startPageNumber).map((rect) => rect.left + rect.width)) -
+            Math.min(...selectionViewportRects.filter((rect) => rect.pageNumber === startPageNumber).map((rect) => rect.left))
           )
         : undefined,
     });
     const pointerWasUsed = Boolean(pointerSelection && nativeSelection === pointerSelection);
 
     if (!nativeSelection) {
-      if (strictDomSelection) {
+      const fallbackSelection = choosePreferredRenderedSelection({
+        domSelection: strictDomSelection,
+        geometrySelection: renderedGeometrySelection,
+        viewportRects: selectionViewportRects,
+        allowGeometryOverride: hasExplicitSelectionClientRects,
+      });
+      if (fallbackSelection) {
         return {
           ok: true,
-          selection: strictDomSelection,
+          selection: fallbackSelection,
         };
       }
 
@@ -1583,16 +1723,23 @@ export function resolvePdfSelectionFromDomRange(input: {
       };
     }
 
-    if (shouldPreferDomSelectionOverNative({
+    const renderedFallbackSelection = choosePreferredRenderedSelection({
       domSelection: strictDomSelection,
+      geometrySelection: renderedGeometrySelection,
+      viewportRects: selectionViewportRects,
+      allowGeometryOverride: hasExplicitSelectionClientRects,
+    });
+
+    if (shouldPreferDomSelectionOverNative({
+      domSelection: renderedFallbackSelection,
       nativeSelection,
-      viewportRects: resolvedViewportRects,
+      viewportRects: selectionViewportRects,
       pointerWasUsed,
     })) {
-      if (strictDomSelection) {
+      if (renderedFallbackSelection) {
         return {
           ok: true,
-          selection: strictDomSelection,
+          selection: renderedFallbackSelection,
         };
       }
     }
@@ -1603,12 +1750,25 @@ export function resolvePdfSelectionFromDomRange(input: {
     };
   }
 
+  const renderedSelection = choosePreferredRenderedSelection({
+    domSelection: strictDomSelection,
+    geometrySelection: renderedGeometrySelection,
+    viewportRects: selectionViewportRects,
+    allowGeometryOverride: hasExplicitSelectionClientRects,
+  });
+  if (renderedSelection) {
+    return {
+      ok: true,
+      selection: renderedSelection,
+    };
+  }
+
   const selection = buildResolvedSelectionFromOffsets({
     pageNumber: startPageNumber,
     pageText: pageModel.normalizedText,
     startOffset,
     endOffset,
-    viewportRects: resolvedViewportRects,
+    viewportRects: domOffsetViewportRects,
     pageWidth: page.width,
     pageHeight: page.height,
     selectedText: input.text || domSelectedText,
@@ -1633,6 +1793,7 @@ export function resolvePdfSelectionFromNativeRange(input: {
   text: string;
   pages: PdfRenderedPageContext[];
   nativeLayout?: PdfNativePageTextLayout | null;
+  clientRects?: PdfSelectionClientRect[];
   dragStartPoint?: { x: number; y: number };
   dragEndPoint?: { x: number; y: number };
 }): PdfSelectionResolutionResult {

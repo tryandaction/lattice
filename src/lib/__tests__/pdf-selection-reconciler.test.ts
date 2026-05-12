@@ -385,6 +385,95 @@ describe("pdf-selection-reconciler", () => {
     expect(result).toBe(geometrySelection);
   });
 
+  it("uses frozen selection geometry when the DOM range drifts to later text on the same line", () => {
+    const line = "fast, high-fidelity excitation to the Rydberg state21 and mid-circuit";
+    const lineLeft = 40;
+    const lineTop = 120;
+    const charWidth = 8;
+    const page = createPageContext({
+      fragments: [
+        { text: line, left: lineLeft, top: lineTop, width: line.length * charWidth, height: 24 },
+      ],
+    });
+    const wrongDomText = "o the Rydberg state21";
+    const intendedText = "high-fidelity exci";
+    const range = createRangeWithinFragment(line, wrongDomText);
+    const intendedStart = line.indexOf(intendedText);
+    const intendedLeft = lineLeft + (intendedStart * charWidth);
+    const intendedRight = intendedLeft + (intendedText.length * charWidth);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: wrongDomText,
+      pages: [page],
+      clientRects: [{
+        left: intendedLeft,
+        right: intendedRight,
+        top: lineTop,
+        bottom: lineTop + 24,
+      }],
+      nativeLayout: {
+        source: "pdfium",
+        pageNumber: 1,
+        width: 640,
+        height: 960,
+        text: line,
+        chars: Array.from(line).map((character, index) => ({
+          charIndex: index,
+          text: character,
+          x1: lineLeft + (index * charWidth),
+          y1: lineTop,
+          x2: lineLeft + ((index + 1) * charWidth),
+          y2: lineTop + 24,
+          fontSize: 24,
+        })),
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(intendedText);
+      expect(result.selection.textQuote.source).toBe("pdfium-native");
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(intendedLeft / 640, 3);
+    }
+  });
+
+  it("uses frozen selection geometry as a rendered-text fallback without a native layout", () => {
+    const line = "fast, high-fidelity excitation to the Rydberg state21 and mid-circuit";
+    const lineLeft = 40;
+    const lineTop = 120;
+    const charWidth = 8;
+    const page = createPageContext({
+      fragments: [
+        { text: line, left: lineLeft, top: lineTop, width: line.length * charWidth, height: 24 },
+      ],
+    });
+    const wrongDomText = "o the Rydberg state21";
+    const intendedText = "high-fidelity exci";
+    const range = createRangeWithinFragment(line, wrongDomText);
+    const intendedStart = line.indexOf(intendedText);
+    const intendedLeft = lineLeft + (intendedStart * charWidth);
+    const intendedRight = intendedLeft + (intendedText.length * charWidth);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: wrongDomText,
+      pages: [page],
+      clientRects: [{
+        left: intendedLeft,
+        right: intendedRight,
+        top: lineTop,
+        bottom: lineTop + 24,
+      }],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(intendedText);
+      expect(result.selection.textQuote.source).toBe("pdfjs-text-model");
+    }
+  });
+
   it("resolves the information regression from a long text span", () => {
     const page = createPageContext({
       fragments: [

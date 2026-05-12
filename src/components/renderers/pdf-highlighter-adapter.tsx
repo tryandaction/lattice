@@ -3603,6 +3603,7 @@ export function PDFHighlighterAdapter({
       text: selectionSnapshot.text,
       pages: renderedPages,
       nativeLayout,
+      clientRects: selectionSnapshot.clientRects,
       dragStartPoint: selectionSnapshot.dragStartPoint ?? undefined,
       dragEndPoint: selectionSnapshot.dragEndPoint ?? undefined,
     });
