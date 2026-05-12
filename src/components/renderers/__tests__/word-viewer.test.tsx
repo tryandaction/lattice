@@ -12,6 +12,7 @@ const renderDocxAsyncMock = vi.fn();
 const createFileMock = vi.fn();
 const openFileInActivePaneMock = vi.fn();
 const openSystemPathMock = vi.fn();
+const readDesktopFileBytesMock = vi.fn();
 const paneCommandBarStateRef: { current: unknown } = { current: null };
 
 vi.mock("mammoth", () => ({
@@ -26,6 +27,10 @@ vi.mock("docx-preview", () => ({
 
 vi.mock("@/lib/link-router/open-external", () => ({
   openSystemPath: (...args: unknown[]) => openSystemPathMock(...args),
+}));
+
+vi.mock("@/lib/desktop-file-system", () => ({
+  readDesktopFileBytes: (...args: unknown[]) => readDesktopFileBytesMock(...args),
 }));
 
 vi.mock("@/hooks/use-i18n", () => ({
@@ -88,6 +93,7 @@ describe("WordViewer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     paneCommandBarStateRef.current = null;
+    readDesktopFileBytesMock.mockResolvedValue(new Uint8Array([9, 8, 7]));
     renderDocxAsyncMock.mockImplementation(async (_content, container: HTMLElement) => {
       container.innerHTML = "<div class=\"lattice-docx-wrapper\"><section class=\"lattice-docx\" style=\"width: 1200px;\"><p>Rendered DOCX page</p></section></div>";
     });
@@ -194,6 +200,8 @@ describe("WordViewer", () => {
     expect(actions.find((item) => item.id === "zoom-out")?.icon).toBe("zoom-out");
     expect(actions.find((item) => item.id === "zoom-in")?.icon).toBe("zoom-in");
     expect(actions.find((item) => item.id === "open-system-editor")?.icon).toBe("file-pen-line");
+    expect(actions.find((item) => item.id === "reload-from-disk")?.icon).toBe("rotate-ccw");
+    expect(actions.find((item) => item.id === "reload-from-disk")?.disabled).toBe(false);
     expect(actions.find((item) => item.id === "import-as-note")?.icon).toBe("file-output");
     expect(actions.find((item) => item.id === "open-system-editor")?.disabled).toBe(false);
   });
@@ -219,10 +227,45 @@ describe("WordViewer", () => {
     });
 
     const action = (paneCommandBarStateRef.current as { state?: { actions?: Array<{ id: string; onTrigger?: () => void }> } })?.state?.actions?.find((item) => item.id === "open-system-editor");
-    action?.onTrigger?.();
+    await act(async () => {
+      action?.onTrigger?.();
+    });
 
     await waitFor(() => {
       expect(openSystemPathMock).toHaveBeenCalledWith("C:/vault/atom/docs/paper.docx");
+    });
+  });
+
+  it("reloads the original docx from disk after native editing", async () => {
+    convertToHtmlMock.mockResolvedValue({
+      value: "<p>Body</p>",
+      messages: [],
+    });
+
+    render(
+      <WordViewer
+        content={new Uint8Array([1, 2, 3]).buffer}
+        fileName="paper.docx"
+        paneId="pane-left"
+        filePath="atom/docs/paper.docx"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Rendered DOCX page")).toBeTruthy();
+    });
+
+    const action = (paneCommandBarStateRef.current as { state?: { actions?: Array<{ id: string; onTrigger?: () => void | Promise<void> }> } })?.state?.actions?.find((item) => item.id === "reload-from-disk");
+    await act(async () => {
+      await action?.onTrigger?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(readDesktopFileBytesMock).toHaveBeenCalledWith("C:/vault/atom/docs/paper.docx");
+      expect(renderDocxAsyncMock).toHaveBeenCalledTimes(2);
+      expect(screen.getByText("viewer.word.reload.lastReloaded")).toBeTruthy();
     });
   });
 });

@@ -96,7 +96,7 @@ function invalidateDesktopDirCache(path: string): void {
   }
 }
 
-async function readDesktopFileBytes(path: string): Promise<Uint8Array> {
+export async function readDesktopFileBytes(path: string): Promise<Uint8Array> {
   const bytes = await invokeDesktopFs<Uint8Array | ArrayBuffer | number[]>("desktop_read_file_bytes_raw", {
     path: normalizeDesktopPath(path),
   });

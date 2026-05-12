@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties }
 import mammoth from "mammoth";
 import { renderAsync as renderDocxAsync } from "docx-preview";
 import DOMPurify from "dompurify";
-import { Loader2, AlertTriangle, Search, ChevronDown, ChevronUp, X, FilePenLine } from "lucide-react";
+import { Loader2, AlertTriangle, Search, ChevronDown, ChevronUp, X, FilePenLine, RefreshCw } from "lucide-react";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useI18n } from "@/hooks/use-i18n";
 import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
@@ -14,6 +14,7 @@ import { emitVaultChange } from "@/lib/plugins/runtime";
 import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
 import { openSystemPath } from "@/lib/link-router/open-external";
 import { resolveWorkspaceFilePath } from "@/lib/runner/path-utils";
+import { readDesktopFileBytes } from "@/lib/desktop-file-system";
 import type { CommandBarState, PaneId } from "@/types/layout";
 import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 import { createSelectionContext, type SelectionAiMode, type SelectionContext } from "@/lib/ai/selection-context";
@@ -334,6 +335,7 @@ function highlightWordPreviewMatches(root: HTMLElement | null, query: string, ac
 export function WordViewer({ content, fileName, paneId, filePath }: WordViewerProps) {
   const { t } = useI18n();
   const isLegacyDoc = /\.doc$/i.test(fileName);
+  const [documentContent, setDocumentContent] = useState(content);
   const [htmlContent, setHtmlContent] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState<WordPreviewMode>("docx");
   const [zoomMode, setZoomMode] = useState<WordZoomMode>("fit-width");
@@ -346,6 +348,8 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
   const [activeSearchMatch, setActiveSearchMatch] = useState(0);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isReloadingFromDisk, setIsReloadingFromDisk] = useState(false);
+  const [lastReloadedAt, setLastReloadedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [selectionHubState, setSelectionHubState] = useState<{
@@ -419,6 +423,11 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
   }, [t]);
 
   useEffect(() => {
+    setDocumentContent(content);
+    setLastReloadedAt(null);
+  }, [content]);
+
+  useEffect(() => {
     let disposed = false;
 
     async function convertDocument() {
@@ -449,7 +458,7 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
           }
 
           try {
-            await renderDocxAsync(content.slice(0), target, target, {
+            await renderDocxAsync(documentContent.slice(0), target, target, {
               className: "lattice-docx",
               inWrapper: true,
               ignoreWidth: false,
@@ -484,7 +493,7 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
         }
 
         try {
-          const result = await mammoth.convertToHtml({ arrayBuffer: content });
+          const result = await mammoth.convertToHtml({ arrayBuffer: documentContent });
           if (disposed) {
             return;
           }
@@ -529,7 +538,7 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     return () => {
       disposed = true;
     };
-  }, [content, isLegacyDoc, updateFitWidthZoom]);
+  }, [documentContent, isLegacyDoc, updateFitWidthZoom]);
 
   useEffect(() => {
     if (previewMode !== "docx") {
@@ -660,6 +669,29 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     }
   }, [absoluteFilePath]);
 
+  const handleReloadFromDisk = useCallback(async () => {
+    if (!absoluteFilePath) {
+      return;
+    }
+
+    setIsReloadingFromDisk(true);
+    try {
+      const bytes = await readDesktopFileBytes(absoluteFilePath);
+      const nextContent = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      setDocumentContent(nextContent);
+      setLastReloadedAt(Date.now());
+    } catch (err) {
+      console.error("Failed to reload Word document from disk:", err);
+      setWarnings((current) => [
+        ...current,
+        tRef.current("viewer.word.reload.failed"),
+      ]);
+      setDiagnosticsOpen(true);
+    } finally {
+      setIsReloadingFromDisk(false);
+    }
+  }, [absoluteFilePath]);
+
   const handleFitWidth = useCallback(() => {
     setZoomMode("fit-width");
     updateFitWidthZoom();
@@ -764,10 +796,19 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
           onTrigger: () => { void handleOpenInSystemEditor(); },
         },
         {
+          id: "reload-from-disk",
+          label: isReloadingFromDisk ? t("viewer.word.command.reloading") : t("viewer.word.command.reloadFromDisk"),
+          icon: "rotate-ccw",
+          priority: 12,
+          group: "secondary",
+          disabled: !absoluteFilePath || isReloadingFromDisk,
+          onTrigger: () => { void handleReloadFromDisk(); },
+        },
+        {
           id: "import-as-note",
           label: isImporting ? t("viewer.word.command.importing") : t("viewer.word.command.import"),
           icon: "file-output",
-          priority: 12,
+          priority: 13,
           group: "primary",
           disabled: isImporting || !htmlContent,
           onTrigger: () => { void handleImportAsNote(); },
@@ -783,10 +824,12 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     handleFitWidth,
     handleImportAsNote,
     handleOpenInSystemEditor,
+    handleReloadFromDisk,
     handleZoomIn,
     handleZoomOut,
     htmlContent,
     isImporting,
+    isReloadingFromDisk,
     previewMode,
     setSearchOpen,
     t,
@@ -853,6 +896,22 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
                   : t("viewer.word.zoom.actual", { percent: zoomPercent })}
               </span>
             ) : null}
+            {lastReloadedAt ? (
+              <span className="rounded-md bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                {t("viewer.word.reload.lastReloaded")}
+              </span>
+            ) : null}
+            {absoluteFilePath ? (
+              <button
+                type="button"
+                onClick={() => { void handleReloadFromDisk(); }}
+                disabled={isReloadingFromDisk}
+                className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent disabled:opacity-50"
+              >
+                <RefreshCw className={isReloadingFromDisk ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
+                {isReloadingFromDisk ? t("viewer.word.command.reloading") : t("viewer.word.command.reloadFromDisk")}
+              </button>
+            ) : null}
             {absoluteFilePath ? (
               <button
                 type="button"
@@ -864,6 +923,17 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
               </button>
             ) : null}
           </div>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-4xl px-8 pt-3">
+        <div className="rounded-lg border border-sky-500/20 bg-sky-500/10 p-3 text-xs leading-relaxed text-muted-foreground">
+          <div className="font-medium text-sky-700 dark:text-sky-300">
+            {t("viewer.word.professional.title")}
+          </div>
+          <p className="mt-1">
+            {t("viewer.word.professional.description")}
+          </p>
         </div>
       </div>
 
