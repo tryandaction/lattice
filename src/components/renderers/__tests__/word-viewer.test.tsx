@@ -102,6 +102,133 @@ describe("WordViewer", () => {
     });
   });
 
+  it("finds and highlights search terms split across docx preview spans", async () => {
+    convertToHtmlMock.mockResolvedValue({
+      value: "<p>high-fidelity excitation</p>",
+      messages: [],
+    });
+    renderDocxAsyncMock.mockImplementation(async (_content, container: HTMLElement) => {
+      container.innerHTML = [
+        "<div class=\"lattice-docx-wrapper\"><section class=\"lattice-docx\" style=\"width: 1200px;\">",
+        "<p><span>high-</span><span>fidelity</span><span> excitation</span></p>",
+        "</section></div>",
+      ].join("");
+    });
+
+    render(
+      <WordViewer
+        content={new Uint8Array([1, 2, 3]).buffer}
+        fileName="paper.docx"
+        paneId="pane-left"
+        filePath="docs/paper.docx"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("high-")).toBeTruthy();
+    });
+
+    const searchAction = (paneCommandBarStateRef.current as { state?: { actions?: Array<{ id: string; onTrigger?: () => void }> } })?.state?.actions?.find((item) => item.id === "search");
+    await act(async () => {
+      searchAction?.onTrigger?.();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("viewer.word.search.placeholder"), {
+      target: { value: "high-fidelity excitation" },
+    });
+
+    await waitFor(() => {
+      const marks = screen.getByTestId("word-docx-preview").querySelectorAll("mark[data-word-search-match-index=\"0\"]");
+      expect(marks).toHaveLength(3);
+      expect(Array.from(marks).map((mark) => mark.textContent).join("")).toBe("high-fidelity excitation");
+      expect(screen.getByText("1/1")).toBeTruthy();
+    });
+  });
+
+  it("does not match search terms across separate docx block boundaries", async () => {
+    convertToHtmlMock.mockResolvedValue({
+      value: "<p>alpha</p><p>beta</p>",
+      messages: [],
+    });
+    renderDocxAsyncMock.mockImplementation(async (_content, container: HTMLElement) => {
+      container.innerHTML = [
+        "<div class=\"lattice-docx-wrapper\"><section class=\"lattice-docx\" style=\"width: 1200px;\">",
+        "<p>alpha</p><p>beta</p>",
+        "</section></div>",
+      ].join("");
+    });
+
+    render(
+      <WordViewer
+        content={new Uint8Array([1, 2, 3]).buffer}
+        fileName="paper.docx"
+        paneId="pane-left"
+        filePath="docs/paper.docx"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("alpha")).toBeTruthy();
+    });
+
+    const searchAction = (paneCommandBarStateRef.current as { state?: { actions?: Array<{ id: string; onTrigger?: () => void }> } })?.state?.actions?.find((item) => item.id === "search");
+    await act(async () => {
+      searchAction?.onTrigger?.();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("viewer.word.search.placeholder"), {
+      target: { value: "alphabeta" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("word-docx-preview").querySelectorAll("mark[data-word-search-match-index]")).toHaveLength(0);
+      expect(screen.getByText("viewer.word.search.noMatch")).toBeTruthy();
+    });
+  });
+
+  it("fits wide docx tables using the widest rendered content", async () => {
+    convertToHtmlMock.mockResolvedValue({
+      value: "<p>Wide table</p>",
+      messages: [],
+    });
+    renderDocxAsyncMock.mockImplementation(async (_content, container: HTMLElement) => {
+      container.innerHTML = [
+        "<div class=\"lattice-docx-wrapper\"><section class=\"lattice-docx\" style=\"width: 1000px;\">",
+        "<table style=\"width: 1800px;\"><tbody><tr><td>Wide table</td></tr></tbody></table>",
+        "</section></div>",
+      ].join("");
+    });
+    const clientWidthSpy = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(956);
+
+    try {
+      render(
+        <WordViewer
+          content={new Uint8Array([1, 2, 3]).buffer}
+          fileName="wide-table.docx"
+          paneId="pane-left"
+          filePath="docs/wide-table.docx"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("Wide table")).toBeTruthy();
+      });
+
+      await act(async () => {
+        window.dispatchEvent(new Event("resize"));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("viewer.word.zoom.fitWidth")).toBeTruthy();
+      });
+
+      const shell = screen.getByTestId("word-docx-preview").parentElement as HTMLElement;
+      expect(shell.style.getPropertyValue("--word-docx-zoom")).toBeCloseTo(0.5, 2);
+    } finally {
+      clientWidthSpy.mockRestore();
+    }
+  });
+
   it("renders high-fidelity docx preview and keeps semantic HTML for text features", async () => {
     convertToHtmlMock.mockResolvedValue({
       value: "<h1>Title</h1><p>Body</p>",
@@ -121,6 +248,15 @@ describe("WordViewer", () => {
       expect(renderDocxAsyncMock).toHaveBeenCalledTimes(1);
       expect(screen.getByText("Rendered DOCX page")).toBeTruthy();
     });
+    expect(convertToHtmlMock).toHaveBeenCalledWith(
+      { arrayBuffer: expect.any(ArrayBuffer) },
+      expect.objectContaining({
+        styleMap: expect.arrayContaining([
+          "p[style-name='Body Text'] => p:fresh",
+          "p[style-name='Compact'] => p:fresh",
+        ]),
+      }),
+    );
 
     expect(screen.getByTestId("word-semantic-preview").className).toContain("hidden");
     expect(screen.queryByText("Unrecognised paragraph style: Body Text")).toBeNull();
@@ -174,6 +310,57 @@ describe("WordViewer", () => {
       expect(action?.disabled).toBe(false);
     });
     expect(typeof action?.onTrigger).toBe("function");
+  });
+
+  it("imports docx semantic tables as editable Markdown tables", async () => {
+    const writes: string[] = [];
+    const closeMock = vi.fn();
+    const createWritableMock = vi.fn(async () => ({
+      write: vi.fn(async (value: string) => {
+        writes.push(value);
+      }),
+      close: closeMock,
+    }));
+    createFileMock.mockResolvedValue({
+      success: true,
+      handle: { createWritable: createWritableMock },
+      path: "docs/report.md",
+    });
+    convertToHtmlMock.mockResolvedValue({
+      value: [
+        "<h1>Report</h1>",
+        "<table><tr><th>Title</th><th>Year</th></tr><tr><td><strong>Paper</strong></td><td>2026</td></tr></table>",
+        "<p>See <a href=\"https://example.com\">source</a>.</p>",
+      ].join(""),
+      messages: [],
+    });
+
+    render(
+      <WordViewer
+        content={new Uint8Array([1, 2, 3]).buffer}
+        fileName="report.docx"
+        paneId="pane-left"
+        filePath="docs/report.docx"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Report")).toBeTruthy();
+    });
+
+    const action = (paneCommandBarStateRef.current as { state?: { actions?: Array<{ id: string; onTrigger?: () => void | Promise<void> }> } })?.state?.actions?.find((item) => item.id === "import-as-note");
+    await act(async () => {
+      await action?.onTrigger?.();
+    });
+
+    await waitFor(() => {
+      expect(createWritableMock).toHaveBeenCalledTimes(1);
+      expect(closeMock).toHaveBeenCalledTimes(1);
+    });
+    expect(writes[0]).toContain("| Title | Year |");
+    expect(writes[0]).toContain("| --- | --- |");
+    expect(writes[0]).toContain("| **Paper** | 2026 |");
+    expect(writes[0]).toContain("[source](https://example.com)");
   });
 
   it("registers distinct command bar icons for search, system editing, and import", async () => {

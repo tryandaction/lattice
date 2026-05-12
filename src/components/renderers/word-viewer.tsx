@@ -26,9 +26,69 @@ const WORD_ZOOM_MIN = 0.35;
 const WORD_ZOOM_MAX = 2;
 const WORD_ZOOM_STEP = 0.1;
 const WORD_FIT_WIDTH_GUTTER = 56;
+const WORD_MAMMOTH_STYLE_MAP = [
+  "p[style-name='Title'] => h1:fresh",
+  "p[style-name='Subtitle'] => p:fresh",
+  "p[style-name='Body Text'] => p:fresh",
+  "p[style-name='First Paragraph'] => p:fresh",
+  "p[style-name='Compact'] => p:fresh",
+  "p[style-name='Abstract'] => blockquote:fresh",
+  "p[style-name='Quote'] => blockquote:fresh",
+  "p[style-name='Intense Quote'] => blockquote:fresh",
+  "p[style-name='Caption'] => p:fresh",
+];
 
 type WordPreviewMode = "docx" | "semantic";
 type WordZoomMode = "fit-width" | "actual";
+
+interface WordTextSegment {
+  node: Text;
+  start: number;
+  end: number;
+}
+
+interface WordTextMatchRange {
+  index: number;
+  start: number;
+  end: number;
+}
+
+const WORD_TEXT_BOUNDARY_SELECTOR = [
+  "address",
+  "article",
+  "aside",
+  "blockquote",
+  "caption",
+  "dd",
+  "div",
+  "dl",
+  "dt",
+  "figcaption",
+  "figure",
+  "footer",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "li",
+  "main",
+  "nav",
+  "ol",
+  "p",
+  "pre",
+  "section",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+].join(",");
 
 function isSameWordMetadata(left: DesktopFileMetadata | null, right: DesktopFileMetadata | null): boolean {
   if (!left || !right) {
@@ -49,50 +109,224 @@ interface WordViewerProps {
  * Convert HTML to basic Markdown
  */
 function htmlToMarkdown(html: string): string {
-  let markdown = html;
-  
-  // Convert headings
-  markdown = markdown.replace(/<h1[^>]*>(.*?)<\/h1>/gi, "# $1\n\n");
-  markdown = markdown.replace(/<h2[^>]*>(.*?)<\/h2>/gi, "## $1\n\n");
-  markdown = markdown.replace(/<h3[^>]*>(.*?)<\/h3>/gi, "### $1\n\n");
-  markdown = markdown.replace(/<h4[^>]*>(.*?)<\/h4>/gi, "#### $1\n\n");
-  markdown = markdown.replace(/<h5[^>]*>(.*?)<\/h5>/gi, "##### $1\n\n");
-  markdown = markdown.replace(/<h6[^>]*>(.*?)<\/h6>/gi, "###### $1\n\n");
-  
-  // Convert bold and italic
-  markdown = markdown.replace(/<strong[^>]*>(.*?)<\/strong>/gi, "**$1**");
-  markdown = markdown.replace(/<b[^>]*>(.*?)<\/b>/gi, "**$1**");
-  markdown = markdown.replace(/<em[^>]*>(.*?)<\/em>/gi, "*$1*");
-  markdown = markdown.replace(/<i[^>]*>(.*?)<\/i>/gi, "*$1*");
-  
-  // Convert lists
-  markdown = markdown.replace(/<ul[^>]*>/gi, "\n");
-  markdown = markdown.replace(/<\/ul>/gi, "\n");
-  markdown = markdown.replace(/<ol[^>]*>/gi, "\n");
-  markdown = markdown.replace(/<\/ol>/gi, "\n");
-  markdown = markdown.replace(/<li[^>]*>(.*?)<\/li>/gi, "- $1\n");
-  
-  // Convert paragraphs
-  markdown = markdown.replace(/<p[^>]*>(.*?)<\/p>/gi, "$1\n\n");
-  
-  // Convert line breaks
-  markdown = markdown.replace(/<br\s*\/?>/gi, "\n");
-  
-  // Remove remaining HTML tags
-  markdown = markdown.replace(/<[^>]+>/g, "");
-  
-  // Decode HTML entities
-  markdown = markdown.replace(/&nbsp;/g, " ");
-  markdown = markdown.replace(/&amp;/g, "&");
-  markdown = markdown.replace(/&lt;/g, "<");
-  markdown = markdown.replace(/&gt;/g, ">");
-  markdown = markdown.replace(/&quot;/g, '"');
-  
-  // Clean up extra whitespace
-  markdown = markdown.replace(/\n{3,}/g, "\n\n");
-  markdown = markdown.trim();
-  
-  return markdown;
+  if (!html.trim()) {
+    return "";
+  }
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  return markdownBlocksFromChildren(doc.body, 0).join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function markdownBlocksFromChildren(parent: ParentNode, listDepth: number): string[] {
+  const blocks: string[] = [];
+  parent.childNodes.forEach((child) => {
+    const markdown = markdownBlockFromNode(child, listDepth);
+    if (markdown.trim()) {
+      blocks.push(markdown.trimEnd());
+    }
+  });
+  return blocks;
+}
+
+function markdownBlockFromNode(node: Node, listDepth: number): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return normalizeMarkdownInlineText(node.textContent ?? "");
+  }
+
+  if (!(node instanceof HTMLElement)) {
+    return "";
+  }
+
+  const tagName = node.tagName.toLowerCase();
+  if (tagName === "script" || tagName === "style") {
+    return "";
+  }
+
+  if (/^h[1-6]$/.test(tagName)) {
+    const level = Number(tagName.slice(1));
+    return `${"#".repeat(level)} ${markdownInlineFromChildren(node).trim()}`.trim();
+  }
+
+  if (tagName === "p" || tagName === "div" || tagName === "section" || tagName === "article") {
+    const inline = markdownInlineFromChildren(node).trim();
+    return inline || markdownBlocksFromChildren(node, listDepth).join("\n\n");
+  }
+
+  if (tagName === "blockquote") {
+    return markdownBlocksFromChildren(node, listDepth)
+      .join("\n\n")
+      .split("\n")
+      .map((line) => `> ${line}`.trimEnd())
+      .join("\n");
+  }
+
+  if (tagName === "pre") {
+    return `\`\`\`\n${node.textContent?.replace(/\n+$/g, "") ?? ""}\n\`\`\``;
+  }
+
+  if (tagName === "ul" || tagName === "ol") {
+    return markdownListFromElement(node, tagName === "ol", listDepth);
+  }
+
+  if (tagName === "table") {
+    return markdownTableFromElement(node);
+  }
+
+  if (tagName === "hr") {
+    return "---";
+  }
+
+  if (tagName === "br") {
+    return "\n";
+  }
+
+  if (tagName === "img") {
+    return markdownInlineFromElement(node);
+  }
+
+  return markdownInlineFromChildren(node).trim();
+}
+
+function markdownListFromElement(list: HTMLElement, ordered: boolean, listDepth: number): string {
+  const items = Array.from(list.children).filter((child): child is HTMLElement => child.tagName.toLowerCase() === "li");
+  return items.map((item, index) => {
+    const nestedLists = Array.from(item.children).filter((child): child is HTMLElement => {
+      const childTagName = child.tagName.toLowerCase();
+      return childTagName === "ul" || childTagName === "ol";
+    });
+    const directInline = markdownInlineFromChildren(item, (child) => {
+      if (!(child instanceof HTMLElement)) {
+        return true;
+      }
+      const childTagName = child.tagName.toLowerCase();
+      return childTagName !== "ul" && childTagName !== "ol";
+    }).trim();
+    const marker = ordered ? `${index + 1}.` : "-";
+    const indent = "  ".repeat(listDepth);
+    const currentLine = `${indent}${marker} ${directInline}`.trimEnd();
+    const nested = nestedLists
+      .map((nestedList) => markdownListFromElement(nestedList, nestedList.tagName.toLowerCase() === "ol", listDepth + 1))
+      .filter(Boolean)
+      .join("\n");
+    return nested ? `${currentLine}\n${nested}` : currentLine;
+  }).join("\n");
+}
+
+function markdownTableFromElement(table: HTMLElement): string {
+  const rows = Array.from(table.querySelectorAll("tr")).map((row) => (
+    Array.from(row.children)
+      .filter((cell): cell is HTMLElement => ["td", "th"].includes(cell.tagName.toLowerCase()))
+      .map((cell) => markdownInlineFromChildren(cell).replace(/\s+/g, " ").trim())
+  )).filter((row) => row.length > 0);
+
+  if (rows.length === 0) {
+    return "";
+  }
+
+  const columnCount = Math.max(...rows.map((row) => row.length));
+  const normalizedRows = rows.map((row) => Array.from({ length: columnCount }, (_, index) => escapeMarkdownTableCell(row[index] ?? "")));
+  const header = normalizedRows[0];
+  const separator = Array.from({ length: columnCount }, () => "---");
+  const body = normalizedRows.slice(1);
+  return [header, separator, ...body]
+    .map((row) => `| ${row.join(" | ")} |`)
+    .join("\n");
+}
+
+function markdownInlineFromChildren(parent: ParentNode, includeChild: (node: ChildNode) => boolean = () => true): string {
+  return Array.from(parent.childNodes)
+    .filter(includeChild)
+    .map((child) => markdownInlineFromNode(child))
+    .join("")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n");
+}
+
+function markdownInlineFromNode(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return normalizeMarkdownInlineText(node.textContent ?? "");
+  }
+
+  if (!(node instanceof HTMLElement)) {
+    return "";
+  }
+
+  return markdownInlineFromElement(node);
+}
+
+function markdownInlineFromElement(element: HTMLElement): string {
+  const tagName = element.tagName.toLowerCase();
+  if (tagName === "script" || tagName === "style") {
+    return "";
+  }
+
+  if (tagName === "br") {
+    return "\n";
+  }
+
+  if (tagName === "strong" || tagName === "b") {
+    return wrapMarkdownInline("**", markdownInlineFromChildren(element));
+  }
+
+  if (tagName === "em" || tagName === "i") {
+    return wrapMarkdownInline("*", markdownInlineFromChildren(element));
+  }
+
+  if (tagName === "s" || tagName === "del" || tagName === "strike") {
+    return wrapMarkdownInline("~~", markdownInlineFromChildren(element));
+  }
+
+  if (tagName === "u") {
+    return `<u>${markdownInlineFromChildren(element).trim()}</u>`;
+  }
+
+  if (tagName === "code") {
+    return `\`${(element.textContent ?? "").replace(/`/g, "\\`")}\``;
+  }
+
+  if (tagName === "sup" || tagName === "sub") {
+    return `<${tagName}>${markdownInlineFromChildren(element).trim()}</${tagName}>`;
+  }
+
+  if (tagName === "a") {
+    const text = markdownInlineFromChildren(element).trim() || element.getAttribute("href") || "";
+    const href = element.getAttribute("href");
+    return href ? `[${escapeMarkdownLinkText(text)}](${href})` : text;
+  }
+
+  if (tagName === "img") {
+    const alt = element.getAttribute("alt") ?? "";
+    const src = element.getAttribute("src") ?? "";
+    return src ? `![${escapeMarkdownLinkText(alt)}](${src})` : alt;
+  }
+
+  if (tagName === "table") {
+    return `\n\n${markdownTableFromElement(element)}\n\n`;
+  }
+
+  if (tagName === "ul" || tagName === "ol") {
+    return `\n${markdownListFromElement(element, tagName === "ol", 0)}\n`;
+  }
+
+  return markdownInlineFromChildren(element);
+}
+
+function normalizeMarkdownInlineText(value: string): string {
+  return value.replace(/\u00a0/g, " ");
+}
+
+function wrapMarkdownInline(marker: string, value: string): string {
+  const trimmed = value.trim();
+  return trimmed ? `${marker}${trimmed}${marker}` : "";
+}
+
+function escapeMarkdownTableCell(value: string): string {
+  return value.replace(/\|/g, "\\|").replace(/\n+/g, "<br>").trim();
+}
+
+function escapeMarkdownLinkText(value: string): string {
+  return value.replace(/\[/g, "\\[").replace(/\]/g, "\\]");
 }
 
 function extractSearchableWordText(html: string): string {
@@ -136,26 +370,34 @@ function parseCssLengthToPx(value: string): number {
   }
 }
 
-function measureDocxPageWidth(page: HTMLElement | null): number {
-  if (!page) {
+function measureElementRenderedWidth(element: HTMLElement): number {
+  const inlineWidth = parseCssLengthToPx(element.style.width);
+  const computedWidth = parseCssLengthToPx(window.getComputedStyle(element).width);
+  const rectWidth = element.getBoundingClientRect().width;
+
+  return Math.max(
+    element.offsetWidth,
+    element.scrollWidth,
+    inlineWidth,
+    computedWidth,
+    rectWidth,
+  );
+}
+
+function measureDocxPreviewContentWidth(root: HTMLElement | null): number {
+  if (!root) {
     return 0;
   }
 
-  if (page.offsetWidth > 0) {
-    return page.offsetWidth;
-  }
+  const pages = Array.from(root.querySelectorAll<HTMLElement>("section.lattice-docx"));
+  const candidates = pages.length > 0 ? pages : [root];
+  const wideContent = Array.from(root.querySelectorAll<HTMLElement>("table, img, svg, canvas, pre"));
 
-  const inlineWidth = parseCssLengthToPx(page.style.width);
-  if (inlineWidth > 0) {
-    return inlineWidth;
-  }
-
-  const computedWidth = parseCssLengthToPx(window.getComputedStyle(page).width);
-  if (computedWidth > 0) {
-    return computedWidth;
-  }
-
-  return page.getBoundingClientRect().width;
+  return Math.max(
+    measureElementRenderedWidth(root),
+    ...candidates.map((candidate) => measureElementRenderedWidth(candidate)),
+    ...wideContent.map((candidate) => measureElementRenderedWidth(candidate)),
+  );
 }
 
 function findWordMatches(text: string, query: string): number[] {
@@ -176,6 +418,131 @@ function findWordMatches(text: string, query: string): number[] {
   return matches;
 }
 
+function findWordMatchRanges(text: string, query: string): WordTextMatchRange[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) {
+    return [];
+  }
+
+  const haystack = text.toLowerCase();
+  const ranges: WordTextMatchRange[] = [];
+  let index = 0;
+
+  while ((index = haystack.indexOf(needle, index)) !== -1) {
+    ranges.push({
+      index: ranges.length,
+      start: index,
+      end: index + needle.length,
+    });
+    index += needle.length;
+  }
+
+  return ranges;
+}
+
+function collectWordTextSegments(root: HTMLElement): { text: string; segments: WordTextSegment[] } {
+  const ownerDocument = root.ownerDocument;
+  const walker = ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.textContent) {
+        return NodeFilter.FILTER_SKIP;
+      }
+      const parent = node instanceof Text ? node.parentElement : null;
+      if (parent && ["SCRIPT", "STYLE", "MARK"].includes(parent.tagName)) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+
+  const segments: WordTextSegment[] = [];
+  let text = "";
+  let current = walker.nextNode();
+  let previousTextNode: Text | null = null;
+
+  while (current) {
+    const node = current as Text;
+    const nodeText = node.textContent ?? "";
+    if (previousTextNode && shouldInsertWordTextBoundary(previousTextNode, node)) {
+      text += "\n";
+    }
+    const start = text.length;
+    text += nodeText;
+    segments.push({
+      node,
+      start,
+      end: text.length,
+    });
+    previousTextNode = node;
+    current = walker.nextNode();
+  }
+
+  return { text, segments };
+}
+
+function getWordTextBoundaryElement(node: Text): Element | null {
+  return node.parentElement?.closest(WORD_TEXT_BOUNDARY_SELECTOR) ?? null;
+}
+
+function shouldInsertWordTextBoundary(previousNode: Text, currentNode: Text): boolean {
+  const previousBoundary = getWordTextBoundaryElement(previousNode);
+  const currentBoundary = getWordTextBoundaryElement(currentNode);
+
+  return Boolean(previousBoundary && currentBoundary && previousBoundary !== currentBoundary);
+}
+
+function applyWordSearchHighlights(input: {
+  root: HTMLElement;
+  query: string;
+  activeIndex: number;
+  classNameForMatch: (matchIndex: number) => string;
+}): number {
+  const { text, segments } = collectWordTextSegments(input.root);
+  const ranges = findWordMatchRanges(text, input.query);
+  if (ranges.length === 0) {
+    return 0;
+  }
+
+  for (const segment of segments) {
+    const nodeText = segment.node.textContent ?? "";
+    const overlappingRanges = ranges.filter((range) => range.end > segment.start && range.start < segment.end);
+    if (overlappingRanges.length === 0) {
+      continue;
+    }
+
+    const ownerDocument = segment.node.ownerDocument;
+    const fragment = ownerDocument.createDocumentFragment();
+    let cursor = 0;
+
+    for (const range of overlappingRanges) {
+      const localStart = Math.max(0, range.start - segment.start);
+      const localEnd = Math.min(nodeText.length, range.end - segment.start);
+      if (localEnd <= cursor) {
+        continue;
+      }
+
+      if (localStart > cursor) {
+        fragment.appendChild(ownerDocument.createTextNode(nodeText.slice(cursor, localStart)));
+      }
+
+      const mark = ownerDocument.createElement("mark");
+      mark.setAttribute("data-word-search-match-index", String(range.index));
+      mark.className = input.classNameForMatch(range.index);
+      mark.textContent = nodeText.slice(localStart, localEnd);
+      fragment.appendChild(mark);
+      cursor = localEnd;
+    }
+
+    if (cursor < nodeText.length) {
+      fragment.appendChild(ownerDocument.createTextNode(nodeText.slice(cursor)));
+    }
+
+    segment.node.parentNode?.replaceChild(fragment, segment.node);
+  }
+
+  return ranges.length;
+}
+
 function buildHighlightedWordHtml(html: string, query: string, activeIndex: number): string {
   const trimmed = query.trim();
   if (!trimmed) {
@@ -185,64 +552,14 @@ function buildHighlightedWordHtml(html: string, query: string, activeIndex: numb
   const lowerNeedle = trimmed.toLowerCase();
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, "text/html");
-  const walker = document.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      if (!node.textContent?.trim()) {
-        return NodeFilter.FILTER_SKIP;
-      }
-      const parent = (node.parentElement ?? null);
-      if (parent && ["SCRIPT", "STYLE", "MARK"].includes(parent.tagName)) {
-        return NodeFilter.FILTER_REJECT;
-      }
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-
-  const nodes: Text[] = [];
-  let current = walker.nextNode();
-  while (current) {
-    nodes.push(current as Text);
-    current = walker.nextNode();
-  }
-
-  let matchIndex = 0;
-  for (const node of nodes) {
-    const text = node.textContent ?? "";
-    const lowerText = text.toLowerCase();
-    let searchIndex = 0;
-    const fragment = document.createDocumentFragment();
-    let lastIndex = 0;
-    let changed = false;
-
-    while ((searchIndex = lowerText.indexOf(lowerNeedle, searchIndex)) !== -1) {
-      changed = true;
-      if (searchIndex > lastIndex) {
-        fragment.appendChild(document.createTextNode(text.slice(lastIndex, searchIndex)));
-      }
-
-      const mark = document.createElement("mark");
-      mark.setAttribute("data-word-search-match-index", String(matchIndex));
-      mark.className = matchIndex === activeIndex
+  applyWordSearchHighlights({
+    root: doc.body,
+    query: lowerNeedle,
+    activeIndex,
+    classNameForMatch: (matchIndex) => matchIndex === activeIndex
         ? "rounded bg-primary/30 px-0.5 text-foreground ring-1 ring-primary/50"
-        : "rounded bg-primary/15 px-0.5 text-foreground";
-      mark.textContent = text.slice(searchIndex, searchIndex + trimmed.length);
-      fragment.appendChild(mark);
-
-      lastIndex = searchIndex + trimmed.length;
-      searchIndex = lastIndex;
-      matchIndex += 1;
-    }
-
-    if (!changed) {
-      continue;
-    }
-
-    if (lastIndex < text.length) {
-      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
-    }
-
-    node.parentNode?.replaceChild(fragment, node);
-  }
+        : "rounded bg-primary/15 px-0.5 text-foreground",
+  });
 
   return doc.body.innerHTML;
 }
@@ -274,66 +591,14 @@ function highlightWordPreviewMatches(root: HTMLElement | null, query: string, ac
   }
 
   const lowerNeedle = trimmed.toLowerCase();
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      if (!node.textContent?.trim()) {
-        return NodeFilter.FILTER_SKIP;
-      }
-      const parent = node instanceof Text ? node.parentElement : null;
-      if (parent && ["SCRIPT", "STYLE", "MARK"].includes(parent.tagName)) {
-        return NodeFilter.FILTER_REJECT;
-      }
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-
-  const nodes: Text[] = [];
-  let current = walker.nextNode();
-  while (current) {
-    nodes.push(current as Text);
-    current = walker.nextNode();
-  }
-
-  let matchIndex = 0;
-  for (const node of nodes) {
-    const text = node.textContent ?? "";
-    const lowerText = text.toLowerCase();
-    let searchIndex = 0;
-    const fragment = document.createDocumentFragment();
-    let lastIndex = 0;
-    let changed = false;
-
-    while ((searchIndex = lowerText.indexOf(lowerNeedle, searchIndex)) !== -1) {
-      changed = true;
-      if (searchIndex > lastIndex) {
-        fragment.appendChild(document.createTextNode(text.slice(lastIndex, searchIndex)));
-      }
-
-      const mark = document.createElement("mark");
-      mark.setAttribute("data-word-search-match-index", String(matchIndex));
-      mark.className = matchIndex === activeIndex
+  return applyWordSearchHighlights({
+    root,
+    query: lowerNeedle,
+    activeIndex,
+    classNameForMatch: (matchIndex) => matchIndex === activeIndex
         ? "word-search-match word-search-match-active"
-        : "word-search-match";
-      mark.textContent = text.slice(searchIndex, searchIndex + trimmed.length);
-      fragment.appendChild(mark);
-
-      lastIndex = searchIndex + trimmed.length;
-      searchIndex = lastIndex;
-      matchIndex += 1;
-    }
-
-    if (!changed) {
-      continue;
-    }
-
-    if (lastIndex < text.length) {
-      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
-    }
-
-    node.parentNode?.replaceChild(fragment, node);
-  }
-
-  return matchIndex;
+        : "word-search-match",
+  });
 }
 
 /**
@@ -412,14 +677,13 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     }
 
     const viewportWidth = docxViewportRef.current?.clientWidth ?? 0;
-    const firstPage = docxPreviewRef.current?.querySelector<HTMLElement>("section.lattice-docx") ?? null;
-    const pageWidth = measureDocxPageWidth(firstPage);
-    if (viewportWidth <= 0 || pageWidth <= 0) {
+    const contentWidth = measureDocxPreviewContentWidth(docxPreviewRef.current);
+    if (viewportWidth <= 0 || contentWidth <= 0) {
       return;
     }
 
     const availableWidth = Math.max(240, viewportWidth - WORD_FIT_WIDTH_GUTTER);
-    setFitWidthZoom(clampWordZoom(Math.min(1, availableWidth / pageWidth)));
+    setFitWidthZoom(clampWordZoom(Math.min(1, availableWidth / contentWidth)));
   }, [previewMode]);
   const persistedViewStateKey = buildPersistedFileViewStateKey({
     kind: "word",
@@ -507,7 +771,9 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
         }
 
         try {
-          const result = await mammoth.convertToHtml({ arrayBuffer: documentContent });
+          const result = await mammoth.convertToHtml({ arrayBuffer: documentContent }, {
+            styleMap: WORD_MAMMOTH_STYLE_MAP,
+          });
           if (disposed) {
             return;
           }
@@ -604,7 +870,7 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     const activeMark = docxPreviewRef.current?.querySelector<HTMLElement>(
       `[data-word-search-match-index="${activeSearchMatch}"]`,
     );
-    activeMark?.scrollIntoView({ behavior: "smooth", block: "center" });
+    activeMark?.scrollIntoView?.({ behavior: "smooth", block: "center" });
   }, [activeSearchMatch, previewMode, searchOpen, searchQuery]);
 
   useEffect(() => {
@@ -627,7 +893,7 @@ export function WordViewer({ content, fileName, paneId, filePath }: WordViewerPr
     const activeMark = containerRef.current?.querySelector<HTMLElement>(
       `[data-word-search-match-index="${activeSearchMatch}"]`,
     );
-    activeMark?.scrollIntoView({ behavior: "smooth", block: "center" });
+    activeMark?.scrollIntoView?.({ behavior: "smooth", block: "center" });
   }, [activeSearchMatch, previewMode, searchMatches.length, searchOpen]);
 
   const goToMatch = useCallback((direction: 1 | -1) => {

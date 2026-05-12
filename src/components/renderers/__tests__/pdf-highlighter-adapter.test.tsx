@@ -86,6 +86,7 @@ const {
     },
     autoApplyDomSelection: true,
     pageTextItems: null as string[] | null,
+    clientRectsOverride: null as Array<{ left: number; right: number; top: number; bottom: number }> | null,
   };
 
   const pdfMockState = {
@@ -241,6 +242,12 @@ function createFragmentSelectionRect(textNode: Text, startOffset: number, endOff
 }
 
 function getMockRangeClientRects(range: Range): DOMRect[] {
+  if (selectionMockState.clientRectsOverride) {
+    return selectionMockState.clientRectsOverride.map((rect) => (
+      createMockRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+    ));
+  }
+
   const startContainer = range.startContainer;
   const endContainer = range.endContainer;
 
@@ -851,6 +858,7 @@ describe('PDFHighlighterAdapter', () => {
     };
     selectionMockState.autoApplyDomSelection = true;
     selectionMockState.pageTextItems = null;
+    selectionMockState.clientRectsOverride = null;
     class MockResizeObserver {
       private callback: ResizeObserverCallback;
 
@@ -1116,6 +1124,83 @@ describe('PDFHighlighterAdapter', () => {
     });
 
     expect(addAnnotation.mock.calls[0][0].content).toBe('DiVincenzo');
+  });
+
+  it('keeps popup quote, annotation content, target quote, and rects aligned when PDF offsets drift to Rydberg text', async () => {
+    const addAnnotation = vi.fn();
+    const line = 'fast, high-fidelity excitation to the Rydberg state21 and mid-circuit';
+    const selectedText = 'high-fidelity excitation';
+    const wrongOffsetText = 'to the Rydberg state21';
+    const lineLeft = 40;
+    const lineTop = 120;
+    const charWidth = 8;
+    const selectedStart = line.indexOf(selectedText);
+    const selectedLeft = lineLeft + (selectedStart * charWidth);
+    const selectedRight = selectedLeft + (selectedText.length * charWidth);
+    const driftStart = line.indexOf(wrongOffsetText);
+
+    selectionMockState.rawText = selectedText;
+    selectionMockState.position = {
+      boundingRect: {
+        x1: selectedLeft,
+        y1: lineTop,
+        x2: selectedRight,
+        y2: lineTop + 24,
+        width: 640,
+        height: 960,
+        pageNumber: 1,
+      },
+      rects: [
+        { x1: selectedLeft, y1: lineTop, x2: selectedRight, y2: lineTop + 24, width: 640, height: 960, pageNumber: 1 },
+      ],
+      pageNumber: 1,
+    };
+    selectionMockState.clientRectsOverride = [{
+      left: selectedLeft,
+      right: selectedRight,
+      top: lineTop,
+      bottom: lineTop + 24,
+    }];
+    selectionMockState.fragments = [
+      { text: line, left: lineLeft, top: lineTop, width: line.length * charWidth, height: 24 },
+    ];
+    selectionMockState.domSelection = {
+      startFragment: line,
+      endFragment: line,
+      startOffset: driftStart,
+      endOffset: driftStart + wrongOffsetText.length,
+    };
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [],
+      error: null,
+      addAnnotation,
+      updateAnnotation: vi.fn(),
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    triggerPdfSelection();
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-selection-preview-pane-left').textContent).toBe(selectedText);
+      expect(screen.getByTestId('pdf-selection-source-pane-left').textContent).toBe('pdfjs-text-model');
+    });
+
+    fireEvent.click(document.querySelector('.pdf-selection-color-picker button') as HTMLButtonElement);
+
+    await waitFor(() => {
+      expect(addAnnotation).toHaveBeenCalledTimes(1);
+    });
+
+    const annotation = addAnnotation.mock.calls[0][0];
+    expect(annotation.content).toBe(selectedText);
+    expect(annotation.target.textQuote.exact).toBe(selectedText);
+    expect(annotation.target.textQuote.exact).not.toContain('Rydberg');
+    expect(annotation.target.rects).toHaveLength(1);
+    const renderedPageWidth = 640 * 1.2;
+    expect(annotation.target.rects[0].x1).toBeCloseTo(selectedLeft / renderedPageWidth, 3);
+    expect(annotation.target.rects[0].x2).toBeCloseTo(selectedRight / renderedPageWidth, 3);
   });
 
   it('extracts the exact selected word from an oversized text-layer span', async () => {
