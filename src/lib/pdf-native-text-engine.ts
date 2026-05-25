@@ -2,7 +2,10 @@ import { getDesktopHandlePath } from "@/lib/desktop-file-system";
 import { invokeTauriCommand, isTauriHost } from "@/lib/storage-adapter";
 
 export interface PdfNativeTextChar {
+  /** UTF-16 offset into PdfNativePageTextLayout.text, matching JavaScript string indexing. */
   charIndex: number;
+  /** UTF-16 end offset into PdfNativePageTextLayout.text; needed when one glyph expands to several text code units. */
+  charEndIndex?: number;
   text: string;
   x1: number;
   y1: number;

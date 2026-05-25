@@ -248,6 +248,15 @@ function isHydratablePdfNode(node: FileNode): boolean {
   return node.extension === "pdf" && !node.isVirtual;
 }
 
+/**
+ * Get the handle for .lattice access. When viewing a subdirectory workspace,
+ * we still want to read/write .lattice from the original workspace root.
+ */
+function getLatticeRootHandle(): FileSystemDirectoryHandle | null {
+  const state = useWorkspaceStore.getState();
+  return state.workspaceRootHandle ?? state.rootHandle;
+}
+
 function collectFileExpansionState(node: TreeNode | null, expanded: Set<string> = new Set()): Set<string> {
   if (!node) {
     return expanded;
@@ -574,6 +583,7 @@ export async function applyWorkspaceHandleToStores(
   };
 
   workspaceStore.setRootHandle(handle);
+  workspaceStore.setWorkspaceRootHandle(handle); // Preserve true workspace root for .lattice access
   workspaceStore.setWorkspaceIdentity(resolvedWorkspaceIdentity);
   workspaceStore.setWorkspaceRootPath(resolvedWorkspaceIdentity.displayPath ?? workspaceRootPath ?? handle.name);
   startTransition(() => {
@@ -619,8 +629,16 @@ export function useFileSystem(): UseFileSystemReturn {
   const applyWorkspaceHandle = useCallback(async (
     handle: FileSystemDirectoryHandle,
     nextWorkspaceRootPath: string | null,
+    options: { preserveWorkspaceRoot?: boolean } = {},
   ) => {
-    await applyWorkspaceHandleToStores(handle, nextWorkspaceRootPath);
+    if (options.preserveWorkspaceRoot) {
+      // When switching to a subdirectory workspace, preserve the original workspace root
+      // for .lattice access (annotations, PDF items, etc.)
+      await applyWorkspaceHandleToStores(handle, nextWorkspaceRootPath);
+      useWorkspaceStore.getState().setWorkspaceRootHandle(useWorkspaceStore.getState().rootHandle);
+    } else {
+      await applyWorkspaceHandleToStores(handle, nextWorkspaceRootPath);
+    }
   }, []);
 
   const openWorkspaceFromDesktopPath = useCallback(async (
@@ -737,7 +755,8 @@ export function useFileSystem(): UseFileSystemReturn {
     pdfPath: string,
     options: { force?: boolean; expand?: boolean } = {},
   ) => {
-    if (!rootHandle) {
+    const latticeRootHandle = getLatticeRootHandle();
+    if (!latticeRootHandle) {
       return;
     }
 
@@ -753,7 +772,7 @@ export function useFileSystem(): UseFileSystemReturn {
       return;
     }
 
-    const hydrationKey = `${rootHandle.name}:${pdfPath}`;
+    const hydrationKey = `${latticeRootHandle.name}:${pdfPath}`;
     const generation = (pdfHydrationGeneration.get(hydrationKey) ?? 0) + 1;
     pdfHydrationGeneration.set(hydrationKey, generation);
 
@@ -765,7 +784,7 @@ export function useFileSystem(): UseFileSystemReturn {
     }));
 
     try {
-      const { manifest, children } = await loadPdfVirtualChildren(rootHandle, pdfPath);
+      const { manifest, children } = await loadPdfVirtualChildren(latticeRootHandle, pdfPath);
       if (pdfHydrationGeneration.get(hydrationKey) !== generation) {
         return;
       }
@@ -778,12 +797,12 @@ export function useFileSystem(): UseFileSystemReturn {
         isExpanded: options.expand ?? file.isExpanded ?? false,
       }));
 
-      void syncPdfAnnotationMarkdownInBackground(rootHandle, manifest, pdfPath)
+      void syncPdfAnnotationMarkdownInBackground(latticeRootHandle, manifest, pdfPath)
         .then(async () => {
           if (pdfHydrationGeneration.get(hydrationKey) !== generation) {
             return;
           }
-          const notes = await listPdfItemNotes(rootHandle, manifest);
+          const notes = await listPdfItemNotes(latticeRootHandle, manifest);
           const refreshedChildren = notes
             .map((summary) => buildPdfVirtualChildNode(summary, pdfPath))
             .filter((child): child is FileNode => child !== null);
@@ -811,7 +830,7 @@ export function useFileSystem(): UseFileSystemReturn {
         isExpanded: options.expand ?? file.isExpanded ?? false,
       }));
     }
-  }, [rootHandle]);
+  }, []);
 
   /**
    * Open a directory using the File System Access API
@@ -895,7 +914,7 @@ export function useFileSystem(): UseFileSystemReturn {
     try {
       setLoading(true);
       setError(null);
-      await applyWorkspaceHandle(directoryHandle, displayPath);
+      await applyWorkspaceHandle(directoryHandle, displayPath, { preserveWorkspaceRoot: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to open nested workspace");
     } finally {
@@ -1104,18 +1123,19 @@ export function useFileSystem(): UseFileSystemReturn {
       resolvedEntry.kind === "file"
         ? await deleteFileUtil(resolvedEntry.parentHandle, resolvedEntry.name)
         : await deleteEntryUtil(resolvedEntry.parentHandle, resolvedEntry.name, resolvedEntry.kind);
-    
+
     if (result.success) {
-      if (resolvedEntry.kind === "file") {
+      const latticeRootHandle = getLatticeRootHandle();
+      if (resolvedEntry.kind === "file" && latticeRootHandle) {
         try {
-          await deleteAnnotationSidecarsForPath(rootHandle, path);
+          await deleteAnnotationSidecarsForPath(latticeRootHandle, path);
         } catch (annotationCleanupError) {
           console.error("Failed to delete annotation sidecar:", annotationCleanupError);
         }
       }
-      if (resolvedEntry.kind === "file" && isPdfPath(path)) {
+      if (resolvedEntry.kind === "file" && isPdfPath(path) && latticeRootHandle) {
         try {
-          await deletePdfItemWorkspace(rootHandle, path);
+          await deletePdfItemWorkspace(latticeRootHandle, path);
         } catch (cleanupError) {
           console.error("Failed to delete PDF companion workspace:", cleanupError);
         }
@@ -1157,18 +1177,19 @@ export function useFileSystem(): UseFileSystemReturn {
         : await renameEntryUtil(resolvedEntry.parentHandle, resolvedEntry.name, newName, resolvedEntry.kind);
     
     if (result.success) {
+      const latticeRootHandle = getLatticeRootHandle();
       const renamedName = result.handle?.name || result.path?.split("/").pop() || newName;
       const fullPath = joinPath(getParentPath(path), renamedName);
-      if (resolvedEntry.kind === "file" && fullPath) {
+      if (resolvedEntry.kind === "file" && fullPath && latticeRootHandle) {
         try {
-          await moveAnnotationSidecar(rootHandle, path, fullPath, detectFileType(fullPath));
+          await moveAnnotationSidecar(latticeRootHandle, path, fullPath, detectFileType(fullPath));
         } catch (annotationMoveError) {
           console.error("Failed to rename annotation sidecar:", annotationMoveError);
         }
       }
-      if (resolvedEntry.kind === "file" && isPdfPath(path) && fullPath) {
+      if (resolvedEntry.kind === "file" && isPdfPath(path) && fullPath && latticeRootHandle) {
         try {
-          await movePdfItemWorkspace(rootHandle, path, fullPath);
+          await movePdfItemWorkspace(latticeRootHandle, path, fullPath);
         } catch (companionError) {
           console.error("Failed to rename PDF companion workspace:", companionError);
         }
@@ -1216,18 +1237,19 @@ export function useFileSystem(): UseFileSystemReturn {
 
     const result = await copyEntryToDirectory(resolvedEntry.handle, targetDirectory);
     if (result.success) {
+      const latticeRootHandle = getLatticeRootHandle();
       const copiedName = result.handle?.name || result.path?.split("/").pop() || resolvedEntry.name;
       const fullPath = joinPath(targetDirectoryPath, copiedName);
-      if (resolvedEntry.kind === "file") {
+      if (resolvedEntry.kind === "file" && latticeRootHandle) {
         try {
-          await copyAnnotationSidecar(rootHandle, sourcePath, fullPath, detectFileType(fullPath));
+          await copyAnnotationSidecar(latticeRootHandle, sourcePath, fullPath, detectFileType(fullPath));
         } catch (annotationCopyError) {
           console.error("Failed to copy annotation sidecar:", annotationCopyError);
         }
       }
-      if (resolvedEntry.kind === "file" && isPdfPath(sourcePath)) {
+      if (resolvedEntry.kind === "file" && isPdfPath(sourcePath) && latticeRootHandle) {
         try {
-          await copyPdfItemWorkspace(rootHandle, sourcePath, fullPath);
+          await copyPdfItemWorkspace(latticeRootHandle, sourcePath, fullPath);
         } catch (companionError) {
           console.error("Failed to copy PDF companion workspace:", companionError);
         }
@@ -1287,18 +1309,19 @@ export function useFileSystem(): UseFileSystemReturn {
     );
 
     if (result.success) {
+      const latticeRootHandle = getLatticeRootHandle();
       const movedName = result.handle?.name || result.path?.split("/").pop() || resolvedEntry.name;
       const fullPath = joinPath(targetDirectoryPath, movedName);
-      if (resolvedEntry.kind === "file") {
+      if (resolvedEntry.kind === "file" && latticeRootHandle) {
         try {
-          await moveAnnotationSidecar(rootHandle, sourcePath, fullPath, detectFileType(fullPath));
+          await moveAnnotationSidecar(latticeRootHandle, sourcePath, fullPath, detectFileType(fullPath));
         } catch (annotationMoveError) {
           console.error("Failed to move annotation sidecar:", annotationMoveError);
         }
       }
-      if (resolvedEntry.kind === "file" && isPdfPath(sourcePath)) {
+      if (resolvedEntry.kind === "file" && isPdfPath(sourcePath) && latticeRootHandle) {
         try {
-          await movePdfItemWorkspace(rootHandle, sourcePath, fullPath);
+          await movePdfItemWorkspace(latticeRootHandle, sourcePath, fullPath);
         } catch (companionError) {
           console.error("Failed to move PDF companion workspace:", companionError);
         }

@@ -58,13 +58,17 @@ function AdaptivePDFRenderer({
   source,
   fileName,
   fileHandle,
-  rootHandle,
+  rootHandle: propRootHandle,
   paneId,
   fileId,
   filePath,
 }: AdaptivePDFRendererProps) {
   const workspaceIdentity = useWorkspaceStore((state) => state.workspaceIdentity);
-  const hasAnnotationContext = Boolean(fileHandle && rootHandle);
+  // Use workspaceRootHandle if available, otherwise fall back to prop rootHandle
+  // This ensures .lattice data is always read from the true workspace root
+  const workspaceRootHandle = useWorkspaceStore((state) => state.workspaceRootHandle);
+  const effectiveRootHandle = workspaceRootHandle ?? propRootHandle;
+  const hasAnnotationContext = Boolean(fileHandle && effectiveRootHandle);
   const isDesktopRuntime = isTauriHost();
   const activePdfKey = `${fileId}:${filePath}`;
 
@@ -80,7 +84,7 @@ function AdaptivePDFRenderer({
   ) ? "highlighter" : "viewer";
 
   useEffect(() => {
-    if (!rootHandle || !fileHandle) {
+    if (!effectiveRootHandle || !fileHandle) {
       return;
     }
 
@@ -89,7 +93,7 @@ function AdaptivePDFRenderer({
     const detectPersistedAnnotations = async () => {
       try {
         const binding = await resolvePdfDocumentBinding({
-          rootHandle,
+          rootHandle: effectiveRootHandle,
           fileHandle,
           filePath,
           fileName,
@@ -122,7 +126,7 @@ function AdaptivePDFRenderer({
     return () => {
       cancelled = true;
     };
-  }, [activePdfKey, fileHandle, fileName, filePath, hasAnnotationContext, isDesktopRuntime, rootHandle, workspaceIdentity]);
+  }, [activePdfKey, fileHandle, fileName, filePath, hasAnnotationContext, isDesktopRuntime, effectiveRootHandle, workspaceIdentity]);
 
   const handleRequestAnnotationMode = useCallback(() => {
     if (!hasAnnotationContext) {
@@ -131,13 +135,13 @@ function AdaptivePDFRenderer({
     setRequestedAnnotationModeKey(activePdfKey);
   }, [activePdfKey, hasAnnotationContext]);
 
-  if (renderMode === "highlighter" && fileHandle && rootHandle) {
+  if (renderMode === "highlighter" && fileHandle && effectiveRootHandle) {
     return (
       <PDFHighlighterAdapter
         source={source}
         fileName={fileName}
         fileHandle={fileHandle}
-        rootHandle={rootHandle}
+        rootHandle={effectiveRootHandle}
         paneId={paneId}
         fileId={fileId}
         filePath={filePath}

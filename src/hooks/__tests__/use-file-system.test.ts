@@ -311,6 +311,7 @@ describe("readDirectoryRecursive", () => {
     useWorkspaceStore.setState((state) => ({
       ...state,
       rootHandle: root as unknown as FileSystemDirectoryHandle,
+      workspaceRootHandle: root as unknown as FileSystemDirectoryHandle, // Required for .lattice access
       workspaceRootPath: "Course",
       fileTree: { root: null },
     }));
@@ -350,6 +351,7 @@ describe("readDirectoryRecursive", () => {
     useWorkspaceStore.setState((state) => ({
       ...state,
       rootHandle: root as unknown as FileSystemDirectoryHandle,
+      workspaceRootHandle: root as unknown as FileSystemDirectoryHandle, // Required for .lattice access
       fileTree: {
         root: {
           name: "workspace",

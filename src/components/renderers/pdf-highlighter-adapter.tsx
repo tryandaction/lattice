@@ -57,7 +57,6 @@ import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
 import { getDesktopPreviewPath, readDesktopFileBytesRaw } from "@/lib/desktop-preview";
 import {
   clearDesktopPdfPageTextLayoutCache,
-  getDesktopPdfPageTextLayout,
   getDesktopPdfPath,
   peekDesktopPdfPageTextLayout,
   prefetchDesktopPdfPageTextLayout,
@@ -117,12 +116,19 @@ import {
   type PdfSelectionSessionState,
   updatePdfSelectionSession,
 } from "@/lib/pdf-selection-session";
+import { buildRenderedPdfPageTextModel, type PdfPageTextModel } from "@/lib/pdf-page-text-cache";
 import { buildPersistedFileViewStateKey, loadPersistedFileViewState, savePersistedFileViewState } from "@/lib/file-view-state";
 import { logger } from "@/lib/logger";
 import {
   createPinAnnotation as createPdfPinAnnotation,
   isPinAnnotation,
 } from "@/lib/pdf-highlight-mapping";
+import {
+  adjustPdfAnnotationAnchor,
+  adjustPdfAnnotationAnchorFromPointer,
+  resolvePdfAnnotationTextAnchor,
+  type PdfAnnotationTextAnchor,
+} from "@/lib/pdf-annotation-adjustment";
 import type { BinaryViewerContent } from "@/types/viewer-content";
 import { getCanonicalPdfAnnotationText } from "@/types/universal-annotation";
 import type { UnderlineStyleType } from "@/types/universal-annotation";
@@ -185,6 +191,20 @@ interface NativePdfSelectionSnapshot {
   dragEndPoint?: { x: number; y: number } | null;
   capturedAt: number;
   token: number;
+}
+
+interface PdfAnnotationAdjustmentDraft {
+  annotationId: string;
+  page: number;
+  anchor: PdfAnnotationTextAnchor;
+  source: "start" | "end";
+}
+
+interface PdfPointerGestureState {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  moved: boolean;
 }
 
 function dedupeAnnotationsById<T extends AnnotationItem>(annotations: T[]): T[] {
@@ -316,6 +336,16 @@ function buildPdfSelectionRectsFromSnapshot(
     pageNumber,
     rects: rects.length > 0 ? rects : undefined,
   };
+}
+
+function isPdfLinkAnnotationTarget(target: EventTarget | null | undefined): target is HTMLElement {
+  return target instanceof HTMLElement &&
+    Boolean(target.closest(".annotationLayer a, .annotationLayer [role='link'], .linkAnnotation"));
+}
+
+function isPdfAnnotationAdjustHandleTarget(target: EventTarget | null | undefined): target is HTMLElement {
+  return target instanceof HTMLElement &&
+    Boolean(target.closest("[data-pdf-annotation-adjust-handle]"));
 }
 
 function buildPdfSelectionMenuSnapshot(
@@ -2434,6 +2464,9 @@ function PdfStoredAnnotationMenu({
       if (target?.closest(`[data-pdf-annotation-menu="${annotation.id}"]`)) {
         return;
       }
+      if (target?.closest("[data-pdf-annotation-adjust-handle]")) {
+        return;
+      }
       onClose();
     };
 
@@ -2490,6 +2523,8 @@ interface PdfStoredAnnotationOverlayProps {
   isActive: boolean;
   onClick: () => void;
   onHoverChange: (isHovered: boolean) => void;
+  adjustmentDraft?: PdfAnnotationAdjustmentDraft | null;
+  onAdjustPointerDown?: (side: "start" | "end", event: React.PointerEvent<HTMLButtonElement>) => void;
 }
 
 function PdfStoredAnnotationOverlay({
@@ -2497,6 +2532,8 @@ function PdfStoredAnnotationOverlay({
   isActive,
   onClick,
   onHoverChange,
+  adjustmentDraft,
+  onAdjustPointerDown,
 }: PdfStoredAnnotationOverlayProps) {
   if (annotation.target.type !== "pdf" || annotation.target.rects.length === 0) {
     return null;
@@ -2506,7 +2543,10 @@ function PdfStoredAnnotationOverlay({
   const resolvedColor = resolveHighlightColor(annotation.style.color);
   const isTransparent = resolvedColor === "transparent";
   const isPin = isPinAnnotation(annotation);
-  const mergedRects = mergePageRelativePdfTargetRects(target.rects);
+  const isTextMarkup = annotation.style.type === "highlight" || annotation.style.type === "underline";
+  const activeDraft = adjustmentDraft?.annotationId === annotation.id ? adjustmentDraft : null;
+  const effectiveRects = activeDraft?.anchor.rects ?? target.rects;
+  const mergedRects = mergePageRelativePdfTargetRects(effectiveRects);
 
   if (isPin) {
     const rect = target.rects[0];
@@ -2600,6 +2640,64 @@ function PdfStoredAnnotationOverlay({
           />
         );
       })}
+      {isTextMarkup && isActive && mergedRects.length > 0 && onAdjustPointerDown ? (
+        (() => {
+          const firstRect = mergedRects[0];
+          const lastRect = mergedRects[mergedRects.length - 1];
+          const handleStyle = {
+            position: "absolute",
+            width: 8,
+            height: 18,
+            marginLeft: -4,
+            marginTop: -1,
+            borderRadius: 9999,
+            border: "1px solid rgba(15, 23, 42, 0.14)",
+            backgroundColor: "rgba(255,255,255,0.88)",
+            boxShadow: "0 1px 4px rgba(15, 23, 42, 0.12)",
+            pointerEvents: "auto" as const,
+            cursor: "ew-resize",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 2,
+          } satisfies React.CSSProperties;
+
+          return (
+            <>
+              <button
+                type="button"
+                aria-label="Adjust annotation start"
+                data-testid={`pdf-annotation-adjust-start-${annotation.id}`}
+                data-pdf-annotation-adjust-handle="start"
+                style={{
+                  ...handleStyle,
+                  left: `${firstRect.left}%`,
+                  top: `${firstRect.top + (firstRect.height / 2)}%`,
+                  opacity: activeDraft?.source === "start" ? 1 : 0.92,
+                }}
+                onPointerDown={(event) => onAdjustPointerDown("start", event)}
+              >
+                <span style={{ width: 1, height: 9, backgroundColor: "#111827", borderRadius: 9999 }} />
+              </button>
+              <button
+                type="button"
+                aria-label="Adjust annotation end"
+                data-testid={`pdf-annotation-adjust-end-${annotation.id}`}
+                data-pdf-annotation-adjust-handle="end"
+                style={{
+                  ...handleStyle,
+                  left: `${lastRect.left + lastRect.width}%`,
+                  top: `${lastRect.top + (lastRect.height / 2)}%`,
+                  opacity: activeDraft?.source === "end" ? 1 : 0.92,
+                }}
+                onPointerDown={(event) => onAdjustPointerDown("end", event)}
+              >
+                <span style={{ width: 1, height: 9, backgroundColor: "#111827", borderRadius: 9999 }} />
+              </button>
+            </>
+          );
+        })()
+      ) : null}
     </div>
   );
 }
@@ -2611,6 +2709,8 @@ interface PdfStoredAnnotationPortalProps {
   isActive: boolean;
   onClick: () => void;
   onHoverChange: (isHovered: boolean) => void;
+  adjustmentDraft?: PdfAnnotationAdjustmentDraft | null;
+  onAdjustPointerDown?: (side: "start" | "end", event: React.PointerEvent<HTMLButtonElement>) => void;
 }
 
 function PdfStoredAnnotationPortal({
@@ -2620,6 +2720,8 @@ function PdfStoredAnnotationPortal({
   isActive,
   onClick,
   onHoverChange,
+  adjustmentDraft,
+  onAdjustPointerDown,
 }: PdfStoredAnnotationPortalProps) {
   const container = usePdfPageOverlayContainer({
     paneRootRef,
@@ -2639,6 +2741,8 @@ function PdfStoredAnnotationPortal({
       isActive={isActive}
       onClick={onClick}
       onHoverChange={onHoverChange}
+      adjustmentDraft={adjustmentDraft}
+      onAdjustPointerDown={onAdjustPointerDown}
     />,
     container,
   );
@@ -2652,13 +2756,18 @@ export function PDFHighlighterAdapter({
   source,
   fileName,
   fileHandle,
-  rootHandle,
+  rootHandle: propRootHandle,
   paneId,
   fileId,
   filePath,
   binding = null,
 }: PDFHighlighterAdapterProps) {
   const { t } = useI18n();
+  // Use workspaceRootHandle if available, otherwise fall back to prop rootHandle
+  // This ensures .lattice data is always read from the true workspace root
+  const workspaceRootHandle = useWorkspaceStore((state) => state.workspaceRootHandle);
+  const rootHandle = workspaceRootHandle ?? propRootHandle;
+
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const persistedPdfViewStateKey = useMemo(
@@ -2716,15 +2825,23 @@ export function PDFHighlighterAdapter({
   const [searchOpen, setSearchOpen] = useState(false);
   const [sidebarSize, setSidebarSize] = useState(cachedPdfViewState?.sidebarSize ?? 28);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
+  const [annotationAdjustmentDraft, setAnnotationAdjustmentDraft] = useState<PdfAnnotationAdjustmentDraft | null>(null);
   const [annotationMenuState, setAnnotationMenuState] = useState<{
     annotationId: string;
     position: { x: number; y: number };
     anchorRect: DOMRect | null;
   } | null>(null);
+  const suppressPdfSurfaceClickUntilRef = useRef(0);
+  const clearActiveAnnotationUi = useCallback(() => {
+    setSelectedAnnotationId(null);
+    setHighlightedId(null);
+    setHoveredAnnotationId(null);
+    setAnnotationAdjustmentDraft(null);
+  }, []);
   const closeAnnotationMenu = useCallback(() => {
     setAnnotationMenuState(null);
-    setSelectedAnnotationId(null);
-  }, []);
+    clearActiveAnnotationUi();
+  }, [clearActiveAnnotationUi]);
   const [currentAnchorDebug, setCurrentAnchorDebug] = useState<PdfViewAnchor | null>(cachedPdfViewState?.anchor ?? null);
   const [persistedPdfViewState, setPersistedPdfViewState] = useState(() => cachedPdfViewState ?? null);
   const dedupedAnnotations = useMemo(
@@ -3209,6 +3326,8 @@ export function PDFHighlighterAdapter({
     start: { x: number; y: number } | null;
     end: { x: number; y: number } | null;
   } | null>(null);
+  const pointerGestureRef = useRef<PdfPointerGestureState | null>(null);
+  const suppressNextLinkClickRef = useRef(false);
   const renderedPdfPagesRef = useRef<HTMLElement[]>([]);
   const bindingRunGuardRef = useRef(createLatestRunGuard());
   const manifestRunGuardRef = useRef(createLatestRunGuard());
@@ -3286,11 +3405,6 @@ export function PDFHighlighterAdapter({
       return null;
     }
 
-    const text = selection.toString();
-    if (!text.trim()) {
-      return null;
-    }
-
     const anchorNode = selection.anchorNode;
     const focusNode = selection.focusNode;
     const container = containerRef.current;
@@ -3312,9 +3426,15 @@ export function PDFHighlighterAdapter({
       top: rect.top,
       bottom: rect.bottom,
     }));
+    const text = selection.toString();
+    const fallbackText = range.toString();
+    const resolvedText = text.trim() || fallbackText.trim();
+    if (!resolvedText && clientRects.length === 0) {
+      return null;
+    }
 
     return {
-      text,
+      text: resolvedText,
       range,
       clientRects,
     };
@@ -3347,7 +3467,8 @@ export function PDFHighlighterAdapter({
       pendingSettle &&
       pendingSettle.token === snapshot.token &&
       snapshot.capturedAt >= pendingSettle.pointerUpAt &&
-      snapshot.capturedAt - pendingSettle.pointerUpAt <= DOM_SELECTION_SETTLE_WINDOW_MS
+      snapshot.capturedAt - pendingSettle.pointerUpAt <= DOM_SELECTION_SETTLE_WINDOW_MS &&
+      !frozenNativePdfSelectionSnapshotRef.current
     ) {
       frozenNativePdfSelectionSnapshotRef.current = snapshot;
     }
@@ -3357,6 +3478,9 @@ export function PDFHighlighterAdapter({
 
   const freezeNativePdfSelectionSnapshot = useCallback((event?: React.PointerEvent<HTMLDivElement>) => {
     if (activeTool === 'note' || activeTool === 'text' || activeTool === 'ink' || activeTool === 'eraser' || activeTool === 'area') {
+      return;
+    }
+    if (isPdfAnnotationAdjustHandleTarget(event?.target)) {
       return;
     }
 
@@ -3421,6 +3545,8 @@ export function PDFHighlighterAdapter({
     if (selection && !selection.isCollapsed) {
       selection.removeAllRanges();
     }
+    pointerGestureRef.current = null;
+    suppressNextLinkClickRef.current = false;
     nativePdfSelectionSnapshotRef.current = null;
     frozenNativePdfSelectionSnapshotRef.current = null;
     pendingNativePdfSelectionSettleRef.current = null;
@@ -3540,11 +3666,20 @@ export function PDFHighlighterAdapter({
 
       return (
         candidate.token === selectionToken &&
-        candidate.clientRects.length > 0 &&
-        candidate.text.trim().length > 0
+        (
+          candidate.clientRects.length > 0 ||
+          Boolean(candidate.dragStartPoint && candidate.dragEndPoint)
+        ) &&
+        (
+          candidate.text.trim().length > 0 ||
+          Boolean(candidate.dragStartPoint && candidate.dragEndPoint)
+        )
       );
     });
-    const selectionSnapshot = selectionSnapshotCandidates
+    const frozenSelectionSnapshot = selectionSnapshotCandidates.find(
+      (candidate) => candidate === frozenNativePdfSelectionSnapshotRef.current,
+    ) ?? null;
+    const selectionSnapshot = frozenSelectionSnapshot ?? selectionSnapshotCandidates
       .sort((left, right) => right.capturedAt - left.capturedAt)[0] ?? null;
 
     if (!selectionSnapshot) {
@@ -3582,30 +3717,31 @@ export function PDFHighlighterAdapter({
       })
       .filter((page) => Number.isInteger(page.pageNumber) && page.pageNumber > 0 && page.width > 0 && page.height > 0);
 
-    const selectionPageElement = selectionSnapshot.range.startContainer instanceof Element
-      ? selectionSnapshot.range.startContainer.closest<HTMLElement>("[data-page-number]")
-      : selectionSnapshot.range.startContainer.parentElement?.closest<HTMLElement>("[data-page-number]") ?? null;
-    const selectionPageNumber = Number(selectionPageElement?.dataset.pageNumber ?? "");
-    const nativeLayout = Number.isInteger(selectionPageNumber) && selectionPageNumber > 0
-      ? (
-        peekDesktopPdfPageTextLayout({
-          fileHandle,
-          pageNumber: selectionPageNumber,
-        }) ?? await getDesktopPdfPageTextLayout({
-          fileHandle,
-          pageNumber: selectionPageNumber,
-        })
-      )
-      : null;
+    // Determine the page number from the selection range
+    const startContainer = selectionSnapshot.range.startContainer;
+    const pageElement = startContainer instanceof Element
+      ? startContainer.closest<HTMLElement>("[data-page-number]")
+      : startContainer.parentElement?.closest<HTMLElement>("[data-page-number]") ?? null;
+    const selectionPageNumber = pageElement ? Number(pageElement.dataset.pageNumber ?? 0) : 0;
+
+    // Get native layout for desktop PDF text extraction (only when on desktop and valid page)
+    const nativeLayout = (
+      Number.isInteger(selectionPageNumber) &&
+      selectionPageNumber > 0 &&
+      desktopPdfPath
+    ) ? peekDesktopPdfPageTextLayout({
+      fileHandle,
+      pageNumber: selectionPageNumber,
+    }) : null;
 
     const resolvedSelectionResult = resolvePdfSelectionFromNativeRange({
       range: selectionSnapshot.range,
       text: selectionSnapshot.text,
       pages: renderedPages,
-      nativeLayout,
       clientRects: selectionSnapshot.clientRects,
       dragStartPoint: selectionSnapshot.dragStartPoint ?? undefined,
       dragEndPoint: selectionSnapshot.dragEndPoint ?? undefined,
+      nativeLayout,
     });
 
     if (!resolvedSelectionResult.ok) {
@@ -3689,6 +3825,7 @@ export function PDFHighlighterAdapter({
     clearNativePdfSelectionLater,
     clearTransientSelection,
     commitPdfSelectionSession,
+    desktopPdfPath,
     fileHandle,
   ]);
 
@@ -3699,6 +3836,18 @@ export function PDFHighlighterAdapter({
   const beginNativePdfSelectionInteraction = useCallback((event?: React.PointerEvent<HTMLDivElement>) => {
     if (activeTool === 'note' || activeTool === 'text' || activeTool === 'ink' || activeTool === 'eraser' || activeTool === 'area') {
       return;
+    }
+    if (isPdfAnnotationAdjustHandleTarget(event?.target)) {
+      return;
+    }
+    if (event) {
+      pointerGestureRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+      };
+      suppressNextLinkClickRef.current = false;
     }
 
     cancelScheduledNativePdfSelectionClear();
@@ -3717,14 +3866,75 @@ export function PDFHighlighterAdapter({
     commitPdfSelectionSession(nextState);
   }, [activeTool, cancelScheduledNativePdfSelectionClear, commitPdfSelectionSession]);
 
+  const updateNativePdfSelectionDragPoint = useCallback((event?: React.PointerEvent<HTMLDivElement>) => {
+    if (!event || !textSelectionDragPointRef.current) {
+      return;
+    }
+    if (isPdfAnnotationAdjustHandleTarget(event.target)) {
+      return;
+    }
+    const pointerGesture = pointerGestureRef.current;
+    if (pointerGesture && pointerGesture.pointerId === event.pointerId) {
+      const dragDistance = Math.hypot(
+        event.clientX - pointerGesture.startX,
+        event.clientY - pointerGesture.startY,
+      );
+      if (dragDistance >= 4 && !pointerGesture.moved) {
+        pointerGestureRef.current = {
+          ...pointerGesture,
+          moved: true,
+        };
+        suppressNextLinkClickRef.current = true;
+      }
+    }
+    const token = pdfSelectionSessionRef.current.token;
+    if (textSelectionDragPointRef.current.token !== token) {
+      return;
+    }
+    textSelectionDragPointRef.current = {
+      ...textSelectionDragPointRef.current,
+      end: { x: event.clientX, y: event.clientY },
+    };
+  }, []);
+
+  const handlePdfSurfaceClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (Date.now() <= suppressPdfSurfaceClickUntilRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      suppressPdfSurfaceClickUntilRef.current = 0;
+      return;
+    }
+    if (!suppressNextLinkClickRef.current) {
+      return;
+    }
+    if (isPdfLinkAnnotationTarget(event.target)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    suppressNextLinkClickRef.current = false;
+  }, []);
+
+  const handlePdfSurfaceDragStartCapture = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (!suppressNextLinkClickRef.current) {
+      return;
+    }
+    if (isPdfLinkAnnotationTarget(event.target)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, []);
+
   useEffect(() => {
     const handleSelectionChange = () => {
+      if (annotationAdjustmentDraft) {
+        return;
+      }
       captureNativePdfSelectionSnapshot();
     };
 
     document.addEventListener("selectionchange", handleSelectionChange);
     return () => document.removeEventListener("selectionchange", handleSelectionChange);
-  }, [captureNativePdfSelectionSnapshot]);
+  }, [annotationAdjustmentDraft, captureNativePdfSelectionSnapshot]);
 
   const updateCurrentAnchorDebug = useCallback((anchor: PdfViewAnchor | null) => {
     if (isDiagnosticsMode) {
@@ -3766,11 +3976,12 @@ export function PDFHighlighterAdapter({
       return;
     }
 
+    const currentFileHandle = fileHandle;
     getRenderedPdfPages().forEach((pageElement) => {
       const pageNumber = Number(pageElement.dataset.pageNumber ?? "");
       if (Number.isInteger(pageNumber) && pageNumber > 0) {
         prefetchDesktopPdfPageTextLayout({
-          fileHandle,
+          fileHandle: currentFileHandle,
           pageNumber,
         });
       }
@@ -5040,6 +5251,7 @@ export function PDFHighlighterAdapter({
       return;
     }
 
+    setAnnotationAdjustmentDraft(null);
     setSelectedAnnotationId(annotation.id);
     setHighlightedId(annotation.id);
     setAnnotationMenuState({
@@ -5048,6 +5260,145 @@ export function PDFHighlighterAdapter({
       anchorRect: placement.anchorRect,
     });
   }, [buildAnnotationMenuPosition]);
+
+  const updatePdfTextMarkupAnnotation = useCallback((annotationId: string, anchor: PdfAnnotationTextAnchor) => {
+    const annotation = annotationById.get(annotationId);
+    if (!annotation || annotation.target.type !== "pdf") {
+      return;
+    }
+
+    const target = annotation.target as PdfTarget;
+    const pageElement = findPdfPageElementInScope(containerRef.current, target.page);
+    const preview = pageElement
+      ? buildPdfAnnotationPreviewFromPageElement(pageElement, anchor.rects, {
+          paddingRatio: 0.035,
+          minCssWidth: 180,
+          minCssHeight: 120,
+        })
+      : undefined;
+
+    updateAnnotation(annotationId, {
+      target: {
+        ...target,
+        rects: mergePdfTargetRectsForTextMarkup(anchor.rects),
+        textQuote: anchor.textQuote,
+      },
+      content: anchor.textQuote.exact,
+      ...(preview ? { preview } : {}),
+    });
+  }, [annotationById, updateAnnotation]);
+
+  const beginAnnotationBoundaryAdjustment = useCallback((annotation: AnnotationItem, side: "start" | "end", event: React.PointerEvent<HTMLButtonElement>) => {
+    if (annotation.target.type !== "pdf") {
+      return;
+    }
+
+    const target = annotation.target as PdfTarget;
+    const pageElement = findPdfPageElementInScope(containerRef.current, target.page);
+    if (!pageElement) {
+      return;
+    }
+
+    const model = buildRenderedPdfPageTextModel(pageElement);
+    if (!model) {
+      return;
+    }
+
+    const resolvedAnchor = resolvePdfAnnotationTextAnchor(model, target);
+    if (!resolvedAnchor) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    closeAnnotationMenu();
+    setSelectedAnnotationId(annotation.id);
+    setAnnotationAdjustmentDraft({
+      annotationId: annotation.id,
+      page: target.page,
+      anchor: resolvedAnchor,
+      source: side,
+    });
+    let currentAnchor = resolvedAnchor;
+
+    const pointerId = event.pointerId;
+    const initialClientX = event.clientX;
+    const initialClientY = event.clientY;
+    if (typeof event.currentTarget.setPointerCapture === "function") {
+      event.currentTarget.setPointerCapture(pointerId);
+    }
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const dragDistance = Math.hypot(
+        moveEvent.clientX - initialClientX,
+        moveEvent.clientY - initialClientY,
+      );
+      if (dragDistance < 8) {
+        return;
+      }
+      const livePageElement = findPdfPageElementInScope(containerRef.current, target.page);
+      if (!livePageElement) {
+        return;
+      }
+      const liveModel = buildRenderedPdfPageTextModel(livePageElement);
+      if (!liveModel) {
+        return;
+      }
+
+      const pageRect = livePageElement.getBoundingClientRect();
+      if (pageRect.width <= 0 || pageRect.height <= 0) {
+        return;
+      }
+
+      const adjusted = adjustPdfAnnotationAnchorFromPointer({
+        model: liveModel,
+        target,
+        currentAnchor,
+        pageRect,
+        point: { x: moveEvent.clientX, y: moveEvent.clientY },
+        side,
+      });
+      if (!adjusted) {
+        return;
+      }
+
+      setAnnotationAdjustmentDraft({
+        annotationId: annotation.id,
+        page: target.page,
+        anchor: adjusted,
+        source: side,
+      });
+      currentAnchor = adjusted;
+    };
+
+    const finish = (commit: boolean) => {
+      document.removeEventListener("pointermove", handlePointerMove);
+      document.removeEventListener("pointerup", handlePointerUp, true);
+      document.removeEventListener("pointercancel", handlePointerCancel, true);
+      suppressPdfSurfaceClickUntilRef.current = Date.now() + 250;
+      setAnnotationAdjustmentDraft((current) => {
+        if (!current || current.annotationId !== annotation.id) {
+          return current;
+        }
+        if (commit) {
+          updatePdfTextMarkupAnnotation(annotation.id, current.anchor);
+        }
+        return null;
+      });
+    };
+
+    const handlePointerUp = () => {
+      finish(true);
+    };
+
+    const handlePointerCancel = () => {
+      finish(false);
+    };
+
+    document.addEventListener("pointermove", handlePointerMove);
+    document.addEventListener("pointerup", handlePointerUp, true);
+    document.addEventListener("pointercancel", handlePointerCancel, true);
+  }, [annotationById, closeAnnotationMenu, updatePdfTextMarkupAnnotation]);
 
   const findPdfAnnotationAtClientPoint = useCallback((event: React.MouseEvent): AnnotationItem | null => {
     const target = event.target as HTMLElement;
@@ -5577,7 +5928,21 @@ export function PDFHighlighterAdapter({
     }
 
     const annotation = findPdfAnnotationAtClientPoint(event);
+    if (selectedAnnotationId) {
+      if (!annotation || annotation.id !== selectedAnnotationId) {
+        if (annotationMenuState) {
+          closeAnnotationMenu();
+        } else {
+          clearActiveAnnotationUi();
+        }
+        return;
+      }
+    }
+
     if (!annotation) {
+      if (selectedAnnotationId || highlightedId || hoveredAnnotationId || annotationAdjustmentDraft) {
+        clearActiveAnnotationUi();
+      }
       if (annotationMenuState) {
         closeAnnotationMenu();
       }
@@ -5587,7 +5952,7 @@ export function PDFHighlighterAdapter({
     event.preventDefault();
     event.stopPropagation();
     openAnnotationMenu(annotation);
-  }, [activeTool, annotationMenuState, closeAnnotationMenu, findPdfAnnotationAtClientPoint, handlePdfClick, openAnnotationMenu]);
+  }, [activeTool, annotationAdjustmentDraft, annotationMenuState, clearActiveAnnotationUi, closeAnnotationMenu, findPdfAnnotationAtClientPoint, handlePdfClick, highlightedId, hoveredAnnotationId, openAnnotationMenu, selectedAnnotationId]);
 
   const handleAreaMouseDown = useCallback((event: React.MouseEvent) => {
     if (activeTool !== 'area') return;
@@ -6279,7 +6644,10 @@ export function PDFHighlighterAdapter({
       className={`relative flex-1 min-h-0 min-w-0 overflow-hidden bg-muted/30${fillHeight ? " h-full" : ""}`}
       data-testid={`pdf-scroll-container-${paneId}`}
       onPointerDownCapture={beginNativePdfSelectionInteraction}
+      onPointerMoveCapture={updateNativePdfSelectionDragPoint}
       onPointerUp={freezeNativePdfSelectionSnapshot}
+      onDragStartCapture={handlePdfSurfaceDragStartCapture}
+      onClickCapture={handlePdfSurfaceClickCapture}
       onClick={handlePdfSurfaceClick}
       onMouseDown={
         activeTool === 'area'
@@ -6403,6 +6771,8 @@ export function PDFHighlighterAdapter({
             isActive={highlightedId === annotation.id || hoveredAnnotationId === annotation.id || selectedAnnotationId === annotation.id}
             onHoverChange={(isHovered) => setHoveredAnnotationId(isHovered ? annotation.id : null)}
             onClick={() => openAnnotationMenu(annotation)}
+            adjustmentDraft={annotationAdjustmentDraft}
+            onAdjustPointerDown={(side, event) => beginAnnotationBoundaryAdjustment(annotation, side, event)}
           />
         );
       })}

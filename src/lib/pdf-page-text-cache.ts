@@ -8,6 +8,8 @@ export interface PdfPageTextSegment {
   hasEOL: boolean;
   pageTextStart: number;
   pageTextEnd: number;
+  lineIndex?: number;
+  blockIndex?: number;
   textNode?: Text | null;
   rawToNormalizedOffsets?: number[];
 }
@@ -52,6 +54,32 @@ export interface PdfPageTextOffsetResolutionInput {
 const pdfPageTextCache = new WeakMap<PDFDocumentProxy, Map<number, PdfPageTextCacheEntry>>();
 let renderedPdfPageTextCache = new WeakMap<HTMLElement, RenderedPdfPageTextCacheEntry>();
 let pdfPageTextNodeIndex = new WeakMap<PdfPageTextModel, Map<Text, PdfPageTextSegment>>();
+
+interface PdfVisualItemMetadata {
+  lineIndex: number;
+  blockIndex: number;
+}
+
+interface PdfVisualRow {
+  lineIndex: number;
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+  centerY: number;
+  rects: PdfPageTextItemRect[];
+}
+
+interface PdfVisualRunMetadata {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  centerX: number;
+  lineIndex: number;
+  equationLike: boolean;
+  blockIndex: number;
+}
 
 function isTextItem(item: TextContent["items"][number]): item is TextItem {
   return typeof (item as TextItem).str === "string";
@@ -192,6 +220,306 @@ function indexPdfPageTextModel(model: PdfPageTextModel): PdfPageTextModel {
   return model;
 }
 
+function rectsHorizontallyTouch(left: Pick<PdfPageTextItemRect, "left" | "width">, right: Pick<PdfPageTextItemRect, "left" | "width">): boolean {
+  return left.left + left.width > right.left && right.left + right.width > left.left;
+}
+
+function shouldAttachSmallInlineRectToRow(input: {
+  rect: PdfPageTextItemRect;
+  row: PdfVisualRow;
+}): boolean {
+  const rowHeight = Math.max(1, input.row.bottom - input.row.top);
+  const rectHeight = Math.max(1, input.rect.height);
+  const smallerHeight = Math.min(rowHeight, rectHeight);
+  const largerHeight = Math.max(rowHeight, rectHeight);
+  const isSmallInlineFragment = smallerHeight <= largerHeight * 0.72;
+  if (!isSmallInlineFragment) {
+    return false;
+  }
+
+  const horizontalGap = input.rect.left > input.row.right
+    ? input.rect.left - input.row.right
+    : input.row.left > input.rect.left + input.rect.width
+      ? input.row.left - (input.rect.left + input.rect.width)
+      : 0;
+  const allowsInlineAttachment = (
+    rectsHorizontallyTouch(input.rect, { left: input.row.left, width: input.row.right - input.row.left }) ||
+    horizontalGap <= Math.max(10, rowHeight * 0.45)
+  );
+  if (!allowsInlineAttachment) {
+    return false;
+  }
+
+  const verticalGap = (input.rect.top + input.rect.height) < input.row.top
+    ? input.row.top - (input.rect.top + input.rect.height)
+    : input.rect.top > input.row.bottom
+      ? input.rect.top - input.row.bottom
+      : 0;
+
+  return verticalGap <= Math.max(8, rowHeight * 0.35);
+}
+
+function shouldInsertSpaceBetweenSegments(input: {
+  previousSegment: {
+    text: string;
+    itemIndex: number;
+  };
+  currentSegment: {
+    text: string;
+    itemIndex: number;
+  };
+  itemRectMap: Map<number, PdfPageTextItemRect>;
+  visualItemMetadata: Map<number, PdfVisualItemMetadata>;
+}): boolean {
+  if (/\s$/.test(input.previousSegment.text) || /^\s/.test(input.currentSegment.text)) {
+    return true;
+  }
+
+  const previousRect = input.itemRectMap.get(input.previousSegment.itemIndex);
+  const currentRect = input.itemRectMap.get(input.currentSegment.itemIndex);
+  if (!previousRect || !currentRect) {
+    return true;
+  }
+
+  const horizontalGap = currentRect.left - (previousRect.left + previousRect.width);
+  const verticalGap = currentRect.top > previousRect.top + previousRect.height
+    ? currentRect.top - (previousRect.top + previousRect.height)
+    : previousRect.top > currentRect.top + currentRect.height
+      ? previousRect.top - (currentRect.top + currentRect.height)
+      : 0;
+  const minimumHeight = Math.min(previousRect.height, currentRect.height);
+  const maximumHeight = Math.max(previousRect.height, currentRect.height);
+  const containsSmallAttachedFragment = minimumHeight <= maximumHeight * 0.72;
+
+  const shouldStayCompact = (
+    containsSmallAttachedFragment &&
+    horizontalGap <= Math.max(3, minimumHeight * 0.35) &&
+    verticalGap <= Math.max(8, maximumHeight * 0.45)
+  );
+  if (shouldStayCompact) {
+    return false;
+  }
+
+  const previousMetadata = input.visualItemMetadata.get(input.previousSegment.itemIndex);
+  const currentMetadata = input.visualItemMetadata.get(input.currentSegment.itemIndex);
+  if (
+    previousMetadata?.lineIndex !== currentMetadata?.lineIndex ||
+    previousMetadata?.blockIndex !== currentMetadata?.blockIndex
+  ) {
+    return true;
+  }
+
+  return horizontalGap > Math.max(
+    3,
+    minimumHeight * 0.22,
+  );
+}
+
+function isEquationLikeRun(input: {
+  left: number;
+  right: number;
+  pageWidth: number;
+}): boolean {
+  const runWidth = Math.max(0, input.right - input.left);
+  const runCenterX = (input.left + input.right) / 2;
+  const pageCenterX = input.pageWidth / 2;
+  return (
+    runWidth <= input.pageWidth * 0.72 &&
+    Math.abs(runCenterX - pageCenterX) <= Math.max(48, input.pageWidth * 0.12)
+  );
+}
+
+function buildRenderedVisualItemMetadata(itemRects: PdfPageTextItemRect[]): Map<number, PdfVisualItemMetadata> {
+  const metadata = new Map<number, PdfVisualItemMetadata>();
+  if (itemRects.length === 0) {
+    return metadata;
+  }
+
+  const sortedRects = [...itemRects].sort((left, right) => (
+    left.top - right.top ||
+    left.left - right.left
+  ));
+  const rows: PdfVisualRow[] = [];
+
+  sortedRects.forEach((rect) => {
+    const rectCenterY = rect.top + (rect.height / 2);
+    const matchingRow = rows.find((row) => (
+      Math.abs(row.centerY - rectCenterY) <= Math.max(4, Math.min(row.bottom - row.top, rect.height) * 0.65)
+    ));
+    if (matchingRow) {
+      matchingRow.rects.push(rect);
+      matchingRow.top = Math.min(matchingRow.top, rect.top);
+      matchingRow.bottom = Math.max(matchingRow.bottom, rect.top + rect.height);
+      matchingRow.left = Math.min(matchingRow.left, rect.left);
+      matchingRow.right = Math.max(matchingRow.right, rect.left + rect.width);
+      matchingRow.centerY = (matchingRow.top + matchingRow.bottom) / 2;
+      return;
+    }
+
+    const attachmentRow = rows.find((row) => shouldAttachSmallInlineRectToRow({
+      rect,
+      row,
+    }));
+    if (attachmentRow) {
+      attachmentRow.rects.push(rect);
+      attachmentRow.top = Math.min(attachmentRow.top, rect.top);
+      attachmentRow.bottom = Math.max(attachmentRow.bottom, rect.top + rect.height);
+      attachmentRow.left = Math.min(attachmentRow.left, rect.left);
+      attachmentRow.right = Math.max(attachmentRow.right, rect.left + rect.width);
+      attachmentRow.centerY = (attachmentRow.top + attachmentRow.bottom) / 2;
+      return;
+    }
+
+    rows.push({
+      lineIndex: rows.length,
+      top: rect.top,
+      bottom: rect.top + rect.height,
+      left: rect.left,
+      right: rect.left + rect.width,
+      centerY: rectCenterY,
+      rects: [rect],
+    });
+  });
+
+  const rowAttachmentTargets = new Map<number, number>();
+  rows.forEach((row, rowIndex) => {
+    const rowHeight = Math.max(1, row.bottom - row.top);
+    const bestHostIndex = rows.findIndex((candidate, candidateIndex) => {
+      if (candidateIndex === rowIndex) {
+        return false;
+      }
+      const candidateHeight = Math.max(1, candidate.bottom - candidate.top);
+      if (rowHeight > candidateHeight * 0.72) {
+        return false;
+      }
+      return row.rects.every((rect) => shouldAttachSmallInlineRectToRow({
+        rect,
+        row: candidate,
+      }));
+    });
+
+    if (bestHostIndex >= 0) {
+      rowAttachmentTargets.set(rowIndex, bestHostIndex);
+    }
+  });
+
+  rowAttachmentTargets.forEach((hostIndex, rowIndex) => {
+    const row = rows[rowIndex];
+    const host = rows[hostIndex];
+    host.rects.push(...row.rects);
+    host.top = Math.min(host.top, row.top);
+    host.bottom = Math.max(host.bottom, row.bottom);
+    host.left = Math.min(host.left, row.left);
+    host.right = Math.max(host.right, row.right);
+    host.centerY = (host.top + host.bottom) / 2;
+  });
+
+  const mergedRows = rows
+    .filter((_, rowIndex) => !rowAttachmentTargets.has(rowIndex))
+    .sort((left, right) => left.top - right.top || left.left - right.left)
+    .map((row, rowIndex) => ({
+      ...row,
+      lineIndex: rowIndex,
+      rects: [...row.rects].sort((left, right) => left.left - right.left || left.top - right.top),
+    }));
+
+  let nextBlockIndex = 0;
+  const pageWidth = Math.max(...itemRects.map((rect) => rect.left + rect.width), 0);
+  const previousRuns: PdfVisualRunMetadata[] = [];
+
+  mergedRows.forEach((row) => {
+      const rowRects = [...row.rects].sort((left, right) => left.left - right.left);
+      const runs: Array<{
+        rects: PdfPageTextItemRect[];
+        left: number;
+        right: number;
+      }> = [];
+
+      rowRects.forEach((rect) => {
+        const previous = runs[runs.length - 1];
+        if (!previous) {
+          runs.push({
+            rects: [rect],
+            left: rect.left,
+            right: rect.left + rect.width,
+          });
+          return;
+        }
+
+        const gap = rect.left - previous.right;
+        const allowedGap = Math.max(32, Math.max(rect.height, row.bottom - row.top) * 1.8);
+        if (gap > allowedGap) {
+          runs.push({
+            rects: [rect],
+            left: rect.left,
+            right: rect.left + rect.width,
+          });
+          return;
+        }
+
+        previous.rects.push(rect);
+        previous.right = Math.max(previous.right, rect.left + rect.width);
+      });
+
+      const currentRuns: PdfVisualRunMetadata[] = [];
+
+      runs.forEach((run) => {
+        const runCenterX = (run.left + run.right) / 2;
+        const runEquationLike = isEquationLikeRun({
+          left: run.left,
+          right: run.right,
+          pageWidth,
+        });
+        const matchingPrevious = previousRuns.find((candidate) => {
+          if (row.lineIndex - candidate.lineIndex > 1) {
+            return false;
+          }
+          const rowHeight = Math.max(1, row.bottom - row.top);
+          const candidateHeight = Math.max(1, candidate.bottom - candidate.top);
+          const rowGap = Math.max(0, row.top - candidate.bottom);
+          if (rowGap > Math.max(24, Math.min(rowHeight, candidateHeight) * 0.8)) {
+            return false;
+          }
+          if (
+            runEquationLike !== candidate.equationLike &&
+            rowGap > Math.max(10, Math.min(rowHeight, candidateHeight) * 0.3)
+          ) {
+            return false;
+          }
+          const overlap = Math.min(run.right, candidate.right) - Math.max(run.left, candidate.left);
+          const minWidth = Math.min(run.right - run.left, candidate.right - candidate.left);
+          return (
+            overlap >= Math.max(12, minWidth * 0.18) ||
+            Math.abs(candidate.centerX - runCenterX) <= Math.max(36, minWidth * 0.5)
+          );
+        });
+
+        const blockIndex = matchingPrevious?.blockIndex ?? nextBlockIndex++;
+        run.rects.forEach((rect) => {
+          metadata.set(rect.itemIndex, {
+            lineIndex: row.lineIndex,
+            blockIndex,
+          });
+        });
+        currentRuns.push({
+          blockIndex,
+          left: run.left,
+          right: run.right,
+          top: row.top,
+          bottom: row.bottom,
+          centerX: runCenterX,
+          lineIndex: row.lineIndex,
+          equationLike: runEquationLike,
+        });
+      });
+
+      previousRuns.length = 0;
+      previousRuns.push(...currentRuns);
+    });
+
+  return metadata;
+}
+
 function buildPdfPageTextModelFromSegments(input: {
   pageNumber: number;
   viewportWidth: number;
@@ -209,8 +537,10 @@ function buildPdfPageTextModelFromSegments(input: {
 }): PdfPageTextModel {
   const segments: PdfPageTextSegment[] = [];
   let normalizedText = "";
+  const visualItemMetadata = buildRenderedVisualItemMetadata(input.itemRects);
+  const itemRectMap = new Map(input.itemRects.map((rect) => [rect.itemIndex, rect]));
 
-  input.sourceSegments.forEach((sourceSegment) => {
+  input.sourceSegments.forEach((sourceSegment, sourceIndex) => {
     const { normalizedText: normalizedSegmentText, rawToNormalizedOffsets } = buildNormalizedOffsetMap(sourceSegment.text);
     if (!normalizedSegmentText) {
       if (sourceSegment.hasEOL && normalizedText && !normalizedText.endsWith(" ")) {
@@ -219,7 +549,18 @@ function buildPdfPageTextModelFromSegments(input: {
       return;
     }
 
-    if (normalizedText && !normalizedText.endsWith(" ")) {
+    const previousSourceSegment = sourceIndex > 0 ? input.sourceSegments[sourceIndex - 1] : null;
+    if (
+      normalizedText &&
+      !normalizedText.endsWith(" ") &&
+      previousSourceSegment &&
+      shouldInsertSpaceBetweenSegments({
+        previousSegment: previousSourceSegment,
+        currentSegment: sourceSegment,
+        itemRectMap,
+        visualItemMetadata,
+      })
+    ) {
       normalizedText += " ";
     }
 
@@ -234,6 +575,8 @@ function buildPdfPageTextModelFromSegments(input: {
       hasEOL: sourceSegment.hasEOL,
       pageTextStart,
       pageTextEnd,
+      lineIndex: visualItemMetadata.get(sourceSegment.itemIndex)?.lineIndex,
+      blockIndex: visualItemMetadata.get(sourceSegment.itemIndex)?.blockIndex,
       textNode: sourceSegment.textNode ?? null,
       rawToNormalizedOffsets,
     });
@@ -286,9 +629,29 @@ function buildPdfPageTextModel(input: {
   });
 }
 
-function buildRenderedPdfPageTextModelSignature(textNodes: Text[]): string {
+function formatRectSignature(rect: DOMRect): string {
+  return [
+    rect.left,
+    rect.top,
+    rect.width,
+    rect.height,
+  ].map((value) => Number.isFinite(value) ? value.toFixed(3) : "0").join(":");
+}
+
+function buildRenderedPdfPageTextModelSignature(pageElement: HTMLElement, textNodes: Text[]): string {
+  const pageRect = pageElement.getBoundingClientRect();
   return textNodes
-    .map((node) => node.textContent ?? "")
+    .map((node) => {
+      const parentRect = node.parentElement?.getBoundingClientRect();
+      return [
+        node.textContent ?? "",
+        parentRect ? formatRectSignature(parentRect) : "missing-rect",
+      ].join("\u0002");
+    })
+    .concat([
+      `page=${formatRectSignature(pageRect)}`,
+      `scale=${pageElement.querySelector<HTMLElement>("[data-scale]")?.dataset.scale ?? ""}`,
+    ])
     .join("\u0001");
 }
 
@@ -330,7 +693,7 @@ export function buildRenderedPdfPageTextModel(pageElement: HTMLElement): PdfPage
     return null;
   }
 
-  const signature = buildRenderedPdfPageTextModelSignature(textNodes);
+  const signature = buildRenderedPdfPageTextModelSignature(pageElement, textNodes);
   const cached = renderedPdfPageTextCache.get(pageElement);
   if (cached?.signature === signature) {
     return cached.value;
@@ -467,6 +830,48 @@ function resolveElementBoundary(input: {
     : null;
 }
 
+function resolveTextNodeBoundaryWithinElement(input: {
+  element: Element;
+  offset: number;
+  affinity: "start" | "end";
+}): { node: Text; offset: number } | null {
+  const childNodes = Array.from(input.element.childNodes);
+  if (childNodes.length === 0) {
+    return null;
+  }
+
+  const clampedOffset = Math.max(0, Math.min(childNodes.length, input.offset));
+  if (input.affinity === "start") {
+    for (let index = clampedOffset; index < childNodes.length; index += 1) {
+      const textNode = findFirstTextNode(childNodes[index]);
+      if (textNode) {
+        return { node: textNode, offset: 0 };
+      }
+    }
+    for (let index = clampedOffset - 1; index >= 0; index -= 1) {
+      const textNode = findLastTextNode(childNodes[index]);
+      if (textNode) {
+        return { node: textNode, offset: textNode.textContent?.length ?? 0 };
+      }
+    }
+  } else {
+    for (let index = Math.min(clampedOffset - 1, childNodes.length - 1); index >= 0; index -= 1) {
+      const textNode = findLastTextNode(childNodes[index]);
+      if (textNode) {
+        return { node: textNode, offset: textNode.textContent?.length ?? 0 };
+      }
+    }
+    for (let index = clampedOffset; index < childNodes.length; index += 1) {
+      const textNode = findFirstTextNode(childNodes[index]);
+      if (textNode) {
+        return { node: textNode, offset: 0 };
+      }
+    }
+  }
+
+  return null;
+}
+
 export function resolvePdfPageTextOffset(input: PdfPageTextOffsetResolutionInput): number | null {
   const nodeIndex = pdfPageTextNodeIndex.get(input.model);
   if (!nodeIndex) {
@@ -478,6 +883,16 @@ export function resolvePdfPageTextOffset(input: PdfPageTextOffsetResolutionInput
 
   if (input.container instanceof Text) {
     resolvedContainer = input.container;
+  } else if (input.container instanceof Element) {
+    const directBoundary = resolveTextNodeBoundaryWithinElement({
+      element: input.container,
+      offset: input.offset,
+      affinity: input.affinity,
+    });
+    if (directBoundary) {
+      resolvedContainer = directBoundary.node;
+      resolvedOffset = directBoundary.offset;
+    }
   } else {
     const textLayerElement = input.model.textLayerElement;
     if (!textLayerElement) {
@@ -496,7 +911,11 @@ export function resolvePdfPageTextOffset(input: PdfPageTextOffsetResolutionInput
     resolvedOffset = resolvedBoundary.offset;
   }
 
-  const segment = resolvedContainer ? nodeIndex.get(resolvedContainer) : undefined;
+  if (!resolvedContainer) {
+    return null;
+  }
+
+  const segment = nodeIndex.get(resolvedContainer);
   if (!segment) {
     return null;
   }

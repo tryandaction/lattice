@@ -62,7 +62,7 @@ function round(value: number, precision = 4): string {
 }
 
 function normalizeText(text: string | undefined): string {
-  return (text ?? "").replace(/\s+/g, " ").trim().slice(0, 240);
+  return (text ?? "").replace(/\s+/g, " ").trim();
 }
 
 function sortSelectionRects(rects: PdfTransientSelectionRect[]): PdfTransientSelectionRect[] {

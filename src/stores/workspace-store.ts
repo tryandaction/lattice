@@ -124,6 +124,7 @@ function collectExecutionScopeIdsByPath(root: LayoutNode, predicate: (tab: TabSt
 interface WorkspaceState {
   // File system state
   rootHandle: FileSystemDirectoryHandle | null;
+  workspaceRootHandle: FileSystemDirectoryHandle | null; // True workspace root for .lattice access
   workspaceRootPath: string | null;
   workspaceIdentity: WorkspaceIdentity | null;
   fileTree: FileTree;
@@ -139,6 +140,7 @@ interface WorkspaceState {
 
   // File system actions
   setRootHandle: (handle: FileSystemDirectoryHandle | null) => void;
+  setWorkspaceRootHandle: (handle: FileSystemDirectoryHandle | null) => void;
   setWorkspaceRootPath: (path: string | null) => void;
   setWorkspaceIdentity: (identity: WorkspaceIdentity | null) => void;
   setFileTree: (tree: FileTree) => void;
@@ -202,6 +204,7 @@ interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   // Initial file system state
   rootHandle: null,
+  workspaceRootHandle: null,
   workspaceRootPath: null,
   workspaceIdentity: null,
   fileTree: initialFileTree,
@@ -226,6 +229,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }).catch(() => {});
     }
   },
+  setWorkspaceRootHandle: (handle) => set({ workspaceRootHandle: handle }),
   setWorkspaceRootPath: (path) => set({ workspaceRootPath: path }),
   setWorkspaceIdentity: (identity) => set({ workspaceIdentity: identity }),
   setFileTree: (tree) => set({ fileTree: tree }),
@@ -236,6 +240,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const scopeIds = collectExecutionScopeIds(get().layout.root);
     set({
       rootHandle: null,
+      workspaceRootHandle: null,
       workspaceRootPath: null,
       workspaceIdentity: null,
       fileTree: initialFileTree,
