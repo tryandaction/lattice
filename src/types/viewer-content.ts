@@ -14,9 +14,16 @@ export interface DesktopUrlViewerContent {
   mimeType?: string | null;
 }
 
+export interface WebUrlViewerContent {
+  kind: "web-url";
+  url: string;
+  title?: string | null;
+}
+
 export type ViewerContent =
   | TextViewerContent
   | BufferViewerContent
-  | DesktopUrlViewerContent;
+  | DesktopUrlViewerContent
+  | WebUrlViewerContent;
 
 export type BinaryViewerContent = BufferViewerContent | DesktopUrlViewerContent;

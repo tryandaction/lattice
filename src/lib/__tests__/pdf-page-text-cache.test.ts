@@ -258,5 +258,145 @@ describe("pdf-page-text-cache", () => {
     expect(sidebarSegment).toBeTruthy();
     expect(bodySegment).toBeTruthy();
     expect(sidebarSegment?.blockIndex).not.toBe(bodySegment?.blockIndex);
+    expect(sidebarSegment?.layoutClass).toBe("sidebar");
+    expect(bodySegment?.layoutClass).toBe("main");
+  });
+
+  it("classifies footnote-style years and citation markers away from main prose", () => {
+    const pageElement = document.createElement("div");
+    pageElement.dataset.pageNumber = "1";
+    Object.defineProperty(pageElement, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createMockRect(0, 0, 640, 960),
+    });
+
+    const textLayer = document.createElement("div");
+    textLayer.className = "textLayer";
+
+    const prose = document.createElement("span");
+    prose.textContent = "The trapped-ion platform has shown rapid progress";
+    Object.defineProperty(prose, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createMockRect(120, 620, 360, 24),
+    });
+    textLayer.appendChild(prose);
+
+    const citation = document.createElement("span");
+    citation.textContent = "[25]";
+    Object.defineProperty(citation, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createMockRect(492, 623, 30, 16),
+    });
+    textLayer.appendChild(citation);
+
+    const footnote = document.createElement("span");
+    footnote.textContent = "2023";
+    Object.defineProperty(footnote, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createMockRect(72, 820, 38, 14),
+    });
+    textLayer.appendChild(footnote);
+
+    pageElement.appendChild(textLayer);
+    document.body.appendChild(pageElement);
+
+    const model = buildRenderedPdfPageTextModel(pageElement);
+    expect(model).toBeTruthy();
+    if (!model) {
+      throw new Error("Missing rendered model");
+    }
+
+    expect(model.segments.find((segment) => segment.text.includes("rapid progress"))?.layoutClass).toBe("main");
+    expect(model.segments.find((segment) => segment.text === "[25]")?.layoutClass).toBe("auxiliary");
+    expect(model.segments.find((segment) => segment.text === "2023")?.layoutClass).toBe("footnote");
+  });
+
+  it("assigns separate columns to left and right prose blocks in a two-column layout", () => {
+    const pageElement = document.createElement("div");
+    pageElement.dataset.pageNumber = "1";
+    Object.defineProperty(pageElement, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createMockRect(0, 0, 640, 960),
+    });
+
+    const textLayer = document.createElement("div");
+    textLayer.className = "textLayer";
+
+    [
+      { text: "Left column opening paragraph", left: 56, top: 140, width: 210, height: 22 },
+      { text: "Left column second line", left: 56, top: 170, width: 206, height: 22 },
+      { text: "Right column opening paragraph", left: 358, top: 140, width: 214, height: 22 },
+      { text: "Right column second line", left: 358, top: 170, width: 208, height: 22 },
+    ].forEach((fragment) => {
+      const span = document.createElement("span");
+      span.textContent = fragment.text;
+      Object.defineProperty(span, "getBoundingClientRect", {
+        configurable: true,
+        value: () => createMockRect(fragment.left, fragment.top, fragment.width, fragment.height),
+      });
+      textLayer.appendChild(span);
+    });
+
+    pageElement.appendChild(textLayer);
+    document.body.appendChild(pageElement);
+
+    const model = buildRenderedPdfPageTextModel(pageElement);
+    expect(model).toBeTruthy();
+    if (!model) {
+      throw new Error("Missing rendered model");
+    }
+
+    const leftSegment = model.segments.find((segment) => segment.text.includes("Left column opening"));
+    const rightSegment = model.segments.find((segment) => segment.text.includes("Right column opening"));
+    expect(leftSegment?.layoutClass).toBe("main");
+    expect(rightSegment?.layoutClass).toBe("main");
+    expect(leftSegment?.columnIndex).toBe(0);
+    expect(rightSegment?.columnIndex).toBe(1);
+  });
+
+  it("classifies top-of-page author and DOI fragments away from body prose", () => {
+    const pageElement = document.createElement("div");
+    pageElement.dataset.pageNumber = "1";
+    Object.defineProperty(pageElement, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createMockRect(0, 0, 614, 803),
+    });
+
+    const textLayer = document.createElement("div");
+    textLayer.className = "textLayer";
+
+    [
+      { text: "Demon-like algorithmic quantum cooling and its", left: 49, top: 40, width: 493, height: 24 },
+      { text: "realization with quantum optics", left: 49, top: 70, width: 324, height: 24 },
+      { text: "Jin-Shi Xu, Man-Hong Yung, Xiao-Ye Xu", left: 49, top: 102, width: 260, height: 12 },
+      { text: "1†", left: 312, top: 105, width: 6, height: 7 },
+      { text: "2,3†", left: 325, top: 105, width: 13, height: 7 },
+      { text: "PUBLISHED ONLINE: 19 JANUARY 2014 | DOI: 10.1038/NPHOTON.2013.354", left: 287, top: 20, width: 264, height: 8 },
+      { text: "In the following, we report a proof-of-principle demonstration of", left: 49, top: 260, width: 250, height: 9 },
+      { text: "the quantum cooling method with an all-optical set-up.", left: 49, top: 271, width: 240, height: 9 },
+      { text: "that is, ref. 25 for a recent review of photonic quantum simulation.", left: 314, top: 260, width: 240, height: 9 },
+    ].forEach((fragment) => {
+      const span = document.createElement("span");
+      span.textContent = fragment.text;
+      Object.defineProperty(span, "getBoundingClientRect", {
+        configurable: true,
+        value: () => createMockRect(fragment.left, fragment.top, fragment.width, fragment.height),
+      });
+      textLayer.appendChild(span);
+    });
+
+    pageElement.appendChild(textLayer);
+    document.body.appendChild(pageElement);
+
+    const model = buildRenderedPdfPageTextModel(pageElement);
+    expect(model).toBeTruthy();
+    if (!model) {
+      throw new Error("Missing rendered model");
+    }
+
+    expect(model.segments.find((segment) => segment.text.includes("Jin-Shi Xu"))?.layoutClass).toBe("metadata");
+    expect(model.segments.find((segment) => segment.text === "1†")?.layoutClass).toBe("auxiliary");
+    expect(model.segments.find((segment) => segment.text.includes("DOI: 10.1038"))?.layoutClass).toBe("metadata");
+    expect(model.segments.find((segment) => segment.text.includes("proof-of-principle"))?.layoutClass).toBe("main");
   });
 });

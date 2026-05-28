@@ -2,7 +2,7 @@ import { fastSaveFile } from "@/lib/fast-save";
 import { emitVaultChange, emitVaultRename } from "@/lib/plugins/runtime";
 import { generateUniqueName, resolveEntry, renameFile as renameFileUtil } from "@/lib/file-operations";
 import { getFileExtension } from "@/lib/file-utils";
-import type { TabState } from "@/types/layout";
+import type { FileTabState } from "@/types/layout";
 import { useExplorerStore } from "@/stores/explorer-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 
@@ -22,11 +22,11 @@ export function extractMarkdownTitle(content: string): string | null {
 }
 
 export async function saveWorkspaceTabContent(input: {
-  tab: TabState;
+  tab: FileTabState;
   content: string;
   rootHandle: FileSystemDirectoryHandle | null;
   refreshDirectory?: (options?: { silent?: boolean }) => Promise<void>;
-}): Promise<TabState> {
+}): Promise<FileTabState> {
   await fastSaveFile(input.tab.fileHandle, input.content);
 
   let persistedTab = input.tab;

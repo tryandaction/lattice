@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   adjustPdfAnnotationAnchor,
+  adjustPdfAnnotationAnchorFromPointer,
   resolvePdfAnnotationTextAnchor,
 } from "../pdf-annotation-adjustment";
 import type { PdfPageTextModel } from "../pdf-page-text-cache";
@@ -155,5 +156,65 @@ describe("pdf-annotation-adjustment", () => {
     expect(adjusted).not.toBeNull();
     expect(adjusted?.textQuote.exact).toBe("DiVincenzo");
     expect(adjusted?.rects).toEqual(target.rects);
+  });
+
+  it("restores the original quote after dragging a boundary out and back to the same place", () => {
+    const model = createModel();
+    const target: PdfTarget = {
+      type: "pdf",
+      page: 1,
+      rects: [
+        { x1: 116 / 640, y1: 120 / 960, x2: 200 / 640, y2: 144 / 960 },
+        { x1: 208 / 640, y1: 120 / 960, x2: 260 / 640, y2: 144 / 960 },
+      ],
+      textQuote: {
+        exact: "phenomenon, which",
+        prefix: "This ",
+        suffix: " we call",
+        source: "pdfjs-text-model",
+        confidence: "exact",
+      },
+    };
+
+    const currentAnchor = resolvePdfAnnotationTextAnchor(model, target);
+    expect(currentAnchor).not.toBeNull();
+    if (!currentAnchor) {
+      throw new Error("Missing current anchor");
+    }
+
+    const pageRect = {
+      left: 0,
+      top: 0,
+      width: 640,
+      height: 960,
+      right: 640,
+      bottom: 960,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect;
+
+    const expanded = adjustPdfAnnotationAnchorFromPointer({
+      model,
+      target,
+      currentAnchor,
+      pageRect,
+      point: { x: 276, y: 132 },
+      side: "end",
+    });
+    expect(expanded?.textQuote.exact).toBe("phenomenon, which we");
+
+    const restored = adjustPdfAnnotationAnchorFromPointer({
+      model,
+      target,
+      currentAnchor: expanded ?? currentAnchor,
+      pageRect,
+      point: { x: 260, y: 132 },
+      side: "end",
+    });
+
+    expect(restored).not.toBeNull();
+    expect(restored?.textQuote.exact).toBe("phenomenon, which");
+    expect(restored?.rects).toEqual(target.rects);
   });
 });

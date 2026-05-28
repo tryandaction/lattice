@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  ArrowLeft,
+  ArrowRight,
   ArrowLeftRight,
   BookOpen,
   Box,
@@ -35,6 +37,9 @@ import {
   ZoomIn,
   ZoomOut,
   MousePointer2,
+  RotateCw,
+  ExternalLink,
+  Globe,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -119,6 +124,11 @@ const ACTION_ICON_MAP = {
   eraser: Eraser,
   mousePointer2: MousePointer2,
   command: Command,
+  arrowLeft: ArrowLeft,
+  arrowRight: ArrowRight,
+  rotateCw: RotateCw,
+  externalLink: ExternalLink,
+  globe: Globe,
 } as const;
 
 type ActionIconKey = keyof typeof ACTION_ICON_MAP;
@@ -137,8 +147,14 @@ function resolveActionIcon(action: { id: string; icon?: string; label: string })
       return "filePenLine";
     case "arrow-left-right":
       return "arrowLeftRight";
+    case "arrow-left":
+      return "arrowLeft";
+    case "arrow-right":
+      return "arrowRight";
     case "maximize-2":
       return "maximize2";
+    case "rotate-cw":
+      return "rotateCw";
     case "zoom-in":
       return "zoomIn";
     case "zoom-out":
@@ -165,6 +181,10 @@ function resolveActionIcon(action: { id: string; icon?: string; label: string })
       return "fileOutput";
     case "search":
       return "search";
+    case "external-link":
+      return "externalLink";
+    case "globe":
+      return "globe";
     default:
       break;
   }
@@ -185,6 +205,11 @@ function resolveActionIcon(action: { id: string; icon?: string; label: string })
   if (actionId === "mode-reading") return "bookOpen";
   if (actionId === "fit-width") return "arrowLeftRight";
   if (actionId === "fit-page") return "maximize2";
+  if (actionId === "back" || actionId === "go-back") return "arrowLeft";
+  if (actionId === "forward" || actionId === "go-forward") return "arrowRight";
+  if (actionId === "reload" || actionId === "refresh") return "rotateCw";
+  if (actionId === "open-external" || actionId === "open-in-browser") return "externalLink";
+  if (actionId === "open-web" || actionId === "web") return "globe";
   if (actionId === "zoom-in") return "zoomIn";
   if (actionId === "zoom-out") return "zoomOut";
   if (actionId === "add-code-cell" || actionId === "add-raw-cell") return "fileCode2";
@@ -207,6 +232,7 @@ function CommandBarActionButton({
     id: string;
     icon?: string;
     label: string;
+    tooltip?: string;
     active?: boolean;
     disabled?: boolean;
     group?: "primary" | "secondary" | "utility";
@@ -216,6 +242,7 @@ function CommandBarActionButton({
 }) {
   const iconKey = resolveActionIcon(action) as ActionIconKey;
   const IconComponent = ACTION_ICON_MAP[iconKey];
+  const accessibleLabel = action.tooltip || action.label;
 
   return (
     <button
@@ -231,8 +258,8 @@ function CommandBarActionButton({
         action.onContextMenu({ x: event.clientX, y: event.clientY });
       }}
       disabled={action.disabled}
-      title={action.label}
-      aria-label={action.label}
+      title={accessibleLabel}
+      aria-label={accessibleLabel}
       aria-pressed={action.active ? true : undefined}
       data-tauri-drag-region="false"
       style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
@@ -473,6 +500,7 @@ export function CommandBar({
       className="relative z-[70] grid grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-border bg-background/95 pl-2 pr-0 backdrop-blur"
       style={{ height: DESKTOP_COMMAND_BAR_HEIGHT, WebkitAppRegion: "drag" } as CSSProperties}
       data-tauri-drag-region={isWindowsDesktop ? "true" : undefined}
+      data-desktop-webview-safe-zone="true"
     >
       <div
         className="flex min-w-0 items-center gap-2 pr-3"
@@ -608,6 +636,7 @@ export function CommandBar({
                 {overflowActions.map((action) => {
                   const iconKey = resolveActionIcon(action) as ActionIconKey;
                   const IconComponent = ACTION_ICON_MAP[iconKey];
+                  const accessibleLabel = action.tooltip || action.label;
                   return (
                     <button
                       key={`${activePaneId}:${action.id}:overflow`}
@@ -626,6 +655,7 @@ export function CommandBar({
                         setOverflowOpen(false);
                       }}
                       disabled={action.disabled}
+                      title={accessibleLabel}
                       className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent disabled:opacity-40"
                       data-tauri-drag-region="false"
                       style={{ WebkitAppRegion: "no-drag" } as CSSProperties}

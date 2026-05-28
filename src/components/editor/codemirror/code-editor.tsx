@@ -34,6 +34,7 @@ export type CodeEditorLanguage =
   | "markdown" 
   | "latex" 
   | "json" 
+  | "html"
   | "javascript" 
   | "typescript"
   | "plaintext";
@@ -210,6 +211,10 @@ async function loadLanguageExtension(language: CodeEditorLanguage): Promise<Exte
       case "json": {
         const { json } = await import("@codemirror/lang-json");
         return json();
+      }
+      case "html": {
+        const { html } = await import("@codemirror/lang-html");
+        return html();
       }
       case "latex": {
         // LaTeX uses legacy mode

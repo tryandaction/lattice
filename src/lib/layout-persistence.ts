@@ -9,13 +9,17 @@ import { getStorageAdapter } from "@/lib/storage-adapter";
 import { resolveEntry } from "@/lib/file-operations";
 import type { LayoutNode, LayoutState, PaneNode, SplitDirection } from "@/types/layout";
 import { isPaneNode } from "@/types/layout";
-import { createEmptyPane, createTab } from "@/lib/layout-utils";
+import { createEmptyPane, createTab, createWebTab } from "@/lib/layout-utils";
 
 const WORKBENCH_SESSION_VERSION = 1;
 const WORKBENCH_SESSION_STORAGE_KEY_PREFIX = "lattice-workbench-session";
 
 interface PersistedWorkbenchTab {
+  kind: "file" | "web";
   filePath: string;
+  fileName?: string;
+  url?: string;
+  pageTitle?: string | null;
 }
 
 interface PersistedWorkbenchPaneNode {
@@ -72,7 +76,12 @@ function serializeNode(node: LayoutNode): PersistedWorkbenchLayoutNode {
     return {
       type: "pane",
       id: node.id,
-      tabs: node.tabs.map((tab) => ({ filePath: tab.filePath })),
+      tabs: node.tabs.map((tab) => ({
+        kind: tab.kind === "web" ? "web" : "file",
+        filePath: tab.filePath,
+        fileName: tab.fileName,
+        ...(tab.kind === "web" ? { url: tab.url, pageTitle: tab.pageTitle } : {}),
+      })),
       activeTabIndex: node.activeTabIndex,
     };
   }
@@ -145,6 +154,16 @@ async function deserializeTab(
   rootHandle: FileSystemDirectoryHandle,
   persistedTab: PersistedWorkbenchTab,
 ) {
+  if (persistedTab.kind === "web") {
+    if (!persistedTab.url) {
+      return null;
+    }
+    return createWebTab(persistedTab.url, {
+      fileName: persistedTab.fileName,
+      pageTitle: persistedTab.pageTitle ?? null,
+    });
+  }
+
   const entry = await resolveEntry(rootHandle, persistedTab.filePath);
   if (!entry || entry.kind !== "file") {
     return null;

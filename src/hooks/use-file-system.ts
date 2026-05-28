@@ -251,10 +251,54 @@ function isHydratablePdfNode(node: FileNode): boolean {
 /**
  * Get the handle for .lattice access. When viewing a subdirectory workspace,
  * we still want to read/write .lattice from the original workspace root.
+ * Uses workspaceRootHistory to find ancestor workspace roots.
  */
 function getLatticeRootHandle(): FileSystemDirectoryHandle | null {
   const state = useWorkspaceStore.getState();
-  return state.workspaceRootHandle ?? state.rootHandle;
+  // First try workspaceRootHandle
+  if (state.workspaceRootHandle) {
+    return state.workspaceRootHandle;
+  }
+  // Fall back to rootHandle
+  return state.rootHandle;
+}
+
+/**
+ * Find the best workspace root for accessing .lattice data.
+ * When opening a subdirectory, checks if it's under a known workspace root.
+ */
+function findBestWorkspaceRoot(
+  currentRootHandle: FileSystemDirectoryHandle,
+  newWorkspacePath: string,
+): FileSystemDirectoryHandle {
+  const state = useWorkspaceStore.getState();
+
+  // If new path starts with existing workspace root path, use existing root
+  const existingRootPath = state.workspaceRootPath;
+  if (existingRootPath && (
+    newWorkspacePath === existingRootPath ||
+    newWorkspacePath.startsWith(`${existingRootPath}/`)
+  )) {
+    return state.workspaceRootHandle ?? currentRootHandle;
+  }
+
+  // If current root is an ancestor of new path, use current root
+  const currentRootPath = state.workspaceRootPath ?? state.rootHandle?.name;
+  if (currentRootPath && (
+    newWorkspacePath.startsWith(`${currentRootPath}/`) ||
+    newWorkspacePath === currentRootPath
+  )) {
+    return state.workspaceRootHandle ?? currentRootHandle;
+  }
+
+  // Try to find in history
+  const historicalRoot = state.findWorkspaceRootForPath(newWorkspacePath);
+  if (historicalRoot) {
+    return historicalRoot;
+  }
+
+  // Default to new root handle
+  return currentRootHandle;
 }
 
 function collectFileExpansionState(node: TreeNode | null, expanded: Set<string> = new Set()): Set<string> {
@@ -554,6 +598,7 @@ export async function applyWorkspaceHandleToStores(
   handle: FileSystemDirectoryHandle,
   workspaceRootPath: string | null,
   preferredWorkspaceKey?: string | null,
+  options?: { preserveWorkspaceRoot?: boolean },
 ): Promise<void> {
   useContentCacheStore.getState().clearCache();
 
@@ -583,7 +628,23 @@ export async function applyWorkspaceHandleToStores(
   };
 
   workspaceStore.setRootHandle(handle);
-  workspaceStore.setWorkspaceRootHandle(handle); // Preserve true workspace root for .lattice access
+
+  // Determine workspace root handle:
+  // - If preserveWorkspaceRoot is true and there's an existing workspaceRootHandle,
+  //   preserve it (for switching to subdirectory within same workspace)
+  // - Otherwise, use the new handle
+  if (options?.preserveWorkspaceRoot && workspaceStore.workspaceRootHandle) {
+    // Keep the existing workspaceRootHandle
+  } else {
+    // This is a new workspace root
+    workspaceStore.setWorkspaceRootHandle(handle);
+    // Register this path for future nested workspace detection
+    workspaceStore.registerWorkspaceRoot(
+      resolvedWorkspaceIdentity.displayPath ?? workspaceRootPath ?? handle.name,
+      handle
+    );
+  }
+
   workspaceStore.setWorkspaceIdentity(resolvedWorkspaceIdentity);
   workspaceStore.setWorkspaceRootPath(resolvedWorkspaceIdentity.displayPath ?? workspaceRootPath ?? handle.name);
   startTransition(() => {
@@ -631,14 +692,36 @@ export function useFileSystem(): UseFileSystemReturn {
     nextWorkspaceRootPath: string | null,
     options: { preserveWorkspaceRoot?: boolean } = {},
   ) => {
+    // If preserveWorkspaceRoot is set and there's an existing workspace root,
+    // determine if the new path is under the existing workspace
     if (options.preserveWorkspaceRoot) {
-      // When switching to a subdirectory workspace, preserve the original workspace root
-      // for .lattice access (annotations, PDF items, etc.)
-      await applyWorkspaceHandleToStores(handle, nextWorkspaceRootPath);
-      useWorkspaceStore.getState().setWorkspaceRootHandle(useWorkspaceStore.getState().rootHandle);
-    } else {
-      await applyWorkspaceHandleToStores(handle, nextWorkspaceRootPath);
+      const existingRoot = useWorkspaceStore.getState().workspaceRootHandle;
+      const existingPath = useWorkspaceStore.getState().workspaceRootPath;
+
+      // Check if new path is under existing workspace
+      if (existingRoot && existingPath) {
+        const normalizedExisting = existingPath.replace(/\\/g, "/");
+        const normalizedNew = (nextWorkspaceRootPath ?? handle.name).replace(/\\/g, "/");
+
+        // If new path starts with existing path or is equal, preserve root
+        if (normalizedNew === normalizedExisting ||
+            normalizedNew.startsWith(`${normalizedExisting}/`)) {
+          await applyWorkspaceHandleToStores(handle, nextWorkspaceRootPath, undefined, {
+            preserveWorkspaceRoot: true,
+          });
+          return;
+        }
+
+        // If existing path starts with new path, new path is a parent
+        if (normalizedExisting.startsWith(`${normalizedNew}/`)) {
+          // New path is a parent of existing, update workspace root
+          await applyWorkspaceHandleToStores(handle, nextWorkspaceRootPath);
+          return;
+        }
+      }
     }
+
+    await applyWorkspaceHandleToStores(handle, nextWorkspaceRootPath);
   }, []);
 
   const openWorkspaceFromDesktopPath = useCallback(async (
@@ -676,8 +759,28 @@ export function useFileSystem(): UseFileSystemReturn {
         }
       }
 
+      // Check if new path is under existing workspace root
+      const existingRootPath = useWorkspaceStore.getState().workspaceRootPath;
+      const existingRootHandle = useWorkspaceStore.getState().workspaceRootHandle;
+      let preserveWorkspaceRoot = false;
+
+      if (existingRootHandle && existingRootPath) {
+        const normalizedExisting = existingRootPath.replace(/\\/g, "/").replace(/\/+$/, "");
+        const normalizedNew = normalizedPath.replace(/\\/g, "/").replace(/\/+$/, "");
+        // If new path starts with existing path, preserve the workspace root
+        if (normalizedNew === normalizedExisting || normalizedNew.startsWith(`${normalizedExisting}/`)) {
+          preserveWorkspaceRoot = true;
+        }
+        // If existing path starts with new path, new path is a parent - update workspace root
+        // Otherwise it's a completely different workspace
+      }
+
       const handle = createDesktopDirectoryHandle(normalizedPath);
-      await applyWorkspaceHandle(handle, normalizedPath);
+      if (preserveWorkspaceRoot) {
+        await applyWorkspaceHandle(handle, normalizedPath, { preserveWorkspaceRoot: true });
+      } else {
+        await applyWorkspaceHandle(handle, normalizedPath);
+      }
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to open workspace";
@@ -893,15 +996,36 @@ export function useFileSystem(): UseFileSystemReturn {
       return;
     }
 
-    const directoryHandle = await resolveDirectoryHandle(rootHandle, path);
-    if (!directoryHandle) {
-      setError(`Could not find directory: ${path}`);
-      return;
+    // Determine which handle to use for resolving the path
+    const workspaceRoot = useWorkspaceStore.getState().workspaceRootHandle;
+    const normalizedPath = normalizeWorkspacePathInput(path);
+    const rootName = normalizeWorkspacePathInput(rootHandle.name);
+
+    // If the path starts with the current root name, resolve from rootHandle
+    // Otherwise, try to resolve from workspaceRootHandle (for sibling/ancestor directories)
+    let resolveFromHandle = rootHandle;
+    if (workspaceRoot && normalizedPath && rootName &&
+        !normalizedPath.startsWith(`${rootName}/`) &&
+        normalizedPath !== rootName) {
+      // Path doesn't start with current root, try workspace root
+      const workspaceRootName = normalizeWorkspacePathInput(workspaceRoot.name);
+      if (workspaceRootName && normalizedPath.startsWith(`${workspaceRootName}/`)) {
+        resolveFromHandle = workspaceRoot;
+      }
     }
 
-    const normalizedPath = normalizeWorkspacePathInput(path);
+    let directoryHandle = await resolveDirectoryHandle(resolveFromHandle, path);
+    if (!directoryHandle) {
+      // Try from rootHandle as fallback
+      const fallbackHandle = await resolveDirectoryHandle(rootHandle, path);
+      if (!fallbackHandle) {
+        setError(`Could not find directory: ${path}`);
+        return;
+      }
+      directoryHandle = fallbackHandle;
+    }
+
     const normalizedRootPath = normalizeWorkspacePathInput(workspaceRootPath ?? rootHandle.name);
-    const rootName = normalizeWorkspacePathInput(rootHandle.name);
     const displayPath = (
       normalizedPath &&
       normalizedRootPath &&
@@ -920,7 +1044,7 @@ export function useFileSystem(): UseFileSystemReturn {
     } finally {
       setLoading(false);
     }
-  }, [applyWorkspaceHandle, rootHandle, setError, setLoading, workspaceRootPath]);
+  }, [rootHandle, setError, setLoading, workspaceRootPath]);
 
   /**
    * Open a QA workspace in OPFS (dev-only helper)

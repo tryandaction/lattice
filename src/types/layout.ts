@@ -18,24 +18,43 @@ export type PaneId = string;
  */
 export type SplitDirection = 'horizontal' | 'vertical';
 
-/**
- * State for an individual tab within a pane
- * Represents an open file with its associated state
- */
-export interface TabState {
+interface BaseTabState {
   /** Unique identifier for the tab */
   id: string;
-  /** File System Access API handle for the file */
-  fileHandle: FileSystemFileHandle;
-  /** Display name of the file */
+  /** Display name of the file or web resource */
   fileName: string;
-  /** Full path relative to workspace root */
+  /** Workspace path or URL used as the logical tab target */
   filePath: string;
-  /** Whether the file has unsaved changes */
+  /** Whether the tab has unsaved changes */
   isDirty: boolean;
   /** Scroll position to restore when switching tabs */
   scrollPosition: number;
 }
+
+/**
+ * State for a workspace-backed file tab.
+ */
+export interface FileTabState extends BaseTabState {
+  kind?: "file";
+  /** File System Access API handle for the file */
+  fileHandle: FileSystemFileHandle;
+}
+
+/**
+ * State for an internal web tab.
+ */
+export interface WebTabState extends BaseTabState {
+  kind: "web";
+  /** Canonical URL currently loaded in the tab */
+  url: string;
+  /** Optional resolved page title when known */
+  pageTitle?: string | null;
+}
+
+/**
+ * State for an individual tab within a pane.
+ */
+export type TabState = FileTabState | WebTabState;
 
 /**
  * Pane node (leaf node in the layout tree)
@@ -95,6 +114,7 @@ export interface CommandBarAction {
   id: string;
   label: string;
   icon?: string;
+  tooltip?: string;
   active?: boolean;
   disabled?: boolean;
   priority?: number;
@@ -129,10 +149,13 @@ export function isSplitNode(node: LayoutNode): node is SplitNode {
  */
 export interface SerializedTab {
   id: string;
+  kind: "file" | "web";
   filePath: string;
   fileName: string;
   isDirty: boolean;
   scrollPosition: number;
+  url?: string;
+  pageTitle?: string | null;
 }
 
 /**
@@ -207,3 +230,11 @@ export interface SplitZoneDropTarget {
  * Union type for all drop targets
  */
 export type DropTarget = TabBarDropTarget | SplitZoneDropTarget;
+
+export function isFileTabState(tab: TabState): tab is FileTabState {
+  return tab.kind !== "web";
+}
+
+export function isWebTabState(tab: TabState): tab is WebTabState {
+  return tab.kind === "web";
+}

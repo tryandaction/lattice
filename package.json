@@ -10,7 +10,7 @@
     "deploy:cloudflare": "npx wrangler pages deploy web-dist --project-name lattice",
     "deploy:web": "npm run build && npm run deploy:cloudflare",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node scripts/ensure-next-type-shims.mjs && tsc --noEmit",
     "test": "vitest",
     "test:docs": "node scripts/check-docs.mjs",
     "test:pdf-ab": "node scripts/pdf-selection-ab-regression.mjs",

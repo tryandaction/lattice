@@ -43,6 +43,7 @@ import { runPromptTemplate } from "@/lib/prompt/executor";
 import { usePromptTemplateStore } from "@/stores/prompt-template-store";
 import { toast } from "sonner";
 import { buildAiResultViewModel } from "@/lib/ai/result-view-model";
+import { isFileTabState } from "@/types/layout";
 
 interface ChatPromptContextOptions {
   includeCurrentFileContent: boolean;
@@ -79,6 +80,9 @@ async function resolveActiveFileContent(
   }
   if (!activeTab) {
     return undefined;
+  }
+  if (!isFileTabState(activeTab)) {
+    return activeContent ?? undefined;
   }
   try {
     const file = await activeTab.fileHandle.getFile();

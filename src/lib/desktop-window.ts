@@ -87,17 +87,17 @@ export function isWindowsDesktopHost(): boolean {
 }
 
 export async function minimizeDesktopWindow(): Promise<void> {
-  const desktopWindow = getDesktopWindow();
-  if (desktopWindow) {
-    try {
-      await desktopWindow.minimize();
-      return;
-    } catch (error) {
-      console.error("[DesktopWindow] minimize via JS API failed:", error);
-    }
+  const invoked = await invokeDesktopWindowCommand("desktop_window_minimize");
+  if (invoked !== null) {
+    return;
   }
 
-  await invokeDesktopWindowCommand("desktop_window_minimize");
+  const desktopWindow = getDesktopWindow();
+  if (!desktopWindow) {
+    return;
+  }
+
+  await desktopWindow.minimize();
 }
 
 export async function startDesktopWindowDrag(): Promise<void> {
@@ -124,6 +124,11 @@ export async function startDesktopWindowResize(direction: DesktopResizeDirection
 }
 
 export async function toggleDesktopWindowMaximize(): Promise<boolean | null> {
+  const invoked = await invokeDesktopWindowCommand<boolean>("desktop_window_toggle_maximize");
+  if (typeof invoked === "boolean") {
+    return invoked;
+  }
+
   const desktopWindow = getDesktopWindow();
   if (desktopWindow) {
     try {
@@ -134,11 +139,15 @@ export async function toggleDesktopWindowMaximize(): Promise<boolean | null> {
     }
   }
 
-  const invoked = await invokeDesktopWindowCommand<boolean>("desktop_window_toggle_maximize");
-  return typeof invoked === "boolean" ? invoked : null;
+  return null;
 }
 
 export async function isDesktopWindowMaximized(): Promise<boolean> {
+  const invoked = await invokeDesktopWindowCommand<boolean>("desktop_window_is_maximized");
+  if (typeof invoked === "boolean") {
+    return invoked;
+  }
+
   const desktopWindow = getDesktopWindow();
   if (desktopWindow) {
     try {
@@ -148,22 +157,21 @@ export async function isDesktopWindowMaximized(): Promise<boolean> {
     }
   }
 
-  const invoked = await invokeDesktopWindowCommand<boolean>("desktop_window_is_maximized");
-  return typeof invoked === "boolean" ? invoked : false;
+  return false;
 }
 
 export async function closeDesktopWindow(): Promise<void> {
-  const desktopWindow = getDesktopWindow();
-  if (desktopWindow) {
-    try {
-      await desktopWindow.close();
-      return;
-    } catch (error) {
-      console.error("[DesktopWindow] close via JS API failed:", error);
-    }
+  const invoked = await invokeDesktopWindowCommand("desktop_window_close");
+  if (invoked !== null) {
+    return;
   }
 
-  await invokeDesktopWindowCommand("desktop_window_close");
+  const desktopWindow = getDesktopWindow();
+  if (!desktopWindow) {
+    return;
+  }
+
+  await desktopWindow.close();
 }
 
 export async function subscribeDesktopWindowState(

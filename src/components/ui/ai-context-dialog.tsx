@@ -14,6 +14,7 @@ import { getFileExtension, isBinaryFile } from "@/lib/file-utils";
 import { cn } from "@/lib/utils";
 import type { AiContextItem } from "@/lib/ai/types";
 import type { AnnotationItem } from "@/types/universal-annotation";
+import { isFileTabState } from "@/types/layout";
 
 export interface AiContextDialogProps {
   isOpen: boolean;
@@ -67,6 +68,8 @@ export function AiContextDialog({ isOpen, onClose }: AiContextDialogProps) {
     const cached = getCachedContent(activeTab.id);
     if (cached && typeof cached.content === "string") {
       content = cached.content;
+    } else if (!isFileTabState(activeTab)) {
+      content = activeTab.filePath;
     } else {
       try {
         const file = await activeTab.fileHandle.getFile();

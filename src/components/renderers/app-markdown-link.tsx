@@ -28,7 +28,7 @@ export function AppMarkdownLink({
     () => (href ? parseLinkTarget(href, { currentFilePath }) : null),
     [currentFilePath, href],
   );
-  const isAppLink = Boolean(parsedTarget?.target && parsedTarget.target.type !== "external_url");
+  const isAppLink = Boolean(parsedTarget?.target);
   const effectivePaneId = paneId ?? fallbackPaneId;
   const effectiveRootHandle = rootHandle ?? fallbackRootHandle;
 
@@ -52,6 +52,9 @@ export function AppMarkdownLink({
           paneId: effectivePaneId,
           rootHandle: effectiveRootHandle,
           currentFilePath,
+          externalUrlMode: (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+            ? "external"
+            : "internal",
         });
       }}
     >

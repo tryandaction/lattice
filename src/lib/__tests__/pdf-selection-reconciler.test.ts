@@ -498,6 +498,46 @@ describe("pdf-selection-reconciler", () => {
     }
   });
 
+  it("keeps a right-column selection inside the right column of a two-column layout", () => {
+    const leftText = "Left column discusses control hardware and initialization";
+    const rightText = "Right column explains the readout calibration sequence";
+    const selectedText = "readout calibration";
+    const rightStart = rightText.indexOf(selectedText);
+    const rightLeft = 352;
+    const rightWidth = 220;
+    const charWidth = rightWidth / rightText.length;
+    const selectedLeft = rightLeft + (rightStart * charWidth);
+    const selectedRight = selectedLeft + (selectedText.length * charWidth);
+    const page = createPageContext({
+      fragments: [
+        { text: leftText, left: 56, top: 180, width: 220, height: 22 },
+        { text: rightText, left: rightLeft, top: 180, width: rightWidth, height: 22 },
+      ],
+    });
+    const range = createRangeWithinFragment(leftText, "control");
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: selectedText,
+      pages: [page],
+      clientRects: [{
+        left: selectedLeft,
+        right: selectedRight,
+        top: 180,
+        bottom: 202,
+      }],
+      dragStartPoint: { x: selectedLeft + 1, y: 191 },
+      dragEndPoint: { x: selectedRight - 1, y: 191 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(selectedText);
+      expect(result.selection.textQuote.exact).not.toContain("control");
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(selectedLeft / 640, 3);
+    }
+  });
+
   it("keeps mixed Chinese-English inline text aligned to the selected formatted span", () => {
     const page = createPageContext({
       fragments: [

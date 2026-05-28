@@ -13,6 +13,7 @@ import type {
 import {
   createEmptyPane,
   createTab,
+  createWebTab,
   splitPane as splitPaneUtil,
   removePane as removePaneUtil,
   updateSizes as updateSizesUtil,
@@ -28,6 +29,7 @@ import {
   setActiveTabInPane,
   setTabDirty as setTabDirtyUtil,
   findPane,
+  updatePaneTabs,
   getAllPaneIds,
   getFirstPaneId,
   generatePaneId,
@@ -37,6 +39,8 @@ import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 import { destroyExecutionScope, destroyExecutionScopes } from "@/stores/execution-session-store";
 import type { WorkspaceIdentity } from "@/types/workspace-identity";
 import { setDesktopPreviewRoot } from "@/lib/desktop-preview";
+import { isFileTabState, isWebTabState } from "@/types/layout";
+import { destroyDesktopWebview, getDesktopWebviewLabelForTab } from "@/lib/desktop-webview";
 
 /**
  * Create initial layout with a single empty pane
@@ -118,6 +122,21 @@ function collectExecutionScopeIdsByPath(root: LayoutNode, predicate: (tab: TabSt
   return root.children.flatMap((child) => collectExecutionScopeIdsByPath(child, predicate));
 }
 
+function collectDesktopWebviewLabels(root: LayoutNode): string[] {
+  if (root.type === "pane") {
+    return root.tabs
+      .filter((tab) => isWebTabState(tab))
+      .map((tab) => getDesktopWebviewLabelForTab(tab.id));
+  }
+  return root.children.flatMap((child) => collectDesktopWebviewLabels(child));
+}
+
+async function destroyDesktopWebviewsByLabels(labels: string[]): Promise<void> {
+  for (const label of labels) {
+    await destroyDesktopWebview(label);
+  }
+}
+
 /**
  * Workspace state interface
  */
@@ -132,6 +151,8 @@ interface WorkspaceState {
   error: string | null;
   selectedDirectoryPath: string | null; // 新增：当前选中的文件夹路径
   runnerPreferences: WorkspaceRunnerPreferences;
+  // Workspace root history for nested workspace detection
+  workspaceRootHistory: Map<string, FileSystemDirectoryHandle>; // path → rootHandle
 
   // Layout state (new advanced layout system)
   layout: LayoutState;
@@ -142,6 +163,9 @@ interface WorkspaceState {
   setRootHandle: (handle: FileSystemDirectoryHandle | null) => void;
   setWorkspaceRootHandle: (handle: FileSystemDirectoryHandle | null) => void;
   setWorkspaceRootPath: (path: string | null) => void;
+  registerWorkspaceRoot: (path: string, handle: FileSystemDirectoryHandle) => void;
+  findWorkspaceRootForPath: (path: string) => FileSystemDirectoryHandle | null;
+  clearWorkspaceRootHistory: () => void;
   setWorkspaceIdentity: (identity: WorkspaceIdentity | null) => void;
   setFileTree: (tree: FileTree) => void;
   setLoading: (loading: boolean) => void;
@@ -170,6 +194,10 @@ interface WorkspaceState {
   // Tab actions
   openFileInPane: (paneId: PaneId, handle: FileSystemFileHandle, path: string) => void;
   openFileInActivePane: (handle: FileSystemFileHandle, path: string) => void;
+  openWebUrlInPane: (paneId: PaneId, url: string, options?: { fileName?: string; pageTitle?: string | null }) => void;
+  openWebUrlInActivePane: (url: string, options?: { fileName?: string; pageTitle?: string | null }) => void;
+  updateWebTab: (paneId: PaneId, tabId: string, update: { url?: string; fileName?: string; pageTitle?: string | null }) => void;
+  reloadWebTab: (paneId: PaneId, tabId: string) => void;
   closeTab: (paneId: PaneId, tabIndex: number) => void;
   closeTabsByPath: (path: string) => void;
   closeTabsByPrefix: (pathPrefix: string) => void;
@@ -212,6 +240,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   error: null,
   selectedDirectoryPath: null,
   runnerPreferences: createInitialRunnerPreferences(),
+  workspaceRootHistory: new Map(),
 
   // Initial layout state
   layout: createInitialLayout(),
@@ -231,6 +260,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
   setWorkspaceRootHandle: (handle) => set({ workspaceRootHandle: handle }),
   setWorkspaceRootPath: (path) => set({ workspaceRootPath: path }),
+  registerWorkspaceRoot: (path, handle) =>
+    set((state) => {
+      const next = new Map(state.workspaceRootHistory);
+      next.set(path, handle);
+      return { workspaceRootHistory: next };
+    }),
+  findWorkspaceRootForPath: (path) => {
+    const state = get();
+    // First check if path is under workspaceRootHandle's name
+    const rootName = state.workspaceRootHandle?.name;
+    if (rootName && (path === rootName || path.startsWith(`${rootName}/`))) {
+      return state.workspaceRootHandle;
+    }
+    // Check history for a matching ancestor path
+    for (const [historyPath, historyHandle] of state.workspaceRootHistory) {
+      if (path === historyPath || path.startsWith(`${historyPath}/`)) {
+        return historyHandle;
+      }
+    }
+    // Fall back to workspaceRootHandle
+    return state.workspaceRootHandle;
+  },
+  clearWorkspaceRootHistory: () => set({ workspaceRootHistory: new Map() }),
   setWorkspaceIdentity: (identity) => set({ workspaceIdentity: identity }),
   setFileTree: (tree) => set({ fileTree: tree }),
   setLoading: (loading) => set({ isLoading: loading }),
@@ -238,6 +290,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   clearWorkspace: () => {
     const scopeIds = collectExecutionScopeIds(get().layout.root);
+    const desktopWebviewLabels = collectDesktopWebviewLabels(get().layout.root);
     set({
       rootHandle: null,
       workspaceRootHandle: null,
@@ -249,9 +302,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       layout: createInitialLayout(),
       runnerPreferences: createInitialRunnerPreferences(),
       commandBarByPane: {},
+      workspaceRootHistory: new Map(),
     });
     void setDesktopPreviewRoot(null);
     void destroyExecutionScopes(scopeIds);
+    void destroyDesktopWebviewsByLabels(desktopWebviewLabels);
   },
 
   toggleDirectory: (path) =>
@@ -344,6 +399,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       paneId,
       tabId: tab.id,
     })) ?? [];
+    const desktopWebviewLabels = pane
+      ? pane.tabs
+          .filter((tab) => isWebTabState(tab))
+          .map((tab) => getDesktopWebviewLabelForTab(tab.id))
+      : [];
 
     set({
       layout: {
@@ -355,6 +415,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       ),
     });
     void destroyExecutionScopes(scopeIds);
+    void destroyDesktopWebviewsByLabels(desktopWebviewLabels);
     return true;
   },
 
@@ -404,23 +465,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   restoreWorkbenchState: (layout, sidebarCollapsed = false) =>
     {
       const scopeIds = collectExecutionScopeIds(get().layout.root);
+      const desktopWebviewLabels = collectDesktopWebviewLabels(get().layout.root);
       set({
         layout,
         sidebarCollapsed,
         commandBarByPane: {},
       });
       void destroyExecutionScopes(scopeIds);
+      void destroyDesktopWebviewsByLabels(desktopWebviewLabels);
     },
 
   resetWorkbenchState: (sidebarCollapsed = false) =>
     {
       const scopeIds = collectExecutionScopeIds(get().layout.root);
+      const desktopWebviewLabels = collectDesktopWebviewLabels(get().layout.root);
       set({
         layout: createInitialLayout(),
         sidebarCollapsed,
         commandBarByPane: {},
       });
       void destroyExecutionScopes(scopeIds);
+      void destroyDesktopWebviewsByLabels(desktopWebviewLabels);
     },
 
   // Tab actions
@@ -443,10 +508,74 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     openFileInPane(layout.activePaneId, handle, path);
   },
 
+  openWebUrlInPane: (paneId, url, options) => {
+    set((state) => {
+      const tab = createWebTab(url, options);
+      const newRoot = addTabToPane(state.layout.root, paneId, tab);
+      return {
+        layout: {
+          ...state.layout,
+          root: newRoot,
+        },
+      };
+    });
+  },
+
+  openWebUrlInActivePane: (url, options) => {
+    const { layout, openWebUrlInPane } = get();
+    openWebUrlInPane(layout.activePaneId, url, options);
+  },
+
+  updateWebTab: (paneId, tabId, update) =>
+    set((state) => {
+      const pane = findPane(state.layout.root, paneId);
+      if (!pane) {
+        return state;
+      }
+
+      const nextTabs = pane.tabs.map((tab) => {
+        if (!isWebTabState(tab) || tab.id !== tabId) {
+          return tab;
+        }
+
+        const nextUrl = update.url?.trim() || tab.url;
+        const nextFileName = update.fileName?.trim() || update.pageTitle?.trim() || tab.fileName;
+        return {
+          ...tab,
+          url: nextUrl,
+          filePath: nextUrl,
+          fileName: nextFileName,
+          pageTitle: update.pageTitle === undefined ? tab.pageTitle : update.pageTitle,
+        };
+      });
+
+      const hasChanges = nextTabs.some((tab, index) => tab !== pane.tabs[index]);
+      if (!hasChanges) {
+        return state;
+      }
+
+      return {
+        layout: {
+          ...state.layout,
+          root: updatePaneTabs(state.layout.root, paneId, nextTabs, pane.activeTabIndex),
+        },
+      };
+    }),
+
+  reloadWebTab: (paneId, tabId) => {
+    const pane = findPane(get().layout.root, paneId);
+    const webTab = pane?.tabs.find((tab) => isWebTabState(tab) && tab.id === tabId);
+    if (!webTab || !isWebTabState(webTab)) {
+      return;
+    }
+    void destroyDesktopWebview(getDesktopWebviewLabelForTab(tabId));
+  },
+
   closeTab: (paneId, tabIndex) => {
     const state = get();
     const pane = findPane(state.layout.root, paneId);
-    const closedPath = pane?.tabs[tabIndex]?.filePath;
+    const closedTab = pane?.tabs[tabIndex];
+    const closedPath = closedTab?.filePath;
     const closedTabId = pane?.tabs[tabIndex]?.id;
     set((state) => ({
       layout: {
@@ -460,13 +589,33 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         tabId: closedTabId,
       }));
     }
-    if (closedPath) {
+    if (closedPath && closedTab && isFileTabState(closedTab)) {
       emitFileClose(closedPath);
+    }
+    if (closedTab && isWebTabState(closedTab)) {
+      void destroyDesktopWebview(getDesktopWebviewLabelForTab(closedTab.id));
     }
   },
 
   closeTabsByPath: (path) => {
-    const scopeIds = collectExecutionScopeIdsByPath(get().layout.root, (tab) => tab.filePath === path);
+    const layout = get().layout.root;
+    const shouldEmitClose = collectExecutionScopeIdsByPath(layout, (tab) => tab.filePath === path).length > 0
+      && (() => {
+        const stack = [layout];
+        while (stack.length > 0) {
+          const current = stack.pop();
+          if (!current) continue;
+          if (current.type === "pane") {
+            if (current.tabs.some((tab) => tab.filePath === path && isFileTabState(tab))) {
+              return true;
+            }
+            continue;
+          }
+          stack.push(...current.children);
+        }
+        return false;
+      })();
+    const scopeIds = collectExecutionScopeIdsByPath(layout, (tab) => tab.filePath === path);
     set((state) => ({
       layout: {
         ...state.layout,
@@ -474,11 +623,34 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       },
     }));
     void destroyExecutionScopes(scopeIds);
-    emitFileClose(path);
+    void destroyDesktopWebviewsByLabels(
+      (() => {
+        const labels: string[] = [];
+        const stack = [layout];
+        while (stack.length > 0) {
+          const current = stack.pop();
+          if (!current) continue;
+          if (current.type === "pane") {
+            current.tabs.forEach((tab) => {
+              if (tab.filePath === path && isWebTabState(tab)) {
+                labels.push(getDesktopWebviewLabelForTab(tab.id));
+              }
+            });
+            continue;
+          }
+          stack.push(...current.children);
+        }
+        return labels;
+      })(),
+    );
+    if (shouldEmitClose) {
+      emitFileClose(path);
+    }
   },
 
   closeTabsByPrefix: (pathPrefix) => {
-    const scopeIds = collectExecutionScopeIdsByPath(get().layout.root, (tab) => tab.filePath.startsWith(pathPrefix));
+    const layout = get().layout.root;
+    const scopeIds = collectExecutionScopeIdsByPath(layout, (tab) => tab.filePath.startsWith(pathPrefix));
     set((state) => ({
       layout: {
         ...state.layout,
@@ -486,6 +658,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       },
     }));
     void destroyExecutionScopes(scopeIds);
+    void destroyDesktopWebviewsByLabels(
+      (() => {
+        const labels: string[] = [];
+        const stack = [layout];
+        while (stack.length > 0) {
+          const current = stack.pop();
+          if (!current) continue;
+          if (current.type === "pane") {
+            current.tabs.forEach((tab) => {
+              if (tab.filePath.startsWith(pathPrefix) && isWebTabState(tab)) {
+                labels.push(getDesktopWebviewLabelForTab(tab.id));
+              }
+            });
+            continue;
+          }
+          stack.push(...current.children);
+        }
+        return labels;
+      })(),
+    );
   },
 
   updateTabPath: (oldPath, newPath) =>
@@ -618,6 +810,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         tabId: tab.id,
       })),
     );
+    void destroyDesktopWebviewsByLabels(
+      pane.tabs
+        .filter((tab) => isWebTabState(tab))
+        .map((tab) => getDesktopWebviewLabelForTab(tab.id)),
+    );
     
     return unsavedTabs;
   },
@@ -652,6 +849,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           paneId,
           tabId: tab.id,
         })),
+    );
+    void destroyDesktopWebviewsByLabels(
+      pane.tabs
+        .filter((tab) => !tab.isDirty && isWebTabState(tab))
+        .map((tab) => getDesktopWebviewLabelForTab(tab.id)),
     );
   },
 
@@ -689,6 +891,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           paneId,
           tabId: tab.id,
         })),
+    );
+    void destroyDesktopWebviewsByLabels(
+      pane.tabs
+        .filter((tab, index) => index !== keepTabIndex && isWebTabState(tab))
+        .map((tab) => getDesktopWebviewLabelForTab(tab.id)),
     );
     
     return unsavedTabs;

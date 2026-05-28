@@ -13,6 +13,7 @@ import { useFileSystem } from "@/hooks/use-file-system";
 import { saveWorkspaceTabContent } from "@/lib/workspace-save";
 import { useWorkspaceRunnerPreferencesPersistence } from "@/hooks/use-workspace-runner-preferences";
 import { useI18n } from "@/hooks/use-i18n";
+import { isFileTabState } from "@/types/layout";
 
 /**
  * Welcome placeholder component - shown when no workspace is open
@@ -128,6 +129,12 @@ export function MainArea() {
 
         const activeTab = activePane.tabs[activePane.activeTabIndex];
         if (!activeTab) {
+          return;
+        }
+        if (!isFileTabState(activeTab)) {
+          toast.info(t('main.toast.readOnly.title'), {
+            description: '当前网页标签不支持保存到工作区文件。',
+          });
           return;
         }
 

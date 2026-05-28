@@ -3401,6 +3401,117 @@ describe('PDFHighlighterAdapter', () => {
     });
   });
 
+  it('restores the original annotation content and exact quote after dragging a boundary out and back', async () => {
+    const updateAnnotation = vi.fn();
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [
+        {
+          id: 'ann-adjust-reversible',
+          target: {
+            type: 'pdf',
+            page: 1,
+            rects: [
+              { x1: 0.18125, y1: 0.125, x2: 0.3125, y2: 0.15 },
+              { x1: 0.325, y1: 0.125, x2: 0.40625, y2: 0.15 },
+            ],
+            textQuote: {
+              exact: 'phenomenon, which',
+              prefix: 'This ',
+              suffix: ' we call',
+              source: 'pdfjs-text-model',
+              confidence: 'exact',
+            },
+          },
+          style: { color: '#FFEB3B', type: 'highlight' },
+          content: 'phenomenon, which',
+          author: 'user',
+          createdAt: 1,
+        },
+      ],
+      error: null,
+      addAnnotation: vi.fn(),
+      updateAnnotation,
+      deleteAnnotation: vi.fn(),
+    });
+
+    selectionMockState.fragments = [
+      { text: 'This phenomenon,', left: 80, top: 120, width: 120, height: 24 },
+      { text: 'which we call algorithm aversion,', left: 208, top: 120, width: 250, height: 24 },
+      { text: 'is costly,', left: 466, top: 120, width: 76, height: 24 },
+    ];
+
+    const annotation = {
+      id: 'ann-adjust-reversible',
+      target: {
+        type: 'pdf' as const,
+        page: 1,
+        rects: [
+          { x1: 0.18125, y1: 0.125, x2: 0.3125, y2: 0.15 },
+          { x1: 0.325, y1: 0.125, x2: 0.40625, y2: 0.15 },
+        ],
+        textQuote: {
+          exact: 'phenomenon, which',
+          prefix: 'This ',
+          suffix: ' we call',
+          source: 'pdfjs-text-model' as const,
+          confidence: 'exact' as const,
+        },
+      },
+      style: { color: '#FFEB3B', type: 'highlight' as const },
+      content: 'phenomenon, which',
+      author: 'user',
+      createdAt: 1,
+    };
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    fireEvent.keyDown(window, {
+      ctrlKey: true,
+      shiftKey: true,
+      key: 'a',
+    });
+    await waitFor(() => {
+      expect(pdfMockState.sidebarProps).toBeTruthy();
+    });
+
+    await act(async () => {
+      const onSelect = pdfMockState.sidebarProps?.onSelect as ((annotationItem: typeof annotation) => void);
+      onSelect(annotation);
+      await Promise.resolve();
+    });
+
+    const endHandle = await screen.findByTestId('pdf-annotation-adjust-end-ann-adjust-reversible');
+    fireEvent.pointerDown(endHandle, {
+      button: 0,
+      clientX: 260,
+      clientY: 132,
+      pointerId: 11,
+    });
+    fireEvent.pointerMove(document, {
+      clientX: 272,
+      clientY: 132,
+      pointerId: 11,
+    });
+    fireEvent.pointerMove(document, {
+      clientX: 260,
+      clientY: 132,
+      pointerId: 11,
+    });
+    fireEvent.pointerUp(document, {
+      clientX: 260,
+      clientY: 132,
+      pointerId: 11,
+    });
+
+    await waitFor(() => {
+      expect(updateAnnotation).toHaveBeenCalled();
+    });
+
+    const lastCall = updateAnnotation.mock.calls.at(-1);
+    expect(lastCall?.[1]?.content).toBe('phenomenon, which');
+    expect(lastCall?.[1]?.target?.textQuote?.exact).toBe('phenomenon, which');
+  });
+
   it('renders fragmented long paragraph highlights as one continuous segment per visual row', async () => {
     const firstRowRects = [
       { x1: 0.10, y1: 0.10, x2: 0.18, y2: 0.125 },

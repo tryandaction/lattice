@@ -10,9 +10,21 @@ export interface PdfPageTextSegment {
   pageTextEnd: number;
   lineIndex?: number;
   blockIndex?: number;
+  columnIndex?: number;
+  layoutClass?: PdfPageTextLayoutClass;
   textNode?: Text | null;
   rawToNormalizedOffsets?: number[];
 }
+
+export type PdfPageTextLayoutClass =
+  | "main"
+  | "sidebar"
+  | "equation"
+  | "caption"
+  | "footnote"
+  | "metadata"
+  | "list"
+  | "auxiliary";
 
 export interface PdfPageTextItemRect {
   itemIndex: number;
@@ -520,6 +532,356 @@ function buildRenderedVisualItemMetadata(itemRects: PdfPageTextItemRect[]): Map<
   return metadata;
 }
 
+function median(values: number[]): number {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+function classifyPdfTextBlock(input: {
+  text: string;
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  pageWidth: number;
+  pageHeight: number;
+  medianHeight: number;
+  lineCount: number;
+  totalChars: number;
+}): PdfPageTextLayoutClass {
+  const normalizedText = normalizePdfText(input.text);
+  const compactText = normalizedText.replace(/\s+/g, "");
+  const blockWidth = Math.max(0, input.right - input.left);
+  const blockHeight = Math.max(0, input.bottom - input.top);
+  const widthRatio = input.pageWidth > 0 ? blockWidth / input.pageWidth : 0;
+  const centerX = (input.left + input.right) / 2;
+  const pageCenterX = input.pageWidth / 2;
+  const explicitEquationSymbols = [...normalizedText].filter((character) => /[=+/*^_()[\]{}<>]/.test(character)).length;
+  const minusSymbolCount = [...normalizedText].filter((character) => character === "-").length;
+  const digitCount = [...compactText].filter((character) => /\d/.test(character)).length;
+  const tokenCount = normalizedText ? normalizedText.split(/\s+/).filter(Boolean).length : 0;
+  const lineCount = Math.max(1, input.lineCount);
+  const medianHeight = Math.max(1, input.medianHeight);
+  const isTinyText = blockHeight / lineCount <= medianHeight * 0.82;
+  const isFarLeft = input.left <= Math.max(48, input.pageWidth * 0.1);
+  const isNarrow = blockWidth <= Math.max(36, input.pageWidth * 0.16);
+  const isTopRegion = input.top <= input.pageHeight * 0.2;
+  const looksLikeAuthorLine = (
+    tokenCount >= 2 &&
+    tokenCount <= 12 &&
+    /,/.test(normalizedText) &&
+    !/[.!?;:]$/.test(normalizedText) &&
+    /^[\p{L}\p{M}\p{N}\s,.'\-*†‡]+$/u.test(normalizedText)
+  );
+  const looksLikeAuthorNamesOnly = (
+    tokenCount >= 2 &&
+    tokenCount <= 16 &&
+    isTopRegion &&
+    lineCount <= 2 &&
+    widthRatio <= 0.58 &&
+    /^[\p{L}\p{M}\p{N}\s,.'\-*†‡]+$/u.test(normalizedText) &&
+    (
+      /(?:,\s*[\p{Lu}])/u.test(normalizedText) ||
+      /^[\p{Lu}][\p{L}\p{M}\-']+(?:\s+[\p{Lu}][\p{L}\p{M}\-']+)+(?:,\s*[\p{Lu}][\p{L}\p{M}\-']+(?:\s+[\p{Lu}][\p{L}\p{M}\-']+)*)*$/u.test(normalizedText)
+    )
+  );
+  const looksLikeJournalHeader = /(published online|doi:|nature|american journal|review article|citation:|view online|table of contents)/i.test(normalizedText);
+
+  if (
+    compactText.length > 0 &&
+    isFarLeft &&
+    (blockHeight >= blockWidth * 1.8 || (isNarrow && input.totalChars <= 18 && blockHeight >= medianHeight * 2.4))
+  ) {
+    return "sidebar";
+  }
+
+  if (/^(figure|fig\.|table|scheme|extended data|supplementary)\b/i.test(normalizedText)) {
+    return "caption";
+  }
+
+  if (
+    /(doi\.org|received:|accepted:|published|correspondence|e-?mail|university|institute|department|school of|laboratory)/i.test(normalizedText) ||
+    (isTopRegion && /(doi|accepted|received|published)/i.test(normalizedText)) ||
+    (isTopRegion && (looksLikeAuthorLine || looksLikeAuthorNamesOnly || looksLikeJournalHeader))
+  ) {
+    return "metadata";
+  }
+
+  if (/^(\(?\d+[\)\.]|[a-zA-Z][\)\.]|[\u2022\-])\s/.test(normalizedText)) {
+    return "list";
+  }
+
+  if (
+    isTinyText &&
+    (
+      input.top >= input.pageHeight * 0.72 ||
+      /^\[?\d+\]?/.test(normalizedText) ||
+      /\b\d{4}\b/.test(normalizedText)
+    ) &&
+    widthRatio <= 0.72
+  ) {
+    return "footnote";
+  }
+
+  if (
+    compactText.length > 0 &&
+    widthRatio <= 0.78 &&
+    Math.abs(centerX - pageCenterX) <= Math.max(48, input.pageWidth * 0.14) &&
+    (
+      explicitEquationSymbols >= 2 ||
+      /(?:=|≈|≤|≥|∑|∫|√)/.test(normalizedText) ||
+      (explicitEquationSymbols >= 1 && digitCount >= 2) ||
+      (minusSymbolCount >= 2 && tokenCount <= 6)
+    ) &&
+    input.lineCount <= 2
+  ) {
+    return "equation";
+  }
+
+  if (
+    isNarrow &&
+    input.totalChars <= 14 &&
+    (
+      digitCount >= Math.max(1, compactText.length - 2) ||
+      /^\[?\d+[a-z]?\]?$/.test(compactText)
+    )
+  ) {
+    return "auxiliary";
+  }
+
+  return "main";
+}
+
+function assignPdfSegmentLayoutClasses(input: {
+  segments: PdfPageTextSegment[];
+  itemRects: PdfPageTextItemRect[];
+  viewportWidth: number;
+  viewportHeight: number;
+}): void {
+  const itemRectMap = new Map(input.itemRects.map((rect) => [rect.itemIndex, rect]));
+  const blockSegments = new Map<number, PdfPageTextSegment[]>();
+
+  input.segments.forEach((segment) => {
+    if (typeof segment.blockIndex !== "number") {
+      segment.layoutClass = "main";
+      return;
+    }
+
+    const current = blockSegments.get(segment.blockIndex) ?? [];
+    current.push(segment);
+    blockSegments.set(segment.blockIndex, current);
+  });
+
+  const medianHeight = median(input.itemRects.map((rect) => rect.height).filter((height) => height > 0));
+
+  blockSegments.forEach((segments) => {
+    let left = Number.POSITIVE_INFINITY;
+    let right = Number.NEGATIVE_INFINITY;
+    let top = Number.POSITIVE_INFINITY;
+    let bottom = Number.NEGATIVE_INFINITY;
+    const lines = new Set<number>();
+    let text = "";
+    let totalChars = 0;
+
+    segments.forEach((segment) => {
+      const itemRect = itemRectMap.get(segment.itemIndex);
+      if (itemRect) {
+        left = Math.min(left, itemRect.left);
+        right = Math.max(right, itemRect.left + itemRect.width);
+        top = Math.min(top, itemRect.top);
+        bottom = Math.max(bottom, itemRect.top + itemRect.height);
+      }
+      if (typeof segment.lineIndex === "number") {
+        lines.add(segment.lineIndex);
+      }
+      text += `${text ? " " : ""}${segment.normalizedText}`;
+      totalChars += segment.normalizedText.length;
+    });
+
+    const layoutClass = classifyPdfTextBlock({
+      text,
+      left: Number.isFinite(left) ? left : 0,
+      right: Number.isFinite(right) ? right : 0,
+      top: Number.isFinite(top) ? top : 0,
+      bottom: Number.isFinite(bottom) ? bottom : 0,
+      pageWidth: input.viewportWidth,
+      pageHeight: input.viewportHeight,
+      medianHeight,
+      lineCount: Math.max(1, lines.size),
+      totalChars,
+    });
+
+    segments.forEach((segment) => {
+      segment.layoutClass = layoutClass;
+    });
+  });
+
+  input.segments.forEach((segment) => {
+    const itemRect = itemRectMap.get(segment.itemIndex);
+    if (!itemRect) {
+      return;
+    }
+
+    const normalizedText = normalizePdfText(segment.normalizedText);
+    const compactText = normalizedText.replace(/\s+/g, "");
+    const isTinyFragment = itemRect.height <= Math.max(18, medianHeight * 0.82);
+    const isNarrowFragment = itemRect.width <= input.viewportWidth * 0.12;
+    const isCitationMarker = /^\[?\d+[a-z]?\]?$/.test(compactText);
+    const isYearLike = /^\d{4}[a-z]?$/.test(compactText);
+    const isFarRightAttached = itemRect.left >= input.viewportWidth * 0.72;
+    const isLowPageFragment = itemRect.top >= input.viewportHeight * 0.72;
+    const isTopFragment = itemRect.top <= input.viewportHeight * 0.22;
+    const looksLikeAffiliationMarker = /^(?:\d+[†‡*]*|[†‡*]+)$/.test(compactText);
+    const looksLikeTopAuthorSegment = (
+      isTopFragment &&
+      itemRect.width >= input.viewportWidth * 0.22 &&
+      itemRect.width <= input.viewportWidth * 0.6 &&
+      /^[\p{L}\p{M}\s,.'\-]+$/u.test(normalizedText) &&
+      /(?:,\s*[\p{Lu}])/u.test(normalizedText)
+    );
+
+    if (isYearLike && isTinyFragment && isLowPageFragment) {
+      segment.layoutClass = "footnote";
+      return;
+    }
+
+    if (looksLikeTopAuthorSegment) {
+      segment.layoutClass = "metadata";
+      return;
+    }
+
+    if (
+      isTopFragment &&
+      isTinyFragment &&
+      (
+        looksLikeAffiliationMarker ||
+        /^\d+(?:,\d+)+$/.test(compactText)
+      )
+    ) {
+      segment.layoutClass = "auxiliary";
+      return;
+    }
+
+    if (
+      (segment.layoutClass === "main" || segment.layoutClass === "equation") &&
+      isTinyFragment &&
+      isCitationMarker
+    ) {
+      segment.layoutClass = "auxiliary";
+      return;
+    }
+
+    if (
+      segment.layoutClass === "main" &&
+      isTinyFragment &&
+      isNarrowFragment &&
+      isFarRightAttached &&
+      isCitationMarker
+    ) {
+      segment.layoutClass = "auxiliary";
+      return;
+    }
+
+    if (segment.layoutClass === "equation") {
+      const hasInlineEquationSyntax = /(?:=|≈|≤|≥|∑|∫|√|[\^_*()[\]{}<>/+])/.test(normalizedText);
+      const isPlainProseLike = !hasInlineEquationSyntax && normalizedText.split(/\s+/).filter(Boolean).length >= 4;
+      const isBodySized = itemRect.height >= Math.max(18, medianHeight * 0.9) && itemRect.width >= input.viewportWidth * 0.18;
+      if (isPlainProseLike && isBodySized) {
+        segment.layoutClass = "main";
+      }
+    }
+  });
+}
+
+function assignPdfSegmentColumnIndices(input: {
+  segments: PdfPageTextSegment[];
+  itemRects: PdfPageTextItemRect[];
+  viewportWidth: number;
+}): void {
+  const itemRectMap = new Map(input.itemRects.map((rect) => [rect.itemIndex, rect]));
+  const blockSegments = new Map<number, PdfPageTextSegment[]>();
+
+  input.segments.forEach((segment) => {
+    if (typeof segment.blockIndex !== "number") {
+      return;
+    }
+    const current = blockSegments.get(segment.blockIndex) ?? [];
+    current.push(segment);
+    blockSegments.set(segment.blockIndex, current);
+  });
+
+  const eligibleBlocks = [...blockSegments.entries()]
+    .map(([blockIndex, segments]) => {
+      let left = Number.POSITIVE_INFINITY;
+      let right = Number.NEGATIVE_INFINITY;
+      let top = Number.POSITIVE_INFINITY;
+      let bottom = Number.NEGATIVE_INFINITY;
+
+      segments.forEach((segment) => {
+        const rect = itemRectMap.get(segment.itemIndex);
+        if (!rect) {
+          return;
+        }
+        left = Math.min(left, rect.left);
+        right = Math.max(right, rect.left + rect.width);
+        top = Math.min(top, rect.top);
+        bottom = Math.max(bottom, rect.top + rect.height);
+      });
+
+      const layoutClass = segments[0]?.layoutClass ?? "main";
+      return {
+        blockIndex,
+        layoutClass,
+        segments,
+        left,
+        right,
+        top,
+        bottom,
+        width: Math.max(0, right - left),
+        centerX: (left + right) / 2,
+      };
+    })
+    .filter((block) => (
+      Number.isFinite(block.left) &&
+      Number.isFinite(block.right) &&
+      (block.layoutClass === "main" || block.layoutClass === "list" || block.layoutClass === "caption") &&
+      block.width > 0 &&
+      block.width <= input.viewportWidth * 0.52
+    ));
+
+  if (eligibleBlocks.length < 2) {
+    return;
+  }
+
+  const pageCenterX = input.viewportWidth / 2;
+  const leftBlocks = eligibleBlocks.filter((block) => block.centerX < pageCenterX - (input.viewportWidth * 0.04));
+  const rightBlocks = eligibleBlocks.filter((block) => block.centerX > pageCenterX + (input.viewportWidth * 0.04));
+  if (leftBlocks.length === 0 || rightBlocks.length === 0) {
+    return;
+  }
+
+  const hasVerticalOverlap = leftBlocks.some((leftBlock) => rightBlocks.some((rightBlock) => (
+    Math.min(leftBlock.bottom, rightBlock.bottom) - Math.max(leftBlock.top, rightBlock.top) >= Math.min(leftBlock.bottom - leftBlock.top, rightBlock.bottom - rightBlock.top) * 0.2
+  )));
+  if (!hasVerticalOverlap) {
+    return;
+  }
+
+  eligibleBlocks.forEach((block) => {
+    const columnIndex = block.centerX < pageCenterX ? 0 : 1;
+    block.segments.forEach((segment) => {
+      segment.columnIndex = columnIndex;
+    });
+  });
+}
+
 function buildPdfPageTextModelFromSegments(input: {
   pageNumber: number;
   viewportWidth: number;
@@ -584,6 +946,18 @@ function buildPdfPageTextModelFromSegments(input: {
     if (sourceSegment.hasEOL && !normalizedText.endsWith(" ")) {
       normalizedText += " ";
     }
+  });
+
+  assignPdfSegmentLayoutClasses({
+    segments,
+    itemRects: input.itemRects,
+    viewportWidth: input.viewportWidth,
+    viewportHeight: input.viewportHeight,
+  });
+  assignPdfSegmentColumnIndices({
+    segments,
+    itemRects: input.itemRects,
+    viewportWidth: input.viewportWidth,
   });
 
   return indexPdfPageTextModel({

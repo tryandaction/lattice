@@ -9,11 +9,13 @@ import {
 import { openExternalUrl, openSystemPath } from "./open-external";
 import { parseLinkTarget } from "./parse-link-target";
 import type { LinkTarget, WorkspaceNavigationTarget } from "./types";
+import { canOpenUrlInternally, deriveWebDocumentName } from "@/lib/web-document";
 
 export interface NavigateLinkOptions {
   paneId?: PaneId;
   rootHandle?: FileSystemDirectoryHandle | null;
   currentFilePath?: string;
+  externalUrlMode?: "internal" | "external";
 }
 
 async function resolveWorkspaceFileHandle(
@@ -70,6 +72,14 @@ function currentFileMatchesTarget(currentFilePath: string | undefined, target: L
   return candidatePaths.some((candidate) => isSameWorkspacePath(candidate, currentFilePath));
 }
 
+function resolvePaneId(preferredPaneId: PaneId | undefined): PaneId | null {
+  if (preferredPaneId) {
+    return preferredPaneId;
+  }
+
+  return useWorkspaceStore.getState().layout.activePaneId ?? null;
+}
+
 export async function navigateLink(rawTarget: string, options: NavigateLinkOptions = {}): Promise<boolean> {
   const parsed = parseLinkTarget(rawTarget, { currentFilePath: options.currentFilePath });
   const target = parsed.target;
@@ -77,8 +87,24 @@ export async function navigateLink(rawTarget: string, options: NavigateLinkOptio
     return false;
   }
 
+  const effectivePaneId = resolvePaneId(options.paneId);
+
   if (target.type === "external_url") {
-    await openExternalUrl(target.url);
+    if (
+      options.externalUrlMode === "external" ||
+      !canOpenUrlInternally(target.url)
+    ) {
+      await openExternalUrl(target.url);
+      return true;
+    }
+
+    if (!effectivePaneId) {
+      return false;
+    }
+
+    useWorkspaceStore.getState().openWebUrlInPane(effectivePaneId, target.url, {
+      fileName: deriveWebDocumentName(target.url),
+    });
     return true;
   }
 
@@ -86,13 +112,13 @@ export async function navigateLink(rawTarget: string, options: NavigateLinkOptio
     return openSystemPath(target.path);
   }
 
-  if (!options.paneId) {
+  if (!effectivePaneId) {
     return false;
   }
 
   if (currentFileMatchesTarget(options.currentFilePath, target)) {
     if (isTargetWithFollowUp(target)) {
-      setPendingNavigation(options.paneId, options.currentFilePath ?? target.path, {
+      setPendingNavigation(effectivePaneId, options.currentFilePath ?? target.path, {
         ...target,
         path: options.currentFilePath ?? target.path,
       });
@@ -110,14 +136,14 @@ export async function navigateLink(rawTarget: string, options: NavigateLinkOptio
   }
 
   if (isTargetWithFollowUp(target)) {
-    setPendingNavigation(options.paneId, resolved.path, {
+    setPendingNavigation(effectivePaneId, resolved.path, {
       ...target,
       path: resolved.path,
     });
   } else {
-    clearPendingNavigation(options.paneId);
+    clearPendingNavigation(effectivePaneId);
   }
 
-  useWorkspaceStore.getState().openFileInPane(options.paneId, resolved.handle, resolved.path);
+  useWorkspaceStore.getState().openFileInPane(effectivePaneId, resolved.handle, resolved.path);
   return true;
 }

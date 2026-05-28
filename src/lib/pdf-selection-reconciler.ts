@@ -10,6 +10,10 @@ import {
   type PdfPageTextModel,
 } from "@/lib/pdf-page-text-cache";
 import {
+  buildPdfCanonicalChars,
+  resolvePdfPointerBoundary,
+} from "@/lib/pdf-canonical-text-anchoring";
+import {
   projectPdfSelectionRectsToPages,
   type PdfCanonicalSelection,
   type PdfSelectionClientRect,
@@ -112,6 +116,8 @@ interface PdfVisualTextSlice {
   centerY: number;
   lineIndex?: number;
   blockIndex?: number;
+  columnIndex?: number;
+  layoutClass?: PdfPageTextModel["segments"][number]["layoutClass"];
 }
 
 type PdfViewportSelectableChar = Pick<
@@ -583,46 +589,19 @@ function buildNativeViewportChars(input: {
 }
 
 function buildRenderedViewportChars(model: PdfPageTextModel): PdfRenderedViewportChar[] {
-  const rectByItem = new Map(model.itemRects.map((rect) => [rect.itemIndex, rect]));
-  const chars: PdfRenderedViewportChar[] = [];
-
-  model.segments.forEach((segment) => {
-    const itemRect = rectByItem.get(segment.itemIndex);
-    const segmentLength = segment.pageTextEnd - segment.pageTextStart;
-    if (!itemRect || itemRect.width <= 0 || itemRect.height <= 0 || segmentLength <= 0) {
-      return;
-    }
-
-    for (let offset = segment.pageTextStart; offset < segment.pageTextEnd; offset += 1) {
-      const character = model.normalizedText[offset] ?? "";
-      if (!character) {
-        continue;
-      }
-      const startRatio = (offset - segment.pageTextStart) / segmentLength;
-      const endRatio = (offset + 1 - segment.pageTextStart) / segmentLength;
-      const left = itemRect.left + (itemRect.width * startRatio);
-      const width = Math.max(0, itemRect.width * (endRatio - startRatio));
-      if (width <= 0) {
-        continue;
-      }
-
-      chars.push({
-        normalizedStart: offset,
-        normalizedEnd: offset + 1,
-        text: character,
-        left,
-        top: itemRect.top,
-        width,
-        height: itemRect.height,
-        right: left + width,
-        bottom: itemRect.top + itemRect.height,
-        centerX: left + (width / 2),
-        centerY: itemRect.top + (itemRect.height / 2),
-      });
-    }
-  });
-
-  return chars;
+  return buildPdfCanonicalChars(model).map((char) => ({
+    normalizedStart: char.normalizedStart,
+    normalizedEnd: char.normalizedEnd,
+    text: char.text,
+    left: char.left,
+    top: char.top,
+    width: char.width,
+    height: char.height,
+    right: char.right,
+    bottom: char.bottom,
+    centerX: char.centerX,
+    centerY: char.centerY,
+  }));
 }
 
 function normalizeViewportRects(rects: PdfCanonicalSelection["viewportRects"]): PdfCanonicalSelection["viewportRects"] {
@@ -852,6 +831,17 @@ function normalizeVisualTextSlices(slices: PdfVisualTextSlice[]): PdfVisualTextS
   return merged;
 }
 
+const RENDERED_LAYOUT_PRIORITY: Record<NonNullable<PdfVisualTextSlice["layoutClass"]>, number> = {
+  main: 0,
+  list: 1,
+  caption: 2,
+  footnote: 3,
+  metadata: 4,
+  auxiliary: 5,
+  equation: 6,
+  sidebar: 7,
+};
+
 function resolveRenderedSelectionFromViewportRects(input: {
   model: PdfPageTextModel;
   viewportRects: PdfCanonicalSelection["viewportRects"];
@@ -922,6 +912,8 @@ function resolveRenderedSelectionFromViewportRects(input: {
         centerY: (intersection.top + intersection.bottom) / 2,
         lineIndex: segment.lineIndex,
         blockIndex: segment.blockIndex,
+        columnIndex: segment.columnIndex,
+        layoutClass: segment.layoutClass,
       });
     }
   }
@@ -936,7 +928,27 @@ function resolveRenderedSelectionFromViewportRects(input: {
     return null;
   }
 
-  const dominantBlock = visualSlices.reduce((best, slice) => {
+  const dominantLayout = visualSlices.reduce((best, slice) => {
+    const layoutClass = slice.layoutClass ?? "main";
+    const weight = slice.endOffset - slice.startOffset;
+    best.set(layoutClass, (best.get(layoutClass) ?? 0) + weight);
+    return best;
+  }, new Map<NonNullable<PdfVisualTextSlice["layoutClass"]>, number>());
+  const preferredLayoutClass = [...dominantLayout.entries()]
+    .sort((left, right) => {
+      if (right[1] !== left[1]) {
+        return right[1] - left[1];
+      }
+      return RENDERED_LAYOUT_PRIORITY[left[0]] - RENDERED_LAYOUT_PRIORITY[right[0]];
+    })[0]?.[0];
+  const layoutFilteredSlices = preferredLayoutClass
+    ? visualSlices.filter((slice) => (slice.layoutClass ?? "main") === preferredLayoutClass)
+    : visualSlices;
+  if (layoutFilteredSlices.length === 0) {
+    return null;
+  }
+
+  const dominantBlock = layoutFilteredSlices.reduce((best, slice) => {
     const blockIndex = slice.blockIndex ?? 0;
     const weight = slice.endOffset - slice.startOffset;
     const current = best.get(blockIndex) ?? 0;
@@ -945,9 +957,20 @@ function resolveRenderedSelectionFromViewportRects(input: {
   }, new Map<number, number>());
   const preferredBlockIndex = [...dominantBlock.entries()]
     .sort((left, right) => right[1] - left[1])[0]?.[0];
-  const filteredVisualSlices = typeof preferredBlockIndex === "number"
-    ? visualSlices.filter((slice) => (slice.blockIndex ?? 0) === preferredBlockIndex)
-    : visualSlices;
+  const blockFilteredSlices = typeof preferredBlockIndex === "number"
+    ? layoutFilteredSlices.filter((slice) => (slice.blockIndex ?? 0) === preferredBlockIndex)
+    : layoutFilteredSlices;
+  const dominantColumn = blockFilteredSlices.reduce((best, slice) => {
+    if (typeof slice.columnIndex !== "number") {
+      return best;
+    }
+    best.set(slice.columnIndex, (best.get(slice.columnIndex) ?? 0) + (slice.endOffset - slice.startOffset));
+    return best;
+  }, new Map<number, number>());
+  const preferredColumnIndex = [...dominantColumn.entries()].sort((left, right) => right[1] - left[1])[0]?.[0];
+  const filteredVisualSlices = typeof preferredColumnIndex === "number"
+    ? blockFilteredSlices.filter((slice) => slice.columnIndex === preferredColumnIndex)
+    : blockFilteredSlices;
   if (filteredVisualSlices.length === 0) {
     return null;
   }
@@ -997,32 +1020,41 @@ function resolveRenderedSelectionFromPointerBounds(input: {
   dragStartPoint: { x: number; y: number };
   dragEndPoint: { x: number; y: number };
 }): PdfResolvedSelection | null {
-  const renderedChars = buildRenderedViewportChars(input.model);
   const pageRect = input.pageElement.getBoundingClientRect();
-  const startChar = selectRenderedCharForPointer({
-    chars: renderedChars,
+  const canonicalChars = buildPdfCanonicalChars(input.model);
+  const startBoundary = resolvePdfPointerBoundary({
+    model: input.model,
     point: input.dragStartPoint,
     pageRect,
     side: "start",
   });
-  const endChar = selectRenderedCharForPointer({
-    chars: renderedChars,
+  const endBoundary = resolvePdfPointerBoundary({
+    model: input.model,
     point: input.dragEndPoint,
     pageRect,
     side: "end",
+    preferredLayoutClass: startBoundary?.layoutClass,
+    preferredBlockIndex: startBoundary?.blockIndex,
+    preferredColumnIndex: startBoundary?.columnIndex,
   });
 
-  if (!startChar || !endChar) {
+  if (!startBoundary || !endBoundary) {
     return null;
   }
 
-  let startOffset = Math.min(startChar.normalizedStart, endChar.normalizedStart);
-  let endOffset = Math.max(startChar.normalizedEnd, endChar.normalizedEnd);
+  let startOffset = Math.min(startBoundary.offset, endBoundary.offset);
+  let endOffset = Math.max(startBoundary.offset, endBoundary.offset);
   const dragDistance = Math.hypot(
     input.dragEndPoint.x - input.dragStartPoint.x,
     input.dragEndPoint.y - input.dragStartPoint.y,
   );
-  if (dragDistance <= Math.max(18, Math.max(startChar.height, endChar.height) * 1.25)) {
+  const startChar = canonicalChars.find((char) => char.normalizedStart <= startOffset && char.normalizedEnd >= startOffset)
+    ?? canonicalChars.find((char) => char.normalizedStart === startOffset)
+    ?? canonicalChars[0];
+  const endChar = [...canonicalChars].reverse().find((char) => char.normalizedEnd >= endOffset && char.normalizedStart < endOffset)
+    ?? [...canonicalChars].reverse().find((char) => char.normalizedEnd === endOffset)
+    ?? canonicalChars[canonicalChars.length - 1];
+  if (dragDistance <= Math.max(18, Math.max(startChar?.height ?? 0, endChar?.height ?? 0) * 1.25)) {
     const expanded = expandRenderedSelectionToWord({
       model: input.model,
       startOffset,
@@ -2064,50 +2096,6 @@ function choosePreferredPointerSelection(input: {
       ? input.pointerSelection
       : input.baseSelection
   );
-}
-
-function selectRenderedCharForPointer(input: {
-  chars: PdfRenderedViewportChar[];
-  point: { x: number; y: number };
-  pageRect: DOMRect;
-  side: "start" | "end";
-}): PdfRenderedViewportChar | null {
-  if (input.chars.length === 0) {
-    return null;
-  }
-
-  const localX = input.point.x - input.pageRect.left;
-  const localY = input.point.y - input.pageRect.top;
-  const sameLineChars = selectNearestLineChars({
-    chars: input.chars,
-    localY,
-  }) as PdfRenderedViewportChar[];
-  const scopedChars = sameLineChars.length > 0 ? sameLineChars : input.chars;
-  const containingChars = scopedChars.filter((character) => (
-    localX >= character.left &&
-    localX <= character.right
-  ));
-
-  if (containingChars.length > 0) {
-    return containingChars.reduce((best, character) => {
-      const bestDistance = Math.abs(best.centerX - localX);
-      const currentDistance = Math.abs(character.centerX - localX);
-      if (currentDistance === bestDistance) {
-        return input.side === "start"
-          ? (character.normalizedStart < best.normalizedStart ? character : best)
-          : (character.normalizedEnd > best.normalizedEnd ? character : best);
-      }
-      return currentDistance < bestDistance ? character : best;
-    });
-  }
-
-  return input.side === "start"
-    ? scopedChars
-        .filter((character) => character.right >= localX)
-        .sort((left, right) => left.left - right.left || left.normalizedStart - right.normalizedStart)[0] ?? scopedChars[scopedChars.length - 1]
-    : scopedChars
-        .filter((character) => character.left <= localX)
-        .sort((left, right) => right.right - left.right || right.normalizedEnd - left.normalizedEnd)[0] ?? scopedChars[0];
 }
 
 function isPdfWordCharacter(character: string): boolean {

@@ -3,8 +3,9 @@
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { createTab } from "@/lib/layout-utils";
+import { createTab, createWebTab } from "@/lib/layout-utils";
 import { loadWorkbenchSession, saveWorkbenchSession } from "@/lib/layout-persistence";
+import { isWebTabState } from "@/types/layout";
 
 class FakeFileHandle {
   kind = "file" as const;
@@ -139,5 +140,43 @@ describe("workbench session persistence", () => {
     expect(restored.layout.root.tabs).toHaveLength(1);
     expect(restored.layout.root.tabs[0]?.filePath).toBe("workspace/notes.md");
     expect(restored.layout.root.activeTabIndex).toBe(0);
+  });
+
+  it("restores persisted web tabs alongside workspace files", async () => {
+    const root = new FakeDirectoryHandle("workspace");
+    const notesHandle = root.addFile(new FakeFileHandle("notes.md"));
+
+    const layout = {
+      root: {
+        type: "pane" as const,
+        id: "pane-main",
+        tabs: [
+          createTab(notesHandle as unknown as FileSystemFileHandle, "workspace/notes.md"),
+          createWebTab("https://example.com/docs/getting-started", {
+            fileName: "Getting Started",
+            pageTitle: "Getting Started",
+          }),
+        ],
+        activeTabIndex: 1,
+      },
+      activePaneId: "pane-main",
+    };
+
+    await saveWorkbenchSession("workspace", "workspace", layout, false);
+    const restored = await loadWorkbenchSession("workspace", "workspace", root as unknown as FileSystemDirectoryHandle);
+
+    expect(restored?.layout.root.type).toBe("pane");
+    if (restored?.layout.root.type !== "pane") {
+      throw new Error("Expected pane layout");
+    }
+    expect(restored.layout.root.tabs).toHaveLength(2);
+    expect(restored.layout.root.tabs[0]?.filePath).toBe("workspace/notes.md");
+    expect(isWebTabState(restored.layout.root.tabs[1]!)).toBe(true);
+    if (!isWebTabState(restored.layout.root.tabs[1]!)) {
+      throw new Error("Expected restored web tab");
+    }
+    expect(restored.layout.root.tabs[1].url).toBe("https://example.com/docs/getting-started");
+    expect(restored.layout.root.tabs[1].fileName).toBe("Getting Started");
+    expect(restored.layout.root.activeTabIndex).toBe(1);
   });
 });

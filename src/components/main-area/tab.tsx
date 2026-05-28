@@ -9,11 +9,13 @@ import {
   File,
   Presentation,
   BookOpen,
+  Globe,
 } from "lucide-react";
 import { useI18n } from "@/hooks/use-i18n";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { TabState, PaneId, TabDragData } from "@/types/layout";
+import { isWebTabState } from "@/types/layout";
 import { getFileExtension } from "@/lib/file-utils";
 import { cn } from "@/lib/utils";
 
@@ -75,6 +77,7 @@ export function Tab({
   isDraggable = true,
 }: TabProps) {
   const { t } = useI18n();
+  const isWebTab = isWebTabState(tab);
   const extension = getFileExtension(tab.fileName);
 
   // Set up sortable for drag-and-drop
@@ -139,7 +142,11 @@ export function Tab({
       title={tab.filePath}
     >
       {/* File Icon */}
-      <FileIcon extension={extension} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      {isWebTab ? (
+        <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      ) : (
+        <FileIcon extension={extension} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      )}
       
       {/* File Name */}
       <span className={cn(

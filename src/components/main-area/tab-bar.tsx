@@ -77,6 +77,7 @@ export function TabBar({
           "flex h-9 items-center bg-muted/30 px-2",
           isOver && "bg-blue-500/10 border-blue-500/50"
         )}
+        data-desktop-webview-safe-zone="true"
       >
         <span className="text-xs text-muted-foreground">
           {isOver ? t("tab.dropHere") : t("tab.empty")}
@@ -94,7 +95,7 @@ export function TabBar({
       className={cn("h-10", isOver && "bg-blue-500/10")}
       viewportClassName={cn("h-10 pb-1", isOver && "bg-blue-500/10")}
       contentClassName="h-9 min-w-full w-max items-end gap-0"
-      viewportProps={{ "data-pane-id": paneId }}
+      viewportProps={{ "data-pane-id": paneId, "data-desktop-webview-safe-zone": "true" }}
       ariaLabel="打开的文件标签"
     >
       <SortableContext items={tabIds} strategy={horizontalListSortingStrategy}>

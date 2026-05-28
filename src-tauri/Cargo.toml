@@ -13,7 +13,7 @@ tauri-build = { version = "2", features = [] }
 
 # Runtime dependencies
 [dependencies]
-tauri = { version = "2", features = ["devtools"] }
+tauri = { version = "2", features = ["devtools", "unstable"] }
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2.6"
 tauri-plugin-opener = "2"

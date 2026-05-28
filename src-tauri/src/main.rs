@@ -18,7 +18,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex as StdMutex,
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(windows)]
@@ -27,7 +27,10 @@ use std::os::windows::process::CommandExt;
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{ipc::Response as TauriResponse, AppHandle, Emitter, Manager, State};
+use tauri::{
+    ipc::Response as TauriResponse, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager,
+    State, WebviewUrl,
+};
 use tauri_plugin_store::StoreExt;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -48,6 +51,8 @@ const LAST_WORKSPACE_PATH_KEY: &str = "last_workspace_path";
 const RECENT_WORKSPACE_PATHS_KEY: &str = "recent_workspace_paths";
 const WINDOW_STATE_KEY: &str = "window_state";
 const MAX_RECENT_WORKSPACES: usize = 12;
+const DESKTOP_NATIVE_WEBVIEW_NEW_WINDOW_EVENT: &str = "desktop-native-webview://new-window";
+const DESKTOP_NATIVE_WEBVIEW_DOWNLOAD_EVENT: &str = "desktop-native-webview://download";
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW_FLAG: u32 = 0x08000000;
@@ -113,6 +118,42 @@ struct DesktopTextChunk {
 struct DesktopFileMetadata {
     size: u64,
     modified_ms: Option<u128>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebDocumentSnapshot {
+    final_url: String,
+    content_type: Option<String>,
+    body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopNativeWebviewSnapshot {
+    label: String,
+    current_url: String,
+    title: Option<String>,
+    status: String,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopNativeWebviewRequestEvent {
+    label: String,
+    url: String,
+    disposition: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopNativeWebviewDownloadEventPayload {
+    label: String,
+    phase: String,
+    url: String,
+    path: Option<String>,
+    success: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -214,6 +255,11 @@ struct DesktopPreviewState {
     workspace_root: StdMutex<Option<PathBuf>>,
 }
 
+#[derive(Default)]
+struct DesktopNativeWebviewState {
+    snapshots: StdMutex<HashMap<String, DesktopNativeWebviewSnapshot>>,
+}
+
 struct DesktopFsState {
     read_dir_permits: Arc<Semaphore>,
     read_file_permits: Arc<Semaphore>,
@@ -275,6 +321,96 @@ fn normalize_optional_path(path: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+fn set_desktop_native_webview_snapshot(
+    app: &AppHandle,
+    label: &str,
+    current_url: Option<String>,
+    title: Option<String>,
+    status: Option<&str>,
+    last_error: Option<Option<String>>,
+) -> Result<DesktopNativeWebviewSnapshot, String> {
+    let state = app.state::<DesktopNativeWebviewState>();
+    let mut snapshots = state.snapshots.lock().map_err(|error| error.to_string())?;
+    let snapshot = snapshots
+        .entry(label.to_string())
+        .or_insert_with(|| DesktopNativeWebviewSnapshot {
+            label: label.to_string(),
+            current_url: current_url.clone().unwrap_or_default(),
+            title: None,
+            status: "idle".to_string(),
+            last_error: None,
+        });
+    if let Some(url) = current_url {
+        snapshot.current_url = url;
+    }
+    if let Some(next_title) = title {
+        snapshot.title = Some(next_title);
+    }
+    if let Some(next_status) = status {
+        snapshot.status = next_status.to_string();
+    }
+    if let Some(next_error) = last_error {
+        snapshot.last_error = next_error;
+    }
+    Ok(snapshot.clone())
+}
+
+fn remove_desktop_native_webview_snapshot(app: &AppHandle, label: &str) -> Result<(), String> {
+    let state = app.state::<DesktopNativeWebviewState>();
+    let mut snapshots = state.snapshots.lock().map_err(|error| error.to_string())?;
+    snapshots.remove(label);
+    Ok(())
+}
+
+fn get_desktop_native_webview_snapshot(
+    app: &AppHandle,
+    label: &str,
+) -> Result<Option<DesktopNativeWebviewSnapshot>, String> {
+    let state = app.state::<DesktopNativeWebviewState>();
+    let snapshots = state.snapshots.lock().map_err(|error| error.to_string())?;
+    Ok(snapshots.get(label).cloned())
+}
+
+fn build_desktop_native_webview_data_directory(url: &reqwest::Url) -> PathBuf {
+    let origin_key = format!(
+        "{}_{}_{}",
+        url.scheme(),
+        url.host_str().unwrap_or("unknown"),
+        url.port_or_known_default()
+            .map(|port| port.to_string())
+            .unwrap_or_else(|| "default".to_string())
+    )
+    .chars()
+    .map(|ch| if ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-' { ch } else { '_' })
+    .collect::<String>();
+
+    PathBuf::from(format!("embedded-web/{}", origin_key))
+}
+
+fn emit_desktop_native_webview_new_window(
+    app: &AppHandle,
+    label: &str,
+    url: &reqwest::Url,
+) -> Result<(), String> {
+    app.emit(
+        DESKTOP_NATIVE_WEBVIEW_NEW_WINDOW_EVENT,
+        DesktopNativeWebviewRequestEvent {
+            label: label.to_string(),
+            url: url.to_string(),
+            disposition: "new-window".to_string(),
+        },
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn emit_desktop_native_webview_download_event(
+    app: &AppHandle,
+    payload: DesktopNativeWebviewDownloadEventPayload,
+) -> Result<(), String> {
+    app.emit(DESKTOP_NATIVE_WEBVIEW_DOWNLOAD_EVENT, payload)
+        .map_err(|error| error.to_string())
 }
 
 fn decode_preview_request_path(path: &str) -> Result<String, String> {
@@ -988,6 +1124,426 @@ async fn desktop_is_directory(
 }
 
 #[tauri::command]
+async fn fetch_web_document(url: String) -> Result<WebDocumentSnapshot, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("URL is required.".to_string());
+    }
+
+    let parsed = reqwest::Url::parse(trimmed).map_err(|error| error.to_string())?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        _ => return Err("Only HTTP and HTTPS URLs can be opened internally.".to_string()),
+    }
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .timeout(Duration::from_secs(15))
+        .user_agent("Lattice/2.1.0 (+https://github.com/tryandaction/lattice)")
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let response = client
+        .get(parsed)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("Failed to load webpage: HTTP {}", status.as_u16()));
+    }
+
+    let final_url = response.url().to_string();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+    let body = response.text().await.map_err(|error| error.to_string())?;
+
+    Ok(WebDocumentSnapshot {
+        final_url,
+        content_type,
+        body,
+    })
+}
+
+#[tauri::command]
+async fn desktop_native_webview_mount(
+    app: AppHandle,
+    label: String,
+    window_label: String,
+    url: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    visible: bool,
+    focus: bool,
+) -> Result<DesktopNativeWebviewSnapshot, String> {
+    let target_url = reqwest::Url::parse(url.trim()).map_err(|error| error.to_string())?;
+    if let Some(existing) = app.get_webview(&label) {
+        let current_url = existing.url().map_err(|error| error.to_string())?;
+        if current_url != target_url {
+            existing
+                .navigate(target_url.clone())
+                .map_err(|error| error.to_string())?;
+        }
+        existing
+            .set_position(LogicalPosition::new(x, y))
+            .map_err(|error| error.to_string())?;
+        existing
+            .set_size(LogicalSize::new(width, height))
+            .map_err(|error| error.to_string())?;
+        if visible {
+            existing.show().map_err(|error| error.to_string())?;
+            if focus {
+                existing.set_focus().map_err(|error| error.to_string())?;
+            }
+        } else {
+            existing.hide().map_err(|error| error.to_string())?;
+        }
+        return set_desktop_native_webview_snapshot(
+            &app,
+            &label,
+            Some(target_url.to_string()),
+            None,
+            Some("ready"),
+            Some(None),
+        );
+    }
+
+    let app_for_navigation = app.clone();
+    let label_for_navigation = label.clone();
+    let app_for_page_load = app.clone();
+    let label_for_page_load = label.clone();
+    let app_for_title = app.clone();
+    let label_for_title = label.clone();
+    let app_for_new_window = app.clone();
+    let label_for_new_window = label.clone();
+    let app_for_download = app.clone();
+    let label_for_download = label.clone();
+
+    let webview_builder = tauri::webview::WebviewBuilder::new(
+        label.clone(),
+        WebviewUrl::External(target_url.clone()),
+    )
+    .user_agent("LatticeEmbeddedWebview/2.1.0")
+    .data_directory(build_desktop_native_webview_data_directory(&target_url))
+    .initialization_script(
+        r#"
+          (() => {
+            const patchHistory = (method) => {
+              const original = history[method];
+              if (typeof original !== 'function') return;
+              history[method] = function (...args) {
+                const result = original.apply(this, args);
+                window.dispatchEvent(new Event('lattice-history-change'));
+                return result;
+              };
+            };
+            patchHistory('pushState');
+            patchHistory('replaceState');
+            window.addEventListener('popstate', () => {
+              window.dispatchEvent(new Event('lattice-history-change'));
+            });
+            window.addEventListener('hashchange', () => {
+              window.dispatchEvent(new Event('lattice-history-change'));
+            });
+          })();
+        "#,
+    )
+    .on_navigation(move |next_url| {
+        let _ = set_desktop_native_webview_snapshot(
+            &app_for_navigation,
+            &label_for_navigation,
+            Some(next_url.to_string()),
+            None,
+            Some("ready"),
+            None,
+        );
+        true
+    })
+    .on_page_load(move |_webview, payload| {
+        let _ = set_desktop_native_webview_snapshot(
+            &app_for_page_load,
+            &label_for_page_load,
+            Some(payload.url().to_string()),
+            None,
+            Some("ready"),
+            Some(None),
+        );
+    })
+    .on_document_title_changed(move |_webview, title| {
+        let _ = set_desktop_native_webview_snapshot(
+            &app_for_title,
+            &label_for_title,
+            None,
+            Some(title),
+            None,
+            None,
+        );
+    })
+    .on_new_window(move |next_url, _features| {
+        let _ = emit_desktop_native_webview_new_window(
+            &app_for_new_window,
+            &label_for_new_window,
+            &next_url,
+        );
+        tauri::webview::NewWindowResponse::Deny
+    })
+    .on_download(move |_webview, event| {
+        match event {
+            tauri::webview::DownloadEvent::Requested { url, destination } => {
+                let _ = emit_desktop_native_webview_download_event(
+                    &app_for_download,
+                    DesktopNativeWebviewDownloadEventPayload {
+                        label: label_for_download.clone(),
+                        phase: "requested".to_string(),
+                        url: url.to_string(),
+                        path: Some(destination.display().to_string()),
+                        success: None,
+                    },
+                );
+            }
+            tauri::webview::DownloadEvent::Finished { url, path, success } => {
+                let _ = emit_desktop_native_webview_download_event(
+                    &app_for_download,
+                    DesktopNativeWebviewDownloadEventPayload {
+                        label: label_for_download.clone(),
+                        phase: "finished".to_string(),
+                        url: url.to_string(),
+                        path: path.map(|value| value.display().to_string()),
+                        success: Some(success),
+                    },
+                );
+            }
+            _ => {}
+        }
+        true
+    });
+
+    let initial_snapshot = set_desktop_native_webview_snapshot(
+        &app,
+        &label,
+        Some(target_url.to_string()),
+        None,
+        Some("mounting"),
+        Some(None),
+    )?;
+
+    let app_for_mount = app.clone();
+    let label_for_mount = label.clone();
+    let target_url_for_mount = target_url.clone();
+    let window_label_for_mount = window_label.clone();
+    std::thread::spawn(move || {
+        let app_for_thread = app_for_mount.clone();
+        let label_for_thread = label_for_mount.clone();
+        let target_url_for_thread = target_url_for_mount.clone();
+        let window_label_for_thread = window_label_for_mount.clone();
+        let mount_result = app_for_mount.run_on_main_thread(move || {
+            let Some(window) = app_for_thread.get_window(&window_label_for_thread) else {
+                let _ = set_desktop_native_webview_snapshot(
+                    &app_for_thread,
+                    &label_for_thread,
+                    Some(target_url_for_thread.to_string()),
+                    None,
+                    Some("error"),
+                    Some(Some(format!("Window not found: {}", window_label_for_thread))),
+                );
+                return;
+            };
+
+            let child_result = window.add_child(
+                webview_builder,
+                LogicalPosition::new(x, y),
+                LogicalSize::new(width, height),
+            );
+
+            match child_result {
+                Ok(webview) => {
+                    let visibility_result = if !visible {
+                        webview.hide().map_err(|error| error.to_string())
+                    } else if focus {
+                        webview.set_focus().map_err(|error| error.to_string())
+                    } else {
+                        Ok(())
+                    };
+
+                    match visibility_result {
+                        Ok(()) => {
+                            let _ = set_desktop_native_webview_snapshot(
+                                &app_for_thread,
+                                &label_for_thread,
+                                Some(target_url_for_thread.to_string()),
+                                None,
+                                Some("ready"),
+                                Some(None),
+                            );
+                        }
+                        Err(error) => {
+                            let _ = set_desktop_native_webview_snapshot(
+                                &app_for_thread,
+                                &label_for_thread,
+                                Some(target_url_for_thread.to_string()),
+                                None,
+                                Some("error"),
+                                Some(Some(error)),
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    let _ = set_desktop_native_webview_snapshot(
+                        &app_for_thread,
+                        &label_for_thread,
+                        Some(target_url_for_thread.to_string()),
+                        None,
+                        Some("error"),
+                        Some(Some(error.to_string())),
+                    );
+                }
+            }
+        });
+
+        if let Err(error) = mount_result {
+            let _ = set_desktop_native_webview_snapshot(
+                &app_for_mount,
+                &label_for_mount,
+                Some(target_url_for_mount.to_string()),
+                None,
+                Some("error"),
+                Some(Some(error.to_string())),
+            );
+        }
+    });
+
+    Ok(initial_snapshot)
+}
+
+#[tauri::command]
+fn desktop_native_webview_update_bounds(
+    app: AppHandle,
+    label: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let webview = app
+        .get_webview(&label)
+        .ok_or_else(|| format!("Webview not found: {}", label))?;
+    webview
+        .set_position(LogicalPosition::new(x, y))
+        .map_err(|error| error.to_string())?;
+    webview
+        .set_size(LogicalSize::new(width, height))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn desktop_native_webview_set_visibility(
+    app: AppHandle,
+    label: String,
+    visible: bool,
+    focus: bool,
+) -> Result<(), String> {
+    let webview = app
+        .get_webview(&label)
+        .ok_or_else(|| format!("Webview not found: {}", label))?;
+    if visible {
+        webview.show().map_err(|error| error.to_string())?;
+        if focus {
+            webview.set_focus().map_err(|error| error.to_string())?;
+        }
+    } else {
+        webview.hide().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn desktop_native_webview_close(app: AppHandle, label: String) -> Result<(), String> {
+    if let Some(webview) = app.get_webview(&label) {
+        webview.close().map_err(|error| error.to_string())?;
+    }
+    remove_desktop_native_webview_snapshot(&app, &label)
+}
+
+#[tauri::command]
+fn desktop_native_webview_get_state(
+    app: AppHandle,
+    label: String,
+) -> Result<Option<DesktopNativeWebviewSnapshot>, String> {
+    if let Some(webview) = app.get_webview(&label) {
+        let current_url = webview.url().map_err(|error| error.to_string())?.to_string();
+        let snapshot = set_desktop_native_webview_snapshot(
+            &app,
+            &label,
+            Some(current_url),
+            None,
+            Some("ready"),
+            None,
+        )?;
+        return Ok(Some(snapshot));
+    }
+
+    get_desktop_native_webview_snapshot(&app, &label)
+}
+
+#[tauri::command]
+fn desktop_native_webview_navigate(
+    app: AppHandle,
+    label: String,
+    url: String,
+) -> Result<DesktopNativeWebviewSnapshot, String> {
+    let webview = app
+        .get_webview(&label)
+        .ok_or_else(|| format!("Webview not found: {}", label))?;
+    let target_url = reqwest::Url::parse(url.trim()).map_err(|error| error.to_string())?;
+    webview
+        .navigate(target_url.clone())
+        .map_err(|error| error.to_string())?;
+    set_desktop_native_webview_snapshot(
+        &app,
+        &label,
+        Some(target_url.to_string()),
+        None,
+        Some("ready"),
+        Some(None),
+    )
+}
+
+#[tauri::command]
+fn desktop_native_webview_reload(app: AppHandle, label: String) -> Result<(), String> {
+    let webview = app
+        .get_webview(&label)
+        .ok_or_else(|| format!("Webview not found: {}", label))?;
+    webview.reload().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn desktop_native_webview_go_back(app: AppHandle, label: String) -> Result<(), String> {
+    let webview = app
+        .get_webview(&label)
+        .ok_or_else(|| format!("Webview not found: {}", label))?;
+    webview
+        .eval("window.history.back();")
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn desktop_native_webview_go_forward(app: AppHandle, label: String) -> Result<(), String> {
+    let webview = app
+        .get_webview(&label)
+        .ok_or_else(|| format!("Webview not found: {}", label))?;
+    webview
+        .eval("window.history.forward();")
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn desktop_create_dir(
     fs_state: State<'_, DesktopFsState>,
     path: String,
@@ -1493,6 +2049,7 @@ fn main() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(DesktopPreviewState::default())
+        .manage(DesktopNativeWebviewState::default())
         .manage(DesktopFsState::default())
         .manage(ExecutionSessions::default())
         .manage(PythonSessions::default())
@@ -1516,6 +2073,16 @@ fn main() {
             desktop_exists_path,
             desktop_file_metadata,
             desktop_is_directory,
+            fetch_web_document,
+            desktop_native_webview_mount,
+            desktop_native_webview_update_bounds,
+            desktop_native_webview_set_visibility,
+            desktop_native_webview_close,
+            desktop_native_webview_get_state,
+            desktop_native_webview_navigate,
+            desktop_native_webview_reload,
+            desktop_native_webview_go_back,
+            desktop_native_webview_go_forward,
             desktop_create_dir,
             desktop_remove_path,
             desktop_set_preview_root,

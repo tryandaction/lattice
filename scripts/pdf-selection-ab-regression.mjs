@@ -2,24 +2,34 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 
-const pathologicalPdfPath = "C:/universe/MyStudy/atom/files/Reviews_Classics/Saffman - 2016 - Quantum computing with atomic qubits and Rydberg interactions progress and challenges.pdf";
-const controlPdfPath = "C:/universe/MyStudy/atom/files/Reviews_Classics/Browaeys和Lahaye - 2020 - Many-body physics with individually controlled Rydberg atoms.pdf";
-
-const phraseBaselines = {
-  pathological: [
-    "computation",
-    "quantum computation based on",
-    "attracting great interest",
-    "intrinsic features of",
-    "In this review",
-  ],
-  control: [
-    "Many-body",
-    "physics",
-    "studies",
-    "ensembles",
-  ],
-};
+const CANDIDATE_BASELINES = [
+  {
+    label: "demon-like-cooling",
+    filePath: "C:/universe/books&essay/physics/Essay/Demon-like algorithmic quantum cooling and its.pdf",
+    phrases: [
+      "Demon-like algorithmic quantum cooling",
+      "realization with quantum optics",
+      "Jin-Shi Xu",
+    ],
+  },
+  {
+    label: "quantum-biology-review",
+    filePath: "C:/universe/books&essay/quantum biology/nphys2474.pdf",
+    phrases: [
+      "Quantum biology",
+      "REVIEW ARTICLE",
+      "Neill Lambert",
+    ],
+  },
+  {
+    label: "ajp-molecular-dynamics",
+    filePath: "C:/Users/XINGLUOYUNSHEN/Downloads/AJP88_401_2020.pdf",
+    phrases: [
+      "Introduction to molecular dynamics simulations",
+      "American Journal of Physics",
+    ],
+  },
+];
 
 async function readPdfStats(filePath, phrases) {
   const fileBuffer = new Uint8Array(await fs.readFile(filePath));
@@ -45,6 +55,7 @@ async function readPdfStats(filePath, phrases) {
       itemCount: items.length,
       longItems: items.filter((item) => item.str.length >= 20).length,
       maxLen: items.reduce((max, item) => Math.max(max, item.str.length), 0),
+      sample: items.slice(0, 16).map((item) => item.str),
     });
 
     for (const phrase of phrases) {
@@ -63,19 +74,22 @@ async function readPdfStats(filePath, phrases) {
 }
 
 async function main() {
-  const inputs = [
-    { label: "pathological", filePath: pathologicalPdfPath, phrases: phraseBaselines.pathological },
-    { label: "control", filePath: controlPdfPath, phrases: phraseBaselines.control },
-  ];
-
-  const results = [];
-  for (const input of inputs) {
+  const existingInputs = [];
+  for (const input of CANDIDATE_BASELINES) {
     try {
       await fs.access(input.filePath);
+      existingInputs.push(input);
     } catch {
-      throw new Error(`Missing PDF baseline: ${input.filePath}`);
+      // Skip unavailable baselines on this machine.
     }
+  }
 
+  if (existingInputs.length === 0) {
+    throw new Error("No available PDF baselines were found on this machine.");
+  }
+
+  const results = [];
+  for (const input of existingInputs) {
     results.push({
       label: input.label,
       filePath: input.filePath,
@@ -93,6 +107,10 @@ async function main() {
 
   console.log(JSON.stringify({
     generatedAt: new Date().toISOString(),
+    baselinesUsed: existingInputs.map((input) => ({
+      label: input.label,
+      filePath: input.filePath,
+    })),
     results,
   }, null, 2));
 }

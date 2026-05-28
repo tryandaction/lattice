@@ -13,6 +13,7 @@ export type RendererType =
   | 'word'
   | 'powerpoint'
   | 'html'
+  | 'web'
   | 'code'
   | 'image'
   | 'handwriting'
@@ -372,6 +373,8 @@ export const EDITABLE_CODE_EXTENSIONS = new Set([
   'jsx',     // JSX
   'ts',      // TypeScript
   'tsx',     // TSX
+  'html',    // HTML
+  'htm',     // HTML
   'mjs',     // ES Modules
   'cjs',     // CommonJS
   'json',    // JSON
@@ -417,7 +420,7 @@ export function isEditableCodeFile(extension: string): boolean {
  * @param extension - File extension without the leading dot
  * @returns The CodeEditor language or 'javascript' as fallback
  */
-export function getCodeEditorLanguage(extension: string): 'python' | 'javascript' | 'typescript' | 'json' | 'latex' | 'markdown' | 'plaintext' {
+export function getCodeEditorLanguage(extension: string): 'python' | 'javascript' | 'typescript' | 'json' | 'html' | 'latex' | 'markdown' | 'plaintext' {
   const ext = extension.toLowerCase();
   
   switch (ext) {
@@ -434,6 +437,9 @@ export function getCodeEditorLanguage(extension: string): 'python' | 'javascript
     case 'json':
     case 'jsonc':
       return 'json';
+    case 'html':
+    case 'htm':
+      return 'html';
     case 'tex':
     case 'latex':
       return 'latex';

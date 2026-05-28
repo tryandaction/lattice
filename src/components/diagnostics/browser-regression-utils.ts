@@ -41,7 +41,7 @@ export async function writeArrayBufferFile(
   return fileHandle;
 }
 
-export async function createSamplePdfBuffer(title: string, totalPages = 8): Promise<ArrayBuffer> {
+export async function createSamplePdfBuffer(title: string, totalPages = 4): Promise<ArrayBuffer> {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
 
@@ -55,7 +55,7 @@ export async function createSamplePdfBuffer(title: string, totalPages = 8): Prom
       color: rgb(0.12, 0.12, 0.18),
     });
 
-    for (let line = 0; line < 24; line += 1) {
+    for (let line = 0; line < 14; line += 1) {
       page.drawText(
         `Diagnostic paragraph ${line + 1} on page ${pageIndex + 1}. Keep scrolling to verify stable zoom and reading progress.`,
         {

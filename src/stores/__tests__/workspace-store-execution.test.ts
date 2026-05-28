@@ -3,6 +3,7 @@ import { waitFor } from "@testing-library/react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 import { destroyExecutionScope, ensureExecutionSession, getExecutionSession } from "@/stores/execution-session-store";
+import { isFileTabState } from "@/types/layout";
 
 function createFileHandle(name: string): FileSystemFileHandle {
   return {
@@ -62,9 +63,13 @@ describe("workspace-store execution scope cleanup", () => {
 
     const pane = useWorkspaceStore.getState().getActivePane();
     const tab = pane?.tabs[0];
+    expect(tab && isFileTabState(tab)).toBe(true);
+    if (!tab || !isFileTabState(tab)) {
+      throw new Error("Expected file tab");
+    }
     expect(tab?.fileName).toBe("note.md");
     expect(tab?.filePath).toBe("workspace/note.md");
-    expect(tab?.fileHandle).toBe(newHandle);
-    expect(tab?.fileHandle.name).toBe("note.md");
+    expect(tab.fileHandle).toBe(newHandle);
+    expect(tab.fileHandle.name).toBe("note.md");
   });
 });

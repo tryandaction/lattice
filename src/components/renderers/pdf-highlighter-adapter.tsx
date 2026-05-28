@@ -5320,6 +5320,7 @@ export function PDFHighlighterAdapter({
       source: side,
     });
     let currentAnchor = resolvedAnchor;
+    let dragActivated = false;
 
     const pointerId = event.pointerId;
     const initialClientX = event.clientX;
@@ -5333,9 +5334,10 @@ export function PDFHighlighterAdapter({
         moveEvent.clientX - initialClientX,
         moveEvent.clientY - initialClientY,
       );
-      if (dragDistance < 8) {
+      if (!dragActivated && dragDistance < 8) {
         return;
       }
+      dragActivated = true;
       const livePageElement = findPdfPageElementInScope(containerRef.current, target.page);
       if (!livePageElement) {
         return;

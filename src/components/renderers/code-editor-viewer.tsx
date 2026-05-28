@@ -20,7 +20,7 @@ import { useTextSelection } from "@/hooks/use-text-selection";
 import { AiInlineMenu } from "@/components/ai/ai-inline-menu";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
-import type { CommandBarState, PaneId } from "@/types/layout";
+import type { CommandBarAction, CommandBarState, PaneId } from "@/types/layout";
 import { useLinkNavigationStore } from "@/stores/link-navigation-store";
 import { isSameWorkspacePath } from "@/lib/link-router/path-utils";
 import { getRunnerDefinition } from "@/lib/runner/extension-map";
@@ -58,6 +58,7 @@ interface CodeEditorViewerProps {
   tabId: string;
   filePath: string;
   executionScopeId: string;
+  extraCommandActions?: CommandBarAction[];
 }
 
 const DEBOUNCE_DELAY = 500;
@@ -79,6 +80,7 @@ export function CodeEditorViewer({
   tabId,
   filePath,
   executionScopeId,
+  extraCommandActions = [],
 }: CodeEditorViewerProps) {
   const { t } = useI18n();
   const extension = getFileExtension(fileName);
@@ -565,6 +567,7 @@ export function CodeEditorViewer({
           group: "secondary",
           onTrigger: () => editorRef.current?.openSearch(),
         },
+        ...extraCommandActions,
         {
           id: isRunning ? "stop" : "run",
           label: isRunning ? t("workbench.commandBar.stop") : t("workbench.commandBar.run"),
@@ -588,6 +591,7 @@ export function CodeEditorViewer({
     filePath,
     handleRerun,
     handleRun,
+    extraCommandActions,
     isReadOnly,
     isRunning,
     onSave,

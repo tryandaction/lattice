@@ -15,6 +15,7 @@ import { findPane } from "@/lib/layout-utils";
 import { getFileExtension, getRendererForExtension, isBinaryFile, isEditableFile } from "@/lib/file-utils";
 import { saveWorkspaceTabContent } from "@/lib/workspace-save";
 import type { TabState } from "@/types/layout";
+import { isFileTabState } from "@/types/layout";
 import { useI18n } from "@/hooks/use-i18n";
 import { getDesktopPreviewPath, resolveDesktopPreviewUrl } from "@/lib/desktop-preview";
 import { readDesktopTextFile, readDesktopTextFileChunk } from "@/lib/desktop-file-system";
@@ -67,7 +68,7 @@ export function PaneWrapper({
     ? tabs[activeTabIndex] 
     : null;
   const activeRendererType = activeTab
-    ? getRendererForExtension(getFileExtension(activeTab.fileName))
+    ? (activeTab.kind === "web" ? "web" : getRendererForExtension(getFileExtension(activeTab.fileName)))
     : null;
   const isActiveSystemIndexFile = activeTab
     ? activeTab.fileName === "_annotations.md" || activeTab.fileName === "_overview.md"
@@ -124,7 +125,7 @@ export function PaneWrapper({
 
     const hasLoadedCurrent = loadedTabId === currentTabId;
     const isLoadingCurrent = loadingTabIdRef.current === currentTabId;
-    const desktopPreviewPath = getDesktopPreviewPath(activeTab.fileHandle);
+    const desktopPreviewPath = isFileTabState(activeTab) ? getDesktopPreviewPath(activeTab.fileHandle) : null;
     const shouldUseDesktopPreview = Boolean(
       isTauriHost() &&
       desktopPreviewPath &&
@@ -142,6 +143,21 @@ export function PaneWrapper({
       if (error) {
         setError(null);
       }
+      return;
+    }
+
+    if (activeTab.kind === "web") {
+      setLoadedTabId(currentTabId);
+      loadingTabIdRef.current = null;
+      setContent({
+        kind: "web-url",
+        url: activeTab.url,
+        title: activeTab.pageTitle ?? activeTab.fileName,
+      });
+      originalContentRef.current = null;
+      setTabDirty(paneId, activeTabIndex, false);
+      setIsLoading(false);
+      setError(null);
       return;
     }
 
@@ -251,6 +267,9 @@ export function PaneWrapper({
       const loadingForTabId = currentTabId;
 
       try {
+        if (!isFileTabState(activeTab)) {
+          throw new Error("Unsupported non-file tab in file loader.");
+        }
         const file = await activeTab.fileHandle.getFile();
         const logicalFileName =
           activeTab.fileName ||
@@ -306,7 +325,7 @@ export function PaneWrapper({
   }, [
     activeTab,
     activeTab?.id,
-    activeTab?.fileHandle,
+    activeTab?.kind,
     activeTabIndex,
     activeRendererType,
     error,
@@ -358,6 +377,9 @@ export function PaneWrapper({
     }
 
     try {
+      if (!isFileTabState(tab)) {
+        throw new Error("Only workspace files can be saved.");
+      }
       await saveWorkspaceTabContent({
         tab,
         content: cached.content,
@@ -447,19 +469,27 @@ export function PaneWrapper({
 
   // Handle file save - optimized with fast save
   const handleSave = useCallback(async () => {
-    if (!activeTab || content?.kind !== "text") return;
+    if (!activeTab || !isFileTabState(activeTab)) return;
+
+    const cached = useContentCacheStore.getState().getContent(activeTab.id);
+    const contentToSave = typeof cached?.content === "string"
+      ? cached.content
+      : content?.kind === "text"
+        ? content.text
+        : null;
+    if (contentToSave === null) return;
     
     try {
       const persistedTab = await saveWorkspaceTabContent({
         tab: activeTab,
-        content: content.text,
+        content: contentToSave,
         rootHandle,
         refreshDirectory,
       });
       
       // Update cache - mark as saved with new original content
-      useContentCacheStore.getState().markAsSaved(persistedTab.id, content.text);
-      originalContentRef.current = content.text;
+      useContentCacheStore.getState().markAsSaved(persistedTab.id, contentToSave);
+      originalContentRef.current = contentToSave;
 
       // Clear dirty state
       setTabDirty(paneId, activeTabIndex, false);
@@ -477,7 +507,7 @@ export function PaneWrapper({
 
   // Determine if current file is editable
   const isEditable = activeTab 
-    ? isEditableFile(getFileExtension(activeTab.fileName)) 
+    ? isFileTabState(activeTab) && isEditableFile(getFileExtension(activeTab.fileName))
     : false;
 
   // Ensure we never render stale content for a different tab
@@ -569,7 +599,8 @@ export function PaneWrapper({
           <UniversalFileViewer
             key={activeTab.id}
             paneId={paneId}
-            handle={activeTab.fileHandle}
+            tab={activeTab}
+            isActive={isActive}
             rootHandle={rootHandle}
             content={displayContent}
             isLoading={displayLoading}

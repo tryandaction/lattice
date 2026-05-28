@@ -8,12 +8,15 @@ import type { PaneId } from "@/stores/workspace-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { normalizeScientificText } from "@/lib/markdown-converter";
 import { navigateLink } from "@/lib/link-router/navigate-link";
+import { findClosestAnchorHref, shouldOpenLinkExternally } from "@/lib/link-router/link-click";
 import { t } from "@/lib/i18n";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 import { isTauriHost } from "@/lib/storage-adapter";
 import { resolvePdfDocumentBinding } from "@/lib/pdf-document-binding";
 import type { ResolvedPdfDocumentBinding } from "@/lib/pdf-document-binding";
 import type { BinaryViewerContent, BufferViewerContent, ViewerContent } from "@/types/viewer-content";
+import type { TabState } from "@/types/layout";
+import { isFileTabState } from "@/types/layout";
 
 /**
  * LRU cache for normalizeScientificText results.
@@ -259,6 +262,11 @@ const ImageViewer = dynamic(
   { loading: () => <LoadingState message={t("viewer.loading.image")} />, ssr: false }
 );
 
+const WebViewer = dynamic(
+  () => import("@/components/renderers/web-viewer").then((mod) => mod.WebViewer),
+  { loading: () => <LoadingState message="正在加载网页..." />, ssr: false }
+);
+
 // Image Tldraw Adapter for annotation support
 const ImageTldrawAdapter = dynamic(
   () => import("@/components/renderers/image-tldraw-adapter").then((mod) => mod.ImageTldrawAdapter),
@@ -286,6 +294,7 @@ const HandwritingViewer = dynamic(
  * File viewer router - renders appropriate component based on file type
  */
 function FileViewer({
+  tab,
   content,
   fileName,
   rendererType,
@@ -298,7 +307,9 @@ function FileViewer({
   onNavigateToFile,
   paneId,
   executionScopeId,
+  isActive,
 }: {
+  tab: TabState;
   content: ViewerContent;
   fileName: string;
   rendererType: RendererType;
@@ -311,6 +322,7 @@ function FileViewer({
   onNavigateToFile?: (target: string) => void;
   paneId: PaneId;
   executionScopeId: string;
+  isActive: boolean;
 }) {
   const extension = getFileExtension(fileName);
   const viewerKey = fileId || fileName;
@@ -425,7 +437,7 @@ function FileViewer({
       );
     }
     case "pdf":
-      if (content.kind === "text") {
+      if (content.kind === "text" || content.kind === "web-url") {
         return <ErrorState error={t("viewer.error.binaryText")} />;
       }
       return (
@@ -499,24 +511,37 @@ function FileViewer({
     case "html": {
       // Ensure content is a string for HTML viewer
       const htmlContent = getTextContent();
-      if (onContentChange) {
-        return (
-          <CodeEditorViewer
-            content={htmlContent}
-            fileName={fileName}
-            onContentChange={onContentChange}
-            onSave={onSave}
-            paneId={paneId}
-            tabId={fileId || fileName}
-            filePath={filePath ?? fileName}
-            executionScopeId={executionScopeId}
-          />
-        );
+      return (
+        <HTMLViewer
+          content={htmlContent}
+          fileName={fileName}
+          paneId={paneId}
+          filePath={filePath ?? fileName}
+          fileHandle={fileHandle}
+          rootHandle={rootHandle}
+          onContentChange={onContentChange}
+          onSave={onSave}
+          tabId={fileId || fileName}
+          executionScopeId={executionScopeId}
+        />
+      );
+    }
+    case "web": {
+      if (content.kind !== "web-url") {
+        return <ErrorState error="Web viewer content is unavailable." />;
       }
-      return <HTMLViewer content={htmlContent} fileName={fileName} paneId={paneId} filePath={filePath ?? fileName} />;
+      return (
+        <WebViewer
+          url={content.url}
+          fileName={fileName}
+          paneId={paneId}
+          tabId={tab.id}
+          isActive={isActive}
+        />
+      );
     }
     case "image":
-      if (content.kind === "text") {
+      if (content.kind === "text" || content.kind === "web-url") {
         return <ErrorState error={t("viewer.error.binaryText")} />;
       }
       if (content.kind === "desktop-url") {
@@ -581,7 +606,9 @@ function FileViewer({
  */
 export interface UniversalFileViewerProps {
   paneId: PaneId;
-  handle: FileSystemFileHandle | null;
+  tab?: TabState | null;
+  handle?: FileSystemFileHandle | null;
+  isActive?: boolean;
   rootHandle?: FileSystemDirectoryHandle | null;
   content: ViewerContent | null;
   isLoading: boolean;
@@ -600,7 +627,9 @@ export interface UniversalFileViewerProps {
  */
 export function UniversalFileViewer({
   paneId,
+  tab,
   handle,
+  isActive = true,
   rootHandle,
   content,
   isLoading,
@@ -621,13 +650,45 @@ export function UniversalFileViewer({
       console.warn("Failed to resolve link target:", target);
     }
   }, [paneId, rootHandle, filePath]);
+  const handleViewerAnchorClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const href = findClosestAnchorHref(event.target);
+    if (!href) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    void navigateLink(href, {
+      paneId,
+      rootHandle,
+      currentFilePath: filePath,
+      externalUrlMode: shouldOpenLinkExternally(event) ? "external" : "internal",
+    });
+  }, [filePath, paneId, rootHandle]);
+
+  const effectiveTab = useMemo<TabState | null>(() => {
+    if (tab) {
+      return tab;
+    }
+    if (!handle) {
+      return null;
+    }
+    return {
+      id: fileId || `${paneId}:${filePath ?? handle.name}`,
+      fileHandle: handle,
+      fileName: handle.name,
+      filePath: filePath ?? handle.name,
+      isDirty: false,
+      scrollPosition: 0,
+    };
+  }, [fileId, filePath, handle, paneId, tab]);
 
   const executionScopeId = useMemo(() => buildExecutionScopeId({
     paneId,
-    tabId: fileId || handle?.name || "",
-  }), [paneId, fileId, handle?.name]);
+    tabId: fileId || effectiveTab?.id || "",
+  }), [paneId, fileId, effectiveTab?.id]);
   // No file selected - show empty placeholder
-  if (!handle) {
+  if (!effectiveTab) {
     return <EmptyPanePlaceholder />;
   }
 
@@ -646,25 +707,33 @@ export function UniversalFileViewer({
     return <LoadingState message={t("viewer.loading.preparing")} />;
   }
 
-  const fileName = getDisplayNameFromPath(filePath, handle.name);
-  const extension = getFileExtension(fileName);
-  const rendererType = getRendererForExtension(extension);
+  const fileName = effectiveTab.fileName || getDisplayNameFromPath(filePath, "Untitled");
+  const rendererType = effectiveTab.kind === "web"
+    ? "web"
+    : getRendererForExtension(getFileExtension(fileName));
+  const fileHandle = isFileTabState(effectiveTab) ? effectiveTab.fileHandle : undefined;
 
   return (
-    <div className="h-full min-h-0 min-w-0 overflow-hidden bg-background">
+    <div
+      className="h-full min-h-0 min-w-0 overflow-hidden bg-background"
+      onClick={handleViewerAnchorClick}
+      onAuxClick={handleViewerAnchorClick}
+    >
       <FileViewer
+        tab={effectiveTab}
         content={content}
         fileName={fileName}
         rendererType={rendererType}
-        fileHandle={handle}
+        fileHandle={fileHandle}
         rootHandle={rootHandle}
         onContentChange={onContentChange}
         onSave={onSave}
-        fileId={fileId}
+        fileId={fileId || effectiveTab.id}
         filePath={filePath}
         onNavigateToFile={handleNavigateToFile}
         paneId={paneId}
         executionScopeId={executionScopeId}
+        isActive={isActive}
       />
     </div>
   );

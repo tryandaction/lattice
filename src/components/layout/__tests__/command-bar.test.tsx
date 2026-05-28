@@ -156,6 +156,7 @@ describe("CommandBar desktop interactions", () => {
     expect(screen.getByTestId("desktop-window-control-minimize").getAttribute("data-tauri-drag-region")).toBe("false");
     expect(screen.getByTestId("desktop-window-control-maximize").getAttribute("data-tauri-drag-region")).toBe("false");
     expect(screen.getByTestId("desktop-window-control-close").getAttribute("data-tauri-drag-region")).toBe("false");
+    expect(screen.getByTestId("desktop-window-controls").closest('[data-desktop-webview-safe-zone="true"]')).not.toBeNull();
   });
 
   it("opens the workspace switcher from the workspace chip", async () => {
@@ -254,6 +255,60 @@ describe("CommandBar desktop interactions", () => {
     );
 
     expect(screen.getByLabelText("Search").innerHTML).not.toBe(screen.getByLabelText("Import").innerHTML);
+  });
+
+  it("renders distinct browser-style icons for web navigation actions", () => {
+    const commandBarByPane = workspaceState.commandBarByPane as Record<string, unknown>;
+    commandBarByPane["pane-1"] = {
+      breadcrumbs: [{ label: "example.com" }],
+      actions: [
+        { id: "back", label: "后退", icon: "arrow-left", group: "primary", onTrigger: () => {} },
+        { id: "forward", label: "前进", icon: "arrow-right", group: "primary", onTrigger: () => {} },
+        { id: "reload", label: "刷新网页", icon: "rotate-cw", group: "primary", onTrigger: () => {} },
+        { id: "open-external", label: "浏览器打开", icon: "external-link", group: "secondary", onTrigger: () => {} },
+      ],
+    };
+
+    render(
+      <CommandBar
+        onOpenWorkspace={() => {}}
+      />,
+    );
+
+    const backButton = screen.getByLabelText("后退");
+    const forwardButton = screen.getByLabelText("前进");
+    const reloadButton = screen.getByLabelText("刷新网页");
+    const externalButton = screen.getByLabelText("浏览器打开");
+
+    expect(backButton.innerHTML).not.toBe(forwardButton.innerHTML);
+    expect(backButton.innerHTML).not.toBe(reloadButton.innerHTML);
+    expect(reloadButton.innerHTML).not.toBe(externalButton.innerHTML);
+  });
+
+  it("uses tooltip text for icon-only web actions", () => {
+    const commandBarByPane = workspaceState.commandBarByPane as Record<string, unknown>;
+    commandBarByPane["pane-1"] = {
+      breadcrumbs: [{ label: "example.com" }],
+      actions: [
+        {
+          id: "copy-url",
+          label: "复制网址",
+          tooltip: "复制网址：https://example.com/paper",
+          icon: "globe",
+          group: "utility",
+          onTrigger: () => {},
+        },
+      ],
+    };
+
+    render(
+      <CommandBar
+        onOpenWorkspace={() => {}}
+      />,
+    );
+
+    const button = screen.getByLabelText("复制网址：https://example.com/paper");
+    expect(button.getAttribute("title")).toBe("复制网址：https://example.com/paper");
   });
 
   it("passes command bar action context menu positions to the active pane", () => {

@@ -12,8 +12,9 @@ import type {
   PaneId,
   SplitDirection,
   TabState,
+  WebTabState,
 } from '@/types/layout';
-import { isPaneNode, isSplitNode } from '@/types/layout';
+import { isFileTabState, isPaneNode, isSplitNode } from '@/types/layout';
 
 // Counter for generating unique IDs
 let paneIdCounter = 0;
@@ -65,9 +66,38 @@ export function createTab(
 ): TabState {
   return {
     id: generateTabId(),
+    kind: 'file',
     fileHandle,
     fileName: fileHandle.name,
     filePath,
+    isDirty: false,
+    scrollPosition: 0,
+  };
+}
+
+function deriveWebTabName(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      const pathname = parsed.pathname.replace(/\/+$/, "");
+      const tail = pathname.split("/").filter(Boolean).pop();
+      return tail || parsed.hostname || url;
+    }
+  } catch {
+    // Fall through to raw input below.
+  }
+
+  return url;
+}
+
+export function createWebTab(url: string, options?: { fileName?: string; pageTitle?: string | null }): WebTabState {
+  return {
+    id: generateTabId(),
+    kind: "web",
+    url,
+    fileName: options?.fileName?.trim() || options?.pageTitle?.trim() || deriveWebTabName(url),
+    filePath: url,
+    pageTitle: options?.pageTitle ?? null,
     isDirty: false,
     scrollPosition: 0,
   };
@@ -842,7 +872,7 @@ export function updateTabsFile(
   function transform(node: LayoutNode): LayoutNode {
     if (isPaneNode(node)) {
       const newTabs = node.tabs.map((tab) => {
-        if (tab.filePath === oldPath) {
+        if (isFileTabState(tab) && tab.filePath === oldPath) {
           return {
             ...tab,
             filePath: newPath,
