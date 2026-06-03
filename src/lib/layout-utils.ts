@@ -765,6 +765,20 @@ export function removeTabsByPrefix(
   return transform(root);
 }
 
+export function removeTabsToRightInPane(
+  root: LayoutNode,
+  paneId: PaneId,
+  tabIndex: number
+): LayoutNode {
+  const pane = findPane(root, paneId);
+  if (!pane || tabIndex < 0 || tabIndex >= pane.tabs.length) return root;
+  if (tabIndex >= pane.tabs.length - 1) return root;
+
+  const newTabs = pane.tabs.slice(0, tabIndex + 1);
+  const newActiveIndex = Math.min(pane.activeTabIndex, newTabs.length - 1);
+  return updatePaneTabs(root, paneId, newTabs, newActiveIndex);
+}
+
 /**
  * Update the path and filename of tabs matching an old path
  * Used when a file is renamed to update open tabs

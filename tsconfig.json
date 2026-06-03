@@ -36,6 +36,8 @@
     ".next/dev/types/**/*.ts",
     "web-dist/types/**/*.ts",
     "web-dist/dev/types/**/*.ts",
+    "web-dist-dev/types/**/*.ts",
+    "web-dist-dev/dev/types/**/*.ts",
     "web-dist-browser-regression/types/**/*.ts",
     "web-dist-browser-regression/dev/types/**/*.ts"
   ],
@@ -43,6 +45,7 @@
     "node_modules",
     "src-tauri/target",
     "web-dist-browser-regression",
+    "web-dist-dev",
     "web-dist"
   ]
 }

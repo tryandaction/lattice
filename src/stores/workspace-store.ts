@@ -21,6 +21,7 @@ import {
   removeTabFromPane,
   removeTabsByPath as removeTabsByPathUtil,
   removeTabsByPrefix as removeTabsByPrefixUtil,
+  removeTabsToRightInPane as removeTabsToRightInPaneUtil,
   updateTabsPath as updateTabsPathUtil,
   updateTabsFile as updateTabsFileUtil,
   updateTabsPathPrefix as updateTabsPathPrefixUtil,
@@ -214,6 +215,7 @@ interface WorkspaceState {
   closeAllTabs: (paneId: PaneId) => TabState[];
   closeSavedTabs: (paneId: PaneId) => void;
   closeOtherTabs: (paneId: PaneId, keepTabIndex: number) => TabState[];
+  closeTabsToRight: (paneId: PaneId, tabIndex: number) => TabState[];
   getUnsavedTabs: (paneId: PaneId) => TabState[];
 
   // Sidebar actions
@@ -815,6 +817,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         .filter((tab) => isWebTabState(tab))
         .map((tab) => getDesktopWebviewLabelForTab(tab.id)),
     );
+    pane.tabs
+      .filter((tab) => isFileTabState(tab))
+      .forEach((tab) => emitFileClose(tab.filePath));
+    emitActiveFileChange(null);
     
     return unsavedTabs;
   },
@@ -855,6 +861,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         .filter((tab) => !tab.isDirty && isWebTabState(tab))
         .map((tab) => getDesktopWebviewLabelForTab(tab.id)),
     );
+    pane.tabs
+      .filter((tab) => !tab.isDirty && isFileTabState(tab))
+      .forEach((tab) => emitFileClose(tab.filePath));
   },
 
   closeOtherTabs: (paneId, keepTabIndex) => {
@@ -897,7 +906,42 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         .filter((tab, index) => index !== keepTabIndex && isWebTabState(tab))
         .map((tab) => getDesktopWebviewLabelForTab(tab.id)),
     );
+    pane.tabs
+      .filter((tab, index) => index !== keepTabIndex && isFileTabState(tab))
+      .forEach((tab) => emitFileClose(tab.filePath));
+    emitActiveFileChange(pane.tabs[keepTabIndex]?.filePath ?? null);
     
+    return unsavedTabs;
+  },
+
+  closeTabsToRight: (paneId, tabIndex) => {
+    const state = get();
+    const pane = findPane(state.layout.root, paneId);
+    if (!pane || tabIndex < 0 || tabIndex >= pane.tabs.length - 1) return [];
+
+    const closingTabs = pane.tabs.slice(tabIndex + 1);
+    const unsavedTabs = closingTabs.filter((tab) => tab.isDirty);
+    set({
+      layout: {
+        ...state.layout,
+        root: removeTabsToRightInPaneUtil(state.layout.root, paneId, tabIndex),
+      },
+    });
+    void destroyExecutionScopes(
+      closingTabs.map((tab) => buildExecutionScopeId({
+        paneId,
+        tabId: tab.id,
+      })),
+    );
+    void destroyDesktopWebviewsByLabels(
+      closingTabs
+        .filter((tab) => isWebTabState(tab))
+        .map((tab) => getDesktopWebviewLabelForTab(tab.id)),
+    );
+    closingTabs
+      .filter((tab) => isFileTabState(tab))
+      .forEach((tab) => emitFileClose(tab.filePath));
+
     return unsavedTabs;
   },
 

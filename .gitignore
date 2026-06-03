@@ -15,6 +15,7 @@
 /.next/
 /out/
 /web-dist/
+/web-dist-dev/
 /web-dist-browser-regression/
 
 # production

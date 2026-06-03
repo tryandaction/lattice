@@ -5,6 +5,17 @@
  * using the File System Access API.
  */
 
+import {
+  copyDesktopPath,
+  getDesktopHandlePath,
+  isDesktopDirectoryHandle,
+  isDesktopFileHandle,
+  moveDesktopPath,
+  renameDesktopPath,
+  createDesktopDirectoryHandle,
+  createDesktopFileHandle,
+} from "@/lib/desktop-file-system";
+
 /**
  * File type for creation
  */
@@ -164,6 +175,34 @@ async function generateUniqueCopyName(
   return generateUniqueDirectoryName(parentHandle, `${originalName || "New Folder"} copy`);
 }
 
+async function entryExists(
+  parentHandle: FileSystemDirectoryHandle,
+  name: string,
+  kind: EntryKind
+): Promise<boolean> {
+  return kind === "file"
+    ? fileExists(parentHandle, name)
+    : directoryExists(parentHandle, name);
+}
+
+async function generateMoveTargetName(
+  parentHandle: FileSystemDirectoryHandle,
+  originalName: string,
+  kind: EntryKind
+): Promise<string> {
+  const sanitized = sanitizeFileName(originalName) || (kind === "file" ? "Untitled" : "New Folder");
+  if (!(await entryExists(parentHandle, sanitized, kind))) {
+    return sanitized;
+  }
+
+  if (kind === "file") {
+    const { baseName, extension } = splitFileName(sanitized);
+    return generateUniqueName(parentHandle, baseName || "Untitled", extension);
+  }
+
+  return generateUniqueDirectoryName(parentHandle, sanitized);
+}
+
 async function writeBlobToFile(fileHandle: FileSystemFileHandle, blob: Blob): Promise<void> {
   const writable = await fileHandle.createWritable();
   await writable.write(blob);
@@ -184,6 +223,26 @@ async function copyFileHandle(
   await writeBlobToFile(targetHandle, sourceFile);
 
   return { handle: targetHandle, name: targetName };
+}
+
+async function copyFileHandleNative(
+  sourceHandle: FileSystemFileHandle,
+  targetDirectoryHandle: FileSystemDirectoryHandle,
+  desiredName?: string
+): Promise<{ handle: FileSystemFileHandle; name: string } | null> {
+  if (!isDesktopFileHandle(sourceHandle) || !isDesktopDirectoryHandle(targetDirectoryHandle)) {
+    return null;
+  }
+
+  const targetName = desiredName
+    ? sanitizeFileName(desiredName)
+    : await generateUniqueCopyName(targetDirectoryHandle, sourceHandle.name, "file");
+  const targetPath = `${getDesktopHandlePath(targetDirectoryHandle)}/${targetName}`;
+  await copyDesktopPath(sourceHandle.fullPath, targetPath);
+  return {
+    handle: createDesktopFileHandle(targetPath),
+    name: targetName,
+  };
 }
 
 async function copyDirectoryHandle(
@@ -207,6 +266,26 @@ async function copyDirectoryHandle(
   }
 
   return { handle: newDirectoryHandle, name: targetName };
+}
+
+async function copyDirectoryHandleNative(
+  sourceHandle: FileSystemDirectoryHandle,
+  targetDirectoryHandle: FileSystemDirectoryHandle,
+  desiredName?: string
+): Promise<{ handle: FileSystemDirectoryHandle; name: string } | null> {
+  if (!isDesktopDirectoryHandle(sourceHandle) || !isDesktopDirectoryHandle(targetDirectoryHandle)) {
+    return null;
+  }
+
+  const targetName = desiredName
+    ? sanitizeFileName(desiredName)
+    : await generateUniqueCopyName(targetDirectoryHandle, sourceHandle.name, "directory");
+  const targetPath = `${getDesktopHandlePath(targetDirectoryHandle)}/${targetName}`;
+  await copyDesktopPath(sourceHandle.fullPath, targetPath);
+  return {
+    handle: createDesktopDirectoryHandle(targetPath),
+    name: targetName,
+  };
 }
 
 export async function resolveDirectoryHandle(
@@ -506,6 +585,18 @@ export async function renameEntry(
       }
 
       const sourceHandle = await dirHandle.getFileHandle(oldName);
+      if (isDesktopDirectoryHandle(dirHandle) && isDesktopFileHandle(sourceHandle)) {
+        const parentPath = getDesktopHandlePath(dirHandle);
+        const targetPath = `${parentPath}/${sanitized}`;
+        await renameDesktopPath(sourceHandle.fullPath, targetPath);
+        return {
+          success: true,
+          handle: createDesktopFileHandle(targetPath),
+          path: `${dirHandle.name}/${sanitized}`,
+          kind,
+        };
+      }
+
       const { handle, name } = await copyFileHandle(sourceHandle, dirHandle, sanitized);
       await dirHandle.removeEntry(oldName);
 
@@ -526,6 +617,18 @@ export async function renameEntry(
     }
 
     const sourceHandle = await dirHandle.getDirectoryHandle(oldName);
+    if (isDesktopDirectoryHandle(dirHandle) && isDesktopDirectoryHandle(sourceHandle)) {
+      const parentPath = getDesktopHandlePath(dirHandle);
+      const targetPath = `${parentPath}/${sanitized}`;
+      await renameDesktopPath(sourceHandle.fullPath, targetPath);
+      return {
+        success: true,
+        handle: createDesktopDirectoryHandle(targetPath),
+        path: `${dirHandle.name}/${sanitized}`,
+        kind,
+      };
+    }
+
     const { handle, name } = await copyDirectoryHandle(sourceHandle, dirHandle, sanitized);
     await dirHandle.removeEntry(oldName, { recursive: true });
 
@@ -631,7 +734,8 @@ export async function copyEntryToDirectory(
 ): Promise<EntryOperationResult> {
   try {
     if (entryHandle.kind === "file") {
-      const { handle, name } = await copyFileHandle(entryHandle as FileSystemFileHandle, targetDirectoryHandle);
+      const copiedNative = await copyFileHandleNative(entryHandle as FileSystemFileHandle, targetDirectoryHandle);
+      const { handle, name } = copiedNative ?? await copyFileHandle(entryHandle as FileSystemFileHandle, targetDirectoryHandle);
       return {
         success: true,
         handle,
@@ -640,7 +744,8 @@ export async function copyEntryToDirectory(
       };
     }
 
-    const { handle, name } = await copyDirectoryHandle(entryHandle as FileSystemDirectoryHandle, targetDirectoryHandle);
+    const copiedNative = await copyDirectoryHandleNative(entryHandle as FileSystemDirectoryHandle, targetDirectoryHandle);
+    const { handle, name } = copiedNative ?? await copyDirectoryHandle(entryHandle as FileSystemDirectoryHandle, targetDirectoryHandle);
     return {
       success: true,
       handle,
@@ -661,17 +766,47 @@ export async function moveEntryToDirectory(
   targetDirectoryHandle: FileSystemDirectoryHandle
 ): Promise<EntryOperationResult> {
   try {
-    const copied = await copyEntryToDirectory(entryHandle, targetDirectoryHandle);
-    if (!copied.success) {
-      return copied;
+    if (isDesktopDirectoryHandle(sourceParentHandle) && isDesktopDirectoryHandle(targetDirectoryHandle)) {
+      const kind = entryHandle.kind as EntryKind;
+      const targetName = await generateMoveTargetName(targetDirectoryHandle, entryHandle.name, kind);
+      const targetPath = `${getDesktopHandlePath(targetDirectoryHandle)}/${targetName}`;
+      const sourcePath = getDesktopHandlePath(entryHandle);
+      if (!sourcePath) {
+        throw new Error("Could not resolve desktop source path.");
+      }
+      await moveDesktopPath(sourcePath, targetPath);
+      return {
+        success: true,
+        handle: kind === "file" ? createDesktopFileHandle(targetPath) : createDesktopDirectoryHandle(targetPath),
+        path: `${targetDirectoryHandle.name}/${targetName}`,
+        kind,
+      };
     }
+
+    const kind = entryHandle.kind as EntryKind;
+    const targetName = await generateMoveTargetName(targetDirectoryHandle, entryHandle.name, kind);
+    const moved =
+      kind === "file"
+        ? {
+            ...(await copyFileHandle(entryHandle as FileSystemFileHandle, targetDirectoryHandle, targetName)),
+            kind,
+          }
+        : {
+            ...(await copyDirectoryHandle(entryHandle as FileSystemDirectoryHandle, targetDirectoryHandle, targetName)),
+            kind,
+          };
 
     await sourceParentHandle.removeEntry(
       entryHandle.name,
       entryHandle.kind === "directory" ? { recursive: true } : undefined
     );
 
-    return copied;
+    return {
+      success: true,
+      handle: moved.handle,
+      path: `${targetDirectoryHandle.name}/${moved.name}`,
+      kind,
+    };
   } catch (err) {
     return {
       success: false,

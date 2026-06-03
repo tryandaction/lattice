@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { useDndMonitor } from "@dnd-kit/core";
-import { SplitSquareHorizontal, SplitSquareVertical, X, FileText } from "lucide-react";
+import { Copy, FileText, MoreHorizontal, PanelTopClose, Save, SplitSquareHorizontal, SplitSquareVertical, X } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { TabBar } from "./tab-bar";
 import { DropZones } from "./drop-zone";
 import { UniversalFileViewer } from "./universal-file-viewer";
 import { SaveReminderDialog } from "@/components/ui/save-reminder-dialog";
+import { WorkbenchContextMenu, type WorkbenchMenuAction } from "@/components/ui/workbench-context-menu";
 import { useWorkspaceStore, type PaneId } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useFileSystem } from "@/hooks/use-file-system";
@@ -57,6 +59,10 @@ export function PaneWrapper({
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
   const setActiveTab = useWorkspaceStore((state) => state.setActiveTab);
   const closeTab = useWorkspaceStore((state) => state.closeTab);
+  const closeAllTabs = useWorkspaceStore((state) => state.closeAllTabs);
+  const closeSavedTabs = useWorkspaceStore((state) => state.closeSavedTabs);
+  const closeOtherTabs = useWorkspaceStore((state) => state.closeOtherTabs);
+  const closeTabsToRight = useWorkspaceStore((state) => state.closeTabsToRight);
   const setTabDirty = useWorkspaceStore((state) => state.setTabDirty);
   const { refreshDirectory } = useFileSystem();
 
@@ -97,10 +103,10 @@ export function PaneWrapper({
   const [pendingCloseTabIndex, setPendingCloseTabIndex] = useState<number | null>(null);
   const [pendingCloseTabName, setPendingCloseTabName] = useState<string | null>(null);
   const pendingCloseTabRef = useRef<TabState | null>(null);
+  const [paneMenu, setPaneMenu] = useState<{ x: number; y: number } | null>(null);
 
   // Load file content when active tab changes
   useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect */
     // No active tab - clear everything
     if (!activeTab) {
       setContent(null);
@@ -321,7 +327,6 @@ export function PaneWrapper({
     };
 
     loadFile();
-    /* eslint-enable react-hooks/set-state-in-effect */
   }, [
     activeTab,
     activeTab?.id,
@@ -358,6 +363,52 @@ export function PaneWrapper({
       closeTab(paneId, index);
     }
   }, [paneId, closeTab, tabs, hasUnsavedChanges, removeFromCache]);
+
+  const closeTabsWithUnsavedGuard = useCallback((operation: () => TabState[]) => {
+    const unsavedTabs = operation();
+    if (unsavedTabs.length > 0) {
+      toast.warning(t("tab.context.unsavedTitle"), {
+        description: t("tab.context.unsavedCount", { count: unsavedTabs.length }),
+      });
+    }
+    unsavedTabs.forEach((tab) => useContentCacheStore.getState().removeFromCache(tab.id));
+  }, [t]);
+
+  const handleCloseAllTabs = useCallback(() => {
+    closeTabsWithUnsavedGuard(() => closeAllTabs(paneId));
+  }, [closeAllTabs, closeTabsWithUnsavedGuard, paneId]);
+
+  const handleCloseSavedTabs = useCallback(() => {
+    const savedTabs = tabs.filter((tab) => !tab.isDirty);
+    savedTabs.forEach((tab) => removeFromCache(tab.id));
+    closeSavedTabs(paneId);
+  }, [closeSavedTabs, paneId, removeFromCache, tabs]);
+
+  const handleCloseOtherTabs = useCallback((keepIndex: number) => {
+    const closedTabs = tabs.filter((_, index) => index !== keepIndex);
+    closedTabs.forEach((tab) => {
+      if (!tab.isDirty) {
+        removeFromCache(tab.id);
+      }
+    });
+    closeTabsWithUnsavedGuard(() => closeOtherTabs(paneId, keepIndex));
+  }, [closeOtherTabs, closeTabsWithUnsavedGuard, paneId, removeFromCache, tabs]);
+
+  const handleCloseTabsToRight = useCallback((tabIndex: number) => {
+    const closedTabs = tabs.slice(tabIndex + 1);
+    closedTabs.forEach((tab) => {
+      if (!tab.isDirty) {
+        removeFromCache(tab.id);
+      }
+    });
+    closeTabsWithUnsavedGuard(() => closeTabsToRight(paneId, tabIndex));
+  }, [closeTabsToRight, closeTabsWithUnsavedGuard, paneId, removeFromCache, tabs]);
+
+  const handleCopyTabPath = useCallback((tab: TabState) => {
+    void navigator.clipboard?.writeText(tab.filePath)
+      .then(() => toast.success(t("tab.context.pathCopied")))
+      .catch(() => toast.error(t("tab.context.pathCopyFailed")));
+  }, [t]);
 
   // Handle save from dialog
   const handleDialogSave = useCallback(async () => {
@@ -505,6 +556,55 @@ export function PaneWrapper({
     }
   }, [isActive, onActivate]);
 
+  const paneMenuActions = useMemo<WorkbenchMenuAction[]>(() => [
+    {
+      id: "split-right",
+      label: t("pane.splitRight"),
+      icon: <SplitSquareHorizontal className="h-4 w-4" />,
+      onSelect: onSplitRight,
+    },
+    {
+      id: "split-down",
+      label: t("pane.splitDown"),
+      icon: <SplitSquareVertical className="h-4 w-4" />,
+      onSelect: onSplitDown,
+    },
+    {
+      id: "close-saved",
+      label: t("tab.context.closeSaved"),
+      icon: <Save className="h-4 w-4" />,
+      separatorBefore: true,
+      disabled: tabs.every((tab) => tab.isDirty),
+      onSelect: handleCloseSavedTabs,
+    },
+    {
+      id: "close-all",
+      label: t("tab.context.closeAll"),
+      icon: <X className="h-4 w-4" />,
+      disabled: tabs.length === 0,
+      onSelect: handleCloseAllTabs,
+    },
+    {
+      id: "copy-active-path",
+      label: t("tab.context.copyPath"),
+      icon: <Copy className="h-4 w-4" />,
+      disabled: !activeTab,
+      onSelect: () => {
+        if (activeTab) {
+          handleCopyTabPath(activeTab);
+        }
+      },
+    },
+    {
+      id: "close-pane",
+      label: t("pane.close"),
+      icon: <PanelTopClose className="h-4 w-4" />,
+      separatorBefore: true,
+      tone: "destructive",
+      onSelect: onClose,
+    },
+  ], [activeTab, handleCloseAllTabs, handleCloseSavedTabs, handleCopyTabPath, onClose, onSplitDown, onSplitRight, t, tabs]);
+
   // Determine if current file is editable
   const isEditable = activeTab 
     ? isFileTabState(activeTab) && isEditableFile(getFileExtension(activeTab.fileName))
@@ -529,8 +629,9 @@ export function PaneWrapper({
     <div
       className={cn(
         "group/pane flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-sm border transition-all duration-150",
+        "bg-[var(--workbench-panel)]",
         isActive
-          ? "border-blue-500/50 ring-2 ring-blue-500/30"
+          ? "border-blue-500/50 ring-2 ring-[var(--workbench-focus)]"
           : "border-border"
       )}
       onMouseDownCapture={handlePaneClick}
@@ -546,7 +647,7 @@ export function PaneWrapper({
       />
 
       {/* Pane Header with Tabs and Actions */}
-      <div className="flex min-w-0 items-center border-b border-border bg-muted/30">
+      <div className="flex min-w-0 items-center border-b border-border bg-[var(--workbench-panel-subtle)]">
         {/* Tab Bar */}
         <div className="flex-1 min-w-0 overflow-hidden">
           <TabBar
@@ -556,6 +657,11 @@ export function PaneWrapper({
             isPaneActive={isActive}
             onTabClick={handleTabClick}
             onTabClose={handleTabClose}
+            onCloseOtherTabs={handleCloseOtherTabs}
+            onCloseTabsToRight={handleCloseTabsToRight}
+            onCloseSavedTabs={handleCloseSavedTabs}
+            onCloseAllTabs={handleCloseAllTabs}
+            onCopyTabPath={handleCopyTabPath}
           />
         </div>
         
@@ -566,6 +672,13 @@ export function PaneWrapper({
             isActive ? "opacity-100" : "opacity-0 group-hover/pane:opacity-100"
           )}
         >
+          <button
+            onClick={(e) => { e.stopPropagation(); setPaneMenu({ x: e.clientX, y: e.clientY }); }}
+            className="p-1 rounded hover:bg-accent transition-colors"
+            title={t("workbench.commandBar.more")}
+          >
+            <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
           <button
             onClick={(e) => { e.stopPropagation(); onSplitRight(); }}
             className="p-1 rounded hover:bg-accent transition-colors"
@@ -589,6 +702,15 @@ export function PaneWrapper({
           </button>
         </div>
       </div>
+
+      {paneMenu && (
+        <WorkbenchContextMenu
+          x={paneMenu.x}
+          y={paneMenu.y}
+          actions={paneMenuActions}
+          onClose={() => setPaneMenu(null)}
+        />
+      )}
 
       {/* Content Area */}
       <div className="relative flex-1 min-h-0 min-w-0 overflow-hidden">

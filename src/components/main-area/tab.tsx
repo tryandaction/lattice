@@ -27,6 +27,7 @@ export interface TabProps {
   paneId: PaneId;
   onClick: () => void;
   onClose: () => void;
+  onContextMenu?: (event: React.MouseEvent) => void;
   isDraggable?: boolean;
 }
 
@@ -74,6 +75,7 @@ export function Tab({
   paneId,
   onClick,
   onClose,
+  onContextMenu,
   isDraggable = true,
 }: TabProps) {
   const { t } = useI18n();
@@ -120,6 +122,12 @@ export function Tab({
     }
   };
 
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onContextMenu?.(e);
+  };
+
   return (
     <div
       ref={setNodeRef}
@@ -132,13 +140,14 @@ export function Tab({
         "transition-colors duration-100",
         isActive
           ? (isPaneActive
-            ? "bg-background border-t-2 border-t-blue-500 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.45)]"
-            : "bg-muted/35 border-t-2 border-t-blue-500/30")
-          : "bg-muted/35 hover:bg-muted/60 border-t-2 border-t-transparent",
+            ? "bg-[var(--workbench-tab-active)] border-t-2 border-t-blue-500 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.28)]"
+            : "bg-[var(--workbench-tab)] border-t-2 border-t-blue-500/30")
+          : "bg-[var(--workbench-tab)] hover:bg-[var(--workbench-hover)] border-t-2 border-t-transparent",
         isDragging && "opacity-50 shadow-lg z-50"
       )}
       onClick={onClick}
       onMouseDown={handleMouseDown}
+      onContextMenu={handleContextMenu}
       title={tab.filePath}
     >
       {/* File Icon */}

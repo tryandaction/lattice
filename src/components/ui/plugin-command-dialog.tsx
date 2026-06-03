@@ -247,6 +247,16 @@ function buildBuiltinCommands(input: {
       },
     },
     {
+      id: "core.open-agent-protocol-center",
+      title: isZh ? "打开 Agent 协议中心" : "Open Agent Protocol Center",
+      description: isZh ? "追踪工程协作协议、复制规则并导出 Markdown" : "Track the engineering collaboration protocol, copy rules, and export Markdown.",
+      source: "core",
+      category: "system",
+      priority: 16,
+      keywords: ["agent", "protocol", "workflow", "todo", "cursor", "engineering"],
+      run: async () => input.navigate(resolveAppRoute("/agent-protocol")),
+    },
+    {
       id: "core.open-live-preview-guide",
       title: isZh ? "打开使用指南" : "Open User Guide",
       description: isZh ? "查看产品说明与桌面使用指南" : "Open the product user guide.",

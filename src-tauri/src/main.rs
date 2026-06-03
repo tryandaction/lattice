@@ -1074,6 +1074,65 @@ fn desktop_write_file_bytes(path: String, data: Vec<u8>) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn desktop_copy_path(
+    fs_state: State<'_, DesktopFsState>,
+    source: String,
+    target: String,
+) -> Result<(), String> {
+    let permit = fs_state
+        .mutate_path_permits
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        copy_desktop_path(&PathBuf::from(source), &PathBuf::from(target))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn desktop_move_path(
+    fs_state: State<'_, DesktopFsState>,
+    source: String,
+    target: String,
+) -> Result<(), String> {
+    let permit = fs_state
+        .mutate_path_permits
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let source_path = PathBuf::from(source);
+        let target_path = PathBuf::from(target);
+        match fs::rename(&source_path, &target_path) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                copy_desktop_path(&source_path, &target_path)?;
+                remove_desktop_path_sync(&source_path, true)
+            }
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn desktop_rename_path(
+    fs_state: State<'_, DesktopFsState>,
+    source: String,
+    target: String,
+) -> Result<(), String> {
+    desktop_move_path(fs_state, source, target).await
+}
+
+#[tauri::command]
 async fn desktop_exists_path(path: String) -> Result<bool, String> {
     tokio::task::spawn_blocking(move || {
         PathBuf::from(path)
@@ -1585,21 +1644,41 @@ async fn desktop_remove_path(
 
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let target = PathBuf::from(path);
-        let metadata = fs::symlink_metadata(&target).map_err(|error| error.to_string())?;
-        if metadata.is_dir() {
-            if recursive {
-                fs::remove_dir_all(target).map_err(|error| error.to_string())?;
-            } else {
-                fs::remove_dir(target).map_err(|error| error.to_string())?;
-            }
-        } else {
-            fs::remove_file(target).map_err(|error| error.to_string())?;
-        }
-        Ok(())
+        remove_desktop_path_sync(&PathBuf::from(path), recursive)
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+fn copy_desktop_path(source: &Path, target: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(source).map_err(|error| error.to_string())?;
+    if metadata.is_dir() {
+        fs::create_dir_all(target).map_err(|error| error.to_string())?;
+        for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            copy_desktop_path(&entry.path(), &target.join(entry.file_name()))?;
+        }
+        return Ok(());
+    }
+
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::copy(source, target).map(|_| ()).map_err(|error| error.to_string())
+}
+
+fn remove_desktop_path_sync(target: &Path, recursive: bool) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(target).map_err(|error| error.to_string())?;
+    if metadata.is_dir() {
+        if recursive {
+            fs::remove_dir_all(target).map_err(|error| error.to_string())?;
+        } else {
+            fs::remove_dir(target).map_err(|error| error.to_string())?;
+        }
+    } else {
+        fs::remove_file(target).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2070,6 +2149,9 @@ fn main() {
             desktop_read_text_file,
             desktop_read_text_file_chunk,
             desktop_write_file_bytes,
+            desktop_copy_path,
+            desktop_move_path,
+            desktop_rename_path,
             desktop_exists_path,
             desktop_file_metadata,
             desktop_is_directory,

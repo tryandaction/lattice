@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 import { TOUCH_TARGET_MIN } from "@/lib/responsive";
 import { syncPlugins, updatePluginNetworkAllowlist } from "@/lib/plugins/runtime";
 import { resolveAppRoute } from "@/lib/app-route";
-import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot, Search as SearchIcon, MessageSquareText, FolderTree, LayoutGrid } from "lucide-react";
+import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot, Search as SearchIcon, MessageSquareText, FolderTree, LayoutGrid, ClipboardCheck } from "lucide-react";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { PluginCommandDialog } from "@/components/ui/plugin-command-dialog";
 import { PluginPanelDialog } from "@/components/ui/plugin-panel-dialog";
@@ -212,6 +212,9 @@ function AppLayoutContent() {
   const recentWorkspaces = settings.recentWorkspacePaths ?? [];
   const openGuide = useCallback(() => {
     router.push(resolveAppRoute("/guide"));
+  }, [router]);
+  const openAgentProtocolCenter = useCallback(() => {
+    router.push(resolveAppRoute("/agent-protocol"));
   }, [router]);
 
   useAutoOpenFolder();
@@ -533,6 +536,19 @@ function AppLayoutContent() {
         >
           <HelpCircle className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         </button>
+        <button
+          onClick={openAgentProtocolCenter}
+          className={cn(
+            "p-1.5 rounded-md",
+            "text-muted-foreground",
+            "hover:bg-muted hover:text-foreground transition-colors"
+          )}
+          style={(isMobile || isTablet) ? { minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN } : undefined}
+          title={t("workbench.activity.agentProtocol")}
+          aria-label={t("workbench.activity.agentProtocol")}
+        >
+          <ClipboardCheck className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
+        </button>
         <PluginToolbarSlot />
       </div>
     </>
@@ -603,6 +619,19 @@ function AppLayoutContent() {
           </MobileSidebarTrigger>
           <h1 className="text-sm font-medium">{t("app.name")}</h1>
           <div className="flex items-center gap-2">
+            <button
+              onClick={openAgentProtocolCenter}
+              className={cn(
+                "flex items-center justify-center rounded-md",
+                "text-muted-foreground hover:text-foreground",
+                "hover:bg-muted transition-colors"
+              )}
+              style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
+              title={t("workbench.activity.agentProtocol")}
+              aria-label={t("workbench.activity.agentProtocol")}
+            >
+              <ClipboardCheck className="h-5 w-5" />
+            </button>
             <button
               onClick={() => setShowPluginPanels(true)}
               className={cn(
@@ -724,6 +753,19 @@ function AppLayoutContent() {
                 </button>
                 <h1 className="text-sm font-medium flex-1">{t("app.name")}</h1>
                 <button
+                  onClick={openAgentProtocolCenter}
+                  className={cn(
+                    "flex items-center justify-center rounded-md",
+                    "text-muted-foreground hover:text-foreground",
+                    "hover:bg-muted transition-colors"
+                  )}
+                  style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
+                  title={t("workbench.activity.agentProtocol")}
+                  aria-label={t("workbench.activity.agentProtocol")}
+                >
+                  <ClipboardCheck className="h-5 w-5" />
+                </button>
+                <button
                   onClick={() => setShowPluginPanels(true)}
                   className={cn(
                     "flex items-center justify-center rounded-md",
@@ -819,6 +861,12 @@ function AppLayoutContent() {
               title={t("chat.title")}
               active={aiChatOpen}
               onClick={(event) => toggleAiPanel(event.currentTarget)}
+            />
+            <CollapsedRailButton
+              icon={ClipboardCheck}
+              label={t("workbench.activity.agentProtocol")}
+              title={t("workbench.activity.agentProtocol")}
+              onClick={openAgentProtocolCenter}
             />
           </div>
 

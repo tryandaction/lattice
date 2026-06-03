@@ -100,6 +100,18 @@ describe("PluginCommandDialog", () => {
     expect(onOpenPluginPanels).toHaveBeenCalledTimes(1);
   });
 
+  it("opens the Agent Protocol Center from the command palette", async () => {
+    render(<PluginCommandDialog isOpen onClose={() => {}} />);
+
+    const agentProtocolRow = await screen.findByText("Open Agent Protocol Center");
+
+    await act(async () => {
+      fireEvent.click(agentProtocolRow.closest("[data-command-id]") as HTMLElement);
+    });
+
+    expect(hoisted.push).toHaveBeenCalledWith("/agent-protocol.html");
+  });
+
   it("does not duplicate recent commands in the main result list", async () => {
     localStorage.setItem("lattice-command-recent", JSON.stringify(["core.toggle-ai-chat-panel"]));
 

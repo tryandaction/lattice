@@ -101,6 +101,13 @@ function invalidateDesktopDirCache(path: string): void {
   }
 }
 
+function invalidateDesktopPathMutation(sourcePath: string, targetPath?: string): void {
+  invalidateDesktopDirCache(sourcePath);
+  if (targetPath) {
+    invalidateDesktopDirCache(targetPath);
+  }
+}
+
 export async function readDesktopFileBytes(path: string): Promise<Uint8Array> {
   const bytes = await invokeDesktopFs<Uint8Array | ArrayBuffer | number[]>("desktop_read_file_bytes_raw", {
     path: normalizeDesktopPath(path),
@@ -157,7 +164,31 @@ async function removeDesktopPath(path: string, recursive = false): Promise<void>
     path: normalizeDesktopPath(path),
     recursive,
   });
-  invalidateDesktopDirCache(path);
+  invalidateDesktopPathMutation(path);
+}
+
+export async function copyDesktopPath(source: string, target: string): Promise<void> {
+  await invokeDesktopFs("desktop_copy_path", {
+    source: normalizeDesktopPath(source),
+    target: normalizeDesktopPath(target),
+  });
+  invalidateDesktopPathMutation(source, target);
+}
+
+export async function moveDesktopPath(source: string, target: string): Promise<void> {
+  await invokeDesktopFs("desktop_move_path", {
+    source: normalizeDesktopPath(source),
+    target: normalizeDesktopPath(target),
+  });
+  invalidateDesktopPathMutation(source, target);
+}
+
+export async function renameDesktopPath(source: string, target: string): Promise<void> {
+  await invokeDesktopFs("desktop_rename_path", {
+    source: normalizeDesktopPath(source),
+    target: normalizeDesktopPath(target),
+  });
+  invalidateDesktopPathMutation(source, target);
 }
 
 async function ensureDesktopFile(path: string): Promise<void> {
@@ -321,6 +352,50 @@ export class DesktopDirectoryHandle implements FileSystemDirectoryHandle, Deskto
 
   async removeEntry(name: string, options?: FileSystemRemoveOptions): Promise<void> {
     await removeDesktopPath(joinDesktopPath(this.fullPath, name), Boolean(options?.recursive));
+  }
+
+  async copyEntryTo(name: string, targetDirectory: FileSystemDirectoryHandle, targetName: string): Promise<FileSystemHandle> {
+    if (!isDesktopDirectoryHandle(targetDirectory)) {
+      throw new Error("Desktop copy requires a desktop target directory.");
+    }
+
+    const sourcePath = joinDesktopPath(this.fullPath, name);
+    const targetPath = joinDesktopPath(targetDirectory.fullPath, targetName);
+    await copyDesktopPath(sourcePath, targetPath);
+    const entries = await readDesktopDirCached(targetDirectory.fullPath, { force: true });
+    const copiedEntry = entries.find((entry) => entry.name === targetName);
+    if (copiedEntry?.isDirectory) {
+      return new DesktopDirectoryHandle(targetName, targetPath) as unknown as FileSystemDirectoryHandle;
+    }
+    return new DesktopFileHandle(targetName, targetPath) as unknown as FileSystemFileHandle;
+  }
+
+  async moveEntryTo(name: string, targetDirectory: FileSystemDirectoryHandle, targetName: string): Promise<FileSystemHandle> {
+    if (!isDesktopDirectoryHandle(targetDirectory)) {
+      throw new Error("Desktop move requires a desktop target directory.");
+    }
+
+    const sourcePath = joinDesktopPath(this.fullPath, name);
+    const targetPath = joinDesktopPath(targetDirectory.fullPath, targetName);
+    await moveDesktopPath(sourcePath, targetPath);
+    const entries = await readDesktopDirCached(targetDirectory.fullPath, { force: true });
+    const movedEntry = entries.find((entry) => entry.name === targetName);
+    if (movedEntry?.isDirectory) {
+      return new DesktopDirectoryHandle(targetName, targetPath) as unknown as FileSystemDirectoryHandle;
+    }
+    return new DesktopFileHandle(targetName, targetPath) as unknown as FileSystemFileHandle;
+  }
+
+  async renameEntry(name: string, newName: string): Promise<FileSystemHandle> {
+    const sourcePath = joinDesktopPath(this.fullPath, name);
+    const targetPath = joinDesktopPath(this.fullPath, newName);
+    await renameDesktopPath(sourcePath, targetPath);
+    const entries = await readDesktopDirCached(this.fullPath, { force: true });
+    const renamedEntry = entries.find((entry) => entry.name === newName);
+    if (renamedEntry?.isDirectory) {
+      return new DesktopDirectoryHandle(newName, targetPath) as unknown as FileSystemDirectoryHandle;
+    }
+    return new DesktopFileHandle(newName, targetPath) as unknown as FileSystemFileHandle;
   }
 
   async isSameEntry(other: FileSystemHandle): Promise<boolean> {

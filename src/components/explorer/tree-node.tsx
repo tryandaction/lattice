@@ -384,6 +384,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
         </div>
       ) : (
         <div
+          data-explorer-node="true"
           className={cn(
             "flex w-full items-center gap-2 px-2 py-1 text-left text-sm transition-colors",
             (isSelected || isActiveFile) && "bg-accent",
@@ -419,6 +420,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
             <span className="w-4 shrink-0" />
           )}
           <button
+            data-explorer-node="true"
             draggable
             onClick={() => {
               setSelection(node.path, "file");
@@ -734,6 +736,7 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
           </div>
         ) : (
           <button
+            data-explorer-node="true"
             draggable
             onClick={() => {
               setSelection(node.path, "directory");

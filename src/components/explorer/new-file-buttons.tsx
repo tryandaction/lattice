@@ -2,6 +2,7 @@
 
 import { FilePlus, BookPlus, FolderPlus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/hooks/use-i18n";
 
 /**
  * Props for NewFileButtons component
@@ -23,12 +24,14 @@ export function NewFileButtons({
   onCreateFolder,
   disabled = false,
 }: NewFileButtonsProps) {
+  const { t } = useI18n();
+
   return (
     <div className="flex items-center gap-0.5">
       <button
         onClick={onCreateNote}
         disabled={disabled}
-        title="New Note (Markdown)"
+        title={t("explorer.action.newNote")}
         className={cn(
           "p-1 rounded hover:bg-accent transition-colors",
           disabled && "opacity-50 cursor-not-allowed"
@@ -39,7 +42,7 @@ export function NewFileButtons({
       <button
         onClick={onCreateNotebook}
         disabled={disabled}
-        title="New Notebook (Jupyter)"
+        title={t("explorer.action.newNotebook")}
         className={cn(
           "p-1 rounded hover:bg-accent transition-colors",
           disabled && "opacity-50 cursor-not-allowed"
@@ -51,7 +54,7 @@ export function NewFileButtons({
         <button
           onClick={onCreateFolder}
           disabled={disabled}
-          title="New Folder"
+          title={t("explorer.context.newFolder")}
           className={cn(
             "p-1 rounded hover:bg-accent transition-colors",
             disabled && "opacity-50 cursor-not-allowed"

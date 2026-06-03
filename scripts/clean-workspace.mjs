@@ -7,6 +7,7 @@ const TARGETS = [
   "out",
   "output",
   "web-dist",
+  "web-dist-dev",
   ".playwright-cli",
   "test-results",
   "tsconfig.codex.focus.tsbuildinfo",

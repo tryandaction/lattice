@@ -6,6 +6,8 @@ const CANDIDATE_DIRS = [
   path.join(ROOT_DIR, ".next", "types"),
   path.join(ROOT_DIR, "web-dist", "types"),
   path.join(ROOT_DIR, "web-dist", "dev", "types"),
+  path.join(ROOT_DIR, "web-dist-dev", "types"),
+  path.join(ROOT_DIR, "web-dist-dev", "dev", "types"),
   path.join(ROOT_DIR, "web-dist-browser-regression", "types"),
   path.join(ROOT_DIR, "web-dist-browser-regression", "dev", "types"),
 ];

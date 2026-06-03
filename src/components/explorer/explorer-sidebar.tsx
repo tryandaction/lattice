@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useI18n } from "@/hooks/use-i18n";
@@ -10,8 +10,9 @@ import { getParentPath } from "@/lib/file-operations";
 import { EmptyState } from "./empty-state";
 import { TreeView } from "./tree-view";
 import { NewFileButtons } from "./new-file-buttons";
-import { Loader2, AlertCircle } from "lucide-react";
+import { ClipboardPaste, FilePlus, FolderPlus, Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import { PluginSidebarSlot } from "@/components/ui/plugin-sidebar-slot";
+import { WorkbenchContextMenu, type WorkbenchMenuAction } from "@/components/ui/workbench-context-menu";
 
 /**
  * Explorer Sidebar component
@@ -19,7 +20,7 @@ import { PluginSidebarSlot } from "@/components/ui/plugin-sidebar-slot";
  */
 export function ExplorerSidebar() {
   const { t } = useI18n();
-  const { fileTree, isLoading, error, openDirectory, openQaWorkspace, isSupported, isCheckingSupport, createFile, createDirectory } = useFileSystem();
+  const { fileTree, isLoading, error, openDirectory, openQaWorkspace, isSupported, isCheckingSupport, createFile, createDirectory, copyEntry, moveEntry, refreshDirectory } = useFileSystem();
   const searchParams = useSearchParams();
   const isQaMode = process.env.NODE_ENV === "development" && searchParams?.get("qa") === "1";
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
@@ -28,6 +29,9 @@ export function ExplorerSidebar() {
   const selectedKind = useExplorerStore((state) => state.selectedKind);
   const setSelection = useExplorerStore((state) => state.setSelection);
   const startRenaming = useExplorerStore((state) => state.startRenaming);
+  const clipboard = useExplorerStore((state) => state.clipboard);
+  const clearClipboard = useExplorerStore((state) => state.clearClipboard);
+  const [blankMenu, setBlankMenu] = useState<{ x: number; y: number } | null>(null);
 
   const hasDirectory = !!fileTree.root;
   const rootPath = fileTree.root?.path;
@@ -87,8 +91,79 @@ export function ExplorerSidebar() {
     }
   }, [createDirectory, getCreationTargetPath, setSelectedDirectoryPath, setSelection, startRenaming]);
 
+  const handleCreateGenericFile = useCallback(async () => {
+    const result = await createFile("untitled.txt", "file", getCreationTargetPath());
+    if (result.success && result.handle && result.path) {
+      setSelection(result.path, "file");
+      startRenaming(result.path);
+      openFileInActivePane(result.handle, result.path);
+    }
+  }, [createFile, getCreationTargetPath, openFileInActivePane, setSelection, startRenaming]);
+
+  const handlePasteIntoTarget = useCallback(async () => {
+    if (!clipboard || !rootPath) return;
+    const targetPath = getCreationTargetPath() ?? rootPath;
+    const result =
+      clipboard.mode === "copy"
+        ? await copyEntry(clipboard.path, targetPath)
+        : await moveEntry(clipboard.path, targetPath);
+    if (!result.success || !result.path) {
+      console.error("Failed to paste entry:", result.error);
+      return;
+    }
+    if (clipboard.mode === "cut") {
+      clearClipboard();
+    }
+    setSelection(result.path, clipboard.kind);
+    if (clipboard.kind === "directory") {
+      setSelectedDirectoryPath(result.path);
+    }
+  }, [clearClipboard, clipboard, copyEntry, getCreationTargetPath, moveEntry, rootPath, setSelectedDirectoryPath, setSelection]);
+
+  const blankMenuActions = useMemo<WorkbenchMenuAction[]>(() => [
+    {
+      id: "new-file",
+      label: t("explorer.context.newFile"),
+      icon: <FilePlus className="h-4 w-4" />,
+      disabled: !hasDirectory,
+      onSelect: () => void handleCreateGenericFile(),
+    },
+    {
+      id: "new-folder",
+      label: t("explorer.context.newFolder"),
+      icon: <FolderPlus className="h-4 w-4" />,
+      disabled: !hasDirectory,
+      onSelect: () => void handleCreateFolder(),
+    },
+    {
+      id: "paste",
+      label: t("explorer.context.paste"),
+      icon: <ClipboardPaste className="h-4 w-4" />,
+      disabled: !hasDirectory || !clipboard,
+      separatorBefore: true,
+      onSelect: () => void handlePasteIntoTarget(),
+    },
+    {
+      id: "refresh",
+      label: t("explorer.refresh"),
+      icon: <RefreshCw className="h-4 w-4" />,
+      separatorBefore: true,
+      disabled: !hasDirectory || isLoading,
+      onSelect: () => void refreshDirectory(),
+    },
+  ], [clipboard, handleCreateFolder, handleCreateGenericFile, handlePasteIntoTarget, hasDirectory, isLoading, refreshDirectory, t]);
+
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="flex h-full flex-col"
+      onContextMenu={(event) => {
+        if (!hasDirectory) return;
+        const target = event.target as HTMLElement | null;
+        if (target?.closest("[data-explorer-node='true']")) return;
+        event.preventDefault();
+        setBlankMenu({ x: event.clientX, y: event.clientY });
+      }}
+    >
       <div className="border-b border-border px-3 py-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -148,6 +223,14 @@ export function ExplorerSidebar() {
         {/* Tree View */}
         {!isLoading && !error && fileTree.root && <TreeView root={fileTree.root} />}
       </div>
+      {blankMenu && (
+        <WorkbenchContextMenu
+          x={blankMenu.x}
+          y={blankMenu.y}
+          actions={blankMenuActions}
+          onClose={() => setBlankMenu(null)}
+        />
+      )}
       <PluginSidebarSlot />
     </div>
   );
