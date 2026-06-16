@@ -24,6 +24,10 @@ import {
 } from "@/lib/universal-annotation-storage";
 import { removeAnnotationDocumentAliases } from "@/lib/annotation-registry";
 import type { AnnotationBacklink } from "@/lib/annotation-backlinks";
+import {
+  mergePdfAnnotationDraftsSection,
+  removeResolvedPdfAnnotationMarkdownDrafts,
+} from "@/lib/pdf-annotation-markdown-drafts";
 import { getCanonicalPdfAnnotationText, type AnnotationItem, type UniversalAnnotationFile } from "@/types/universal-annotation";
 import type { ResolvedPdfDocumentBinding } from "@/lib/pdf-document-binding";
 import { getLocale, t as translate } from "@/lib/i18n";
@@ -150,7 +154,7 @@ function getPdfItemManifestPath(itemFolderPath: string): string {
   return joinPath(itemFolderPath, PDF_ITEM_MANIFEST_NAME);
 }
 
-function getPdfItemAnnotationIndexPath(itemFolderPath: string): string {
+export function getPdfItemAnnotationIndexPath(itemFolderPath: string): string {
   return joinPath(itemFolderPath, DEFAULT_ANNOTATIONS_NOTE_NAME);
 }
 
@@ -254,6 +258,37 @@ async function readTextFileIfExists(
     return null;
   }
   return readTextFile(handle);
+}
+
+export async function readPdfItemAnnotationMarkdown(
+  rootHandle: FileSystemDirectoryHandle,
+  manifest: PdfItemManifest,
+): Promise<string | null> {
+  const annotationPath = manifest.annotationIndexPath ?? getPdfItemAnnotationIndexPath(manifest.itemFolderPath);
+  return readTextFileIfExists(rootHandle, annotationPath);
+}
+
+export async function removeResolvedPdfItemAnnotationMarkdownDrafts(
+  rootHandle: FileSystemDirectoryHandle,
+  manifest: PdfItemManifest,
+  resolvedIds: Iterable<string>,
+): Promise<boolean> {
+  const annotationPath = manifest.annotationIndexPath ?? getPdfItemAnnotationIndexPath(manifest.itemFolderPath);
+  const handle = await getFileHandleForPath(rootHandle, annotationPath);
+  if (!handle) {
+    return false;
+  }
+
+  const currentMarkdown = await readTextFile(handle);
+  const nextMarkdown = removeResolvedPdfAnnotationMarkdownDrafts(currentMarkdown, resolvedIds);
+  if (nextMarkdown === currentMarkdown) {
+    return false;
+  }
+
+  const writable = await handle.createWritable();
+  await writable.write(nextMarkdown);
+  await writable.close();
+  return true;
 }
 
 async function writeTextFile(
@@ -1241,61 +1276,57 @@ export async function syncPdfAnnotationsMarkdown(
 ): Promise<{ handle: FileSystemFileHandle | null; path: string | null; manifest: PdfItemManifest }> {
   const pdfAnnotations = annotations.filter((annotation) => annotation.target.type === "pdf");
   const annotationPath = manifest.annotationIndexPath ?? getPdfItemAnnotationIndexPath(manifest.itemFolderPath);
+  const hasPdfAnnotations = pdfAnnotations.length > 0;
+  const existingMarkdown = await readTextFileIfExists(rootHandle, annotationPath);
 
-  if (pdfAnnotations.length === 0) {
-    await removeFileIfExists(rootHandle, annotationPath);
-    await removeDirectoryIfExists(rootHandle, getPdfItemAnnotationPreviewDirPath(manifest.itemFolderPath));
-    const nextManifest = await savePdfItemManifest(rootHandle, {
-      ...manifest,
-      annotationIndexPath: null,
-    });
+  if (!hasPdfAnnotations && existingMarkdown === null && !manifest.annotationIndexPath) {
     return {
       handle: null,
       path: null,
-      manifest: nextManifest,
+      manifest,
     };
   }
 
   const dirHandle = await ensurePdfItemFolder(rootHandle, manifest);
-  const previewDirPath = getPdfItemAnnotationPreviewDirPath(manifest.itemFolderPath);
-  const previewDirHandle = await ensureNestedDirectory(rootHandle, previewDirPath);
   const previewPathByAnnotationId: Record<string, string> = {};
-  const retainedPreviewFileNames = new Set<string>();
+  const previewAnnotations = pdfAnnotations.filter((annotation) => (
+    annotation.target.type === "pdf" &&
+    (annotation.style.type === "area" || annotation.style.type === "ink") &&
+    annotation.preview?.type === "image" &&
+    Boolean(annotation.preview.dataUrl)
+  ));
 
-  for (const annotation of pdfAnnotations) {
-    if (
-      annotation.target.type !== "pdf" ||
-      (annotation.style.type !== "area" && annotation.style.type !== "ink") ||
-      annotation.preview?.type !== "image" ||
-      !annotation.preview.dataUrl
-    ) {
-      continue;
+  if (previewAnnotations.length > 0) {
+    const previewDirPath = getPdfItemAnnotationPreviewDirPath(manifest.itemFolderPath);
+    const previewDirHandle = await ensureNestedDirectory(rootHandle, previewDirPath);
+    const retainedPreviewFileNames = new Set<string>();
+
+    for (const annotation of previewAnnotations) {
+      const previewFileName = `${annotation.id}.png`;
+      retainedPreviewFileNames.add(previewFileName);
+      const existingPreview = await getExistingFileHandle(previewDirHandle, previewFileName);
+      if (!existingPreview) {
+        const previewBytes = await dataUrlToBytes(annotation.preview?.dataUrl ?? "");
+        if (!previewBytes) {
+          continue;
+        }
+        await writeBinaryFile(previewDirHandle, previewFileName, previewBytes);
+      }
+      previewPathByAnnotationId[annotation.id] = buildRelativeWorkspacePath(
+        annotationPath,
+        joinPath(previewDirPath, previewFileName),
+      );
     }
 
-    const previewFileName = `${annotation.id}.png`;
-    retainedPreviewFileNames.add(previewFileName);
-    const existingPreview = await getExistingFileHandle(previewDirHandle, previewFileName);
-    if (!existingPreview) {
-      const previewBytes = await dataUrlToBytes(annotation.preview.dataUrl);
-      if (!previewBytes) {
+    for await (const entry of previewDirHandle.values()) {
+      if (entry.kind !== "file") {
         continue;
       }
-      await writeBinaryFile(previewDirHandle, previewFileName, previewBytes);
+      if (retainedPreviewFileNames.has(entry.name)) {
+        continue;
+      }
+      await previewDirHandle.removeEntry(entry.name);
     }
-    previewPathByAnnotationId[annotation.id] = buildRelativeWorkspacePath(
-      annotationPath,
-      joinPath(previewDirPath, previewFileName),
-    );
-  }
-
-  for await (const entry of previewDirHandle.values()) {
-    if (entry.kind !== "file") {
-      continue;
-    }
-    if (retainedPreviewFileNames.has(entry.name)) {
-      continue;
-    }
-    await previewDirHandle.removeEntry(entry.name);
   }
 
   const markdown = buildPdfAnnotationsMarkdown({
@@ -1309,9 +1340,9 @@ export async function syncPdfAnnotationsMarkdown(
     previewPathByAnnotationId,
   });
   let handle = await getExistingFileHandle(dirHandle, DEFAULT_ANNOTATIONS_NOTE_NAME);
-  const existingMarkdown = handle ? await readTextFile(handle) : null;
-  if (existingMarkdown !== markdown) {
-    handle = await writeTextFile(dirHandle, DEFAULT_ANNOTATIONS_NOTE_NAME, markdown);
+  const mergedMarkdown = mergePdfAnnotationDraftsSection(markdown, existingMarkdown);
+  if (existingMarkdown !== mergedMarkdown) {
+    handle = await writeTextFile(dirHandle, DEFAULT_ANNOTATIONS_NOTE_NAME, mergedMarkdown);
   }
   const nextManifest = manifest.annotationIndexPath === annotationPath
     ? manifest

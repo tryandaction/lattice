@@ -6,7 +6,8 @@
 
 import { memo, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, ChevronDown, ChevronRight, Copy, Info, Terminal, Trash2 } from "lucide-react";
-import type { ExecutionDiagnostic, ExecutionOutput, ExecutionPanelMeta } from "@/lib/runner/types";
+import type { ExecutionContextRef, ExecutionDiagnostic, ExecutionOutput, ExecutionPanelMeta, ExecutionProblem } from "@/lib/runner/types";
+import { parseOutputLocationLine } from "@/lib/runner/output-location-parser";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/hooks/use-i18n";
 
@@ -17,6 +18,8 @@ interface OutputAreaProps {
   variant?: "compact" | "full";
   meta?: ExecutionPanelMeta;
   showDiagnosticsInline?: boolean;
+  context?: ExecutionContextRef | null;
+  onSelectProblem?: (problem: ExecutionProblem) => void;
 }
 
 const COLLAPSE_THRESHOLD = 20;
@@ -137,14 +140,60 @@ function DiagnosticBanner({ diagnostic }: { diagnostic: ExecutionDiagnostic }) {
   );
 }
 
-function TextOutput({ content, channel, compact }: { content: string; channel?: "stdout" | "stderr"; compact: boolean }) {
+function buildOutputProblem(
+  rawLine: string,
+  index: number,
+  context?: ExecutionContextRef | null,
+): ExecutionProblem | null {
+  const location = parseOutputLocationLine(rawLine);
+  if (!location) {
+    return null;
+  }
+
+  const title = location.source === "node"
+    ? "运行错误位置"
+    : location.severity === "warning"
+      ? "编译警告"
+      : location.severity === "info"
+        ? "编译提示"
+        : "编译错误";
+
+  return {
+    id: `output-location:${index}:${location.rawLine}`,
+    source: "runtime",
+    severity: location.severity,
+    title,
+    message: location.message || location.rawLine.trim(),
+    stage: "execution",
+    traceback: [location.rawLine],
+    context: {
+      ...(context ?? { kind: "file" as const }),
+      filePath: location.filePath ?? context?.filePath,
+      line: location.line,
+      column: location.column,
+    },
+  };
+}
+
+function TextOutput({
+  content,
+  channel,
+  compact,
+  context,
+  onSelectProblem,
+}: {
+  content: string;
+  channel?: "stdout" | "stderr";
+  compact: boolean;
+  context?: ExecutionContextRef | null;
+  onSelectProblem?: (problem: ExecutionProblem) => void;
+}) {
   const { t } = useI18n();
   const [isCollapsed, setIsCollapsed] = useState(true);
   const lines = content.split("\n");
   const isLong = lines.length > COLLAPSE_THRESHOLD;
-  const displayContent = isLong && isCollapsed
-    ? `${lines.slice(0, COLLAPSE_THRESHOLD).join("\n")}\n...`
-    : content;
+  const displayLines = isLong && isCollapsed ? lines.slice(0, COLLAPSE_THRESHOLD) : lines;
+  const canNavigate = channel === "stderr" && Boolean(onSelectProblem);
 
   return (
     <div className="relative group">
@@ -167,7 +216,32 @@ function TextOutput({ content, channel, compact }: { content: string; channel?: 
             : "code-output-block",
         )}
       >
-        {displayContent}
+        {displayLines.map((line, index) => {
+          const problem = canNavigate ? buildOutputProblem(line, index, context) : null;
+          if (!problem) {
+            return (
+              <span key={`${index}-${line}`}>
+                {line}
+                {index < displayLines.length - 1 ? "\n" : ""}
+              </span>
+            );
+          }
+
+          return (
+            <span key={`${index}-${line}`}>
+              <button
+                type="button"
+                onClick={() => onSelectProblem?.(problem)}
+                className="cursor-pointer rounded px-0.5 text-left underline decoration-dotted underline-offset-2 hover:bg-[var(--code-surface-hover)]"
+                title={`${problem.context?.filePath ?? ""}:${problem.context?.line ?? ""}${problem.context?.column ? `:${problem.context.column}` : ""}`}
+              >
+                {line}
+              </button>
+              {index < displayLines.length - 1 ? "\n" : ""}
+            </span>
+          );
+        })}
+        {isLong && isCollapsed ? "\n..." : null}
       </pre>
       <div className="absolute right-2 top-7 opacity-0 transition-opacity group-hover:opacity-100">
         <CopyButton content={content} />
@@ -320,10 +394,28 @@ function ErrorOutput({ output, compact }: { output: ExecutionOutput & { type: "e
   );
 }
 
-function OutputItem({ output, compact }: { output: ExecutionOutput; compact: boolean }) {
+function OutputItem({
+  output,
+  compact,
+  context,
+  onSelectProblem,
+}: {
+  output: ExecutionOutput;
+  compact: boolean;
+  context?: ExecutionContextRef | null;
+  onSelectProblem?: (problem: ExecutionProblem) => void;
+}) {
   switch (output.type) {
     case "text":
-      return <TextOutput content={output.content} channel={output.channel} compact={compact} />;
+      return (
+        <TextOutput
+          content={output.content}
+          channel={output.channel}
+          compact={compact}
+          context={context}
+          onSelectProblem={onSelectProblem}
+        />
+      );
     case "image":
       return <ImageOutput src={output.content} compact={compact} />;
     case "html":
@@ -344,6 +436,8 @@ export const OutputArea = memo(function OutputArea({
   variant = "full",
   meta,
   showDiagnosticsInline = true,
+  context,
+  onSelectProblem,
 }: OutputAreaProps) {
   const { t } = useI18n();
   const compact = variant === "compact";
@@ -375,7 +469,13 @@ export const OutputArea = memo(function OutputArea({
       ))}
 
       {normalizedOutputs.map((output, index) => (
-        <OutputItem key={`${output.type}-${index}`} output={output} compact={compact} />
+        <OutputItem
+          key={`${output.type}-${index}`}
+          output={output}
+          compact={compact}
+          context={context ?? meta?.context}
+          onSelectProblem={onSelectProblem}
+        />
       ))}
     </div>
   );

@@ -39,7 +39,62 @@ function isEscaped(text: string, index: number): boolean {
   return backslashes % 2 === 1;
 }
 
+function hasDecorationType(
+  decorationData: unknown,
+  type: string,
+): decorationData is Record<string, unknown> & { type: string } {
+  return typeof decorationData === "object"
+    && decorationData !== null
+    && "type" in decorationData
+    && decorationData.type === type;
+}
+
+function hasDecorationClass(
+  decorationData: unknown,
+  className: string,
+): decorationData is Record<string, unknown> & { className: string } {
+  return typeof decorationData === "object"
+    && decorationData !== null
+    && "className" in decorationData
+    && decorationData.className === className;
+}
+
 describe("live preview diagnostics", () => {
+  it("keeps annotation, wiki links, and embeds from stealing each other", () => {
+    const text = [
+      "See [[paper.pdf#ann-123]] and [[Daily Note#Heading|daily]].",
+      "Embed ![[assets/chart 1.png|Chart]].",
+      "Inline code `==literal==` and highlight ==marked==.",
+    ].join("\n");
+
+    const elements = resolveConflicts(parseDocumentFromText(text));
+    const inlineLinks = elements.filter((element) => element.type === ElementType.INLINE_LINK);
+    const inlineOther = elements.filter((element) => element.type === ElementType.INLINE_OTHER);
+
+    const annotation = inlineOther.find((element) => hasDecorationType(element.decorationData, "annotation-link"));
+    const embed = inlineOther.find((element) => hasDecorationType(element.decorationData, "embed"));
+    const wikiLinks = inlineLinks.filter((element) => hasDecorationType(element.decorationData, "wiki-link"));
+    const highlights = inlineOther.filter((element) => hasDecorationClass(element.decorationData, "cm-highlight"));
+    const annotationData = hasDecorationType(annotation?.decorationData, "annotation-link")
+      ? annotation.decorationData
+      : null;
+    const embedData = hasDecorationType(embed?.decorationData, "embed")
+      ? embed.decorationData
+      : null;
+    const wikiData = hasDecorationType(wikiLinks[0]?.decorationData, "wiki-link")
+      ? wikiLinks[0].decorationData
+      : null;
+
+    expect(annotationData?.filePath).toBe("paper.pdf");
+    expect(annotationData?.annotationId).toBe("ann-123");
+    expect(wikiLinks).toHaveLength(1);
+    expect(wikiData?.url).toBe("Daily Note#Heading");
+    expect(embedData?.target).toBe("assets/chart 1.png");
+    expect(embedData?.displayText).toBe("Chart");
+    expect(highlights).toHaveLength(1);
+    expect(highlights[0]?.content).toBe("marked");
+  });
+
   it("parses fixtures without invalid ranges or escaped matches", () => {
     for (const fixture of FIXTURES) {
       const fullPath = resolve(process.cwd(), fixture);

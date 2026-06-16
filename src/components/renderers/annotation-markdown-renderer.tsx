@@ -13,13 +13,11 @@
  */
 
 import "katex/dist/katex.min.css";
-import { useState, useEffect, useMemo, type ComponentPropsWithoutRef, type CSSProperties, type JSX } from "react";
+import { useState, useEffect, useMemo, type ComponentPropsWithoutRef, type JSX } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import type { PluggableList } from "unified";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { KATEX_MACROS } from "@/lib/katex-config";
 import type { PaneId } from "@/types/layout";
 import { AppMarkdownLink } from "./app-markdown-link";
@@ -69,46 +67,41 @@ export function AnnotationMarkdownRenderer({
 
   // Memoize components — they never change, but defining inline recreates the object every render
   const components = useMemo(() => ({
-    p: ({ children }: MarkdownProps<"p">) => <p className="my-0.5 leading-relaxed">{children}</p>,
+    p: ({ children }: MarkdownProps<"p">) => <div className="my-0.5 leading-relaxed">{children}</div>,
 
-    h1: ({ children }: MarkdownProps<"h1">) => <p className="font-bold text-sm mt-1 mb-0.5 border-b border-border pb-0.5">{children}</p>,
-    h2: ({ children }: MarkdownProps<"h2">) => <p className="font-bold text-xs mt-1 mb-0.5">{children}</p>,
-    h3: ({ children }: MarkdownProps<"h3">) => <p className="font-semibold text-xs mt-0.5 mb-0">{children}</p>,
-    h4: ({ children }: MarkdownProps<"h4">) => <p className="font-semibold text-xs">{children}</p>,
-    h5: ({ children }: MarkdownProps<"h5">) => <p className="font-medium text-xs">{children}</p>,
-    h6: ({ children }: MarkdownProps<"h6">) => <p className="font-medium text-xs text-muted-foreground">{children}</p>,
+    h1: ({ children }: MarkdownProps<"h1">) => <div className="font-bold text-sm mt-1 mb-0.5 border-b border-border pb-0.5">{children}</div>,
+    h2: ({ children }: MarkdownProps<"h2">) => <div className="font-bold text-xs mt-1 mb-0.5">{children}</div>,
+    h3: ({ children }: MarkdownProps<"h3">) => <div className="font-semibold text-xs mt-0.5 mb-0">{children}</div>,
+    h4: ({ children }: MarkdownProps<"h4">) => <div className="font-semibold text-xs">{children}</div>,
+    h5: ({ children }: MarkdownProps<"h5">) => <div className="font-medium text-xs">{children}</div>,
+    h6: ({ children }: MarkdownProps<"h6">) => <div className="font-medium text-xs text-muted-foreground">{children}</div>,
 
     code({ inline, className: cls, children, style: _s, node: _n, ...props }: MarkdownCodeProps) {
       const match = /language-(\w+)/.exec(cls || "");
       const lang = match ? match[1] : "";
-      if (!inline && lang) {
+      const text = String(children);
+      const isMathDisplay = /\bmath-display\b/.test(cls || "");
+      const isInline = inline ?? ((lang === "math" || lang === "tex") && !isMathDisplay && !text.includes("\n"));
+
+      if (!isInline) {
         return (
-          <div className="my-1 overflow-x-auto rounded text-[11px]">
-            <SyntaxHighlighter
-              style={oneDark as Record<string, CSSProperties>}
-              language={lang}
-              PreTag="div"
-              customStyle={{ margin: 0, padding: "5px 8px", fontSize: "11px", borderRadius: "4px" }}
-              {...props}
-            >
-              {String(children).replace(/\n$/, "")}
-            </SyntaxHighlighter>
-          </div>
-        );
-      }
-      if (!inline) {
-        return (
-          <pre className="my-1 overflow-x-auto rounded bg-muted px-2 py-1 text-[11px] font-mono">
-            <code className={cls} {...props}>{children}</code>
-          </pre>
+          <code className={`block whitespace-pre rounded bg-muted px-2 py-1 text-[11px] font-mono ${cls ?? ""}`} {...props}>
+            {text.replace(/\n$/, "")}
+          </code>
         );
       }
       return (
-        <code className="rounded bg-muted px-1 py-0.5 text-[11px] font-mono text-primary" {...props}>
+        <code className={`rounded bg-muted px-1 py-0.5 text-[11px] font-mono text-primary ${cls ?? ""}`} {...props}>
           {children}
         </code>
       );
     },
+
+    pre: ({ children }: MarkdownProps<"pre">) => (
+      <pre className="my-1 overflow-x-auto rounded bg-muted text-[11px] font-mono">
+        {children}
+      </pre>
+    ),
 
     ul: ({ children }: MarkdownProps<"ul">) => <ul className="list-disc pl-4 my-0.5">{children}</ul>,
     ol: ({ children }: MarkdownProps<"ol">) => <ol className="list-decimal pl-4 my-0.5">{children}</ol>,

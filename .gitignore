@@ -16,7 +16,7 @@
 /out/
 /web-dist/
 /web-dist-dev/
-/web-dist-browser-regression/
+/web-dist-browser-regression*/
 
 # production
 /build

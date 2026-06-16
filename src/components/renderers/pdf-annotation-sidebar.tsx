@@ -47,6 +47,10 @@ import type { AnnotationBacklink } from "@/lib/annotation-backlinks";
 import { useI18n } from "@/hooks/use-i18n";
 import { getLocale, t as translate } from "@/lib/i18n";
 import { getPdfInkBoundingBox, parsePdfInkContent, type ParsedPdfInkContent } from "@/lib/pdf-ink";
+import {
+  normalizePdfAnnotationSidebarViewState,
+  type PdfAnnotationSidebarViewState,
+} from "@/lib/pdf-view-state";
 
 function dedupePdfAnnotations(annotations: AnnotationItem[]): AnnotationItem[] {
   const seen = new Set<string>();
@@ -126,6 +130,7 @@ function exportAnnotationsToMarkdown(annotations: AnnotationItem[]): string {
 
 interface PdfAnnotationSidebarProps {
   annotations: AnnotationItem[];
+  isLoading?: boolean;
   selectedId: string | null;
   onSelect: (annotation: AnnotationItem) => void;
   onHoverChange?: (annotation: AnnotationItem | null) => void;
@@ -142,6 +147,8 @@ interface PdfAnnotationSidebarProps {
   onBatchDelete?: (ids: string[]) => void;
   onBatchUpdateColor?: (ids: string[], color: string) => void;
   onBatchExport?: (annotations: AnnotationItem[]) => void;
+  viewState?: PdfAnnotationSidebarViewState | null;
+  onViewStateChange?: (state: PdfAnnotationSidebarViewState) => void;
 }
 
 // Batch selection toolbar component
@@ -214,11 +221,11 @@ function BatchSelectionToolbar({
                   <button
                     key={color.value}
                     onClick={() => {
-                      onChangeColor(color.hex);
+                      onChangeColor(resolveHighlightColor(color.hex));
                       setShowColorPicker(false);
                     }}
-                    className="w-6 h-6 rounded-full border border-transparent hover:border-foreground/30 transition-all hover:scale-110"
-                    style={{ backgroundColor: color.hex }}
+                    className="h-5 w-5 rounded-full border border-transparent transition-all hover:scale-110 hover:border-foreground/30"
+                    style={{ backgroundColor: resolveHighlightColor(color.hex) }}
                     title={color.nameCN}
                   />
                 ))}
@@ -266,6 +273,136 @@ function BatchSelectionToolbar({
 // Search and filter toolbar component
 type AnnotationTypeFilter = 'all' | 'highlight' | 'underline' | 'area' | 'ink' | 'text';
 type ColorFilter = 'all' | string;
+type TagFilter = 'all' | string;
+
+function getAnnotationTags(annotation: AnnotationItem): string[] {
+  return Array.from(new Set((annotation.tags ?? []).map((tag) => tag.trim()).filter(Boolean)));
+}
+
+function normalizeColorFilter(value: ColorFilter): ColorFilter {
+  return value === "all" ? "all" : resolveHighlightColor(value);
+}
+
+function AnnotationColorFilterStrip({
+  colorFilter,
+  onColorFilterChange,
+  tagFilter,
+  onTagFilterChange,
+  annotations,
+}: {
+  colorFilter: ColorFilter;
+  onColorFilterChange: (color: ColorFilter) => void;
+  tagFilter: TagFilter;
+  onTagFilterChange: (tag: TagFilter) => void;
+  annotations: AnnotationItem[];
+}) {
+  const { t } = useI18n();
+  const colorCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const annotation of annotations) {
+      const color = resolveHighlightColor(annotation.style.color);
+      if (!color || color === "transparent") {
+        continue;
+      }
+      counts.set(color, (counts.get(color) ?? 0) + 1);
+    }
+    return counts;
+  }, [annotations]);
+  const tagCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const annotation of annotations) {
+      for (const tag of getAnnotationTags(annotation)) {
+        counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
+    }
+    return Array.from(counts.entries()).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  }, [annotations]);
+
+  return (
+    <div className="sticky bottom-0 z-10 space-y-1.5 border-t border-border bg-background/95 px-2 py-1.5 backdrop-blur">
+      {tagCounts.length > 0 ? (
+        <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => onTagFilterChange("all")}
+            className={cn(
+              "h-6 shrink-0 rounded-md border px-2 text-[11px] transition-colors",
+              tagFilter === "all"
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground",
+            )}
+            title={t("pdf.sidebar.filter.all")}
+          >
+            {t("pdf.sidebar.filter.all")}
+          </button>
+          {tagCounts.map(([tag, count]) => (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => onTagFilterChange(tagFilter === tag ? "all" : tag)}
+              className={cn(
+                "inline-flex h-6 shrink-0 items-center gap-1 rounded-md border px-2 text-[11px] transition-colors",
+                tagFilter === tag
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground",
+              )}
+              title={`${tag} (${count})`}
+            >
+              <Tag className="h-3 w-3" />
+              <span>{tag}</span>
+              <span className="text-[10px] opacity-70">{count}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => onColorFilterChange("all")}
+          className={cn(
+            "h-6 rounded-md border px-2 text-[11px] transition-colors",
+            colorFilter === "all"
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground",
+          )}
+          title={t("pdf.sidebar.filter.all")}
+        >
+          {t("pdf.sidebar.filter.all")}
+        </button>
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          {HIGHLIGHT_COLORS.map((color) => {
+            const displayColor = resolveHighlightColor(color.hex);
+            const selected = normalizeColorFilter(colorFilter) === displayColor;
+            const count = colorCounts.get(displayColor) ?? 0;
+            return (
+              <button
+                key={color.value}
+                type="button"
+                onClick={() => onColorFilterChange(selected ? "all" : displayColor)}
+                className={cn(
+                  "relative h-5 w-5 shrink-0 rounded-full border-2 transition-all",
+                  selected
+                    ? "border-foreground ring-1 ring-foreground ring-offset-1"
+                    : "border-transparent hover:border-foreground/30",
+                  count === 0 && "opacity-35",
+                )}
+                style={{ backgroundColor: displayColor }}
+                title={`${color.nameCN} (${count})`}
+                aria-label={`${t("pdf.sidebar.filter.color")}: ${color.nameCN}`}
+              >
+                {count > 0 ? (
+                  <span className="absolute -right-1 -top-1 min-w-2.5 rounded-full bg-background px-0.5 text-[8px] leading-2.5 text-foreground shadow">
+                    {count}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function SearchFilterToolbar({
   searchQuery,
@@ -397,14 +534,14 @@ function SearchFilterToolbar({
                   {HIGHLIGHT_COLORS.map((color) => (
                     <button
                       key={color.value}
-                      onClick={() => onColorFilterChange(color.hex)}
+                      onClick={() => onColorFilterChange(resolveHighlightColor(color.hex))}
                       className={cn(
-                        "w-6 h-6 rounded-full border-2 transition-all hover:scale-110",
-                        colorFilter === color.hex
+                        "w-5 h-5 rounded-full border-2 transition-all hover:scale-110",
+                        normalizeColorFilter(colorFilter) === resolveHighlightColor(color.hex)
                           ? "border-foreground ring-1 ring-foreground ring-offset-1"
                           : "border-transparent hover:border-foreground/30"
                       )}
-                      style={{ backgroundColor: color.hex }}
+                      style={{ backgroundColor: resolveHighlightColor(color.hex) }}
                       title={color.nameCN}
                     />
                   ))}
@@ -629,14 +766,14 @@ function AnnotationContextMenu({
                   onClose();
                 }}
                 className={`w-5 h-5 rounded-full border transition-all hover:scale-110 ${
-                  annotation.style.color === color.hex 
+                  resolveHighlightColor(annotation.style.color) === resolveHighlightColor(color.hex)
                     ? 'border-foreground ring-1 ring-foreground ring-offset-1' 
                     : 'border-transparent hover:border-foreground/30'
                 }`}
-                style={{ backgroundColor: color.hex }}
+                style={{ backgroundColor: resolveHighlightColor(color.hex) }}
                 title={color.nameCN}
               >
-                {annotation.style.color === color.hex && (
+                {resolveHighlightColor(annotation.style.color) === resolveHighlightColor(color.hex) && (
                   <Check className="h-3 w-3 text-white mx-auto drop-shadow" />
                 )}
               </button>
@@ -867,6 +1004,7 @@ function AnnotationCard({
   const inkPreview = annotation.style.type === 'ink'
     ? parsePdfInkContent(annotation.content)
     : null;
+  const annotationTags = getAnnotationTags(annotation);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -1008,6 +1146,25 @@ function AnnotationCard({
               <MoreHorizontal className="h-3.5 w-3.5" />
             </Button>
           </div>
+
+          {annotationTags.length > 0 ? (
+            <div className="mb-1.5 flex flex-wrap gap-1">
+              {annotationTags.map((tag) => (
+                <span
+                  key={tag}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px]",
+                    tag === "AI批注" || tag === "AI"
+                      ? "border-primary/30 bg-primary/10 text-primary"
+                      : "border-border bg-muted/40 text-muted-foreground",
+                  )}
+                >
+                  <Tag className="h-3 w-3" />
+                  {tag}
+                </span>
+              ))}
+            </div>
+          ) : null}
 
           {/* Text annotation - show with actual styling */}
           {isTextAnnotation && quoteText && (
@@ -1239,6 +1396,7 @@ function AnnotationCard({
 
 export function PdfAnnotationSidebar({
   annotations,
+  isLoading = false,
   selectedId,
   onSelect,
   onHoverChange,
@@ -1255,6 +1413,8 @@ export function PdfAnnotationSidebar({
   onBatchDelete,
   onBatchUpdateColor,
   onBatchExport,
+  viewState,
+  onViewStateChange,
 }: PdfAnnotationSidebarProps) {
   const { t } = useI18n();
   // Multi-select state
@@ -1262,9 +1422,56 @@ export function PdfAnnotationSidebar({
   const isMultiSelectMode = selectedIds.size > 0;
 
   // Search and filter state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [typeFilter, setTypeFilter] = useState<AnnotationTypeFilter>('all');
-  const [colorFilter, setColorFilter] = useState<ColorFilter>('all');
+  const initialViewState = useMemo(
+    () => normalizePdfAnnotationSidebarViewState(viewState),
+    // Initialize from the currently restored PDF view state. Later prop changes are handled below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const [searchQuery, setSearchQuery] = useState(initialViewState.searchQuery);
+  const [typeFilter, setTypeFilter] = useState<AnnotationTypeFilter>(initialViewState.typeFilter);
+  const [colorFilter, setColorFilter] = useState<ColorFilter>(initialViewState.colorFilter);
+  const [tagFilter, setTagFilter] = useState<TagFilter>(initialViewState.tagFilter);
+  const lastAppliedViewStateRef = useRef<string>("");
+  const applyingExternalViewStateRef = useRef(false);
+  const normalizedViewState = useMemo(
+    () => normalizePdfAnnotationSidebarViewState(viewState),
+    [viewState],
+  );
+  const normalizedViewStateSignature = useMemo(
+    () => JSON.stringify(normalizedViewState),
+    [normalizedViewState],
+  );
+
+  useEffect(() => {
+    if (lastAppliedViewStateRef.current === normalizedViewStateSignature) {
+      return;
+    }
+    lastAppliedViewStateRef.current = normalizedViewStateSignature;
+    applyingExternalViewStateRef.current = true;
+    setSearchQuery(normalizedViewState.searchQuery);
+    setTypeFilter(normalizedViewState.typeFilter);
+    setColorFilter(normalizedViewState.colorFilter);
+    setTagFilter(normalizedViewState.tagFilter);
+  }, [normalizedViewState, normalizedViewStateSignature]);
+
+  useEffect(() => {
+    const next = normalizePdfAnnotationSidebarViewState({
+      searchQuery,
+      typeFilter,
+      colorFilter,
+      tagFilter,
+    });
+    const signature = JSON.stringify(next);
+    if (applyingExternalViewStateRef.current) {
+      applyingExternalViewStateRef.current = false;
+      lastAppliedViewStateRef.current = signature;
+      return;
+    }
+    lastAppliedViewStateRef.current = signature;
+    onViewStateChange?.(next);
+  }, [colorFilter, onViewStateChange, searchQuery, tagFilter, typeFilter]);
+
   const pdfAnnotations = useMemo(
     () => dedupePdfAnnotations(annotations),
     [annotations],
@@ -1279,7 +1486,11 @@ export function PdfAnnotationSidebar({
           return false;
         }
         // Color filter
-        if (colorFilter !== 'all' && a.style.color !== colorFilter) {
+        if (colorFilter !== 'all' && resolveHighlightColor(a.style.color) !== normalizeColorFilter(colorFilter)) {
+          return false;
+        }
+        // Tag filter
+        if (tagFilter !== 'all' && !getAnnotationTags(a).includes(tagFilter)) {
           return false;
         }
         // Search filter
@@ -1287,13 +1498,14 @@ export function PdfAnnotationSidebar({
           const query = searchQuery.toLowerCase();
           const content = (getCanonicalPdfAnnotationText(a) || '').toLowerCase();
           const comment = (a.comment || '').toLowerCase();
-          if (!content.includes(query) && !comment.includes(query)) {
+          const tags = getAnnotationTags(a).join(' ').toLowerCase();
+          if (!content.includes(query) && !comment.includes(query) && !tags.includes(query)) {
             return false;
           }
         }
         return true;
       });
-  }, [pdfAnnotations, typeFilter, colorFilter, searchQuery]);
+  }, [pdfAnnotations, typeFilter, colorFilter, tagFilter, searchQuery]);
 
   // Sort annotations by page, then by position (top to bottom)
   const sortedAnnotations = useMemo(() => {
@@ -1386,6 +1598,20 @@ export function PdfAnnotationSidebar({
     card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [selectedId]);
 
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-6 text-center">
+        <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
+          <Highlighter className="h-6 w-6 animate-pulse text-muted-foreground" />
+        </div>
+        <p className="text-sm font-medium text-foreground mb-1">{t("workbench.annotations.loading")}</p>
+        <p className="text-xs text-muted-foreground">
+          {t("viewer.loading.preparing")}
+        </p>
+      </div>
+    );
+  }
+
   if (pdfAnnotations.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-6 text-center">
@@ -1401,7 +1627,7 @@ export function PdfAnnotationSidebar({
   }
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto">
+    <div className="flex h-full min-h-0 flex-col">
       <div className="border-b border-border bg-background/95">
         <div className="px-3 py-2 border-b border-border flex items-center justify-between">
           <h3 className="text-sm font-medium">{t("workbench.annotations.panelTitle")}</h3>
@@ -1447,12 +1673,12 @@ export function PdfAnnotationSidebar({
         />
       </div>
 
-      <div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {sortedAnnotations.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32 p-4 text-center">
             <Search className="h-6 w-6 text-muted-foreground mb-2" />
             <p className="text-xs text-muted-foreground">
-              {searchQuery || typeFilter !== 'all' || colorFilter !== 'all'
+              {searchQuery || typeFilter !== 'all' || colorFilter !== 'all' || tagFilter !== 'all'
                 ? t("pdf.sidebar.emptyFiltered")
                 : t("pdf.sidebar.empty")}
             </p>
@@ -1484,6 +1710,13 @@ export function PdfAnnotationSidebar({
           </div>
         )}
       </div>
+      <AnnotationColorFilterStrip
+        colorFilter={colorFilter}
+        onColorFilterChange={setColorFilter}
+        tagFilter={tagFilter}
+        onTagFilterChange={setTagFilter}
+        annotations={pdfAnnotations}
+      />
     </div>
   );
 }

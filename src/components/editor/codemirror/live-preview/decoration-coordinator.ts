@@ -2707,6 +2707,9 @@ function parseInlineElements(
     const target = match[1];
     const heading = match[2];
     const alias = match[3];
+    if (lineText[match.index - 1] === '!') continue;
+    if (/\.pdf$/i.test(target) && heading?.startsWith('ann-')) continue;
+
     const fullTarget = heading ? `${target}#${heading}` : target;
     const displayText = alias || fullTarget;
     
@@ -2932,16 +2935,21 @@ function parseInlineElements(
   while ((match = REGEX_PATTERNS.embed.exec(lineText)) !== null) {
     if (shouldSkipMatch(match.index)) continue;
 
+    const rawTarget = match[1];
+    const aliasSeparator = rawTarget.indexOf('|');
+    const target = (aliasSeparator >= 0 ? rawTarget.slice(0, aliasSeparator) : rawTarget).trim();
+    const displayText = (aliasSeparator >= 0 ? rawTarget.slice(aliasSeparator + 1) : target).trim() || target;
+
     elements.push({
       type: ElementType.INLINE_OTHER,
       from: lineFrom + match.index,
       to: lineFrom + match.index + match[0].length,
       lineNumber: lineNum,
-      content: match[1],
+      content: displayText,
       decorationData: {
         type: 'embed',
-        target: match[1],
-        displayText: match[1],
+        target,
+        displayText,
         syntaxFrom: lineFrom + match.index,
         syntaxTo: lineFrom + match.index + match[0].length,
         contentFrom: lineFrom + match.index + 3,

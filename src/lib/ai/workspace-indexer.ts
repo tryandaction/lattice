@@ -1,3 +1,5 @@
+import { extractMarkdownDocument } from '@/lib/markdown/extract';
+
 /**
  * Workspace Indexer
  * Indexes workspace files for AI context — extracts file summaries/structure
@@ -11,6 +13,9 @@ export interface FileIndex {
   size: number;
   summary: string;       // First ~200 chars or extracted structure
   headings?: string[];   // For markdown files
+  links?: string[];       // Wiki and Markdown links for knowledge graph/search
+  tags?: string[];        // Markdown tags discovered in note bodies
+  frontmatter?: Record<string, unknown>; // YAML-style properties for markdown files
   exports?: string[];    // For code files (function/class names)
   chunks?: WorkspaceContentChunk[];
   symbols?: WorkspaceSymbolRef[];
@@ -103,13 +108,20 @@ function extractNotebookCells(content: string): WorkspaceNotebookCellRef[] {
   }
 }
 
-function extractSummary(content: string, ext: string): Partial<FileIndex> {
+export function extractFileIndexSummary(content: string, ext: string): Partial<FileIndex> {
   const summary = content.slice(0, 200).replace(/\n/g, ' ').trim();
   const chunks = chunkContent(content);
 
   if (ext === '.md' || ext === '.mdx') {
-    const headings = [...content.matchAll(/^#{1,6}\s+(.+)$/gm)].map(m => m[1].trim());
-    return { summary, headings, chunks };
+    const document = extractMarkdownDocument(content);
+    return {
+      summary: document.body.slice(0, 200).replace(/\n/g, ' ').trim(),
+      headings: document.headings.map((heading) => heading.text),
+      links: document.links.map((link) => link.target).slice(0, 50),
+      tags: document.tags.map((tag) => tag.tag).slice(0, 50),
+      frontmatter: document.frontmatter,
+      chunks: chunkContent(document.body),
+    };
   }
 
   if (['.ts', '.tsx', '.js', '.jsx'].includes(ext)) {
@@ -166,7 +178,7 @@ async function indexFile(
     }
 
     const content = await file.text();
-    const extracted = extractSummary(content, ext);
+    const extracted = extractFileIndexSummary(content, ext);
 
     return {
       path,
@@ -175,6 +187,9 @@ async function indexFile(
       size: file.size,
       summary: extracted.summary ?? '',
       headings: extracted.headings,
+      links: extracted.links,
+      tags: extracted.tags,
+      frontmatter: extracted.frontmatter,
       exports: extracted.exports,
       chunks: extracted.chunks,
       symbols: extracted.symbols,
@@ -273,6 +288,11 @@ export function searchIndex(query: string, limit = 10): FileIndex[] {
       file.path.toLowerCase().includes(q) ||
       file.summary.toLowerCase().includes(q) ||
       file.headings?.some(h => h.toLowerCase().includes(q)) ||
+      file.links?.some(link => link.toLowerCase().includes(q)) ||
+      file.tags?.some(tag => tag.toLowerCase().includes(q)) ||
+      Object.entries(file.frontmatter ?? {}).some(([key, value]) =>
+        key.toLowerCase().includes(q) || String(value).toLowerCase().includes(q)
+      ) ||
       file.exports?.some(e => e.toLowerCase().includes(q))
     ) {
       results.push(file);
@@ -293,6 +313,11 @@ export function buildIndexContext(relevantPaths?: string[]): string {
   return files.map(f => {
     let entry = `## ${f.path} (${f.size}B)`;
     if (f.headings?.length) entry += `\nHeadings: ${f.headings.join(', ')}`;
+    if (f.tags?.length) entry += `\nTags: ${f.tags.join(', ')}`;
+    if (f.links?.length) entry += `\nLinks: ${f.links.join(', ')}`;
+    if (f.frontmatter && Object.keys(f.frontmatter).length > 0) {
+      entry += `\nProperties: ${Object.entries(f.frontmatter).map(([key, value]) => `${key}: ${String(value)}`).join(', ')}`;
+    }
     if (f.exports?.length) entry += `\nExports: ${f.exports.join(', ')}`;
     if (f.symbols?.length) entry += `\nSymbols: ${f.symbols.map((symbol) => `${symbol.kind} ${symbol.name}`).join(', ')}`;
     if (f.notebookCells?.length) entry += `\nNotebook cells: ${f.notebookCells.map((cell) => `${cell.id}(${cell.kind})`).join(', ')}`;

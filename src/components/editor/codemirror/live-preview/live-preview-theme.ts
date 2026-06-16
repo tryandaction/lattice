@@ -37,15 +37,15 @@ export const livePreviewTheme = EditorView.theme({
   '&': {
     backgroundColor: colors.background,
     color: colors.foreground,
-    fontSize: '16px',
-    lineHeight: '1.6',
+    fontSize: 'var(--cm-markdown-font-size, 15px)',
+    lineHeight: 'var(--cm-markdown-line-height, 1.58)',
   },
   
   // Content
   '.cm-content': {
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-    fontSize: '16px',
-    lineHeight: '1.6',
+    fontSize: 'var(--cm-markdown-font-size, 15px)',
+    lineHeight: 'var(--cm-markdown-line-height, 1.58)',
     padding: 'var(--cm-content-padding-y, 1rem) var(--cm-content-padding-x, 0px)',
     caretColor: colors.cursor,
   },
@@ -106,16 +106,16 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-line': {
     padding: '0 !important',
     margin: '0 !important',
-    fontSize: '16px',
-    lineHeight: '1.6',
-    minHeight: '1.6em',
+    fontSize: 'var(--cm-markdown-font-size, 15px)',
+    lineHeight: 'var(--cm-markdown-line-height, 1.58)',
+    minHeight: 'calc(var(--cm-markdown-font-size, 15px) * var(--cm-markdown-line-height, 1.58))',
   },
 
   // Paragraph spacing: blank lines render as explicit vertical rhythm
   '.cm-line:empty': {
-    height: '1.6em',
-    lineHeight: '1.6',
-    minHeight: '1.6em',
+    height: 'calc(var(--cm-markdown-font-size, 15px) * var(--cm-markdown-line-height, 1.58))',
+    lineHeight: 'var(--cm-markdown-line-height, 1.58)',
+    minHeight: 'calc(var(--cm-markdown-font-size, 15px) * var(--cm-markdown-line-height, 1.58))',
   },
 
   // No vertical padding on .cm-line — padding creates posAtCoords() dead zones
@@ -126,7 +126,7 @@ export const livePreviewTheme = EditorView.theme({
   // Improved reading width
   '.cm-formatted-content': {
     maxWidth: '65ch',
-    lineHeight: '1.6',
+    lineHeight: 'var(--cm-markdown-line-height, 1.58)',
   },
   
   // === Inline Styles ===
@@ -245,33 +245,33 @@ export const livePreviewTheme = EditorView.theme({
   },
 
   '.cm-heading-1': {
-    fontSize: '2em',
+    fontSize: '1.55em',
     lineHeight: '1.3',
-    marginTop: '0.67em',
-    marginBottom: '0.67em',
+    marginTop: '0.55em',
+    marginBottom: '0.4em',
     padding: '0',
     borderBottom: `1px solid ${colors.border}`,
     paddingBottom: '0.3em',
   },
 
   '.cm-heading-2': {
-    fontSize: '1.5em',
+    fontSize: '1.32em',
     lineHeight: '1.3',
-    marginTop: '0.83em',
-    marginBottom: '0.83em',
+    marginTop: '0.6em',
+    marginBottom: '0.45em',
     padding: '0',
   },
 
   '.cm-heading-3': {
-    fontSize: '1.25em',
+    fontSize: '1.15em',
     lineHeight: '1.3',
-    marginTop: '1em',
-    marginBottom: '1em',
+    marginTop: '0.65em',
+    marginBottom: '0.4em',
     padding: '0',
   },
 
   '.cm-heading-4': {
-    fontSize: '1.1em',
+    fontSize: '1.04em',
     lineHeight: '1.3',
     marginTop: '1.33em',
     marginBottom: '1.33em',
@@ -288,7 +288,7 @@ export const livePreviewTheme = EditorView.theme({
   },
 
   '.cm-heading-1-content': {
-    fontSize: '2em',
+    fontSize: '1.55em',
     fontWeight: 'bold',
     lineHeight: '1.3',
     padding: '0',
@@ -296,7 +296,7 @@ export const livePreviewTheme = EditorView.theme({
   },
 
   '.cm-heading-2-content': {
-    fontSize: '1.5em',
+    fontSize: '1.32em',
     fontWeight: 'bold',
     lineHeight: '1.3',
     padding: '0',

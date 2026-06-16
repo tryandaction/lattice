@@ -11,13 +11,37 @@
  */
 
 import { useEffect, useRef, useState, useCallback, memo } from "react";
-import { EditorView, keymap, lineNumbers, highlightActiveLineGutter } from "@codemirror/view";
+import {
+  EditorView,
+  drawSelection,
+  dropCursor,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  highlightSpecialChars,
+  keymap,
+  lineNumbers,
+  rectangularSelection,
+} from "@codemirror/view";
 import { EditorState, Extension } from "@codemirror/state";
-import { defaultKeymap, indentWithTab } from "@codemirror/commands";
-import { bracketMatching, syntaxTree } from "@codemirror/language";
+import {
+  copyLineDown,
+  copyLineUp,
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentLess,
+  indentMore,
+  indentSelection,
+  indentWithTab,
+  moveLineDown,
+  moveLineUp,
+  toggleBlockComment,
+  toggleComment,
+} from "@codemirror/commands";
+import { bracketMatching, foldGutter, foldKeymap, indentOnInput, syntaxTree } from "@codemirror/language";
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
-import { linter, type Diagnostic as CodeMirrorDiagnostic } from "@codemirror/lint";
-import { openSearchPanel } from "@codemirror/search";
+import { linter, lintKeymap, type Diagnostic as CodeMirrorDiagnostic } from "@codemirror/lint";
+import { gotoLine, highlightSelectionMatches, openSearchPanel, searchKeymap } from "@codemirror/search";
 import { academicThemeExtension } from "./academic-theme";
 import { registerCodeMirrorView, unregisterCodeMirrorView, setActiveInputTargetFromElement } from "@/lib/unified-input-handler";
 import type { ExecutionContextRef, ExecutionProblem } from "@/lib/runner/types";
@@ -35,6 +59,8 @@ export type CodeEditorLanguage =
   | "latex" 
   | "json" 
   | "html"
+  | "c"
+  | "cpp"
   | "javascript" 
   | "typescript"
   | "plaintext";
@@ -76,6 +102,8 @@ export interface CodeEditorRef {
   restoreEditorState: (state: CodeEditorStateSnapshot) => void;
   /** Open the built-in search panel */
   openSearch: () => void;
+  /** Open the built-in go-to-line dialog */
+  openGotoLine: () => void;
 }
 
 /**
@@ -183,6 +211,23 @@ function diagnosticsToProblems(
   });
 }
 
+export const vscodeStyleKeymap = [
+  { key: "Mod-g", run: gotoLine },
+  { key: "Ctrl-g", run: gotoLine },
+  { key: "Mod-/", run: toggleComment },
+  { key: "Ctrl-/", run: toggleComment },
+  { key: "Shift-Alt-a", run: toggleBlockComment },
+  { key: "Mod-[", run: indentLess },
+  { key: "Ctrl-[", run: indentLess },
+  { key: "Mod-]", run: indentMore },
+  { key: "Ctrl-]", run: indentMore },
+  { key: "Shift-Alt-f", run: indentSelection },
+  { key: "Alt-ArrowUp", run: moveLineUp },
+  { key: "Alt-ArrowDown", run: moveLineDown },
+  { key: "Shift-Alt-ArrowUp", run: copyLineUp },
+  { key: "Shift-Alt-ArrowDown", run: copyLineDown },
+];
+
 /**
  * Load language extension dynamically
  * Falls back to empty extension on failure (plain text mode)
@@ -215,6 +260,16 @@ async function loadLanguageExtension(language: CodeEditorLanguage): Promise<Exte
       case "html": {
         const { html } = await import("@codemirror/lang-html");
         return html();
+      }
+      case "c": {
+        const { StreamLanguage } = await import("@codemirror/language");
+        const { c } = await import("@codemirror/legacy-modes/mode/clike");
+        return StreamLanguage.define(c);
+      }
+      case "cpp": {
+        const { StreamLanguage } = await import("@codemirror/language");
+        const { cpp } = await import("@codemirror/legacy-modes/mode/clike");
+        return StreamLanguage.define(cpp);
       }
       case "latex": {
         // LaTeX uses legacy mode
@@ -375,15 +430,30 @@ function CodeEditorComponent({
         const extensions: Extension[] = [
           // Core extensions
           lineNumbers(),
+          foldGutter(),
+          highlightSpecialChars(),
+          history(),
+          drawSelection(),
+          dropCursor(),
+          EditorState.allowMultipleSelections.of(true),
+          indentOnInput(),
           highlightActiveLineGutter(),
+          highlightActiveLine(),
+          highlightSelectionMatches(),
           bracketMatching(),
           closeBrackets(),
+          rectangularSelection(),
           
           // Keymaps
           keymap.of([
+            ...vscodeStyleKeymap,
             ...closeBracketsKeymap,
             ...(basicCompletion ? completionKeymap : []),
             ...defaultKeymap,
+            ...searchKeymap,
+            ...historyKeymap,
+            ...foldKeymap,
+            ...lintKeymap,
             indentWithTab,
           ]),
           navigationKeymap,
@@ -627,6 +697,12 @@ function CodeEditorComponent({
     viewRef.current.focus();
   }, []);
 
+  const openGotoLine = useCallback(() => {
+    if (!viewRef.current) return;
+    gotoLine(viewRef.current);
+    viewRef.current.focus();
+  }, []);
+
   // Expose methods via ref
   useEffect(() => {
     if (editorRef && 'current' in editorRef) {
@@ -641,6 +717,7 @@ function CodeEditorComponent({
         getEditorState,
         restoreEditorState,
         openSearch,
+        openGotoLine,
       };
     }
     return () => {
@@ -648,7 +725,7 @@ function CodeEditorComponent({
         editorRef.current = null;
       }
     };
-  }, [editorRef, flashLine, focus, getContent, getEditorState, getSelection, getSelectionDetails, hasSelection, openSearch, restoreEditorState, scrollToLine]);
+  }, [editorRef, flashLine, focus, getContent, getEditorState, getSelection, getSelectionDetails, hasSelection, openGotoLine, openSearch, restoreEditorState, scrollToLine]);
 
   // Error state
   if (error) {

@@ -35,6 +35,7 @@ import { useI18n } from "@/hooks/use-i18n";
 import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
 import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
 import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
+import type { CodeEditorLanguage } from "@/components/editor/codemirror/code-editor";
 
 interface NotebookEditorProps {
   content: string;
@@ -105,6 +106,19 @@ function resolveNotebookKernelLabel(metadata: ReturnType<typeof useNotebookEdito
     || null;
 }
 
+function resolveNotebookCodeEditorLanguage(language: string): CodeEditorLanguage {
+  const normalized = language.trim().toLowerCase();
+  if (normalized === "python" || normalized === "py") return "python";
+  if (normalized === "javascript" || normalized === "js" || normalized === "node") return "javascript";
+  if (normalized === "typescript" || normalized === "ts") return "typescript";
+  if (normalized === "c") return "c";
+  if (normalized === "cpp" || normalized === "c++" || normalized === "cc" || normalized === "cxx") return "cpp";
+  if (normalized === "json") return "json";
+  if (normalized === "html") return "html";
+  if (normalized === "markdown" || normalized === "md") return "markdown";
+  return "plaintext";
+}
+
 function isKernelOption(value: unknown): value is KernelOption {
   return Boolean(value && typeof value === "object" && "runnerType" in (value as Record<string, unknown>));
 }
@@ -161,6 +175,10 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   const notebookAbsolutePath = resolveWorkspaceFilePath(workspaceRootPath, filePath, rootName);
   const notebookCwd = notebookAbsolutePath ? dirname(notebookAbsolutePath) : workspaceRootPath ?? undefined;
   const notebookLanguage = useMemo(() => resolveNotebookLanguage(state.metadata), [state.metadata]);
+  const codeEditorLanguage = useMemo(
+    () => resolveNotebookCodeEditorLanguage(notebookLanguage),
+    [notebookLanguage],
+  );
   const notebookKernelLabel = useMemo(() => resolveNotebookKernelLabel(state.metadata), [state.metadata]);
   const isPythonNotebook = notebookLanguage.trim().toLowerCase() === "python";
   const isDesktopHost = useMemo(() => isTauriHost(), []);
@@ -168,6 +186,11 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
     filePath,
     open: false,
   });
+  const [activeCodeCellCommands, setActiveCodeCellCommands] = useState<{
+    cellId: string;
+    openSearch: () => void;
+    openGotoLine: () => void;
+  } | null>(null);
   const showNotebookProblems = notebookProblemsState.filePath === filePath && notebookProblemsState.open;
   const healthContext = useMemo(
     () => ({
@@ -604,6 +627,26 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
           onTrigger: () => { void handleSave(); },
         },
         {
+          id: "search-active-cell",
+          label: t("workbench.commandBar.searchInFile"),
+          icon: "search",
+          tooltip: t("workbench.commandBar.searchInFile"),
+          priority: 15,
+          group: "secondary",
+          disabled: !activeCodeCellCommands,
+          onTrigger: () => activeCodeCellCommands?.openSearch(),
+        },
+        {
+          id: "goto-active-cell-line",
+          label: t("workbench.commandBar.gotoLine"),
+          icon: "scan-search",
+          tooltip: t("workbench.commandBar.gotoLine"),
+          priority: 16,
+          group: "secondary",
+          disabled: !activeCodeCellCommands,
+          onTrigger: () => activeCodeCellCommands?.openGotoLine(),
+        },
+        {
           id: executionState === "running" ? "stop" : "verify",
           label: executionState === "running" ? t("workbench.commandBar.stop") : t("workbench.commandBar.verify"),
           priority: 20,
@@ -625,7 +668,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
         },
         {
           id: "restart-kernel",
-          label: "重启内核",
+          label: t("workbench.notebook.command.restartKernel"),
           priority: 22,
           group: "secondary",
           disabled: !commandState.canRestart,
@@ -655,6 +698,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
       ],
     };
   }, [
+    activeCodeCellCommands,
     canExecuteNotebook,
     executionState,
     filePath,
@@ -728,6 +772,18 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
   const handleCellTypeChange = useCallback((cellId: string, type: "markdown" | "code" | "raw") => {
     changeType(cellId, type);
   }, [changeType]);
+
+  const handleCodeCellEditorCommandsChange = useCallback((
+    cellId: string,
+    commands: { openSearch: () => void; openGotoLine: () => void } | null,
+  ) => {
+    setActiveCodeCellCommands((current) => {
+      if (!commands) {
+        return current?.cellId === cellId ? null : current;
+      }
+      return { cellId, ...commands };
+    });
+  }, []);
 
   const cellCount = state.cells.length;
   const canDeleteCell = cellCount > 1;
@@ -833,9 +889,11 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
               onLinkNavigate={handleLinkNavigate}
               rootHandle={workspaceRootHandle}
               notebookFilePath={filePath}
+              codeLanguage={codeEditorLanguage}
               onRunCell={runCellHandler}
               isExecuting={executionState === "running" && currentCellId === cell.id}
               canRunCell={canRunCellValue}
+              onCodeCellEditorCommandsChange={handleCodeCellEditorCommandsChange}
             />
           </div>
         ))}

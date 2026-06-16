@@ -101,48 +101,6 @@ export interface AiProvider {
 }
 
 // ============================================================================
-// Function Calling / Tool Use
-// ============================================================================
-
-export interface AiTool {
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>; // JSON Schema
-}
-
-export interface AiToolCall {
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-}
-
-export interface AiToolResult {
-  toolCallId: string;
-  content: string;
-}
-
-// ============================================================================
-// Agent Types
-// ============================================================================
-
-export interface AgentStep {
-  type: 'thinking' | 'tool_call' | 'tool_result' | 'response';
-  content: string;
-  toolCall?: AiToolCall;
-  toolResult?: AiToolResult;
-  timestamp: number;
-}
-
-export interface AgentTask {
-  id: string;
-  description: string;
-  status: 'running' | 'completed' | 'failed' | 'cancelled';
-  steps: AgentStep[];
-  result?: string;
-  error?: string;
-}
-
-// ============================================================================
 // AI-Native Workbench Types
 // ============================================================================
 
@@ -386,15 +344,20 @@ export interface AiFollowUpAction {
   kind: 'create_draft' | 'propose_task';
 }
 
+export interface AiDraftSuggestion {
+  type: AiDraftArtifactType;
+  templateId?: AiDraftTemplateId;
+  title: string;
+  content?: string;
+  targetPath?: string;
+  writeMode?: AiDraftWriteMode;
+}
+
 export interface AiRunResult {
   text: string;
   evidenceRefs: EvidenceRef[];
   context: AiPromptContext;
   model: AiModelInfo;
   followUpActions: AiFollowUpAction[];
-  draftSuggestion?: {
-    type: AiDraftArtifactType;
-    templateId?: AiDraftTemplateId;
-    title: string;
-  };
+  draftSuggestion?: AiDraftSuggestion;
 }

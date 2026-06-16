@@ -98,7 +98,31 @@ function isTextItem(item: TextContent["items"][number]): item is TextItem {
 }
 
 export function normalizePdfText(text: string | null | undefined): string {
-  return (text ?? "").replace(/\s+/g, " ").trim();
+  return (text ?? "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function inferRenderedTextNodeHasEOL(
+  currentRect: DOMRect | null | undefined,
+  nextRect: DOMRect | null | undefined,
+): boolean {
+  if (!currentRect || !nextRect) {
+    return false;
+  }
+
+  const minimumHeight = Math.max(1, Math.min(currentRect.height, nextRect.height));
+  const maximumHeight = Math.max(currentRect.height, nextRect.height);
+  const verticalShift = nextRect.top - currentRect.top;
+  const horizontalGap = nextRect.left - (currentRect.left + currentRect.width);
+  const containsSmallAttachedFragment =
+    minimumHeight <= maximumHeight * 0.72 &&
+    horizontalGap <= Math.max(8, minimumHeight * 0.8);
+  if (containsSmallAttachedFragment) {
+    return false;
+  }
+  return verticalShift >= Math.max(6, minimumHeight * 0.55);
 }
 
 function multiplyTransforms(left: number[], right: number[]): number[] {
@@ -341,7 +365,10 @@ function isEquationLikeRun(input: {
   );
 }
 
-function buildRenderedVisualItemMetadata(itemRects: PdfPageTextItemRect[]): Map<number, PdfVisualItemMetadata> {
+function buildRenderedVisualItemMetadata(
+  itemRects: PdfPageTextItemRect[],
+  viewportWidth?: number,
+): Map<number, PdfVisualItemMetadata> {
   const metadata = new Map<number, PdfVisualItemMetadata>();
   if (itemRects.length === 0) {
     return metadata;
@@ -436,7 +463,7 @@ function buildRenderedVisualItemMetadata(itemRects: PdfPageTextItemRect[]): Map<
     }));
 
   let nextBlockIndex = 0;
-  const pageWidth = Math.max(...itemRects.map((rect) => rect.left + rect.width), 0);
+  const pageWidth = Math.max(viewportWidth ?? 0, ...itemRects.map((rect) => rect.left + rect.width), 0);
   const previousRuns: PdfVisualRunMetadata[] = [];
 
   mergedRows.forEach((row) => {
@@ -459,8 +486,16 @@ function buildRenderedVisualItemMetadata(itemRects: PdfPageTextItemRect[]): Map<
         }
 
         const gap = rect.left - previous.right;
-        const allowedGap = Math.max(32, Math.max(rect.height, row.bottom - row.top) * 1.8);
-        if (gap > allowedGap) {
+        const rowHeight = Math.max(rect.height, row.bottom - row.top);
+        const pageCenterX = pageWidth / 2;
+        const crossesPageCenterGutter = (
+          pageWidth > 0 &&
+          previous.right < pageCenterX &&
+          rect.left > pageCenterX &&
+          gap >= Math.max(16, rowHeight * 0.65)
+        );
+        const allowedGap = Math.max(32, rowHeight * 1.8);
+        if (gap > allowedGap || crossesPageCenterGutter) {
           runs.push({
             rects: [rect],
             left: rect.left,
@@ -899,7 +934,7 @@ function buildPdfPageTextModelFromSegments(input: {
 }): PdfPageTextModel {
   const segments: PdfPageTextSegment[] = [];
   let normalizedText = "";
-  const visualItemMetadata = buildRenderedVisualItemMetadata(input.itemRects);
+  const visualItemMetadata = buildRenderedVisualItemMetadata(input.itemRects, input.viewportWidth);
   const itemRectMap = new Map(input.itemRects.map((rect) => [rect.itemIndex, rect]));
 
   input.sourceSegments.forEach((sourceSegment, sourceIndex) => {
@@ -1012,11 +1047,58 @@ function formatRectSignature(rect: DOMRect): string {
   ].map((value) => Number.isFinite(value) ? value.toFixed(3) : "0").join(":");
 }
 
+function isUsableRenderedTextRect(rect: DOMRect | null | undefined): rect is DOMRect {
+  return Boolean(
+    rect &&
+    Number.isFinite(rect.left) &&
+    Number.isFinite(rect.top) &&
+    Number.isFinite(rect.width) &&
+    Number.isFinite(rect.height) &&
+    rect.width > 0 &&
+    rect.height > 0,
+  );
+}
+
+function getRenderedTextNodeRect(textNode: Text, parentRect?: DOMRect | null): DOMRect | null {
+  if (typeof document === "undefined" || typeof document.createRange !== "function") {
+    return null;
+  }
+
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(textNode);
+    const rect = range.getBoundingClientRect();
+    if (typeof range.detach === "function") {
+      range.detach();
+    }
+    if (!isUsableRenderedTextRect(rect)) {
+      return null;
+    }
+    if (parentRect && isUsableRenderedTextRect(parentRect)) {
+      const startsAtParentTextOrigin = Math.abs(rect.left - parentRect.left) <= Math.max(1, parentRect.width * 0.01);
+      const insideParent =
+        rect.left >= parentRect.left - 1 &&
+        rect.right <= parentRect.right + 1 &&
+        rect.top >= parentRect.top - Math.max(2, parentRect.height * 0.4) &&
+        rect.bottom <= parentRect.bottom + Math.max(2, parentRect.height * 0.4);
+      const verticalOverlap = Math.max(0, Math.min(rect.bottom, parentRect.bottom) - Math.max(rect.top, parentRect.top));
+      const minimumHeight = Math.max(1, Math.min(rect.height, parentRect.height));
+      if (!startsAtParentTextOrigin || !insideParent || verticalOverlap < minimumHeight * 0.35) {
+        return null;
+      }
+    }
+    return rect;
+  } catch {
+    return null;
+  }
+}
+
 function buildRenderedPdfPageTextModelSignature(pageElement: HTMLElement, textNodes: Text[]): string {
   const pageRect = pageElement.getBoundingClientRect();
   return textNodes
     .map((node) => {
-      const parentRect = node.parentElement?.getBoundingClientRect();
+      const rawParentRect = node.parentElement?.getBoundingClientRect();
+      const parentRect = getRenderedTextNodeRect(node, rawParentRect) ?? rawParentRect;
       return [
         node.textContent ?? "",
         parentRect ? formatRectSignature(parentRect) : "missing-rect",
@@ -1075,24 +1157,59 @@ export function buildRenderedPdfPageTextModel(pageElement: HTMLElement): PdfPage
 
   const pageRect = pageElement.getBoundingClientRect();
   const pageNumber = Number(pageElement.dataset.pageNumber ?? "0");
+  const toPageLocalRect = (rect: DOMRect): { left: number; top: number; width: number; height: number } => {
+    const viewportRelativeLeft = rect.left - pageRect.left;
+    const viewportRelativeTop = rect.top - pageRect.top;
+    const rectLooksPageLocal =
+      rect.left >= -1 &&
+      rect.top >= -1 &&
+      rect.left + rect.width <= pageRect.width + 1 &&
+      rect.top + rect.height <= pageRect.height + 1 &&
+      (
+        viewportRelativeLeft < -1 ||
+        viewportRelativeTop < -1 ||
+        viewportRelativeLeft + rect.width > pageRect.width + 1 ||
+        viewportRelativeTop + rect.height > pageRect.height + 1
+      );
+
+    return {
+      left: rectLooksPageLocal ? rect.left : viewportRelativeLeft,
+      top: rectLooksPageLocal ? rect.top : viewportRelativeTop,
+      width: rect.width,
+      height: rect.height,
+    };
+  };
   const items: TextItem[] = [];
   const itemRects: PdfPageTextItemRect[] = [];
+  const parentRects = textNodes.map((textNode) => textNode.parentElement?.getBoundingClientRect() ?? null);
+  const textRects = textNodes.map((textNode, index) => getRenderedTextNodeRect(textNode, parentRects[index]) ?? parentRects[index]);
   const sourceSegments = textNodes.map((textNode, itemIndex) => {
-    const parentRect = textNode.parentElement?.getBoundingClientRect();
-    if (parentRect) {
+    const textRect = textRects[itemIndex];
+    const nextTextRect = textRects[itemIndex + 1] ?? null;
+    items.push({
+      str: textNode.textContent ?? "",
+      dir: "ltr",
+      transform: [1, 0, 0, textRect?.height ?? 0, textRect?.left ?? 0, textRect?.top ?? 0],
+      width: textRect?.width ?? 0,
+      height: textRect?.height ?? 0,
+      fontName: "",
+      hasEOL: false,
+    } as TextItem);
+    if (textRect) {
+      const localRect = toPageLocalRect(textRect);
       itemRects.push({
         itemIndex,
-        left: parentRect.left - pageRect.left,
-        top: parentRect.top - pageRect.top,
-        width: parentRect.width,
-        height: parentRect.height,
+        left: localRect.left,
+        top: localRect.top,
+        width: localRect.width,
+        height: localRect.height,
       });
     }
 
     return {
       itemIndex,
       text: textNode.textContent ?? "",
-      hasEOL: false,
+      hasEOL: inferRenderedTextNodeHasEOL(textRect, nextTextRect),
       textNode,
     };
   });

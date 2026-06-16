@@ -3,7 +3,7 @@
  */
 
 import React from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { WorkspaceSearchPanel } from "../workspace-search-panel";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -35,12 +35,25 @@ function createFileHandle(name: string, content: string): FileSystemFileHandle {
   } as unknown as FileSystemFileHandle;
 }
 
+beforeAll(() => {
+  consoleErrorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+    const message = args.map((value) => String(value ?? "")).join(" ");
+    if (message.includes("not wrapped in act")) {
+      return;
+    }
+    originalConsoleError(...args);
+  });
+});
+
+afterAll(() => {
+  consoleErrorSpy?.mockRestore();
+});
+
 afterEach(async () => {
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
   });
-  consoleErrorSpy?.mockRestore();
   navigateLinkMock.mockClear();
   useWorkspaceStore.setState((state) => ({
     ...state,
@@ -60,13 +73,6 @@ afterEach(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  consoleErrorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-    const message = args.map((value) => String(value ?? "")).join(" ");
-    if (message.includes("not wrapped in act")) {
-      return;
-    }
-    originalConsoleError(...args);
-  });
 });
 
 describe("WorkspaceSearchPanel", () => {

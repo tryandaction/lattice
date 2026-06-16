@@ -38,7 +38,15 @@ import { useAnnotationSystem } from "@/hooks/use-annotation-system";
 import { useAnnotationNavigation } from "@/hooks/use-annotation-navigation";
 import { useI18n } from "@/hooks/use-i18n";
 import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
+import { useContentCacheStore } from "@/stores/content-cache-store";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 import type { PaneId } from "@/types/layout";
+import {
+  buildPersistedFileViewStateKey,
+  loadPersistedFileViewState,
+  savePersistedFileViewState,
+  type ImageViewState,
+} from "@/lib/file-view-state";
 import {
   serializeShapes,
   deserializeShapes,
@@ -80,6 +88,7 @@ interface ImageTldrawAdapterProps {
 }
 
 const SAVE_DEBOUNCE_MS = 500;
+const VIEW_STATE_SAVE_DEBOUNCE_MS = 250;
 const KNOWN_TLDRAW_SHAPE_TYPES: ReadonlySet<TLShape["type"]> = new Set([
   "embed",
   "video",
@@ -104,6 +113,49 @@ type KnownTldrawShape = TldrawShape & { type: TLShape["type"] };
 
 function isKnownTldrawShape(shape: TldrawShape): shape is KnownTldrawShape {
   return isKnownTldrawShapeType(shape.type);
+}
+
+function isValidImageCamera(value: unknown): value is NonNullable<ImageViewState["camera"]> {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const camera = value as Record<string, unknown>;
+  return (
+    typeof camera.x === "number" &&
+    Number.isFinite(camera.x) &&
+    typeof camera.y === "number" &&
+    Number.isFinite(camera.y) &&
+    typeof camera.z === "number" &&
+    Number.isFinite(camera.z) &&
+    camera.z > 0
+  );
+}
+
+function readImageViewState(state: { viewState?: Record<string, unknown> } | undefined | null): ImageViewState | null {
+  const candidate = state?.viewState?.image as Partial<ImageViewState> | undefined;
+  if (!candidate || typeof candidate !== "object") {
+    return null;
+  }
+  return {
+    ...(typeof candidate.showSidebar === "boolean" ? { showSidebar: candidate.showSidebar } : {}),
+    ...(isValidImageCamera(candidate.camera) ? { camera: candidate.camera } : {}),
+  };
+}
+
+function buildImageEditorState(input: ImageViewState): {
+  cursorPosition: number;
+  scrollTop: number;
+  scrollLeft: number;
+  viewState: { image: ImageViewState };
+} {
+  return {
+    cursorPosition: 0,
+    scrollTop: 0,
+    scrollLeft: 0,
+    viewState: {
+      image: input,
+    },
+  };
 }
 
 // ============================================================================
@@ -181,6 +233,25 @@ export function ImageTldrawAdapter({
   onDiagnosticsSnapshot,
 }: ImageTldrawAdapterProps) {
   const { t } = useI18n();
+  const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const saveEditorState = useContentCacheStore((state) => state.saveEditorState);
+  const getEditorState = useContentCacheStore((state) => state.getEditorState);
+  const imageViewStateKey = filePath ?? fileName;
+  const persistedViewStateKey = useMemo(
+    () => buildPersistedFileViewStateKey({
+      kind: "image",
+      workspaceKey,
+      workspaceRootPath,
+      filePath,
+      fallbackName: fileName,
+    }),
+    [fileName, filePath, workspaceKey, workspaceRootPath],
+  );
+  const cachedImageViewState = useMemo(
+    () => readImageViewState(useContentCacheStore.getState().getEditorState(imageViewStateKey)),
+    [imageViewStateKey],
+  );
   const {
     annotations: allAnnotations,
     isLoading: annotationsLoading,
@@ -202,14 +273,16 @@ export function ImageTldrawAdapter({
   const [isReady, setIsReady] = useState(false);
   const [tldrawError, setTldrawError] = useState<Error | null>(null);
   const [currentTool, setCurrentTool] = useState('select');
-  const [showSidebar, setShowSidebar] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(cachedImageViewState?.showSidebar ?? false);
   const [highlightedRegion, setHighlightedRegion] = useState<{
     x: number; y: number; width: number; height: number;
   } | null>(null);
   
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const viewStateSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentAnnotationIdRef = useRef<string | null>(null);
   const isRestoringRef = useRef(false);
+  const hasRestoredViewStateRef = useRef(Boolean(cachedImageViewState));
   const imageSetupDoneRef = useRef(false);
   // Prevent re-converting the same ArrayBuffer reference on parent re-renders
   const prevContentRef = useRef<ArrayBuffer | null>(null);
@@ -275,6 +348,65 @@ export function ImageTldrawAdapter({
   useEffect(() => {
     currentAnnotationIdRef.current = imageAnnotation?.id || null;
   }, [imageAnnotation]);
+
+  const captureImageViewState = useCallback((): ImageViewState => {
+    const camera = editor?.getCamera();
+    return {
+      showSidebar,
+      ...(camera ? { camera: { x: camera.x, y: camera.y, z: camera.z } } : {}),
+    };
+  }, [editor, showSidebar]);
+
+  const persistImageViewState = useCallback((state: ImageViewState) => {
+    const editorState = buildImageEditorState(state);
+    saveEditorState(imageViewStateKey, editorState);
+    void savePersistedFileViewState(persistedViewStateKey, editorState);
+  }, [imageViewStateKey, persistedViewStateKey, saveEditorState]);
+
+  const schedulePersistImageViewState = useCallback((delay = VIEW_STATE_SAVE_DEBOUNCE_MS) => {
+    if (viewStateSaveTimeoutRef.current) {
+      clearTimeout(viewStateSaveTimeoutRef.current);
+    }
+
+    viewStateSaveTimeoutRef.current = setTimeout(() => {
+      viewStateSaveTimeoutRef.current = null;
+      persistImageViewState(captureImageViewState());
+    }, delay);
+  }, [captureImageViewState, persistImageViewState]);
+
+  useEffect(() => {
+    setShowSidebar(cachedImageViewState?.showSidebar ?? false);
+    hasRestoredViewStateRef.current = Boolean(cachedImageViewState);
+  }, [cachedImageViewState, imageViewStateKey]);
+
+  useEffect(() => {
+    if (!persistedViewStateKey || getEditorState(imageViewStateKey)) {
+      return;
+    }
+
+    let cancelled = false;
+    void loadPersistedFileViewState(persistedViewStateKey).then((persistedState) => {
+      if (cancelled) {
+        return;
+      }
+      const restored = readImageViewState(persistedState);
+      if (!restored) {
+        return;
+      }
+      hasRestoredViewStateRef.current = true;
+      setShowSidebar(restored.showSidebar ?? false);
+      saveEditorState(imageViewStateKey, buildImageEditorState(restored));
+      if (editor && restored.camera) {
+        requestAnimationFrame(() => {
+          editor.setCamera(restored.camera!);
+        });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [editor, getEditorState, imageViewStateKey, persistedViewStateKey, saveEditorState]);
 
   useEffect(() => {
     if (!onDiagnosticsSnapshot) {
@@ -419,11 +551,16 @@ export function ImageTldrawAdapter({
         return;
       }
       setupBackground();
-      editor.zoomToFit();
+      const restoredCamera = readImageViewState(getEditorState(imageViewStateKey))?.camera;
+      if (restoredCamera) {
+        editor.setCamera(restoredCamera);
+      } else {
+        editor.zoomToFit();
+      }
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [editor, editorImageSrc, imageSize, setupBackground]);
+  }, [editor, editorImageSrc, getEditorState, imageSize, imageViewStateKey, setupBackground]);
 
   // Restore shapes from annotation
   useEffect(() => {
@@ -498,6 +635,41 @@ export function ImageTldrawAdapter({
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
   }, [editor, isReady, saveShapes]);
+
+  useEffect(() => {
+    if (!editor || !isReady) {
+      return;
+    }
+
+    const unsubscribe = editor.store.listen(() => {
+      schedulePersistImageViewState();
+    }, { source: 'user', scope: 'session' });
+
+    schedulePersistImageViewState(0);
+
+    return () => {
+      unsubscribe();
+    };
+  }, [editor, isReady, schedulePersistImageViewState]);
+
+  useEffect(() => {
+    if (!isReady) {
+      return;
+    }
+    schedulePersistImageViewState();
+  }, [isReady, schedulePersistImageViewState, showSidebar]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+      if (viewStateSaveTimeoutRef.current) {
+        clearTimeout(viewStateSaveTimeoutRef.current);
+      }
+      persistImageViewState(captureImageViewState());
+    };
+  }, [captureImageViewState, persistImageViewState]);
 
   // Background image existence check and auto-recovery.
   // Only listens to user-initiated document changes (not internal tldraw state),
@@ -697,7 +869,13 @@ export function ImageTldrawAdapter({
           <AlertCircle className="h-4 w-4" />
           {t("image.drawingUnavailable")}: {tldrawError.message}
         </div>
-        <ImageViewer source={{ kind: "buffer", data: content }} fileName={fileName} mimeType={mimeType} />
+        <ImageViewer
+          source={{ kind: "buffer", data: content }}
+          fileName={fileName}
+          mimeType={mimeType}
+          rootHandle={rootHandle}
+          filePath={filePath}
+        />
       </div>
     );
   }

@@ -19,7 +19,8 @@ vi.mock("@/lib/runner/runner-manager", () => ({
 
 import { useExecutionRunner } from "@/hooks/use-execution-runner";
 
-function createSessionMock() {
+function createSessionMock(options: { emitTerminatedOnStop?: boolean } = {}) {
+  const { emitTerminatedOnStop = true } = options;
   let statusListener: ((status: RunnerStatus, error?: string | null) => void) | null = null;
   let eventListener: ((event: RunnerEvent) => void) | null = null;
   let resolveRun: ((value: { sessionId: string; success: boolean; exitCode: number | null; terminated: boolean }) => void) | null = null;
@@ -55,15 +56,17 @@ function createSessionMock() {
       });
     }),
     terminate: vi.fn(async () => {
-      eventListener?.({
-        type: "terminated",
-        sessionId: "session-1",
-        payload: {
-          success: false,
-          exitCode: null,
-          terminated: true,
-        },
-      });
+      if (emitTerminatedOnStop) {
+        eventListener?.({
+          type: "terminated",
+          sessionId: "session-1",
+          payload: {
+            success: false,
+            exitCode: null,
+            terminated: true,
+          },
+        });
+      }
       statusListener?.("idle", null);
       resolveRun?.({
         sessionId: "session-1",
@@ -257,5 +260,37 @@ describe("useExecutionRunner", () => {
     expect(mockCreateSession).toHaveBeenCalledTimes(1);
 
     hook.unmount();
+  });
+
+  it("停止时即使 runtime 没有回发 terminated 事件也会收敛状态", async () => {
+    const session = createSessionMock({ emitTerminatedOnStop: false });
+    mockCreateSession.mockReturnValue(session);
+
+    const { result } = renderHook(() => useExecutionRunner({ scope }));
+
+    let runPromise: Promise<unknown> | undefined;
+    await act(async () => {
+      runPromise = result.current.run({
+        runnerType: "python-local",
+        command: "python",
+        code: "while True: pass",
+        mode: "inline",
+      });
+      await Promise.resolve();
+    });
+
+    expect(result.current.commandState.canStop).toBe(true);
+
+    await act(async () => {
+      await result.current.terminate();
+      await runPromise;
+    });
+
+    await waitFor(() => {
+      expect(result.current.isRunning).toBe(false);
+      expect(result.current.commandState.canRun).toBe(true);
+    });
+    expect(result.current.summary.terminated).toBe(true);
+    expect(result.current.summary.completedAt).not.toBeNull();
   });
 });

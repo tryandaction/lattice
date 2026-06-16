@@ -6,6 +6,7 @@ import {
   resolvePdfExactQuoteOffsets,
   resolvePdfPointerBoundary,
 } from "@/lib/pdf-canonical-text-anchoring";
+import { isLikelyCoarseTextMarkupGeometry, isPlausibleTextMarkupBox } from "@/lib/pdf-text-rects";
 
 export interface PdfAnnotationTextAnchor {
   startOffset: number;
@@ -46,7 +47,130 @@ function resolveAnchorByRects(model: PdfPageTextModel, rects: BoundingBox[]): Pd
   });
 }
 
+function normalizeAnchorText(text: string | null | undefined): string {
+  return (text ?? "").replace(/\s+/g, " ").trim();
+}
+
+function isSingleLegacyTextMarkupBlock(target: PdfTarget): boolean {
+  if (target.rects.length !== 1) {
+    return false;
+  }
+
+  const rect = target.rects[0];
+  const width = Math.max(0, rect.x2 - rect.x1);
+  const height = Math.max(0, rect.y2 - rect.y1);
+  return width >= 0.12 && height >= 0.045;
+}
+
+function canReuseTargetRectsForTextMarkup(target: PdfTarget): boolean {
+  return target.rects.length > 0 &&
+    target.rects.every(isPlausibleTextMarkupBox) &&
+    !isSingleLegacyTextMarkupBlock(target) &&
+    !isLikelyCoarseTextMarkupGeometry(target.rects, target.textQuote?.exact);
+}
+
+function getReusableTargetRects(target: PdfTarget): BoundingBox[] | undefined {
+  return canReuseTargetRectsForTextMarkup(target) ? target.rects : undefined;
+}
+
+function getBoundingRectForBoxes(rects: BoundingBox[]): BoundingBox | null {
+  if (rects.length === 0) {
+    return null;
+  }
+
+  return {
+    x1: Math.min(...rects.map((rect) => rect.x1)),
+    y1: Math.min(...rects.map((rect) => rect.y1)),
+    x2: Math.max(...rects.map((rect) => rect.x2)),
+    y2: Math.max(...rects.map((rect) => rect.y2)),
+  };
+}
+
+function arePdfTextMarkupRectsEquivalent(leftRects: BoundingBox[], rightRects: BoundingBox[]): boolean {
+  if (leftRects.length !== rightRects.length || leftRects.length === 0) {
+    return false;
+  }
+
+  const maxEdgeDelta = leftRects.reduce((maxDelta, leftRect, index) => {
+    const rightRect = rightRects[index];
+    if (!rightRect) {
+      return Number.POSITIVE_INFINITY;
+    }
+
+    return Math.max(
+      maxDelta,
+      Math.abs(leftRect.x1 - rightRect.x1),
+      Math.abs(leftRect.y1 - rightRect.y1),
+      Math.abs(leftRect.x2 - rightRect.x2),
+      Math.abs(leftRect.y2 - rightRect.y2),
+    );
+  }, 0);
+  if (maxEdgeDelta <= 0.004) {
+    return true;
+  }
+
+  const leftBounds = getBoundingRectForBoxes(leftRects);
+  const rightBounds = getBoundingRectForBoxes(rightRects);
+  if (!leftBounds || !rightBounds) {
+    return false;
+  }
+
+  return Math.abs(leftBounds.x1 - rightBounds.x1) <= 0.006 &&
+    Math.abs(leftBounds.y1 - rightBounds.y1) <= 0.006 &&
+    Math.abs(leftBounds.x2 - rightBounds.x2) <= 0.006 &&
+    Math.abs(leftBounds.y2 - rightBounds.y2) <= 0.006;
+}
+
+function withOriginalTargetRects(anchor: PdfAnnotationTextAnchor, target: PdfTarget): PdfAnnotationTextAnchor {
+  return canReuseTargetRectsForTextMarkup(target) &&
+    arePdfTextMarkupRectsEquivalent(anchor.rects, target.rects)
+    ? { ...anchor, rects: target.rects }
+    : anchor;
+}
+
+function resolveAnchorByCharRange(model: PdfPageTextModel, target: PdfTarget): PdfAnnotationTextAnchor | null {
+  if (
+    !Number.isInteger(target.startCharIndex) ||
+    !Number.isInteger(target.endCharIndex) ||
+    target.startCharIndex === undefined ||
+    target.endCharIndex === undefined ||
+    target.startCharIndex < 0 ||
+    target.endCharIndex <= target.startCharIndex ||
+    target.endCharIndex > model.normalizedText.length
+  ) {
+    return null;
+  }
+
+  const anchor = buildPdfTextAnchorFromOffsets({
+    model,
+    startOffset: target.startCharIndex,
+    endOffset: target.endCharIndex,
+    source: target.textQuote?.source ?? "pdfjs-text-model",
+    fallbackRects: getReusableTargetRects(target),
+  });
+  if (!anchor) {
+    return null;
+  }
+
+  const expected = normalizeAnchorText(target.textQuote?.exact);
+  if (!expected) {
+    return anchor;
+  }
+
+  const actual = normalizeAnchorText(anchor.textQuote.exact);
+  if (actual === expected) {
+    return anchor;
+  }
+
+  return null;
+}
+
 export function resolvePdfAnnotationTextAnchor(model: PdfPageTextModel, target: PdfTarget): PdfAnnotationTextAnchor | null {
+  const charRangeAnchor = resolveAnchorByCharRange(model, target);
+  if (charRangeAnchor) {
+    return charRangeAnchor;
+  }
+
   const exactAnchor = resolvePdfExactQuoteOffsets({
     model,
     exact: target.textQuote?.exact,
@@ -57,7 +181,7 @@ export function resolvePdfAnnotationTextAnchor(model: PdfPageTextModel, target: 
       model,
       startOffset: exactAnchor.startOffset,
       endOffset: exactAnchor.endOffset,
-      fallbackRects: target.rects,
+      fallbackRects: getReusableTargetRects(target),
     });
   }
 
@@ -95,7 +219,7 @@ export function adjustPdfAnnotationAnchor(input: {
     adjusted.startOffset === currentAnchor.startOffset &&
     adjusted.endOffset === currentAnchor.endOffset
   ) {
-    return currentAnchor;
+    return withOriginalTargetRects(currentAnchor, input.target);
   }
 
   return adjusted;
@@ -114,50 +238,12 @@ export function adjustPdfAnnotationAnchorFromPointer(input: {
     char.normalizedStart < input.currentAnchor.endOffset
   ));
   const originalAnchor = resolvePdfAnnotationTextAnchor(input.model, input.target);
-  const currentBoundaryOffset = input.side === "start"
-    ? input.currentAnchor.startOffset
-    : input.currentAnchor.endOffset;
-  const currentBoundaryRect = input.side === "start"
-    ? input.currentAnchor.rects[0]
-    : input.currentAnchor.rects[input.currentAnchor.rects.length - 1];
-  if (currentBoundaryRect) {
-    const boundaryX = (
-      input.side === "start"
-        ? currentBoundaryRect.x1
-        : currentBoundaryRect.x2
-    ) * input.model.viewportWidth;
-    const localX = input.point.x - input.pageRect.left;
-    if (Math.abs(localX - boundaryX) <= 3) {
-      return adjustPdfAnnotationAnchor({
-        model: input.model,
-        target: input.target,
-        currentAnchor: input.currentAnchor,
-        nextStartOffset: input.side === "start" ? currentBoundaryOffset : input.currentAnchor.startOffset,
-        nextEndOffset: input.side === "end" ? currentBoundaryOffset : input.currentAnchor.endOffset,
-      });
-    }
-  }
-  const originalBoundaryRect = originalAnchor
-    ? (
-        input.side === "start"
-          ? originalAnchor.rects[0]
-          : originalAnchor.rects[originalAnchor.rects.length - 1]
-      )
-    : null;
-  if (originalAnchor && originalBoundaryRect) {
-    const originalBoundaryX = (
-      input.side === "start"
-        ? originalBoundaryRect.x1
-        : originalBoundaryRect.x2
-    ) * input.model.viewportWidth;
-    const localX = input.point.x - input.pageRect.left;
-    if (Math.abs(localX - originalBoundaryX) <= 4) {
-      return originalAnchor;
-    }
-  }
-  const preferredLayoutClass = anchorChars[0]?.layoutClass;
-  const preferredBlockIndex = anchorChars[0]?.blockIndex;
-  const preferredColumnIndex = anchorChars[0]?.columnIndex;
+  const preferredChar = input.side === "start"
+    ? anchorChars[0]
+    : anchorChars[anchorChars.length - 1];
+  const preferredLayoutClass = preferredChar?.layoutClass;
+  const preferredBlockIndex = preferredChar?.blockIndex;
+  const preferredColumnIndex = preferredChar?.columnIndex;
   const boundary = resolvePdfPointerBoundary({
     model: input.model,
     point: input.point,
@@ -173,24 +259,11 @@ export function adjustPdfAnnotationAnchorFromPointer(input: {
   }
 
   if (originalAnchor) {
-    if (input.side === "end") {
-      const movingBackNearOriginal = (
-        boundary.offset >= originalAnchor.endOffset &&
-        boundary.offset <= originalAnchor.endOffset + 2 &&
-        input.currentAnchor.endOffset >= boundary.offset
-      );
-      if (movingBackNearOriginal) {
-        return originalAnchor;
-      }
-    } else {
-      const movingBackNearOriginal = (
-        boundary.offset <= originalAnchor.startOffset &&
-        boundary.offset >= originalAnchor.startOffset - 2 &&
-        input.currentAnchor.startOffset <= boundary.offset
-      );
-      if (movingBackNearOriginal) {
-        return originalAnchor;
-      }
+    const returnedToOriginal = input.side === "end"
+      ? boundary.offset === originalAnchor.endOffset
+      : boundary.offset === originalAnchor.startOffset;
+    if (returnedToOriginal) {
+      return withOriginalTargetRects(originalAnchor, input.target);
     }
   }
 

@@ -25,6 +25,14 @@ describe("parseLinkTarget", () => {
     });
   });
 
+  it("decodes escaped spaces in workspace links before resolving", () => {
+    expect(parseLinkTarget("Daily%20Note.md#Deep%20Heading", { currentFilePath: "notes/index.md" }).target).toEqual({
+      type: "workspace_heading",
+      path: "notes/Daily Note.md",
+      heading: "Deep Heading",
+    });
+  });
+
   it("parses PDF annotation links", () => {
     expect(parseLinkTarget("papers/math.pdf#ann-123").target).toEqual({
       type: "pdf_annotation",

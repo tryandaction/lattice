@@ -85,6 +85,8 @@ export interface UseAnnotationSystemReturn {
   
   // Actions
   addAnnotation: (annotation: Omit<AnnotationItem, 'id' | 'createdAt'>) => string | null;
+  upsertAnnotation: (annotation: AnnotationItem) => boolean;
+  upsertAnnotations: (annotations: AnnotationItem[]) => number;
   updateAnnotation: (id: string, updates: AnnotationUpdates) => boolean;
   deleteAnnotation: (id: string) => boolean;
   
@@ -446,6 +448,57 @@ export function useAnnotationSystem({
     return newAnnotation.id;
   }, [scheduleSave]);
 
+  const upsertAnnotation = useCallback((annotation: AnnotationItem): boolean => {
+    const validation = validateAnnotationItem(annotation);
+    if (!validation.valid) {
+      setError(`Invalid annotation: ${validation.errors.join(', ')}`);
+      return false;
+    }
+
+    setAnnotations(prev => {
+      const index = prev.findIndex((candidate) => candidate.id === annotation.id);
+      const next = [...prev];
+      if (index >= 0) {
+        next[index] = annotation;
+      } else {
+        next.push(annotation);
+      }
+      const deduped = dedupeAnnotationsById(next);
+      scheduleSave(deduped);
+      return deduped;
+    });
+    setError(null);
+    return true;
+  }, [scheduleSave]);
+
+  const upsertAnnotations = useCallback((nextAnnotations: AnnotationItem[]): number => {
+    const validAnnotations: AnnotationItem[] = [];
+    for (const annotation of nextAnnotations) {
+      const validation = validateAnnotationItem(annotation);
+      if (!validation.valid) {
+        setError(`Invalid annotation: ${validation.errors.join(', ')}`);
+        return 0;
+      }
+      validAnnotations.push(annotation);
+    }
+
+    if (validAnnotations.length === 0) {
+      return 0;
+    }
+
+    setAnnotations(prev => {
+      const byId = new Map(prev.map((annotation) => [annotation.id, annotation] as const));
+      validAnnotations.forEach((annotation) => {
+        byId.set(annotation.id, annotation);
+      });
+      const deduped = dedupeAnnotationsById(Array.from(byId.values()));
+      scheduleSave(deduped);
+      return deduped;
+    });
+    setError(null);
+    return validAnnotations.length;
+  }, [scheduleSave]);
+
   // Update annotation
   const updateAnnotation = useCallback((
     id: string,
@@ -560,6 +613,8 @@ export function useAnnotationSystem({
     pendingSave,
     fileId,
     addAnnotation,
+    upsertAnnotation,
+    upsertAnnotations,
     updateAnnotation,
     deleteAnnotation,
     scrollToAnnotation,

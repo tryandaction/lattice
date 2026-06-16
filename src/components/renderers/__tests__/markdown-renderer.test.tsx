@@ -65,4 +65,43 @@ describe("MarkdownRenderer", () => {
     expect(container.querySelector("hr")).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Paragraph above" })).toBeNull();
   });
+
+  it("renders Obsidian highlights, callouts, and attachment embeds in reading mode", () => {
+    const { container } = render(
+      <MarkdownRenderer
+        content={[
+          "This is ==important== and `==literal==`.",
+          "",
+          "> [!TIP] Useful Tip",
+          "> Callout with **bold** and $x+y$.",
+          "",
+          "Visible %%hidden comment%% text and `%%literal comment%%`.",
+          "Block target ^block-123",
+          "",
+          "Image embed: ![[assets/diagram.png|160]]",
+          "Sized image: ![Plot|120x80](assets/plot.png)",
+          "PDF embed: ![[papers/demo.pdf|Demo PDF]]",
+        ].join("\n")}
+        fileName="demo.md"
+        variant="document"
+      />,
+    );
+
+    expect(container.querySelector("mark")?.textContent).toBe("important");
+    expect(screen.getByText("==literal==")).toBeTruthy();
+    expect(screen.queryByText("hidden comment")).toBeNull();
+    expect(screen.getByText("%%literal comment%%")).toBeTruthy();
+    expect(container.textContent).not.toContain("^block-123");
+    expect(container.querySelector("pre")).toBeNull();
+    expect(container.querySelector(".markdown-callout-tip")).toBeTruthy();
+    expect(screen.getByText("Useful Tip")).toBeTruthy();
+    expect(screen.getByText("bold")).toBeTruthy();
+    const embedImage = container.querySelector('img[src="assets/diagram.png"]') as HTMLImageElement | null;
+    expect(embedImage?.getAttribute("width")).toBe("160");
+    expect(embedImage?.getAttribute("alt")).toBe("");
+    const sizedImage = container.querySelector('img[alt="Plot"]') as HTMLImageElement | null;
+    expect(sizedImage?.getAttribute("width")).toBe("120");
+    expect(sizedImage?.getAttribute("height")).toBe("80");
+    expect(screen.getByRole("link", { name: "Demo PDF" }).getAttribute("href")).toBe("papers/demo.pdf");
+  });
 });

@@ -2,17 +2,39 @@
  * @vitest-environment jsdom
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createRunnerPreferenceDefaults,
+  resolveRunnerExecutionRequest,
+  getRunnerDefinitionForLanguage,
   getWorkspaceRunnerPreferencesStorageKey,
   loadWorkspaceRunnerPreferences,
   normalizeWorkspacePath,
   saveWorkspaceRunnerPreferences,
 } from "../preferences";
 
+const probeCommandAvailabilityMock = vi.hoisted(() => vi.fn());
+const detectPythonEnvironmentsMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/runner/runner-manager", () => ({
+  runnerManager: {
+    probeCommandAvailability: probeCommandAvailabilityMock,
+    detectPythonEnvironments: detectPythonEnvironmentsMock,
+  },
+}));
+
 describe("runner preferences helpers", () => {
   beforeEach(() => {
     localStorage.clear();
+    vi.clearAllMocks();
+    detectPythonEnvironmentsMock.mockResolvedValue([]);
+    probeCommandAvailabilityMock.mockResolvedValue({
+      command: "gcc",
+      available: true,
+      resolvedPath: "C:/msys64/ucrt64/bin/gcc.exe",
+      version: "gcc 13.2.0",
+      error: null,
+    });
   });
 
   it("normalizes workspace paths for stable storage keys", () => {
@@ -73,5 +95,58 @@ describe("runner preferences helpers", () => {
 
     expect(loaded.defaultPythonPath).toBe("C:/Python312/python.exe");
     expect(localStorage.getItem("lattice-workspace-runner-preferences:desktop:c:/workspace/project")).not.toBeNull();
+  });
+
+  it("builds saved-file requests for compiled native C entries", async () => {
+    const runnerDefinition = getRunnerDefinitionForLanguage("c");
+    expect(runnerDefinition).toBeTruthy();
+
+    const resolved = await resolveRunnerExecutionRequest({
+      runnerDefinition: runnerDefinition!,
+      mode: "file",
+      code: "int main(void) { return 0; }",
+      cwd: "C:/workspace/project",
+      absoluteFilePath: "C:/workspace/project/main.c",
+      fileKey: "workspace/main.c",
+      language: "c",
+      preferences: createRunnerPreferenceDefaults(),
+    });
+
+    expect(probeCommandAvailabilityMock).toHaveBeenCalledWith("gcc");
+    expect(resolved.request).toEqual(expect.objectContaining({
+      runnerType: "compiled-native",
+      command: "gcc",
+      filePath: "C:/workspace/project/main.c",
+      cwd: "C:/workspace/project",
+      args: [],
+      mode: "file",
+      allowPyodideFallback: false,
+    }));
+    expect(resolved.meta.diagnostics).toEqual([]);
+  });
+
+  it("blocks inline requests for compiled native entries", async () => {
+    const runnerDefinition = getRunnerDefinitionForLanguage("cpp");
+    expect(runnerDefinition).toBeTruthy();
+
+    const resolved = await resolveRunnerExecutionRequest({
+      runnerDefinition: runnerDefinition!,
+      mode: "selection",
+      code: "int main() { return 0; }",
+      cwd: "C:/workspace/project",
+      absoluteFilePath: "C:/workspace/project/main.cpp",
+      fileKey: "workspace/main.cpp",
+      language: "cpp",
+      preferences: createRunnerPreferenceDefaults(),
+    });
+
+    expect(probeCommandAvailabilityMock).toHaveBeenCalledWith("g++");
+    expect(resolved.request).toBeNull();
+    expect(resolved.meta.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: "error",
+        stage: "request-build",
+      }),
+    ]);
   });
 });

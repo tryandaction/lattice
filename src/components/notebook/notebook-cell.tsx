@@ -8,6 +8,7 @@ import { CodeCell } from "./code-cell";
 import { MarkdownCell } from "./markdown-cell";
 import { RawCell } from "./raw-cell";
 import type { NotebookCell as NotebookCellType } from "@/lib/notebook-utils";
+import type { CodeEditorLanguage } from "@/components/editor/codemirror/code-editor";
 
 interface NotebookCellProps {
   cell: NotebookCellType;
@@ -26,9 +27,14 @@ interface NotebookCellProps {
   onLinkNavigate?: (target: string) => void;
   rootHandle?: FileSystemDirectoryHandle | null;
   notebookFilePath?: string;
+  codeLanguage?: CodeEditorLanguage;
   onRunCell?: (cellId: string, source: string) => Promise<unknown>;
   isExecuting?: boolean;
   canRunCell?: boolean;
+  onCodeCellEditorCommandsChange?: (
+    cellId: string,
+    commands: { openSearch: () => void; openGotoLine: () => void } | null,
+  ) => void;
 }
 
 /**
@@ -204,9 +210,11 @@ export const NotebookCellComponent = memo(function NotebookCellComponent({
   onLinkNavigate,
   rootHandle,
   notebookFilePath,
+  codeLanguage = "python",
   onRunCell,
   isExecuting = false,
   canRunCell = true,
+  onCodeCellEditorCommandsChange,
 }: NotebookCellProps) {
   const { t } = useI18n();
   const [showControls, setShowControls] = useState(false);
@@ -321,6 +329,7 @@ export const NotebookCellComponent = memo(function NotebookCellComponent({
           outputs={cell.outputs}
           executionCount={cell.execution_count}
           executionMeta={cell.execution_meta}
+          language={codeLanguage}
           isActive={isActive}
           onChange={(source) => onSourceChange(cellId, source)}
           onFocus={() => onActivate(cellId)}
@@ -331,6 +340,7 @@ export const NotebookCellComponent = memo(function NotebookCellComponent({
           onRunCell={onRunCell}
           isExecuting={isExecuting}
           canRun={canRunCell}
+          onEditorCommandsChange={onCodeCellEditorCommandsChange}
         />
       ) : cell.cell_type === "markdown" ? (
         <MarkdownCell

@@ -4,6 +4,7 @@
  * Polymorphic annotation schema supporting PDF, Image, PPTX, Code, and HTML files.
  * Uses discriminated union types for type-safe target handling.
  */
+import { normalizePdfReadableText } from "@/lib/pdf-readable-text";
 
 // ============================================================================
 // Bounding Box Types
@@ -19,7 +20,18 @@ export interface BoundingBox {
   y2: number;  // Bottom edge (0-1)
 }
 
-export type PdfTextQuoteSource = 'pdfjs-text-model' | 'dom-selection' | 'pdfium-native' | 'validated-native-fallback';
+export interface PdfQuad {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  x3: number;
+  y3: number;
+  x4: number;
+  y4: number;
+}
+
+export type PdfTextQuoteSource = 'pdfjs-text-model' | 'dom-selection' | 'pdfium-native' | 'validated-native-fallback' | 'ocr-text-model';
 
 export type PdfTextQuoteConfidence = 'exact' | 'validated-native';
 
@@ -43,6 +55,12 @@ export interface PdfTarget {
   page: number;           // 1-indexed page number
   rects: BoundingBox[];   // Selection rectangles
   textQuote?: PdfTextQuote;
+  textKernelVersion?: number;
+  startCharIndex?: number;
+  endCharIndex?: number;
+  quads?: PdfQuad[];
+  textSource?: PdfTextQuoteSource;
+  textConfidence?: number;
 }
 
 /**
@@ -183,6 +201,7 @@ export interface AnnotationItem {
   style: AnnotationStyle;
   content?: string;              // Extracted text content
   comment?: string;              // User's note
+  tags?: string[];                // User/AI labels for filtering and workflows
   preview?: ImageAnnotationPreview;
   author: string;                // Author identifier
   createdAt: number;             // Unix timestamp (ms)
@@ -192,8 +211,12 @@ export function getCanonicalPdfAnnotationText(annotation: Pick<AnnotationItem, '
   if (annotation.target.type === 'pdf') {
     const exact = annotation.target.textQuote?.exact;
     if (exact) {
-      return exact;
+      const normalizedExact = normalizePdfReadableText(exact);
+      return normalizedExact.length > 0 ? normalizedExact : undefined;
     }
+
+    const normalizedContent = normalizePdfReadableText(annotation.content);
+    return normalizedContent.length > 0 ? normalizedContent : undefined;
   }
 
   return annotation.content !== undefined && annotation.content !== null && annotation.content.length > 0
@@ -257,6 +280,13 @@ export function isBoundingBox(value: unknown): value is BoundingBox {
   );
 }
 
+export function isPdfQuad(value: unknown): value is PdfQuad {
+  if (typeof value !== 'object' || value === null) return false;
+  const quad = value as Record<string, unknown>;
+  const values = [quad.x1, quad.y1, quad.x2, quad.y2, quad.x3, quad.y3, quad.x4, quad.y4];
+  return values.every((entry) => typeof entry === 'number' && entry >= -0.001 && entry <= 1.001);
+}
+
 export function isPdfTextQuote(value: unknown): value is PdfTextQuote {
   if (typeof value !== 'object' || value === null) return false;
   const quote = value as Record<string, unknown>;
@@ -266,7 +296,13 @@ export function isPdfTextQuote(value: unknown): value is PdfTextQuote {
     quote.exact.length > 0 &&
     typeof quote.prefix === 'string' &&
     typeof quote.suffix === 'string' &&
-    (quote.source === 'pdfjs-text-model' || quote.source === 'dom-selection' || quote.source === 'pdfium-native' || quote.source === 'validated-native-fallback') &&
+    (
+      quote.source === 'pdfjs-text-model' ||
+      quote.source === 'dom-selection' ||
+      quote.source === 'pdfium-native' ||
+      quote.source === 'validated-native-fallback' ||
+      quote.source === 'ocr-text-model'
+    ) &&
     (quote.confidence === 'exact' || quote.confidence === 'validated-native')
   );
 }
@@ -282,6 +318,27 @@ export function isPdfTarget(value: unknown): value is PdfTarget {
   if (typeof target.page !== 'number' || !Number.isInteger(target.page) || target.page < 1) return false;
   if (!Array.isArray(target.rects)) return false;
   if (target.textQuote !== undefined && target.textQuote !== null && !isPdfTextQuote(target.textQuote)) return false;
+  if (target.textKernelVersion !== undefined && (!Number.isInteger(target.textKernelVersion) || Number(target.textKernelVersion) < 1)) return false;
+  if (target.startCharIndex !== undefined && (!Number.isInteger(target.startCharIndex) || Number(target.startCharIndex) < 0)) return false;
+  if (target.endCharIndex !== undefined && (!Number.isInteger(target.endCharIndex) || Number(target.endCharIndex) < 0)) return false;
+  if (
+    target.startCharIndex !== undefined &&
+    target.endCharIndex !== undefined &&
+    Number(target.endCharIndex) < Number(target.startCharIndex)
+  ) return false;
+  if (target.quads !== undefined && (!Array.isArray(target.quads) || !target.quads.every(isPdfQuad))) return false;
+  if (
+    target.textSource !== undefined &&
+    target.textSource !== 'pdfjs-text-model' &&
+    target.textSource !== 'dom-selection' &&
+    target.textSource !== 'pdfium-native' &&
+    target.textSource !== 'validated-native-fallback' &&
+    target.textSource !== 'ocr-text-model'
+  ) return false;
+  if (
+    target.textConfidence !== undefined &&
+    (typeof target.textConfidence !== 'number' || target.textConfidence < 0 || target.textConfidence > 1)
+  ) return false;
   
   return target.rects.every(isBoundingBox);
 }
@@ -402,6 +459,11 @@ export function isAnnotationItem(value: unknown): value is AnnotationItem {
   // Optional fields - allow undefined, null, or correct type
   if (item.content !== undefined && item.content !== null && typeof item.content !== 'string') return false;
   if (item.comment !== undefined && item.comment !== null && typeof item.comment !== 'string') return false;
+  if (
+    item.tags !== undefined &&
+    item.tags !== null &&
+    (!Array.isArray(item.tags) || !item.tags.every((tag) => typeof tag === 'string'))
+  ) return false;
   if (item.preview !== undefined && item.preview !== null && !isImageAnnotationPreview(item.preview)) return false;
   
   return true;
@@ -636,6 +698,14 @@ export function validateAnnotationItem(value: unknown): ValidationResult {
   
   if (item.comment !== undefined && item.comment !== null && typeof item.comment !== 'string') {
     errors.push('Annotation comment must be a string if provided');
+  }
+
+  if (item.tags !== undefined && item.tags !== null) {
+    if (!Array.isArray(item.tags)) {
+      errors.push('Annotation tags must be an array of strings if provided');
+    } else if (!item.tags.every((tag) => typeof tag === 'string')) {
+      errors.push('Annotation tags must only contain strings');
+    }
   }
 
   if (item.preview !== undefined && item.preview !== null && !isImageAnnotationPreview(item.preview)) {

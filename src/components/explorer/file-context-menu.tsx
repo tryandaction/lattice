@@ -5,6 +5,15 @@ import { Trash2, Pencil, FilePlus, FolderPlus, Copy, Scissors, ClipboardPaste } 
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/hooks/use-i18n";
 
+export interface FileContextMenuAction {
+  label: string;
+  onSelect: () => void;
+  disabled?: boolean;
+  shortcut?: string;
+  separatorBefore?: boolean;
+  tone?: "default" | "destructive";
+}
+
 interface FileContextMenuProps {
   x: number;
   y: number;
@@ -18,11 +27,7 @@ interface FileContextMenuProps {
   onPaste?: () => void;
   canPaste?: boolean;
   isDirectory?: boolean;
-  actions?: Array<{
-    label: string;
-    onSelect: () => void;
-    tone?: "default" | "destructive";
-  }>;
+  actions?: FileContextMenuAction[];
 }
 
 /**
@@ -198,22 +203,30 @@ export function FileContextMenu({
         <div className="my-1 h-px bg-border" />
       )}
       {actions.map((action) => (
-        <button
-          key={action.label}
-          onClick={() => {
-            action.onSelect();
-            onClose();
-          }}
-          className={cn(
-            "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors",
-            action.tone === "destructive"
-              ? "hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive"
-              : "hover:bg-accent focus:bg-accent",
-            "focus:outline-none"
-          )}
-        >
-          <span>{action.label}</span>
-        </button>
+        <div key={action.label}>
+          {action.separatorBefore && <div className="my-1 h-px bg-border" />}
+          <button
+            onClick={() => {
+              if (action.disabled) return;
+              action.onSelect();
+              onClose();
+            }}
+            disabled={action.disabled}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors",
+              action.tone === "destructive"
+                ? "hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive"
+                : "hover:bg-accent focus:bg-accent",
+              "focus:outline-none",
+              action.disabled && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-current"
+            )}
+          >
+            <span className="min-w-0 flex-1 truncate text-left">{action.label}</span>
+            {action.shortcut && (
+              <span className="ml-3 shrink-0 text-[11px] text-muted-foreground">{action.shortcut}</span>
+            )}
+          </button>
+        </div>
       ))}
       {actions.length > 0 && (
         <div className="my-1 h-px bg-border" />

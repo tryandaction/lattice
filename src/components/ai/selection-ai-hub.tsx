@@ -300,10 +300,13 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
   }
 
   return (
-    <div className="fixed inset-0 z-[185] flex items-start justify-center overflow-y-auto bg-black/55 px-4 pb-4 pt-6 md:pt-20" onClick={() => {
-      onClose();
-      returnFocusTo?.focus?.();
-    }}>
+    <aside
+      className="fixed inset-y-0 right-0 z-[185] flex w-full max-w-[34rem] flex-col border-l border-border bg-background shadow-2xl sm:w-[min(34rem,calc(100vw-4rem))]"
+      role="dialog"
+      aria-modal="false"
+      aria-label="Selection AI side panel"
+      data-testid="selection-ai-dock"
+    >
       <PromptPicker
         isOpen={isPromptPickerOpen}
         surface="selection"
@@ -342,11 +345,8 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
         onClose={() => setPromptRunState(null)}
         onConfirm={(payload) => void handlePromptTemplateConfirm(payload)}
       />
-      <div
-        className="flex w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+      <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
+        <div className="flex items-start justify-between border-b border-border px-4 py-4">
           <div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Selection AI Hub</div>
             <h2 className="mt-1 text-xl font-semibold">{context.sourceLabel}</h2>
@@ -366,7 +366,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
           </Button>
         </div>
 
-        <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto px-6 py-5 lg:grid-cols-[1.05fr_1.15fr]">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
           <div className="space-y-4">
             <div className="rounded-2xl border border-border bg-muted/20 p-4">
               <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -516,7 +516,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
           </div>
         </div>
 
-        <div className="flex items-center justify-between border-t border-border px-6 py-4">
+        <div className="flex items-center justify-between border-t border-border px-4 py-3">
           <div className="text-xs text-muted-foreground">
             当前模式：{modeMeta.label}
           </div>
@@ -539,7 +539,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
           </div>
         </div>
       </div>
-    </div>
+    </aside>
   );
 }
 

@@ -33,6 +33,13 @@ describe("File Utils - CodeEditor Routing", () => {
       jsx: "javascript",
       ts: "typescript",
       tsx: "typescript",
+      c: "c",
+      h: "c",
+      cpp: "cpp",
+      cxx: "cpp",
+      cc: "cpp",
+      hpp: "cpp",
+      hxx: "cpp",
       mjs: "javascript",
       cjs: "javascript",
       json: "json",
@@ -134,6 +141,22 @@ describe("File Utils - CodeEditor Routing", () => {
     it("should route .jsonc files to json language", () => {
       expect(isEditableCodeFile("jsonc")).toBe(true);
       expect(getCodeEditorLanguage("jsonc")).toBe("json");
+    });
+  });
+
+  describe("C/C++ file routing", () => {
+    it("should route .c and .h files to c language", () => {
+      expect(isEditableCodeFile("c")).toBe(true);
+      expect(isEditableCodeFile("h")).toBe(true);
+      expect(getCodeEditorLanguage("c")).toBe("c");
+      expect(getCodeEditorLanguage("h")).toBe("c");
+    });
+
+    it("should route C++ source and header files to cpp language", () => {
+      for (const extension of ["cpp", "cxx", "cc", "hpp", "hxx"]) {
+        expect(isEditableCodeFile(extension)).toBe(true);
+        expect(getCodeEditorLanguage(extension)).toBe("cpp");
+      }
     });
   });
 

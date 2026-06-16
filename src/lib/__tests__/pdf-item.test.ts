@@ -6,9 +6,14 @@ import {
   getDefaultPdfItemFolderPath,
   invalidatePdfItemManifestIndex,
   loadPdfItemManifest,
+  removeResolvedPdfItemAnnotationMarkdownDrafts,
   syncPdfAnnotationsMarkdown,
   syncPdfManagedFiles,
 } from "@/lib/pdf-item";
+import {
+  PDF_ANNOTATION_DRAFTS_BEGIN,
+  PDF_ANNOTATION_DRAFTS_END,
+} from "@/lib/pdf-annotation-markdown-drafts";
 import { setLocale } from "@/lib/i18n";
 
 class TestFileHandle {
@@ -384,5 +389,126 @@ describe("pdf-item utils", () => {
 
     expect(previewFile.writeCount).toBe(0);
     expect(markdownFile.writeCount).toBe(0);
+  });
+
+  it("does not create annotation sidecar files for untouched PDFs", async () => {
+    setLocale("en-US");
+
+    const root = new TestDirectoryHandle("workspace");
+    const manifest = {
+      version: 4 as const,
+      itemId: "paper",
+      pdfPath: "docs/paper.pdf",
+      itemFolderPath: ".lattice/items/paper",
+      annotationIndexPath: null,
+      fileFingerprint: null,
+      versionFingerprint: null,
+      knownPdfPaths: ["docs/paper.pdf"],
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    };
+
+    const result = await syncPdfAnnotationsMarkdown(
+      root as unknown as FileSystemDirectoryHandle,
+      manifest,
+      "paper.pdf",
+      [],
+    );
+
+    expect(result.handle).toBeNull();
+    expect(result.path).toBeNull();
+    expect(result.manifest.annotationIndexPath).toBeNull();
+    await expect(root.getDirectoryHandle(".lattice")).rejects.toBeInstanceOf(DOMException);
+  });
+
+  it("keeps the PDF annotation draft block before drafts resolve into sidecar annotations", async () => {
+    setLocale("en-US");
+
+    const root = new TestDirectoryHandle("workspace");
+    const lattice = root.addDirectory(new TestDirectoryHandle(".lattice"));
+    const items = lattice.addDirectory(new TestDirectoryHandle("items"));
+    const itemDir = items.addDirectory(new TestDirectoryHandle("paper"));
+    itemDir.addDirectory(new TestDirectoryHandle("_annotation_previews"));
+    const markdownFile = itemDir.addFile(new TestFileHandle("_annotations.md", [
+      "# previous",
+      "",
+      PDF_ANNOTATION_DRAFTS_BEGIN,
+      '<!-- lattice-pdf-annotation id="ann-ai-draft" page="7" type="highlight" color="#FFD400" -->',
+      "- Quote: exact text from PDF",
+      "",
+      PDF_ANNOTATION_DRAFTS_END,
+    ].join("\n")));
+    const manifest = {
+      version: 4 as const,
+      itemId: "paper",
+      pdfPath: "docs/paper.pdf",
+      itemFolderPath: ".lattice/items/paper",
+      annotationIndexPath: ".lattice/items/paper/_annotations.md",
+      fileFingerprint: null,
+      versionFingerprint: null,
+      knownPdfPaths: ["docs/paper.pdf"],
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    };
+
+    const result = await syncPdfAnnotationsMarkdown(
+      root as unknown as FileSystemDirectoryHandle,
+      manifest,
+      "paper.pdf",
+      [],
+    );
+
+    const nextMarkdown = await markdownFile.getFile().then((file) => file.text());
+    expect(result.path).toBe(".lattice/items/paper/_annotations.md");
+    expect(nextMarkdown).toContain("_No annotations yet._");
+    expect(nextMarkdown).toContain('id="ann-ai-draft"');
+    expect(nextMarkdown).toContain("- Quote: exact text from PDF");
+  });
+
+  it("clears resolved PDF annotation drafts without removing unresolved drafts", async () => {
+    setLocale("en-US");
+
+    const root = new TestDirectoryHandle("workspace");
+    const lattice = root.addDirectory(new TestDirectoryHandle(".lattice"));
+    const items = lattice.addDirectory(new TestDirectoryHandle("items"));
+    const itemDir = items.addDirectory(new TestDirectoryHandle("paper"));
+    const markdownFile = itemDir.addFile(new TestFileHandle("_annotations.md", [
+      "# annotations",
+      "",
+      PDF_ANNOTATION_DRAFTS_BEGIN,
+      '<!-- lattice-pdf-annotation id="ann-done" page="7" type="highlight" color="#FFD400" -->',
+      "- Quote: resolved text",
+      "",
+      '<!-- lattice-pdf-annotation id="ann-open" page="8" type="underline" color="#2196F3" -->',
+      "- Quote: unresolved text",
+      "",
+      PDF_ANNOTATION_DRAFTS_END,
+      "",
+    ].join("\n")));
+    const manifest = {
+      version: 4 as const,
+      itemId: "paper",
+      pdfPath: "docs/paper.pdf",
+      itemFolderPath: ".lattice/items/paper",
+      annotationIndexPath: ".lattice/items/paper/_annotations.md",
+      fileFingerprint: null,
+      versionFingerprint: null,
+      knownPdfPaths: ["docs/paper.pdf"],
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    };
+
+    const changed = await removeResolvedPdfItemAnnotationMarkdownDrafts(
+      root as unknown as FileSystemDirectoryHandle,
+      manifest,
+      ["ann-done"],
+    );
+
+    const nextMarkdown = await markdownFile.getFile().then((file) => file.text());
+    expect(changed).toBe(true);
+    expect(nextMarkdown).not.toContain('id="ann-done"');
+    expect(nextMarkdown).not.toContain("- Quote: resolved text");
+    expect(nextMarkdown).toContain('id="ann-open"');
+    expect(nextMarkdown).toContain("- Quote: unresolved text");
   });
 });

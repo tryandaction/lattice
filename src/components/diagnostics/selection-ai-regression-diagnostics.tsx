@@ -11,6 +11,7 @@ import { useAiChatStore } from "@/stores/ai-chat-store";
 import { useAiWorkbenchStore } from "@/stores/ai-workbench-store";
 import { useSelectionAiStore } from "@/stores/selection-ai-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useAgentSessionStore } from "@/stores/agent-session-store";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 
 const DIAGNOSTICS_MODEL: AiModel = {
@@ -47,6 +48,32 @@ const diagnosticsProvider: AiProvider = {
               targetPath: "AI Drafts/selection-regression.md",
               mode: "create",
               contentPreview: "Create a structured note from the selected paragraph.",
+            },
+          ],
+        }),
+      };
+    }
+
+    if (system.includes("planning module") || user.includes("You are planning a Lattice Research Agent run")) {
+      return {
+        model: DIAGNOSTICS_MODEL.id,
+        text: JSON.stringify({
+          steps: [
+            {
+              id: "context-pack",
+              title: "Collect diagnostics selection context",
+              description: "Collect selected markdown context and evidence.",
+            },
+            {
+              id: "evidence-resolve",
+              title: "Resolve diagnostics evidence",
+              description: "Resolve evidence through the Tool Broker.",
+              toolName: "evidence.resolve",
+            },
+            {
+              id: "synthesize-answer",
+              title: "Synthesize diagnostics answer",
+              description: "Prepare an evidence-backed answer for chat.",
             },
           ],
         }),
@@ -120,6 +147,10 @@ function resetDiagnosticsStores() {
     preferredMode: "chat",
     recentPrompts: [],
   });
+  useAgentSessionStore.setState({
+    sessions: [],
+    activeSessionId: null,
+  });
 }
 
 export function SelectionAiRegressionDiagnostics() {
@@ -135,6 +166,9 @@ export function SelectionAiRegressionDiagnostics() {
   const proposals = useAiWorkbenchStore((state) => state.proposals);
   const preferredMode = useSelectionAiStore((state) => state.preferredMode);
   const recentPrompts = useSelectionAiStore((state) => state.recentPrompts);
+  const activeAgentSession = useAgentSessionStore((state) =>
+    state.sessions.find((session) => session.id === state.activeSessionId) ?? state.sessions[0] ?? null,
+  );
 
   const latestAssistant = useMemo(
     () => [...(activeConversation?.messages ?? [])].reverse().find((message) => message.role === "assistant") ?? null,
@@ -144,6 +178,13 @@ export function SelectionAiRegressionDiagnostics() {
     () => [...(activeConversation?.messages ?? [])].reverse().find((message) => message.role === "user") ?? null,
     [activeConversation],
   );
+  const planCreatedEvent = useMemo(
+    () => activeAgentSession?.trace.find((event) =>
+      event.kind === "planning" && typeof event.metadata?.planSource === "string",
+    ) ?? null,
+    [activeAgentSession],
+  );
+  const latestCompaction = activeAgentSession?.compactions.at(-1) ?? null;
 
   const resetState = useCallback(() => {
     resetDiagnosticsStores();
@@ -249,6 +290,25 @@ export function SelectionAiRegressionDiagnostics() {
             Recent prompt 数：<span data-testid="selection-ai-recent-prompt-count">{recentPrompts.length}</span>
             <br />
             最近 prompt：<span data-testid="selection-ai-latest-prompt">{recentPrompts[0]?.prompt ?? "无"}</span>
+          </div>
+          <div className="rounded-lg border border-border p-3 leading-6">
+            Agent session: <span data-testid="selection-ai-agent-session-id">{activeAgentSession?.id ?? "none"}</span>
+            <br />
+            Agent status: <span data-testid="selection-ai-agent-status">{activeAgentSession?.status ?? "none"}</span>
+            <br />
+            Agent trace count: <span data-testid="selection-ai-agent-trace-count">{activeAgentSession?.trace.length ?? 0}</span>
+            <br />
+            Plan source: <span data-testid="selection-ai-agent-plan-source">{String(planCreatedEvent?.metadata?.planSource ?? "none")}</span>
+            <br />
+            Plan warnings: <span data-testid="selection-ai-agent-plan-warning-count">{String(planCreatedEvent?.metadata?.planWarningCount ?? "0")}</span>
+            <br />
+            Planner prompt preview: <span data-testid="selection-ai-agent-planner-prompt-preview">{String(planCreatedEvent?.metadata?.plannerPromptPreview ?? "none")}</span>
+            <br />
+            Planner raw preview: <span data-testid="selection-ai-agent-planner-raw-preview">{String(planCreatedEvent?.metadata?.plannerRawOutputPreview ?? "none")}</span>
+            <br />
+            Compaction count: <span data-testid="selection-ai-agent-compaction-count">{activeAgentSession?.compactions.length ?? 0}</span>
+            <br />
+            Latest compaction: <span data-testid="selection-ai-agent-latest-compaction">{latestCompaction?.summary ?? "none"}</span>
           </div>
         </aside>
       </main>

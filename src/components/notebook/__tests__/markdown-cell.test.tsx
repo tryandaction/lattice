@@ -19,6 +19,8 @@ vi.mock("@/components/editor/codemirror/live-preview/live-preview-editor", () =>
       flashLine: vi.fn(),
       getEditorState: vi.fn(() => null),
       restoreEditorState: vi.fn(),
+      openSearch: vi.fn(),
+      openGotoLine: vi.fn(),
     }));
 
     return <div data-testid="live-preview" data-mode={String(props.mode)} data-readonly={String(props.readOnly)} />;

@@ -1,4 +1,4 @@
-export type RunnerType = "python-local" | "python-pyodide" | "external-command";
+export type RunnerType = "python-local" | "python-pyodide" | "external-command" | "compiled-native";
 
 export type ExecutionMode = "file" | "selection" | "cell" | "inline";
 

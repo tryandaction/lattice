@@ -75,16 +75,11 @@ function AdaptivePDFRenderer({
   const isDesktopRuntime = isTauriHost();
   const activePdfKey = `${fileId}:${filePath}`;
 
-  const [requestedAnnotationModeKey, setRequestedAnnotationModeKey] = useState<string | null>(null);
   const [bindingByKey, setBindingByKey] = useState<Record<string, ResolvedPdfDocumentBinding | null>>({});
   const [annotationPresenceByKey, setAnnotationPresenceByKey] = useState<Record<string, boolean>>({});
   const resolvedBinding = bindingByKey[activePdfKey] ?? null;
   const hasPersistedAnnotations = annotationPresenceByKey[activePdfKey] ?? false;
-  const renderMode: "viewer" | "highlighter" = (
-    hasAnnotationContext ||
-    requestedAnnotationModeKey === activePdfKey ||
-    (!isDesktopRuntime && hasPersistedAnnotations)
-  ) ? "highlighter" : "viewer";
+  const renderMode: "viewer" | "highlighter" = hasAnnotationContext ? "highlighter" : "viewer";
 
   useEffect(() => {
     if (!effectiveRootHandle || !fileHandle) {
@@ -131,13 +126,6 @@ function AdaptivePDFRenderer({
     };
   }, [activePdfKey, fileHandle, fileName, filePath, hasAnnotationContext, isDesktopRuntime, effectiveRootHandle, workspaceIdentity]);
 
-  const handleRequestAnnotationMode = useCallback(() => {
-    if (!hasAnnotationContext) {
-      return;
-    }
-    setRequestedAnnotationModeKey(activePdfKey);
-  }, [activePdfKey, hasAnnotationContext]);
-
   if (renderMode === "highlighter" && fileHandle && effectiveRootHandle) {
     return (
       <PDFHighlighterAdapter
@@ -162,7 +150,6 @@ function AdaptivePDFRenderer({
       paneId={paneId}
       canAnnotate={hasAnnotationContext}
       hasPersistedAnnotations={hasPersistedAnnotations}
-      onRequestAnnotationMode={handleRequestAnnotationMode}
     />
   );
 }
@@ -218,13 +205,13 @@ const MarkdownRenderer = dynamic(
 
 const PDFViewer = dynamic(
   () => import("@/components/renderers/pdf-viewer").then((mod) => mod.PDFViewer),
-  { loading: () => null, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.pdf")} />, ssr: false }
 );
 
 // PDF Highlighter Adapter for annotation support
 const PDFHighlighterAdapter = dynamic(
   () => import("@/components/renderers/pdf-highlighter-adapter").then((mod) => mod.PDFHighlighterAdapter),
-  { loading: () => null, ssr: false }
+  { loading: () => <LoadingState message={t("viewer.loading.pdfAnnotated")} />, ssr: false }
 );
 
 const JupyterRenderer = dynamic(
@@ -553,6 +540,7 @@ function FileViewer({
             mimeType={content.mimeType ?? getImageMimeType(extension)}
             paneId={paneId}
             filePath={filePath ?? fileName}
+            rootHandle={rootHandle}
           />
         );
       }
@@ -580,6 +568,7 @@ function FileViewer({
           mimeType={getImageMimeType(extension)}
           paneId={paneId}
           filePath={filePath ?? fileName}
+          rootHandle={rootHandle}
         />
       );
     case "handwriting": {

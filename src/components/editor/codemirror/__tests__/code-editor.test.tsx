@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, cleanup, screen, waitFor } from "@testing-library/react";
 import fc from "fast-check";
-import { CodeEditor, CodeEditorLanguage } from "../code-editor";
+import { CodeEditor, CodeEditorLanguage, vscodeStyleKeymap } from "../code-editor";
 
 // Mock the dynamic imports for language extensions
 vi.mock("@codemirror/lang-python", () => ({
@@ -44,6 +44,11 @@ vi.mock("@codemirror/legacy-modes/mode/stex", () => ({
   stex: {},
 }));
 
+vi.mock("@codemirror/legacy-modes/mode/clike", () => ({
+  c: {},
+  cpp: {},
+}));
+
 describe("CodeEditor Properties", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -51,6 +56,24 @@ describe("CodeEditor Properties", () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  describe("VS Code style key bindings", () => {
+    it("registers common editor shortcut aliases", () => {
+      const bindings = new Set(vscodeStyleKeymap.map((binding) => binding.key));
+
+      expect(bindings.has("Mod-g")).toBe(true);
+      expect(bindings.has("Ctrl-g")).toBe(true);
+      expect(bindings.has("Mod-/")).toBe(true);
+      expect(bindings.has("Ctrl-/")).toBe(true);
+      expect(bindings.has("Shift-Alt-a")).toBe(true);
+      expect(bindings.has("Mod-[")).toBe(true);
+      expect(bindings.has("Mod-]")).toBe(true);
+      expect(bindings.has("Alt-ArrowUp")).toBe(true);
+      expect(bindings.has("Alt-ArrowDown")).toBe(true);
+      expect(bindings.has("Shift-Alt-ArrowUp")).toBe(true);
+      expect(bindings.has("Shift-Alt-ArrowDown")).toBe(true);
+    });
   });
 
   /**
@@ -231,6 +254,8 @@ describe("CodeEditor Properties", () => {
   describe("Language Support", () => {
     const languages: CodeEditorLanguage[] = [
       "python",
+      "c",
+      "cpp",
       "javascript",
       "typescript",
       "json",

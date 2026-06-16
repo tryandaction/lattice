@@ -163,7 +163,51 @@ vi.mock("@/components/renderers/pdf-highlighter-adapter", () => ({
   ),
 }));
 
+vi.mock("@/components/renderers/image-viewer", () => ({
+  ImageViewer: ({
+    source,
+    fileName,
+    mimeType,
+    paneId,
+  }: {
+    source: { kind: string };
+    fileName: string;
+    mimeType: string;
+    paneId?: string;
+  }) => (
+    <div data-testid={`mock-image-viewer-${paneId ?? "default"}`}>
+      <span data-testid="mock-image-viewer-source-kind">{source.kind}</span>
+      <span data-testid="mock-image-viewer-file-name">{fileName}</span>
+      <span data-testid="mock-image-viewer-mime-type">{mimeType}</span>
+    </div>
+  ),
+}));
+
+vi.mock("@/components/renderers/image-tldraw-adapter", () => ({
+  ImageTldrawAdapter: ({
+    fileName,
+    mimeType,
+    filePath,
+    paneId,
+  }: {
+    fileName: string;
+    mimeType: string;
+    filePath?: string;
+    paneId?: string;
+  }) => (
+    <div data-testid={`mock-image-tldraw-${paneId ?? "default"}`}>
+      <span data-testid="mock-image-tldraw-file-name">{fileName}</span>
+      <span data-testid="mock-image-tldraw-mime-type">{mimeType}</span>
+      <span data-testid="mock-image-tldraw-file-path">{filePath}</span>
+    </div>
+  ),
+}));
+
 function createPdfHandle(name = "paper.pdf") {
+  return { name } as FileSystemFileHandle;
+}
+
+function createImageHandle(name = "figure.png") {
   return { name } as FileSystemFileHandle;
 }
 
@@ -193,6 +237,40 @@ function renderPdfViewerWithoutAnnotationContext() {
       error={null}
       fileId="paper-id"
       filePath="docs/paper.pdf"
+    />,
+  );
+}
+
+function renderImageViewerWithDesktopUrl() {
+  return render(
+    <UniversalFileViewer
+      paneId="pane-left"
+      handle={createImageHandle()}
+      rootHandle={null}
+      content={{
+        kind: "desktop-url",
+        url: "http://lattice-preview.localhost/images/figure.png",
+        mimeType: "image/png",
+      }}
+      isLoading={false}
+      error={null}
+      fileId="figure-id"
+      filePath="figures/figure.png"
+    />,
+  );
+}
+
+function renderImageViewerWithAnnotationContext() {
+  return render(
+    <UniversalFileViewer
+      paneId="pane-left"
+      handle={createImageHandle()}
+      rootHandle={{ name: "workspace" } as FileSystemDirectoryHandle}
+      content={{ kind: "buffer", data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer }}
+      isLoading={false}
+      error={null}
+      fileId="figure-id"
+      filePath="figures/figure.png"
     />,
   );
 }
@@ -229,11 +307,12 @@ describe("UniversalFileViewer PDF routing", () => {
     });
   });
 
-  it("defaults to the highlighter when annotation context is available", async () => {
+  it("opens annotation-capable PDFs directly in the highlighter workspace", async () => {
     renderPdfViewer();
 
     await waitFor(() => {
       expect(screen.getByTestId("mock-pdf-highlighter-pane-left")).toBeTruthy();
+      expect(screen.queryByTestId("mock-pdf-viewer-pane-left")).toBeNull();
     });
   });
 
@@ -248,7 +327,7 @@ describe("UniversalFileViewer PDF routing", () => {
     });
   });
 
-  it("still upgrades to the highlighter path when persisted annotations are detected", async () => {
+  it("opens PDFs with persisted annotations directly in the highlighter workspace", async () => {
     loadAnnotationsForFileIdentityMock.mockResolvedValue({
       annotationFile: {
         version: 3 as const,
@@ -300,20 +379,11 @@ describe("UniversalFileViewer PDF routing", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("mock-pdf-highlighter-pane-left")).toBeTruthy();
+      expect(screen.queryByTestId("mock-pdf-viewer-pane-left")).toBeNull();
     });
   });
 
-  it("still allows explicit upgrade from the lightweight viewer path", async () => {
-    renderPdfViewerWithoutAnnotationContext();
-
-    fireEvent.click(await screen.findByTestId("mock-pdf-viewer-annotate-pane-left"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("mock-pdf-viewer-pane-left")).toBeTruthy();
-    });
-  });
-
-  it("routes desktop annotatable PDFs directly to the highlighter toolbar state", async () => {
+  it("opens desktop annotatable PDFs directly in the highlighter workspace", async () => {
     isTauriHostMock.mockReturnValue(true);
     loadAnnotationsForFileIdentityMock.mockResolvedValue({
       annotationFile: {
@@ -366,6 +436,32 @@ describe("UniversalFileViewer PDF routing", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("mock-pdf-highlighter-pane-left")).toBeTruthy();
+      expect(screen.queryByTestId("mock-pdf-viewer-pane-left")).toBeNull();
     });
+  });
+});
+
+describe("UniversalFileViewer image routing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("opens desktop preview URLs in the lightweight image viewer", async () => {
+    renderImageViewerWithDesktopUrl();
+
+    expect(await screen.findByTestId("mock-image-viewer-pane-left")).toBeTruthy();
+    expect(screen.getByTestId("mock-image-viewer-source-kind").textContent).toBe("desktop-url");
+    expect(screen.getByTestId("mock-image-viewer-mime-type").textContent).toBe("image/png");
+    expect(screen.queryByTestId("mock-image-tldraw-pane-left")).toBeNull();
+  });
+
+  it("opens workspace buffer images with handles in the tldraw annotation adapter", async () => {
+    renderImageViewerWithAnnotationContext();
+
+    expect(await screen.findByTestId("mock-image-tldraw-pane-left")).toBeTruthy();
+    expect(screen.getByTestId("mock-image-tldraw-file-name").textContent).toBe("figure.png");
+    expect(screen.getByTestId("mock-image-tldraw-mime-type").textContent).toBe("image/png");
+    expect(screen.getByTestId("mock-image-tldraw-file-path").textContent).toBe("figures/figure.png");
+    expect(screen.queryByTestId("mock-image-viewer-pane-left")).toBeNull();
   });
 });

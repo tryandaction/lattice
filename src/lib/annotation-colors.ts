@@ -100,6 +100,13 @@ export interface AnnotationContextAction {
  * Default highlight color (yellow)
  */
 export const DEFAULT_HIGHLIGHT_COLOR = HIGHLIGHT_COLORS[0];
+const LEGACY_HIGHLIGHT_COLOR_ALIASES: Record<string, string> = {
+  '#FFEB3B': '#FFD400',
+  '#4CAF50': '#5FB236',
+  '#2196F3': '#2EA8E5',
+  '#E91E63': '#E56EEE',
+  '#FF9800': '#F19837',
+};
 
 /**
  * Pin/sticky note color (amber)
@@ -217,6 +224,11 @@ export function resolveHighlightColor(color: string | null | undefined): string 
 
   if (normalized === "transparent") {
     return "transparent";
+  }
+
+  const legacyAlias = LEGACY_HIGHLIGHT_COLOR_ALIASES[normalized.toUpperCase()];
+  if (legacyAlias) {
+    return legacyAlias;
   }
 
   const found = HIGHLIGHT_COLORS.find((candidate) => (

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   beginPdfSelectionSession,
+  buildPdfSelectionSignature,
   createPdfSelectionSnapshot,
   resolvePdfCopySelectionText,
   isDuplicatePdfSelection,
@@ -126,5 +127,61 @@ describe("pdf-selection-session", () => {
       nativeText: "",
       frozenSnapshot: snapshot,
     })).toBe("Selected PDF text");
+  });
+
+  it("uses canonical textQuote exact text for snapshots, signatures, and copy", () => {
+    const canonicalSnapshot = createPdfSelectionSnapshot({
+      selection: {
+        pageNumber: 1,
+        startOffset: 20,
+        endOffset: 58,
+        text: "0",
+        textQuote: {
+          exact: "where a and b are the positions of the two Rydberg",
+          prefix: "interaction",
+          suffix: "electrons",
+          source: "pdfjs-text-model",
+          confidence: "exact",
+        },
+        pageRects: [{
+          x1: 0.55,
+          y1: 0.2,
+          x2: 0.82,
+          y2: 0.23,
+        }],
+        viewportRects: [{
+          left: 352,
+          top: 192,
+          width: 173,
+          height: 22,
+          pageNumber: 1,
+        }],
+      },
+      signature: buildPdfSelectionSignature({
+        tool: "highlight",
+        selection: {
+          pageNumber: 1,
+          startOffset: 20,
+          endOffset: 58,
+          text: "0",
+          textQuote: { exact: "where a and b are the positions of the two Rydberg" },
+          pageRects: [{
+            x1: 0.55,
+            y1: 0.2,
+            x2: 0.82,
+            y2: 0.23,
+          }],
+        },
+      }),
+    });
+
+    expect(canonicalSnapshot.text).toBe("where a and b are the positions of the two Rydberg");
+    expect(canonicalSnapshot.textQuote.exact).toBe("where a and b are the positions of the two Rydberg");
+    expect(canonicalSnapshot.signature).toContain("where a and b are the positions of the two Rydberg");
+    expect(canonicalSnapshot.signature.split("::").at(-1)).toBe("where a and b are the positions of the two Rydberg");
+    expect(resolvePdfCopySelectionText({
+      nativeText: "0",
+      frozenSnapshot: canonicalSnapshot,
+    })).toBe("where a and b are the positions of the two Rydberg");
   });
 });

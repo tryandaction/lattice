@@ -1,6 +1,6 @@
 # 手动发布指南
 
-适用版本：`v2.1.0`
+适用版本：`v2.3.0`
 
 ## 1. 最小本地发布闭环
 
@@ -17,7 +17,7 @@ npm run release:prepare
 1. 校验版本一致性
 2. 执行 `qa:gate`（其中已包含 `test:docs`）
 3. 生成桌面产物
-4. 同步到 `releases/v2.1.0/`
+4. 同步到 `releases/v2.3.0/`
 5. 生成：
    - `checksums.txt`
    - `release-manifest.json`
@@ -66,16 +66,18 @@ npm run release:prepare -- --upload
 
 本地发布事实来源固定为：
 
-- `releases/v2.1.0/`
+- `releases/v2.3.0/`
 
 其中至少应包含：
 
 - `lattice.exe`
-- `Lattice_2.1.0_x64_en-US.msi`
-- `Lattice_2.1.0_x64-setup.exe`
+- `Lattice_2.3.0_x64_en-US.msi`
+- `Lattice_2.3.0_x64-setup.exe`
 - `checksums.txt`
 - `release-manifest.json`
 - `RELEASE_SUMMARY.md`
+
+`release-manifest.json` 会记录 `gitRevision` 与 `gitDirty`。如果 `gitDirty` 为 `true`，说明本地产物来自带有未提交改动的工作区；正式发布前应在完成提交后重新执行 `npm run release:prepare`，让产物和提交版本一一对应。
 
 ## 6. GitHub Release
 
@@ -87,7 +89,7 @@ npm run release:prepare -- --upload
 
 如果平台不可用或 billing 有问题：
 
-- 保留本地 `releases/v2.1.0/` 作为可交付结果
+- 保留本地 `releases/v2.3.0/` 作为可交付结果
 - 平台恢复后再执行 upload
 
 ## 7. 最低验收
@@ -96,6 +98,7 @@ npm run release:prepare -- --upload
 - `/diagnostics/image-annotation` 可通过
 - `/diagnostics/selection-ai` 可通过
 - `/diagnostics/runner` 可打开并展示解释器/命令探测结果
+- `/performance-test` 可完成三项性能基线并显示 0 个失败项
 - `npm run test:browser-regression` 全绿
 - Windows 桌面端启动后不再出现原生标题栏与自定义标题栏双排
 - Windows 标题栏最右侧的最小化 / 最大化 / 还原 / 关闭按钮在窄宽度下仍可见且可用

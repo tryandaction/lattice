@@ -1,7 +1,20 @@
 "use client";
 
 import "katex/dist/katex.min.css";
-import { useState, useCallback, useEffect, useMemo, useRef, type ComponentPropsWithoutRef, type CSSProperties, type JSX } from "react";
+import {
+  cloneElement,
+  isValidElement,
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type ComponentPropsWithoutRef,
+  type CSSProperties,
+  type JSX,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -44,6 +57,79 @@ type MarkdownProps<T extends keyof JSX.IntrinsicElements> = ComponentPropsWithou
 type MarkdownCodeProps = MarkdownProps<"code"> & { inline?: boolean };
 type RehypeKatexPlugin = typeof import("rehype-katex").default;
 
+const CALLOUT_STYLES: Record<string, string> = {
+  note: "border-blue-500 bg-blue-500/10",
+  abstract: "border-cyan-500 bg-cyan-500/10",
+  summary: "border-cyan-500 bg-cyan-500/10",
+  info: "border-cyan-500 bg-cyan-500/10",
+  todo: "border-blue-500 bg-blue-500/10",
+  tip: "border-emerald-500 bg-emerald-500/10",
+  hint: "border-emerald-500 bg-emerald-500/10",
+  success: "border-emerald-500 bg-emerald-500/10",
+  question: "border-amber-500 bg-amber-500/10",
+  warning: "border-amber-500 bg-amber-500/10",
+  failure: "border-red-500 bg-red-500/10",
+  danger: "border-red-500 bg-red-500/10",
+  bug: "border-red-500 bg-red-500/10",
+  example: "border-violet-500 bg-violet-500/10",
+  quote: "border-slate-500 bg-slate-500/10",
+};
+
+function getTextContent(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(getTextContent).join("");
+  }
+  if (isValidElement<{ children?: ReactNode }>(node)) {
+    return getTextContent(node.props.children);
+  }
+  return "";
+}
+
+function stripCalloutMarkerFromNode(node: ReactNode): ReactNode {
+  if (typeof node === "string") {
+    return node.replace(/^\s*\[![A-Za-z][\w-]*\][+-]?\s*[^\n]*(?:\n)?/, "");
+  }
+  if (Array.isArray(node)) {
+    let stripped = false;
+    return node.map((child) => {
+      if (stripped) return child;
+      const next = stripCalloutMarkerFromNode(child);
+      stripped = next !== child;
+      return next;
+    });
+  }
+  if (isValidElement<{ children?: ReactNode }>(node)) {
+    return cloneElement(
+      node as ReactElement<{ children?: ReactNode }>,
+      undefined,
+      stripCalloutMarkerFromNode(node.props.children),
+    );
+  }
+  return node;
+}
+
+function parseCallout(children: ReactNode): { type: string; title: string; body: ReactNode } | null {
+  const text = getTextContent(children).trimStart();
+  const match = text.match(/^\[!([A-Za-z][\w-]*)\][+-]?\s*([^\n]*)/);
+  if (!match) {
+    return null;
+  }
+
+  const type = match[1].toLowerCase();
+  return {
+    type,
+    title: match[2]?.trim() || type.toUpperCase(),
+    body: stripCalloutMarkerFromNode(children),
+  };
+}
+
+function isMarkdownCodeBlock(inline: boolean | undefined, rawCode: string): boolean {
+  return inline === false || rawCode.includes("\n");
+}
+
 function resolveMarkdownImagePath(currentFilePath: string, imageUrl: string): string {
   if (imageUrl.startsWith("/")) {
     return imageUrl.slice(1);
@@ -61,6 +147,25 @@ function resolveMarkdownImagePath(currentFilePath: string, imageUrl: string): st
     resolved.push(part);
   }
   return resolved.join("/");
+}
+
+function parseObsidianImageAlt(alt: string | undefined): { alt: string; width?: number; height?: number } {
+  if (!alt) {
+    return { alt: "" };
+  }
+
+  const match = alt.match(/^(.*)\|(\d{1,4})(?:x(\d{1,4}))?$/i);
+  if (!match) {
+    return { alt };
+  }
+
+  const width = Number.parseInt(match[2], 10);
+  const height = match[3] ? Number.parseInt(match[3], 10) : undefined;
+  return {
+    alt: match[1].trim(),
+    width: Number.isFinite(width) ? width : undefined,
+    height: height && Number.isFinite(height) ? height : undefined,
+  };
 }
 
 async function resolveMarkdownFileHandleFromRoot(
@@ -110,6 +215,7 @@ function ResolvedMarkdownImage({
   const resolvedSrc = isLocalImage
     ? (resolvedState.key === localImageKey ? resolvedState.src : undefined)
     : directSrc;
+  const imageAlt = parseObsidianImageAlt(alt);
 
   useEffect(() => {
     if (!isLocalImage) {
@@ -176,7 +282,9 @@ function ResolvedMarkdownImage({
     <img
       ref={imageRef}
       src={resolvedSrc}
-      alt={alt || ""}
+      alt={imageAlt.alt}
+      width={imageAlt.width}
+      height={imageAlt.height}
       className={className}
       loading="lazy"
       {...props}
@@ -347,9 +455,11 @@ const components: Components = {
   code({ inline, className, children, style: _style, node: _node, ...props }: MarkdownCodeProps) {
     const match = /language-([^\s]+)/.exec(className || "");
     const language = match ? match[1].toLowerCase() : "";
-    const codeString = String(children).replace(/\n$/, "");
+    const rawCodeString = String(children);
+    const codeString = rawCodeString.replace(/\n$/, "");
+    const isBlock = isMarkdownCodeBlock(inline, rawCodeString);
 
-    if (!inline && language) {
+    if (isBlock && language) {
       return (
         <div className="relative group my-4">
           <SyntaxHighlighter
@@ -366,7 +476,7 @@ const components: Components = {
       );
     }
 
-    if (!inline) {
+    if (isBlock) {
       return (
         <div className="relative group my-4">
           <pre className="bg-muted rounded-lg p-4 overflow-x-auto">
@@ -472,6 +582,24 @@ const components: Components = {
   
   // Blockquotes
   blockquote({ children, ...props }: MarkdownProps<"blockquote">) {
+    const callout = parseCallout(children);
+    if (callout) {
+      return (
+        <blockquote
+          className={`markdown-callout markdown-callout-${callout.type} my-4 rounded border-l-4 px-4 py-3 not-italic text-foreground ${CALLOUT_STYLES[callout.type] ?? CALLOUT_STYLES.note}`}
+          data-callout={callout.type}
+          {...props}
+        >
+          <div className="mb-1 text-sm font-semibold uppercase tracking-wide">
+            {callout.title}
+          </div>
+          <div className="[&_p]:my-1.5">
+            {callout.body}
+          </div>
+        </blockquote>
+      );
+    }
+
     return (
       <blockquote 
         className="border-l-4 border-primary/40 pl-4 my-4 italic text-muted-foreground bg-muted/30 py-2 pr-4 rounded-r"
@@ -560,6 +688,14 @@ const components: Components = {
       <del className="line-through text-muted-foreground" {...props}>
         {children}
       </del>
+    );
+  },
+
+  mark({ children, ...props }: MarkdownProps<"mark">) {
+    return (
+      <mark className="rounded bg-yellow-200/80 px-0.5 text-foreground dark:bg-yellow-500/30" {...props}>
+        {children}
+      </mark>
     );
   },
 
@@ -661,8 +797,7 @@ export function MarkdownRenderer({
   }, [rehypeKatex]);
 
   const renderedContent = useMemo(() => {
-    const normalized = convertWikiLinksToMarkdown(content);
-    return prepareMarkdownForReading(normalized);
+    return convertWikiLinksToMarkdown(prepareMarkdownForReading(content));
   }, [content]);
 
   let blockIndex = 0;
@@ -753,9 +888,11 @@ export function MarkdownRenderer({
     code({ inline, className, children, style: _style, node: _node, ...props }: MarkdownCodeProps) {
       const match = /language-([^\s]+)/.exec(className || "");
       const language = match ? match[1].toLowerCase() : "";
-      const codeString = String(children).replace(/\n$/, "");
+      const rawCodeString = String(children);
+      const codeString = rawCodeString.replace(/\n$/, "");
+      const isBlock = isMarkdownCodeBlock(inline, rawCodeString);
 
-      if (!inline && language) {
+      if (isBlock && language) {
         const currentIndex = blockIndex;
         blockIndex += 1;
         return (
@@ -769,7 +906,7 @@ export function MarkdownRenderer({
         );
       }
 
-      if (!inline) {
+      if (isBlock) {
         return (
           <div className="relative group my-4">
             <pre className="bg-muted rounded-lg p-4 overflow-x-auto">

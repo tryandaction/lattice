@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import type {
-  AiDraftArtifactType,
-  AiDraftTemplateId,
+  AiDraftSuggestion,
   AiFollowUpAction,
   AiMessage,
   AiModelInfo,
@@ -9,6 +8,7 @@ import type {
   EvidenceRef,
   SelectionAiOrigin,
 } from '@/lib/ai/types';
+import type { ResearchAgentWorkflowId } from '@/lib/ai/research-agent-workflows';
 import { getStorageAdapter } from '@/lib/storage-adapter';
 
 const AI_CHAT_STORAGE_KEY = 'lattice-ai-chat';
@@ -17,6 +17,48 @@ export interface ChatMessageUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+}
+
+export interface AgentResultMetadata {
+  sessionId: string;
+  workflowLabel?: string;
+  workflowInferred?: boolean;
+  planSource?: string;
+  approvalStatus?: string;
+  recoverySummary?: string;
+  contextSummary?: {
+    omittedCount: number;
+    omittedTokens: number;
+    preview?: string;
+    autoSummary?: string;
+    modelSummary?: string;
+    modelSummaryStatus?: string;
+    modelSummaryQuality?: string;
+    recoveryPlan?: string;
+  };
+  memorySummary?: {
+    pendingSuggestionCount: number;
+    pendingSuggestionTitles?: string[];
+  };
+  continuation?: AiChatContinuationContext;
+  warnings?: string[];
+  planSteps?: Array<{
+    title: string;
+    status: string;
+    toolName?: string;
+  }>;
+  toolObservations?: Array<{
+    stepId: string;
+    toolName: string;
+    status: string;
+    preview: string;
+    evidenceCount?: number;
+    resultStatus?: string;
+    resultSummary?: string;
+    resultMetricsPreview?: string;
+    resultArtifactsPreview?: string;
+    resultDiagnosticsPreview?: string;
+  }>;
 }
 
 export interface ChatMessage {
@@ -32,12 +74,21 @@ export interface ChatMessage {
   followUpActions?: AiFollowUpAction[];
   templateId?: string;
   promptRunId?: string;
-  draftSuggestion?: {
-    type: AiDraftArtifactType;
-    templateId?: AiDraftTemplateId;
-    title: string;
-  };
+  draftSuggestion?: AiDraftSuggestion;
+  agentResult?: AgentResultMetadata;
   origin?: SelectionAiOrigin;
+}
+
+export interface AiChatContinuationContext {
+  sourceSessionId: string;
+  compactionId?: string;
+  sourceSummary?: string;
+}
+
+export interface AiChatComposerDraft {
+  text: string;
+  mode?: 'chat' | 'agent';
+  continuation?: AiChatContinuationContext;
 }
 
 export interface ChatConversation {
@@ -53,11 +104,16 @@ interface AiChatState {
   isOpen: boolean;
   isGenerating: boolean;
   abortController: AbortController | null;
+  selectedResearchWorkflowId: ResearchAgentWorkflowId | null;
+  composerDraft: AiChatComposerDraft | null;
 }
 
 interface AiChatActions {
   toggleOpen: () => void;
   setOpen: (open: boolean) => void;
+  setResearchWorkflow: (workflowId: ResearchAgentWorkflowId | null) => void;
+  setComposerDraft: (draft: string | AiChatComposerDraft | null) => void;
+  consumeComposerDraft: () => AiChatComposerDraft | null;
   newConversation: () => string;
   setActiveConversation: (id: string) => void;
   addUserMessage: (content: string, metadata?: Partial<Pick<ChatMessage, 'origin' | 'templateId' | 'promptRunId'>>) => void;
@@ -67,7 +123,7 @@ interface AiChatActions {
   setAssistantError: (messageId: string, error: string) => void;
   setAssistantMetadata: (
     messageId: string,
-    metadata: Partial<Pick<ChatMessage, 'model' | 'evidenceRefs' | 'promptContext' | 'followUpActions' | 'draftSuggestion' | 'origin' | 'templateId' | 'promptRunId'>>
+    metadata: Partial<Pick<ChatMessage, 'model' | 'evidenceRefs' | 'promptContext' | 'followUpActions' | 'draftSuggestion' | 'agentResult' | 'origin' | 'templateId' | 'promptRunId'>>
   ) => void;
   setGenerating: (generating: boolean, controller?: AbortController | null) => void;
   stopGenerating: () => void;
@@ -105,9 +161,22 @@ export const useAiChatStore = create<AiChatState & AiChatActions>((set, get) => 
   isOpen: false,
   isGenerating: false,
   abortController: null,
+  selectedResearchWorkflowId: null,
+  composerDraft: null,
 
   toggleOpen: () => set((s) => ({ isOpen: !s.isOpen })),
   setOpen: (open) => set({ isOpen: open }),
+  setResearchWorkflow: (workflowId) => set({ selectedResearchWorkflowId: workflowId }),
+  setComposerDraft: (draft) => set({
+    composerDraft: typeof draft === 'string' ? { text: draft } : draft,
+  }),
+  consumeComposerDraft: () => {
+    const draft = get().composerDraft;
+    if (draft !== null) {
+      set({ composerDraft: null });
+    }
+    return draft;
+  },
 
   newConversation: () => {
     const id = generateId();

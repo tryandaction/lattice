@@ -1,7 +1,7 @@
 import { useAiChatStore } from "@/stores/ai-chat-store";
-import { useAiWorkbenchStore } from "@/stores/ai-workbench-store";
 import { usePromptTemplateStore } from "@/stores/prompt-template-store";
 import { runPromptTemplate } from "@/lib/prompt/executor";
+import { executeUserApprovedAgentTool } from "@/lib/ai/agent-tool-broker";
 import type {
   AiChatRequest,
   AiReferenceInput,
@@ -40,7 +40,6 @@ export async function executePromptTemplateForSurface(
 ): Promise<{ kind: "chat" | "draft" | "proposal"; title: string; runId: string }> {
   const promptStore = usePromptTemplateStore.getState();
   const chatStore = useAiChatStore.getState();
-  const workbenchStore = useAiWorkbenchStore.getState();
 
   const runId = promptStore.addRun({
     templateId: input.template.id,
@@ -116,14 +115,29 @@ export async function executePromptTemplateForSurface(
     }
 
     if (result.outputMode === "draft") {
-      const draftId = workbenchStore.createDraft({
-        type: result.chatResult.draftSuggestion?.type ?? "paper_note",
-        templateId: result.chatResult.draftSuggestion?.templateId,
-        promptRunId: runId,
+      const brokerResult = await executeUserApprovedAgentTool({
+        name: "workbench.createDraft",
+        args: {
+          draft: {
+            type: result.chatResult.draftSuggestion?.type ?? "paper_note",
+            templateId: result.chatResult.draftSuggestion?.templateId,
+            promptRunId: runId,
+            title: result.draft.title,
+            sourceRefs: result.chatResult.evidenceRefs,
+            content: result.draft.content,
+          },
+        },
+      }, {
+        profile: "research",
+        task: `Create ${input.surface} prompt draft: ${input.template.title}`,
         title: result.draft.title,
-        sourceRefs: result.chatResult.evidenceRefs,
-        content: result.draft.content,
+        evidenceRefs: result.chatResult.evidenceRefs,
+        approvalNote: "User confirmed a prompt template that outputs a draft.",
       });
+      const draftId = brokerResult.result?.draftId;
+      if (!draftId) {
+        throw new Error("Draft creation did not return an artifact id.");
+      }
       promptStore.updateRunResult(runId, { resultDraftId: draftId });
       return {
         kind: "draft",
@@ -133,15 +147,29 @@ export async function executePromptTemplateForSurface(
     }
 
     if (result.outputMode === "proposal") {
-      workbenchStore.addProposal({
+      const proposal = {
         ...result.proposal,
         promptRunId: runId,
         ...(input.origin ? { origin: input.origin } : {}),
+      };
+      const brokerResult = await executeUserApprovedAgentTool({
+        name: "workbench.createProposal",
+        args: { proposal },
+      }, {
+        profile: "research",
+        task: `Create ${input.surface} prompt proposal: ${input.template.title}`,
+        title: proposal.summary,
+        evidenceRefs: proposal.sourceRefs,
+        approvalNote: "User confirmed a prompt template that outputs a proposal.",
       });
-      promptStore.updateRunResult(runId, { resultProposalId: result.proposal.id });
+      const proposalId = brokerResult.result?.proposalId;
+      if (!proposalId) {
+        throw new Error("Proposal creation did not return an artifact id.");
+      }
+      promptStore.updateRunResult(runId, { resultProposalId: proposalId });
       return {
         kind: "proposal",
-        title: result.proposal.summary,
+        title: proposal.summary,
         runId,
       };
     }

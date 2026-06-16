@@ -16,8 +16,6 @@ import { getCodeEditorLanguage, getFileExtension } from "@/lib/file-utils";
 import { useAnnotationNavigation } from "../../hooks/use-annotation-navigation";
 import { OutputArea } from "@/components/notebook/output-area";
 import { KernelStatus } from "@/components/notebook/kernel-status";
-import { useTextSelection } from "@/hooks/use-text-selection";
-import { AiInlineMenu } from "@/components/ai/ai-inline-menu";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
 import type { CommandBarAction, CommandBarState, PaneId } from "@/types/layout";
@@ -47,6 +45,8 @@ import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
 import { useI18n } from "@/hooks/use-i18n";
 import { buildPersistedFileViewStateKey, loadPersistedFileViewState, savePersistedFileViewState } from "@/lib/file-view-state";
 import { setExecutionHealthSnapshot } from "@/stores/execution-session-store";
+import { extractCodeOutlineSymbols } from "@/lib/code-outline";
+import { CodeOutlinePanel } from "@/components/renderers/code-outline-panel";
 
 interface CodeEditorViewerProps {
   content: string;
@@ -63,6 +63,11 @@ interface CodeEditorViewerProps {
 
 const DEBOUNCE_DELAY = 500;
 const HEAVY_EDITOR_FEATURE_CHAR_LIMIT = 150_000;
+const DEFAULT_EXTRA_COMMAND_ACTIONS: CommandBarAction[] = [];
+
+function messageFromUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 function formatDuration(durationMs: number | null): string | null {
   if (durationMs === null) return null;
@@ -80,7 +85,7 @@ export function CodeEditorViewer({
   tabId,
   filePath,
   executionScopeId,
-  extraCommandActions = [],
+  extraCommandActions = DEFAULT_EXTRA_COMMAND_ACTIONS,
 }: CodeEditorViewerProps) {
   const { t } = useI18n();
   const extension = getFileExtension(fileName);
@@ -150,6 +155,7 @@ export function CodeEditorViewer({
   });
 
   const [syntaxProblems, setSyntaxProblems] = useState<ExecutionProblem[]>([]);
+  const [outlineOpen, setOutlineOpen] = useState(false);
   const currentContentRef = useRef(content);
   const editorRef = useRef<CodeEditorRef | null>(null);
   const [selectionHubState, setSelectionHubState] = useState<{
@@ -158,7 +164,6 @@ export function CodeEditorViewer({
     returnFocusTo?: HTMLElement | null;
   } | null>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
-  const { selection: aiSelection, dismiss: dismissAiMenu } = useTextSelection(editorContainerRef);
   const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
     editorContainerRef,
     ({ text, inputOffsets, lineStart, lineEnd }) => createSelectionContext({
@@ -387,6 +392,21 @@ export function CodeEditorViewer({
     }
   }, [onContentChange, onSave]);
 
+  const flushPendingSave = useCallback(async () => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+
+    if (!onSave) {
+      hasChangedRef.current = false;
+      return;
+    }
+
+    await onSave();
+    hasChangedRef.current = false;
+  }, [onSave]);
+
   const buildRunRequest = useCallback(async (
     mode: RunnerExecutionRequest["mode"],
     codeOverride?: string,
@@ -403,8 +423,26 @@ export function CodeEditorViewer({
     const code = codeOverride ?? currentContentRef.current;
     const languageKey = getLanguagePreferenceKey(extension);
 
-    if (mode === "file" && absoluteFilePath) {
-      await onSave?.();
+    if (mode === "file") {
+      try {
+        await flushPendingSave();
+      } catch (error) {
+        const message = messageFromUnknownError(error);
+        return {
+          request: null,
+          origin: null,
+          diagnostics: [
+            {
+              severity: "error",
+              title: "保存失败，已阻止运行",
+              message,
+              hint: "请先解决保存问题，再重新运行当前文件。",
+              stage: "request-build",
+            },
+          ],
+          context: executionContext,
+        };
+      }
     }
 
     const resolved = await resolveRunnerExecutionRequest({
@@ -424,7 +462,7 @@ export function CodeEditorViewer({
       diagnostics: resolved.meta.diagnostics,
       context: executionContext,
     };
-  }, [absoluteFilePath, executionContext, extension, filePath, onSave, runCwd, runnerDefinition, runnerPreferences]);
+  }, [absoluteFilePath, executionContext, extension, filePath, flushPendingSave, runCwd, runnerDefinition, runnerPreferences]);
 
   const handleRun = useCallback(async () => {
     if (!runnerDefinition || !commandState.canRun) {
@@ -479,11 +517,37 @@ export function CodeEditorViewer({
     if (!lastRequest || !commandState.canRerun) {
       return;
     }
+
+    if (lastRequest.mode === "file") {
+      try {
+        await flushPendingSave();
+      } catch (error) {
+        const message = messageFromUnknownError(error);
+        clearOutputs();
+        setPanelMeta({
+          origin: null,
+          diagnostics: [
+            {
+              severity: "error",
+              title: "保存失败，已阻止重新运行",
+              message,
+              hint: "请先解决保存问题，再重新运行当前文件。",
+              stage: "request-build",
+            },
+          ],
+          context: executionContext,
+        });
+        setShowOutput(true);
+        setActiveDockTab("problems");
+        return;
+      }
+    }
+
     clearOutputs();
     setShowOutput(true);
     setActiveDockTab("run");
     await run(lastRequest);
-  }, [clearOutputs, commandState.canRerun, lastRequest, run, setActiveDockTab, setShowOutput]);
+  }, [clearOutputs, commandState.canRerun, executionContext, flushPendingSave, lastRequest, run, setActiveDockTab, setPanelMeta, setShowOutput]);
 
   const healthProblems = useMemo(
     () => runnerHealthIssuesToExecutionProblems(runnerHealthSnapshot.issues, healthContext),
@@ -518,20 +582,6 @@ export function CodeEditorViewer({
     }, 120);
   }, []);
 
-  const handleAiInsert = useCallback((text: string) => {
-    const current = currentContentRef.current;
-    handleChange(`${current}\n\n${text}`);
-  }, [handleChange]);
-
-  const handleAiReplace = useCallback((text: string) => {
-    const selection = window.getSelection();
-    const selectedText = selection?.toString() ?? "";
-    const current = currentContentRef.current;
-    if (selectedText && current.includes(selectedText)) {
-      handleChange(current.replace(selectedText, text));
-    }
-  }, [handleChange]);
-
   const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
     if (runnerDefinition && event.shiftKey && event.key === "Enter") {
       event.preventDefault();
@@ -546,6 +596,17 @@ export function CodeEditorViewer({
   const durationLabel = formatDuration(summary.durationMs);
   const shouldRenderDock = showOutput || outputs.length > 0 || problems.length > 0 || isRunning || isLoading;
   const runnerCommand = runnerDefinition?.command;
+  const outlineSymbols = useMemo(
+    () => (outlineOpen ? extractCodeOutlineSymbols(content, language) : []),
+    [content, language, outlineOpen],
+  );
+
+  const navigateToOutlineSymbol = useCallback((line: number) => {
+    editorRef.current?.scrollToLine(line);
+    window.setTimeout(() => {
+      editorRef.current?.flashLine(line);
+    }, 120);
+  }, []);
 
   const commandBarState = useMemo<CommandBarState>(() => {
     const breadcrumbs = filePath.split("/").filter(Boolean).map((segment) => ({ label: segment }));
@@ -555,6 +616,7 @@ export function CodeEditorViewer({
         {
           id: "save",
           label: t("common.save"),
+          icon: "save",
           priority: 10,
           group: "primary",
           disabled: !onSave || isReadOnly,
@@ -562,15 +624,37 @@ export function CodeEditorViewer({
         },
         {
           id: "search",
-          label: t("workbench.search.title"),
+          label: t("workbench.commandBar.searchInFile"),
+          icon: "search",
+          tooltip: t("workbench.commandBar.searchInFile"),
           priority: 15,
           group: "secondary",
           onTrigger: () => editorRef.current?.openSearch(),
+        },
+        {
+          id: "goto-line",
+          label: t("workbench.commandBar.gotoLine"),
+          icon: "scan-search",
+          tooltip: t("workbench.commandBar.gotoLine"),
+          priority: 16,
+          group: "secondary",
+          onTrigger: () => editorRef.current?.openGotoLine(),
+        },
+        {
+          id: "outline",
+          label: outlineOpen ? t("workbench.commandBar.hideOutline") : t("workbench.commandBar.showOutline"),
+          icon: "list-tree",
+          tooltip: outlineOpen ? t("workbench.commandBar.hideOutline") : t("workbench.commandBar.showOutline"),
+          priority: 17,
+          group: "secondary",
+          active: outlineOpen,
+          onTrigger: () => setOutlineOpen((value) => !value),
         },
         ...extraCommandActions,
         {
           id: isRunning ? "stop" : "run",
           label: isRunning ? t("workbench.commandBar.stop") : t("workbench.commandBar.run"),
+          icon: isRunning ? "square" : "play",
           priority: 20,
           group: "primary",
           disabled: !canRun || (isRunning ? !commandState.canStop : !commandState.canRun),
@@ -579,14 +663,53 @@ export function CodeEditorViewer({
         {
           id: "rerun",
           label: t("workbench.commandBar.rerun"),
+          icon: "rotate-cw",
           priority: 21,
           group: "secondary",
           disabled: !commandState.canRerun,
           onTrigger: () => { void handleRerun(); },
         },
+        {
+          id: "show-run-output",
+          label: t("workbench.commandBar.showRun"),
+          icon: "file-output",
+          priority: 30,
+          group: "secondary",
+          active: showOutput && activeDockTab === "run",
+          onTrigger: () => {
+            setActiveDockTab("run");
+            setShowOutput(true);
+          },
+        },
+        {
+          id: "show-problems",
+          label: t("workbench.commandBar.showProblems"),
+          icon: "check-circle",
+          priority: 31,
+          group: "secondary",
+          active: showOutput && activeDockTab === "problems",
+          onTrigger: () => {
+            setActiveDockTab("problems");
+            setShowOutput(true);
+          },
+        },
+        {
+          id: "verify",
+          label: t("workbench.commandBar.verify"),
+          icon: "check-circle",
+          priority: 40,
+          group: "utility",
+          disabled: !canRun,
+          onTrigger: () => {
+            void refreshRunnerHealth();
+            setActiveDockTab("problems");
+            setShowOutput(true);
+          },
+        },
       ],
     };
   }, [
+    activeDockTab,
     canRun,
     filePath,
     handleRerun,
@@ -595,6 +718,11 @@ export function CodeEditorViewer({
     isReadOnly,
     isRunning,
     onSave,
+    outlineOpen,
+    refreshRunnerHealth,
+    setActiveDockTab,
+    setShowOutput,
+    showOutput,
     t,
     terminate,
     commandState.canRun,
@@ -607,6 +735,45 @@ export function CodeEditorViewer({
     scopeId: executionScopeId,
     state: commandBarState,
   });
+
+  const renderEditorSurface = useCallback(() => (
+    <div className="flex h-full min-h-0 overflow-hidden">
+      <CodeOutlinePanel
+        symbols={outlineSymbols}
+        isOpen={outlineOpen}
+        onClose={() => setOutlineOpen(false)}
+        onNavigate={navigateToOutlineSymbol}
+      />
+      <div className="min-w-0 flex-1 overflow-hidden">
+        <CodeEditor
+          initialValue={content}
+          language={language}
+          onChange={handleChange}
+          isReadOnly={isReadOnly || !onContentChange}
+          autoHeight={false}
+          fileId={fileName}
+          className="h-full"
+          editorRef={editorRef}
+          basicCompletion={enableHeavyEditorFeatures}
+          syntaxDiagnostics={enableHeavyEditorFeatures}
+          problemContext={executionContext}
+          onProblemsChange={setSyntaxProblems}
+        />
+      </div>
+    </div>
+  ), [
+    content,
+    enableHeavyEditorFeatures,
+    executionContext,
+    fileName,
+    handleChange,
+    isReadOnly,
+    language,
+    navigateToOutlineSymbol,
+    onContentChange,
+    outlineOpen,
+    outlineSymbols,
+  ]);
 
   const renderDock = useCallback((expanded: boolean) => (
     <div className={expanded ? "code-workbench-elevated flex h-full min-h-0 flex-col border-t" : "code-workbench-elevated border-t"}>
@@ -692,7 +859,13 @@ export function CodeEditorViewer({
             <KernelStatus status={runnerStatus} error={runnerError} />
             {activeDockTab === "run" ? (
             <>
-              <OutputArea outputs={outputs} meta={panelMeta} showDiagnosticsInline={false} />
+              <OutputArea
+                outputs={outputs}
+                meta={panelMeta}
+                context={panelMeta.context ?? executionContext}
+                showDiagnosticsInline={false}
+                onSelectProblem={navigateToProblem}
+              />
               {outputs.length === 0 && !runnerError && runnerStatus !== "loading" && runnerStatus !== "running" && (
                 <p className="code-workbench-muted-text py-4 text-center text-xs">
                   {t("workbench.runner.noOutput")}
@@ -740,16 +913,6 @@ export function CodeEditorViewer({
       className="code-workbench-shell h-full flex flex-col overflow-hidden"
       onKeyDown={handleKeyDown}
     >
-      {aiSelection && (
-        <AiInlineMenu
-          selectedText={aiSelection.text}
-          position={aiSelection.position}
-          onInsert={handleAiInsert}
-          onReplace={handleAiReplace}
-          onClose={dismissAiMenu}
-        />
-      )}
-
       <SelectionContextMenu
         state={selectionMenuState}
         onClose={closeSelectionMenu}
@@ -782,20 +945,7 @@ export function CodeEditorViewer({
           }}
         >
           <ResizablePanel index={0} defaultSize={100 - dockSize} minSize={30} className="min-h-0 overflow-hidden">
-            <CodeEditor
-              initialValue={content}
-              language={language}
-              onChange={handleChange}
-              isReadOnly={isReadOnly || !onContentChange}
-              autoHeight={false}
-              fileId={fileName}
-              className="h-full"
-              editorRef={editorRef}
-              basicCompletion={enableHeavyEditorFeatures}
-              syntaxDiagnostics={enableHeavyEditorFeatures}
-              problemContext={executionContext}
-              onProblemsChange={setSyntaxProblems}
-            />
+            {renderEditorSurface()}
           </ResizablePanel>
           <ResizableHandle withHandle index={0} />
           <ResizablePanel index={1} defaultSize={dockSize} minSize={18} className="min-h-0 overflow-hidden">
@@ -805,20 +955,7 @@ export function CodeEditorViewer({
       ) : (
         <>
           <div className="flex-1 min-h-0 overflow-hidden">
-            <CodeEditor
-              initialValue={content}
-              language={language}
-              onChange={handleChange}
-              isReadOnly={isReadOnly || !onContentChange}
-              autoHeight={false}
-              fileId={fileName}
-              className="h-full"
-              editorRef={editorRef}
-              basicCompletion={enableHeavyEditorFeatures}
-              syntaxDiagnostics={enableHeavyEditorFeatures}
-              problemContext={executionContext}
-              onProblemsChange={setSyntaxProblems}
-            />
+            {renderEditorSurface()}
           </div>
           {canRun && shouldRenderDock ? renderDock(false) : null}
         </>

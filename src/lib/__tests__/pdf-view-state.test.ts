@@ -5,9 +5,12 @@ import {
   clearScopedPdfPaneId,
   captureRelativeScrollPosition,
   clampPdfScale,
+  comparePdfViewAnchor,
   getScopedPdfPaneId,
   getPdfWheelZoomDelta,
   isPdfInteractionActive,
+  normalizePdfAnnotationSidebarViewState,
+  normalizePdfAnnotationToolbarViewState,
   readCachedPdfViewState,
   restoreRelativeScrollPosition,
   setScopedPdfPaneId,
@@ -26,12 +29,40 @@ describe('pdf-view-state helpers', () => {
           scale: 1.5,
           zoomMode: 'fit-width',
           showSidebar: true,
+          sidebarState: {
+            searchQuery: 'Rydberg',
+            typeFilter: 'highlight',
+            colorFilter: '#FFEB3B',
+            tagFilter: 'AI',
+          },
+          toolbarState: {
+            activeTool: 'underline',
+            activeColor: 'yellow',
+            activeUnderlineStyle: 'wavy',
+            activeEraserMode: 'partial',
+            activeEraserSize: 32,
+            searchOpen: true,
+          },
         },
       },
     })).toEqual({
       scale: 1.5,
       zoomMode: 'fit-width',
       showSidebar: true,
+      sidebarState: {
+        searchQuery: 'Rydberg',
+        typeFilter: 'highlight',
+        colorFilter: '#FFD400',
+        tagFilter: 'AI',
+      },
+      toolbarState: {
+        activeTool: 'underline',
+        activeColor: '#FFD400',
+        activeUnderlineStyle: 'wavy',
+        activeEraserMode: 'partial',
+        activeEraserSize: 32,
+        searchOpen: true,
+      },
     });
   });
 
@@ -62,6 +93,20 @@ describe('pdf-view-state helpers', () => {
       scale: 1.8,
       zoomMode: 'fit-page',
       showSidebar: false,
+      sidebarState: {
+        searchQuery: 'field',
+        typeFilter: 'underline',
+        colorFilter: '#FFEB3B',
+        tagFilter: 'AI批注',
+      },
+      toolbarState: {
+        activeTool: 'highlight',
+        activeColor: '#FFEB3B',
+        activeUnderlineStyle: 'double',
+        activeEraserMode: 'stroke',
+        activeEraserSize: 36,
+        searchOpen: false,
+      },
       scrollTop: 320,
       scrollLeft: 44,
     })).toEqual({
@@ -73,8 +118,52 @@ describe('pdf-view-state helpers', () => {
           scale: 1.8,
           zoomMode: 'fit-page',
           showSidebar: false,
+          sidebarState: {
+            searchQuery: 'field',
+            typeFilter: 'underline',
+            colorFilter: '#FFD400',
+            tagFilter: 'AI批注',
+          },
+          toolbarState: {
+            activeTool: 'highlight',
+            activeColor: '#FFD400',
+            activeUnderlineStyle: 'double',
+            activeEraserMode: 'stroke',
+            activeEraserSize: 36,
+            searchOpen: false,
+          },
         },
       },
+    });
+  });
+
+  it('normalizes pdf annotation sidebar and toolbar state defensively', () => {
+    expect(normalizePdfAnnotationSidebarViewState({
+      searchQuery: '  keep spaces  ',
+      typeFilter: 'bad',
+      colorFilter: '#FFEB3B',
+      tagFilter: '',
+    })).toEqual({
+      searchQuery: '  keep spaces  ',
+      typeFilter: 'all',
+      colorFilter: '#FFD400',
+      tagFilter: 'all',
+    });
+
+    expect(normalizePdfAnnotationToolbarViewState({
+      activeTool: 'ink',
+      activeColor: '#4CAF50',
+      activeUnderlineStyle: 'bad',
+      activeEraserMode: 'partial',
+      activeEraserSize: 999,
+      searchOpen: true,
+    })).toEqual({
+      activeTool: 'ink',
+      activeColor: '#5FB236',
+      activeUnderlineStyle: 'solid',
+      activeEraserMode: 'partial',
+      activeEraserSize: 96,
+      searchOpen: true,
     });
   });
 
@@ -105,6 +194,28 @@ describe('pdf-view-state helpers', () => {
       left: (120 / 900) * 1500,
       behavior: 'auto',
     });
+  });
+
+  it('treats restored PDF anchors as valid when page and vertical position match even if horizontal scroll is clamped', () => {
+    const comparison = comparePdfViewAnchor({
+      pageNumber: 5,
+      pageOffsetTopRatio: 0.22,
+      pageOffsetLeftRatio: 0.1,
+      viewportAnchorY: 0.35,
+      viewportAnchorX: 0.5,
+      captureRevision: 3,
+    }, {
+      pageNumber: 5,
+      pageOffsetTopRatio: 0.225,
+      pageOffsetLeftRatio: 0.52,
+      viewportAnchorY: 0.35,
+      viewportAnchorX: 0.5,
+      captureRevision: 3,
+    });
+
+    expect(comparison.ok).toBe(true);
+    expect(comparison.pageMatch).toBe(true);
+    expect(comparison.deltaLeftRatio).toBeGreaterThan(0.3);
   });
 
   it('evaluates pane interaction scope and zoom delta helpers', () => {

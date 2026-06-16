@@ -1,6 +1,6 @@
 {
   "name": "lattice",
-  "version": "2.1.0",
+  "version": "2.3.0",
   "private": true,
   "scripts": {
     "clean": "node scripts/clean-workspace.mjs",
@@ -10,13 +10,19 @@
     "deploy:cloudflare": "npx wrangler pages deploy web-dist --project-name lattice",
     "deploy:web": "npm run build && npm run deploy:cloudflare",
     "lint": "eslint .",
-    "typecheck": "node scripts/ensure-next-type-shims.mjs && tsc --noEmit",
+    "typecheck": "node scripts/ensure-next-type-shims.mjs && tsc --noEmit --incremental false",
     "test": "vitest",
     "test:docs": "node scripts/check-docs.mjs",
     "test:pdf-ab": "node scripts/pdf-selection-ab-regression.mjs",
+    "test:pdf-corpus": "node scripts/pdf-corpus-audit.mjs",
+    "test:pdf-corpus:gate": "node scripts/pdf-corpus-audit.mjs --fail-on-errors",
+    "repair:pdf-annotation-quotes": "node scripts/repair-pdf-annotation-quotes.mjs",
+    "test:desktop:pdf-smoke": "node scripts/desktop-pdf-smoke.mjs",
     "test:run": "vitest run --maxWorkers=2",
     "test:browser-regression": "node scripts/browser-regression.mjs",
+    "test:browser-regression:pdf": "node scripts/pdf-browser-regression-segments.mjs",
     "qa:workspace-annotation-manual": "node scripts/workspace-annotation-manual-smoke.mjs",
+    "qa:agent-smoke": "node scripts/agent-qa-smoke.mjs",
     "qa:gate": "npm run lint && npm run typecheck && npm run test:docs && npm run test:run && npm run build && npm run tauri:build",
     "qa:gate:extended": "npm run qa:gate && npm run test:browser-regression",
     "release:prepare": "node scripts/prepare-release.mjs",
@@ -113,6 +119,10 @@
   },
   "overrides": {
     "canvas": "3.2.1",
-    "minimatch": "^10.2.1"
+    "minimatch": "^10.2.1",
+    "postcss": "$postcss",
+    "pptx-preview": {
+      "uuid": "^11.1.1"
+    }
   }
 }

@@ -15,6 +15,7 @@ import {
   BookOpen,
   Loader2,
 } from "lucide-react";
+import { toast } from "sonner";
 import type { TreeNode, FileNode, DirectoryNode } from "@/types/file-system";
 import { isFileNode, isDirectoryNode } from "@/types/file-system";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -22,14 +23,24 @@ import { useExplorerStore } from "@/stores/explorer-store";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { getAllPaneIds, findPane } from "@/lib/layout-utils";
 import { cn } from "@/lib/utils";
-import { FileContextMenu, DeleteConfirmDialog } from "./file-context-menu";
+import { FileCompareDialog, type FileCompareDialogInput } from "./file-compare-dialog";
+import { FileContextMenu, DeleteConfirmDialog, type FileContextMenuAction } from "./file-context-menu";
 import type { EntryKind } from "@/lib/file-operations";
+import { getParentPath } from "@/lib/file-operations";
 import {
   createPdfItemNote,
   ensurePdfItemWorkspace,
 } from "@/lib/pdf-item";
 import { generateFileId } from "@/lib/universal-annotation-storage";
 import { useI18n } from "@/hooks/use-i18n";
+import { copyToClipboard } from "@/lib/clipboard";
+import { getDesktopHandlePath } from "@/lib/desktop-file-system";
+import {
+  canUseDesktopOpeners,
+  openDesktopPath,
+  openDesktopTerminalAtPath,
+  revealDesktopPath,
+} from "@/lib/desktop-openers";
 
 interface TreeNodeProps {
   node: TreeNode;
@@ -85,6 +96,38 @@ function parseDraggedEntry(event: React.DragEvent): DragPayload | null {
 
 function setExplorerClipboardForPath(path: string, kind: EntryKind, mode: "copy" | "cut"): void {
   useExplorerStore.getState().setClipboard({ path, kind, mode });
+}
+
+function getRelativeWorkspacePath(path: string, rootName?: string | null): string {
+  if (!rootName) {
+    return path;
+  }
+
+  return path === rootName
+    ? ""
+    : path.startsWith(`${rootName}/`)
+      ? path.slice(rootName.length + 1)
+      : path;
+}
+
+function getPathParent(path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const index = normalized.lastIndexOf("/");
+  return index > 0 ? normalized.slice(0, index) : normalized;
+}
+
+function getSidePaneId(layoutRoot: ReturnType<typeof useWorkspaceStore.getState>["layout"]["root"], activePaneId: string): string | null {
+  const paneIds = getAllPaneIds(layoutRoot);
+  return paneIds.find((paneId) => paneId !== activePaneId) ?? null;
+}
+
+async function runDesktopAction(action: () => Promise<void>, failureMessage: string): Promise<void> {
+  try {
+    await action();
+  } catch (error) {
+    console.error(failureMessage, error);
+    toast.error(failureMessage);
+  }
 }
 
 function syncExplorerSelectionAfterPathChange(
@@ -177,6 +220,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   const { t } = useI18n();
   const toggleDirectory = useWorkspaceStore((state) => state.toggleDirectory);
   const openFileInPane = useWorkspaceStore((state) => state.openFileInPane);
+  const splitPane = useWorkspaceStore((state) => state.splitPane);
   const closeTabsByPath = useWorkspaceStore((state) => state.closeTabsByPath);
   const updateTabPath = useWorkspaceStore((state) => state.updateTabPath);
   const updateTabFile = useWorkspaceStore((state) => state.updateTabFile);
@@ -185,14 +229,18 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   const selectedPath = useExplorerStore((state) => state.selectedPath);
   const renamingPath = useExplorerStore((state) => state.renamingPath);
   const clipboard = useExplorerStore((state) => state.clipboard);
+  const compareSelection = useExplorerStore((state) => state.compareSelection);
   const setSelection = useExplorerStore((state) => state.setSelection);
   const startRenaming = useExplorerStore((state) => state.startRenaming);
   const stopRenaming = useExplorerStore((state) => state.stopRenaming);
+  const setCompareSelection = useExplorerStore((state) => state.setCompareSelection);
+  const clearCompareSelection = useExplorerStore((state) => state.clearCompareSelection);
   const dragOverPath = useExplorerStore((state) => state.dragOverPath);
   const setDragOverPath = useExplorerStore((state) => state.setDragOverPath);
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [compareDialog, setCompareDialog] = useState<FileCompareDialogInput | null>(null);
   const [renameValue, setRenameValue] = useState(node.name);
   const [renameError, setRenameError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -318,6 +366,198 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
     await hydratePdfVirtualChildren(node.path, { force: true, expand: true });
     openFileInPane(layout.activePaneId, created.handle, created.path);
   }, [ensurePdfWorkspace, hydratePdfVirtualChildren, layout.activePaneId, openFileInPane, refreshDirectory, rootHandle, node.path]);
+
+  const handleOpenToSide = useCallback(() => {
+    const sidePaneId = getSidePaneId(layout.root, layout.activePaneId);
+    const targetPaneId = sidePaneId ?? splitPane(layout.activePaneId, "horizontal");
+    if (!targetPaneId) {
+      openFileInPane(layout.activePaneId, node.handle, node.path);
+      return;
+    }
+    openFileInPane(targetPaneId, node.handle, node.path);
+  }, [layout.activePaneId, layout.root, node.handle, node.path, openFileInPane, splitPane]);
+
+  const handleCopyPath = useCallback(async () => {
+    const path = getDesktopHandlePath(node.handle) ?? node.path;
+    const copied = await copyToClipboard(path);
+    toast[copied ? "success" : "error"](copied ? t("explorer.context.pathCopied") : t("explorer.context.pathCopyFailed"));
+  }, [node.handle, node.path, t]);
+
+  const handleCopyRelativePath = useCallback(async () => {
+    const relativePath = getRelativeWorkspacePath(node.path, rootHandle?.name);
+    const copied = await copyToClipboard(relativePath);
+    toast[copied ? "success" : "error"](copied ? t("explorer.context.relativePathCopied") : t("explorer.context.pathCopyFailed"));
+  }, [node.path, rootHandle?.name, t]);
+
+  const handleOpenWithDefaultApp = useCallback(() => {
+    const desktopPath = getDesktopHandlePath(node.handle);
+    if (!desktopPath) {
+      toast.error(t("explorer.context.desktopOnly"));
+      return;
+    }
+    void runDesktopAction(
+      () => openDesktopPath(desktopPath),
+      t("explorer.context.openWithFailed"),
+    );
+  }, [node.handle, t]);
+
+  const handleRevealInFileExplorer = useCallback(() => {
+    const desktopPath = getDesktopHandlePath(node.handle);
+    if (!desktopPath) {
+      toast.error(t("explorer.context.desktopOnly"));
+      return;
+    }
+    void runDesktopAction(
+      () => revealDesktopPath(desktopPath),
+      t("explorer.context.revealFailed"),
+    );
+  }, [node.handle, t]);
+
+  const handleOpenTerminalHere = useCallback(() => {
+    const desktopPath = getDesktopHandlePath(node.handle);
+    if (!desktopPath) {
+      toast.error(t("explorer.context.desktopOnly"));
+      return;
+    }
+    void runDesktopAction(
+      () => openDesktopTerminalAtPath(getPathParent(desktopPath)),
+      t("explorer.context.openTerminalFailed"),
+    );
+  }, [node.handle, t]);
+
+  const handleSelectForCompare = useCallback(() => {
+    setCompareSelection({
+      path: node.path,
+      name: node.displayName ?? node.name,
+      handle: node.handle,
+    });
+    toast.success(t("explorer.context.compareSelected"));
+  }, [node.displayName, node.handle, node.name, node.path, setCompareSelection, t]);
+
+  const handleCompareWithSelected = useCallback(async () => {
+    if (!compareSelection || compareSelection.path === node.path) {
+      handleSelectForCompare();
+      return;
+    }
+
+    const sidePaneId = getSidePaneId(layout.root, layout.activePaneId);
+    const targetPaneId = sidePaneId ?? splitPane(layout.activePaneId, "horizontal");
+    openFileInPane(layout.activePaneId, compareSelection.handle, compareSelection.path);
+    openFileInPane(targetPaneId ?? layout.activePaneId, node.handle, node.path);
+
+    try {
+      const [leftFile, rightFile] = await Promise.all([
+        compareSelection.handle.getFile(),
+        node.handle.getFile(),
+      ]);
+      const [leftContent, rightContent] = await Promise.all([
+        leftFile.text(),
+        rightFile.text(),
+      ]);
+      setCompareDialog({
+        leftName: compareSelection.name,
+        leftPath: compareSelection.path,
+        leftContent,
+        rightName: node.displayName ?? node.name,
+        rightPath: node.path,
+        rightContent,
+      });
+      clearCompareSelection();
+      toast.success(t("explorer.context.compareOpened"));
+    } catch (error) {
+      console.error("Failed to compare files:", error);
+      toast.error(t("explorer.compare.failed"));
+    }
+  }, [
+    clearCompareSelection,
+    compareSelection,
+    handleSelectForCompare,
+    node.displayName,
+    layout.activePaneId,
+    layout.root,
+    node.handle,
+    node.name,
+    node.path,
+    openFileInPane,
+    splitPane,
+    t,
+  ]);
+
+  const fileContextActions = useMemo(() => {
+    const desktopActionsDisabled = !canUseDesktopOpeners() || !getDesktopHandlePath(node.handle);
+    const actions: FileContextMenuAction[] = [
+      {
+        label: t("explorer.context.openToSide"),
+        shortcut: "Ctrl+Enter",
+        onSelect: handleOpenToSide,
+      },
+      {
+        label: t("explorer.context.openWith"),
+        disabled: desktopActionsDisabled,
+        onSelect: handleOpenWithDefaultApp,
+      },
+      {
+        label: t("explorer.context.revealInFileExplorer"),
+        shortcut: "Shift+Alt+R",
+        disabled: desktopActionsDisabled,
+        onSelect: handleRevealInFileExplorer,
+      },
+      {
+        label: t("explorer.context.openInIntegratedTerminal"),
+        disabled: desktopActionsDisabled,
+        onSelect: handleOpenTerminalHere,
+      },
+      {
+        label: compareSelection && compareSelection.path !== node.path
+          ? t("explorer.context.compareWithSelected")
+          : t("explorer.context.selectForCompare"),
+        separatorBefore: true,
+        onSelect: handleCompareWithSelected,
+      },
+      {
+        label: t("explorer.context.copyPath"),
+        shortcut: "Shift+Alt+C",
+        separatorBefore: true,
+        onSelect: handleCopyPath,
+      },
+      {
+        label: t("explorer.context.copyRelativePath"),
+        shortcut: "Ctrl+K Ctrl+Shift+C",
+        onSelect: handleCopyRelativePath,
+      },
+    ];
+
+    if (node.extension === "pdf" && !node.isVirtual) {
+      actions.push(
+        {
+          label: t("explorer.pdf.newNote"),
+          separatorBefore: true,
+          onSelect: () => void handleCreatePdfNote("note"),
+        },
+        {
+          label: t("explorer.pdf.newNotebook"),
+          onSelect: () => void handleCreatePdfNote("notebook"),
+        },
+      );
+    }
+
+    return actions;
+  }, [
+    compareSelection,
+    handleCompareWithSelected,
+    handleCopyPath,
+    handleCopyRelativePath,
+    handleCreatePdfNote,
+    handleOpenTerminalHere,
+    handleOpenToSide,
+    handleOpenWithDefaultApp,
+    handleRevealInFileExplorer,
+    node.extension,
+    node.handle,
+    node.isVirtual,
+    node.path,
+    t,
+  ]);
 
   const handleRenameKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
@@ -467,10 +707,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
         <FileContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          actions={node.extension === "pdf" && !node.isVirtual ? [
-            { label: t("explorer.pdf.newNote"), onSelect: () => void handleCreatePdfNote("note") },
-            { label: t("explorer.pdf.newNotebook"), onSelect: () => void handleCreatePdfNote("notebook") },
-          ] : undefined}
+          actions={fileContextActions}
           onCopy={() => setExplorerClipboardForPath(node.path, "file", "copy")}
           onCut={() => setExplorerClipboardForPath(node.path, "file", "cut")}
           onRename={() => {
@@ -492,6 +729,12 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
           fileName={node.name}
           onConfirm={() => void handleDelete()}
           onCancel={() => setShowDeleteConfirm(false)}
+        />
+      )}
+      {compareDialog && (
+        <FileCompareDialog
+          compare={compareDialog}
+          onClose={() => setCompareDialog(null)}
         />
       )}
     </>
@@ -518,6 +761,7 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
     copyEntry,
     moveEntry,
     openDirectoryAsWorkspace,
+    rootHandle,
   } = useFileSystem();
   const selectedPath = useExplorerStore((state) => state.selectedPath);
   const selectedKind = useExplorerStore((state) => state.selectedKind);
@@ -683,6 +927,102 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
     }
   }, [moveEntry, node.path, setSelectedDirectoryPath, setSelection, updateTabPathPrefix]);
 
+  const handleCopyDirectoryPath = useCallback(async () => {
+    const path = getDesktopHandlePath(node.handle) ?? node.path;
+    const copied = await copyToClipboard(path);
+    toast[copied ? "success" : "error"](copied ? t("explorer.context.pathCopied") : t("explorer.context.pathCopyFailed"));
+  }, [node.handle, node.path, t]);
+
+  const handleCopyDirectoryRelativePath = useCallback(async () => {
+    const relativePath = getRelativeWorkspacePath(node.path, rootHandle?.name);
+    const copied = await copyToClipboard(relativePath);
+    toast[copied ? "success" : "error"](copied ? t("explorer.context.relativePathCopied") : t("explorer.context.pathCopyFailed"));
+  }, [node.path, rootHandle?.name, t]);
+
+  const handleRevealDirectory = useCallback(() => {
+    const desktopPath = getDesktopHandlePath(node.handle);
+    if (!desktopPath) {
+      toast.error(t("explorer.context.desktopOnly"));
+      return;
+    }
+    void runDesktopAction(
+      () => revealDesktopPath(desktopPath),
+      t("explorer.context.revealFailed"),
+    );
+  }, [node.handle, t]);
+
+  const handleOpenDirectoryWithDefaultApp = useCallback(() => {
+    const desktopPath = getDesktopHandlePath(node.handle);
+    if (!desktopPath) {
+      toast.error(t("explorer.context.desktopOnly"));
+      return;
+    }
+    void runDesktopAction(
+      () => openDesktopPath(desktopPath),
+      t("explorer.context.openWithFailed"),
+    );
+  }, [node.handle, t]);
+
+  const handleOpenDirectoryTerminal = useCallback(() => {
+    const desktopPath = getDesktopHandlePath(node.handle);
+    if (!desktopPath) {
+      toast.error(t("explorer.context.desktopOnly"));
+      return;
+    }
+    void runDesktopAction(
+      () => openDesktopTerminalAtPath(desktopPath),
+      t("explorer.context.openTerminalFailed"),
+    );
+  }, [node.handle, t]);
+
+  const directoryContextActions = useMemo<FileContextMenuAction[]>(() => {
+    const desktopActionsDisabled = !canUseDesktopOpeners() || !getDesktopHandlePath(node.handle);
+    return [
+      {
+        label: t("explorer.context.openWith"),
+        disabled: desktopActionsDisabled,
+        onSelect: handleOpenDirectoryWithDefaultApp,
+      },
+      {
+        label: t("explorer.context.revealInFileExplorer"),
+        shortcut: "Shift+Alt+R",
+        disabled: desktopActionsDisabled,
+        onSelect: handleRevealDirectory,
+      },
+      {
+        label: t("explorer.context.openInIntegratedTerminal"),
+        disabled: desktopActionsDisabled,
+        onSelect: handleOpenDirectoryTerminal,
+      },
+      {
+        label: t("explorer.context.copyPath"),
+        shortcut: "Shift+Alt+C",
+        separatorBefore: true,
+        onSelect: handleCopyDirectoryPath,
+      },
+      {
+        label: t("explorer.context.copyRelativePath"),
+        shortcut: "Ctrl+K Ctrl+Shift+C",
+        onSelect: handleCopyDirectoryRelativePath,
+      },
+      {
+        label: t("explorer.context.openAsWorkspace"),
+        separatorBefore: true,
+        onSelect: () => void openDirectoryAsWorkspace(node.path),
+      },
+    ];
+  }, [
+    handleCopyDirectoryPath,
+    handleCopyDirectoryRelativePath,
+    handleOpenDirectoryTerminal,
+    handleOpenDirectoryWithDefaultApp,
+    handleRevealDirectory,
+    node.handle,
+    node.path,
+    openDirectoryAsWorkspace,
+    t,
+  ]);
+
   const handleRenameKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -820,12 +1160,7 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
           y={contextMenu.y}
           isDirectory={true}
           canPaste={!!clipboard}
-          actions={[
-            {
-              label: t("explorer.context.openAsWorkspace"),
-              onSelect: () => void openDirectoryAsWorkspace(node.path),
-            },
-          ]}
+          actions={directoryContextActions}
           onNewFile={() => void handleCreateFile()}
           onNewFolder={() => void handleCreateFolder()}
           onPaste={() => void handlePaste()}

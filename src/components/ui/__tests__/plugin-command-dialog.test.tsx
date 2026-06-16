@@ -8,9 +8,10 @@ import { PluginCommandDialog } from "../plugin-command-dialog";
 
 const hoisted = vi.hoisted(() => ({
   toggleOpen: vi.fn(),
+  setOpen: vi.fn(),
+  setResearchWorkflow: vi.fn(),
   getRegisteredCommands: vi.fn(() => []),
   subscribePluginRegistry: vi.fn(() => () => {}),
-  push: vi.fn(),
 }));
 
 const settingsState = {
@@ -22,17 +23,20 @@ const settingsState = {
 
 const aiChatState = {
   isOpen: false,
+  selectedResearchWorkflowId: "markdown-research",
   toggleOpen: () => {
     hoisted.toggleOpen();
     aiChatState.isOpen = !aiChatState.isOpen;
   },
+  setOpen: (open: boolean) => {
+    hoisted.setOpen(open);
+    aiChatState.isOpen = open;
+  },
+  setResearchWorkflow: (workflowId: string) => {
+    hoisted.setResearchWorkflow(workflowId);
+    aiChatState.selectedResearchWorkflowId = workflowId;
+  },
 };
-
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({
-    push: hoisted.push,
-  }),
-}));
 
 vi.mock("@/hooks/use-i18n", () => ({
   useI18n: () => ({
@@ -57,6 +61,7 @@ describe("PluginCommandDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     aiChatState.isOpen = false;
+    aiChatState.selectedResearchWorkflowId = "markdown-research";
     localStorage.clear();
   });
 
@@ -100,16 +105,44 @@ describe("PluginCommandDialog", () => {
     expect(onOpenPluginPanels).toHaveBeenCalledTimes(1);
   });
 
-  it("opens the Agent Protocol Center from the command palette", async () => {
+  it("exposes Research Agent workflow commands that open AI Chat with the selected workflow", async () => {
     render(<PluginCommandDialog isOpen onClose={() => {}} />);
 
-    const agentProtocolRow = await screen.findByText("Open Agent Protocol Center");
+    const readingNoteRow = await screen.findByText("Research Agent: Reading Note");
+
+    expect(screen.getByText("Research Agent: Notebook Analysis")).not.toBeNull();
+    expect(screen.queryByText("Research Agent: PDF Annotation")).toBeNull();
 
     await act(async () => {
-      fireEvent.click(agentProtocolRow.closest("[data-command-id]") as HTMLElement);
+      fireEvent.click(readingNoteRow.closest("[data-command-id]") as HTMLElement);
     });
 
-    expect(hoisted.push).toHaveBeenCalledWith("/agent-protocol.html");
+    expect(hoisted.setResearchWorkflow).toHaveBeenCalledWith("reading-note");
+    expect(hoisted.setOpen).toHaveBeenCalledWith(true);
+    expect(aiChatState.selectedResearchWorkflowId).toBe("reading-note");
+    expect(aiChatState.isOpen).toBe(true);
+  });
+
+  it("opens the user guide through the in-product guide callback", async () => {
+    const onOpenGuide = vi.fn();
+
+    render(<PluginCommandDialog isOpen onClose={() => {}} onOpenGuide={onOpenGuide} />);
+
+    const guideRow = await screen.findByText("Open User Guide");
+
+    await act(async () => {
+      fireEvent.click(guideRow.closest("[data-command-id]") as HTMLElement);
+    });
+
+    expect(onOpenGuide).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not expose internal development workflow pages in the command palette", async () => {
+    render(<PluginCommandDialog isOpen onClose={() => {}} />);
+
+    expect(screen.queryByText("Open Agent Protocol Center")).toBeNull();
+    expect(screen.queryByText("Open Diagnostics")).toBeNull();
+    expect(screen.queryByText("Open Runner Diagnostics")).toBeNull();
   });
 
   it("does not duplicate recent commands in the main result list", async () => {

@@ -4,6 +4,7 @@ import { startTransition, useCallback, useState, useEffect } from "react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useI18n } from "@/hooks/use-i18n";
 import type { FileTree, DirectoryNode, FileNode, TreeNode } from "@/types/file-system";
 import {
   isAllowedExtension,
@@ -55,6 +56,12 @@ import { setDesktopPreviewRoot } from "@/lib/desktop-preview";
 import { isTauri, isTauriHost } from "@/lib/storage-adapter";
 import { isExistingDesktopDirectory, openDesktopDirectoryDialog } from "@/lib/desktop-folder";
 import { emitVaultChange, emitVaultDelete, emitVaultRename } from "@/lib/plugins/runtime";
+import {
+  getWorkspaceMarkdownRenameLinkUpdates,
+  removeWorkspaceMarkdownFile,
+  renameWorkspaceMarkdownFile,
+  upsertWorkspaceMarkdownFile,
+} from "@/lib/markdown/workspace-link-index";
 import { resolveWorkspaceIdentity } from "@/lib/workspace-identity";
 import { withTimeout } from "@/lib/async-task-guard";
 
@@ -88,6 +95,68 @@ interface UseFileSystemReturn {
 }
 
 const QA_WORKSPACE_NAME = "lattice-qa-workspace";
+
+function isMarkdownFilePath(path: string): boolean {
+  const extension = getExtension(path);
+  return extension === "md" || extension === "markdown";
+}
+
+async function upsertMarkdownIndexFromHandle(path: string, handle: FileSystemHandle | undefined): Promise<void> {
+  if (!isMarkdownFilePath(path) || !handle || handle.kind !== "file") {
+    return;
+  }
+
+  try {
+    const content = await (await (handle as FileSystemFileHandle).getFile()).text();
+    upsertWorkspaceMarkdownFile(path, content);
+  } catch {
+    // Index refresh is best-effort; file operation success should not be rolled back.
+  }
+}
+
+async function writeMarkdownFileContent(rootHandle: FileSystemDirectoryHandle, path: string, content: string): Promise<void> {
+  const resolvedEntry = await resolveEntry(rootHandle, path);
+  if (!resolvedEntry || resolvedEntry.kind !== "file") {
+    throw new Error(`Could not find Markdown file: ${path}`);
+  }
+  const writable = await (resolvedEntry.handle as FileSystemFileHandle).createWritable();
+  await writable.write(content);
+  await writable.close();
+}
+
+async function confirmAndWriteMarkdownRenameLinkUpdates(
+  rootHandle: FileSystemDirectoryHandle,
+  oldPath: string,
+  newPath: string,
+  confirmMessage: (count: number) => string,
+): Promise<boolean> {
+  if (!isMarkdownFilePath(oldPath) && !isMarkdownFilePath(newPath)) {
+    return false;
+  }
+
+  const updates = getWorkspaceMarkdownRenameLinkUpdates(oldPath, newPath);
+  if (updates.length === 0) {
+    return false;
+  }
+
+  if (typeof window !== "undefined" && !window.confirm(confirmMessage(updates.length))) {
+    return false;
+  }
+
+  let wroteAnyUpdate = false;
+  for (const update of updates) {
+    try {
+      await writeMarkdownFileContent(rootHandle, update.sourceFile, update.content);
+      upsertWorkspaceMarkdownFile(update.sourceFile, update.content);
+      emitVaultChange(update.sourceFile);
+      wroteAnyUpdate = true;
+    } catch (error) {
+      console.error("Failed to update Markdown links after rename:", update.sourceFile, error);
+    }
+  }
+  return wroteAnyUpdate;
+}
+
 const QA_PDF_BASE64 =
   "JVBERi0xLjcKJYGBgYEKCjYgMCBvYmoKPDwKL0ZpbHRlciAvRmxhdGVEZWNvZGUKL0xlbmd0aCAxMDgKPj4Kc3RyZWFtCnicNYexCsJAEAX79xVbC8bd82XvDsRCEVKkEfYHRKIoSaGI3+81MszAvHAIaJfk7/uOzTDN3+nzuF7WWWth0VyqWJG4IVFihIk2TNoZVWLBjke3zEyvvvU+aW+0ViXpe4knYoVT4Iwfv3QYpgplbmRzdHJlYW0KZW5kb2JqCgo3IDAgb2JqCjw8Ci9GaWx0ZXIgL0ZsYXRlRGVjb2RlCi9UeXBlIC9PYmpTdG0KL04gNQovRmlyc3QgMjYKL0xlbmd0aCAzNjEKPj4Kc3RyZWFtCnic1VJNS8NAEL3vr5ijHmQ/8rGplELbJApSlFZQFA9pspRI2ZVkI/XfO5Oklh7Es4TH7sy82X2beRIEKAhDCEAnEEIUKIhASwnTKeOPXx8G+EOxMy3jd3XVwityBKzhjfGl66wHyWYzduIuC1/s3Y4NTSCJfGQ8NK7qStPANM/yXAgthIhDRCyESnFdIiYIhTHWVIJ7hA5HYE4HQgRzrOUDYj30UL3nRmN/hityY+KkAzdMhvjnXrorG85Qf+mZzBhfuSotvIGL9FoJFQulpIyDONIvl/g7GlN4938f1+uvnf31hWdzpvHSkBtDHuinzNemdV1T4tiJlzus0ObW7D+Nr8viSotJgjp1MkGPjcbgz/fbd1P2VAqzg7/ZeNIwJCi3MlVdLNwB3Sfww5cDqiYPzq11nlzZ+9F6VENRPHr0TDIJYnzTbX0fUlIyviha00s96UQRtnRVbXfAn2o7t219TNCJ3yQQxeAKZW5kc3RyZWFtCmVuZG9iagoKOCAwIG9iago8PAovU2l6ZSA5Ci9Sb290IDIgMCBSCi9JbmZvIDMgMCBSCi9GaWx0ZXIgL0ZsYXRlRGVjb2RlCi9UeXBlIC9YUmVmCi9MZW5ndGggNDAKL1cgWyAxIDIgMiBdCi9JbmRleCBbIDAgOSBdCj4+CnN0cmVhbQp4nBXEsREAIAwDsbfDHS3DsxJzJViFgG6zISk5VVrigHg/XxhhhgOkCmVuZHN0cmVhbQplbmRvYmoKCnN0YXJ0eHJlZgo2NjAKJSVFT0Y=";
 
@@ -261,44 +330,6 @@ function getLatticeRootHandle(): FileSystemDirectoryHandle | null {
   }
   // Fall back to rootHandle
   return state.rootHandle;
-}
-
-/**
- * Find the best workspace root for accessing .lattice data.
- * When opening a subdirectory, checks if it's under a known workspace root.
- */
-function findBestWorkspaceRoot(
-  currentRootHandle: FileSystemDirectoryHandle,
-  newWorkspacePath: string,
-): FileSystemDirectoryHandle {
-  const state = useWorkspaceStore.getState();
-
-  // If new path starts with existing workspace root path, use existing root
-  const existingRootPath = state.workspaceRootPath;
-  if (existingRootPath && (
-    newWorkspacePath === existingRootPath ||
-    newWorkspacePath.startsWith(`${existingRootPath}/`)
-  )) {
-    return state.workspaceRootHandle ?? currentRootHandle;
-  }
-
-  // If current root is an ancestor of new path, use current root
-  const currentRootPath = state.workspaceRootPath ?? state.rootHandle?.name;
-  if (currentRootPath && (
-    newWorkspacePath.startsWith(`${currentRootPath}/`) ||
-    newWorkspacePath === currentRootPath
-  )) {
-    return state.workspaceRootHandle ?? currentRootHandle;
-  }
-
-  // Try to find in history
-  const historicalRoot = state.findWorkspaceRootForPath(newWorkspacePath);
-  if (historicalRoot) {
-    return historicalRoot;
-  }
-
-  // Default to new root handle
-  return currentRootHandle;
 }
 
 function collectFileExpansionState(node: TreeNode | null, expanded: Set<string> = new Set()): Set<string> {
@@ -676,6 +707,8 @@ export function useFileSystem(): UseFileSystemReturn {
   const removeRecentWorkspacePath = useSettingsStore((state) => state.removeRecentWorkspacePath);
   const lastWorkspacePath = useSettingsStore((state) => state.settings.lastWorkspacePath);
   const defaultFolder = useSettingsStore((state) => state.settings.defaultFolder);
+  const markdownUpdateLinksOnRename = useSettingsStore((state) => state.settings.markdownUpdateLinksOnRename);
+  const { t } = useI18n();
 
   // Use state with useEffect to avoid hydration mismatch
   // Server always renders false, client updates after mount
@@ -1044,7 +1077,7 @@ export function useFileSystem(): UseFileSystemReturn {
     } finally {
       setLoading(false);
     }
-  }, [rootHandle, setError, setLoading, workspaceRootPath]);
+  }, [applyWorkspaceHandle, rootHandle, setError, setLoading, workspaceRootPath]);
 
   /**
    * Open a QA workspace in OPFS (dev-only helper)
@@ -1266,6 +1299,9 @@ export function useFileSystem(): UseFileSystemReturn {
       }
       // Refresh the file tree to reflect the deletion
       await refreshDirectory({ silent: true });
+      if (resolvedEntry.kind === "file") {
+        removeWorkspaceMarkdownFile(path);
+      }
       emitVaultDelete(path);
     }
 
@@ -1321,13 +1357,25 @@ export function useFileSystem(): UseFileSystemReturn {
       // Refresh the file tree to reflect the rename
       await refreshDirectory({ silent: true });
       if (fullPath) {
+        if (resolvedEntry.kind === "file") {
+          let wroteReferenceUpdates = false;
+          if (markdownUpdateLinksOnRename) {
+            wroteReferenceUpdates = await confirmAndWriteMarkdownRenameLinkUpdates(
+              rootHandle,
+              path,
+              fullPath,
+              (count) => t("settings.markdown.updateLinksOnRename.confirm", { count }),
+            );
+          }
+          renameWorkspaceMarkdownFile(path, fullPath, { rewriteReferences: wroteReferenceUpdates });
+        }
         emitVaultRename(path, fullPath);
       }
       result.path = fullPath;
     }
 
     return { ...result, kind: resolvedEntry.kind };
-  }, [rootHandle, refreshDirectory]);
+  }, [markdownUpdateLinksOnRename, rootHandle, refreshDirectory, t]);
 
   const copyEntry = useCallback(async (
     sourcePath: string,
@@ -1379,6 +1427,7 @@ export function useFileSystem(): UseFileSystemReturn {
         }
       }
       await refreshDirectory({ silent: true });
+      await upsertMarkdownIndexFromHandle(fullPath, result.handle);
       emitVaultChange(fullPath);
       result.path = fullPath;
       result.kind = resolvedEntry.kind;
@@ -1451,13 +1500,25 @@ export function useFileSystem(): UseFileSystemReturn {
         }
       }
       await refreshDirectory({ silent: true });
+      if (resolvedEntry.kind === "file") {
+        let wroteReferenceUpdates = false;
+        if (markdownUpdateLinksOnRename) {
+          wroteReferenceUpdates = await confirmAndWriteMarkdownRenameLinkUpdates(
+            rootHandle,
+            sourcePath,
+            fullPath,
+            (count) => t("settings.markdown.updateLinksOnRename.confirm", { count }),
+          );
+        }
+        renameWorkspaceMarkdownFile(sourcePath, fullPath, { rewriteReferences: wroteReferenceUpdates });
+      }
       emitVaultRename(sourcePath, fullPath);
       result.path = fullPath;
       result.kind = resolvedEntry.kind;
     }
 
     return result;
-  }, [rootHandle, refreshDirectory]);
+  }, [markdownUpdateLinksOnRename, rootHandle, refreshDirectory, t]);
 
   return {
     isSupported,

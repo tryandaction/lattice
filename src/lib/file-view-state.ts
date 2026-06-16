@@ -35,6 +35,20 @@ export interface PdfViewStateSnapshot {
   showSidebar?: boolean;
   sidebarSize?: number;
   selectedAnnotationId?: string | null;
+  sidebarState?: {
+    searchQuery?: string;
+    typeFilter?: "all" | "highlight" | "underline" | "area" | "ink" | "text";
+    colorFilter?: string;
+    tagFilter?: string;
+  };
+  toolbarState?: {
+    activeTool?: "select" | "highlight" | "underline" | "note" | "text" | "area" | "ink" | "eraser";
+    activeColor?: string;
+    activeUnderlineStyle?: "solid" | "wavy" | "double" | "dashed";
+    activeEraserMode?: "stroke" | "partial";
+    activeEraserSize?: number;
+    searchOpen?: boolean;
+  };
 }
 
 export interface ImageViewState {
@@ -42,6 +56,8 @@ export interface ImageViewState {
   manualZoom?: number;
   rotation?: number;
   panOffset?: { x: number; y: number };
+  showSidebar?: boolean;
+  camera?: { x: number; y: number; z: number };
 }
 
 export interface HtmlViewState {

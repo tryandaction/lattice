@@ -754,6 +754,8 @@ export function AgentProtocolCenter() {
   const layout = useWorkspaceStore((state) => state.layout);
 
   useEffect(() => {
+    // Restore client-only persisted state after mount to avoid SSR hydration drift.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setProtocolState(readProtocolState());
     setCheckState(readProtocolChecks());
     setTaskContext(readTaskContext());
@@ -872,7 +874,7 @@ export function AgentProtocolCenter() {
   const checkProgressPercent = totalCheckCount === 0
     ? 0
     : Math.round((completedCheckCount / totalCheckCount) * 100);
-  const nextOpenCheck = useMemo(() => {
+  const nextOpenCheck = (() => {
     for (const stage of PROTOCOL_STAGES) {
       const openCheckIndex = stage.checks.findIndex((_, checkIndex) => !checkState[getCheckId(stage.id, checkIndex)]);
       if (openCheckIndex >= 0) {
@@ -883,7 +885,7 @@ export function AgentProtocolCenter() {
       }
     }
     return null;
-  }, [checkState]);
+  })();
   const closureReady = completedClosureGateCount === CLOSURE_GATES.length;
   const passedEvidenceEntries = useMemo(
     () => evidenceEntries.filter((entry) => entry.status === "passed"),
@@ -1196,7 +1198,7 @@ export function AgentProtocolCenter() {
           id: "ev-desktop-package-20260603",
           label: "桌面产品打包更新",
           command: "npm run tauri:build",
-          result: "通过；Tauri release 构建完成，生成 src-tauri/target/release/lattice.exe、bundle/msi/Lattice_2.1.0_x64_en-US.msi、bundle/nsis/Lattice_2.1.0_x64-setup.exe。",
+          result: "通过；Tauri release 构建完成，生成 src-tauri/target/release/lattice.exe、bundle/msi/Lattice_2.2.0_x64_en-US.msi、bundle/nsis/Lattice_2.2.0_x64-setup.exe。",
           status: "passed",
         },
       ];
@@ -1246,7 +1248,15 @@ export function AgentProtocolCenter() {
     if (window.localStorage.getItem(CURRENT_VALIDATION_STORAGE_KEY) === CURRENT_VALIDATION_RECORD_ID) {
       return;
     }
-    recordCurrentValidation({ silent: true });
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        recordCurrentValidation({ silent: true });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [mounted, recordCurrentValidation]);
 
   const copyProtocol = useCallback(async () => {

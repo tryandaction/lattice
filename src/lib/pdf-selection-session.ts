@@ -1,4 +1,4 @@
-import type { BoundingBox, ImageAnnotationPreview, PdfTextQuote } from "@/types/universal-annotation";
+import type { BoundingBox, ImageAnnotationPreview, PdfQuad, PdfTextQuote, PdfTextQuoteSource } from "@/types/universal-annotation";
 
 export type PdfSelectionPhase =
   | "idle"
@@ -38,6 +38,10 @@ export interface PdfCanonicalSelection {
   textQuote: PdfTextQuote;
   pageRects: BoundingBox[];
   viewportRects: PdfTransientSelectionRect[];
+  textKernelVersion?: number;
+  quads?: PdfQuad[];
+  textSource?: PdfTextQuoteSource;
+  textConfidence?: number;
 }
 
 export type PdfOverlayRectsByPage = Record<number, PdfTransientSelectionRect[]>;
@@ -86,7 +90,9 @@ function buildOverlayRectsByPage(rects: PdfTransientSelectionRect[]): PdfOverlay
 
 export function buildPdfSelectionSignature(input: {
   tool: "highlight" | "underline" | "area" | "select";
-  selection: Pick<PdfCanonicalSelection, "pageNumber" | "startOffset" | "endOffset" | "text" | "pageRects">;
+  selection: Pick<PdfCanonicalSelection, "pageNumber" | "startOffset" | "endOffset" | "text" | "pageRects"> & {
+    textQuote?: Pick<PdfTextQuote, "exact"> | null;
+  };
 }): string {
   const rectSignature = input.selection.pageRects
     .map((rect) => [
@@ -103,7 +109,7 @@ export function buildPdfSelectionSignature(input: {
     input.selection.startOffset,
     input.selection.endOffset,
     rectSignature,
-    normalizeText(input.selection.text),
+    normalizeText(input.selection.textQuote?.exact || input.selection.text),
   ].join("::");
 }
 
@@ -133,12 +139,13 @@ export function createPdfSelectionSnapshot(input: {
   signature: string;
 }): PdfSelectionSnapshot {
   const overlayRectsByPage = buildOverlayRectsByPage(input.selection.viewportRects);
+  const exactText = normalizeText(input.selection.textQuote.exact || input.selection.text);
   return {
     ...input.selection,
-    text: normalizeText(input.selection.text),
+    text: exactText,
     textQuote: {
       ...input.selection.textQuote,
-      exact: normalizeText(input.selection.textQuote.exact),
+      exact: exactText,
     },
     viewportRects: sortSelectionRects(input.selection.viewportRects),
     overlayRectsByPage,

@@ -290,14 +290,14 @@
 
 ```bash
 # 下载并运行
-Lattice_2.1.0_x64-setup.exe
+Lattice_2.3.0_x64-setup.exe
 ```
 
 或使用 MSI 安装包（适合企业部署）：
 
 ```bash
 # 下载并运行
-Lattice_2.1.0_x64_en-US.msi
+Lattice_2.3.0_x64_en-US.msi
 ```
 
 ### macOS

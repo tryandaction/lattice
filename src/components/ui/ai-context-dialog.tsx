@@ -185,10 +185,20 @@ export function AiContextDialog({ isOpen, onClose }: AiContextDialogProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[180] flex items-start justify-center overflow-y-auto px-4 pb-4 pt-6 md:pt-20" onKeyDown={(e) => e.key === "Escape" && onClose()}>
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 flex w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+    <aside
+      className="fixed inset-y-0 right-0 z-[180] flex w-full max-w-[34rem] flex-col border-l border-border bg-background shadow-2xl sm:w-[min(34rem,calc(100vw-4rem))]"
+      role="dialog"
+      aria-modal="false"
+      aria-label={t("ai.context.title")}
+      data-testid="ai-context-dock"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          onClose();
+        }
+      }}
+    >
+      <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
+        <div className="flex items-center justify-between border-b border-border px-4 py-4">
           <div className="flex items-center gap-2">
             <Bot className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-base font-semibold">{t("ai.context.title")}</h2>
@@ -202,12 +212,12 @@ export function AiContextDialog({ isOpen, onClose }: AiContextDialogProps) {
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
-          <div className="flex items-start justify-between gap-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
+          <div className="space-y-3">
             <p className="text-xs text-muted-foreground">
               {t("ai.context.description")}
             </p>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
                 <input
                   type="checkbox"
@@ -307,7 +317,7 @@ export function AiContextDialog({ isOpen, onClose }: AiContextDialogProps) {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+          <div className="grid gap-2 rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground sm:grid-cols-2">
             {summaryItems.map((item) => (
               <div key={item.label} className="flex items-center gap-2">
                 <span className="text-muted-foreground/80">{item.label}</span>
@@ -321,7 +331,7 @@ export function AiContextDialog({ isOpen, onClose }: AiContextDialogProps) {
               <div className="text-sm text-muted-foreground">{t("ai.context.loading")}</div>
             )}
             {status === "ready" && (
-              <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap text-xs text-foreground">
+              <pre className="max-h-[calc(100vh-22rem)] min-h-72 overflow-auto whitespace-pre-wrap text-xs text-foreground">
                 {contextText}
               </pre>
             )}
@@ -331,6 +341,6 @@ export function AiContextDialog({ isOpen, onClose }: AiContextDialogProps) {
           </div>
         </div>
       </div>
-    </div>
+    </aside>
   );
 }

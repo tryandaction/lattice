@@ -258,6 +258,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       import('@/lib/ai/workspace-indexer').then(({ indexWorkspace }) => {
         indexWorkspace(handle).catch(() => {});
       }).catch(() => {});
+      import('@/lib/markdown/workspace-link-index').then(({ scanWorkspaceMarkdownLinkIndex }) => {
+        scanWorkspaceMarkdownLinkIndex(handle).catch(() => {});
+      }).catch(() => {});
     }
   },
   setWorkspaceRootHandle: (handle) => set({ workspaceRootHandle: handle }),

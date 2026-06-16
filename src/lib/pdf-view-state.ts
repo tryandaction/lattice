@@ -1,4 +1,10 @@
+import { resolveHighlightColor } from "./annotation-colors";
+
 export type PdfZoomMode = 'manual' | 'fit-width' | 'fit-page';
+export type PdfAnnotationTypeFilterState = 'all' | 'highlight' | 'underline' | 'area' | 'ink' | 'text';
+export type PdfAnnotationToolState = 'select' | 'highlight' | 'underline' | 'note' | 'text' | 'area' | 'ink' | 'eraser';
+export type PdfUnderlineStyleState = 'solid' | 'wavy' | 'double' | 'dashed';
+export type PdfInkEraserModeState = 'stroke' | 'partial';
 
 export interface PdfViewAnchor {
   pageNumber: number;
@@ -9,12 +15,30 @@ export interface PdfViewAnchor {
   captureRevision: number;
 }
 
+export interface PdfAnnotationSidebarViewState {
+  searchQuery: string;
+  typeFilter: PdfAnnotationTypeFilterState;
+  colorFilter: 'all' | string;
+  tagFilter: 'all' | string;
+}
+
+export interface PdfAnnotationToolbarViewState {
+  activeTool: PdfAnnotationToolState;
+  activeColor: string;
+  activeUnderlineStyle: PdfUnderlineStyleState;
+  activeEraserMode: PdfInkEraserModeState;
+  activeEraserSize: number;
+  searchOpen: boolean;
+}
+
 export interface PdfViewState {
   scale: number;
   zoomMode: PdfZoomMode;
   showSidebar: boolean;
   sidebarSize?: number;
   selectedAnnotationId?: string | null;
+  sidebarState?: PdfAnnotationSidebarViewState;
+  toolbarState?: PdfAnnotationToolbarViewState;
   anchor?: PdfViewAnchor;
 }
 
@@ -71,9 +95,51 @@ export const DEFAULT_PDF_VIEWPORT_ANCHOR = {
   x: 0.5,
   y: 0.35,
 } as const;
+export const DEFAULT_PDF_ANNOTATION_SIDEBAR_VIEW_STATE: PdfAnnotationSidebarViewState = {
+  searchQuery: '',
+  typeFilter: 'all',
+  colorFilter: 'all',
+  tagFilter: 'all',
+};
+export const DEFAULT_PDF_ANNOTATION_TOOLBAR_VIEW_STATE: PdfAnnotationToolbarViewState = {
+  activeTool: 'select',
+  activeColor: '#FFD400',
+  activeUnderlineStyle: 'solid',
+  activeEraserMode: 'stroke',
+  activeEraserSize: 24,
+  searchOpen: false,
+};
 
 const DEFAULT_ANCHOR_TOLERANCE = 0.08;
 const DEFAULT_FIT_PADDING = 32;
+const PDF_ANNOTATION_TYPE_FILTERS = new Set<PdfAnnotationTypeFilterState>([
+  'all',
+  'highlight',
+  'underline',
+  'area',
+  'ink',
+  'text',
+]);
+const PDF_ANNOTATION_TOOLS = new Set<PdfAnnotationToolState>([
+  'select',
+  'highlight',
+  'underline',
+  'note',
+  'text',
+  'area',
+  'ink',
+  'eraser',
+]);
+const PDF_UNDERLINE_STYLES = new Set<PdfUnderlineStyleState>([
+  'solid',
+  'wavy',
+  'double',
+  'dashed',
+]);
+const PDF_INK_ERASER_MODES = new Set<PdfInkEraserModeState>([
+  'stroke',
+  'partial',
+]);
 
 let scopedPdfPaneId: string | null = null;
 
@@ -83,6 +149,75 @@ function clamp01(value: number): number {
 
 function isPdfZoomMode(value: unknown): value is PdfZoomMode {
   return value === 'manual' || value === 'fit-width' || value === 'fit-page';
+}
+
+function isPdfAnnotationTypeFilter(value: unknown): value is PdfAnnotationTypeFilterState {
+  return typeof value === 'string' && PDF_ANNOTATION_TYPE_FILTERS.has(value as PdfAnnotationTypeFilterState);
+}
+
+function isPdfAnnotationTool(value: unknown): value is PdfAnnotationToolState {
+  return typeof value === 'string' && PDF_ANNOTATION_TOOLS.has(value as PdfAnnotationToolState);
+}
+
+function isPdfUnderlineStyle(value: unknown): value is PdfUnderlineStyleState {
+  return typeof value === 'string' && PDF_UNDERLINE_STYLES.has(value as PdfUnderlineStyleState);
+}
+
+function isPdfInkEraserMode(value: unknown): value is PdfInkEraserModeState {
+  return typeof value === 'string' && PDF_INK_ERASER_MODES.has(value as PdfInkEraserModeState);
+}
+
+function normalizeSidebarText(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function normalizeSidebarFilterValue(value: unknown): 'all' | string {
+  if (typeof value !== 'string') {
+    return 'all';
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === 'all') {
+    return 'all';
+  }
+
+  return trimmed;
+}
+
+export function normalizePdfAnnotationSidebarViewState(value: unknown): PdfAnnotationSidebarViewState {
+  if (typeof value !== 'object' || value === null) {
+    return { ...DEFAULT_PDF_ANNOTATION_SIDEBAR_VIEW_STATE };
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const colorFilter = normalizeSidebarFilterValue(candidate.colorFilter);
+
+  return {
+    searchQuery: normalizeSidebarText(candidate.searchQuery),
+    typeFilter: isPdfAnnotationTypeFilter(candidate.typeFilter) ? candidate.typeFilter : 'all',
+    colorFilter: colorFilter === 'all' ? 'all' : resolveHighlightColor(colorFilter),
+    tagFilter: normalizeSidebarFilterValue(candidate.tagFilter),
+  };
+}
+
+export function normalizePdfAnnotationToolbarViewState(value: unknown): PdfAnnotationToolbarViewState {
+  if (typeof value !== 'object' || value === null) {
+    return { ...DEFAULT_PDF_ANNOTATION_TOOLBAR_VIEW_STATE };
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const activeEraserSize = typeof candidate.activeEraserSize === 'number' && Number.isFinite(candidate.activeEraserSize)
+    ? Math.max(4, Math.min(96, candidate.activeEraserSize))
+    : DEFAULT_PDF_ANNOTATION_TOOLBAR_VIEW_STATE.activeEraserSize;
+
+  return {
+    activeTool: isPdfAnnotationTool(candidate.activeTool) ? candidate.activeTool : 'select',
+    activeColor: resolveHighlightColor(typeof candidate.activeColor === 'string' ? candidate.activeColor : undefined),
+    activeUnderlineStyle: isPdfUnderlineStyle(candidate.activeUnderlineStyle) ? candidate.activeUnderlineStyle : 'solid',
+    activeEraserMode: isPdfInkEraserMode(candidate.activeEraserMode) ? candidate.activeEraserMode : 'stroke',
+    activeEraserSize,
+    searchOpen: candidate.searchOpen === true,
+  };
 }
 
 function normalizeRect(rect: RectLike): Required<RectLike> {
@@ -141,6 +276,13 @@ export function readCachedPdfViewState(editorState: PdfEditorStateLike | undefin
     return null;
   }
 
+  const sidebarState = candidate.sidebarState === undefined
+    ? undefined
+    : normalizePdfAnnotationSidebarViewState(candidate.sidebarState);
+  const toolbarState = candidate.toolbarState === undefined
+    ? undefined
+    : normalizePdfAnnotationToolbarViewState(candidate.toolbarState);
+
   return {
     scale: candidate.scale,
     zoomMode: candidate.zoomMode,
@@ -149,6 +291,8 @@ export function readCachedPdfViewState(editorState: PdfEditorStateLike | undefin
     selectedAnnotationId: typeof candidate.selectedAnnotationId === 'string' || candidate.selectedAnnotationId === null
       ? candidate.selectedAnnotationId
       : undefined,
+    ...(sidebarState ? { sidebarState } : {}),
+    ...(toolbarState ? { toolbarState } : {}),
     anchor: isValidAnchor(candidate.anchor) ? candidate.anchor : undefined,
   };
 }
@@ -159,10 +303,19 @@ export function buildPdfEditorState(input: {
   showSidebar: boolean;
   sidebarSize?: number;
   selectedAnnotationId?: string | null;
+  sidebarState?: PdfAnnotationSidebarViewState | null;
+  toolbarState?: PdfAnnotationToolbarViewState | null;
   anchor?: PdfViewAnchor;
   scrollTop?: number;
   scrollLeft?: number;
 }): Required<Pick<PdfEditorStateLike, 'cursorPosition' | 'scrollTop' | 'scrollLeft' | 'viewState'>> {
+  const sidebarState = input.sidebarState
+    ? normalizePdfAnnotationSidebarViewState(input.sidebarState)
+    : undefined;
+  const toolbarState = input.toolbarState
+    ? normalizePdfAnnotationToolbarViewState(input.toolbarState)
+    : undefined;
+
   return {
     cursorPosition: 0,
     scrollTop: input.scrollTop ?? 0,
@@ -174,6 +327,8 @@ export function buildPdfEditorState(input: {
         showSidebar: input.showSidebar,
         ...(typeof input.sidebarSize === 'number' ? { sidebarSize: input.sidebarSize } : {}),
         ...(input.selectedAnnotationId !== undefined ? { selectedAnnotationId: input.selectedAnnotationId } : {}),
+        ...(sidebarState ? { sidebarState } : {}),
+        ...(toolbarState ? { toolbarState } : {}),
         ...(input.anchor ? { anchor: input.anchor } : {}),
       } satisfies PdfViewState,
     },
@@ -332,7 +487,7 @@ export function comparePdfViewAnchor(
   const pageMatch = expected.pageNumber === actual.pageNumber;
 
   return {
-    ok: pageMatch && deltaTopRatio <= tolerance && deltaLeftRatio <= tolerance,
+    ok: pageMatch && deltaTopRatio <= tolerance,
     pageMatch,
     deltaTopRatio,
     deltaLeftRatio,

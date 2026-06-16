@@ -16,6 +16,16 @@ const RUNNER_ALIASES: Record<string, string> = {
   javascript: "js",
   js: "js",
   node: "js",
+  typescript: "ts",
+  ts: "ts",
+  c: "c",
+  cpp: "cpp",
+  "c++": "cpp",
+  cc: "cpp",
+  cxx: "cpp",
+  h: "c",
+  hpp: "cpp",
+  hxx: "cpp",
   julia: "jl",
   jl: "jl",
   r: "r",
@@ -48,6 +58,33 @@ export const RUNNER_DEFINITIONS: Record<string, RunnerDefinition> = {
     displayName: "Node.js",
     supportsInlineCode: true,
     buildArgs: ({ code, filePath, mode }) => (mode === "file" ? FILE_ARG(filePath) : code ? ["-e", code] : []),
+  },
+  ts: {
+    runnerType: "external-command",
+    command: "node",
+    displayName: "TypeScript",
+    supportsInlineCode: true,
+    buildArgs: ({ code, filePath, mode }) => (
+      mode === "file"
+        ? ["--experimental-transform-types", ...FILE_ARG(filePath)]
+        : code
+          ? ["--experimental-transform-types", "-e", code]
+          : []
+    ),
+  },
+  c: {
+    runnerType: "compiled-native",
+    command: "gcc",
+    displayName: "C",
+    supportsInlineCode: false,
+    buildArgs: () => [],
+  },
+  cpp: {
+    runnerType: "compiled-native",
+    command: "g++",
+    displayName: "C++",
+    supportsInlineCode: false,
+    buildArgs: () => [],
   },
   jl: {
     runnerType: "external-command",

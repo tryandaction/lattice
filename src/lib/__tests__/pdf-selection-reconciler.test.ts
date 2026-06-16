@@ -538,6 +538,231 @@ describe("pdf-selection-reconciler", () => {
     }
   });
 
+  it("keeps a dragged right-column paper selection out of interleaved left-column DOM text", () => {
+    const leftLine1 = "The large dipole matrix elements also imply that";
+    const rightLine1 = "possible interactions in the absence of applied fields.";
+    const leftLine2 = "Rydberg states are extremely sensitive to small low-";
+    const rightLine2 = "this section we discuss the properties of dipole-dipole";
+    const selectedText = `${rightLine1} ${rightLine2}`;
+    const page = createPageContext({
+      fragments: [
+        { text: leftLine1, left: 70, top: 104, width: 230, height: 24 },
+        { text: rightLine1, left: 340, top: 104, width: 240, height: 24 },
+        { text: leftLine2, left: 70, top: 132, width: 230, height: 24 },
+        { text: rightLine2, left: 340, top: 132, width: 242, height: 24 },
+        { text: "0", left: 300, top: 214, width: 10, height: 12 },
+      ],
+    });
+    const range = createRangeAcrossFragments({
+      startFragment: rightLine1,
+      endFragment: rightLine2,
+    });
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: `${rightLine1} ${leftLine2} ${rightLine2}`,
+      pages: [page],
+      dragStartPoint: { x: 342, y: 116 },
+      dragEndPoint: { x: 580, y: 144 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(selectedText);
+      expect(result.selection.textQuote.exact).not.toContain(leftLine2);
+      expect(result.selection.textQuote.exact).not.toBe("0");
+      expect(result.selection.pageRects).toHaveLength(2);
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(340 / 640, 3);
+    }
+  });
+
+  it("uses explicit visual geometry when a math-heavy left-column selection collapses to a stray zero", () => {
+    const beforeFormula = "Even so, the electric field stability required to hold";
+    const afterFormula = "Stark shifts below 1 MHz is typically of order";
+    const selectedText = `${beforeFormula} ${afterFormula}`;
+    const page = createPageContext({
+      fragments: [
+        { text: "0", left: 546, top: 212, width: 10, height: 12 },
+        { text: beforeFormula, left: 70, top: 516, width: 530, height: 24 },
+        { text: "ΔE ∼ ℏ6n7E2/m3e6.", left: 70, top: 544, width: 210, height: 24 },
+        { text: afterFormula, left: 70, top: 572, width: 520, height: 24 },
+        { text: "possible interactions in the absence of applied fields.", left: 624, top: 516, width: 505, height: 24 },
+      ],
+    });
+    const range = createRangeWithinFragment("0", "0");
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: "0",
+      pages: [page],
+      clientRects: [
+        { left: 70, right: 600, top: 516, bottom: 540 },
+        { left: 70, right: 590, top: 572, bottom: 596 },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(selectedText);
+      expect(result.selection.textQuote.exact).not.toBe("0");
+      expect(result.selection.textQuote.exact).not.toContain("possible interactions");
+      expect(result.selection.pageRects).toHaveLength(2);
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(70 / 640, 3);
+    }
+  });
+
+  it("preserves explicit line edges when desktop drag metadata starts inside the first selected word", () => {
+    const firstLine = "Even so, the electric field stability required to hold";
+    const secondLine = "Stark shifts below 1 MHz is typically of order";
+    const page = createPageContext({
+      fragments: [
+        { text: "0", left: 540, top: 212, width: 10, height: 12 },
+        { text: firstLine, left: 70, top: 516, width: 530, height: 24 },
+        { text: secondLine, left: 70, top: 548, width: 520, height: 24 },
+      ],
+    });
+    const range = createRangeWithinFragment("0", "0");
+    const charWidth = 530 / firstLine.length;
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: "0",
+      pages: [page],
+      clientRects: [
+        { left: 70, right: 600, top: 516, bottom: 540 },
+        { left: 70, right: 590, top: 548, bottom: 572 },
+      ],
+      dragStartPoint: { x: 70 + charWidth * 3.5, y: 528 },
+      dragEndPoint: { x: 588, y: 560 },
+      ignoreDomText: true,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(`${firstLine} ${secondLine}`);
+      expect(result.selection.textQuote.exact.startsWith("Even so")).toBe(true);
+      expect(result.selection.textQuote.exact).not.toMatch(/^n so/);
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(70 / 640, 3);
+    }
+  });
+
+  it("does not treat a pointer inside the first selected word as a single-line text boundary", () => {
+    const line = "Even so, the electric field stability required to hold";
+    const page = createPageContext({
+      fragments: [
+        { text: "0", left: 540, top: 212, width: 10, height: 12 },
+        { text: line, left: 70, top: 516, width: 530, height: 24 },
+      ],
+    });
+    const range = createRangeWithinFragment("0", "0");
+    const charWidth = 530 / line.length;
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: "0",
+      pages: [page],
+      clientRects: [
+        { left: 70, right: 600, top: 516, bottom: 540 },
+      ],
+      dragStartPoint: { x: 70 + charWidth * 3.5, y: 528 },
+      dragEndPoint: { x: 598, y: 528 },
+      ignoreDomText: true,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(line);
+      expect(result.selection.textQuote.exact.startsWith("Even so")).toBe(true);
+      expect(result.selection.textQuote.exact).not.toMatch(/^n so/);
+    }
+  });
+
+  it("rejects a masthead vertical strip and rebuilds the text quote from pointer boundaries", () => {
+    const abstractLine = "Rydberg atoms with principal quantum number n have exaggerated atomic properties including";
+    const selectedText = "Rydberg atoms with principal quantum number";
+    const lineLeft = 88;
+    const lineTop = 340;
+    const lineWidth = 560;
+    const charWidth = lineWidth / abstractLine.length;
+    const selectedLeft = lineLeft;
+    const selectedRight = lineLeft + (selectedText.length * charWidth);
+    const page = createPageContext({
+      fragments: [
+        { text: "REVIEWS OF MODERN PHYSICS, VOLUME 82", left: 250, top: 92, width: 260, height: 22 },
+        { text: "Quantum information with Rydberg atoms", left: 80, top: 150, width: 560, height: 36 },
+        { text: "M. Saffman and T. G. Walker", left: 180, top: 230, width: 320, height: 28 },
+        { text: "Department of Physics, University of Wisconsin, 1150 University Avenue", left: 150, top: 278, width: 520, height: 22 },
+        { text: abstractLine, left: lineLeft, top: lineTop, width: lineWidth, height: 24 },
+      ],
+    });
+    const range = createRangeWithinFragment("Quantum information with Rydberg atoms", "Rydberg atoms");
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: "g atoms consin, 1150 University A for Quantum System",
+      pages: [page],
+      clientRects: [{
+        left: 260,
+        right: 380,
+        top: 92,
+        bottom: 720,
+      }],
+      dragStartPoint: { x: selectedLeft + 1, y: lineTop + 12 },
+      dragEndPoint: { x: selectedRight - 1, y: lineTop + 12 },
+      ignoreDomText: true,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(selectedText);
+      expect(result.selection.textQuote.exact).not.toContain("Wisconsin");
+      expect(result.selection.textQuote.exact).not.toContain("Quantum information");
+      expect(result.selection.pageRects).toHaveLength(1);
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(selectedLeft / 640, 3);
+      expect(result.selection.pageRects[0]?.x2).toBeCloseTo(selectedRight / 640, 3);
+      expect(result.selection.pageRects[0] ? result.selection.pageRects[0].y2 - result.selection.pageRects[0].y1 : 1)
+        .toBeLessThan(0.04);
+    }
+  });
+
+  it("uses drag-only geometry when the native DOM selection collapses without client rects", () => {
+    const firstLine = "The applicability of Rydberg atoms for quantum infor-";
+    const secondLine = "mation processing, which is the central topic of this re-";
+    const selectedText = "The applicability of Rydberg atoms for quantum information processing, which is the central topic of this re-";
+    const lineLeft = 70;
+    const firstLineWidth = 236;
+    const secondLineWidth = 246;
+    const page = createPageContext({
+      fragments: [
+        { text: firstLine, left: lineLeft, top: 104, width: firstLineWidth, height: 24 },
+        { text: secondLine, left: lineLeft, top: 132, width: secondLineWidth, height: 24 },
+        { text: "two-atom blockade shift B due to the Rydberg interaction", left: 340, top: 104, width: 260, height: 24 },
+      ],
+    });
+    const anchorNode = getFragmentTextNode(firstLine);
+    const collapsedRange = document.createRange();
+    collapsedRange.setStart(anchorNode, 0);
+    collapsedRange.setEnd(anchorNode, 0);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range: collapsedRange,
+      text: "",
+      pages: [page],
+      clientRects: [],
+      dragStartPoint: { x: lineLeft + 2, y: 116 },
+      dragEndPoint: { x: lineLeft + secondLineWidth - 2, y: 144 },
+      ignoreDomText: true,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(selectedText);
+      expect(result.selection.textQuote.exact).not.toContain("two-atom blockade");
+      expect(result.selection.pageRects.length).toBeGreaterThanOrEqual(2);
+      expect(Math.max(...result.selection.pageRects.map((rect) => rect.x2 - rect.x1))).toBeLessThan(0.75);
+    }
+  });
+
   it("keeps mixed Chinese-English inline text aligned to the selected formatted span", () => {
     const page = createPageContext({
       fragments: [
@@ -569,6 +794,46 @@ describe("pdf-selection-reconciler", () => {
     if (result.ok) {
       expect(result.selection.textQuote.exact).toBe(selectedText);
       expect(result.selection.textQuote.exact).not.toContain("附加说明");
+    }
+  });
+
+  it("uses CJK visual geometry when a DOM range shifts one character left on the same line", () => {
+    const line = "例（肝炎病毒检测）：设每个人血清中含有肝炎病毒的概率为 0.4%，求";
+    const selectedText = "含有肝炎";
+    const wrongDomText = "中含有肝";
+    const lineLeft = 40;
+    const lineTop = 96;
+    const charWidth = 18;
+    const page = createPageContext({
+      fragments: [
+        { text: line, left: lineLeft, top: lineTop, width: line.length * charWidth, height: 48 },
+      ],
+    });
+    const range = createRangeWithinFragment(line, wrongDomText);
+    const selectedStart = line.indexOf(selectedText);
+    const selectedLeft = lineLeft + (selectedStart * charWidth);
+    const selectedRight = selectedLeft + (selectedText.length * charWidth);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: wrongDomText,
+      pages: [page],
+      clientRects: [{
+        left: selectedLeft,
+        right: selectedRight,
+        top: lineTop,
+        bottom: lineTop + 48,
+      }],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.text).toBe(selectedText);
+      expect(result.selection.textQuote.exact).toBe(selectedText);
+      expect(result.selection.textQuote.source).toBe("pdfjs-text-model");
+      expect(result.selection.textQuote.exact).not.toBe(wrongDomText);
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(selectedLeft / 640, 3);
+      expect(result.selection.pageRects[0]?.x2).toBeCloseTo(selectedRight / 640, 3);
     }
   });
 
@@ -909,6 +1174,44 @@ describe("pdf-selection-reconciler", () => {
     }
   });
 
+  it("uses explicit rendered geometry when a Rydberg DOM range drifts later without native layout", () => {
+    const line = "fast, high-fidelity excitation to the Rydberg state21 and mid-circuit";
+    const lineLeft = 40;
+    const lineTop = 120;
+    const charWidth = 8;
+    const page = createPageContext({
+      fragments: [
+        { text: line, left: lineLeft, top: lineTop, width: line.length * charWidth, height: 24 },
+      ],
+    });
+    const selectedText = "high-fidelity excitation";
+    const wrongOffsetText = "to the Rydberg state21";
+    const range = createRangeWithinFragment(line, wrongOffsetText);
+    const selectedStart = line.indexOf(selectedText);
+    const selectedLeft = lineLeft + (selectedStart * charWidth);
+    const selectedRight = selectedLeft + (selectedText.length * charWidth);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: wrongOffsetText,
+      pages: [page],
+      clientRects: [{
+        left: selectedLeft,
+        right: selectedRight,
+        top: lineTop,
+        bottom: lineTop + 24,
+      }],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(selectedText);
+      expect(result.selection.textQuote.source).toBe("pdfjs-text-model");
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(selectedLeft / 640, 3);
+      expect(result.selection.pageRects[0]?.x2).toBeCloseTo(selectedRight / 640, 3);
+    }
+  });
+
   it("uses rendered pointer bounds when a short literature selection drifts later on the same line", () => {
     const line = "The development of scalable, high-fidelity qubits is a key challenge in quantum";
     const lineLeft = 80;
@@ -1240,6 +1543,761 @@ describe("pdf-selection-reconciler", () => {
       expect(result.selection.textQuote.exact).not.toContain("852 nm");
       expect(result.selection.pageRects).toHaveLength(2);
       expect(result.selection.pageRects[0]?.x1).toBeCloseTo(360 / 640, 3);
+    }
+  });
+
+  it("uses pointer bounds to trim a Saffman-style cross-line selection that starts after earlier prose", () => {
+    const previousLine = "of states with equal and opposite ΔE, as can be inferred";
+    const firstSelectedLine = "from Fig. 5, that tend to cause shifts in opposite direc-";
+    const secondSelectedLine = "tions. Even so, the electric field stability required to hold";
+    const thirdSelectedLine = "Stark shifts below 1 MHz is typically of order";
+    const page = createPageContext({
+      fragments: [
+        { text: previousLine, left: 60, top: 420, width: 520, height: 24 },
+        { text: firstSelectedLine, left: 60, top: 452, width: 520, height: 24 },
+        { text: secondSelectedLine, left: 60, top: 484, width: 520, height: 24 },
+        { text: thirdSelectedLine, left: 60, top: 516, width: 480, height: 24 },
+      ],
+    });
+    const range = createRangeAcrossFragments({
+      startFragment: previousLine,
+      startOffset: previousLine.indexOf("with equal"),
+      endFragment: thirdSelectedLine,
+    });
+    const figStart = firstSelectedLine.indexOf("Fig. 5");
+    const charWidth = 520 / firstSelectedLine.length;
+    const dragStartX = 60 + (figStart * charWidth);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: "with equal and opposite ΔE, as can be inferred from Fig. 5, that tend to cause shifts in opposite direc- tions. Even so, the electric field stability required to hold Stark shifts below 1 MHz is typically of order",
+      pages: [page],
+      clientRects: [
+        { left: 138, right: 580, top: 420, bottom: 444 },
+        { left: 60, right: 580, top: 452, bottom: 476 },
+        { left: 60, right: 580, top: 484, bottom: 508 },
+        { left: 60, right: 540, top: 516, bottom: 540 },
+      ],
+      dragStartPoint: { x: dragStartX + 2, y: 464 },
+      dragEndPoint: { x: 540 - 2, y: 528 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toContain("Fig. 5, that tend");
+      expect(result.selection.textQuote.exact).toContain("opposite directions. Even so");
+      expect(result.selection.textQuote.exact).not.toContain("direc-");
+      expect(result.selection.textQuote.exact).not.toContain("with equal and opposite");
+      expect(result.selection.textQuote.exact.startsWith("Fig. 5")).toBe(true);
+    }
+  });
+
+  it("keeps the exact Saffman Fig. 5 sentence when the DOM range expands into surrounding paragraphs", () => {
+    const left = 52;
+    const lineWidth = 500;
+    const lineHeight = 22;
+    const top = 260;
+    const gap = 30;
+    const lines = [
+      "feature for coherent optical manipulation. On the one",
+      "hand, this sensitivity requires that electric fields be well",
+      "controlled to avoid frequency fluctuations. On the other",
+      "hand, it also makes it possible to tune the strength and",
+      "angular dependence of Rydberg-Rydberg interactions",
+      "using such fields.",
+      "For small dc electric fields E such that the dipole cou-",
+      "plings e<r>E are much less than the energy difference ΔE",
+      "of the nearest opposite parity state, the Stark effect is",
+      "quadratic and the shift is at most of order",
+      "-(e<r>E)2/ΔE ~ hbar6n7E2/m3e6. In fact the shift is often",
+      "substantially smaller than this due to partial cancellation",
+      "of states with equal and opposite ΔE, as can be inferred",
+      "from Fig. 5, that tend to cause shifts in opposite direc-",
+      "tions. Even so, the electric field stability required to hold",
+      "Stark shifts below 1 MHz is typically of order",
+      "0.01(100/n)7/2 V/cm.",
+      "In higher electric fields, mixing of opposite parity",
+      "states gives the atom an electric dipole moment of order",
+      "n2ea0 and hence a linear Stark effect. This may be desirable",
+    ];
+    const page = createPageContext({
+      fragments: lines.map((text, index) => ({
+        text,
+        left,
+        top: top + (index * gap),
+        width: index === 16 ? 160 : lineWidth,
+        height: lineHeight,
+      })),
+    });
+    const range = createRangeAcrossFragments({
+      startFragment: lines[0],
+      endFragment: lines[19],
+    });
+    const firstTargetLine = lines[13];
+    const lastTargetLine = lines[16];
+    const figStart = firstTargetLine.indexOf("Fig. 5");
+    const firstTargetCharWidth = lineWidth / firstTargetLine.length;
+    const lastTargetCharWidth = 160 / lastTargetLine.length;
+    const targetStartX = left + (figStart * firstTargetCharWidth);
+    const targetEndX = left + (lastTargetLine.length * lastTargetCharWidth);
+    const targetStartY = top + (13 * gap) + (lineHeight / 2);
+    const targetEndY = top + (16 * gap) + (lineHeight / 2);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: "",
+      pages: [page],
+      ignoreDomText: true,
+      clientRects: lines.map((text, index) => ({
+        left,
+        right: left + (index === 16 ? 160 : lineWidth),
+        top: top + (index * gap),
+        bottom: top + (index * gap) + lineHeight,
+      })),
+      dragStartPoint: { x: targetStartX + 1, y: targetStartY },
+      dragEndPoint: { x: targetEndX - 1, y: targetEndY },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(
+        "Fig. 5, that tend to cause shifts in opposite directions. Even so, the electric field stability required to hold Stark shifts below 1 MHz is typically of order 0.01(100/n)^(7/2) V/cm.",
+      );
+      expect(result.selection.textQuote.exact).not.toContain("feature for coherent");
+      expect(result.selection.textQuote.exact).not.toContain("In higher electric fields");
+      expect(result.selection.pageRects.length).toBe(4);
+      expect(result.selection.pageRects[0]?.x1).toBeGreaterThan(left / 640);
+      expect(result.selection.pageRects[3]?.x2).toBeCloseTo((left + 160) / 640, 2);
+    }
+  });
+
+  it("does not let polluted browser client rects expand a user drag from Fig. 5 to V/cm", () => {
+    const left = 52;
+    const fullWidth = 500;
+    const shortWidth = 160;
+    const lineHeight = 22;
+    const top = 260;
+    const gap = 30;
+    const lines = [
+      "feature for coherent optical manipulation. On the one",
+      "hand, this sensitivity requires that electric fields be well",
+      "controlled to avoid frequency fluctuations. On the other",
+      "hand, it also makes it possible to tune the strength and",
+      "angular dependence of Rydberg-Rydberg interactions",
+      "using such fields.",
+      "For small dc electric fields E such that the dipole cou-",
+      "plings e<r>E are much less than the energy difference Delta E",
+      "of the nearest opposite parity state, the Stark effect is",
+      "quadratic and the shift is at most of order",
+      "-(e<r>E)2/Delta E ~ hbar6n7E2/m3e6. In fact the shift is often",
+      "substantially smaller than this due to partial cancellation",
+      "of states with equal and opposite Delta E, as can be inferred",
+      "from Fig. 5, that tend to cause shifts in opposite direc-",
+      "tions. Even so, the electric field stability required to hold",
+      "Stark shifts below 1 MHz is typically of order",
+      "0.01(100/n)7/2 V/cm.",
+      "In higher electric fields, mixing of opposite parity",
+      "states gives the atom an electric dipole moment of order",
+      "n2ea0 and hence a linear Stark effect. This may be desirable",
+    ];
+    const page = createPageContext({
+      fragments: lines.map((text, index) => ({
+        text,
+        left,
+        top: top + (index * gap),
+        width: index === 16 ? shortWidth : fullWidth,
+        height: lineHeight,
+      })),
+    });
+    const range = createRangeAcrossFragments({
+      startFragment: lines[0],
+      endFragment: lines[19],
+    });
+    const firstTargetLine = lines[13];
+    const lastTargetLine = lines[16];
+    const figStart = firstTargetLine.indexOf("Fig. 5");
+    const targetStartX = left + (figStart * (fullWidth / firstTargetLine.length));
+    const targetEndX = left + shortWidth;
+    const targetStartY = top + (13 * gap) + (lineHeight / 2);
+    const targetEndY = top + (16 * gap) + (lineHeight / 2);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: lines.join(" "),
+      pages: [page],
+      clientRects: lines.map((text, index) => ({
+        left,
+        right: left + (index === 16 ? shortWidth : fullWidth),
+        top: top + (index * gap),
+        bottom: top + (index * gap) + lineHeight,
+      })),
+      dragStartPoint: { x: targetStartX + 1, y: targetStartY },
+      dragEndPoint: { x: targetEndX - 1, y: targetEndY },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(
+        "Fig. 5, that tend to cause shifts in opposite directions. Even so, the electric field stability required to hold Stark shifts below 1 MHz is typically of order 0.01(100/n)^(7/2) V/cm.",
+      );
+      expect(result.selection.textQuote.exact).not.toContain("feature for coherent");
+      expect(result.selection.textQuote.exact).not.toContain("with equal and opposite");
+      expect(result.selection.textQuote.exact).not.toContain("In higher electric fields");
+      expect(result.selection.pageRects).toHaveLength(4);
+    }
+  });
+
+  it("keeps a widened Fig. 5 to V/cm drag on the intended four-line sentence instead of expanding earlier prose", () => {
+    const left = 52;
+    const fullWidth = 250;
+    const shortWidth = 160;
+    const lineHeight = 22;
+    const top = 260;
+    const gap = 30;
+    const lines = [
+      "feature for coherent optical manipulation. On the one",
+      "hand, this sensitivity requires that electric fields be well",
+      "controlled to avoid frequency fluctuations. On the other",
+      "hand, it also makes it possible to tune the strength and",
+      "angular dependence of Rydberg-Rydberg interactions",
+      "using such fields.",
+      "For small dc electric fields E such that the dipole cou-",
+      "plings e<r>E are much less than the energy difference Delta E",
+      "of the nearest opposite parity state, the Stark effect is",
+      "quadratic and the shift is at most of order",
+      "-(e<r>E)2/Delta E ~ hbar6n7E2/m3e6. In fact the shift is often",
+      "substantially smaller than this due to partial cancellation",
+      "of states with equal and opposite Delta E, as can be inferred",
+      "from Fig. 5, that tend to cause shifts in opposite direc-",
+      "tions. Even so, the electric field stability required to hold",
+      "Stark shifts below 1 MHz is typically of order",
+      "0.01(100/n)7/2 V/cm.",
+      "In higher electric fields, mixing of opposite parity",
+      "states gives the atom an electric dipole moment of order",
+      "n2ea0 and hence a linear Stark effect. This may be desirable",
+    ];
+    const page = createPageContext({
+      fragments: lines.map((text, index) => ({
+        text,
+        left,
+        top: top + (index * gap),
+        width: index === 16 ? shortWidth : fullWidth,
+        height: lineHeight,
+      })),
+    });
+    const range = createRangeAcrossFragments({
+      startFragment: lines[0],
+      endFragment: lines[19],
+    });
+    const firstTargetLine = lines[13];
+    const lastTargetLine = lines[16];
+    const figStart = firstTargetLine.indexOf("Fig. 5");
+    const firstTargetCharWidth = fullWidth / firstTargetLine.length;
+    const lastTargetCharWidth = shortWidth / lastTargetLine.length;
+    const targetStartX = left + (figStart * firstTargetCharWidth);
+    const targetEndX = left + (lastTargetLine.length * lastTargetCharWidth);
+    const targetStartY = top + (13 * gap) + (lineHeight / 2);
+    const targetEndY = top + (16 * gap) + (lineHeight / 2);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: lines.join(" "),
+      pages: [page],
+      clientRects: lines.map((text, index) => ({
+        left,
+        right: left + (index === 16 ? shortWidth : fullWidth),
+        top: top + (index * gap),
+        bottom: top + (index * gap) + lineHeight,
+      })),
+      dragStartPoint: { x: targetStartX + 1, y: targetStartY },
+      dragEndPoint: { x: targetEndX - 1, y: targetEndY },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(
+        "Fig. 5, that tend to cause shifts in opposite directions. Even so, the electric field stability required to hold Stark shifts below 1 MHz is typically of order 0.01(100/n)^(7/2) V/cm.",
+      );
+      expect(result.selection.textQuote.exact).not.toContain("feature for coherent");
+      expect(result.selection.textQuote.exact).not.toContain("with equal and opposite");
+      expect(result.selection.textQuote.exact).not.toContain("In higher electric fields");
+      expect(result.selection.pageRects).toHaveLength(4);
+      expect(Math.max(...result.selection.pageRects.map((rect) => rect.x2))).toBeLessThan(0.55);
+    }
+  });
+
+  it("normalizes Saffman-style cross-line hyphenation and numeric spacing in the quote", () => {
+    const firstLine = "The applicability of Rydberg atoms for quantum infor-";
+    const secondLine = "mation processing, which is the central topic of this re-";
+    const thirdLine = "view, can be traced to the fact that the two-atom inter-";
+    const fourthLine = "action can be turned on and off with a contrast of 12orders";
+    const fifthLine = "of magnitude. The ability to control the interaction strength over such a wide range";
+    const page = createPageContext({
+      fragments: [
+        { text: firstLine, left: 52, top: 180, width: 520, height: 24 },
+        { text: secondLine, left: 52, top: 212, width: 520, height: 24 },
+        { text: thirdLine, left: 52, top: 244, width: 520, height: 24 },
+        { text: fourthLine, left: 52, top: 276, width: 520, height: 24 },
+        { text: fifthLine, left: 52, top: 308, width: 620, height: 24 },
+      ],
+    });
+    const range = createRangeAcrossFragments({
+      startFragment: firstLine,
+      endFragment: fifthLine,
+    });
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: [
+        firstLine,
+        secondLine,
+        thirdLine,
+        fourthLine,
+        fifthLine,
+      ].join(" "),
+      pages: [page],
+      clientRects: [
+        { left: 52, right: 572, top: 180, bottom: 204 },
+        { left: 52, right: 572, top: 212, bottom: 236 },
+        { left: 52, right: 572, top: 244, bottom: 268 },
+        { left: 52, right: 572, top: 276, bottom: 300 },
+        { left: 52, right: 672, top: 308, bottom: 332 },
+      ],
+      dragStartPoint: { x: 54, y: 192 },
+      dragEndPoint: { x: 670, y: 320 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toContain("quantum information processing");
+      expect(result.selection.textQuote.exact).toContain("topic of this review");
+      expect(result.selection.textQuote.exact).toContain("two-atom interaction");
+      expect(result.selection.textQuote.exact).toContain("12 orders of magnitude");
+      expect(result.selection.textQuote.exact).not.toContain("infor-");
+      expect(result.selection.textQuote.exact).not.toContain("12orders");
+    }
+  });
+
+  it("persists Saffman-style text markup as character-derived row rects instead of a drag block", () => {
+    const firstLine = "The applicability of Rydberg atoms for quantum infor-";
+    const secondLine = "mation processing, which is the central topic of this re-";
+    const thirdLine = "view, can be traced to the fact that the two-atom inter-";
+    const fourthLine = "action can be turned on and off with a contrast of 12";
+    const fifthLine = "orders of magnitude. The ability to control the interac-";
+    const left = 52;
+    const lineWidth = 520;
+    const lineHeight = 24;
+    const page = createPageContext({
+      fragments: [
+        { text: firstLine, left, top: 180, width: lineWidth, height: lineHeight },
+        { text: secondLine, left, top: 212, width: lineWidth, height: lineHeight },
+        { text: thirdLine, left, top: 244, width: lineWidth, height: lineHeight },
+        { text: fourthLine, left, top: 276, width: lineWidth, height: lineHeight },
+        { text: fifthLine, left, top: 308, width: lineWidth, height: lineHeight },
+      ],
+    });
+    const endText = "The ability to";
+    const endOffset = fifthLine.indexOf(endText) + endText.length;
+    const expectedLastRightPx = left + (lineWidth * endOffset / fifthLine.length);
+    const range = createRangeAcrossFragments({
+      startFragment: firstLine,
+      endFragment: fifthLine,
+      endOffset,
+    });
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: [
+        firstLine,
+        secondLine,
+        thirdLine,
+        fourthLine,
+        fifthLine.slice(0, endOffset),
+      ].join(" "),
+      pages: [page],
+      clientRects: [
+        { left, right: left + lineWidth, top: 180, bottom: 332 },
+      ],
+      dragStartPoint: { x: left + 2, y: 192 },
+      dragEndPoint: { x: expectedLastRightPx - 1, y: 320 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toContain("quantum information processing");
+      expect(result.selection.textQuote.exact).toContain("12 orders of magnitude. The ability to");
+      expect(result.selection.pageRects.length).toBeGreaterThanOrEqual(5);
+      expect(Math.max(...result.selection.pageRects.map((rect) => rect.y2 - rect.y1))).toBeLessThan(0.04);
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(left / 640, 3);
+      expect(result.selection.pageRects[0]?.x2).toBeCloseTo((left + lineWidth) / 640, 2);
+      const lastRect = result.selection.pageRects[result.selection.pageRects.length - 1];
+      const expectedLastRight = expectedLastRightPx / 640;
+      expect(lastRect?.x1).toBeCloseTo(left / 640, 3);
+      expect(lastRect?.x2).toBeCloseTo(expectedLastRight, 2);
+      expect(lastRect?.x2).toBeLessThan((left + lineWidth - 80) / 640);
+    }
+  });
+
+  it("keeps Saffman-style multi-line left-column selection rects out of the right column", () => {
+    const previousLine = "of states with equal and opposite Delta E, as can be inferred";
+    const firstSelectedLine = "from Fig. 5, that tend to cause shifts in opposite direc-";
+    const secondSelectedLine = "tions. Even so, the electric field stability required to hold";
+    const thirdSelectedLine = "Stark shifts below 1 MHz is typically of order";
+    const fourthSelectedLine = "0.01(100/n)7/2 V/cm.";
+    const rightLineA = "where j is the total";
+    const rightLineB = "dipole-dipole interaction";
+    const leftLineLeft = 52;
+    const leftLineRight = 302;
+    const rightLineLeft = 356;
+    const rightLineRight = 616;
+    const page = createPageContext({
+      fragments: [
+        { text: previousLine, left: leftLineLeft, top: 420, width: leftLineRight - leftLineLeft, height: 24 },
+        { text: firstSelectedLine, left: leftLineLeft, top: 452, width: leftLineRight - leftLineLeft, height: 24 },
+        { text: secondSelectedLine, left: leftLineLeft, top: 484, width: leftLineRight - leftLineLeft, height: 24 },
+        { text: thirdSelectedLine, left: leftLineLeft, top: 516, width: leftLineRight - leftLineLeft - 24, height: 24 },
+        { text: fourthSelectedLine, left: leftLineLeft, top: 548, width: 122, height: 24 },
+        { text: rightLineA, left: rightLineLeft, top: 484, width: rightLineRight - rightLineLeft, height: 24 },
+        { text: rightLineB, left: rightLineLeft, top: 516, width: rightLineRight - rightLineLeft, height: 24 },
+      ],
+    });
+    const range = createRangeAcrossFragments({
+      startFragment: previousLine,
+      startOffset: previousLine.indexOf("with equal"),
+      endFragment: fourthSelectedLine,
+    });
+    const figStart = firstSelectedLine.indexOf("Fig. 5");
+    const firstLineCharWidth = (leftLineRight - leftLineLeft) / firstSelectedLine.length;
+    const dragStartX = leftLineLeft + (figStart * firstLineCharWidth);
+    const dragEndX = leftLineLeft + 122;
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: [
+        "with equal and opposite Delta E, as can be inferred",
+        firstSelectedLine,
+        secondSelectedLine,
+        thirdSelectedLine,
+        fourthSelectedLine,
+      ].join(" "),
+      pages: [page],
+      clientRects: [
+        { left: 138, right: leftLineRight, top: 420, bottom: 444 },
+        { left: leftLineLeft, right: leftLineRight, top: 452, bottom: 476 },
+        { left: leftLineLeft, right: leftLineRight, top: 484, bottom: 508 },
+        { left: rightLineLeft, right: rightLineRight, top: 484, bottom: 508 },
+        { left: leftLineLeft, right: leftLineRight - 24, top: 516, bottom: 540 },
+        { left: rightLineLeft, right: rightLineRight, top: 516, bottom: 540 },
+        { left: leftLineLeft, right: dragEndX, top: 548, bottom: 572 },
+      ],
+      dragStartPoint: { x: dragStartX + 2, y: 464 },
+      dragEndPoint: { x: dragEndX - 2, y: 560 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toContain("Fig. 5, that tend");
+      expect(result.selection.textQuote.exact).toContain("opposite directions. Even so");
+      expect(result.selection.textQuote.exact).not.toContain("direc-");
+      expect(result.selection.textQuote.exact).not.toContain("where j");
+      expect(result.selection.textQuote.exact).not.toContain("dipole-dipole");
+      expect(Math.max(...result.selection.pageRects.map((rect) => rect.x2))).toBeLessThan(0.55);
+    }
+  });
+
+  it("uses pointer visual boundaries when DOM order interleaves right-column text into a Saffman selection", () => {
+    const previousLine = "of states with equal and opposite Delta E, as can be inferred";
+    const firstSelectedLine = "from Fig. 5, that tend to cause shifts in opposite direc-";
+    const secondSelectedLine = "tions. Even so, the electric field stability required to hold";
+    const thirdSelectedLine = "Stark shifts below 1 MHz is typically of order";
+    const fourthSelectedLine = "0.01(100/n)7/2 V/cm.";
+    const rightLineA = "where j is the total angular momentum";
+    const rightLineB = "dipole-dipole interaction of atom states";
+    const leftLineLeft = 52;
+    const leftLineRight = 302;
+    const rightLineLeft = 356;
+    const rightLineRight = 616;
+    const lineHeight = 22;
+    const firstLineTop = 452;
+    const page = createPageContext({
+      fragments: [
+        { text: previousLine, left: leftLineLeft, top: 420, width: leftLineRight - leftLineLeft, height: lineHeight },
+        { text: firstSelectedLine, left: leftLineLeft, top: firstLineTop, width: leftLineRight - leftLineLeft, height: lineHeight },
+        { text: secondSelectedLine, left: leftLineLeft, top: firstLineTop + 32, width: leftLineRight - leftLineLeft, height: lineHeight },
+        { text: rightLineA, left: rightLineLeft, top: firstLineTop + 32, width: rightLineRight - rightLineLeft, height: lineHeight },
+        { text: thirdSelectedLine, left: leftLineLeft, top: firstLineTop + 64, width: leftLineRight - leftLineLeft - 24, height: lineHeight },
+        { text: rightLineB, left: rightLineLeft, top: firstLineTop + 64, width: rightLineRight - rightLineLeft, height: lineHeight },
+        { text: fourthSelectedLine, left: leftLineLeft, top: firstLineTop + 96, width: 122, height: lineHeight },
+      ],
+    });
+    const range = createRangeAcrossFragments({
+      startFragment: previousLine,
+      startOffset: previousLine.indexOf("with equal"),
+      endFragment: fourthSelectedLine,
+    });
+    const figStart = firstSelectedLine.indexOf("Fig. 5");
+    const firstLineCharWidth = (leftLineRight - leftLineLeft) / firstSelectedLine.length;
+    const dragStartX = leftLineLeft + (figStart * firstLineCharWidth);
+    const dragEndX = leftLineLeft + 122;
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: [
+        "with equal and opposite Delta E, as can be inferred",
+        firstSelectedLine,
+        secondSelectedLine,
+        rightLineA,
+        thirdSelectedLine,
+        rightLineB,
+        fourthSelectedLine,
+      ].join(" "),
+      pages: [page],
+      clientRects: [
+        { left: 138, right: leftLineRight, top: 420, bottom: 420 + lineHeight },
+        { left: dragStartX, right: leftLineRight, top: firstLineTop, bottom: firstLineTop + lineHeight },
+        { left: leftLineLeft, right: leftLineRight, top: firstLineTop + 32, bottom: firstLineTop + 32 + lineHeight },
+        { left: rightLineLeft, right: rightLineRight, top: firstLineTop + 32, bottom: firstLineTop + 32 + lineHeight },
+        { left: leftLineLeft, right: leftLineRight - 24, top: firstLineTop + 64, bottom: firstLineTop + 64 + lineHeight },
+        { left: rightLineLeft, right: rightLineRight, top: firstLineTop + 64, bottom: firstLineTop + 64 + lineHeight },
+        { left: leftLineLeft, right: dragEndX, top: firstLineTop + 96, bottom: firstLineTop + 96 + lineHeight },
+      ],
+      dragStartPoint: { x: dragStartX + 2, y: firstLineTop + (lineHeight / 2) },
+      dragEndPoint: { x: dragEndX - 2, y: firstLineTop + 96 + (lineHeight / 2) },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toContain("Fig. 5, that tend");
+      expect(result.selection.textQuote.exact).toContain("opposite directions. Even so");
+      expect(result.selection.textQuote.exact).not.toContain("direc-");
+      expect(result.selection.textQuote.exact).not.toContain("with equal and opposite");
+      expect(result.selection.textQuote.exact).not.toContain("where j");
+      expect(result.selection.textQuote.exact).not.toContain("dipole-dipole");
+      expect(Math.max(...result.selection.pageRects.map((rect) => rect.x2))).toBeLessThan(0.55);
+    }
+  });
+
+  it("matches the component Saffman regression data without keeping right-column prose", () => {
+    const previousLine = "of states with equal and opposite Delta E, as can be inferred";
+    const firstSelectedLine = "from Fig. 5, that tend to cause shifts in opposite direc-";
+    const secondSelectedLine = "tions. Even so, the electric field stability required to hold";
+    const thirdSelectedLine = "Stark shifts below 1 MHz is typically of order";
+    const fourthSelectedLine = "0.01(100/n)7/2 V/cm.";
+    const rightLineA = "where j is the total angular momentum";
+    const rightLineB = "dipole-dipole interaction of atom states";
+    const leftLineLeft = 52;
+    const leftLineRight = 302;
+    const rightLineLeft = 356;
+    const rightLineRight = 616;
+    const lineHeight = 22;
+    const firstLineTop = 452;
+    const figStart = firstSelectedLine.indexOf("Fig. 5");
+    const firstLineCharWidth = (leftLineRight - leftLineLeft) / firstSelectedLine.length;
+    const selectedLeft = leftLineLeft + (figStart * firstLineCharWidth);
+    const selectedEndX = leftLineLeft + 122;
+    const selectedText = [
+      "Fig. 5, that tend to cause shifts in opposite direc-",
+      "tions. Even so, the electric field stability required to hold",
+      "Stark shifts below 1 MHz is typically of order",
+      fourthSelectedLine,
+    ].join(" ");
+    const page = createPageContext({
+      fragments: [
+        { text: previousLine, left: leftLineLeft, top: 420, width: leftLineRight - leftLineLeft, height: lineHeight },
+        { text: firstSelectedLine, left: leftLineLeft, top: firstLineTop, width: leftLineRight - leftLineLeft, height: lineHeight },
+        { text: secondSelectedLine, left: leftLineLeft, top: firstLineTop + 32, width: leftLineRight - leftLineLeft, height: lineHeight },
+        { text: rightLineA, left: rightLineLeft, top: firstLineTop + 32, width: rightLineRight - rightLineLeft, height: lineHeight },
+        { text: thirdSelectedLine, left: leftLineLeft, top: firstLineTop + 64, width: leftLineRight - leftLineLeft - 24, height: lineHeight },
+        { text: rightLineB, left: rightLineLeft, top: firstLineTop + 64, width: rightLineRight - rightLineLeft, height: lineHeight },
+        { text: fourthSelectedLine, left: leftLineLeft, top: firstLineTop + 96, width: selectedEndX - leftLineLeft, height: lineHeight },
+      ],
+    });
+    const range = createRangeAcrossFragments({
+      startFragment: previousLine,
+      endFragment: fourthSelectedLine,
+      startOffset: previousLine.indexOf("with equal"),
+      endOffset: fourthSelectedLine.length,
+    });
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: selectedText,
+      pages: [page],
+      clientRects: [
+        { left: 138, right: leftLineRight, top: 420, bottom: 420 + lineHeight },
+        { left: selectedLeft, right: leftLineRight, top: firstLineTop, bottom: firstLineTop + lineHeight },
+        { left: leftLineLeft, right: leftLineRight, top: firstLineTop + 32, bottom: firstLineTop + 32 + lineHeight },
+        { left: rightLineLeft, right: rightLineRight, top: firstLineTop + 32, bottom: firstLineTop + 32 + lineHeight },
+        { left: leftLineLeft, right: leftLineRight - 24, top: firstLineTop + 64, bottom: firstLineTop + 64 + lineHeight },
+        { left: rightLineLeft, right: rightLineRight, top: firstLineTop + 64, bottom: firstLineTop + 64 + lineHeight },
+        { left: leftLineLeft, right: selectedEndX, top: firstLineTop + 96, bottom: firstLineTop + 96 + lineHeight },
+      ],
+      dragStartPoint: { x: selectedLeft + 1, y: firstLineTop + (lineHeight / 2) },
+      dragEndPoint: { x: selectedEndX - 1, y: firstLineTop + 96 + (lineHeight / 2) },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toContain("Fig. 5, that tend");
+      expect(result.selection.textQuote.exact).toContain("opposite directions. Even so");
+      expect(result.selection.textQuote.exact).not.toContain("direc-");
+      expect(result.selection.textQuote.exact).not.toContain("where j");
+      expect(result.selection.textQuote.exact).not.toContain("dipole-dipole");
+      expect(Math.max(...result.selection.pageRects.map((rect) => rect.x2))).toBeLessThan(0.55);
+    }
+  });
+
+  it("keeps a Saffman Fig. 7 paragraph selection in order with inline quantum-state fragments", () => {
+    const lineA = "states of this type. To illustrate, Fig. 7 shows the energy";
+    const lineBPrefix = "level structure centered around the |60p";
+    const lineBSupA = "3/2";
+    const lineBMid = "60p";
+    const lineBSupB = "3/2";
+    const lineBSuffix = "> state of";
+    const lineC = "Rb at zero relative energy. If we restrict changes in the";
+    const lineD = "principal quantum numbers to at most \u00b18, there are 18";
+    const lineE = "two-atom states within \u00b14 GHz of the initial state.";
+    const selectedText = [
+      "Fig. 7 shows the energy",
+      "level structure centered around the |60p3/2 60p3/2> state of",
+      lineC,
+      lineD,
+      lineE,
+    ].join(" ");
+    const left = 64;
+    const right = 560;
+    const lineHeight = 24;
+    const page = createPageContext({
+      fragments: [
+        { text: lineA, left, top: 210, width: right - left, height: lineHeight },
+        { text: lineBPrefix, left, top: 242, width: 270, height: lineHeight },
+        { text: lineBSupA, left: 334, top: 234, width: 24, height: 12 },
+        { text: " ", left: 358, top: 242, width: 8, height: lineHeight },
+        { text: lineBMid, left: 366, top: 242, width: 34, height: lineHeight },
+        { text: lineBSupB, left: 400, top: 234, width: 24, height: 12 },
+        { text: lineBSuffix, left: 424, top: 242, width: 110, height: lineHeight },
+        { text: lineC, left, top: 274, width: right - left - 20, height: lineHeight },
+        { text: lineD, left, top: 306, width: right - left - 35, height: lineHeight },
+        { text: lineE, left, top: 338, width: right - left - 80, height: lineHeight },
+      ],
+    });
+    const range = createRangeAcrossFragments({
+      startFragment: lineA,
+      startOffset: lineA.indexOf("Fig. 7"),
+      endFragment: lineE,
+      endOffset: lineE.length,
+    });
+    const firstLineCharWidth = (right - left) / lineA.length;
+    const selectedLeft = left + (lineA.indexOf("Fig. 7") * firstLineCharWidth);
+    const selectedEndX = left + (right - left - 80);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: selectedText,
+      pages: [page],
+      clientRects: [
+        { left: selectedLeft, right, top: 210, bottom: 210 + lineHeight },
+        { left, right: 534, top: 234, bottom: 266 },
+        { left, right: right - 20, top: 274, bottom: 274 + lineHeight },
+        { left, right: right - 35, top: 306, bottom: 306 + lineHeight },
+        { left, right: selectedEndX, top: 338, bottom: 338 + lineHeight },
+      ],
+      dragStartPoint: { x: selectedLeft + 2, y: 222 },
+      dragEndPoint: { x: selectedEndX - 2, y: 350 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toContain("Fig. 7 shows the energy");
+      expect(result.selection.textQuote.exact).toContain("|60p3/2 60p3/2> state");
+      expect(result.selection.textQuote.exact).toContain("two-atom states within \u00b14 GHz");
+      expect(result.selection.textQuote.exact).not.toContain("p 3/2 p 3/2");
+      expect(result.selection.textQuote.exact).not.toBe("0");
+      expect(result.selection.pageRects).toHaveLength(5);
+    }
+  });
+
+  it("keeps a Saffman right-column prose selection from resolving to a stray zero", () => {
+    const leftStray = "0";
+    const rightLineA = "where a and b are the positions of the two Rydberg";
+    const rightLineB = "electrons measured from their respective nuclei. At such";
+    const rightLineC = "large distances, overlap between the atoms can be ne-";
+    const rightLineD = "glected.";
+    const selectedText = [
+      rightLineA,
+      rightLineB,
+      rightLineC,
+      rightLineD,
+    ].join(" ");
+    const page = createPageContext({
+      fragments: [
+        { text: leftStray, left: 96, top: 250, width: 10, height: 12 },
+        { text: rightLineA, left: 340, top: 210, width: 260, height: 22 },
+        { text: rightLineB, left: 340, top: 240, width: 270, height: 22 },
+        { text: rightLineC, left: 340, top: 270, width: 270, height: 22 },
+        { text: rightLineD, left: 340, top: 300, width: 80, height: 22 },
+      ],
+    });
+    const range = createRangeWithinFragment(leftStray, leftStray);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: "0",
+      pages: [page],
+      clientRects: [
+        { left: 340, right: 600, top: 210, bottom: 232 },
+        { left: 340, right: 610, top: 240, bottom: 262 },
+        { left: 340, right: 610, top: 270, bottom: 292 },
+        { left: 340, right: 420, top: 300, bottom: 322 },
+      ],
+      dragStartPoint: { x: 342, y: 221 },
+      dragEndPoint: { x: 418, y: 311 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toContain("where a and b are the positions");
+      expect(result.selection.textQuote.exact).toContain("large distances");
+      expect(result.selection.textQuote.exact).not.toBe("0");
+      expect(Math.min(...result.selection.pageRects.map((rect) => rect.x1))).toBeGreaterThan(0.5);
+    }
+  });
+
+  it("uses explicit right-column geometry even when desktop pointer metadata is missing", () => {
+    const leftStray = "0";
+    const rightLineA = "where a and b are the positions of the two Rydberg";
+    const rightLineB = "electrons measured from their respective nuclei. At such";
+    const rightLineC = "large distances, overlap between the atoms can be ne-";
+    const rightLineD = "glected.";
+    const page = createPageContext({
+      fragments: [
+        { text: leftStray, left: 96, top: 250, width: 10, height: 12 },
+        { text: rightLineA, left: 340, top: 210, width: 260, height: 22 },
+        { text: rightLineB, left: 340, top: 240, width: 270, height: 22 },
+        { text: rightLineC, left: 340, top: 270, width: 270, height: 22 },
+        { text: rightLineD, left: 340, top: 300, width: 80, height: 22 },
+      ],
+    });
+    const range = createRangeWithinFragment(leftStray, leftStray);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: "0",
+      pages: [page],
+      clientRects: [
+        { left: 340, right: 600, top: 210, bottom: 232 },
+        { left: 340, right: 610, top: 240, bottom: 262 },
+        { left: 340, right: 610, top: 270, bottom: 292 },
+        { left: 340, right: 420, top: 300, bottom: 322 },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toContain("where a and b are the positions");
+      expect(result.selection.textQuote.exact).toContain("large distances");
+      expect(result.selection.textQuote.exact).not.toBe("0");
+      expect(Math.min(...result.selection.pageRects.map((rect) => rect.x1))).toBeGreaterThan(0.5);
     }
   });
 

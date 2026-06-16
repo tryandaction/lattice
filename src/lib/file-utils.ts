@@ -373,6 +373,13 @@ export const EDITABLE_CODE_EXTENSIONS = new Set([
   'jsx',     // JSX
   'ts',      // TypeScript
   'tsx',     // TSX
+  'c',       // C
+  'h',       // C header
+  'cpp',     // C++
+  'cxx',     // C++
+  'cc',      // C++
+  'hpp',     // C++ header
+  'hxx',     // C++ header
   'html',    // HTML
   'htm',     // HTML
   'mjs',     // ES Modules
@@ -420,7 +427,7 @@ export function isEditableCodeFile(extension: string): boolean {
  * @param extension - File extension without the leading dot
  * @returns The CodeEditor language or 'javascript' as fallback
  */
-export function getCodeEditorLanguage(extension: string): 'python' | 'javascript' | 'typescript' | 'json' | 'html' | 'latex' | 'markdown' | 'plaintext' {
+export function getCodeEditorLanguage(extension: string): 'python' | 'javascript' | 'typescript' | 'json' | 'html' | 'c' | 'cpp' | 'latex' | 'markdown' | 'plaintext' {
   const ext = extension.toLowerCase();
   
   switch (ext) {
@@ -434,6 +441,15 @@ export function getCodeEditorLanguage(extension: string): 'python' | 'javascript
     case 'ts':
     case 'tsx':
       return 'typescript';
+    case 'c':
+    case 'h':
+      return 'c';
+    case 'cpp':
+    case 'cxx':
+    case 'cc':
+    case 'hpp':
+    case 'hxx':
+      return 'cpp';
     case 'json':
     case 'jsonc':
       return 'json';

@@ -13,13 +13,12 @@
  */
 
 import { useState, useCallback, useEffect, useRef, useMemo, startTransition } from "react";
+import { toast } from "sonner";
 import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
-import { useTextSelection } from "@/hooks/use-text-selection";
-import { AiInlineMenu } from "@/components/ai/ai-inline-menu";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
 import dynamic from "next/dynamic";
@@ -31,7 +30,7 @@ import type {
 import type { LivePreviewEditorRef } from "./codemirror/live-preview/live-preview-editor";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { clearDecorationCache } from "./codemirror/live-preview/decoration-coordinator";
-import { emitFileSave } from "@/lib/plugins/runtime";
+import { emitFileSave, emitVaultChange } from "@/lib/plugins/runtime";
 import { navigateLink } from "@/lib/link-router/navigate-link";
 import { useLinkNavigationStore } from "@/stores/link-navigation-store";
 import { parseHeadings, buildOutlineTree } from "./codemirror/live-preview/markdown-parser";
@@ -50,11 +49,17 @@ import { dirname, resolveWorkspaceFilePath } from "@/lib/runner/path-utils";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useRunnerHealth } from "@/hooks/use-runner-health";
 import { WorkspaceRunnerManager } from "@/components/runner/workspace-runner-manager";
+import { MarkdownLinksPanel } from "@/components/editor/markdown-links-panel";
 import type { ExecutionProblem } from "@/lib/runner/types";
+import type { IndexedMarkdownLink } from "@/lib/markdown/link-index";
+import type { MarkdownUnlinkedMention } from "@/lib/markdown/workspace-link-index";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useExecutionDockLayout } from "@/hooks/use-execution-dock-layout";
 import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
 import { prepareMarkdownForReading } from "@/lib/markdown-reading";
+import { ignoreWorkspaceMarkdownUnlinkedMention, upsertWorkspaceMarkdownFile } from "@/lib/markdown/workspace-link-index";
+import { linkUnlinkedMentionInContent, linkUnlinkedMentionsInContent, repairMarkdownLinkTargetInContent } from "@/lib/markdown/link-maintenance";
+import { normalizeWorkspacePath } from "@/lib/link-router/path-utils";
 import { useI18n } from "@/hooks/use-i18n";
 import { buildPersistedFileViewStateKey, loadPersistedFileViewState, savePersistedFileViewState } from "@/lib/file-view-state";
 
@@ -127,6 +132,63 @@ interface ObsidianMarkdownViewerProps {
   variant?: "document" | "system-index";
 }
 
+function ensureMarkdownExtension(path: string): string {
+  if (/\.(md|markdown)$/i.test(path)) {
+    return path;
+  }
+  return `${path}.md`;
+}
+
+function buildMissingNoteTitle(path: string): string {
+  const fileName = path.split("/").pop() || "New Note";
+  return fileName.replace(/\.(md|markdown)$/i, "").replace(/[-_]+/g, " ").trim() || "New Note";
+}
+
+async function resolveWorkspaceFileHandle(
+  rootHandle: FileSystemDirectoryHandle,
+  path: string,
+): Promise<FileSystemFileHandle> {
+  const parts = normalizeWorkspacePath(path).split("/").filter(Boolean);
+  const fileName = parts.pop();
+  if (!fileName) {
+    throw new Error("Invalid file path");
+  }
+
+  let directory = rootHandle;
+  for (const part of parts) {
+    directory = await directory.getDirectoryHandle(part);
+  }
+  return directory.getFileHandle(fileName);
+}
+
+async function createWorkspaceMarkdownFile(
+  rootHandle: FileSystemDirectoryHandle,
+  path: string,
+  content: string,
+): Promise<void> {
+  const normalized = normalizeWorkspacePath(path);
+  const parts = normalized.split("/").filter(Boolean);
+  const fileName = parts.pop();
+  if (!fileName) {
+    throw new Error("Invalid note path");
+  }
+
+  let directory = rootHandle;
+  for (const part of parts) {
+    directory = await directory.getDirectoryHandle(part, { create: true });
+  }
+
+  const fileHandle = await directory.getFileHandle(fileName, { create: true });
+  const existing = await fileHandle.getFile();
+  if (existing.size > 0) {
+    return;
+  }
+
+  const writable = await fileHandle.createWritable();
+  await writable.write(content);
+  await writable.close();
+}
+
 /**
  * ObsidianMarkdownViewer - Obsidian-like Markdown editing experience
  */
@@ -150,6 +212,7 @@ export function ObsidianMarkdownViewer({
   const [isDirty, setIsDirty] = useState(false);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [showOutline, setShowOutline] = useState(false);
+  const [showLinks, setShowLinks] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [selectionHubState, setSelectionHubState] = useState<{
     context: SelectionContext;
@@ -180,7 +243,6 @@ export function ObsidianMarkdownViewer({
   const isDirtyRef = useRef(isDirty);
   useEffect(() => { localContentRef.current = localContent; }, [localContent]);
   useEffect(() => { isDirtyRef.current = isDirty; }, [isDirty]);
-  const { selection: aiSelection, dismiss: dismissAiMenu } = useTextSelection(containerRef);
   const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
     containerRef,
     ({ text }) => createSelectionContext({
@@ -281,13 +343,11 @@ export function ObsidianMarkdownViewer({
       // Clear stale decoration cache from previous file
       clearDecorationCache();
 
-      /* eslint-disable react-hooks/set-state-in-effect */
       setLocalContent(content);
       setIsDirty(false);
       setSaveStatus('idle');
       setOutline([]);
       setActiveHeading(undefined);
-      /* eslint-enable react-hooks/set-state-in-effect */
 
       // Restore editor state if cached (with race condition guard)
       const cachedState = getEditorState(resolvedFileId);
@@ -359,6 +419,9 @@ export function ObsidianMarkdownViewer({
       await onSave();
       setIsDirty(false);
       setSaveStatus("saved");
+      if (filePath) {
+        upsertWorkspaceMarkdownFile(filePath, localContent);
+      }
       // Notify plugins that file was saved
       emitFileSave(resolvedFileId);
       setTimeout(() => setSaveStatus("idle"), 2000);
@@ -366,7 +429,7 @@ export function ObsidianMarkdownViewer({
       setSaveStatus("error");
       setTimeout(() => setSaveStatus("idle"), 3000);
     }
-  }, [onSave, resolvedFileId]);
+  }, [filePath, localContent, onSave, resolvedFileId]);
 
   // Handle mode change
   const handleModeChange = useCallback((newMode: ViewMode) => {
@@ -384,22 +447,6 @@ export function ObsidianMarkdownViewer({
   const handleOutlineChange = useCallback((newOutline: OutlineItem[]) => {
     setOutline(newOutline);
   }, []);
-
-  // Handle AI inline insert (append after selection)
-  const handleAiInsert = useCallback((text: string) => {
-    const newContent = localContent + "\n\n" + text;
-    handleContentChange(newContent);
-  }, [localContent, handleContentChange]);
-
-  // Handle AI inline replace (replace selected text)
-  const handleAiReplace = useCallback((text: string) => {
-    const sel = window.getSelection();
-    const selectedText = sel?.toString() ?? "";
-    if (selectedText && localContent.includes(selectedText)) {
-      const newContent = localContent.replace(selectedText, text);
-      handleContentChange(newContent);
-    }
-  }, [localContent, handleContentChange]);
 
   useEffect(() => {
     if (!filePath || !pendingNavigation) return;
@@ -432,6 +479,146 @@ export function ObsidianMarkdownViewer({
     });
     onNavigateToFile?.(target);
   }, [filePath, onNavigateToFile, paneId, rootHandle]);
+
+  const handleSourceLinkNavigate = useCallback((targetFile: string, line: number) => {
+    void navigateLink(`${targetFile}#line=${line}`, {
+      paneId,
+      rootHandle,
+      currentFilePath: filePath,
+    });
+    onNavigateToFile?.(targetFile);
+  }, [filePath, onNavigateToFile, paneId, rootHandle]);
+
+  const handleCreateMissingNote = useCallback(async (link: IndexedMarkdownLink) => {
+    if (!rootHandle || !link.parsedTarget || !("path" in link.parsedTarget)) {
+      return;
+    }
+
+    const targetPath = ensureMarkdownExtension(normalizeWorkspacePath(link.parsedTarget.path));
+    const title = buildMissingNoteTitle(targetPath);
+    const initialContent = `# ${title}\n\n`;
+
+    try {
+      await createWorkspaceMarkdownFile(rootHandle, targetPath, initialContent);
+      upsertWorkspaceMarkdownFile(targetPath, initialContent);
+      emitVaultChange(targetPath);
+      toast.success(t("markdown.links.toast.created"), {
+        description: targetPath,
+      });
+      handleLinkNavigate(targetPath);
+    } catch (error) {
+      toast.error(t("markdown.links.toast.createFailed"), {
+        description: error instanceof Error ? error.message : t("markdown.links.toast.createFailedDescription"),
+      });
+    }
+  }, [handleLinkNavigate, rootHandle, t]);
+
+  const handleLinkUnlinkedMention = useCallback(async (mention: MarkdownUnlinkedMention) => {
+    if (!rootHandle) {
+      return;
+    }
+
+    try {
+      const fileHandle = await resolveWorkspaceFileHandle(rootHandle, mention.sourceFile);
+      const content = await (await fileHandle.getFile()).text();
+      const result = linkUnlinkedMentionInContent(content, mention);
+      if (!result.changed) {
+        throw new Error("Mention text is no longer available");
+      }
+
+      const writable = await fileHandle.createWritable();
+      await writable.write(result.content);
+      await writable.close();
+      upsertWorkspaceMarkdownFile(mention.sourceFile, result.content);
+      emitVaultChange(mention.sourceFile);
+      toast.success(t("markdown.links.toast.linkedMention"), {
+        description: mention.sourceFile,
+      });
+    } catch (error) {
+      toast.error(t("markdown.links.toast.linkMentionFailed"), {
+        description: error instanceof Error ? error.message : t("markdown.links.toast.createFailedDescription"),
+      });
+    }
+  }, [rootHandle, t]);
+
+  const handleLinkUnlinkedMentions = useCallback(async (mentions: MarkdownUnlinkedMention[]) => {
+    if (!rootHandle || mentions.length === 0) {
+      return;
+    }
+
+    const mentionsByFile = new Map<string, MarkdownUnlinkedMention[]>();
+    for (const mention of mentions) {
+      const items = mentionsByFile.get(mention.sourceFile) ?? [];
+      items.push(mention);
+      mentionsByFile.set(mention.sourceFile, items);
+    }
+
+    try {
+      let linkedCount = 0;
+      for (const [sourceFile, sourceMentions] of mentionsByFile) {
+        const fileHandle = await resolveWorkspaceFileHandle(rootHandle, sourceFile);
+        const content = await (await fileHandle.getFile()).text();
+        const result = linkUnlinkedMentionsInContent(content, sourceMentions);
+        if (!result.changed) {
+          continue;
+        }
+
+        const writable = await fileHandle.createWritable();
+        await writable.write(result.content);
+        await writable.close();
+        upsertWorkspaceMarkdownFile(sourceFile, result.content);
+        emitVaultChange(sourceFile);
+        linkedCount += result.linkedCount;
+      }
+
+      if (linkedCount === 0) {
+        throw new Error("Mention text is no longer available");
+      }
+
+      toast.success(t("markdown.links.toast.linkedMentions"), {
+        description: String(linkedCount),
+      });
+    } catch (error) {
+      toast.error(t("markdown.links.toast.linkMentionFailed"), {
+        description: error instanceof Error ? error.message : t("markdown.links.toast.createFailedDescription"),
+      });
+    }
+  }, [rootHandle, t]);
+
+  const handleIgnoreUnlinkedMention = useCallback((mention: MarkdownUnlinkedMention) => {
+    ignoreWorkspaceMarkdownUnlinkedMention(mention);
+    toast.success(t("markdown.links.toast.ignoredMention"), {
+      description: mention.sourceFile,
+    });
+  }, [t]);
+
+  const handleRepairBrokenLink = useCallback(async (link: IndexedMarkdownLink, targetFile: string) => {
+    if (!rootHandle) {
+      return;
+    }
+
+    try {
+      const fileHandle = await resolveWorkspaceFileHandle(rootHandle, link.sourceFile);
+      const content = await (await fileHandle.getFile()).text();
+      const result = repairMarkdownLinkTargetInContent(content, link, targetFile);
+      if (!result.changed) {
+        throw new Error("Link text is no longer available");
+      }
+
+      const writable = await fileHandle.createWritable();
+      await writable.write(result.content);
+      await writable.close();
+      upsertWorkspaceMarkdownFile(link.sourceFile, result.content);
+      emitVaultChange(link.sourceFile);
+      toast.success(t("markdown.links.toast.repairedLink"), {
+        description: link.sourceFile,
+      });
+    } catch (error) {
+      toast.error(t("markdown.links.toast.repairLinkFailed"), {
+        description: error instanceof Error ? error.message : t("markdown.links.toast.createFailedDescription"),
+      });
+    }
+  }, [rootHandle, t]);
 
   const commandBarState = useMemo<CommandBarState>(() => {
     const breadcrumbs = (filePath ?? fileName)
@@ -471,6 +658,14 @@ export function ObsidianMarkdownViewer({
           onTrigger: () => setShowOutline((value) => !value),
         },
         {
+          id: "links",
+          label: showLinks ? t("workbench.commandBar.hideLinks") : t("workbench.commandBar.showLinks"),
+          priority: 31,
+          group: "secondary",
+          disabled: !filePath,
+          onTrigger: () => setShowLinks((value) => !value),
+        },
+        {
           id: "mode-live",
           label: t("workbench.commandBar.live"),
           priority: 40,
@@ -504,6 +699,7 @@ export function ObsidianMarkdownViewer({
     mode,
     onSave,
     saveStatus,
+    showLinks,
     showOutline,
     t,
   ]);
@@ -644,6 +840,20 @@ export function ObsidianMarkdownViewer({
           />
         </div>
       )}
+      {showLinks && (
+        <div className="w-64 border-r border-border flex-shrink-0">
+          <MarkdownLinksPanel
+            filePath={filePath}
+            onNavigate={handleLinkNavigate}
+            onNavigateToSource={handleSourceLinkNavigate}
+            onCreateMissingNote={handleCreateMissingNote}
+            onLinkUnlinkedMention={handleLinkUnlinkedMention}
+            onLinkUnlinkedMentions={handleLinkUnlinkedMentions}
+            onIgnoreUnlinkedMention={handleIgnoreUnlinkedMention}
+            onRepairBrokenLink={handleRepairBrokenLink}
+          />
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 overflow-auto">
         {mode === "reading" || (variant === "system-index" && mode !== "source") ? (
@@ -692,6 +902,12 @@ export function ObsidianMarkdownViewer({
     handleModeChange,
     handleOutlineChange,
     handleOutlineNavigate,
+    handleCreateMissingNote,
+    handleIgnoreUnlinkedMention,
+    handleLinkUnlinkedMention,
+    handleLinkUnlinkedMentions,
+    handleRepairBrokenLink,
+    handleSourceLinkNavigate,
     handleSave,
     localContent,
     mode,
@@ -699,6 +915,7 @@ export function ObsidianMarkdownViewer({
     paneId,
     readingModeContent,
     rootHandle,
+    showLinks,
     showOutline,
     variant,
   ]);
@@ -851,17 +1068,6 @@ export function ObsidianMarkdownViewer({
           </div>
           {shouldRenderRunDock ? renderRunDock(false) : null}
         </div>
-      )}
-
-      {/* AI Inline Menu */}
-      {aiSelection && (
-        <AiInlineMenu
-          selectedText={aiSelection.text}
-          position={aiSelection.position}
-          onInsert={handleAiInsert}
-          onReplace={handleAiReplace}
-          onClose={dismissAiMenu}
-        />
       )}
 
       <SelectionContextMenu

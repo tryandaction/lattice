@@ -56,6 +56,8 @@ npm run release:prepare
 - `/diagnostics/image-annotation` 可打开
 - `/diagnostics/selection-ai` 可打开
 - `/diagnostics/runner` 可打开
+- `/performance-test` 可执行三项性能基线
+- 诊断与性能路由保留为开发/验收直达入口；主工作台不默认暴露这些内部工具入口
 - `tauri build` 输出中仍可看到：
   - `Patching binary ... for type msi`
   - `Patching binary ... for type nsis`

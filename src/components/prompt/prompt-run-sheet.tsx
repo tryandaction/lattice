@@ -86,11 +86,14 @@ export function PromptRunSheet({
   const canRun = !isContextUpdating && rendered.missingRequiredContext.length === 0;
 
   return (
-    <div className="fixed inset-0 z-[190] flex items-start justify-end bg-black/45 px-2 pb-2 pt-6 md:px-4 md:pt-20" onClick={onClose}>
-      <div
-        className="flex h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl md:h-[calc(100vh-6rem)]"
-        onClick={(event) => event.stopPropagation()}
-      >
+    <aside
+      className="fixed inset-y-0 right-0 z-[190] flex w-full max-w-[42rem] flex-col border-l border-border bg-background shadow-2xl sm:w-[min(42rem,calc(100vw-4rem))]"
+      role="dialog"
+      aria-modal="false"
+      aria-label={t("prompt.run.title")}
+      data-testid="prompt-run-dock"
+    >
+      <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
         <div className="flex items-start justify-between border-b border-border px-6 py-4">
           <div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
@@ -209,7 +212,7 @@ export function PromptRunSheet({
           </div>
         </div>
       </div>
-    </div>
+    </aside>
   );
 }
 

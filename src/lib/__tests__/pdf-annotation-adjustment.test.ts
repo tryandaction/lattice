@@ -50,6 +50,129 @@ function createModel(): PdfPageTextModel {
 }
 
 describe("pdf-annotation-adjustment", () => {
+  it("prefers persisted character offsets over stale rectangles when restoring an anchor", () => {
+    const model = createModel();
+    const startCharIndex = model.normalizedText.indexOf("which we");
+    const endCharIndex = startCharIndex + "which we".length;
+    const target: PdfTarget = {
+      type: "pdf",
+      page: 1,
+      rects: [
+        { x1: 80 / 640, y1: 120 / 960, x2: 200 / 640, y2: 144 / 960 },
+      ],
+      textKernelVersion: 1,
+      startCharIndex,
+      endCharIndex,
+      textQuote: {
+        exact: "which we",
+        prefix: "phenomenon, ",
+        suffix: " call algorithm",
+        source: "pdfjs-text-model",
+        confidence: "exact",
+      },
+    };
+
+    const anchor = resolvePdfAnnotationTextAnchor(model, target);
+
+    expect(anchor).not.toBeNull();
+    expect(anchor?.startOffset).toBe(startCharIndex);
+    expect(anchor?.endOffset).toBe(endCharIndex);
+    expect(anchor?.textQuote.exact).toBe("which we");
+  });
+
+  it("falls back to the exact quote when persisted character offsets no longer match the text", () => {
+    const model = createModel();
+    const target: PdfTarget = {
+      type: "pdf",
+      page: 1,
+      rects: [
+        { x1: 116 / 640, y1: 120 / 960, x2: 200 / 640, y2: 144 / 960 },
+        { x1: 208 / 640, y1: 120 / 960, x2: 260 / 640, y2: 144 / 960 },
+      ],
+      textKernelVersion: 1,
+      startCharIndex: 0,
+      endCharIndex: 4,
+      textQuote: {
+        exact: "phenomenon, which",
+        prefix: "This ",
+        suffix: " we call",
+        source: "pdfjs-text-model",
+        confidence: "exact",
+      },
+    };
+
+    const anchor = resolvePdfAnnotationTextAnchor(model, target);
+
+    expect(anchor).not.toBeNull();
+    expect(anchor?.textQuote.exact).toBe("phenomenon, which");
+    expect(anchor?.startOffset).toBe(model.normalizedText.indexOf("phenomenon, which"));
+  });
+
+  it("uses preferred rectangles to choose the correct repeated exact quote", () => {
+    const normalizedText = "repeated phrase middle repeated phrase";
+    const secondStart = normalizedText.lastIndexOf("repeated phrase");
+    const model: PdfPageTextModel = {
+      pageNumber: 1,
+      viewportWidth: 640,
+      viewportHeight: 960,
+      textContent: { items: [], styles: {}, lang: null },
+      items: [],
+      segments: [
+        {
+          itemIndex: 0,
+          text: "repeated phrase",
+          normalizedText: "repeated phrase",
+          hasEOL: false,
+          pageTextStart: 0,
+          pageTextEnd: 15,
+        },
+        {
+          itemIndex: 1,
+          text: "middle",
+          normalizedText: "middle",
+          hasEOL: false,
+          pageTextStart: 16,
+          pageTextEnd: 22,
+        },
+        {
+          itemIndex: 2,
+          text: "repeated phrase",
+          normalizedText: "repeated phrase",
+          hasEOL: false,
+          pageTextStart: secondStart,
+          pageTextEnd: secondStart + "repeated phrase".length,
+        },
+      ],
+      itemRects: [
+        { itemIndex: 0, left: 80, top: 120, width: 150, height: 24 },
+        { itemIndex: 1, left: 260, top: 120, width: 56, height: 24 },
+        { itemIndex: 2, left: 360, top: 120, width: 150, height: 24 },
+      ],
+      normalizedText,
+    };
+    const target: PdfTarget = {
+      type: "pdf",
+      page: 1,
+      rects: [
+        { x1: 360 / 640, y1: 120 / 960, x2: 510 / 640, y2: 144 / 960 },
+      ],
+      textQuote: {
+        exact: "repeated phrase",
+        prefix: "middle ",
+        suffix: "",
+        source: "pdfjs-text-model",
+        confidence: "exact",
+      },
+    };
+
+    const anchor = resolvePdfAnnotationTextAnchor(model, target);
+
+    expect(anchor).not.toBeNull();
+    expect(anchor?.startOffset).toBe(secondStart);
+    expect(anchor?.endOffset).toBe(secondStart + "repeated phrase".length);
+    expect(anchor?.rects[0].x1).toBeCloseTo(360 / 640, 4);
+  });
+
   it("resolves an existing text markup annotation back to normalized offsets", () => {
     const model = createModel();
     const target: PdfTarget = {
@@ -101,7 +224,11 @@ describe("pdf-annotation-adjustment", () => {
 
     expect(adjusted).not.toBeNull();
     expect(adjusted?.textQuote.exact).toBe("phenomenon, which we");
-    expect(adjusted?.rects.length).toBeGreaterThanOrEqual(2);
+    expect(adjusted?.rects).toHaveLength(1);
+    expect(adjusted?.rects[0].x1).toBeGreaterThanOrEqual(116 / 640);
+    expect(adjusted?.rects[0].x1).toBeLessThan(120 / 640);
+    expect(adjusted?.rects[0].x2).toBeGreaterThan(258 / 640);
+    expect((adjusted?.rects[0].y2 ?? 0) - (adjusted?.rects[0].y1 ?? 0)).toBeLessThan(0.04);
   });
 
   it("keeps a single-word anchor stable inside a long text span when offsets do not materially change", () => {
@@ -155,7 +282,48 @@ describe("pdf-annotation-adjustment", () => {
 
     expect(adjusted).not.toBeNull();
     expect(adjusted?.textQuote.exact).toBe("DiVincenzo");
-    expect(adjusted?.rects).toEqual(target.rects);
+    expect(adjusted?.rects).not.toEqual(target.rects);
+    expect(adjusted?.rects[0].x1).toBeLessThan(target.rects[0].x1);
+    expect(adjusted?.rects[0].x2).toBeLessThan(target.rects[0].x2);
+  });
+
+  it("rebuilds text markup rectangles instead of preserving an implausible legacy block", () => {
+    const model = createModel();
+    const startCharIndex = model.normalizedText.indexOf("which we");
+    const endCharIndex = startCharIndex + "which we".length;
+    const target: PdfTarget = {
+      type: "pdf",
+      page: 1,
+      rects: [
+        { x1: 0.05, y1: 0.10, x2: 0.42, y2: 0.25 },
+      ],
+      textKernelVersion: 1,
+      startCharIndex,
+      endCharIndex,
+      textQuote: {
+        exact: "which we",
+        prefix: "phenomenon, ",
+        suffix: " call algorithm",
+        source: "pdfjs-text-model",
+        confidence: "exact",
+      },
+    };
+
+    const anchor = resolvePdfAnnotationTextAnchor(model, target);
+    expect(anchor).not.toBeNull();
+
+    const adjusted = adjustPdfAnnotationAnchor({
+      model,
+      target,
+      currentAnchor: anchor,
+      nextStartOffset: anchor?.startOffset,
+      nextEndOffset: anchor?.endOffset,
+    });
+
+    expect(adjusted).not.toBeNull();
+    expect(adjusted?.textQuote.exact).toBe("which we");
+    expect(adjusted?.rects).not.toEqual(target.rects);
+    expect(adjusted?.rects.every((rect) => rect.y2 - rect.y1 < 0.04)).toBe(true);
   });
 
   it("restores the original quote after dragging a boundary out and back to the same place", () => {
@@ -209,12 +377,63 @@ describe("pdf-annotation-adjustment", () => {
       target,
       currentAnchor: expanded ?? currentAnchor,
       pageRect,
-      point: { x: 260, y: 132 },
+      point: { x: 246, y: 132 },
       side: "end",
     });
 
     expect(restored).not.toBeNull();
     expect(restored?.textQuote.exact).toBe("phenomenon, which");
-    expect(restored?.rects).toEqual(target.rects);
+    expect(restored?.rects).not.toEqual(target.rects);
+    expect(restored?.rects.at(-1)?.x2).toBeCloseTo(246 / 640, 2);
+  });
+
+  it("does not reuse coarse legacy rects when rebuilding the exact quote anchor", () => {
+    const model = createModel();
+    const target: PdfTarget = {
+      type: "pdf",
+      page: 1,
+      rects: [
+        { x1: 0.18125, y1: 0.125, x2: 0.40625, y2: 0.15 },
+      ],
+      textQuote: {
+        exact: "phenomenon, which",
+        prefix: "This ",
+        suffix: " we call",
+        source: "pdfjs-text-model",
+        confidence: "exact",
+      },
+    };
+
+    const currentAnchor = resolvePdfAnnotationTextAnchor(model, target);
+    expect(currentAnchor).not.toBeNull();
+    if (!currentAnchor) {
+      throw new Error("Missing current anchor");
+    }
+
+    const pageRect = {
+      left: 0,
+      top: 0,
+      width: 640,
+      height: 960,
+      right: 640,
+      bottom: 960,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect;
+
+    const adjusted = adjustPdfAnnotationAnchorFromPointer({
+      model,
+      target,
+      currentAnchor,
+      pageRect,
+      point: { x: 246, y: 132 },
+      side: "end",
+    });
+
+    expect(adjusted).not.toBeNull();
+    expect(adjusted?.textQuote.exact).toBe("phenomenon, which");
+    expect(adjusted?.rects).not.toEqual(target.rects);
+    expect(adjusted?.rects.every((rect) => rect.y2 - rect.y1 < 0.04)).toBe(true);
   });
 });

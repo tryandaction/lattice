@@ -6,8 +6,9 @@ import type {
   SelectionAiOrigin,
 } from './types';
 import { parseStructuredAiResponse } from './structured-response';
+import { buildAgentResultSections } from './agent-result-view-model';
 
-export type AiResultSectionKind = 'conclusion' | 'evidence' | 'next_actions';
+export type AiResultSectionKind = 'conclusion' | 'evidence' | 'next_actions' | 'run' | 'plan';
 
 export interface AiResultSectionViewModel {
   kind: AiResultSectionKind;
@@ -80,8 +81,9 @@ export function buildAiResultViewModel(message: ChatMessage): AiResultViewModel 
   const evidenceRefs = message.evidenceRefs ?? [];
   const promptContext = message.promptContext ?? null;
   const followUpActions = message.followUpActions ?? [];
+  const agentSections = buildAgentResultSections(message);
 
-  const sections: AiResultSectionViewModel[] = structured?.sections.map((section) => ({
+  const sections: AiResultSectionViewModel[] = agentSections ?? structured?.sections.map((section) => ({
     kind: section.kind,
     title: section.title,
     content: section.content,
@@ -122,6 +124,6 @@ export function buildAiResultViewModel(message: ChatMessage): AiResultViewModel 
     summaryLabel: firstNonEmptyLine(
       sections.find((section) => section.kind === 'conclusion')?.content ?? message.content,
     ).slice(0, 48),
-    hasStructuredSections: Boolean(structured && structured.sections.length > 0),
+    hasStructuredSections: Boolean(agentSections || (structured && structured.sections.length > 0)),
   };
 }

@@ -15,6 +15,10 @@ import type {
   AiTaskType,
   EvidenceRef,
 } from './types';
+import {
+  buildLatticeProposalPlannedWrites,
+  getApprovedPlannedWriteTargets,
+} from './lattice-skills/proposal-planned-writes';
 
 function draftTypeForTask(taskType: AiTaskType): AiDraftArtifactType {
   switch (taskType) {
@@ -256,6 +260,13 @@ export class AiOrchestrator {
       title: step.title || `Step ${index + 1}`,
       description: step.description || 'Review and confirm this step before execution.',
     }));
+    const plannedWrites = buildLatticeProposalPlannedWrites({
+      requestedWrites: parsed?.plannedWrites,
+      prompt: request.prompt,
+      summary: parsed?.summary || request.prompt,
+      steps,
+      evidenceRefs: promptContext.evidenceRefs,
+    });
 
     return {
       id: `proposal-${Date.now()}`,
@@ -265,18 +276,10 @@ export class AiOrchestrator {
       requiredApprovals: parsed?.requiredApprovals?.length
         ? parsed.requiredApprovals
         : ['Confirm any file creation or updates before execution'],
-      plannedWrites: (parsed?.plannedWrites ?? []).flatMap((write) => {
-        if (!write.targetPath || !write.mode) return [];
-        return [{
-          targetPath: write.targetPath,
-          mode: write.mode,
-          contentPreview: write.contentPreview || '',
-        }];
-      }),
+      plannedWrites,
       status: 'pending',
       confirmedApprovals: [],
-      approvedWrites: (parsed?.plannedWrites ?? [])
-        .flatMap((write) => (write.targetPath && write.mode ? [write.targetPath] : [])),
+      approvedWrites: getApprovedPlannedWriteTargets(plannedWrites),
       generatedDraftTargets: [],
       createdAt: Date.now(),
     };

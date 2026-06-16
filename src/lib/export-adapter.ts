@@ -12,6 +12,7 @@ export interface ExportOptions {
   filters?: Array<{
     name: string;
     extensions: string[];
+    mimeType?: string;
   }>;
 }
 
@@ -91,9 +92,7 @@ class WebExportAdapter implements ExportAdapter {
             suggestedName: options.defaultFileName,
             types: options.filters?.map(f => ({
               description: f.name,
-              accept: {
-                [`application/${f.extensions[0]}`]: f.extensions.map(e => `.${e}`),
-              },
+              accept: buildBrowserAcceptMap(f),
             })),
           });
           
@@ -257,4 +256,41 @@ export async function exportFile(
 export async function showInFolder(filePath: string): Promise<void> {
   const adapter = getExportAdapter();
   return adapter.showInFolder(filePath);
+}
+
+function buildBrowserAcceptMap(filter: NonNullable<ExportOptions['filters']>[number]): Record<string, string[]> {
+  const extensions = filter.extensions.map((extension) => `.${extension.replace(/^\./, '')}`);
+  return {
+    [filter.mimeType ?? mimeTypeForExtension(filter.extensions[0])]: extensions,
+  };
+}
+
+function mimeTypeForExtension(extension: string): string {
+  switch (extension.replace(/^\./, '').toLowerCase()) {
+    case 'png':
+      return 'image/png';
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'webp':
+      return 'image/webp';
+    case 'gif':
+      return 'image/gif';
+    case 'svg':
+      return 'image/svg+xml';
+    case 'pdf':
+      return 'application/pdf';
+    case 'md':
+    case 'markdown':
+      return 'text/markdown';
+    case 'txt':
+      return 'text/plain';
+    case 'json':
+      return 'application/json';
+    case 'html':
+    case 'htm':
+      return 'text/html';
+    default:
+      return 'application/octet-stream';
+  }
 }

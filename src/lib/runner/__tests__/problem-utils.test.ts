@@ -51,6 +51,59 @@ describe("runner problem utils", () => {
     expect(problems[0].context?.line).toBe(22);
   });
 
+  it("从 stderr 编译器输出中提取可跳转问题", () => {
+    const outputs: ExecutionOutput[] = [
+      {
+        type: "text",
+        channel: "stderr",
+        content: "src/main.c:12:5: error: expected ';' before 'return'\n",
+      },
+    ];
+
+    const problems = outputsToExecutionProblems(outputs, {
+      kind: "file",
+      filePath: "src/main.c",
+      fileName: "main.c",
+    });
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatchObject({
+      source: "runtime",
+      severity: "error",
+      title: "编译错误",
+      message: "expected ';' before 'return'",
+      context: {
+        filePath: "src/main.c",
+        line: 12,
+        column: 5,
+      },
+    });
+  });
+
+  it("从 Node stderr stack frame 中提取可跳转问题", () => {
+    const outputs: ExecutionOutput[] = [
+      {
+        type: "text",
+        channel: "stderr",
+        content: "TypeError: broken\n    at Object.<anonymous> (C:\\workspace\\demo.js:3:7)\n",
+      },
+    ];
+
+    const problems = outputsToExecutionProblems(outputs);
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatchObject({
+      source: "runtime",
+      severity: "error",
+      title: "运行错误位置",
+      context: {
+        filePath: "C:\\workspace\\demo.js",
+        line: 3,
+        column: 7,
+      },
+    });
+  });
+
   it("合并问题时按 id 去重", () => {
     const problem: ExecutionProblem = {
       id: "same",

@@ -163,4 +163,35 @@ describe("PDFViewer", () => {
       expect(mockPdfDocument.unmountCount).toBe(1);
     });
   });
+
+  it("preserves pane zoom across parent remounts", async () => {
+    const source = { kind: "buffer" as const, data: new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer };
+    const { unmount } = render(
+      <PDFViewer
+        source={source}
+        documentId="paper-1"
+        fileName="paper.pdf"
+        paneId="pane-zoom-cache"
+      />,
+    );
+
+    await screen.findByTestId("mock-react-pdf-document");
+    fireEvent.click(screen.getByTitle("pdf.zoomIn"));
+    const zoomAfterClick = screen.getByTestId("pdf-zoom-label-pane-zoom-cache").textContent;
+    expect(zoomAfterClick).not.toBe("120%");
+
+    unmount();
+
+    render(
+      <PDFViewer
+        source={source}
+        documentId="paper-2"
+        fileName="paper-2.pdf"
+        paneId="pane-zoom-cache"
+      />,
+    );
+
+    await screen.findByTestId("mock-react-pdf-document");
+    expect(screen.getByTestId("pdf-zoom-label-pane-zoom-cache").textContent).toBe(zoomAfterClick);
+  });
 });

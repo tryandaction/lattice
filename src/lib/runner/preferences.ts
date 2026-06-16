@@ -316,7 +316,7 @@ export async function resolveRunnerExecutionRequest(
       ? recent.command
       : runnerType === "python-local"
         ? preferences.defaultPythonPath ?? runnerDefinition.command
-        : runnerType === "external-command"
+        : runnerType === "external-command" || runnerType === "compiled-native"
           ? runnerDefinition.command
           : undefined;
 
@@ -348,7 +348,7 @@ export async function resolveRunnerExecutionRequest(
     }
   }
 
-  if (runnerType === "external-command" && command) {
+  if ((runnerType === "external-command" || runnerType === "compiled-native") && command) {
     const availability = await runnerManager.probeCommandAvailability(command);
     if (!availability.available) {
       diagnostics.push(buildMissingCommandDiagnostic(command, availability));
@@ -368,8 +368,32 @@ export async function resolveRunnerExecutionRequest(
     }
   }
 
+  if (runnerType === "compiled-native" && (!absoluteFilePath || mode !== "file")) {
+    diagnostics.push({
+      severity: "error",
+      title: "C/C++ entry cannot be compiled",
+      message: "C/C++ execution requires a saved local file. Selection and inline execution are not supported yet.",
+      hint: "Save the file first, then run the whole file.",
+      stage: "request-build",
+    });
+    return {
+      request: null,
+      meta: {
+        runnerType,
+        command,
+        diagnostics,
+        origin: getExecutionOrigin({
+          runnerType,
+          mode,
+          command,
+        }),
+      },
+    };
+  }
+
   const shouldUseInlineCode =
-    runnerType === "python-pyodide" || mode === "selection" || mode === "inline" || !absoluteFilePath;
+    runnerType !== "compiled-native" &&
+    (runnerType === "python-pyodide" || mode === "selection" || mode === "inline" || !absoluteFilePath);
 
   let request: RunnerExecutionRequest | null = null;
 

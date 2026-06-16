@@ -1,0 +1,17 @@
+
+> lattice@2.2.0 dev
+> next dev -p 3000
+
+▲ Next.js 16.2.1 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://172.28.144.1:3000
+✓ Ready in 621ms
+
+ GET / 200 in 1886ms (next.js: 394ms, application-code: 1492ms)
+ GET / 200 in 139ms (next.js: 9ms, application-code: 130ms)
+ GET / 200 in 1314ms (next.js: 205ms, application-code: 1109ms)
+ GET / 200 in 115ms (next.js: 14ms, application-code: 102ms)
+✓ Compiled in 1245ms
+✓ Compiled in 947ms
+✓ Compiled in 3.1s
+[?25h

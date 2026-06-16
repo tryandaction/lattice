@@ -10,6 +10,374 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { CodeEditorViewer } from "../code-editor-viewer";
+import type { ReactNode } from "react";
+import type { CommandBarState } from "@/types/layout";
+import type { RunnerExecutionRequest } from "@/lib/runner/types";
+
+const paneCommandBarInputs = vi.hoisted(() => [] as Array<{
+  paneId: string | null | undefined;
+  scopeId?: string | null;
+  state: CommandBarState | null;
+}>);
+
+const stableRunnerState = vi.hoisted(() => ({
+  status: "idle",
+  outputs: [],
+  panelMeta: { origin: null, diagnostics: [], context: null },
+  error: null,
+  summary: {
+    startedAt: null,
+    completedAt: null,
+    durationMs: null,
+    exitCode: null,
+    terminated: false,
+  },
+  problems: [],
+  run: vi.fn(async () => ({ success: true })),
+  terminate: vi.fn(async () => undefined),
+  clearOutputs: vi.fn(),
+  setPanelMeta: vi.fn(),
+  setExternalProblems: vi.fn(),
+  isRunning: false,
+  isLoading: false,
+  lastRequest: null as RunnerExecutionRequest | null,
+  commandState: {
+    canRun: true,
+    canRerun: false,
+    canStop: false,
+    canInterrupt: false,
+    canRestart: false,
+    canVerifyRuntime: false,
+    canSelectRuntime: false,
+  },
+}));
+
+const stableTranslate = vi.hoisted(() => vi.fn((key: string) => key));
+const stableRefreshRunnerHealth = vi.hoisted(() => vi.fn(async () => undefined));
+const stableEditorCommands = vi.hoisted(() => ({
+  openSearch: vi.fn(),
+  openGotoLine: vi.fn(),
+  scrollToLine: vi.fn(),
+  flashLine: vi.fn(),
+}));
+const stableDockSetters = vi.hoisted(() => ({
+  setDockSize: vi.fn(),
+  setIsDockOpen: vi.fn(),
+  setActiveDockTab: vi.fn(),
+}));
+
+vi.mock("@/components/editor/codemirror/code-editor", () => ({
+  CodeEditor: ({ editorRef }: { editorRef?: React.RefObject<unknown> }) => {
+    if (editorRef && "current" in editorRef) {
+      editorRef.current = {
+        focus: vi.fn(),
+        scrollToLine: stableEditorCommands.scrollToLine,
+        flashLine: stableEditorCommands.flashLine,
+        getContent: vi.fn(() => ""),
+        getSelection: vi.fn(() => ""),
+        getSelectionDetails: vi.fn(() => null),
+        hasSelection: vi.fn(() => false),
+        getEditorState: vi.fn(() => null),
+        restoreEditorState: vi.fn(),
+        openSearch: stableEditorCommands.openSearch,
+        openGotoLine: stableEditorCommands.openGotoLine,
+      };
+    }
+    return <div data-testid="mock-code-editor" />;
+  },
+}));
+
+vi.mock("@/hooks/use-pane-command-bar", () => ({
+  usePaneCommandBar: (input: {
+    paneId: string | null | undefined;
+    scopeId?: string | null;
+    state: CommandBarState | null;
+  }) => {
+    paneCommandBarInputs.push(input);
+  },
+}));
+
+vi.mock("@/hooks/use-execution-runner", () => ({
+  useExecutionRunner: () => stableRunnerState,
+}));
+
+vi.mock("@/hooks/use-execution-dock-layout", () => ({
+  useExecutionDockLayout: () => ({
+    dockSize: 38,
+    isDockOpen: false,
+    activeDockTab: "run",
+    setDockSize: stableDockSetters.setDockSize,
+    setIsDockOpen: stableDockSetters.setIsDockOpen,
+    setActiveDockTab: stableDockSetters.setActiveDockTab,
+  }),
+}));
+
+vi.mock("@/hooks/use-runner-health", () => ({
+  useRunnerHealth: () => ({
+    runnerHealthSnapshot: { issues: [] },
+    refresh: stableRefreshRunnerHealth,
+  }),
+}));
+
+vi.mock("@/hooks/use-annotation-navigation", () => ({
+  useAnnotationNavigation: () => undefined,
+}));
+
+vi.mock("@/hooks/use-text-selection", () => ({
+  useTextSelection: () => ({ selection: null, dismiss: vi.fn() }),
+}));
+
+vi.mock("@/hooks/use-selection-context-menu", () => ({
+  useSelectionContextMenu: () => ({
+    menuState: null,
+    closeMenu: vi.fn(),
+  }),
+}));
+
+vi.mock("@/hooks/use-i18n", () => ({
+  useI18n: () => ({ t: stableTranslate }),
+}));
+
+vi.mock("@/components/ai/ai-inline-menu", () => ({
+  AiInlineMenu: () => null,
+}));
+
+vi.mock("@/components/ai/selection-context-menu", () => ({
+  SelectionContextMenu: () => null,
+}));
+
+vi.mock("@/components/ai/selection-ai-hub", () => ({
+  SelectionAiHub: () => null,
+}));
+
+vi.mock("@/components/notebook/output-area", () => ({
+  OutputArea: () => null,
+}));
+
+vi.mock("@/components/notebook/kernel-status", () => ({
+  KernelStatus: () => null,
+}));
+
+vi.mock("@/components/runner/problems-panel", () => ({
+  ProblemsPanel: () => null,
+}));
+
+vi.mock("@/components/runner/workspace-runner-manager", () => ({
+  WorkspaceRunnerManager: () => null,
+}));
+
+vi.mock("@/components/ui/resizable", () => ({
+  ResizableHandle: () => null,
+  ResizablePanel: ({ children }: { children: ReactNode }) => <>{children}</>,
+  ResizablePanelGroup: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
+vi.mock("@/components/ui/horizontal-scroll-strip", () => ({
+  HorizontalScrollStrip: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+describe("CodeEditorViewer command bar stability", () => {
+  beforeEach(() => {
+    paneCommandBarInputs.length = 0;
+    vi.clearAllMocks();
+    stableEditorCommands.openSearch.mockClear();
+    stableEditorCommands.openGotoLine.mockClear();
+    stableEditorCommands.scrollToLine.mockClear();
+    stableEditorCommands.flashLine.mockClear();
+    stableRunnerState.lastRequest = null;
+    stableRunnerState.commandState.canRerun = false;
+    stableRunnerState.commandState.canRun = true;
+  });
+
+  it("keeps command bar state stable when optional extra actions are omitted", () => {
+    const props = {
+      content: "print('hello')",
+      fileName: "script.py",
+      onContentChange: vi.fn(),
+      onSave: vi.fn(async () => undefined),
+      paneId: "pane-code",
+      tabId: "tab-script",
+      filePath: "workspace/script.py",
+      executionScopeId: "pane-code::tab-script",
+    };
+
+    const { rerender } = render(<CodeEditorViewer {...props} />);
+    const initialState = paneCommandBarInputs.at(-1)?.state;
+
+    rerender(<CodeEditorViewer {...props} />);
+
+    expect(paneCommandBarInputs.at(-1)?.state).toBe(initialState);
+  });
+
+  it("registers editor workflow actions in the command bar", async () => {
+    const props = {
+      content: "print('hello')",
+      fileName: "script.py",
+      onContentChange: vi.fn(),
+      onSave: vi.fn(async () => undefined),
+      paneId: "pane-code",
+      tabId: "tab-script",
+      filePath: "workspace/script.py",
+      executionScopeId: "pane-code::tab-script",
+    };
+
+    render(<CodeEditorViewer {...props} />);
+
+    const actions = paneCommandBarInputs.at(-1)?.state?.actions ?? [];
+    const actionById = new Map(actions.map((action) => [action.id, action]));
+
+    expect(actionById.has("search")).toBe(true);
+    expect(actionById.has("goto-line")).toBe(true);
+    expect(actionById.has("show-run-output")).toBe(true);
+    expect(actionById.has("show-problems")).toBe(true);
+    expect(actionById.has("verify")).toBe(true);
+
+    actionById.get("search")?.onTrigger?.();
+    expect(stableEditorCommands.openSearch).toHaveBeenCalledTimes(1);
+
+    actionById.get("goto-line")?.onTrigger?.();
+    expect(stableEditorCommands.openGotoLine).toHaveBeenCalledTimes(1);
+
+    actionById.get("show-run-output")?.onTrigger?.();
+    expect(stableDockSetters.setActiveDockTab).toHaveBeenCalledWith("run");
+    expect(stableDockSetters.setIsDockOpen).toHaveBeenCalledWith(true);
+
+    actionById.get("show-problems")?.onTrigger?.();
+    expect(stableDockSetters.setActiveDockTab).toHaveBeenCalledWith("problems");
+    expect(stableDockSetters.setIsDockOpen).toHaveBeenCalledWith(true);
+
+    await act(async () => {
+      await actionById.get("verify")?.onTrigger?.();
+    });
+    expect(stableRefreshRunnerHealth).toHaveBeenCalledTimes(1);
+    expect(stableDockSetters.setActiveDockTab).toHaveBeenCalledWith("problems");
+  });
+
+  it("shows outline symbols and navigates to the selected line", async () => {
+    const props = {
+      content: [
+        "class App:",
+        "    def run(self):",
+        "        pass",
+      ].join("\n"),
+      fileName: "script.py",
+      onContentChange: vi.fn(),
+      onSave: vi.fn(async () => undefined),
+      paneId: "pane-code",
+      tabId: "tab-script",
+      filePath: "workspace/script.py",
+      executionScopeId: "pane-code::tab-script",
+    };
+
+    render(<CodeEditorViewer {...props} />);
+
+    const outlineAction = paneCommandBarInputs.at(-1)?.state?.actions.find((action) => action.id === "outline");
+    expect(outlineAction).toBeTruthy();
+
+    await act(async () => {
+      outlineAction?.onTrigger?.();
+    });
+
+    expect(screen.getByText("App")).toBeTruthy();
+    expect(screen.getByText("run")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("run"));
+    expect(stableEditorCommands.scrollToLine).toHaveBeenCalledWith(2);
+  });
+
+  it("blocks file run when saving fails", async () => {
+    const saveError = new Error("disk is full");
+    const props = {
+      content: "print('hello')",
+      fileName: "script.py",
+      onContentChange: vi.fn(),
+      onSave: vi.fn(async () => {
+        throw saveError;
+      }),
+      paneId: "pane-code",
+      tabId: "tab-script",
+      filePath: "workspace/script.py",
+      executionScopeId: "pane-code::tab-script",
+    };
+
+    render(<CodeEditorViewer {...props} />);
+
+    const runAction = paneCommandBarInputs.at(-1)?.state?.actions.find((action) => action.id === "run");
+    expect(runAction).toBeTruthy();
+
+    await act(async () => {
+      await runAction?.onTrigger?.();
+    });
+
+    expect(props.onSave).toHaveBeenCalledTimes(1);
+    expect(stableRunnerState.run).not.toHaveBeenCalled();
+    expect(stableRunnerState.setPanelMeta).toHaveBeenCalledWith(expect.objectContaining({
+      origin: null,
+      diagnostics: [
+        expect.objectContaining({
+          severity: "error",
+          title: "保存失败，已阻止运行",
+          message: "disk is full",
+          stage: "request-build",
+        }),
+      ],
+    }));
+    expect(stableDockSetters.setIsDockOpen).toHaveBeenCalledWith(true);
+    expect(stableDockSetters.setActiveDockTab).toHaveBeenCalledWith("problems");
+  });
+
+  it("blocks file rerun when saving fails", async () => {
+    stableRunnerState.lastRequest = {
+      runnerType: "python-local",
+      command: "python",
+      filePath: "C:/workspace/script.py",
+      cwd: "C:/workspace",
+      mode: "file",
+    };
+    stableRunnerState.commandState.canRerun = true;
+
+    const props = {
+      content: "print('hello')",
+      fileName: "script.py",
+      onContentChange: vi.fn(),
+      onSave: vi.fn(async () => {
+        throw new Error("permission denied");
+      }),
+      paneId: "pane-code",
+      tabId: "tab-script",
+      filePath: "workspace/script.py",
+      executionScopeId: "pane-code::tab-script",
+    };
+
+    render(<CodeEditorViewer {...props} />);
+
+    const rerunAction = paneCommandBarInputs.at(-1)?.state?.actions.find((action) => action.id === "rerun");
+    expect(rerunAction).toBeTruthy();
+    expect(rerunAction?.disabled).toBe(false);
+
+    await act(async () => {
+      await rerunAction?.onTrigger?.();
+    });
+
+    expect(props.onSave).toHaveBeenCalledTimes(1);
+    expect(stableRunnerState.run).not.toHaveBeenCalled();
+    expect(stableRunnerState.setPanelMeta).toHaveBeenCalledWith(expect.objectContaining({
+      origin: null,
+      diagnostics: [
+        expect.objectContaining({
+          severity: "error",
+          title: "保存失败，已阻止重新运行",
+          message: "permission denied",
+          stage: "request-build",
+        }),
+      ],
+    }));
+    expect(stableDockSetters.setIsDockOpen).toHaveBeenCalledWith(true);
+    expect(stableDockSetters.setActiveDockTab).toHaveBeenCalledWith("problems");
+  });
+});
 
 /**
  * Simplified debounce implementation matching CodeEditorViewer

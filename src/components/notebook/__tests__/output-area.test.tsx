@@ -6,8 +6,8 @@
  * @vitest-environment jsdom
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, cleanup } from '@testing-library/react';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { render, cleanup, fireEvent, screen } from '@testing-library/react';
 import { OutputArea } from '../output-area';
 import type { ExecutionOutput } from '@/lib/runner/types';
 
@@ -61,6 +61,39 @@ describe('OutputArea', () => {
 
       const textElement = container.querySelector('pre');
       expect(textElement?.className).toContain('whitespace-pre-wrap');
+    });
+
+    it('should make stderr location lines clickable when navigation is available', () => {
+      const onSelectProblem = vi.fn();
+      const outputs: ExecutionOutput[] = [
+        {
+          type: 'text',
+          channel: 'stderr',
+          content: "src/main.c:12:5: error: expected ';' before 'return'\n",
+        },
+      ];
+
+      render(
+        <OutputArea
+          outputs={outputs}
+          context={{ kind: 'file', filePath: 'src/main.c', fileName: 'main.c' }}
+          onSelectProblem={onSelectProblem}
+        />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /src\/main\.c:12:5/ }));
+
+      expect(onSelectProblem).toHaveBeenCalledTimes(1);
+      expect(onSelectProblem.mock.calls[0][0]).toMatchObject({
+        source: 'runtime',
+        severity: 'error',
+        title: '编译错误',
+        context: {
+          filePath: 'src/main.c',
+          line: 12,
+          column: 5,
+        },
+      });
     });
   });
 

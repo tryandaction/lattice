@@ -7,9 +7,10 @@ const storage = {
   clear: vi.fn(),
 };
 
-const { proposeTaskMock, runChatMock } = vi.hoisted(() => ({
+const { proposeTaskMock, runChatMock, runResearchAgentForSurfaceMock } = vi.hoisted(() => ({
   proposeTaskMock: vi.fn(),
   runChatMock: vi.fn(),
+  runResearchAgentForSurfaceMock: vi.fn(),
 }));
 
 vi.mock('@/lib/storage-adapter', () => ({
@@ -21,6 +22,10 @@ vi.mock('../ai/orchestrator', () => ({
     proposeTask: proposeTaskMock,
     runChat: runChatMock,
   },
+}));
+
+vi.mock('../ai/research-agent-chat-runner', () => ({
+  runResearchAgentForSurface: runResearchAgentForSurfaceMock,
 }));
 
 import { runSelectionAiMode } from '../ai/selection-actions';
@@ -149,23 +154,34 @@ describe('runSelectionAiMode', () => {
     }));
   });
 
-  it('uses agent mode prompt framing and default prompt fallback', async () => {
-    runChatMock.mockResolvedValue({
-      text: 'Agent answer',
-      model: {
+  it('routes agent mode through the formal Research Agent surface runner', async () => {
+    runResearchAgentForSurfaceMock.mockResolvedValue({
+      chatText: 'Task: Deep selection analysis\n\nAgent session: selection-research-session',
+      plannerModel: 'OpenAI/gpt-test',
+      plannerModelInfo: {
         providerId: 'openai',
         providerName: 'OpenAI',
         model: 'gpt-test',
         source: 'cloud',
       },
-      evidenceRefs: [],
-      context: {
-        nodes: [],
-        prompt: 'Prompt',
-        evidenceRefs: [],
-        truncated: false,
+      adapterWarnings: [],
+      workflow: null,
+      workflowPlannerHints: null,
+      result: {
+        sessionId: 'selection-research-session',
+        promptContext: {
+          nodes: [],
+          prompt: 'Resolved selection evidence',
+          evidenceRefs: [
+            {
+              kind: 'file',
+              label: 'notes/notes.md',
+              locator: 'notes/notes.md',
+            },
+          ],
+          truncated: false,
+        },
       },
-      followUpActions: [],
     });
 
     const context = buildContext();
@@ -183,8 +199,41 @@ describe('runSelectionAiMode', () => {
       kind: 'chat',
       title: defaultPromptForSelectionMode('agent', context),
     });
-    expect(runChatMock).toHaveBeenCalledWith(expect.objectContaining({
-      prompt: expect.stringContaining('Act as a research agent. Be evidence-first'),
+    expect(runChatMock).not.toHaveBeenCalled();
+    expect(runResearchAgentForSurfaceMock).toHaveBeenCalledWith(expect.objectContaining({
+      workflowId: 'markdown-research',
+      task: defaultPromptForSelectionMode('agent', context),
+      query: expect.stringContaining('Act as a research agent. Be evidence-first'),
+      filePath: 'notes/notes.md',
+      content: 'Local context block',
+      selection: 'A highlighted research paragraph',
+      explicitEvidenceRefs: context.evidenceRefs,
+      compact: true,
+    }));
+
+    const conversation = useAiChatStore.getState().getActiveConversation();
+    expect(conversation?.messages[0]).toEqual(expect.objectContaining({
+      role: 'user',
+      content: defaultPromptForSelectionMode('agent', context),
+      origin: expect.objectContaining({
+        kind: 'selection-ai',
+        mode: 'agent',
+      }),
+    }));
+    expect(conversation?.messages[1]).toEqual(expect.objectContaining({
+      role: 'assistant',
+      content: expect.stringContaining('selection-research-session'),
+      model: expect.objectContaining({ providerName: 'OpenAI', model: 'gpt-test' }),
+      evidenceRefs: expect.arrayContaining([
+        expect.objectContaining({ locator: 'notes/notes.md' }),
+      ]),
+      promptContext: expect.objectContaining({
+        prompt: 'Resolved selection evidence',
+      }),
+      origin: expect.objectContaining({
+        kind: 'selection-ai',
+        mode: 'agent',
+      }),
     }));
   });
 

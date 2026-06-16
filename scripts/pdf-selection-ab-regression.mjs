@@ -4,6 +4,16 @@ import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 
 const CANDIDATE_BASELINES = [
   {
+    label: "saffman-rydberg-review",
+    filePath: "C:/universe/MyStudy/atom/Categorized Papers/Reviews_Classics/Saffman 等 - 2010 - Quantum information with Rydberg atoms.pdf",
+    maxPages: 8,
+    phrases: [
+      "Quantum information with Rydberg atoms",
+      "For small dc electric fields",
+      "Fig. 5, that tend to cause shifts",
+    ],
+  },
+  {
     label: "demon-like-cooling",
     filePath: "C:/universe/books&essay/physics/Essay/Demon-like algorithmic quantum cooling and its.pdf",
     phrases: [
@@ -31,7 +41,7 @@ const CANDIDATE_BASELINES = [
   },
 ];
 
-async function readPdfStats(filePath, phrases) {
+async function readPdfStats(filePath, phrases, maxPages = 5) {
   const fileBuffer = new Uint8Array(await fs.readFile(filePath));
   const document = await pdfjsLib.getDocument({
     data: fileBuffer,
@@ -41,7 +51,7 @@ async function readPdfStats(filePath, phrases) {
   const pageStats = [];
   const phraseHits = new Map(phrases.map((phrase) => [phrase, []]));
 
-  for (let pageNumber = 1; pageNumber <= Math.min(document.numPages, 5); pageNumber += 1) {
+  for (let pageNumber = 1; pageNumber <= Math.min(document.numPages, maxPages); pageNumber += 1) {
     const page = await document.getPage(pageNumber);
     const textContent = await page.getTextContent({
       includeMarkedContent: false,
@@ -93,7 +103,7 @@ async function main() {
     results.push({
       label: input.label,
       filePath: input.filePath,
-      ...(await readPdfStats(input.filePath, input.phrases)),
+      ...(await readPdfStats(input.filePath, input.phrases, input.maxPages)),
     });
   }
 

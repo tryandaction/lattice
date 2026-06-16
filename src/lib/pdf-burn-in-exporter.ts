@@ -18,6 +18,9 @@ import { mergePdfTargetRectsForTextMarkup } from './pdf-text-rects';
  * Default highlight opacity (0.35 = 35% opacity)
  */
 export const HIGHLIGHT_OPACITY = 0.35;
+export const AREA_FILL_OPACITY = 0.10;
+export const AREA_BORDER_OPACITY = 0.85;
+export const UNDERLINE_OPACITY = 0.95;
 
 /**
  * Color mapping for PDF drawing
@@ -118,6 +121,50 @@ export function drawHighlightRect(
   });
 }
 
+export function drawUnderlineRect(
+  page: PDFPage,
+  rect: BoundingBox,
+  color: string,
+  opacity: number = UNDERLINE_OPACITY
+): void {
+  const { width: pageWidth, height: pageHeight } = page.getSize();
+  const { x, y, width, height } = normalizedToPoints(rect, pageWidth, pageHeight);
+  const colorRgb = getColorRgb(color);
+  const lineWidth = Math.max(0.75, Math.min(2.25, height * 0.16));
+  const underlineY = y + Math.max(lineWidth / 2, height * 0.08);
+
+  page.drawLine({
+    start: { x, y: underlineY },
+    end: { x: x + width, y: underlineY },
+    thickness: lineWidth,
+    color: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
+    opacity,
+  });
+}
+
+export function drawAreaRect(
+  page: PDFPage,
+  rect: BoundingBox,
+  color: string
+): void {
+  const { width: pageWidth, height: pageHeight } = page.getSize();
+  const { x, y, width, height } = normalizedToPoints(rect, pageWidth, pageHeight);
+  const colorRgb = getColorRgb(color);
+  const strokeWidth = Math.max(1.2, Math.min(3, Math.min(width, height) * 0.02));
+
+  page.drawRectangle({
+    x,
+    y,
+    width,
+    height,
+    color: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
+    opacity: AREA_FILL_OPACITY,
+    borderColor: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
+    borderOpacity: AREA_BORDER_OPACITY,
+    borderWidth: strokeWidth,
+  });
+}
+
 /**
  * Draws all rectangles for a highlight annotation
  */
@@ -137,7 +184,13 @@ export function drawHighlightAnnotation(
     : target.rects;
 
   for (const rect of drawRects) {
-    drawHighlightRect(page, rect, color, opacity);
+    if (annotation.style.type === 'underline') {
+      drawUnderlineRect(page, rect, color);
+    } else if (annotation.style.type === 'area') {
+      drawAreaRect(page, rect, color);
+    } else {
+      drawHighlightRect(page, rect, color, opacity);
+    }
     rectCount++;
   }
   

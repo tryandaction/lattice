@@ -1,14 +1,12 @@
 "use client";
 
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   Bot,
   BookOpen,
   Command,
   RefreshCcw,
   Settings,
-  Stethoscope,
   X,
   Zap,
 } from "lucide-react";
@@ -18,17 +16,21 @@ import { useAiChatStore } from "@/stores/ai-chat-store";
 import { getRegisteredCommands, subscribePluginRegistry } from "@/lib/plugins/runtime";
 import type { PluginCommand } from "@/lib/plugins/types";
 import { cn } from "@/lib/utils";
-import { resolveAppRoute } from "@/lib/app-route";
+import {
+  listResearchAgentWorkflows,
+  type ResearchAgentWorkflowId,
+} from "@/lib/ai/research-agent-workflows";
 
 export interface PluginCommandDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenSettings?: () => void;
   onOpenPluginPanels?: () => void;
+  onOpenGuide?: () => void;
 }
 
 type CommandSource = "core" | "plugin";
-type CommandCategory = "ai" | "system" | "docs" | "diagnostics" | "plugin";
+type CommandCategory = "ai" | "system" | "docs" | "plugin";
 type CommandSectionKey = "recent" | "suggested" | "plugins" | "results";
 type CommandItem = PluginCommand & {
   source: CommandSource;
@@ -104,8 +106,6 @@ function getCategoryLabel(category: CommandCategory, language: string): string {
       return isZh ? "系统" : "System";
     case "docs":
       return isZh ? "指南" : "Guide";
-    case "diagnostics":
-      return isZh ? "诊断" : "Diagnostics";
     default:
       return isZh ? "插件" : "Plugin";
   }
@@ -127,8 +127,8 @@ function getSectionLabel(section: CommandSectionKey, language: string): string {
 
 function getCommandDialogDescription(language: string): string {
   return language === "en-US"
-    ? "Global actions, AI tools, docs, diagnostics, and plugin commands are unified here."
-    : "全局动作、AI 工具、指南、诊断与插件命令统一收口在这里。";
+    ? "Global actions, AI tools, docs, and plugin commands are unified here."
+    : "全局动作、AI 工具、指南与插件命令统一收口在这里。";
 }
 
 function getCommandDisabledHint(language: string): string {
@@ -153,8 +153,6 @@ function getCategoryIcon(category: CommandCategory) {
       return Settings;
     case "docs":
       return BookOpen;
-    case "diagnostics":
-      return Stethoscope;
     default:
       return Zap;
   }
@@ -197,11 +195,13 @@ function scoreCommand(command: CommandItem, query: string, recentIds: string[]):
 
 function buildBuiltinCommands(input: {
   language: string;
-  navigate: (path: string) => void;
   toggleAiChat: () => void;
+  openAiChat: () => void;
+  setResearchWorkflow: (workflowId: ResearchAgentWorkflowId) => void;
   aiChatOpen: boolean;
   onOpenSettings?: () => void;
   onOpenPluginPanels?: () => void;
+  onOpenGuide?: () => void;
 }): CommandItem[] {
   const isZh = input.language !== "en-US";
   return [
@@ -220,6 +220,29 @@ function buildBuiltinCommands(input: {
         input.toggleAiChat();
       },
     },
+    ...listResearchAgentWorkflows().map((workflow, index): CommandItem => ({
+      id: `core.research-agent.workflow.${workflow.id}`,
+      title: isZh
+        ? `Research Agent: ${workflow.title}`
+        : `Research Agent: ${workflow.title}`,
+      description: workflow.description,
+      source: "core",
+      category: "ai",
+      priority: 11 + index / 10,
+      keywords: [
+        "research",
+        "agent",
+        "workflow",
+        workflow.id,
+        workflow.title,
+        workflow.outputArtifactPolicy,
+        ...workflow.allowedTools,
+      ],
+      run: async () => {
+        input.setResearchWorkflow(workflow.id);
+        input.openAiChat();
+      },
+    })),
     {
       id: "core.open-settings",
       title: isZh ? "打开设置" : "Open Settings",
@@ -247,16 +270,6 @@ function buildBuiltinCommands(input: {
       },
     },
     {
-      id: "core.open-agent-protocol-center",
-      title: isZh ? "打开 Agent 协议中心" : "Open Agent Protocol Center",
-      description: isZh ? "追踪工程协作协议、复制规则并导出 Markdown" : "Track the engineering collaboration protocol, copy rules, and export Markdown.",
-      source: "core",
-      category: "system",
-      priority: 16,
-      keywords: ["agent", "protocol", "workflow", "todo", "cursor", "engineering"],
-      run: async () => input.navigate(resolveAppRoute("/agent-protocol")),
-    },
-    {
       id: "core.open-live-preview-guide",
       title: isZh ? "打开使用指南" : "Open User Guide",
       description: isZh ? "查看产品说明与桌面使用指南" : "Open the product user guide.",
@@ -265,27 +278,9 @@ function buildBuiltinCommands(input: {
       priority: 18,
       shortcut: "Ctrl+Shift+/",
       keywords: ["guide", "docs", "help"],
-      run: async () => input.navigate(resolveAppRoute("/guide")),
-    },
-    {
-      id: "core.open-live-preview-diagnostics",
-      title: isZh ? "打开诊断中心" : "Open Diagnostics",
-      description: isZh ? "打开综合诊断页进行功能回归检查" : "Open the main diagnostics workspace.",
-      source: "core",
-      category: "diagnostics",
-      priority: 40,
-      keywords: ["diagnostics", "debug", "health"],
-      run: async () => input.navigate(resolveAppRoute("/diagnostics")),
-    },
-    {
-      id: "core.open-runner-diagnostics",
-      title: isZh ? "打开运行器诊断" : "Open Runner Diagnostics",
-      description: isZh ? "检查运行器与执行环境状态" : "Inspect runner and execution environment health.",
-      source: "core",
-      category: "diagnostics",
-      priority: 42,
-      keywords: ["runner", "python", "diagnostics"],
-      run: async () => input.navigate(resolveAppRoute("/diagnostics/runner")),
+      run: async () => {
+        input.onOpenGuide?.();
+      },
     },
   ];
 }
@@ -295,12 +290,14 @@ export function PluginCommandDialog({
   onClose,
   onOpenSettings,
   onOpenPluginPanels,
+  onOpenGuide,
 }: PluginCommandDialogProps) {
   const { t } = useI18n();
-  const router = useRouter();
   const settings = useSettingsStore((state) => state.settings);
   const aiChatOpen = useAiChatStore((state) => state.isOpen);
   const toggleAiChat = useAiChatStore((state) => state.toggleOpen);
+  const openAiChat = useAiChatStore((state) => state.setOpen);
+  const setResearchWorkflow = useAiChatStore((state) => state.setResearchWorkflow);
   const language = settings.language || "zh-CN";
   const [pluginCommands, setPluginCommands] = useState<PluginCommand[]>([]);
   const [query, setQuery] = useState("");
@@ -319,13 +316,15 @@ export function PluginCommandDialog({
   const builtinCommands = useMemo(
     () => buildBuiltinCommands({
       language,
-      navigate: (path) => router.push(path),
       toggleAiChat,
+      openAiChat: () => openAiChat(true),
+      setResearchWorkflow,
       aiChatOpen,
       onOpenSettings,
       onOpenPluginPanels,
+      onOpenGuide,
     }),
-    [aiChatOpen, language, onOpenPluginPanels, onOpenSettings, router, toggleAiChat],
+    [aiChatOpen, language, onOpenGuide, onOpenPluginPanels, onOpenSettings, openAiChat, setResearchWorkflow, toggleAiChat],
   );
 
   const allCommands = useMemo<CommandItem[]>(() => {

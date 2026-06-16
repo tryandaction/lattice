@@ -1,20 +1,23 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import Link from "next/link";
 import dynamic from "next/dynamic";
+import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LIVE_PREVIEW_GUIDE_SCENARIOS } from "./live-preview-content";
-import { resolveAppRoute } from "@/lib/app-route";
 
 const ObsidianMarkdownViewer = dynamic(
   () => import("@/components/editor/obsidian-markdown-viewer").then((mod) => mod.ObsidianMarkdownViewer),
   { ssr: false }
 );
 
-export function LivePreviewGuide() {
-  const homeHref = resolveAppRoute("/");
-  const diagnosticsHref = resolveAppRoute("/diagnostics");
+interface LivePreviewGuideProps {
+  surface?: "page" | "dialog";
+  onClose?: () => void;
+}
+
+export function LivePreviewGuide({ surface = "page", onClose }: LivePreviewGuideProps) {
+  const isDialog = surface === "dialog";
   const [selectedId, setSelectedId] = useState(LIVE_PREVIEW_GUIDE_SCENARIOS[0].id);
   const selected = useMemo(
     () => LIVE_PREVIEW_GUIDE_SCENARIOS.find((item) => item.id === selectedId) ?? LIVE_PREVIEW_GUIDE_SCENARIOS[0],
@@ -46,7 +49,7 @@ export function LivePreviewGuide() {
   }, [selected.content, selected.id]);
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div className={cn("flex flex-col bg-background text-foreground", isDialog ? "h-full" : "min-h-screen")}>
       <header className="border-b border-border bg-background/95 px-6 py-4 backdrop-blur">
         <div className="mx-auto flex w-full max-w-7xl items-start justify-between gap-6">
           <div className="space-y-2">
@@ -57,18 +60,20 @@ export function LivePreviewGuide() {
               用真实交互理解 Lattice 的实时预览逻辑。
             </p>
           </div>
-          <div className="flex items-center gap-2 text-sm">
-            <Link href={homeHref} className="rounded border border-border px-3 py-2 text-muted-foreground transition hover:bg-muted hover:text-foreground">
-              返回工作台
-            </Link>
-            <Link href={diagnosticsHref} className="rounded border border-border px-3 py-2 text-muted-foreground transition hover:bg-muted hover:text-foreground">
-              打开自检面板
-            </Link>
-          </div>
+          {isDialog && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md border border-border p-2 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              aria-label="Close guide"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-7xl flex-1 gap-6 px-6 py-6">
+      <main className={cn("mx-auto flex w-full max-w-7xl flex-1 gap-6 px-6 py-6", isDialog && "min-h-0 overflow-hidden")}>
         <aside className="sticky top-6 h-fit w-[320px] shrink-0 space-y-4 self-start">
           <section className="rounded-xl border border-border bg-card p-4">
             <div className="flex items-center justify-between gap-3">
@@ -135,7 +140,7 @@ export function LivePreviewGuide() {
               </button>
             </div>
           </div>
-          <div className="h-[calc(100vh-220px)] min-h-[640px] overflow-hidden">
+          <div className={cn("overflow-hidden", isDialog ? "h-full min-h-0" : "h-[calc(100vh-220px)] min-h-[640px]")}>
             <ObsidianMarkdownViewer
               key={selected.id}
               content={content}

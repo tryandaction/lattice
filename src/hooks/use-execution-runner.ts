@@ -178,6 +178,54 @@ function setCodeFailure(
   });
 }
 
+function settleInterruptedRun(scopeId: string): void {
+  patchExecutionSession(scopeId, (current) => {
+    if (
+      !current.activeRunId &&
+      current.lifecyclePhase !== "preparing" &&
+      current.lifecyclePhase !== "running" &&
+      current.lifecyclePhase !== "stopping"
+    ) {
+      return current;
+    }
+
+    const completedAt = Date.now();
+    const summary = {
+      ...current.summary,
+      completedAt,
+      durationMs: current.summary.startedAt ? completedAt - current.summary.startedAt : current.summary.durationMs,
+      terminated: true,
+    };
+    const next = {
+      ...current,
+      activeRunId: null,
+      lastCompletedRunId: current.activeRunId ?? current.lastCompletedRunId,
+      lifecyclePhase: "interrupted" as const,
+      status: "idle" as const,
+      summary,
+      runtime: {
+        ...current.runtime,
+        status: "idle" as RunnerStatus,
+      },
+      lastEvent: {
+        type: "terminated" as const,
+        timestampMs: completedAt,
+        message: null,
+      },
+    };
+
+    return {
+      ...next,
+      commandState: deriveCommandState({
+        activeRunId: next.activeRunId,
+        lastRequest: next.lastRequest,
+        capability: next.capability,
+        lifecyclePhase: next.lifecyclePhase,
+      }),
+    };
+  });
+}
+
 function ensureCodeController(scope: ExecutionSessionScope) {
   const controller = ensureCodeRuntimeResource(scope, {
     onStatusChange: (nextStatus, nextError) => {
@@ -493,6 +541,7 @@ export function useExecutionRunner(options: UseExecutionRunnerOptions = {}): Use
       };
     });
     await controller.session.terminate();
+    settleInterruptedRun(scope.scopeId);
   }, [scope]);
 
   const setPanelMeta = useCallback((meta: ExecutionPanelMeta) => {

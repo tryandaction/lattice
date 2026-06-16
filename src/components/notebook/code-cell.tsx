@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, memo, useCallback } from "react";
-import { CodeEditor, type CodeEditorRef } from "@/components/editor/codemirror/code-editor";
+import { CodeEditor, type CodeEditorLanguage, type CodeEditorRef } from "@/components/editor/codemirror/code-editor";
 import type { JupyterOutput } from "@/lib/notebook-utils";
 import { jupyterOutputsToExecutionOutputs } from "@/lib/runner/output-utils";
 import { OutputArea } from "./output-area";
@@ -17,6 +17,7 @@ interface CodeCellProps {
   outputs?: JupyterOutput[];
   executionCount?: number | null;
   executionMeta?: ExecutionPanelMeta;
+  language?: CodeEditorLanguage;
   isActive: boolean;
   onChange: (source: string) => void;
   onFocus: () => void;
@@ -27,6 +28,10 @@ interface CodeCellProps {
   onRunCell?: (cellId: string, source: string) => Promise<unknown>;
   isExecuting?: boolean;
   canRun?: boolean;
+  onEditorCommandsChange?: (
+    cellId: string,
+    commands: { openSearch: () => void; openGotoLine: () => void } | null,
+  ) => void;
 }
 
 function PlayIcon({ className = "" }: { className?: string }) {
@@ -49,6 +54,7 @@ export const CodeCell = memo(function CodeCell({
   outputs,
   executionCount,
   executionMeta,
+  language = "python",
   isActive,
   onChange,
   onFocus,
@@ -59,6 +65,7 @@ export const CodeCell = memo(function CodeCell({
   onRunCell,
   isExecuting = false,
   canRun = true,
+  onEditorCommandsChange,
 }: CodeCellProps) {
   const { t } = useI18n();
   const [content, setContent] = useState(source);
@@ -75,9 +82,9 @@ export const CodeCell = memo(function CodeCell({
       filePath: notebookFilePath,
       cellId,
       label: `Cell [${executionCount ?? " "}]`,
-      language: "python",
+      language,
     }),
-    [cellId, executionCount, notebookFilePath],
+    [cellId, executionCount, language, notebookFilePath],
   );
 
   const executionOutputs = useMemo(
@@ -117,6 +124,21 @@ export const CodeCell = memo(function CodeCell({
     }
   }, [canRun, handleRun]);
 
+  useEffect(() => {
+    if (!isActive || !onEditorCommandsChange) {
+      return;
+    }
+
+    onEditorCommandsChange(cellId, {
+      openSearch: () => editorRef.current?.openSearch(),
+      openGotoLine: () => editorRef.current?.openGotoLine(),
+    });
+
+    return () => {
+      onEditorCommandsChange(cellId, null);
+    };
+  }, [cellId, isActive, onEditorCommandsChange]);
+
   const navigateToProblem = useCallback((problem: ExecutionProblem) => {
     onFocus();
     const line = problem.context?.line;
@@ -155,7 +177,7 @@ export const CodeCell = memo(function CodeCell({
       >
         <CodeEditor
           initialValue={content}
-          language="python"
+          language={language}
           onChange={handleChange}
           isReadOnly={!isActive}
           autoHeight={true}
@@ -182,7 +204,14 @@ export const CodeCell = memo(function CodeCell({
       {executionOutputs.length > 0 ? (
         <div className="space-y-1">
           <div className="code-workbench-soft-text text-[11px] uppercase tracking-wide">{t("workbench.dock.run")}</div>
-          <OutputArea outputs={executionOutputs} meta={executionMeta} variant="compact" showDiagnosticsInline={false} />
+          <OutputArea
+            outputs={executionOutputs}
+            meta={executionMeta}
+            context={executionMeta?.context ?? executionContext}
+            variant="compact"
+            showDiagnosticsInline={false}
+            onSelectProblem={navigateToProblem}
+          />
         </div>
       ) : null}
 

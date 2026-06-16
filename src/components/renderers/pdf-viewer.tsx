@@ -9,6 +9,16 @@ import { PdfOutlineSidebar } from "./pdf-outline-sidebar";
 import { useI18n } from "@/hooks/use-i18n";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { isTauriHost } from "@/lib/storage-adapter";
+import { buildPersistedFileViewStateKey, loadPersistedFileViewState, savePersistedFileViewState } from "@/lib/file-view-state";
+import { captureRelativeScrollPosition, restoreRelativeScrollPosition, type ScrollContainerLike } from "@/lib/pdf-view-state";
+import {
+  DEFAULT_PDF_VIEWER_VIEW_STATE,
+  buildViewerVisiblePageSeed,
+  getPdfViewerViewStateKey,
+  readPdfViewerViewState,
+  type PdfFitMode,
+  type PdfViewerViewState,
+} from "@/lib/pdf-viewer-position-state";
 import type { BinaryViewerContent } from "@/types/viewer-content";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -34,6 +44,12 @@ interface PDFViewerProps {
   onRequestAnnotationMode?: () => void;
 }
 
+declare global {
+  interface Window {
+    __latticeActivePdfPaneId?: string;
+  }
+}
+
 /**
  * Number of pages to render above/below the visible viewport.
  * Keeps scrolling smooth without rendering the entire document.
@@ -44,6 +60,42 @@ const PAGE_BUFFER = 2;
 const ESTIMATED_PAGE_HEIGHT = 842;
 /** Placeholder width (px) */
 const ESTIMATED_PAGE_WIDTH = 595;
+
+const pdfViewerViewStateByKey = new Map<string, PdfViewerViewState>();
+const pdfViewerZoomStateByPaneKey = new Map<string, Pick<PdfViewerViewState, "scale" | "fitMode">>();
+
+function getCachedPdfViewerViewState(key: string): PdfViewerViewState {
+  return pdfViewerViewStateByKey.get(key) ?? DEFAULT_PDF_VIEWER_VIEW_STATE;
+}
+
+function getCachedPdfViewerZoomState(paneId: string | undefined): Pick<PdfViewerViewState, "scale" | "fitMode"> | null {
+  return paneId ? pdfViewerZoomStateByPaneKey.get(paneId) ?? null : null;
+}
+
+function findPrimaryVisibleViewerPage(container: HTMLElement): number | null {
+  const containerRect = container.getBoundingClientRect();
+  const pages = Array.from(container.querySelectorAll<HTMLElement>("[data-page-number]"));
+  let best: { pageNumber: number; score: number } | null = null;
+
+  for (const page of pages) {
+    const pageNumber = Number(page.dataset.pageNumber ?? "");
+    if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+      continue;
+    }
+
+    const rect = page.getBoundingClientRect();
+    const visibleTop = Math.max(rect.top, containerRect.top);
+    const visibleBottom = Math.min(rect.bottom, containerRect.bottom);
+    const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+    const distanceFromAnchor = Math.abs(rect.top - (containerRect.top + containerRect.height * 0.2));
+    const score = visibleHeight * 10000 - distanceFromAnchor;
+    if (!best || score > best.score) {
+      best = { pageNumber, score };
+    }
+  }
+
+  return best?.pageNumber ?? null;
+}
 
 // --- Virtualized page wrapper ---------------------------------------------------
 
@@ -136,7 +188,7 @@ const VirtualPage = memo(function VirtualPage({
  * Uses IntersectionObserver to only render pages near the viewport.
  */
 export function PDFViewer(props: PDFViewerProps) {
-  const viewerKey = `${props.paneId ?? "default"}:${props.documentId}`;
+  const viewerKey = props.paneId ?? "default";
   return <PDFViewerInner key={viewerKey} {...props} />;
 }
 
@@ -156,22 +208,42 @@ function PDFViewerInner({
     () => `${paneId ?? "default"}:${documentId}`,
     [documentId, paneId],
   );
+  const viewStateKey = useMemo(
+    () => getPdfViewerViewStateKey(paneId, documentId),
+    [documentId, paneId],
+  );
+  const persistedViewStateKey = useMemo(
+    () => buildPersistedFileViewStateKey({
+      kind: "pdf-viewer",
+      filePath: documentId,
+      fallbackName: fileName,
+    }),
+    [documentId, fileName],
+  );
+  const initialViewState = useMemo(() => ({
+    ...getCachedPdfViewerViewState(viewStateKey),
+    ...getCachedPdfViewerZoomState(paneId),
+  }), [paneId, viewStateKey]);
 
   // ── Diagnostic: log mount time and worker status ──
   const [numPages, setNumPages] = useState<number>(0);
-  const [scale, setScale] = useState<number>(1.2);
+  const [scale, setScale] = useState<number>(() => initialViewState.scale);
   const [error, setError] = useState<string | null>(null);
-  const [pageInput, setPageInput] = useState<string>("1");
+  const [pageInput, setPageInput] = useState<string>(() => String(initialViewState.currentPage ?? 1));
   const [searchOpen, setSearchOpen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
-  const [fitMode, setFitMode] = useState<'manual' | 'width' | 'page'>('width');
+  const [fitMode, setFitMode] = useState<PdfFitMode>(() => initialViewState.fitMode);
   const [pageWidth, setPageWidth] = useState(612);
   const [pageHeight, setPageHeight] = useState(792);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const restoreViewStateRef = useRef<PdfViewerViewState>(initialViewState);
+  const hasRestoredViewStateRef = useRef(false);
+  const persistTimeoutRef = useRef<number | null>(null);
+  const lastPersistSignatureRef = useRef<string | null>(null);
 
   // Track which pages are near the viewport
-  const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set([1, 2, 3]));
+  const [visiblePages, setVisiblePages] = useState<Set<number>>(() => buildViewerVisiblePageSeed(initialViewState.currentPage ?? 1));
   // Track measured page dimensions (unscaled) — use state so render can read it
   const [pageDimensions, setPageDimensions] = useState<Map<number, { w: number; h: number }>>(new Map());
 
@@ -232,6 +304,130 @@ function PDFViewerInner({
       : objectUrl
   ), [fileDataSource, isDesktopUrlSource, objectUrl]);
 
+  const captureCurrentViewState = useCallback((): PdfViewerViewState => {
+    const container = scrollContainerRef.current;
+    const currentPage = container
+      ? findPrimaryVisibleViewerPage(container) ?? restoreViewStateRef.current.currentPage ?? 1
+      : restoreViewStateRef.current.currentPage ?? 1;
+    const relativeScroll = container
+      ? captureRelativeScrollPosition(container)
+      : restoreViewStateRef.current.relativeScroll;
+
+    return {
+      scale,
+      fitMode,
+      scrollTop: container?.scrollTop ?? restoreViewStateRef.current.scrollTop ?? 0,
+      scrollLeft: container?.scrollLeft ?? restoreViewStateRef.current.scrollLeft ?? 0,
+      currentPage,
+      relativeScroll,
+    };
+  }, [fitMode, scale]);
+
+  const persistViewStateNow = useCallback(() => {
+    const nextState = captureCurrentViewState();
+    const signature = [
+      nextState.scale.toFixed(4),
+      nextState.fitMode,
+      Math.round(nextState.scrollTop ?? 0),
+      Math.round(nextState.scrollLeft ?? 0),
+      nextState.currentPage ?? 1,
+      nextState.relativeScroll?.topRatio.toFixed(4) ?? "0",
+      nextState.relativeScroll?.leftRatio.toFixed(4) ?? "0",
+    ].join("|");
+
+    restoreViewStateRef.current = nextState;
+    pdfViewerViewStateByKey.set(viewStateKey, nextState);
+    setPageInput(String(nextState.currentPage ?? 1));
+    if (lastPersistSignatureRef.current === signature) {
+      return;
+    }
+    lastPersistSignatureRef.current = signature;
+    void savePersistedFileViewState(persistedViewStateKey, {
+      cursorPosition: nextState.currentPage ?? 1,
+      scrollTop: nextState.scrollTop ?? 0,
+      scrollLeft: nextState.scrollLeft ?? 0,
+      viewState: {
+        pdfViewer: nextState,
+      },
+    });
+  }, [captureCurrentViewState, persistedViewStateKey, viewStateKey]);
+
+  const cacheViewStateNow = useCallback((nextState: Partial<PdfViewerViewState>) => {
+    const currentState = captureCurrentViewState();
+    const cachedState = {
+      ...currentState,
+      ...nextState,
+    };
+    restoreViewStateRef.current = cachedState;
+    pdfViewerViewStateByKey.set(viewStateKey, cachedState);
+    if (paneId && typeof cachedState.scale === "number") {
+      pdfViewerZoomStateByPaneKey.set(paneId, {
+        scale: cachedState.scale,
+        fitMode: cachedState.fitMode,
+      });
+    }
+  }, [captureCurrentViewState, paneId, viewStateKey]);
+
+  const schedulePersistViewState = useCallback((delay = 250) => {
+    if (persistTimeoutRef.current !== null) {
+      window.clearTimeout(persistTimeoutRef.current);
+    }
+    persistTimeoutRef.current = window.setTimeout(() => {
+      persistTimeoutRef.current = null;
+      persistViewStateNow();
+    }, delay);
+  }, [persistViewStateNow]);
+
+  useEffect(() => {
+    const cachedState = {
+      ...getCachedPdfViewerViewState(viewStateKey),
+      ...getCachedPdfViewerZoomState(paneId),
+    };
+    restoreViewStateRef.current = cachedState;
+    hasRestoredViewStateRef.current = false;
+    lastPersistSignatureRef.current = null;
+    setNumPages(0);
+    setError(null);
+    setPdfDoc(null);
+    setScale(cachedState.scale);
+    setFitMode(cachedState.fitMode);
+    setPageInput(String(cachedState.currentPage ?? 1));
+    setVisiblePages(buildViewerVisiblePageSeed(cachedState.currentPage ?? 1));
+    setPageDimensions(new Map());
+    setPageWidth(612);
+    setPageHeight(792);
+  }, [documentKey, paneId, viewStateKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadPersistedFileViewState(persistedViewStateKey).then((persistedState) => {
+      if (cancelled || !persistedState) {
+        return;
+      }
+
+      const persistedViewerState = readPdfViewerViewState(persistedState.viewState?.pdfViewer);
+      if (!persistedViewerState) {
+        return;
+      }
+
+      const paneZoomState = getCachedPdfViewerZoomState(paneId);
+      const viewerState = {
+        ...persistedViewerState,
+        ...paneZoomState,
+      };
+      restoreViewStateRef.current = viewerState;
+      pdfViewerViewStateByKey.set(viewStateKey, viewerState);
+      setScale(viewerState.scale);
+      setFitMode(viewerState.fitMode);
+      setPageInput(String(persistedViewerState.currentPage ?? 1));
+      setVisiblePages(buildViewerVisiblePageSeed(persistedViewerState.currentPage ?? 1));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [persistedViewStateKey, paneId, viewStateKey]);
+
   const onDocumentLoadSuccess = useCallback((pdf: { numPages: number }) => {
     setNumPages(pdf.numPages);
     setError(null);
@@ -241,6 +437,125 @@ function PDFViewerInner({
   const onDocumentLoadError = useCallback((err: Error) => {
     setError(err.message || "Failed to load PDF");
   }, []);
+
+  useEffect(() => {
+    if (numPages <= 0 || hasRestoredViewStateRef.current) {
+      return;
+    }
+
+    let frameId = 0;
+    let attemptsLeft = 80;
+    const restore = () => {
+      const container = scrollContainerRef.current;
+      if (!container) {
+        attemptsLeft -= 1;
+        if (attemptsLeft > 0) {
+          frameId = window.requestAnimationFrame(restore);
+        }
+        return;
+      }
+
+      const state = restoreViewStateRef.current;
+      if (state.currentPage) {
+        setVisiblePages((previous) => {
+          const next = new Set(previous);
+          for (const page of buildViewerVisiblePageSeed(state.currentPage ?? 1)) {
+            next.add(page);
+          }
+          return next;
+        });
+      }
+
+      const hasScrollableLayout = container.scrollHeight > container.clientHeight || container.scrollWidth > container.clientWidth;
+      if (!hasScrollableLayout) {
+        attemptsLeft -= 1;
+        if (attemptsLeft > 0) {
+          frameId = window.requestAnimationFrame(restore);
+        }
+        return;
+      }
+
+      if (state.relativeScroll) {
+        restoreRelativeScrollPosition(container as ScrollContainerLike, state.relativeScroll);
+      } else if (typeof state.scrollTop === "number" || typeof state.scrollLeft === "number") {
+        container.scrollTo({
+          top: state.scrollTop ?? 0,
+          left: state.scrollLeft ?? 0,
+          behavior: "auto",
+        });
+      }
+      hasRestoredViewStateRef.current = true;
+      schedulePersistViewState(400);
+    };
+
+    frameId = window.requestAnimationFrame(() => {
+      frameId = window.requestAnimationFrame(restore);
+    });
+    return () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [numPages, schedulePersistViewState]);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    let rafId = 0;
+    const handleScroll = () => {
+      if (!hasRestoredViewStateRef.current) {
+        return;
+      }
+      if (rafId) {
+        return;
+      }
+      rafId = window.requestAnimationFrame(() => {
+        rafId = 0;
+        restoreViewStateRef.current = captureCurrentViewState();
+        schedulePersistViewState();
+      });
+    };
+
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+      }
+      if (persistTimeoutRef.current !== null) {
+        window.clearTimeout(persistTimeoutRef.current);
+        persistTimeoutRef.current = null;
+      }
+      persistViewStateNow();
+    };
+  }, [captureCurrentViewState, persistViewStateNow, schedulePersistViewState]);
+
+  useEffect(() => {
+    if (hasRestoredViewStateRef.current) {
+      schedulePersistViewState(160);
+    }
+  }, [fitMode, scale, schedulePersistViewState]);
+
+  useEffect(() => {
+    const flush = () => persistViewStateNow();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        flush();
+      }
+    };
+
+    window.addEventListener("blur", flush);
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("blur", flush);
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [persistViewStateNow]);
 
   // Fit mode: recalculate scale when container resizes or fitMode changes
   useEffect(() => {
@@ -291,13 +606,29 @@ function PDFViewerInner({
 
   const zoomIn = () => {
     setFitMode('manual');
-    setScale((prev) => Math.min(prev + 0.25, 3.0));
+    setScale((prev) => {
+      const nextScale = Math.min(prev + 0.25, 3.0);
+      cacheViewStateNow({ fitMode: 'manual', scale: nextScale });
+      schedulePersistViewState(0);
+      return nextScale;
+    });
   };
 
   const zoomOut = () => {
     setFitMode('manual');
-    setScale((prev) => Math.max(prev - 0.25, 0.5));
+    setScale((prev) => {
+      const nextScale = Math.max(prev - 0.25, 0.5);
+      cacheViewStateNow({ fitMode: 'manual', scale: nextScale });
+      schedulePersistViewState(0);
+      return nextScale;
+    });
   };
+
+  const markPaneActive = useCallback(() => {
+    if (paneId) {
+      window.__latticeActivePdfPaneId = paneId;
+    }
+  }, [paneId]);
 
   const jumpToPage = useCallback((pageNum: number) => {
     if (pageNum < 1 || pageNum > numPages) return;
@@ -344,6 +675,32 @@ function PDFViewerInner({
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  useEffect(() => {
+    if (!paneId) {
+      return;
+    }
+
+    const handler = (event: KeyboardEvent) => {
+      if ((!event.ctrlKey && !event.metaKey) || window.__latticeActivePdfPaneId !== paneId) {
+        return;
+      }
+
+      if (event.key === "=" || event.key === "+") {
+        event.preventDefault();
+        zoomIn();
+        return;
+      }
+
+      if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        zoomOut();
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [paneId]);
+
   if (error) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-8">
@@ -355,7 +712,9 @@ function PDFViewerInner({
   return (
     <div
       className="flex h-full flex-col"
-      data-testid={paneId ? `pdf-viewer-${paneId}` : "pdf-viewer"}
+      data-testid={paneId ? `pdf-pane-${paneId}` : "pdf-viewer"}
+      onMouseEnter={markPaneActive}
+      onFocusCapture={markPaneActive}
     >
       {/* Toolbar */}
       <div className="flex items-center justify-between border-b border-border bg-muted/50 px-4 py-2">
@@ -392,6 +751,11 @@ function PDFViewerInner({
             <span className="min-w-[4rem] text-center text-sm">
               {Math.round(scale * 100)}%
             </span>
+            {paneId ? (
+              <span className="sr-only" data-testid={`pdf-zoom-label-${paneId}`}>
+                {Math.round(scale * 100)}%
+              </span>
+            ) : null}
             <button
               onClick={zoomIn}
               disabled={scale >= 3.0}
@@ -463,7 +827,11 @@ function PDFViewerInner({
         />
 
         {/* PDF Content - Virtualized continuous scroll */}
-        <div ref={scrollContainerRef} className="relative flex-1 overflow-auto bg-muted/30 p-4">
+        <div
+          ref={scrollContainerRef}
+          className="relative flex-1 overflow-auto bg-muted/30 p-4"
+          data-testid={paneId ? `pdf-viewer-container-${paneId}` : undefined}
+        >
           <PdfSearchOverlay
             key={`${documentKey}:${searchOpen ? "open" : "closed"}`}
             pdfDocument={pdfDoc}

@@ -38,6 +38,7 @@ interface PdfItemWorkspacePanelProps {
   filePath: string;
   paneId: PaneId;
   annotations: AnnotationItem[];
+  isAnnotationsLoading?: boolean;
   manifest?: PdfItemManifest | null;
   pdfDocument?: PDFDocumentProxy | null;
 }
@@ -88,6 +89,7 @@ export function PdfItemWorkspacePanel({
   filePath,
   paneId,
   annotations,
+  isAnnotationsLoading = false,
   manifest: initialManifest = null,
   pdfDocument = null,
 }: PdfItemWorkspacePanelProps) {
@@ -400,7 +402,9 @@ export function PdfItemWorkspacePanel({
 
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
         <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5">
-          {t("pdf.workspace.count.annotations", { count: pdfAnnotations.length })}
+          {isAnnotationsLoading
+            ? t("workbench.annotations.loading")
+            : t("pdf.workspace.count.annotations", { count: pdfAnnotations.length })}
         </span>
         <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5">
           {t("pdf.workspace.count.notes", { count: notes.length })}

@@ -41,6 +41,7 @@ export interface AppSettings {
   recentWorkspaceKeys: string[];
   workspaceDisplayPaths: Record<string, string>;
   rememberWindowState: boolean;
+  markdownUpdateLinksOnRename: boolean;
 
   // Workbench
   activityView: ActivityView;
@@ -92,6 +93,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   recentWorkspaceKeys: [],
   workspaceDisplayPaths: {},
   rememberWindowState: true,
+  markdownUpdateLinksOnRename: false,
   activityView: 'files',
   sidePanelWidth: 22,
   sidePanelCollapsed: false,

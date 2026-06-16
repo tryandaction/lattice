@@ -6,6 +6,7 @@ import type {
   RunnerHealthAction,
   RunnerHealthIssue,
 } from "@/lib/runner/types";
+import { parseOutputLocations } from "@/lib/runner/output-location-parser";
 
 function buildProblemId(prefix: string, title: string, message: string, context?: ExecutionContextRef | null): string {
   return [
@@ -133,11 +134,41 @@ export function outputsToExecutionProblems(
   context?: ExecutionContextRef | null,
 ): ExecutionProblem[] {
   return outputs.flatMap((output, index) => {
+    if (output.type === "text" && output.channel === "stderr") {
+      return parseOutputLocations(output.content).map((location, locationIndex) => {
+        const resolvedContext = cloneContext(context, {
+          filePath: location.filePath ?? context?.filePath,
+          line: location.line,
+          column: location.column,
+        });
+        const title = location.source === "node"
+          ? "运行错误位置"
+          : location.severity === "warning"
+            ? "编译警告"
+            : location.severity === "info"
+              ? "编译提示"
+              : "编译错误";
+        const message = location.message || location.rawLine.trim();
+
+        return {
+          id: buildProblemId("runtime", title, `${message}:${index}:${locationIndex}`, resolvedContext),
+          source: "runtime",
+          severity: location.severity,
+          title,
+          message,
+          stage: "execution",
+          context: resolvedContext,
+          traceback: [location.rawLine],
+        };
+      });
+    }
+
     if (output.type !== "error") {
       return [];
     }
 
-    const location = parseTracebackLocation(output.traceback, context);
+    const traceback = output.traceback ?? [];
+    const location = parseTracebackLocation(traceback, context);
     const resolvedContext = cloneContext(context, location ?? undefined);
     const title = output.errorName ?? "运行失败";
     const message = output.errorValue ?? output.content;
@@ -155,7 +186,7 @@ export function outputsToExecutionProblems(
         stage: "execution",
         errorName: output.errorName,
         errorValue: output.errorValue,
-        traceback: output.traceback,
+        traceback,
         context: resolvedContext,
         actions: runtimeMeta.actions,
       },

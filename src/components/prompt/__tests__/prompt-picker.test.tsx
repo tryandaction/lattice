@@ -22,22 +22,17 @@ const template: PromptTemplate = {
   updatedAt: 1,
 };
 
+const recentTemplate: PromptTemplate = {
+  ...template,
+  id: "template-recent",
+  title: "Recent Matrix",
+  description: "Build a comparison matrix",
+};
+
 const store = {
   loadPromptState: vi.fn(async () => undefined),
   getTemplatesForSurface: vi.fn(() => [template]),
-  getRecentTemplates: vi.fn(() => [template]),
-  getRecentRuns: vi.fn(() => [
-    {
-      id: "run-1",
-      templateId: "template-1",
-      surface: "chat",
-      renderedPrompt: "Rendered prompt",
-      contextSummary: "Current File: ready",
-      outputMode: "structured-chat",
-      createdAt: 1,
-    },
-  ]),
-  getTemplateById: vi.fn((templateId: string) => (templateId === "template-1" ? template : null)),
+  getRecentTemplates: vi.fn(() => [recentTemplate]),
 };
 
 vi.mock("@/stores/prompt-template-store", () => ({
@@ -55,7 +50,7 @@ describe("PromptPicker", () => {
     vi.clearAllMocks();
   });
 
-  it("shows recent runs using template titles and selects a template", () => {
+  it("selects a template directly from the compact picker", () => {
     const onSelectTemplate = vi.fn();
 
     render(
@@ -72,11 +67,36 @@ describe("PromptPicker", () => {
       />,
     );
 
-    expect(screen.getAllByText("Paper Summary").length).toBeGreaterThan(0);
-    expect(screen.getByText("prompt.picker.runs")).not.toBeNull();
-    expect(screen.getAllByText("Paper Summary").length).toBeGreaterThan(0);
+    expect(screen.getByText("Recent Matrix")).not.toBeNull();
+    expect(screen.getByText("Paper Summary")).not.toBeNull();
+    expect(screen.queryByText("prompt.picker.runs")).toBeNull();
+    expect(screen.queryByText("prompt.picker.use")).toBeNull();
 
-    fireEvent.click(screen.getAllByText("prompt.picker.use")[0]!);
+    fireEvent.click(screen.getByText("Paper Summary"));
     expect(onSelectTemplate).toHaveBeenCalledWith(template);
+  });
+
+  it("selects recent templates in one click and keeps edit separate", () => {
+    const onSelectTemplate = vi.fn();
+    const onEditTemplate = vi.fn();
+
+    render(
+      <PromptPicker
+        isOpen
+        surface="chat"
+        currentInput=""
+        onClose={() => {}}
+        onSelectTemplate={onSelectTemplate}
+        onCreateTemplate={() => {}}
+        onEditTemplate={onEditTemplate}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Recent Matrix"));
+    expect(onSelectTemplate).toHaveBeenCalledWith(recentTemplate);
+
+    fireEvent.click(screen.getAllByTitle("common.edit")[0]!);
+    expect(onEditTemplate).toHaveBeenCalledWith(recentTemplate);
+    expect(onSelectTemplate).toHaveBeenCalledTimes(1);
   });
 });

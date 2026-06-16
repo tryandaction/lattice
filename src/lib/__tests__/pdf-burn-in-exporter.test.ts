@@ -5,17 +5,31 @@
  * Feature: visual-adapters-exporter, Property 5: PDF Export Rendering Correctness
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as fc from 'fast-check';
 import {
   normalizedToPoints,
   getColorRgb,
   countHighlightRects,
   countAnnotationsWithComments,
+  drawHighlightAnnotation,
+  drawAreaRect,
+  drawUnderlineRect,
   HIGHLIGHT_OPACITY,
+  AREA_FILL_OPACITY,
+  AREA_BORDER_OPACITY,
+  UNDERLINE_OPACITY,
   PDF_HIGHLIGHT_COLORS,
 } from '../pdf-burn-in-exporter';
 import type { AnnotationItem, PdfTarget, BoundingBox } from '@/types/universal-annotation';
+
+function createMockPdfPage() {
+  return {
+    getSize: () => ({ width: 600, height: 800 }),
+    drawRectangle: vi.fn(),
+    drawLine: vi.fn(),
+  };
+}
 
 // ============================================================================
 // Arbitrary Generators
@@ -264,6 +278,12 @@ describe('Property 5: PDF Export Rendering Correctness', () => {
     it('has correct default opacity', () => {
       expect(HIGHLIGHT_OPACITY).toBe(0.35);
     });
+
+    it('uses dedicated opacities for underline and area export rendering', () => {
+      expect(UNDERLINE_OPACITY).toBe(0.95);
+      expect(AREA_FILL_OPACITY).toBe(0.10);
+      expect(AREA_BORDER_OPACITY).toBe(0.85);
+    });
   });
 
   describe('Multi-Page Annotations', () => {
@@ -366,5 +386,66 @@ describe('PDF Export Edge Cases', () => {
     expect(getColorRgb('YELLOW')).toEqual(PDF_HIGHLIGHT_COLORS.yellow);
     expect(getColorRgb('Yellow')).toEqual(PDF_HIGHLIGHT_COLORS.yellow);
     expect(getColorRgb('yellow')).toEqual(PDF_HIGHLIGHT_COLORS.yellow);
+  });
+
+  it('exports underline annotations as underline strokes instead of filled highlights', () => {
+    const page = createMockPdfPage();
+    const annotation: AnnotationItem = {
+      id: 'underline',
+      target: {
+        type: 'pdf',
+        page: 2,
+        rects: [{ x1: 0.1, y1: 0.2, x2: 0.4, y2: 0.25 }],
+      },
+      style: { color: 'yellow', type: 'underline' },
+      author: 'user',
+      createdAt: 1,
+    };
+
+    expect(drawHighlightAnnotation(page as never, annotation)).toBe(1);
+    expect(page.drawLine).toHaveBeenCalledTimes(1);
+    expect(page.drawRectangle).not.toHaveBeenCalled();
+  });
+
+  it('exports area annotations as framed rectangles', () => {
+    const page = createMockPdfPage();
+
+    drawAreaRect(page as never, { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.6 }, 'blue');
+
+    expect(page.drawRectangle).toHaveBeenCalledTimes(1);
+    expect(page.drawRectangle.mock.calls[0][0]).toMatchObject({
+      opacity: AREA_FILL_OPACITY,
+      borderOpacity: AREA_BORDER_OPACITY,
+    });
+  });
+
+  it('exports highlight annotations as filled rectangles', () => {
+    const page = createMockPdfPage();
+    const annotation: AnnotationItem = {
+      id: 'highlight',
+      target: {
+        type: 'pdf',
+        page: 1,
+        rects: [{ x1: 0.1, y1: 0.2, x2: 0.4, y2: 0.25 }],
+      },
+      style: { color: 'yellow', type: 'highlight' },
+      author: 'user',
+      createdAt: 1,
+    };
+
+    expect(drawHighlightAnnotation(page as never, annotation)).toBe(1);
+    expect(page.drawRectangle).toHaveBeenCalledTimes(1);
+    expect(page.drawLine).not.toHaveBeenCalled();
+  });
+
+  it('draws underline helper with pdf-lib line primitives', () => {
+    const page = createMockPdfPage();
+
+    drawUnderlineRect(page as never, { x1: 0.1, y1: 0.2, x2: 0.4, y2: 0.25 }, 'yellow');
+
+    expect(page.drawLine).toHaveBeenCalledTimes(1);
+    expect(page.drawLine.mock.calls[0][0]).toMatchObject({
+      opacity: UNDERLINE_OPACITY,
+    });
   });
 });

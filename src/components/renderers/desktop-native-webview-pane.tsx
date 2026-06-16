@@ -221,7 +221,6 @@ export function DesktopNativeWebviewPane({
     }
 
     const requestVersion = ++requestVersionRef.current;
-    setError(null);
 
     void ensureDesktopWebview({
       label,
@@ -240,6 +239,7 @@ export function DesktopNativeWebviewPane({
           setError(nextSnapshot.lastError || "Failed to create desktop webview.");
           return;
         }
+        setError(null);
         updateWebTab(paneId, tabId, {
           url: nextSnapshot.currentUrl || url,
           fileName: nextSnapshot.title?.trim() || fileName,

@@ -120,6 +120,70 @@ describe('AiOrchestrator', () => {
     expect(proposal.requiredApprovals).toEqual([
       'Confirm any file creation or updates before execution',
     ]);
-    expect(proposal.plannedWrites).toEqual([]);
+    expect(proposal.plannedWrites).toEqual([
+      expect.objectContaining({
+        targetPath: 'AI Drafts/整理本周实验记录 Plan.md',
+        mode: 'create',
+        contentPreview: expect.stringContaining('Proposal: 整理本周实验记录'),
+      }),
+    ]);
+    expect(proposal.plannedWrites[0]?.contentPreview).toContain('lab/log.md#Week log');
+    expect(proposal.approvedWrites).toEqual(['AI Drafts/整理本周实验记录 Plan.md']);
+  });
+
+  it('normalizes proposal planned writes and filters unsafe model targets', async () => {
+    generateMock.mockResolvedValue({
+      text: JSON.stringify({
+        summary: 'Organize Alpha notes',
+        steps: [
+          {
+            title: 'Review Alpha',
+            description: 'Review Alpha sources.',
+          },
+        ],
+        plannedWrites: [
+          {
+            targetPath: 'Research//alpha-plan.md',
+            mode: 'append',
+            contentPreview: 'Append Alpha plan.',
+          },
+          {
+            targetPath: '../escape.md',
+            mode: 'create',
+            contentPreview: 'Unsafe traversal.',
+          },
+          {
+            targetPath: 'C:/Users/me/unsafe.md',
+            mode: 'update',
+            contentPreview: 'Unsafe absolute path.',
+          },
+        ],
+      }),
+      model: 'gpt-test',
+    });
+
+    const proposal = await aiOrchestrator.proposeTask({
+      prompt: 'Organize Alpha notes',
+      settings: baseSettings,
+      filePath: 'notes/alpha.md',
+      content: '# Alpha\nResult summary.',
+    });
+
+    expect(proposal.summary).toBe('Organize Alpha notes');
+    expect(proposal.steps).toEqual([
+      {
+        id: 'step-1',
+        title: 'Review Alpha',
+        description: 'Review Alpha sources.',
+      },
+    ]);
+    expect(proposal.plannedWrites).toEqual([
+      {
+        targetPath: 'Research/alpha-plan.md',
+        mode: 'append',
+        contentPreview: 'Append Alpha plan.',
+      },
+    ]);
+    expect(proposal.approvedWrites).toEqual(['Research/alpha-plan.md']);
   });
 });

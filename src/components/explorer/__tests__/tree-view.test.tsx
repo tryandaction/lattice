@@ -3,16 +3,63 @@
  */
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { TreeView } from "../tree-view";
 import { useExplorerStore } from "@/stores/explorer-store";
 
+let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+const originalConsoleError = console.error;
 const copyEntry = vi.fn();
 const moveEntry = vi.fn();
 const hydratePdfVirtualChildren = vi.fn();
 const setSelectedDirectoryPath = vi.fn();
 const updateTabPath = vi.fn();
 const updateTabPathPrefix = vi.fn();
+const openFileInPane = vi.fn();
+const splitPane = vi.fn();
+const toastMocks = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+}));
+const clipboardMocks = vi.hoisted(() => ({
+  copyToClipboard: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: toastMocks.success,
+    error: toastMocks.error,
+  },
+}));
+
+vi.mock("@/lib/clipboard", () => ({
+  copyToClipboard: clipboardMocks.copyToClipboard,
+}));
+
+vi.mock("@/lib/desktop-file-system", () => ({
+  getDesktopHandlePath: () => null,
+}));
+
+vi.mock("@/lib/desktop-openers", () => ({
+  canUseDesktopOpeners: () => false,
+  openDesktopPath: vi.fn(),
+  openDesktopTerminalAtPath: vi.fn(),
+  revealDesktopPath: vi.fn(),
+}));
+
+vi.mock("@/hooks/use-i18n", () => ({
+  useI18n: () => ({
+    t: (key: string) => key,
+  }),
+}));
+
+function createTextFileHandle(name: string, text: string): FileSystemFileHandle {
+  return {
+    name,
+    kind: "file",
+    getFile: vi.fn(async () => new File([text], name)),
+  } as unknown as FileSystemFileHandle;
+}
 
 vi.mock("@/hooks/use-file-system", () => ({
   useFileSystem: () => ({
@@ -22,7 +69,7 @@ vi.mock("@/hooks/use-file-system", () => ({
     deleteFile: vi.fn(),
     renameFile: vi.fn(),
     refreshDirectory: vi.fn(),
-    rootHandle: null,
+    rootHandle: { name: "workspace" },
     createFile: vi.fn(),
     createDirectory: vi.fn(),
     openDirectoryAsWorkspace: vi.fn(),
@@ -34,19 +81,18 @@ vi.mock("@/stores/workspace-store", () => ({
     setSelectedDirectoryPath: typeof setSelectedDirectoryPath;
     updateTabPath: typeof updateTabPath;
     updateTabPathPrefix: typeof updateTabPathPrefix;
+    openFileInPane: typeof openFileInPane;
+    splitPane: typeof splitPane;
     layout: {
       activePaneId: string;
-      root: {
-        type: "pane";
-        id: string;
-        tabs: never[];
-        activeTabIndex: number;
-      };
+      root: any;
     };
   }) => unknown) => selector({
     setSelectedDirectoryPath,
     updateTabPath,
     updateTabPathPrefix,
+    openFileInPane,
+    splitPane,
     layout: {
       activePaneId: "pane-1",
       root: {
@@ -60,6 +106,20 @@ vi.mock("@/stores/workspace-store", () => ({
 }));
 
 describe("TreeView rename keyboard handling", () => {
+  beforeAll(() => {
+    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      const message = args.map((value) => String(value ?? "")).join(" ");
+      if (message.includes("not wrapped in act")) {
+        return;
+      }
+      originalConsoleError(...args);
+    });
+  });
+
+  afterAll(() => {
+    consoleErrorSpy?.mockRestore();
+  });
+
   beforeEach(() => {
     copyEntry.mockReset();
     moveEntry.mockReset();
@@ -67,11 +127,19 @@ describe("TreeView rename keyboard handling", () => {
     setSelectedDirectoryPath.mockReset();
     updateTabPath.mockReset();
     updateTabPathPrefix.mockReset();
+    openFileInPane.mockReset();
+    splitPane.mockReset();
+    splitPane.mockReturnValue("pane-2");
+    clipboardMocks.copyToClipboard.mockReset();
+    clipboardMocks.copyToClipboard.mockResolvedValue(true);
+    toastMocks.success.mockReset();
+    toastMocks.error.mockReset();
     useExplorerStore.setState({
       selectedPath: "workspace/file.md",
       selectedKind: "file",
       renamingPath: "workspace/file.md",
       clipboard: { mode: "copy", path: "workspace/other.md", kind: "file" },
+      compareSelection: null,
       dragOverPath: null,
     });
   });
@@ -82,6 +150,7 @@ describe("TreeView rename keyboard handling", () => {
       selectedKind: null,
       renamingPath: null,
       clipboard: null,
+      compareSelection: null,
       dragOverPath: null,
     });
   });
@@ -150,5 +219,143 @@ describe("TreeView rename keyboard handling", () => {
 
     expect(screen.getByText("paper.pdf")).toBeTruthy();
     expect(hydratePdfVirtualChildren).not.toHaveBeenCalled();
+  });
+
+  it("shows VS Code-style core file context actions", () => {
+    render(
+      <TreeView
+        root={{
+          name: "workspace",
+          kind: "directory",
+          path: "workspace",
+          isExpanded: true,
+          children: [
+            {
+              name: "file.py",
+              kind: "file",
+              handle: { name: "file.py" } as FileSystemFileHandle,
+              extension: "py",
+              path: "workspace/src/file.py",
+            },
+          ],
+          handle: {} as FileSystemDirectoryHandle,
+        }}
+      />
+    );
+
+    fireEvent.contextMenu(screen.getByText("file.py"));
+
+    expect(screen.getByText("explorer.context.openToSide")).toBeTruthy();
+    expect(screen.getByText("explorer.context.openWith")).toBeTruthy();
+    expect(screen.getByText("explorer.context.revealInFileExplorer")).toBeTruthy();
+    expect(screen.getByText("explorer.context.openInIntegratedTerminal")).toBeTruthy();
+    expect(screen.getByText("explorer.context.selectForCompare")).toBeTruthy();
+    expect(screen.getByText("explorer.context.copyPath")).toBeTruthy();
+    expect(screen.getByText("explorer.context.copyRelativePath")).toBeTruthy();
+  });
+
+  it("opens a file to the side by splitting when no side pane exists", () => {
+    const handle = { name: "file.py" } as FileSystemFileHandle;
+    render(
+      <TreeView
+        root={{
+          name: "workspace",
+          kind: "directory",
+          path: "workspace",
+          isExpanded: true,
+          children: [
+            {
+              name: "file.py",
+              kind: "file",
+              handle,
+              extension: "py",
+              path: "workspace/src/file.py",
+            },
+          ],
+          handle: {} as FileSystemDirectoryHandle,
+        }}
+      />
+    );
+
+    fireEvent.contextMenu(screen.getByText("file.py"));
+    fireEvent.click(screen.getByText("explorer.context.openToSide"));
+
+    expect(splitPane).toHaveBeenCalledWith("pane-1", "horizontal");
+    expect(openFileInPane).toHaveBeenCalledWith("pane-2", handle, "workspace/src/file.py");
+  });
+
+  it("copies a workspace-relative file path from the context menu", async () => {
+    render(
+      <TreeView
+        root={{
+          name: "workspace",
+          kind: "directory",
+          path: "workspace",
+          isExpanded: true,
+          children: [
+            {
+              name: "file.py",
+              kind: "file",
+              handle: { name: "file.py" } as FileSystemFileHandle,
+              extension: "py",
+              path: "workspace/src/file.py",
+            },
+          ],
+          handle: {} as FileSystemDirectoryHandle,
+        }}
+      />
+    );
+
+    fireEvent.contextMenu(screen.getByText("file.py"));
+    fireEvent.click(screen.getByText("explorer.context.copyRelativePath"));
+
+    await vi.waitFor(() => {
+      expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith("src/file.py");
+    });
+  });
+
+  it("opens a real line diff when comparing with the selected file", async () => {
+    const leftHandle = createTextFileHandle("left.py", "print('old')\nshared\n");
+    const rightHandle = createTextFileHandle("right.py", "print('new')\nshared\n");
+
+    render(
+      <TreeView
+        root={{
+          name: "workspace",
+          kind: "directory",
+          path: "workspace",
+          isExpanded: true,
+          children: [
+            {
+              name: "left.py",
+              kind: "file",
+              handle: leftHandle,
+              extension: "py",
+              path: "workspace/left.py",
+            },
+            {
+              name: "right.py",
+              kind: "file",
+              handle: rightHandle,
+              extension: "py",
+              path: "workspace/right.py",
+            },
+          ],
+          handle: {} as FileSystemDirectoryHandle,
+        }}
+      />
+    );
+
+    fireEvent.contextMenu(screen.getByText("left.py"));
+    fireEvent.click(screen.getByText("explorer.context.selectForCompare"));
+
+    fireEvent.contextMenu(screen.getByText("right.py"));
+    fireEvent.click(screen.getByText("explorer.context.compareWithSelected"));
+
+    expect(await screen.findByText("explorer.compare.title")).toBeTruthy();
+    expect(screen.getByText("print('old')")).toBeTruthy();
+    expect(screen.getByText("print('new')")).toBeTruthy();
+    expect(openFileInPane).toHaveBeenCalledWith("pane-1", leftHandle, "workspace/left.py");
+    expect(openFileInPane).toHaveBeenCalledWith("pane-2", rightHandle, "workspace/right.py");
   });
 });

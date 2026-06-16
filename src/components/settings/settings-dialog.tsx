@@ -404,6 +404,22 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
             {activeTab === 'files' && (
               <div className="space-y-6">
                 <FolderSelector showNotFoundWarning />
+                <label className="flex items-start gap-3 rounded border border-border bg-background p-3">
+                  <input
+                    type="checkbox"
+                    checked={settings.markdownUpdateLinksOnRename}
+                    onChange={(event) => updateSetting('markdownUpdateLinksOnRename', event.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-border"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-foreground">
+                      {t('settings.markdown.updateLinksOnRename')}
+                    </span>
+                    <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                      {t('settings.markdown.updateLinksOnRename.description')}
+                    </span>
+                  </span>
+                </label>
               </div>
             )}
 

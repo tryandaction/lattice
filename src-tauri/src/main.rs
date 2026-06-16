@@ -39,7 +39,10 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use crate::pdf_native::desktop_extract_pdf_page_text_layout;
+use crate::pdf_native::{
+    desktop_extract_pdf_page_text_layout,
+    desktop_ocr_pdf_page_text_layout,
+};
 
 const SETTINGS_STORE: &str = "settings.json";
 const RUNNER_EVENT_NAME: &str = "runner://event";
@@ -162,6 +165,7 @@ enum RunnerType {
     PythonLocal,
     PythonPyodide,
     ExternalCommand,
+    CompiledNative,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -280,6 +284,7 @@ impl Default for DesktopFsState {
 struct CleanupArtifacts {
     bootstrap_path: PathBuf,
     payload_path: Option<PathBuf>,
+    extra_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1198,7 +1203,7 @@ async fn fetch_web_document(url: String) -> Result<WebDocumentSnapshot, String> 
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(10))
         .timeout(Duration::from_secs(15))
-        .user_agent("Lattice/2.1.0 (+https://github.com/tryandaction/lattice)")
+        .user_agent("Lattice/2.2.0 (+https://github.com/tryandaction/lattice)")
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -1288,7 +1293,7 @@ async fn desktop_native_webview_mount(
         label.clone(),
         WebviewUrl::External(target_url.clone()),
     )
-    .user_agent("LatticeEmbeddedWebview/2.1.0")
+    .user_agent("LatticeEmbeddedWebview/2.2.0")
     .data_directory(build_desktop_native_webview_data_directory(&target_url))
     .initialization_script(
         r#"
@@ -1751,6 +1756,10 @@ async fn start_local_execution(
         return Err("python-pyodide is not handled by the desktop backend".to_string());
     }
 
+    if matches!(request.runner_type, RunnerType::CompiledNative) {
+        return start_compiled_native_execution(app, state, request).await;
+    }
+
     let session_id = request
         .session_id
         .clone()
@@ -1883,6 +1892,287 @@ async fn start_local_execution(
         session_id,
         runner_type,
     })
+}
+
+async fn start_compiled_native_execution(
+    app: AppHandle,
+    state: State<'_, ExecutionSessions>,
+    request: LocalExecutionRequest,
+) -> Result<ExecutionStartResponse, String> {
+    let session_id = request
+        .session_id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let runner_type = request.runner_type.clone();
+    let mode = request.mode.clone();
+    let request_cwd = request.cwd.clone();
+    let request_file_path = request.file_path.clone();
+    let cwd_path = request
+        .cwd
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from);
+
+    let compiler = request
+        .command
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Missing C/C++ compiler command".to_string())?;
+    let source_path = request
+        .file_path
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Compiled native execution requires a saved file path".to_string())?;
+
+    let compiler_availability = probe_command(&compiler);
+    if !compiler_availability.available {
+        return Err(
+            compiler_availability
+                .error
+                .unwrap_or_else(|| format!("Command not available: {compiler}")),
+        );
+    }
+
+    let output_path = compiled_native_output_path(&session_id)?;
+    let cleanup = CleanupArtifacts {
+        bootstrap_path: output_path.clone(),
+        payload_path: None,
+        extra_paths: Vec::new(),
+    };
+
+    emit_runner_event(
+        &app,
+        &session_id,
+        "started",
+        json!({
+            "cwd": request_cwd,
+            "filePath": request_file_path,
+            "mode": mode,
+            "runnerType": runner_type,
+        }),
+    );
+
+    let mut compile_command = Command::new(&compiler);
+    configure_tokio_command(&mut compile_command);
+    if let Some(cwd) = &cwd_path {
+        compile_command.current_dir(cwd);
+    }
+    if let Some(environment) = &request.env {
+        compile_command.envs(environment);
+    }
+    if let Some(arguments) = &request.args {
+        compile_command.args(arguments);
+    }
+    compile_command
+        .arg(&source_path)
+        .arg("-o")
+        .arg(&output_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut compile_child = compile_command.spawn().map_err(|error| error.to_string())?;
+    let compile_stdout = compile_child.stdout.take();
+    let compile_stderr = compile_child.stderr.take();
+    let compile_child = Arc::new(Mutex::new(compile_child));
+    let terminated = Arc::new(AtomicBool::new(false));
+
+    {
+        let mut sessions = state.sessions.lock().await;
+        sessions.insert(
+            session_id.clone(),
+            ManagedExecution {
+                child: Arc::clone(&compile_child),
+                terminated: Arc::clone(&terminated),
+            },
+        );
+    }
+
+    if let Some(stdout_pipe) = compile_stdout {
+        let app_handle = app.clone();
+        let stdout_session_id = session_id.clone();
+        tokio::spawn(async move {
+            stream_output(app_handle, stdout_session_id, stdout_pipe, "stdout", false).await;
+        });
+    }
+
+    if let Some(stderr_pipe) = compile_stderr {
+        let app_handle = app.clone();
+        let stderr_session_id = session_id.clone();
+        tokio::spawn(async move {
+            stream_output(app_handle, stderr_session_id, stderr_pipe, "stderr", false).await;
+        });
+    }
+
+    let wait_app = app.clone();
+    let wait_session_id = session_id.clone();
+    tokio::spawn(async move {
+        let compile_status = {
+            let mut guard = compile_child.lock().await;
+            guard.wait().await
+        };
+
+        match compile_status {
+            Ok(status) if status.success() && !terminated.load(Ordering::SeqCst) => {
+                if let Err(error) = run_compiled_native_artifact(
+                    wait_app.clone(),
+                    wait_session_id.clone(),
+                    output_path.clone(),
+                    cwd_path,
+                    request.env,
+                    cleanup.clone(),
+                    Arc::clone(&terminated),
+                )
+                .await
+                {
+                    emit_runner_event(
+                        &wait_app,
+                        &wait_session_id,
+                        "error",
+                        json!({ "message": error }),
+                    );
+                    remove_execution_session(&wait_app, &wait_session_id).await;
+                    cleanup_execution_files(Some(cleanup));
+                }
+            }
+            Ok(status) => {
+                let was_terminated = terminated.load(Ordering::SeqCst);
+                emit_runner_event(
+                    &wait_app,
+                    &wait_session_id,
+                    if was_terminated { "terminated" } else { "completed" },
+                    json!({
+                        "success": false,
+                        "exitCode": status.code(),
+                        "terminated": was_terminated,
+                    }),
+                );
+                remove_execution_session(&wait_app, &wait_session_id).await;
+                cleanup_execution_files(Some(cleanup));
+            }
+            Err(error) => {
+                emit_runner_event(
+                    &wait_app,
+                    &wait_session_id,
+                    "error",
+                    json!({ "message": error.to_string() }),
+                );
+                remove_execution_session(&wait_app, &wait_session_id).await;
+                cleanup_execution_files(Some(cleanup));
+            }
+        }
+    });
+
+    Ok(ExecutionStartResponse {
+        session_id,
+        runner_type,
+    })
+}
+
+async fn run_compiled_native_artifact(
+    app: AppHandle,
+    session_id: String,
+    output_path: PathBuf,
+    cwd_path: Option<PathBuf>,
+    env_vars: Option<HashMap<String, String>>,
+    cleanup: CleanupArtifacts,
+    terminated: Arc<AtomicBool>,
+) -> Result<(), String> {
+    let mut command = Command::new(&output_path);
+    configure_tokio_command(&mut command);
+    if let Some(cwd) = &cwd_path {
+        command.current_dir(cwd);
+    }
+    if let Some(environment) = &env_vars {
+        command.envs(environment);
+    }
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let child = Arc::new(Mutex::new(child));
+
+    {
+        let sessions = app.state::<ExecutionSessions>();
+        let mut guard = sessions.sessions.lock().await;
+        guard.insert(
+            session_id.clone(),
+            ManagedExecution {
+                child: Arc::clone(&child),
+                terminated: Arc::clone(&terminated),
+            },
+        );
+    }
+
+    if let Some(stdout_pipe) = stdout {
+        let app_handle = app.clone();
+        let stdout_session_id = session_id.clone();
+        tokio::spawn(async move {
+            stream_output(app_handle, stdout_session_id, stdout_pipe, "stdout", false).await;
+        });
+    }
+
+    if let Some(stderr_pipe) = stderr {
+        let app_handle = app.clone();
+        let stderr_session_id = session_id.clone();
+        tokio::spawn(async move {
+            stream_output(app_handle, stderr_session_id, stderr_pipe, "stderr", false).await;
+        });
+    }
+
+    let wait_app = app.clone();
+    let wait_session_id = session_id.clone();
+    tokio::spawn(async move {
+        let exit_result = {
+            let mut guard = child.lock().await;
+            guard.wait().await
+        };
+
+        match exit_result {
+            Ok(status) => {
+                let success = status.success();
+                let exit_code = status.code();
+                let was_terminated = terminated.load(Ordering::SeqCst);
+                emit_runner_event(
+                    &wait_app,
+                    &wait_session_id,
+                    if was_terminated { "terminated" } else { "completed" },
+                    json!({
+                        "success": success && !was_terminated,
+                        "exitCode": exit_code,
+                        "terminated": was_terminated,
+                    }),
+                );
+            }
+            Err(error) => {
+                emit_runner_event(
+                    &wait_app,
+                    &wait_session_id,
+                    "error",
+                    json!({ "message": error.to_string() }),
+                );
+            }
+        }
+
+        remove_execution_session(&wait_app, &wait_session_id).await;
+        cleanup_execution_files(Some(cleanup));
+    });
+
+    Ok(())
+}
+
+fn compiled_native_output_path(session_id: &str) -> Result<PathBuf, String> {
+    let temp_dir = env::temp_dir().join("lattice-runner");
+    fs::create_dir_all(&temp_dir).map_err(|error| error.to_string())?;
+    let extension = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    Ok(temp_dir.join(format!("compiled-{session_id}{extension}")))
+}
+
+async fn remove_execution_session(app: &AppHandle, session_id: &str) {
+    let sessions = app.state::<ExecutionSessions>();
+    let mut guard = sessions.sessions.lock().await;
+    guard.remove(session_id);
 }
 
 #[tauri::command]
@@ -2110,6 +2400,58 @@ async fn stop_python_session(
     child.kill().await.map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn desktop_open_terminal_at_path(path: String) -> Result<(), String> {
+    let cwd = PathBuf::from(path);
+    if !cwd.is_dir() {
+        return Err("Terminal path must be an existing directory".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        StdCommand::new("cmd")
+            .args(["/C", "start", "", "cmd"])
+            .current_dir(&cwd)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        StdCommand::new("open")
+            .args(["-a", "Terminal", "."])
+            .current_dir(&cwd)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let candidates = [
+            ("x-terminal-emulator", Vec::<&str>::new()),
+            ("gnome-terminal", Vec::<&str>::new()),
+            ("konsole", vec!["--workdir", "."]),
+            ("xfce4-terminal", vec!["--working-directory", "."]),
+            ("xterm", Vec::<&str>::new()),
+        ];
+
+        for (command, args) in candidates {
+            if StdCommand::new(command)
+                .args(args)
+                .current_dir(&cwd)
+                .spawn()
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
+
+        Err("No supported terminal application was found".to_string())
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .register_uri_scheme_protocol("lattice-preview", |ctx, request| {
@@ -2180,7 +2522,9 @@ fn main() {
             start_python_session,
             execute_python_session,
             stop_python_session,
+            desktop_open_terminal_at_path,
             desktop_extract_pdf_page_text_layout,
+            desktop_ocr_pdf_page_text_layout,
         ])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
@@ -2267,6 +2611,7 @@ fn build_execution_command(
     match request.runner_type {
         RunnerType::PythonLocal => build_python_command(request, cwd),
         RunnerType::ExternalCommand => build_external_command(request),
+        RunnerType::CompiledNative => Err("compiled-native is handled by the compile-run pipeline".to_string()),
         RunnerType::PythonPyodide => Err("python-pyodide is not executable via Tauri backend".to_string()),
     }
 }
@@ -2356,6 +2701,7 @@ fn create_python_runner_artifacts(payload: &PythonPayload) -> Result<CleanupArti
     Ok(CleanupArtifacts {
         bootstrap_path,
         payload_path: Some(payload_path),
+        extra_paths: Vec::new(),
     })
 }
 
@@ -2371,6 +2717,7 @@ fn create_python_session_artifacts() -> Result<CleanupArtifacts, String> {
     Ok(CleanupArtifacts {
         bootstrap_path,
         payload_path: None,
+        extra_paths: Vec::new(),
     })
 }
 
@@ -2382,6 +2729,9 @@ fn cleanup_execution_files(cleanup: Option<CleanupArtifacts>) {
     let _ = fs::remove_file(cleanup.bootstrap_path);
     if let Some(payload_path) = cleanup.payload_path {
         let _ = fs::remove_file(payload_path);
+    }
+    for path in cleanup.extra_paths {
+        let _ = fs::remove_file(path);
     }
 }
 

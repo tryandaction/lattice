@@ -6,6 +6,7 @@ import { useWorkspaceStore } from '@/stores/workspace-store';
 import { useAnnotationStore } from '@/stores/annotation-store';
 import { deriveFileId } from '@/lib/annotation-storage';
 import { useSettingsStore } from '@/stores/settings-store';
+import { extractMarkdownDocument } from '@/lib/markdown/extract';
 import type {
   PluginCommand,
   PluginContext,
@@ -845,6 +846,12 @@ function createContext(manifest: PluginManifest): PluginContext {
         const writable = await handle.createWritable();
         await writable.write(content);
         await writable.close();
+        void import('@/lib/markdown/workspace-link-index')
+          .then(({ upsertWorkspaceMarkdownFile }) => {
+            upsertWorkspaceMarkdownFile(path, content);
+          })
+          .catch(() => {});
+        emitFileSave(path);
       },
     },
     metadataCache: {
@@ -989,56 +996,33 @@ async function parseFileMetadata(path: string, canRead: boolean): Promise<Cached
   try {
     const content = await getWorkspaceReadFile(path, canRead);
     if (!content) return null;
-    const lines = content.split('\n');
-    const headings: CachedHeading[] = [];
-    const links: CachedLink[] = [];
-    const tags: CachedTag[] = [];
-    let frontmatter: Record<string, unknown> | undefined;
-
-    // Parse frontmatter
-    if (lines[0]?.trim() === '---') {
-      const endIdx = lines.indexOf('---', 1);
-      if (endIdx > 0) {
-        const fmLines = lines.slice(1, endIdx);
-        frontmatter = {};
-        for (const l of fmLines) {
-          const match = l.match(/^(\w[\w.-]*)\s*:\s*(.*)$/);
-          if (match) frontmatter[match[1]] = match[2].trim();
-        }
-      }
-    }
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      // Headings
-      const hMatch = line.match(/^(#{1,6})\s+(.+)$/);
-      if (hMatch) {
-        headings.push({
-          heading: hMatch[2].trim(),
-          level: hMatch[1].length,
-          position: { start: { line: i, col: 0 }, end: { line: i, col: line.length } },
-        });
-      }
-      // Links [[...]] and [text](url)
-      const wikiLinks = [...line.matchAll(/\[\[([^\]]+)\]\]/g)];
-      for (const m of wikiLinks) {
-        links.push({
-          link: m[1].split('|')[0],
-          displayText: m[1].includes('|') ? m[1].split('|')[1] : undefined,
-          position: { start: { line: i, col: m.index! }, end: { line: i, col: m.index! + m[0].length } },
-        });
-      }
-      // Tags #tag
-      const tagMatches = [...line.matchAll(/(?:^|\s)#([\w/-]+)/g)];
-      for (const m of tagMatches) {
-        tags.push({
-          tag: m[1],
-          position: { start: { line: i, col: m.index! }, end: { line: i, col: m.index! + m[0].length } },
-        });
-      }
-    }
-
-    return { headings, links, tags, frontmatter };
+    const document = extractMarkdownDocument(content);
+    return {
+      headings: document.headings.map((heading): CachedHeading => ({
+        heading: heading.text,
+        level: heading.level,
+        position: {
+          start: { line: heading.range.start.line, col: heading.range.start.col },
+          end: { line: heading.range.end.line, col: heading.range.end.col },
+        },
+      })),
+      links: document.links.map((link): CachedLink => ({
+        link: link.target,
+        displayText: link.label,
+        position: {
+          start: { line: link.range.start.line, col: link.range.start.col },
+          end: { line: link.range.end.line, col: link.range.end.col },
+        },
+      })),
+      tags: document.tags.map((tag): CachedTag => ({
+        tag: tag.tag,
+        position: {
+          start: { line: tag.range.start.line, col: tag.range.start.col },
+          end: { line: tag.range.end.line, col: tag.range.end.col },
+        },
+      })),
+      frontmatter: document.frontmatter,
+    };
   } catch {
     return null;
   }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Save, Sparkles, X } from "lucide-react";
+import { Pencil, Plus, Save, Sparkles, X } from "lucide-react";
 import { useI18n } from "@/hooks/use-i18n";
 import { usePromptTemplateStore } from "@/stores/prompt-template-store";
 import type { PromptSurface, PromptTemplate } from "@/lib/prompt/types";
@@ -16,6 +16,67 @@ interface PromptPickerProps {
   onSelectTemplate: (template: PromptTemplate) => void;
   onCreateTemplate: (seed?: { userPrompt?: string }) => void;
   onEditTemplate: (template: PromptTemplate) => void;
+}
+
+function PromptTemplateRow({
+  template,
+  onSelect,
+  onEdit,
+}: {
+  template: PromptTemplate;
+  onSelect: (template: PromptTemplate) => void;
+  onEdit: (template: PromptTemplate) => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(template)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(template);
+        }
+      }}
+      className="group flex cursor-pointer items-start gap-2 rounded-md border border-border/60 bg-background px-2.5 py-2 text-left outline-none hover:bg-accent/40 focus-visible:ring-1 focus-visible:ring-ring"
+    >
+      <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-medium text-foreground">{template.title}</span>
+          {template.pinned && (
+            <span className="shrink-0 rounded-full border border-border px-1.5 py-0.5 text-[9px] text-muted-foreground">
+              {t("prompt.picker.pinned")}
+            </span>
+          )}
+          {template.builtin && (
+            <span className="shrink-0 rounded-full border border-border px-1.5 py-0.5 text-[9px] text-muted-foreground">
+              {t("prompt.picker.builtin")}
+            </span>
+          )}
+        </div>
+        <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{template.description}</div>
+        <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] text-muted-foreground/80">
+          <span>{t(`prompt.category.${template.category}`)}</span>
+          <span>·</span>
+          <span>{t(`prompt.output.${template.outputMode}`)}</span>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onEdit(template);
+        }}
+        className="rounded-md p-1.5 text-muted-foreground opacity-70 hover:bg-accent hover:text-foreground group-hover:opacity-100"
+        title={template.builtin ? t("prompt.picker.duplicate") : t("common.edit")}
+      >
+        <Pencil className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
 }
 
 export function PromptPicker({
@@ -33,8 +94,6 @@ export function PromptPicker({
   const loadPromptState = usePromptTemplateStore((state) => state.loadPromptState);
   const getTemplatesForSurface = usePromptTemplateStore((state) => state.getTemplatesForSurface);
   const getRecentTemplates = usePromptTemplateStore((state) => state.getRecentTemplates);
-  const getRecentRuns = usePromptTemplateStore((state) => state.getRecentRuns);
-  const getTemplateById = usePromptTemplateStore((state) => state.getTemplateById);
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
 
   useEffect(() => {
@@ -64,27 +123,25 @@ export function PromptPicker({
     () => Array.from(new Set(getTemplatesForSurface(surface).map((template) => template.category))),
     [getTemplatesForSurface, surface],
   );
-  const recentRuns = useMemo(() => getRecentRuns(surface).slice(0, 6), [getRecentRuns, surface]);
 
   if (!isOpen) {
     return null;
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[140] flex items-start justify-center overflow-y-auto bg-black/50 px-4 pb-4 pt-6 md:pt-20"
-      onClick={onClose}
+    <aside
+      className="fixed inset-y-0 right-0 z-[190] flex w-full max-w-[24rem] flex-col border-l border-border bg-background shadow-xl sm:w-[min(24rem,calc(100vw-4rem))]"
+      role="dialog"
+      aria-modal="false"
+      aria-label={t("prompt.picker.title")}
+      data-testid="prompt-picker-dock"
     >
-      <div
-        className="flex w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-start justify-between border-b border-border px-6 py-4">
+      <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
+        <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
           <div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
               {t("prompt.picker.title")}
             </div>
-            <h2 className="mt-1 text-lg font-semibold text-foreground">{t("prompt.picker.subtitle")}</h2>
           </div>
           <button
             type="button"
@@ -95,23 +152,25 @@ export function PromptPicker({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
               onClick={() => onCreateTemplate()}
-              className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-accent"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-xs text-foreground hover:bg-accent"
+              title={t("prompt.picker.new")}
             >
-              <Plus className="h-4 w-4" />
+              <Plus className="h-3.5 w-3.5" />
               {t("prompt.picker.new")}
             </button>
             <button
               type="button"
               onClick={() => onCreateTemplate({ userPrompt: currentInput })}
               disabled={!currentInput.trim()}
-              className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-accent disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-xs text-foreground hover:bg-accent disabled:opacity-50"
+              title={t("prompt.picker.saveCurrent")}
             >
-              <Save className="h-4 w-4" />
+              <Save className="h-3.5 w-3.5" />
               {t("prompt.picker.saveCurrent")}
             </button>
           </div>
@@ -119,49 +178,14 @@ export function PromptPicker({
           {recentTemplates.length > 0 && (
             <section>
               <div className="mb-2 text-sm font-medium text-foreground">{t("prompt.picker.recent")}</div>
-              <div className="grid gap-2">
+              <div className="grid gap-1">
                 {recentTemplates.map((template) => (
-                  <button
+                  <PromptTemplateRow
                     key={template.id}
-                    type="button"
-                    onClick={() => onSelectTemplate(template)}
-                    className="rounded-xl border border-border bg-background px-4 py-3 text-left hover:bg-accent/40"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-medium text-foreground">{template.title}</div>
-                        <div className="mt-1 text-xs text-muted-foreground">{template.description}</div>
-                      </div>
-                      <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
-                        {t(`prompt.output.${template.outputMode}`)}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {recentRuns.length > 0 && (
-            <section>
-              <div className="mb-2 text-sm font-medium text-foreground">{t("prompt.picker.runs")}</div>
-              <div className="grid gap-2">
-                {recentRuns.map((run) => (
-                  <div key={run.id} className="rounded-xl border border-border bg-background px-4 py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                          <div className="truncate text-sm font-medium text-foreground">
-                          {run.templateId ? (getTemplateById(run.templateId)?.title ?? run.templateId) : t("prompt.picker.adHoc")}
-                        </div>
-                        <div className="mt-1 truncate text-xs text-muted-foreground">
-                          {run.contextSummary || t("prompt.run.contextEmpty")}
-                        </div>
-                      </div>
-                      <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
-                        {t(`prompt.output.${run.outputMode}`)}
-                      </span>
-                    </div>
-                  </div>
+                    template={template}
+                    onSelect={onSelectTemplate}
+                    onEdit={onEditTemplate}
+                  />
                 ))}
               </div>
             </section>
@@ -192,53 +216,55 @@ export function PromptPicker({
                 </button>
               ))}
             </div>
-            <div className="grid gap-2">
+            <div className="grid gap-1">
               {allTemplates.map((template) => (
                 <div
                   key={template.id}
-                  className="rounded-xl border border-border bg-background px-4 py-3"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelectTemplate(template)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onSelectTemplate(template);
+                    }
+                  }}
+                  className="group cursor-pointer rounded-md border border-border/60 bg-background px-2.5 py-2 text-left outline-none hover:bg-accent/40 focus-visible:ring-1 focus-visible:ring-ring"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <button
-                      type="button"
-                      onClick={() => onSelectTemplate(template)}
-                      className="flex-1 text-left"
-                    >
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <Sparkles className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-sm font-medium text-foreground">{template.title}</span>
+                        <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="truncate text-sm font-medium text-foreground">{template.title}</span>
                         {template.pinned && (
-                          <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                          <span className="shrink-0 rounded-full border border-border px-1.5 py-0.5 text-[9px] text-muted-foreground">
                             {t("prompt.picker.pinned")}
                           </span>
                         )}
                         {template.builtin && (
-                          <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                          <span className="shrink-0 rounded-full border border-border px-1.5 py-0.5 text-[9px] text-muted-foreground">
                             {t("prompt.picker.builtin")}
                           </span>
                         )}
                       </div>
-                      <div className="mt-1 text-xs text-muted-foreground">{template.description}</div>
-                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+                      <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{template.description}</div>
+                      <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] text-muted-foreground/80">
                         <span>{t(`prompt.category.${template.category}`)}</span>
                         <span>·</span>
                         <span>{t(`prompt.output.${template.outputMode}`)}</span>
                       </div>
-                    </button>
-                    <div className="flex shrink-0 items-center gap-2">
+                    </div>
+                    <div className="shrink-0">
                       <button
                         type="button"
-                        onClick={() => onEditTemplate(template)}
-                        className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onEditTemplate(template);
+                        }}
+                        className="rounded-md p-1.5 text-muted-foreground opacity-70 hover:bg-accent hover:text-foreground group-hover:opacity-100"
+                        title={template.builtin ? t("prompt.picker.duplicate") : t("common.edit")}
                       >
-                        {template.builtin ? t("prompt.picker.duplicate") : t("common.edit")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onSelectTemplate(template)}
-                        className="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground hover:bg-primary/90"
-                      >
-                        {t("prompt.picker.use")}
+                        <Pencil className="h-3.5 w-3.5" />
                       </button>
                     </div>
                   </div>
@@ -248,7 +274,7 @@ export function PromptPicker({
           </section>
         </div>
       </div>
-    </div>
+    </aside>
   );
 }
 

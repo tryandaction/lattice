@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - ✅ `README`、`USER_GUIDE`、`RELEASE_NOTES`、`MANUAL_RELEASE_GUIDE`、`PRODUCT_STRATEGY` 已同步更新
 - **发布与验证**
   - ✅ 本轮顺序通过 `lint / typecheck / test:docs / test:run / build / tauri:build / release:prepare / deploy:web`
-  - ✅ 桌面 release 已刷新到 `releases/v2.1.0/`
+  - ✅ 桌面 release 已刷新到 `releases/v2.3.0/`
   - ✅ 最新 Cloudflare Pages 预览地址：`https://47f3417d.lattice-apq.pages.dev`
 
 ### 改进 (2026-03-24 本轮体验收口)

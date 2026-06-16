@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildRenderedPdfPageTextModel,
   clearPdfPageTextCache,
@@ -27,6 +27,7 @@ describe("pdf-page-text-cache", () => {
   afterEach(() => {
     document.body.innerHTML = "";
     clearPdfPageTextCache();
+    vi.restoreAllMocks();
   });
 
   it("rebuilds rendered text rects when zoom changes without text changes", () => {
@@ -72,6 +73,41 @@ describe("pdf-page-text-cache", () => {
       top: 180,
       width: 300,
       height: 36,
+    });
+  });
+
+  it("uses the rendered text-node range rect before a widened parent span rect", () => {
+    const pageElement = document.createElement("div");
+    pageElement.dataset.pageNumber = "1";
+    Object.defineProperty(pageElement, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createMockRect(0, 0, 640, 960),
+    });
+
+    const textLayer = document.createElement("div");
+    textLayer.className = "textLayer";
+    const span = document.createElement("span");
+    span.textContent = "from Fig. 5, that tend";
+    Object.defineProperty(span, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createMockRect(80, 120, 480, 24),
+    });
+    textLayer.appendChild(span);
+    pageElement.appendChild(textLayer);
+    document.body.appendChild(pageElement);
+
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: vi.fn(() => createMockRect(80, 120, 170, 24)),
+    });
+
+    const model = buildRenderedPdfPageTextModel(pageElement);
+
+    expect(model?.itemRects[0]).toMatchObject({
+      left: 80,
+      top: 120,
+      width: 170,
+      height: 24,
     });
   });
 

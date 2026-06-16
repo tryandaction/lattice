@@ -5,6 +5,11 @@ import { Loader2, Wand2, AlertCircle, BarChart3 } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings-store";
 import { aiOrchestrator } from "@/lib/ai/orchestrator";
 import type { AiRuntimeSettings } from "@/lib/ai/types";
+import {
+  createAgentToolSession,
+  executeAgentTool,
+} from "@/lib/ai/agent-tool-broker";
+import { useAgentSessionStore } from "@/stores/agent-session-store";
 
 interface NotebookAiAssistProps {
   /** Current cell source code */
@@ -18,6 +23,15 @@ interface NotebookAiAssistProps {
 }
 
 type AiAction = "generate" | "explain-error" | "interpret-output";
+
+function failSessionIfOpen(sessionId: string, error: string) {
+  const store = useAgentSessionStore.getState();
+  const session = store.getSession(sessionId);
+  if (!session || session.status === "completed" || session.status === "failed" || session.status === "cancelled") {
+    return;
+  }
+  store.failSession(sessionId, error);
+}
 
 export function NotebookAiAssist({ cellSource, cellOutput, cellError, onInsertCode }: NotebookAiAssistProps) {
   const [result, setResult] = useState("");
@@ -63,16 +77,53 @@ export function NotebookAiAssist({ cellSource, cellOutput, cellError, onInsertCo
         break;
     }
 
+    const agentStore = useAgentSessionStore.getState();
+    const sessionId = createAgentToolSession({
+      profile: "research",
+      task: `Notebook AI assist: ${action}`,
+      title: `Notebook AI - ${action}`,
+    });
+
     try {
+      const resolvedContext = await executeAgentTool({
+        name: "evidence.resolve",
+        args: {
+          filePath: "notebook-cell.py",
+          content: cellSource,
+          selection: cellSource,
+          query: userPrompt,
+        },
+      }, { sessionId });
+
+      if (resolvedContext.status === "denied" || resolvedContext.status === "failed") {
+        throw new Error(resolvedContext.error ?? "Notebook context resolution failed.");
+      }
+
+      agentStore.appendTrace(sessionId, {
+        kind: "planning",
+        message: `Notebook AI action ${action} is running with resolved cell context.`,
+        evidenceRefs: resolvedContext.result?.evidenceRefs,
+      });
+
       const response = await aiOrchestrator.runResearchAction({
         action: researchAction,
         prompt: userPrompt,
         content: cellSource,
+        selection: cellSource,
+        explicitEvidenceRefs: resolvedContext.result?.evidenceRefs,
         settings: runtimeSettings,
       });
       setResult(response.text);
+      agentStore.appendTrace(sessionId, {
+        kind: "completed",
+        message: response.text.slice(0, 240) || "Notebook AI assist completed.",
+        model: response.model,
+        evidenceRefs: response.evidenceRefs,
+      });
     } catch (err) {
-      setResult(`Error: ${(err as Error).message}`);
+      const message = err instanceof Error ? err.message : String(err);
+      setResult(`Error: ${message}`);
+      failSessionIfOpen(sessionId, message);
     }
     setLoading(false);
   }, [cellSource, cellOutput, cellError, prompt, settings]);

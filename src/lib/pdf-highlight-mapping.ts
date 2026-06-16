@@ -167,7 +167,9 @@ export function annotationToHighlight(
     id: annotation.id,
     position: boundingBoxesToScaledPosition(target, pageDimensions),
     content: {
-      text: getCanonicalPdfAnnotationText(annotation),
+      text: annotation.content !== undefined
+        ? annotation.content
+        : getCanonicalPdfAnnotationText(annotation),
       image: annotation.preview?.type === "image" ? annotation.preview.dataUrl : undefined,
     },
     color: resolveHighlightColor(annotation.style.color),

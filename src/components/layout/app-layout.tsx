@@ -1,7 +1,6 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEventHandler } from "react";
-import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import {
   ResizablePanelGroup,
@@ -22,8 +21,7 @@ import { setLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { TOUCH_TARGET_MIN } from "@/lib/responsive";
 import { syncPlugins, updatePluginNetworkAllowlist } from "@/lib/plugins/runtime";
-import { resolveAppRoute } from "@/lib/app-route";
-import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot, Search as SearchIcon, MessageSquareText, FolderTree, LayoutGrid, ClipboardCheck } from "lucide-react";
+import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot, Search as SearchIcon, MessageSquareText, FolderTree, LayoutGrid } from "lucide-react";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { PluginCommandDialog } from "@/components/ui/plugin-command-dialog";
 import { PluginPanelDialog } from "@/components/ui/plugin-panel-dialog";
@@ -103,6 +101,11 @@ const AiChatPanel = dynamic(
   { ssr: false }
 );
 
+const LivePreviewGuide = dynamic(
+  () => import("@/components/diagnostics/live-preview-guide").then((mod) => mod.LivePreviewGuide),
+  { ssr: false }
+);
+
 // Dialogs are kept as static imports to avoid runtime chunk-loading failures
 
 function scheduleIdleTask(task: () => void, timeout = 2000): () => void {
@@ -175,6 +178,7 @@ function AppLayoutContent() {
   const [showSettings, setShowSettings] = useState(false);
   const [showCommands, setShowCommands] = useState(false);
   const [showPluginPanels, setShowPluginPanels] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [desktopSidebarSize, setDesktopSidebarSize] = useState(DESKTOP_SIDEBAR_DEFAULT);
@@ -207,16 +211,17 @@ function AppLayoutContent() {
   const { openDirectory, openWorkspacePath } = useFileSystem();
   const { toggleTheme } = useTheme();
   const { t } = useI18n();
-  const router = useRouter();
   const isDesktopLayout = !isMobile && !isTablet;
   const recentWorkspaces = settings.recentWorkspacePaths ?? [];
   const openGuide = useCallback(() => {
-    router.push(resolveAppRoute("/guide"));
-  }, [router]);
-  const openAgentProtocolCenter = useCallback(() => {
-    router.push(resolveAppRoute("/agent-protocol"));
-  }, [router]);
+    setShowGuide(true);
+  }, []);
 
+  useEffect(() => {
+    const handleOpenGuide = () => setShowGuide(true);
+    window.addEventListener("lattice:open-guide", handleOpenGuide);
+    return () => window.removeEventListener("lattice:open-guide", handleOpenGuide);
+  }, []);
   useAutoOpenFolder();
   useWorkbenchSession();
 
@@ -536,19 +541,6 @@ function AppLayoutContent() {
         >
           <HelpCircle className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         </button>
-        <button
-          onClick={openAgentProtocolCenter}
-          className={cn(
-            "p-1.5 rounded-md",
-            "text-muted-foreground",
-            "hover:bg-muted hover:text-foreground transition-colors"
-          )}
-          style={(isMobile || isTablet) ? { minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN } : undefined}
-          title={t("workbench.activity.agentProtocol")}
-          aria-label={t("workbench.activity.agentProtocol")}
-        >
-          <ClipboardCheck className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
-        </button>
         <PluginToolbarSlot />
       </div>
     </>
@@ -620,19 +612,6 @@ function AppLayoutContent() {
           <h1 className="text-sm font-medium">{t("app.name")}</h1>
           <div className="flex items-center gap-2">
             <button
-              onClick={openAgentProtocolCenter}
-              className={cn(
-                "flex items-center justify-center rounded-md",
-                "text-muted-foreground hover:text-foreground",
-                "hover:bg-muted transition-colors"
-              )}
-              style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
-              title={t("workbench.activity.agentProtocol")}
-              aria-label={t("workbench.activity.agentProtocol")}
-            >
-              <ClipboardCheck className="h-5 w-5" />
-            </button>
-            <button
               onClick={() => setShowPluginPanels(true)}
               className={cn(
                 "flex items-center justify-center rounded-md",
@@ -684,6 +663,8 @@ function AppLayoutContent() {
           setShowCommands={setShowCommands}
           showPluginPanels={showPluginPanels}
           setShowPluginPanels={setShowPluginPanels}
+          showGuide={showGuide}
+          setShowGuide={setShowGuide}
         />
       </div>
     );
@@ -753,19 +734,6 @@ function AppLayoutContent() {
                 </button>
                 <h1 className="text-sm font-medium flex-1">{t("app.name")}</h1>
                 <button
-                  onClick={openAgentProtocolCenter}
-                  className={cn(
-                    "flex items-center justify-center rounded-md",
-                    "text-muted-foreground hover:text-foreground",
-                    "hover:bg-muted transition-colors"
-                  )}
-                  style={{ minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN }}
-                  title={t("workbench.activity.agentProtocol")}
-                  aria-label={t("workbench.activity.agentProtocol")}
-                >
-                  <ClipboardCheck className="h-5 w-5" />
-                </button>
-                <button
                   onClick={() => setShowPluginPanels(true)}
                   className={cn(
                     "flex items-center justify-center rounded-md",
@@ -807,6 +775,8 @@ function AppLayoutContent() {
           setShowCommands={setShowCommands}
           showPluginPanels={showPluginPanels}
           setShowPluginPanels={setShowPluginPanels}
+          showGuide={showGuide}
+          setShowGuide={setShowGuide}
         />
       </div>
     );
@@ -861,12 +831,6 @@ function AppLayoutContent() {
               title={t("chat.title")}
               active={aiChatOpen}
               onClick={(event) => toggleAiPanel(event.currentTarget)}
-            />
-            <CollapsedRailButton
-              icon={ClipboardCheck}
-              label={t("workbench.activity.agentProtocol")}
-              title={t("workbench.activity.agentProtocol")}
-              onClick={openAgentProtocolCenter}
             />
           </div>
 
@@ -994,6 +958,8 @@ function AppLayoutContent() {
         setShowCommands={setShowCommands}
         showPluginPanels={isMobile ? showPluginPanels : false}
         setShowPluginPanels={setShowPluginPanels}
+        showGuide={showGuide}
+        setShowGuide={setShowGuide}
       />
     </div>
   );
@@ -1006,6 +972,8 @@ function Dialogs({
   setShowCommands,
   showPluginPanels,
   setShowPluginPanels,
+  showGuide,
+  setShowGuide,
 }: {
   showSettings: boolean;
   setShowSettings: (show: boolean) => void;
@@ -1013,6 +981,8 @@ function Dialogs({
   setShowCommands: (show: boolean) => void;
   showPluginPanels: boolean;
   setShowPluginPanels: (show: boolean) => void;
+  showGuide: boolean;
+  setShowGuide: (show: boolean) => void;
 }) {
   return (
     <>
@@ -1023,6 +993,7 @@ function Dialogs({
           onClose={() => setShowCommands(false)}
           onOpenSettings={() => setShowSettings(true)}
           onOpenPluginPanels={() => setShowPluginPanels(true)}
+          onOpenGuide={() => setShowGuide(true)}
         />
       </ErrorBoundary>
       <ErrorBoundary onReset={() => setShowPluginPanels(false)}>
@@ -1030,6 +1001,20 @@ function Dialogs({
       </ErrorBoundary>
       <ErrorBoundary onReset={() => setShowSettings(false)}>
         <SettingsDialog isOpen={showSettings} onClose={() => setShowSettings(false)} />
+      </ErrorBoundary>
+      <ErrorBoundary onReset={() => setShowGuide(false)}>
+        {showGuide && (
+          <div
+            className="fixed inset-0 z-[120] flex items-center justify-center bg-background/80 p-3 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-label="User guide"
+          >
+            <div className="h-[min(900px,92vh)] w-[min(1280px,96vw)] overflow-hidden rounded-lg border border-border bg-background shadow-2xl">
+              <LivePreviewGuide surface="dialog" onClose={() => setShowGuide(false)} />
+            </div>
+          </div>
+        )}
       </ErrorBoundary>
       <OnboardingWizard />
       <ExportToastContainer />

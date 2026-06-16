@@ -2,22 +2,25 @@
 
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAiChatStore, type ChatMessage } from "@/stores/ai-chat-store";
+import type { AiChatContinuationContext } from "@/stores/ai-chat-store";
 import { useAiWorkbenchStore } from "@/stores/ai-workbench-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useAnnotationStore } from "@/stores/annotation-store";
+import { useAgentSessionStore } from "@/stores/agent-session-store";
 import { aiOrchestrator } from "@/lib/ai/orchestrator";
-import { X, Send, Square, Plus, Trash2, MessageSquare, Copy, Check, GitCompareArrows, Bot, FileText, ShieldCheck, Wand2, ChevronDown, ChevronUp, ChevronRight, FolderPen, FileOutput, ListTodo, Save } from "lucide-react";
+import { X, Send, Square, Plus, Trash2, MessageSquare, Copy, Check, GitCompareArrows, Bot, FileText, ShieldCheck, Wand2, ChevronDown, ChevronUp, ChevronRight, FolderPen, FileOutput, ListTodo, Save, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MarkdownRenderer } from "@/components/renderers/markdown-renderer";
 import { useI18n } from "@/hooks/use-i18n";
 import { MentionAutocomplete } from "./mention-autocomplete";
 import { DiffPreview } from "./diff-preview";
 import { EvidencePanel } from "./evidence-panel";
+import { AgentTracePanel } from "./agent-trace-panel";
+import { AgentMemoryPanel } from "./agent-memory-panel";
 import { PromptPicker } from "@/components/prompt/prompt-picker";
 import { PromptEditorDialog } from "@/components/prompt/prompt-editor-dialog";
-import { PromptRunSheet } from "@/components/prompt/prompt-run-sheet";
 import { parseMentions, resolveMentions } from "@/lib/ai/mention-resolver";
 import { extractCodeBlocks } from "@/lib/ai/diff-utils";
 import { deriveFileId } from "@/lib/annotation-storage";
@@ -33,17 +36,31 @@ import {
   writeDraftArtifactToTarget,
 } from "@/lib/ai/workbench-actions";
 import type {
+  AiDraftArtifact,
   AiDraftWriteMode,
   AiRuntimeSettings,
+  AiTaskProposal,
   EvidenceRef,
   SelectionAiOrigin,
 } from "@/lib/ai/types";
 import type { PromptContextValues, PromptTemplate } from "@/lib/prompt/types";
-import { runPromptTemplate } from "@/lib/prompt/executor";
+import { renderPromptTemplate } from "@/lib/prompt/render";
 import { usePromptTemplateStore } from "@/stores/prompt-template-store";
 import { toast } from "sonner";
-import { buildAiResultViewModel } from "@/lib/ai/result-view-model";
+import { buildAiResultViewModel, type AiResultSectionViewModel, type AiResultViewModel } from "@/lib/ai/result-view-model";
 import { isFileTabState } from "@/types/layout";
+import { executeUserApprovedAgentTool } from "@/lib/ai/agent-tool-broker";
+import { runResearchAgentForChat } from "@/lib/ai/research-agent-chat-runner";
+import { getAllProviders } from "@/lib/ai/providers";
+import type { AiProviderId } from "@/lib/ai/types";
+import { getResearchAgentWorkflow } from "@/lib/ai/research-agent-workflows";
+import {
+  buildAgentComposerViewModel,
+  type AgentComposerEffort,
+  type AgentComposerMode,
+  type AgentComposerViewModel,
+} from "@/lib/ai/agent-composer-view-model";
+import { focusAgentSession } from "@/lib/ai/agent-session-focus";
 
 interface ChatPromptContextOptions {
   includeCurrentFileContent: boolean;
@@ -120,6 +137,55 @@ function buildWorkspaceSummary(
     .join("\n");
 }
 
+async function createWorkbenchDraftWithTrace(input: {
+  draft: Omit<AiDraftArtifact, "id" | "createdAt" | "status">;
+  task: string;
+  title?: string;
+  evidenceRefs?: EvidenceRef[];
+  approvalNote?: string;
+}): Promise<string> {
+  const result = await executeUserApprovedAgentTool({
+    name: "workbench.createDraft",
+    args: { draft: input.draft },
+  }, {
+    profile: "research",
+    task: input.task,
+    title: input.title,
+    evidenceRefs: input.evidenceRefs ?? input.draft.sourceRefs,
+    approvalNote: input.approvalNote ?? "User explicitly requested draft creation from the AI workbench.",
+  });
+
+  const draftId = result.result?.draftId;
+  if (!draftId) {
+    throw new Error("Draft creation did not return an artifact id.");
+  }
+  return draftId;
+}
+
+async function createWorkbenchProposalWithTrace(input: {
+  proposal: AiTaskProposal;
+  task: string;
+  title?: string;
+  approvalNote?: string;
+}): Promise<string> {
+  const result = await executeUserApprovedAgentTool({
+    name: "workbench.createProposal",
+    args: { proposal: input.proposal },
+  }, {
+    profile: "research",
+    task: input.task,
+    title: input.title,
+    evidenceRefs: input.proposal.sourceRefs,
+    approvalNote: input.approvalNote ?? "User explicitly requested proposal creation from the AI workbench.",
+  });
+
+  const proposalId = result.result?.proposalId;
+  if (!proposalId) {
+    throw new Error("Proposal creation did not return an artifact id.");
+  }
+  return proposalId;
+}
+
 function formatAnnotationContext(
   annotations: Array<{
     target?: { type?: string; page?: number; line?: number };
@@ -155,8 +221,6 @@ export function AiChatPanel({
   const isOpen = useAiChatStore((s) => s.isOpen);
   const setOpen = useAiChatStore((s) => s.setOpen);
   const loadConversations = useAiChatStore((s) => s.loadConversations);
-  const createDraft = useAiWorkbenchStore((state) => state.createDraft);
-  const addProposal = useAiWorkbenchStore((state) => state.addProposal);
   const settings = useSettingsStore((state) => state.settings);
   const activeTab = useWorkspaceStore((state) => state.getActiveTab());
   const getCachedContent = useContentCacheStore((state) => state.getContent);
@@ -217,13 +281,23 @@ export function AiChatPanel({
     content: string;
     refs: EvidenceRef[] | undefined;
   }) => {
-    createDraft({
-      type: "paper_note",
+    void createWorkbenchDraftWithTrace({
+      draft: {
+        type: "paper_note",
+        title: input.title,
+        sourceRefs: input.refs ?? [],
+        content: input.content,
+      },
+      task: `Create evidence draft: ${input.title}`,
       title: input.title,
-      sourceRefs: input.refs ?? [],
-      content: input.content,
+      evidenceRefs: input.refs ?? [],
+      approvalNote: "User clicked save draft from the Evidence Panel.",
+    }).catch((error) => {
+      toast.error("Failed to create draft", {
+        description: error instanceof Error ? error.message : String(error),
+      });
     });
-  }, [createDraft]);
+  }, []);
 
   const handleProposeEvidenceTask = useCallback(async (input: {
     prompt: string;
@@ -241,8 +315,13 @@ export function AiChatPanel({
       explicitEvidenceRefs: input.refs ?? [],
       settings: toRuntimeSettings(settings),
     });
-    addProposal(proposal);
-  }, [activeTab, addProposal, getCachedContent, settings]);
+    await createWorkbenchProposalWithTrace({
+      proposal,
+      task: `Create evidence proposal: ${input.prompt.slice(0, 80)}`,
+      title: "Evidence proposal",
+      approvalNote: "User clicked generate plan from the Evidence Panel.",
+    });
+  }, [activeTab, getCachedContent, settings]);
 
   if (!isOpen) return null;
 
@@ -278,6 +357,8 @@ export function AiChatPanel({
         isEvidencePanelOpen={isEvidencePanelVisible}
         />
       </div>
+      <AgentMemoryPanel />
+      <AgentTracePanel />
       <WorkbenchPanel />
       <ChatInput />
     </div>
@@ -386,7 +467,7 @@ function EvidenceSummaryButton({
     >
       <ShieldCheck className="h-3 w-3" />
       <span>{t("chat.evidenceCount", { count: evidenceCount })}</span>
-      <span>·</span>
+      <span>/</span>
       <span>{t("chat.contextCount", { count: contextCount })}</span>
       {open && selected ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
     </button>
@@ -399,6 +480,7 @@ function FollowUpActions({
   filePath,
   contentForFile,
   evidenceRefs,
+  followUpActions,
   draftSuggestion,
 }: {
   messageId: string;
@@ -406,27 +488,52 @@ function FollowUpActions({
   filePath?: string;
   contentForFile?: string;
   evidenceRefs: EvidenceRef[];
+  followUpActions?: ChatMessage["followUpActions"];
   draftSuggestion?: ChatMessage["draftSuggestion"];
 }) {
-  const createDraft = useAiWorkbenchStore((state) => state.createDraft);
-  const addProposal = useAiWorkbenchStore((state) => state.addProposal);
   const settings = useSettingsStore((state) => state.settings);
   const { t } = useI18n();
   const [draftSaved, setDraftSaved] = useState(false);
   const [proposalBusy, setProposalBusy] = useState(false);
   const [proposalDone, setProposalDone] = useState(false);
+  const hasDraftAction = (followUpActions ?? []).some((action) => action.kind === "create_draft");
+  const hasProposalAction = (followUpActions ?? []).some((action) => action.kind === "propose_task");
 
-  const handleCreateDraft = useCallback(() => {
-    createDraft({
-      type: draftSuggestion?.type ?? "paper_note",
-      templateId: draftSuggestion?.templateId,
-      title: draftSuggestion?.title || `AI Draft ${messageId}`,
-      sourceRefs: evidenceRefs,
-      content,
-      originMessageId: messageId,
-    });
-    setDraftSaved(true);
-  }, [content, createDraft, draftSuggestion?.templateId, draftSuggestion?.title, draftSuggestion?.type, evidenceRefs, messageId]);
+  const handleCreateDraft = useCallback(async () => {
+    try {
+      await createWorkbenchDraftWithTrace({
+        draft: {
+          type: draftSuggestion?.type ?? "paper_note",
+          templateId: draftSuggestion?.templateId,
+          title: draftSuggestion?.title || `AI Draft ${messageId}`,
+          sourceRefs: evidenceRefs,
+          content: draftSuggestion?.content ?? content,
+          targetPath: draftSuggestion?.targetPath,
+          writeMode: draftSuggestion?.writeMode,
+          originMessageId: messageId,
+        },
+        task: `Create draft from message ${messageId}`,
+        title: draftSuggestion?.title || `AI Draft ${messageId}`,
+        evidenceRefs,
+        approvalNote: "User clicked save draft from an AI chat message.",
+      });
+      setDraftSaved(true);
+    } catch (error) {
+      toast.error("Failed to create draft", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [
+    content,
+    draftSuggestion?.content,
+    draftSuggestion?.targetPath,
+    draftSuggestion?.templateId,
+    draftSuggestion?.title,
+    draftSuggestion?.type,
+    draftSuggestion?.writeMode,
+    evidenceRefs,
+    messageId,
+  ]);
 
   const handleProposeTask = useCallback(async () => {
     setProposalBusy(true);
@@ -438,31 +545,50 @@ function FollowUpActions({
         explicitEvidenceRefs: evidenceRefs,
         settings: toRuntimeSettings(settings),
       });
-      addProposal(proposal);
+      await createWorkbenchProposalWithTrace({
+        proposal,
+        task: `Create proposal from message ${messageId}`,
+        title: proposal.summary,
+        approvalNote: "User clicked generate proposal from an AI chat message.",
+      });
       setProposalDone(true);
+    } catch (error) {
+      toast.error("Failed to create proposal", {
+        description: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setProposalBusy(false);
     }
-  }, [addProposal, content, contentForFile, evidenceRefs, filePath, settings]);
+  }, [content, contentForFile, evidenceRefs, filePath, messageId, settings]);
+
+  if (!hasDraftAction && !hasProposalAction) {
+    return null;
+  }
 
   return (
     <div className="mt-2 flex flex-wrap gap-2">
-      <button
-        onClick={handleCreateDraft}
-        className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/60 px-2 py-1 text-[11px] text-foreground hover:bg-accent"
-        disabled={draftSaved}
-      >
-        <FileText className="h-3 w-3" />
-        {draftSaved ? t("chat.workbench.draftSaved") : t("chat.workbench.saveDraft")}
-      </button>
-      <button
-        onClick={() => void handleProposeTask()}
-        className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/60 px-2 py-1 text-[11px] text-foreground hover:bg-accent disabled:opacity-50"
-        disabled={proposalBusy || proposalDone}
-      >
-        <Wand2 className="h-3 w-3" />
-        {proposalDone ? t("chat.workbench.proposalReady") : proposalBusy ? t("chat.workbench.generating") : t("chat.workbench.generateProposal")}
-      </button>
+      {hasDraftAction ? (
+        <button
+          onClick={handleCreateDraft}
+          data-testid="ai-chat-follow-up-save-draft"
+          className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/60 px-2 py-1 text-[11px] text-foreground hover:bg-accent"
+          disabled={draftSaved}
+        >
+          <FileText className="h-3 w-3" />
+          {draftSaved ? t("chat.workbench.draftSaved") : t("chat.workbench.saveDraft")}
+        </button>
+      ) : null}
+      {hasProposalAction ? (
+        <button
+          onClick={() => void handleProposeTask()}
+          data-testid="ai-chat-follow-up-generate-proposal"
+          className="inline-flex items-center gap-1 rounded border border-border/70 bg-background/60 px-2 py-1 text-[11px] text-foreground hover:bg-accent disabled:opacity-50"
+          disabled={proposalBusy || proposalDone}
+        >
+          <Wand2 className="h-3 w-3" />
+          {proposalDone ? t("chat.workbench.proposalReady") : proposalBusy ? t("chat.workbench.generating") : t("chat.workbench.generateProposal")}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -491,6 +617,240 @@ function proposalStatusLabel(status: string, t: ReturnType<typeof useI18n>["t"])
   }
 }
 
+function ComposerToolbar({
+  view,
+  isModelQuickSwitchOpen,
+  draftProviderId,
+  draftModelId,
+  aiProviders,
+  onModeChange,
+  onToggleModelQuickSwitch,
+  onDraftProviderChange,
+  onDraftModelChange,
+  onApplyModelQuickSwitch,
+  onCloseModelQuickSwitch,
+  onEffortChange,
+  onOpenPromptPicker,
+  onToggleAdvanced,
+}: {
+  view: AgentComposerViewModel;
+  isModelQuickSwitchOpen: boolean;
+  draftProviderId: AiProviderId | "";
+  draftModelId: string;
+  aiProviders: ReturnType<typeof getAllProviders>;
+  onModeChange: (mode: AgentComposerMode) => void;
+  onToggleModelQuickSwitch: () => void;
+  onDraftProviderChange: (providerId: AiProviderId | "") => void;
+  onDraftModelChange: (modelId: string) => void;
+  onApplyModelQuickSwitch: () => void;
+  onCloseModelQuickSwitch: () => void;
+  onEffortChange: (effort: AgentComposerEffort) => void;
+  onOpenPromptPicker: () => void;
+  onToggleAdvanced: () => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-2">
+      <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5" aria-label={t("chat.mode")}>
+        <button
+          type="button"
+          onClick={() => onModeChange("chat")}
+          aria-pressed={view.mode === "chat"}
+          data-testid="ai-chat-mode-chat"
+          className={cn(
+            "rounded px-2.5 py-1 text-[11px] transition-colors",
+            view.mode === "chat" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          Chat
+        </button>
+        <button
+          type="button"
+          onClick={() => onModeChange("agent")}
+          aria-pressed={view.isAgentMode}
+          data-testid="ai-chat-mode-agent"
+          className={cn(
+            "inline-flex items-center gap-1 rounded px-2.5 py-1 text-[11px] transition-colors",
+            view.isAgentMode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+          )}
+          title={t("chat.researchAgent.hint")}
+        >
+          <Bot className="h-3 w-3" />
+          Agent
+        </button>
+      </div>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={onToggleModelQuickSwitch}
+          className="min-w-0 max-w-[180px] truncate rounded-md border border-border/70 bg-background px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+          title={view.modelLabel}
+          data-testid="ai-chat-model-switch"
+        >
+          {view.modelLabel}
+        </button>
+        {isModelQuickSwitchOpen && (
+          <div className="absolute bottom-full left-0 z-30 mb-2 w-72 rounded-md border border-border bg-popover p-2 shadow-lg">
+            <div className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              {t("chat.model.quickSwitch")}
+            </div>
+            <div className="space-y-2">
+              <label className="block text-[11px] text-muted-foreground">
+                {t("settings.ai.providerLabel")}
+                <select
+                  value={draftProviderId}
+                  onChange={(event) => onDraftProviderChange(event.currentTarget.value as AiProviderId | "")}
+                  className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
+                >
+                  <option value="">{t("chat.model.auto")}</option>
+                  {aiProviders.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-[11px] text-muted-foreground">
+                {t("settings.ai.modelLabel")}
+                <input
+                  type="text"
+                  value={draftModelId}
+                  onChange={(event) => onDraftModelChange(event.currentTarget.value)}
+                  placeholder={t("settings.ai.modelPlaceholder")}
+                  className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
+                />
+              </label>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={onCloseModelQuickSwitch}
+                  className="rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  {t("common.cancel")}
+                </button>
+                <button
+                  type="button"
+                  onClick={onApplyModelQuickSwitch}
+                  className="rounded-md bg-primary px-2 py-1 text-[11px] text-primary-foreground hover:bg-primary/90"
+                >
+                  {t("common.apply")}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+      {view.isAgentMode && (
+        <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5" aria-label={t("chat.agentEffort")}>
+          {(["low", "medium", "high"] as const).map((effort) => (
+            <button
+              key={effort}
+              type="button"
+              onClick={() => onEffortChange(effort)}
+              aria-pressed={view.effort === effort}
+              data-testid={`ai-chat-agent-effort-${effort}`}
+              className={cn(
+                "rounded px-2 py-1 text-[11px] transition-colors",
+                view.effort === effort ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+              title={t(`chat.agentEffort.${effort}`)}
+            >
+              {t(`chat.agentEffort.${effort}`)}
+            </button>
+          ))}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onOpenPromptPicker}
+        className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-[11px] text-foreground hover:bg-accent"
+      >
+        <Wand2 className="h-3.5 w-3.5" />
+        {t("prompt.chat.open")}
+      </button>
+      {view.isAgentMode && (
+        <button
+          type="button"
+          onClick={onToggleAdvanced}
+          aria-expanded={view.advancedOpen}
+          aria-controls="ai-chat-agent-advanced-panel"
+          data-testid="ai-chat-agent-advanced-toggle"
+          className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          {view.advancedOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {t("chat.agentAdvanced")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ComposerAdvancedPanel({
+  view,
+  input,
+  onSuggestMemoryChange,
+  onClearWorkflow,
+  onSaveCurrentPrompt,
+}: {
+  view: AgentComposerViewModel;
+  input: string;
+  onSuggestMemoryChange: (checked: boolean) => void;
+  onClearWorkflow: () => void;
+  onSaveCurrentPrompt: () => void;
+}) {
+  const { t } = useI18n();
+
+  if (!view.advancedOpen) {
+    return null;
+  }
+
+  return (
+    <div
+      id="ai-chat-agent-advanced-panel"
+      data-testid="ai-chat-agent-advanced-panel"
+      className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-2 py-1.5"
+    >
+      <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={view.suggestMemory}
+          onChange={(event) => onSuggestMemoryChange(event.currentTarget.checked)}
+          className="h-3 w-3 accent-primary"
+        />
+        <span>{t("chat.researchAgent.memorySuggestions")}</span>
+      </label>
+      <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground" data-testid="ai-chat-agent-workflow-label">
+        <span>{t("chat.researchAgent.workflow")}: {view.workflowLabel}</span>
+        <span className="rounded border border-border/60 px-1 text-[10px] uppercase tracking-wide">
+          {view.workflowSelectionMode}
+        </span>
+        {view.canClearWorkflow && (
+          <button
+            type="button"
+            onClick={onClearWorkflow}
+            data-testid="ai-chat-agent-workflow-clear"
+            className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            title={t("common.clear")}
+            aria-label={t("common.clear")}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onSaveCurrentPrompt}
+        disabled={!input.trim()}
+        className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground hover:bg-accent disabled:opacity-50"
+      >
+        <Save className="h-3 w-3" />
+        {t("prompt.chat.saveCurrent")}
+      </button>
+    </div>
+  );
+}
+
 function selectionOriginModeLabel(mode: SelectionAiOrigin["mode"], t: ReturnType<typeof useI18n>["t"]): string {
   switch (mode) {
     case "agent":
@@ -517,7 +877,7 @@ function SelectionOriginBadge({
     )}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] font-medium text-primary">
-          Selection AI · {selectionOriginModeLabel(origin.mode, t)}
+          Selection AI / {selectionOriginModeLabel(origin.mode, t)}
         </span>
         <span className="text-foreground">{origin.sourceLabel}</span>
       </div>
@@ -530,12 +890,86 @@ function SelectionOriginBadge({
   );
 }
 
+function AgentResultSection({
+  section,
+  messageId,
+  index,
+}: {
+  section: AiResultSectionViewModel;
+  messageId: string;
+  index: number;
+}) {
+  const isAnswer = section.title === "Answer" || section.kind === "conclusion";
+  if (isAnswer) {
+    return (
+      <div className="text-xs leading-relaxed ai-chat-markdown [&_.prose]:max-w-none [&_pre]:text-[11px] [&_code]:text-[11px] [&_p]:my-1.5 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5">
+        <MarkdownRenderer content={section.content} className="text-xs" />
+      </div>
+    );
+  }
+
+  const contentLines = section.content.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  const isCompactAgentSection = section.title === "Run" || section.title === "Workbench" || section.title === "Plan" || section.title === "Observations";
+
+  return (
+    <div
+      className={cn(
+        "border-t border-border/60 pt-2",
+        !isCompactAgentSection && "rounded-md border border-border/60 bg-background/60 p-2",
+      )}
+      data-agent-section={`${messageId}:${section.title}:${index}`}
+    >
+      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        <span>{section.title}</span>
+        {section.title === "Observations" && contentLines[0]?.startsWith("Summary:") && (
+          <span className="normal-case tracking-normal text-muted-foreground/70">
+            {contentLines[0].replace(/^Summary:\s*/, "")}
+          </span>
+        )}
+      </div>
+      {section.title === "Observations" && contentLines[0]?.startsWith("Summary:") ? (
+        <div className="space-y-1 text-[11px] leading-relaxed text-muted-foreground">
+          {contentLines.slice(1).map((line, lineIndex) => (
+            <div key={`${messageId}:${section.title}:${index}:${lineIndex}`} className="break-words">
+              {line}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-[11px] leading-relaxed ai-chat-markdown text-muted-foreground [&_.prose]:max-w-none [&_pre]:text-[11px] [&_code]:text-[11px] [&_p]:my-1 [&_ul]:my-0.5 [&_ol]:my-0.5 [&_li]:my-0.5">
+          <MarkdownRenderer content={section.content} className="text-xs" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AgentResultSections({
+  resultView,
+  messageId,
+}: {
+  resultView: AiResultViewModel;
+  messageId: string;
+}) {
+  return (
+    <div className="space-y-2">
+      {resultView.sections.map((section, index) => (
+        <AgentResultSection
+          key={`${messageId}:${section.title}:${index}`}
+          section={section}
+          messageId={messageId}
+          index={index}
+        />
+      ))}
+    </div>
+  );
+}
+
 function WorkbenchPanel() {
   const { t } = useI18n();
   const drafts = useAiWorkbenchStore((state) => state.drafts);
   const proposals = useAiWorkbenchStore((state) => state.proposals);
   const highlightedProposalId = useAiWorkbenchStore((state) => state.highlightedProposalId);
-  const createDraft = useAiWorkbenchStore((state) => state.createDraft);
   const updateDraftStatus = useAiWorkbenchStore((state) => state.updateDraftStatus);
   const updateDraftWriteConfig = useAiWorkbenchStore((state) => state.updateDraftWriteConfig);
   const markDraftApplied = useAiWorkbenchStore((state) => state.markDraftApplied);
@@ -649,25 +1083,37 @@ function WorkbenchPanel() {
     );
   }, []);
 
-  const handleCreateProposalDraft = useCallback((proposalId: string) => {
+  const handleCreateProposalDraft = useCallback(async (proposalId: string) => {
     const proposal = proposals.find((item) => item.id === proposalId);
     if (!proposal) {
       return;
     }
 
-    createDraft({
-      type: "task_plan",
-      templateId: "task-plan",
-      title: `Plan - ${proposal.summary.slice(0, 80)}`,
-      sourceRefs: proposal.sourceRefs,
-      content: formatTaskProposalDraftContent(proposal),
-      writeMode: "create",
-      originProposalId: proposal.id,
-    });
-    toast.success(t("chat.workbench.toast.proposalDraftSaved"), {
-      description: proposal.summary,
-    });
-  }, [createDraft, proposals, t]);
+    try {
+      await createWorkbenchDraftWithTrace({
+        draft: {
+          type: "task_plan",
+          templateId: "task-plan",
+          title: `Plan - ${proposal.summary.slice(0, 80)}`,
+          sourceRefs: proposal.sourceRefs,
+          content: formatTaskProposalDraftContent(proposal),
+          writeMode: "create",
+          originProposalId: proposal.id,
+        },
+        task: `Create plan draft for proposal ${proposal.id}`,
+        title: `Plan - ${proposal.summary.slice(0, 80)}`,
+        evidenceRefs: proposal.sourceRefs,
+        approvalNote: "User clicked generate plan draft in AI Workbench.",
+      });
+      toast.success(t("chat.workbench.toast.proposalDraftSaved"), {
+        description: proposal.summary,
+      });
+    } catch (error) {
+      toast.error(t("prompt.run.toast.failed"), {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [proposals, t]);
 
   const handleApproveProposal = useCallback((proposalId: string) => {
     updateProposalStatus(proposalId, "approved");
@@ -679,7 +1125,7 @@ function WorkbenchPanel() {
     toast(t("chat.workbench.toast.proposalRejected"));
   }, [t, updateProposalStatus]);
 
-  const handleCreateTargetDrafts = useCallback((proposalId: string) => {
+  const handleCreateTargetDrafts = useCallback(async (proposalId: string) => {
     const proposal = proposals.find((item) => item.id === proposalId);
     if (!proposal) {
       return;
@@ -694,21 +1140,33 @@ function WorkbenchPanel() {
     }
 
     const generatedTargets: string[] = [];
-    draftsToCreate.forEach((draft) => {
-      createDraft(draft);
-      if (draft.targetPath) {
-        generatedTargets.push(draft.targetPath);
+    try {
+      for (const draft of draftsToCreate) {
+        await createWorkbenchDraftWithTrace({
+          draft,
+          task: `Create target draft for proposal ${proposal.id}`,
+          title: draft.title,
+          evidenceRefs: draft.sourceRefs,
+          approvalNote: "User clicked generate target drafts in AI Workbench.",
+        });
+        if (draft.targetPath) {
+          generatedTargets.push(draft.targetPath);
+        }
       }
-    });
 
-    if (proposal.status === "pending") {
-      updateProposalStatus(proposalId, "approved");
+      if (proposal.status === "pending") {
+        updateProposalStatus(proposalId, "approved");
+      }
+      markProposalDraftTargets(proposalId, generatedTargets);
+      toast.success(t("chat.workbench.toast.generatedDrafts", { count: draftsToCreate.length }), {
+        description: proposal.summary,
+      });
+    } catch (error) {
+      toast.error(t("prompt.run.toast.failed"), {
+        description: error instanceof Error ? error.message : String(error),
+      });
     }
-    markProposalDraftTargets(proposalId, generatedTargets);
-    toast.success(t("chat.workbench.toast.generatedDrafts", { count: draftsToCreate.length }), {
-      description: proposal.summary,
-    });
-  }, [createDraft, markProposalDraftTargets, proposals, t, updateProposalStatus]);
+  }, [markProposalDraftTargets, proposals, t, updateProposalStatus]);
 
   const handleApplyProposalDrafts = useCallback(async (proposalId: string) => {
     const proposal = proposals.find((item) => item.id === proposalId);
@@ -794,7 +1252,7 @@ function WorkbenchPanel() {
                     <div className="min-w-0">
                       <div className="truncate text-xs font-medium text-foreground">{draft.title}</div>
                       <div className="mt-1 text-[10px] text-muted-foreground">
-                        {draftStatusLabel(draft.status, t)} · {t("chat.evidenceCount", { count: draft.sourceRefs.length })}
+                        {draftStatusLabel(draft.status, t)} / {t("chat.evidenceCount", { count: draft.sourceRefs.length })}
                       </div>
                     </div>
                     <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground">
@@ -1032,7 +1490,7 @@ function WorkbenchPanel() {
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          onClick={() => handleCreateProposalDraft(proposal.id)}
+                          onClick={() => void handleCreateProposalDraft(proposal.id)}
                           className="rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-foreground hover:bg-accent"
                           disabled={proposal.status === "discarded"}
                         >
@@ -1040,7 +1498,7 @@ function WorkbenchPanel() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleCreateTargetDrafts(proposal.id)}
+                          onClick={() => void handleCreateTargetDrafts(proposal.id)}
                           disabled={
                             proposal.status === "discarded" ||
                             !proposal.requiredApprovals.every((approval) => proposal.confirmedApprovals.includes(approval)) ||
@@ -1172,33 +1630,21 @@ function ChatMessages({
             <>
               {resultView ? (
                 <div className="space-y-2">
-                  {resultView.sections.map((section) => (
-                    <div
-                      key={`${msg.id}:${section.kind}`}
-                      className="rounded-md border border-border/60 bg-background/60 p-2"
-                    >
-                      <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                        {section.title}
-                      </div>
-                      <div className="text-xs leading-relaxed ai-chat-markdown [&_.prose]:max-w-none [&_pre]:text-[11px] [&_code]:text-[11px] [&_p]:my-1.5 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5">
-                        <MarkdownRenderer content={section.content} className="text-xs" />
-                      </div>
-                    </div>
-                  ))}
-                  {msg.isStreaming && <span className="animate-pulse text-xs">▊</span>}
+                  <AgentResultSections resultView={resultView} messageId={msg.id} />
+                  {msg.isStreaming && <span className="animate-pulse text-xs">...</span>}
                 </div>
               ) : (
                 <div className="text-xs leading-relaxed ai-chat-markdown [&_.prose]:max-w-none [&_pre]:text-[11px] [&_code]:text-[11px] [&_p]:my-1.5 [&_h1]:text-sm [&_h2]:text-xs [&_h3]:text-xs [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5">
                   <MarkdownRenderer content={msg.content} className="text-xs" />
-                  {msg.isStreaming && <span className="animate-pulse">▊</span>}
+                  {msg.isStreaming && <span className="animate-pulse">...</span>}
                 </div>
               )}
               {msg.model && (
                 <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
                   <Bot className="h-3 w-3" />
                   <span>{msg.model.providerName}</span>
-                  {msg.model.model && <span>· {msg.model.model}</span>}
-                  <span>· {msg.model.source === "local" ? t("chat.model.local") : t("chat.model.cloud")}</span>
+                  {msg.model.model && <span>/ {msg.model.model}</span>}
+                  <span>/ {msg.model.source === "local" ? t("chat.model.local") : t("chat.model.cloud")}</span>
                 </div>
               )}
               <EvidenceSummaryButton
@@ -1211,12 +1657,34 @@ function ChatMessages({
               />
               {msg.usage && (
                 <div className="text-[9px] text-muted-foreground/60 mt-1">
-                  {msg.usage.totalTokens} tokens ({msg.usage.promptTokens}→{msg.usage.completionTokens})
+                    {msg.usage.totalTokens} tokens ({msg.usage.promptTokens} -&gt; {msg.usage.completionTokens})
                 </div>
               )}
               {!msg.isStreaming && msg.content && (
                 <div className="flex items-center gap-1 mt-1">
                   <CopyMessageButton text={msg.content} />
+                  {msg.agentResult?.sessionId && (
+                    <button
+                      onClick={() => {
+                        focusAgentSession(useAgentSessionStore.getState(), msg.agentResult?.sessionId, "trace");
+                      }}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                      title={t("chat.agentResult.openTrace")}
+                    >
+                      <ListTodo className="w-3 h-3" />
+                    </button>
+                  )}
+                  {msg.agentResult?.sessionId && msg.agentResult.memorySummary?.pendingSuggestionCount ? (
+                    <button
+                      onClick={() => {
+                        focusAgentSession(useAgentSessionStore.getState(), msg.agentResult?.sessionId, "memory");
+                      }}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                      title={t("chat.agentResult.reviewMemory")}
+                    >
+                      <Database className="w-3 h-3" />
+                    </button>
+                  ) : null}
                   {extractCodeBlocks(msg.content).length > 0 && activeTab && (
                     <button
                       onClick={() => {
@@ -1240,6 +1708,7 @@ function ChatMessages({
                   filePath={activeTab?.filePath}
                   contentForFile={activeContent ?? undefined}
                   evidenceRefs={msg.evidenceRefs ?? []}
+                  followUpActions={msg.followUpActions}
                   draftSuggestion={msg.draftSuggestion}
                 />
               )}
@@ -1277,12 +1746,14 @@ function ChatInput() {
     template?: PromptTemplate | null;
     seedUserPrompt?: string;
   } | null>(null);
-  const [promptRunState, setPromptRunState] = useState<{
-    template: PromptTemplate;
-    contextValues: PromptContextValues;
-    contextOptions: ChatPromptContextOptions;
-    isContextUpdating: boolean;
-  } | null>(null);
+  const [inputMode, setInputMode] = useState<"chat" | "agent">("chat");
+  const [agentEffort, setAgentEffort] = useState<"low" | "medium" | "high">("medium");
+  const [showAgentAdvanced, setShowAgentAdvanced] = useState(false);
+  const [isModelQuickSwitchOpen, setModelQuickSwitchOpen] = useState(false);
+  const [draftProviderId, setDraftProviderId] = useState<AiProviderId | "">("");
+  const [draftModelId, setDraftModelId] = useState("");
+  const [suggestMemoryForRun, setSuggestMemoryForRun] = useState(true);
+  const [continuationForRun, setContinuationForRun] = useState<AiChatContinuationContext | null>(null);
   const isGenerating = useAiChatStore((s) => s.isGenerating);
   const stopGenerating = useAiChatStore((s) => s.stopGenerating);
   const addUserMessage = useAiChatStore((s) => s.addUserMessage);
@@ -1293,9 +1764,10 @@ function ChatInput() {
   const setAssistantMetadata = useAiChatStore((s) => s.setAssistantMetadata);
   const setGenerating = useAiChatStore((s) => s.setGenerating);
   const getMessagesForApi = useAiChatStore((s) => s.getMessagesForApi);
-  const createDraft = useAiWorkbenchStore((state) => state.createDraft);
-  const addProposal = useAiWorkbenchStore((state) => state.addProposal);
+  const selectedResearchWorkflowId = useAiChatStore((s) => s.selectedResearchWorkflowId);
+  const setResearchWorkflow = useAiChatStore((s) => s.setResearchWorkflow);
   const settings = useSettingsStore((s) => s.settings);
+  const updateSettings = useSettingsStore((s) => s.updateSettings);
   const activeTab = useWorkspaceStore((s) => s.getActiveTab());
   const rootHandle = useWorkspaceStore((s) => s.rootHandle);
   const workspaceRootPath = useWorkspaceStore((s) => s.workspaceRootPath);
@@ -1303,17 +1775,73 @@ function ChatInput() {
   const getCachedContent = useContentCacheStore((s) => s.getContent);
   const getAnnotationsForFile = useAnnotationStore((s) => s.getAnnotationsForFile);
   const loadPromptState = usePromptTemplateStore((state) => state.loadPromptState);
-  const addPromptRun = usePromptTemplateStore((state) => state.addRun);
-  const updatePromptRunResult = usePromptTemplateStore((state) => state.updateRunResult);
   const rememberTemplateUsage = usePromptTemplateStore((state) => state.rememberTemplateUsage);
+  const composerDraft = useAiChatStore((s) => s.composerDraft);
+  const consumeComposerDraft = useAiChatStore((s) => s.consumeComposerDraft);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionPos, setMentionPos] = useState({ top: 0, left: 0 });
-  const promptRunContextRequestRef = useRef(0);
+  const aiProviders = useMemo(() => getAllProviders(), []);
+  const selectedResearchWorkflow = useMemo(() => {
+    if (!selectedResearchWorkflowId) {
+      return null;
+    }
+    try {
+      return getResearchAgentWorkflow(selectedResearchWorkflowId);
+    } catch {
+      return null;
+    }
+  }, [selectedResearchWorkflowId]);
+  const composerView = useMemo(() => buildAgentComposerViewModel({
+    mode: inputMode,
+    effort: agentEffort,
+    inputText: input,
+    isGenerating,
+    selectedWorkflowLabel: selectedResearchWorkflow?.title ?? null,
+    providerId: settings.aiProvider,
+    modelId: settings.aiModel,
+    autoModelLabel: t("chat.model.auto"),
+    autoWorkflowLabel: t("chat.workflow.auto"),
+    advancedOpen: showAgentAdvanced,
+    suggestMemory: suggestMemoryForRun,
+  }), [
+    agentEffort,
+    input,
+    inputMode,
+    isGenerating,
+    selectedResearchWorkflow?.title,
+    settings.aiModel,
+    settings.aiProvider,
+    showAgentAdvanced,
+    suggestMemoryForRun,
+    t,
+  ]);
 
   useEffect(() => {
     void loadPromptState();
   }, [loadPromptState]);
+
+  useEffect(() => {
+    if (!isModelQuickSwitchOpen) {
+      return;
+    }
+    setDraftProviderId((settings.aiProvider as AiProviderId | null) ?? "");
+    setDraftModelId(settings.aiModel ?? "");
+  }, [isModelQuickSwitchOpen, settings.aiModel, settings.aiProvider]);
+
+  useEffect(() => {
+    if (!composerDraft) {
+      return;
+    }
+    const draft = consumeComposerDraft();
+    if (!draft) {
+      return;
+    }
+    setInput(draft.text);
+    setInputMode(draft.mode ?? "agent");
+    setContinuationForRun(draft.continuation ?? null);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [composerDraft, consumeComposerDraft]);
 
   const buildChatContextSnapshot = useCallback(async (options?: {
     includeCurrentFileContent?: boolean;
@@ -1390,7 +1918,7 @@ function ChatInput() {
 
     try {
       if (!settings.aiEnabled) {
-        setAssistantError(msgId, "AI is disabled. Go to Settings → AI to enable it.");
+        setAssistantError(msgId, "AI is disabled. Go to Settings > AI to enable it.");
         return;
       }
 
@@ -1448,212 +1976,140 @@ function ChatInput() {
     setAssistantMetadata,
   ]);
 
-  const syncPromptRunContext = useCallback(async (
-    template: PromptTemplate,
-    contextOptions: ChatPromptContextOptions,
-  ) => {
-    const requestId = promptRunContextRequestRef.current + 1;
-    promptRunContextRequestRef.current = requestId;
-
-    setPromptRunState((current) => current && current.template.id === template.id
-      ? {
-          ...current,
-          contextOptions,
-          isContextUpdating: true,
-        }
-      : current);
-
-    const snapshot = await buildChatContextSnapshot(contextOptions);
-    if (promptRunContextRequestRef.current !== requestId) {
-      return;
-    }
-
-    setPromptRunState((current) => current && current.template.id === template.id
-      ? {
-          ...current,
-          contextValues: snapshot.contextValues,
-          contextOptions,
-          isContextUpdating: false,
-        }
-      : current);
-  }, [buildChatContextSnapshot]);
-
-  const openPromptRun = useCallback(async (template: PromptTemplate) => {
-    setPromptRunState({
-      template,
-      contextValues: {},
-      contextOptions: DEFAULT_CHAT_PROMPT_CONTEXT_OPTIONS,
-      isContextUpdating: true,
-    });
-    setPromptPickerOpen(false);
-    await syncPromptRunContext(template, DEFAULT_CHAT_PROMPT_CONTEXT_OPTIONS);
-  }, [syncPromptRunContext]);
-
-  const handlePromptRunConfirm = useCallback(async (payload: {
-    renderedPrompt: string;
-    renderedSystemPrompt?: string;
-    contextSummary: string;
-  }) => {
-    if (!promptRunState || isGenerating) {
-      return;
-    }
-
-    const template = promptRunState.template;
-    const runId = addPromptRun({
-      templateId: template.id,
-      surface: "chat",
-      renderedPrompt: payload.renderedPrompt,
-      renderedSystemPrompt: payload.renderedSystemPrompt,
-      contextSummary: payload.contextSummary,
-      outputMode: template.outputMode,
-    });
-
-    rememberTemplateUsage(template.id, "chat", {
-      workspaceKey,
-      workspaceRootPath,
-    });
-    setPromptRunState(null);
+  const handleResearchAgentRun = useCallback(async () => {
+    const text = input.trim();
+    if (!text || isGenerating) return;
+    const continuation = continuationForRun;
     setInput("");
+    setContinuationForRun(null);
+
+    addUserMessage(`[Research Agent] ${text}`);
+    const msgId = startAssistantMessage();
+    const controller = new AbortController();
+    setGenerating(true, controller);
 
     try {
       if (!settings.aiEnabled) {
-        throw new Error("AI is disabled. Go to Settings → AI to enable it.");
+        setAssistantError(msgId, "AI is disabled. Go to Settings > AI to enable it.");
+        return;
       }
 
-      const historyBeforeSend = getMessagesForApi();
-      const execution = await prepareChatExecution(payload.renderedPrompt, {
-        includeCurrentFileContent: promptRunState.contextOptions.includeCurrentFileContent,
-        includeAnnotations: promptRunState.contextOptions.includeAnnotations,
-        includeWorkspaceSummary: promptRunState.contextOptions.includeWorkspaceSummary,
+      const execution = await prepareChatExecution(text, {
+        includeCurrentFileContent: true,
+        includeAnnotations: true,
+        includeWorkspaceSummary: true,
       });
 
-      const shouldSendToChat = template.outputMode === "chat" || template.outputMode === "structured-chat";
-
-      if (shouldSendToChat) {
-        addUserMessage(payload.renderedPrompt, {
-          templateId: template.id,
-          promptRunId: runId,
-        });
+      if (controller.signal.aborted) {
+        finishAssistantMessage(msgId);
+        return;
       }
 
-      const assistantMessageId = shouldSendToChat
-        ? startAssistantMessage({
-            templateId: template.id,
-            promptRunId: runId,
-          })
-        : null;
-
-      const controller = new AbortController();
-      if (assistantMessageId) {
-        setGenerating(true, controller);
-      }
-
-      const result = await runPromptTemplate({
-        template,
-        surface: "chat",
-        contextValues: promptRunState.contextValues,
+      const result = await runResearchAgentForChat({
         settings: toRuntimeSettings(settings),
-        history: historyBeforeSend,
-        filePath: activeTab?.filePath,
-        content: execution.activeContent ?? undefined,
+        ...(selectedResearchWorkflowId ? { workflowId: selectedResearchWorkflowId } : {}),
+        task: text,
+        title: `Research Agent: ${text.slice(0, 80)}`,
+        query: text,
+        filePath: activeTab?.filePath ?? activeTab?.fileName,
+        content: execution.activeContent ?? "",
         selection: execution.contextValues.selected_text ?? undefined,
-        references: execution.references,
-        annotations: execution.annotations,
         explicitEvidenceRefs: execution.explicitEvidenceRefs,
-        renderedOverride: {
-          renderedPrompt: payload.renderedPrompt,
-          renderedSystemPrompt: payload.renderedSystemPrompt,
-          contextSummary: payload.contextSummary,
-        },
+        workspaceKey: workspaceKey ?? workspaceRootPath ?? rootHandle?.name,
+        includeWorkspaceSummary: Boolean(workspaceKey || workspaceRootPath || rootHandle),
+        suggestMemory: suggestMemoryForRun,
+        continuation: continuation ?? undefined,
+        plannerSignal: controller.signal,
+        compact: true,
+        maxObservationReplans: composerView.effortConfig.maxObservationReplans,
+        maxReadToolSteps: composerView.effortConfig.maxReadToolSteps,
+        ...(composerView.effortConfig.contextBudgetProfileId ? { contextBudgetProfileId: composerView.effortConfig.contextBudgetProfileId } : {}),
       });
 
-      if (shouldSendToChat && assistantMessageId && (result.outputMode === "chat" || result.outputMode === "structured-chat")) {
-        if (controller.signal.aborted) {
-          finishAssistantMessage(assistantMessageId);
-          return;
-        }
-
-        appendToAssistantMessage(assistantMessageId, result.chatResult.text);
-        finishAssistantMessage(assistantMessageId);
-        setAssistantMetadata(assistantMessageId, {
-          model: result.chatResult.model,
-          evidenceRefs: result.chatResult.evidenceRefs,
-          promptContext: result.chatResult.context,
-          followUpActions: result.chatResult.followUpActions,
-          draftSuggestion: result.chatResult.draftSuggestion,
-          templateId: template.id,
-          promptRunId: runId,
-        });
-        updatePromptRunResult(runId, { resultMessageId: assistantMessageId });
+      if (controller.signal.aborted) {
+        finishAssistantMessage(msgId);
         return;
       }
 
-      if (result.outputMode === "draft") {
-        const draftId = createDraft({
-          type: result.chatResult.draftSuggestion?.type ?? "paper_note",
-          templateId: result.chatResult.draftSuggestion?.templateId,
-          promptRunId: runId,
-          title: result.draft.title,
-          sourceRefs: result.chatResult.evidenceRefs,
-          content: result.draft.content,
-        });
-        updatePromptRunResult(runId, { resultDraftId: draftId });
-        toast.success(t("prompt.run.toast.draftCreated"), {
-          description: template.title,
-        });
-        return;
-      }
-
-      if (result.outputMode === "proposal") {
-        addProposal({
-          ...result.proposal,
-          promptRunId: runId,
-        });
-        updatePromptRunResult(runId, { resultProposalId: result.proposal.id });
-        toast.success(t("prompt.run.toast.proposalCreated"), {
-          description: result.proposal.summary,
-        });
-      }
-    } catch (error) {
-      if ((template.outputMode === "chat" || template.outputMode === "structured-chat")) {
-        const activeConversation = useAiChatStore.getState().getActiveConversation();
-        const latestAssistant = activeConversation?.messages.at(-1);
-        if (latestAssistant?.role === "assistant" && latestAssistant.promptRunId === runId) {
-          setAssistantError(latestAssistant.id, error instanceof Error ? error.message : String(error));
-        }
-      }
-      toast.error(t("prompt.run.toast.failed"), {
-        description: error instanceof Error ? error.message : String(error),
+      appendToAssistantMessage(msgId, result.chatText);
+      finishAssistantMessage(msgId);
+      setAssistantMetadata(msgId, {
+        model: result.plannerModelInfo ?? undefined,
+        evidenceRefs: result.result.promptContext.evidenceRefs,
+        promptContext: result.result.promptContext,
+        followUpActions: result.followUpActions,
+        draftSuggestion: result.draftSuggestion,
+        agentResult: result.agentResult,
       });
+    } catch (err) {
+      if ((err as Error).name === "AbortError") {
+        finishAssistantMessage(msgId);
+      } else {
+        setAssistantError(msgId, (err as Error).message ?? "Research agent failed");
+      }
     }
   }, [
-    addPromptRun,
-    addProposal,
-    addUserMessage,
+    activeTab?.fileName,
     activeTab?.filePath,
+    addUserMessage,
+    composerView.effortConfig,
     appendToAssistantMessage,
-    createDraft,
     finishAssistantMessage,
-    getMessagesForApi,
+    input,
     isGenerating,
+    continuationForRun,
     prepareChatExecution,
-    promptRunState,
-    rememberTemplateUsage,
+    rootHandle,
+    selectedResearchWorkflowId,
     setAssistantError,
     setAssistantMetadata,
     setGenerating,
     settings,
     startAssistantMessage,
-    t,
-    updatePromptRunResult,
+    suggestMemoryForRun,
+    workspaceKey,
+    workspaceRootPath,
+  ]);
+
+  const applyPromptTemplateToInput = useCallback(async (template: PromptTemplate) => {
+    setPromptPickerOpen(false);
+    const snapshot = await buildChatContextSnapshot(DEFAULT_CHAT_PROMPT_CONTEXT_OPTIONS);
+    const rendered = renderPromptTemplate(template, snapshot.contextValues);
+    const prompt = rendered.renderedPrompt.trim();
+    setInput((current) => {
+      const existing = current.trim();
+      if (!prompt) {
+        return existing;
+      }
+      return existing ? `${prompt}\n\n${existing}` : prompt;
+    });
+    rememberTemplateUsage(template.id, "chat", {
       workspaceKey,
       workspaceRootPath,
-  ]);
+    });
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [buildChatContextSnapshot, rememberTemplateUsage, workspaceKey, workspaceRootPath]);
+
+  const applyModelQuickSwitch = useCallback(async () => {
+    await updateSettings({
+      aiProvider: draftProviderId || null,
+      aiModel: draftModelId.trim() || null,
+    });
+    setModelQuickSwitchOpen(false);
+  }, [draftModelId, draftProviderId, updateSettings]);
+
+  const submitInput = useCallback(() => {
+    if (composerView.submitIntent === "agent") {
+      void handleResearchAgentRun();
+      return;
+    }
+    void handleSend();
+  }, [composerView.submitIntent, handleResearchAgentRun, handleSend]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      submitInput();
     }
   };
 
@@ -1666,7 +2122,7 @@ function ChatInput() {
         workspaceRootPath={workspaceRootPath}
         currentInput={input}
         onClose={() => setPromptPickerOpen(false)}
-        onSelectTemplate={(template) => void openPromptRun(template)}
+        onSelectTemplate={(template) => void applyPromptTemplateToInput(template)}
         onCreateTemplate={(seed) => {
           setPromptPickerOpen(false);
           setPromptEditorState({ seedUserPrompt: seed?.userPrompt });
@@ -1683,46 +2139,6 @@ function ChatInput() {
         template={promptEditorState?.template ?? null}
         seedUserPrompt={promptEditorState?.seedUserPrompt}
         onClose={() => setPromptEditorState(null)}
-      />
-      <PromptRunSheet
-        key={`prompt-run:${promptRunState?.template?.id ?? "none"}:${promptRunState?.contextValues.current_file ?? ""}:${promptRunState?.contextValues.selected_text ?? ""}`}
-        isOpen={Boolean(promptRunState)}
-        surface="chat"
-        template={promptRunState?.template ?? null}
-        contextValues={promptRunState?.contextValues ?? {}}
-        contextControls={promptRunState ? [
-          {
-            key: "includeCurrentFileContent",
-            label: t("prompt.run.chat.includeCurrentFileContent"),
-            description: t("prompt.run.chat.includeCurrentFileContentHint"),
-            checked: promptRunState.contextOptions.includeCurrentFileContent,
-          },
-          {
-            key: "includeAnnotations",
-            label: t("prompt.run.chat.includeAnnotations"),
-            description: t("prompt.run.chat.includeAnnotationsHint"),
-            checked: promptRunState.contextOptions.includeAnnotations,
-          },
-          {
-            key: "includeWorkspaceSummary",
-            label: t("prompt.run.chat.includeWorkspaceSummary"),
-            description: t("prompt.run.chat.includeWorkspaceSummaryHint"),
-            checked: promptRunState.contextOptions.includeWorkspaceSummary,
-          },
-        ] : undefined}
-        isContextUpdating={promptRunState?.isContextUpdating ?? false}
-        onClose={() => setPromptRunState(null)}
-        onContextControlChange={(key, checked) => {
-          if (!promptRunState) {
-            return;
-          }
-          const nextOptions = {
-            ...promptRunState.contextOptions,
-            [key]: checked,
-          } as ChatPromptContextOptions;
-          void syncPromptRunContext(promptRunState.template, nextOptions);
-        }}
-        onConfirm={(payload) => void handlePromptRunConfirm(payload)}
       />
       {mentionQuery !== null && (
         <MentionAutocomplete
@@ -1750,25 +2166,29 @@ function ChatInput() {
           onClose={() => setMentionQuery(null)}
         />
       )}
-      <div className="mb-2 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setPromptPickerOpen(true)}
-          className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-[11px] text-foreground hover:bg-accent"
-        >
-          <Wand2 className="h-3.5 w-3.5" />
-          {t("prompt.chat.open")}
-        </button>
-        <button
-          type="button"
-          onClick={() => setPromptEditorState({ seedUserPrompt: input })}
-          disabled={!input.trim()}
-          className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-[11px] text-foreground hover:bg-accent disabled:opacity-50"
-        >
-          <Save className="h-3.5 w-3.5" />
-          {t("prompt.chat.saveCurrent")}
-        </button>
-      </div>
+      <ComposerToolbar
+        view={composerView}
+        isModelQuickSwitchOpen={isModelQuickSwitchOpen}
+        draftProviderId={draftProviderId}
+        draftModelId={draftModelId}
+        aiProviders={aiProviders}
+        onModeChange={setInputMode}
+        onToggleModelQuickSwitch={() => setModelQuickSwitchOpen((open) => !open)}
+        onDraftProviderChange={setDraftProviderId}
+        onDraftModelChange={setDraftModelId}
+        onApplyModelQuickSwitch={() => void applyModelQuickSwitch()}
+        onCloseModelQuickSwitch={() => setModelQuickSwitchOpen(false)}
+        onEffortChange={setAgentEffort}
+        onOpenPromptPicker={() => setPromptPickerOpen(true)}
+        onToggleAdvanced={() => setShowAgentAdvanced((open) => !open)}
+      />
+      <ComposerAdvancedPanel
+        view={composerView}
+        input={input}
+        onSuggestMemoryChange={setSuggestMemoryForRun}
+        onClearWorkflow={() => setResearchWorkflow(null)}
+        onSaveCurrentPrompt={() => setPromptEditorState({ seedUserPrompt: input })}
+      />
       <div className="flex items-end gap-1">
         <textarea
           ref={textareaRef}
@@ -1803,10 +2223,11 @@ function ChatInput() {
           </button>
         ) : (
           <button
-            onClick={handleSend}
-            disabled={!input.trim()}
+            onClick={submitInput}
+            disabled={!composerView.canSubmit}
             className="rounded-md bg-primary/10 p-2 text-primary hover:bg-primary/20 disabled:opacity-30 transition-colors"
-            title={t('chat.send')}
+            title={composerView.isAgentMode ? t("chat.researchAgent.hint") : t('chat.send')}
+            data-testid="ai-chat-submit"
           >
             <Send className="h-3.5 w-3.5" />
           </button>

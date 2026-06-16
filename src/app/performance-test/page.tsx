@@ -194,7 +194,7 @@ export default function PerformanceTestPage() {
     setResults([]);
     setIsRunning(true);
     setStatus("running");
-    setStatusMessage("正在执行性能基线…");
+    setStatusMessage("正在执行性能基线...");
 
     const nextResults: BenchmarkResult[] = [];
 
