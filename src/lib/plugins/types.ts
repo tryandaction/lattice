@@ -5,6 +5,12 @@ import type { LatticeAnnotation } from '@/types/annotation';
 // ============================================================================
 
 export type PluginPermission =
+  | 'read-current-document'
+  | 'read-workspace-file'
+  | 'clipboard-write'
+  | 'export-file'
+  | 'use-ocr'
+  | 'use-ai'
   | 'file:read'
   | 'file:write'
   | 'annotations:read'
@@ -206,9 +212,25 @@ export interface PluginManifest {
   version: string;
   description?: string;
   author?: string;
+  category?: string;
+  entry?: string;
   minAppVersion?: string;
   engines?: PluginEngineInfo;
   permissions?: PluginPermission[];
+  activationEvents?: string[];
+  contributes?: {
+    commands?: Array<Omit<PluginCommand, 'run'>>;
+    panels?: PluginPanel[];
+    sidebar?: Array<Omit<PluginSidebarItem, 'render'>>;
+    toolbar?: Array<Omit<PluginToolbarItem, 'run'>>;
+    fileActions?: Array<Omit<PluginCommand, 'run'>>;
+    selectionActions?: Array<Omit<PluginCommand, 'run'>>;
+    rendererContextActions?: Array<Omit<PluginCommand, 'run'>>;
+    workspaceTools?: Array<Omit<PluginCommand, 'run'>>;
+    settings?: PluginSettingField[];
+  };
+  recommended?: boolean;
+  defaultEnabled?: boolean;
   main?: string;
   settings?: PluginSettingField[];
   dependencies?: Record<string, string>;
@@ -226,6 +248,48 @@ export interface PluginCommand {
   title: string;
   shortcut?: string;
   run: (payload?: unknown) => void | Promise<void>;
+}
+
+export type PluginViewerType = 'pdf' | 'docx' | 'md' | 'html' | 'unknown';
+
+export interface PluginActiveDocumentInfo {
+  filePath: string | null;
+  fileName: string | null;
+  viewerType: PluginViewerType;
+  paneId?: string | null;
+  tabId?: string | null;
+}
+
+export interface PluginDocumentContent {
+  info: PluginActiveDocumentInfo;
+  text?: string;
+  arrayBuffer?: ArrayBuffer;
+}
+
+export interface PluginPdfTextPage {
+  pageNumber: number;
+  text: string;
+  visible: boolean;
+  source: 'pdfjs-text-model' | 'rendered-text-layer' | 'unknown';
+  items?: Array<{
+    text: string;
+    normalizedText: string;
+    bbox?: { x1: number; y1: number; x2: number; y2: number };
+    lineIndex?: number;
+    blockIndex?: number;
+  }>;
+}
+
+export interface PluginDocumentAPI {
+  getActive: () => Promise<PluginActiveDocumentInfo>;
+  getViewerType: () => Promise<PluginViewerType>;
+  getSelectionText: () => Promise<string>;
+  readCurrent: () => Promise<PluginDocumentContent>;
+  getPdfTextPages: (options?: { scope?: 'visible' | 'current-page' | 'all' }) => Promise<PluginPdfTextPage[]>;
+}
+
+export interface PluginUiAPI {
+  openPanel: (panelId?: string) => Promise<void>;
 }
 
 // TYPES_CONTINUE_2
@@ -306,6 +370,12 @@ export interface PluginContext {
     register: (item: PluginStatusBarItem) => void;
   };
   events: PluginWorkspaceEvents;
+  document: PluginDocumentAPI;
+  ui: PluginUiAPI;
+  clipboard: {
+    writeText: (text: string) => Promise<void>;
+  };
+  exportFile: (options: { suggestedName: string; content: string; mimeType?: string }) => Promise<boolean>;
   settings: PluginSettingsAPI;
   assets: PluginAssetsAPI;
   storage: PluginStorage;

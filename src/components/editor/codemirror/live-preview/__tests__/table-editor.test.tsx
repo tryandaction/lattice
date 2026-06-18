@@ -106,4 +106,64 @@ describe('TableEditor', () => {
 
     expect(onUpdate).toHaveBeenCalledWith('| 标题 A | 标题 B |\n| --- | --- |\n| ==A1== | B1 |');
   });
+
+  it('copies standard markdown and can reveal table source from the table action menu', () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    renderTableEditor();
+    const wrapper = screen.getByRole('group', { name: 'Markdown table editor' });
+
+    fireEvent.mouseEnter(wrapper);
+    fireEvent.click(screen.getByRole('button', { name: 'Table actions' }));
+    fireEvent.click(screen.getByText('Copy Markdown'));
+
+    expect(writeText).toHaveBeenCalledWith('| 标题 A | 标题 B |\n| --- | --- |\n| A1 | B1 |');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Table actions' }));
+    fireEvent.click(screen.getByText('Show Source'));
+
+    expect(screen.getByLabelText('Markdown table source').textContent).toContain('| 标题 A | 标题 B |');
+  });
+
+  it('duplicates rows and moves columns from perimeter menus', () => {
+    const onUpdate = vi.fn();
+    renderTableEditor({ onUpdate });
+    const wrapper = screen.getByRole('group', { name: 'Markdown table editor' });
+
+    fireEvent.mouseEnter(wrapper);
+    fireEvent.click(screen.getByRole('button', { name: 'Row 2 actions' }));
+    fireEvent.click(screen.getByText('Duplicate Row'));
+
+    expect(onUpdate).toHaveBeenLastCalledWith('| 标题 A | 标题 B |\n| --- | --- |\n| A1 | B1 |\n| A1 | B1 |');
+
+    fireEvent.mouseEnter(wrapper);
+    fireEvent.click(screen.getByRole('button', { name: 'Column 2 actions' }));
+    fireEvent.click(screen.getByText('Move Left'));
+
+    expect(onUpdate).toHaveBeenLastCalledWith('| 标题 B | 标题 A |\n| --- | --- |\n| B1 | A1 |\n| B1 | A1 |');
+  });
+
+  it('pastes clipboard cell matrices from the table action menu', async () => {
+    const onUpdate = vi.fn();
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { readText: vi.fn().mockResolvedValue('X1\tX2\nY1\tY2') },
+      configurable: true,
+    });
+
+    renderTableEditor({ onUpdate });
+    const wrapper = screen.getByRole('group', { name: 'Markdown table editor' });
+
+    fireEvent.click(screen.getByText('A1'));
+    fireEvent.mouseEnter(wrapper);
+    fireEvent.click(screen.getByRole('button', { name: 'Table actions' }));
+    fireEvent.click(screen.getByText('Paste Cells'));
+
+    await vi.waitFor(() => {
+      expect(onUpdate).toHaveBeenLastCalledWith('| 标题 A | 标题 B |\n| --- | --- |\n| X1 | X2 |\n| Y1 | Y2 |');
+    });
+  });
 });

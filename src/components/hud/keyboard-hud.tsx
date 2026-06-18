@@ -15,9 +15,11 @@ import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { motion, AnimatePresence, useDragControls, PanInfo } from 'framer-motion';
 import { ShadowKeyboard } from './shadow-keyboard';
 import { SymbolSelector } from './symbol-selector';
+import { useKaTeXRenderer } from './katex-renderer';
 import { useHUDStore, computeMode } from '../../stores/hud-store';
 import { useQuantumCustomStore, getAllSymbolsForKey } from '../../stores/quantum-custom-store';
 import { getActiveMathField, getGlobalTiptapEditor, setActiveMathField } from './hud-provider';
+import type { QuantumInsertPayload } from './hud-provider';
 import {
   quantumKeymap,
   getDisplaySymbol,
@@ -25,20 +27,14 @@ import {
   KEY_LABELS,
 } from '../../config/quantum-keymap';
 import { GripHorizontal, RotateCcw } from 'lucide-react';
-import { getActiveInputTarget, getLastActiveInputTarget, wrapSelectionWith } from '@/lib/unified-input-handler';
 import { logger } from '@/lib/logger';
+import { getActiveInputTarget, getLastActiveInputTarget } from '@/lib/unified-input-handler';
+import { getFormulaTemplateForKey, getQuickFormulaTemplates, latexToVisualPreview } from '@/lib/formula-templates';
 import type { MathfieldElement } from 'mathlive';
 
 export interface KeyboardHUDProps {
-  onInsertSymbol: (latex: string) => void;
+  onInsertSymbol: (input: string | QuantumInsertPayload) => void;
 }
-
-const MARKDOWN_SHORTCUTS: Record<string, { before: string; after: string }> = {
-  KeyB: { before: '**', after: '**' },
-  KeyI: { before: '*', after: '*' },
-  KeyK: { before: '[', after: '](url)' },
-  KeyE: { before: '`', after: '`' },
-};
 
 type MathfieldWithCommands = MathfieldElement & {
   executeCommand: (command: string) => unknown;
@@ -55,12 +51,17 @@ function findInputTargetRect(): DOMRect | null {
   if (focusedMathField) {
     return focusedMathField.getBoundingClientRect();
   }
-  
-  // Priority 2: Any math field (most recent)
-  const mathFields = document.querySelectorAll('math-field');
-  if (mathFields.length > 0) {
-    const lastMathField = mathFields[mathFields.length - 1] as HTMLElement;
-    return lastMathField.getBoundingClientRect();
+
+  // Priority 2: Active saved input target. HUD focus intentionally moves to the
+  // hidden key-capture input, so the last real target is the best anchor.
+  const target = getActiveInputTarget() || getLastActiveInputTarget();
+  if (target) {
+    const cursor = target.element.querySelector?.('.cm-cursor') as HTMLElement | null;
+    if (cursor) {
+      const cursorRect = cursor.getBoundingClientRect();
+      if (cursorRect.height > 0) return cursorRect;
+    }
+    return target.element.getBoundingClientRect();
   }
   
   // Priority 3: Text selection
@@ -85,6 +86,8 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const isProcessingEnterRef = useRef(false);
   const [selectorAnchor, setSelectorAnchor] = useState({ x: 0, y: 0 });
   const [showHelp, setShowHelp] = useState(false);
+  const [livePreviewLatex, setLivePreviewLatex] = useState('\\square');
+  const renderLatex = useKaTeXRenderer();
 
   // Store state
   const isOpen = useHUDStore((state) => state.isOpen);
@@ -92,8 +95,6 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const highlightedIndex = useHUDStore((state) => state.highlightedIndex);
   const flashingKey = useHUDStore((state) => state.flashingKey);
   const isEditMode = useHUDStore((state) => state.isEditMode);
-  const insertMode = useHUDStore((state) => state.insertMode);
-  const insertFormat = useHUDStore((state) => state.insertFormat);
   const customOffset = useHUDStore((state) => state.customOffset);
   const isDragging = useHUDStore((state) => state.isDragging);
   // Note: cursorPosition is managed in store, we use computeOptimalPosition instead
@@ -106,8 +107,6 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const selectSymbol = useHUDStore((state) => state.selectSymbol);
   const flashKey = useHUDStore((state) => state.flashKey);
   const toggleEditMode = useHUDStore((state) => state.toggleEditMode);
-  const setInsertMode = useHUDStore((state) => state.setInsertMode);
-  const setInsertFormat = useHUDStore((state) => state.setInsertFormat);
   const setCustomOffset = useHUDStore((state) => state.setCustomOffset);
   const setIsDragging = useHUDStore((state) => state.setIsDragging);
   const updateCursorPosition = useHUDStore((state) => state.updateCursorPosition);
@@ -128,7 +127,22 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
 
   // Compute current mode and position
   const mode = computeMode({ isOpen, activeSymbolKey });
-  const { side: optimalPosition, topPx } = computeOptimalPosition();
+  const { side: optimalPosition, topPx, leftPx } = computeOptimalPosition();
+  const quickStructures = useMemo(
+    () => getQuickFormulaTemplates().map((item) => {
+      const preview = item.previewLatex;
+      return {
+        ...item,
+        preview,
+        html: renderLatex(preview),
+      };
+    }),
+    [renderLatex]
+  );
+  const renderedLivePreview = useMemo(
+    () => renderLatex(latexToVisualPreview(livePreviewLatex)),
+    [livePreviewLatex, renderLatex]
+  );
 
   // ============================================================================
   // MathLive Integration (moved before useEffects that depend on it)
@@ -194,6 +208,22 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
         el.classList.remove('quantum-keyboard-active');
       });
     };
+  }, [isOpen, findCurrentMathField]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const syncPreview = () => {
+      const mathField = findCurrentMathField() as MathfieldWithCommands | null;
+      const value = mathField?.getValue?.();
+      if (value && value.trim()) {
+        setLivePreviewLatex(value);
+      }
+    };
+
+    syncPreview();
+    const interval = window.setInterval(syncPreview, 180);
+    return () => window.clearInterval(interval);
   }, [isOpen, findCurrentMathField]);
 
   // Update cursor position when HUD opens and periodically while open
@@ -324,8 +354,25 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
     if (!symbol) return;
 
     flashKey(keyCode);
+    const template = getFormulaTemplateForKey(keyCode);
+    if (template) {
+      setLivePreviewLatex(template.previewLatex);
+      onInsertSymbol({
+        latex: template.latex,
+        mathLiveLatex: template.mathLiveLatex,
+        displayMode: template.displayMode,
+        previewLatex: template.previewLatex,
+      });
+      return;
+    }
+    setLivePreviewLatex(mapping.preview ?? symbol);
     onInsertSymbol(symbol);
   }, [flashKey, onInsertSymbol]);
+
+  const handleQuickInsert = useCallback((payload: QuantumInsertPayload) => {
+    setLivePreviewLatex(payload.previewLatex ?? payload.latex);
+    onInsertSymbol(payload);
+  }, [onInsertSymbol]);
 
   const handleShiftKeySelect = useCallback((keyCode: string) => {
     const mapping = quantumKeymap[keyCode];
@@ -338,6 +385,7 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
     if (activeSymbolKey) {
       flashKey(activeSymbolKey);
     }
+    setLivePreviewLatex(symbol);
     onInsertSymbol(symbol);
     closeSymbolSelector();
   }, [activeSymbolKey, flashKey, onInsertSymbol, closeSymbolSelector]);
@@ -505,6 +553,11 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
 
     // Symbol selector mode
     if (activeSymbolKey) {
+      if (keyCode === 'Tab') {
+        event.preventDefault();
+        navigateSymbol(event.shiftKey ? 'up' : 'down');
+        return;
+      }
       if (keyCode === 'ArrowDown' || keyCode === 'Space') {
         event.preventDefault();
         navigateSymbol('down');
@@ -536,26 +589,11 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
       }
     }
 
-    // HUD mode toggles (Tab = inline/block, Shift+Tab = markdown/latex)
+    // Tab moves through MathLive placeholders. It never switches output format.
     if (keyCode === 'Tab') {
       event.preventDefault();
-      if (event.shiftKey) {
-        useHUDStore.getState().toggleInsertFormat();
-      } else {
-        useHUDStore.getState().toggleInsertMode();
-      }
+      forwardKeyToMathField(event);
       return;
-    }
-
-    // Markdown shortcuts when editing non-math inputs
-    const activeTarget = getActiveInputTarget() || getLastActiveInputTarget();
-    if (activeTarget && activeTarget.type !== 'mathlive') {
-      const shortcut = MARKDOWN_SHORTCUTS[keyCode];
-      if (shortcut) {
-        event.preventDefault();
-        wrapSelectionWith(shortcut.before, shortcut.after);
-        return;
-      }
     }
 
     // Enter key - create new line
@@ -663,7 +701,7 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
         <div
           className="quantum-hud-container"
           data-position={optimalPosition}
-          style={{ top: `${topPx + dragOffset.y}px` }}
+          style={{ top: `${topPx + dragOffset.y}px`, left: `${leftPx + dragOffset.x}px` }}
         >
           <input
             ref={inputRef}
@@ -692,14 +730,12 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
             onDragEnd={handleDragEnd}
             initial={{
               y: optimalPosition === 'top' ? -150 : 150,
-              x: dragOffset.x,
               opacity: 0,
               scale: 0.3,
               borderRadius: '50%',
             }}
             animate={{
               y: 0,
-              x: dragOffset.x,
               opacity: 1,
               scale: 1,
               borderRadius: '20px',
@@ -743,51 +779,90 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
               </button>
             </div>
 
-            {/* Ripple Background */}
-            <div className="quantum-ripple-bg">
-              <div className="quantum-ripple quantum-ripple-1" />
-              <div className="quantum-ripple quantum-ripple-2" />
-              <div className="quantum-ripple quantum-ripple-3" />
-            </div>
-
             {/* Content */}
             <div className="quantum-content">
-              <div className="quantum-controls">
-                <div className="quantum-toggle-group">
-                  <button
-                    type="button"
-                    className={`quantum-toggle ${insertMode === 'inline' ? 'active' : ''}`}
-                    onClick={() => setInsertMode('inline')}
-                  >
-                    行内
-                  </button>
-                  <button
-                    type="button"
-                    className={`quantum-toggle ${insertMode === 'block' ? 'active' : ''}`}
-                    onClick={() => setInsertMode('block')}
-                  >
-                    块级
-                  </button>
+              <div className="quantum-header">
+                <div className="quantum-title-group">
+                  <div className="quantum-title">量子键盘</div>
+                  <div className="quantum-subtitle">
+                    自动适配当前编辑格式，物理键盘优先
+                  </div>
                 </div>
-                <div className="quantum-toggle-group">
-                  <button
-                    type="button"
-                    className={`quantum-toggle ${insertFormat === 'markdown' ? 'active' : ''}`}
-                    onClick={() => setInsertFormat('markdown')}
-                  >
-                    Markdown
-                  </button>
-                  <button
-                    type="button"
-                    className={`quantum-toggle ${insertFormat === 'latex' ? 'active' : ''}`}
-                    onClick={() => setInsertFormat('latex')}
-                  >
-                    LaTeX
-                  </button>
+                <div className="quantum-controls">
+                  <div className="quantum-toggle-group" aria-label="公式范围">
+                    <button
+                      type="button"
+                      className="quantum-toggle"
+                      onClick={(event) => event.preventDefault()}
+                    >
+                      行内
+                    </button>
+                    <button
+                      type="button"
+                      className="quantum-toggle"
+                      onClick={(event) => event.preventDefault()}
+                    >
+                      块级
+                    </button>
+                  </div>
+                  <div className="quantum-toggle-group" aria-label="输出格式">
+                    <button
+                      type="button"
+                      className="quantum-toggle"
+                      onClick={(event) => event.preventDefault()}
+                    >
+                      MD
+                    </button>
+                    <button
+                      type="button"
+                      className="quantum-toggle"
+                      onClick={(event) => event.preventDefault()}
+                    >
+                      TeX
+                    </button>
+                  </div>
                 </div>
               </div>
+
+              <div className="quantum-quick-strip" aria-label="常用公式结构">
+                <div className="quantum-status-row" aria-label="量子键盘状态">
+                  <span className="quantum-status-pill">Auto</span>
+                  <span className="quantum-status-pill">Live</span>
+                  <span className="quantum-status-pill">Keyboard</span>
+                </div>
+
+                <div className="quantum-live-preview" aria-live="polite">
+                  <div className="quantum-live-preview-label">实时公式</div>
+                  <div
+                    className="quantum-live-preview-formula"
+                    dangerouslySetInnerHTML={{ __html: renderedLivePreview }}
+                  />
+                </div>
+
+                {quickStructures.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="quantum-quick-button"
+                    onClick={() => handleQuickInsert({
+                      latex: item.latex,
+                      mathLiveLatex: item.mathLiveLatex,
+                      displayMode: item.displayMode,
+                      previewLatex: item.preview,
+                    })}
+                    title={item.label}
+                  >
+                    <span
+                      className="quantum-quick-symbol"
+                      dangerouslySetInnerHTML={{ __html: item.html }}
+                    />
+                    <span className="quantum-quick-label">{item.label}</span>
+                  </button>
+                ))}
+              </div>
+
               <div className="quantum-mode-indicator">
-                {mode === 'symbol-selector' ? `◆ ${activeKeyLabel} 符号` : '∑ 量子键盘'}
+                {mode === 'symbol-selector' ? `${activeKeyLabel} 变体` : '按键插入 · Shift 打开变体'}
               </div>
 
               <ShadowKeyboard
@@ -801,31 +876,25 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
 
               <div className="quantum-hint">
                 {mode === 'symbol-selector'
-                  ? '↑↓/空格 选择 • Enter 确认 • Esc 返回'
-                  : '拖动移动 • Shift 变体 • Tab 行内/块级 • Shift+Tab MD/LaTeX • Esc 关闭'}
+                  ? '方向键/空格选择 · Enter 确认 · Esc 返回'
+                  : 'Tab/Shift+Tab 跳转公式占位 · Shift+键看变体 · Esc 关闭'}
               </div>
 
               {showHelp && (
                 <div className="quantum-help-panel">
-                  <div className="quantum-help-title">编辑器公式快捷键</div>
+                  <div className="quantum-help-title">低冲突编辑器快捷键</div>
                   <div className="quantum-help-grid">
                     <span className="quantum-help-label">行内公式</span><kbd className="quantum-help-kbd">Ctrl+Shift+M</kbd>
                     <span className="quantum-help-label">块级公式</span><kbd className="quantum-help-kbd">Ctrl+Alt+M</kbd>
-                    <span className="quantum-help-label">分数</span><kbd className="quantum-help-kbd">Ctrl+Shift+F</kbd>
-                    <span className="quantum-help-label">根号</span><kbd className="quantum-help-kbd">Ctrl+Shift+R</kbd>
-                    <span className="quantum-help-label">积分</span><kbd className="quantum-help-kbd">Ctrl+Shift+I</kbd>
-                    <span className="quantum-help-label">求和</span><kbd className="quantum-help-kbd">Ctrl+Shift+U</kbd>
-                    <span className="quantum-help-label">极限</span><kbd className="quantum-help-kbd">Ctrl+Shift+L</kbd>
-                    <span className="quantum-help-label">矩阵</span><kbd className="quantum-help-kbd">Ctrl+Shift+X</kbd>
-                    <span className="quantum-help-label">向量</span><kbd className="quantum-help-kbd">Ctrl+Shift+V</kbd>
-                    <span className="quantum-help-label">偏导</span><kbd className="quantum-help-kbd">Ctrl+Shift+P</kbd>
-                    <span className="quantum-help-label">上标</span><kbd className="quantum-help-kbd">Ctrl+↑</kbd>
-                    <span className="quantum-help-label">下标</span><kbd className="quantum-help-kbd">Ctrl+↓</kbd>
+                    <span className="quantum-help-label">打开量子键盘</span><kbd className="quantum-help-kbd">Tab Tab</kbd>
                   </div>
                   <div className="quantum-help-title" style={{ marginTop: '6px' }}>量子键盘</div>
                   <div className="quantum-help-grid">
-                    <span className="quantum-help-label">行内/块级</span><kbd className="quantum-help-kbd">Tab</kbd>
-                    <span className="quantum-help-label">MD/LaTeX</span><kbd className="quantum-help-kbd">Shift+Tab</kbd>
+                    <span className="quantum-help-label">分数 / 根号</span><kbd className="quantum-help-kbd">F/4 · 3</kbd>
+                    <span className="quantum-help-label">求和 / 积分 / 极限</span><kbd className="quantum-help-kbd">S/5 · I/6 · 7</kbd>
+                    <span className="quantum-help-label">矩阵 / 分段 / 向量</span><kbd className="quantum-help-kbd">M/X · B · V</kbd>
+                    <span className="quantum-help-label">下一占位</span><kbd className="quantum-help-kbd">Tab</kbd>
+                    <span className="quantum-help-label">上一占位</span><kbd className="quantum-help-kbd">Shift+Tab</kbd>
                     <span className="quantum-help-label">符号变体</span><kbd className="quantum-help-kbd">Shift+键</kbd>
                     <span className="quantum-help-label">关闭</span><kbd className="quantum-help-kbd">Esc</kbd>
                   </div>

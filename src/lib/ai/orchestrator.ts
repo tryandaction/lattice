@@ -266,6 +266,7 @@ export class AiOrchestrator {
       summary: parsed?.summary || request.prompt,
       steps,
       evidenceRefs: promptContext.evidenceRefs,
+      filePath: request.filePath,
     });
 
     return {

@@ -219,7 +219,7 @@ describe('research-agent-chat-runner', () => {
       workflowTitle: 'Teaching Explain',
       workflowInferred: true,
       generatePlan,
-      generateOmittedSummary,
+      generateOmittedSummary: undefined,
       plannerModel: 'OpenAI/gpt-test',
       contextBudgetProfileId: 'chat',
       continuation: {
@@ -228,6 +228,10 @@ describe('research-agent-chat-runner', () => {
         sourceSummary: 'Alpha compacted summary.',
       },
     }));
+    expect(generateOmittedSummary).not.toHaveBeenCalled();
+    expect(result.adapterWarnings).toEqual(expect.arrayContaining([
+      expect.stringContaining('Omitted-context model summary skipped'),
+    ]));
     expect(result.plannerModelInfo).toMatchObject({ providerName: 'OpenAI', model: 'gpt-test' });
     expect(result.chatText).toContain('Agent session: research-session-chat');
     expect(result.chatText).toContain('Workflow: Teaching Explain (teaching-explain) [auto]');
@@ -264,6 +268,47 @@ describe('research-agent-chat-runner', () => {
         },
       ],
     });
+  });
+
+  it('passes omitted-context model summary generation only when explicitly enabled', async () => {
+    const generatePlan = vi.fn();
+    const generateOmittedSummary = vi.fn();
+    mocks.createResearchAgentPlannerGenerate.mockReturnValue({
+      generatePlan,
+      generateOmittedSummary,
+      modelInfo: {
+        providerId: 'openai',
+        providerName: 'OpenAI',
+        model: 'gpt-test',
+        source: 'cloud',
+      },
+      policy: {
+        taskType: 'research',
+        preferredProvider: 'openai',
+        fallbackProvider: null,
+        maxContextTokens: 18000,
+        evidenceRequired: true,
+      },
+    });
+    mocks.runResearchAgent.mockResolvedValue(createResult());
+
+    const result = await runResearchAgentForChat({
+      settings: {
+        ...settings,
+        agentOmittedSummaryEnabled: true,
+      },
+      task: 'Explain Alpha',
+      query: 'Explain Alpha',
+      content: 'Alpha content',
+    });
+
+    expect(mocks.runResearchAgent).toHaveBeenCalledWith(expect.objectContaining({
+      generatePlan,
+      generateOmittedSummary,
+    }));
+    expect(result.adapterWarnings).not.toEqual(expect.arrayContaining([
+      expect.stringContaining('Omitted-context model summary skipped'),
+    ]));
   });
 
   it('falls back to the deterministic plan when planner routing is unavailable', async () => {
@@ -390,6 +435,10 @@ describe('research-agent-chat-runner', () => {
       workflowTitle: 'Knowledge Organization',
     }));
     mocks.runResearchAgent.mockResolvedValueOnce(createResult({
+      workflowId: 'code-change-plan',
+      workflowTitle: 'Code Change Plan',
+    }));
+    mocks.runResearchAgent.mockResolvedValueOnce(createResult({
       workflowId: 'teaching-explain',
       workflowTitle: 'Teaching Explain',
     }));
@@ -411,6 +460,13 @@ describe('research-agent-chat-runner', () => {
       workflowId: 'knowledge-organization',
       task: 'Organize Alpha notes',
       query: 'Organize Alpha notes',
+    });
+    const codePlan = await runResearchAgentForChat({
+      settings,
+      workflowId: 'code-change-plan',
+      task: 'Review src/lib/agent.ts and prepare a patch plan',
+      query: 'Review src/lib/agent.ts and prepare a patch plan',
+      filePath: 'src/lib/agent.ts',
     });
     const teaching = await runResearchAgentForChat({
       settings,
@@ -442,6 +498,9 @@ describe('research-agent-chat-runner', () => {
     expect(organization.followUpActions).toEqual([
       { id: 'create-organization-proposal', label: '生成整理计划', kind: 'propose_task' },
     ]);
+    expect(codePlan.draftSuggestion).toBeUndefined();
+    expect(codePlan.followUpActions.map((action) => action.id)).toEqual(['create-code-change-proposal']);
+    expect(codePlan.followUpActions.map((action) => action.kind)).toEqual(['propose_task']);
     expect(teaching.draftSuggestion).toBeUndefined();
     expect(teaching.followUpActions).toEqual([]);
   });

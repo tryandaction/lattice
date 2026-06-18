@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { getRegisteredCommands, subscribePluginRegistry } from "@/lib/plugins/runtime";
+import { isEditableElement } from "@/lib/unified-input-handler";
 
 /**
  * Parses a shortcut string like "Ctrl+Shift+H" into a matcher.
@@ -38,6 +39,10 @@ export function usePluginShortcuts() {
     });
 
     const handler = (e: KeyboardEvent) => {
+      if (isEditableElement(e.target)) {
+        return;
+      }
+
       for (const cmd of commandsRef.current) {
         if (cmd.shortcut && matchesShortcut(e, cmd.shortcut)) {
           e.preventDefault();

@@ -7,6 +7,7 @@ export type LatticeSkillId =
   | 'path-identity'
   | 'note-taking'
   | 'notebook-analysis'
+  | 'coding-change-review'
   | 'knowledge-organization'
   | 'pdf-item-workspace'
   | 'pdf-annotation';
@@ -54,6 +55,7 @@ export const LATTICE_SKILL_REGISTRY: LatticeSkillDescriptor[] = [
       'notebook-analysis',
       'literature-matrix',
       'knowledge-organization',
+      'code-change-plan',
       'paper-reading',
       'pdf-annotation',
       'notebook-from-paper',
@@ -115,6 +117,30 @@ export const LATTICE_SKILL_REGISTRY: LatticeSkillDescriptor[] = [
     notes: [
       'Runner execution remains approval-gated.',
       'Prefer proposals for next experiments over silent notebook mutation.',
+    ],
+  },
+  {
+    id: 'coding-change-review',
+    title: 'Coding Change Review',
+    owner: 'ai-agent-thread',
+    status: 'foundation',
+    scope: 'workspace',
+    approvalMode: 'approval-gated',
+    workflows: ['code-change-plan'],
+    allowedTools: ['workspace.search', 'workspace.readIndexedContext', 'lattice.resolvePathIdentity', 'evidence.resolve', 'workbench.createProposal'],
+    requiredCapabilities: [
+      'search_workspace',
+      'read_workspace',
+      'lattice_read_identity',
+      'resolve_evidence',
+      'propose_write',
+    ],
+    operationContractIds: ['path-identity', 'coding-change-review'],
+    writesWorkspace: true,
+    pdfScoped: false,
+    notes: [
+      'Produces reviewable code-change proposals with target files, risks, patch previews, and test plans.',
+      'No direct source edits, shell commands, network calls, package manager actions, or git operations are enabled in this slice.',
     ],
   },
   {

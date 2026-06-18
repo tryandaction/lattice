@@ -4,6 +4,12 @@ const REQUIRED_FIELDS = ['id', 'name', 'version'] as const;
 const ID_PATTERN = /^[a-z0-9._-]+$/;
 
 const KNOWN_PERMISSIONS: PluginPermission[] = [
+  'read-current-document',
+  'read-workspace-file',
+  'clipboard-write',
+  'export-file',
+  'use-ocr',
+  'use-ai',
   'file:read',
   'file:write',
   'annotations:read',
@@ -49,8 +55,12 @@ export function validatePluginManifest(raw: unknown): ManifestValidationResult {
     }
   }
 
-  if (manifest.ui?.panels) {
-    for (const panel of manifest.ui.panels) {
+  const panels = [
+    ...(manifest.ui?.panels ?? []),
+    ...(manifest.contributes?.panels ?? []),
+  ];
+  if (panels.length > 0) {
+    for (const panel of panels) {
       if (!panel.id || !panel.title) {
         errors.push('Panel requires id and title');
       }
@@ -66,4 +76,3 @@ export function validatePluginManifest(raw: unknown): ManifestValidationResult {
     manifest: errors.length === 0 ? manifest : undefined,
   };
 }
-

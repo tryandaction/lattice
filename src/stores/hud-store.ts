@@ -18,8 +18,6 @@ import { useQuantumCustomStore, getAllSymbolsForKey } from './quantum-custom-sto
 
 export type HUDMode = 'closed' | 'standard' | 'symbol-selector';
 export type HUDPosition = 'top' | 'bottom' | 'auto';
-export type InsertMode = 'inline' | 'block';
-export type InsertFormat = 'markdown' | 'latex';
 
 export interface HUDCoordinates {
   x: number;
@@ -32,6 +30,7 @@ export interface CursorPosition {
   bottom: number;
   left: number;
   right: number;
+  centerX: number;
   centerY: number;
 }
 
@@ -43,8 +42,6 @@ export interface HUDState {
   activeMathFieldId: string | null;
   flashingKey: string | null;
   isEditMode: boolean;
-  insertMode: InsertMode;
-  insertFormat: InsertFormat;
   
   // Position state
   position: HUDPosition;
@@ -66,10 +63,6 @@ export interface HUDState {
   clearFlash: () => void;
   setEditMode: (editMode: boolean) => void;
   toggleEditMode: () => void;
-  setInsertMode: (mode: InsertMode) => void;
-  toggleInsertMode: () => void;
-  setInsertFormat: (format: InsertFormat) => void;
-  toggleInsertFormat: () => void;
   
   // Position actions
   setPosition: (position: HUDPosition) => void;
@@ -82,17 +75,17 @@ export interface HUDState {
   getCurrentSymbols: () => string[];
   getHighlightedSymbol: () => string | null;
   getTotalItems: () => number;
-  computeOptimalPosition: () => { side: 'top' | 'bottom'; topPx: number };
+  computeOptimalPosition: () => { side: 'top' | 'bottom'; topPx: number; leftPx: number };
 }
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const HUD_HEIGHT = 320;
-const _HUD_WIDTH = 480;
-const HUD_MARGIN = 20;
-const VIEWPORT_PADDING = 20;
+const HUD_HEIGHT = 360;
+const HUD_MAX_WIDTH = 760;
+const HUD_MARGIN = 14;
+const VIEWPORT_PADDING = 12;
 const POSITION_STORAGE_KEY = 'lattice-quantum-keyboard-position';
 
 // ============================================================================
@@ -164,8 +157,6 @@ export const useHUDStore = create<HUDState>((set, get) => ({
   activeMathFieldId: null,
   flashingKey: null,
   isEditMode: false,
-  insertMode: 'inline',
-  insertFormat: 'markdown',
   
   // Position state
   position: 'auto',
@@ -277,22 +268,6 @@ export const useHUDStore = create<HUDState>((set, get) => ({
   toggleEditMode: () => {
     set((state) => ({ isEditMode: !state.isEditMode }));
   },
-
-  setInsertMode: (mode) => {
-    set({ insertMode: mode });
-  },
-
-  toggleInsertMode: () => {
-    set((state) => ({ insertMode: state.insertMode === 'inline' ? 'block' : 'inline' }));
-  },
-
-  setInsertFormat: (format) => {
-    set({ insertFormat: format });
-  },
-
-  toggleInsertFormat: () => {
-    set((state) => ({ insertFormat: state.insertFormat === 'markdown' ? 'latex' : 'markdown' }));
-  },
   
   // Position actions
   setPosition: (position: HUDPosition) => {
@@ -322,6 +297,7 @@ export const useHUDStore = create<HUDState>((set, get) => ({
         bottom: rect.bottom,
         left: rect.left,
         right: rect.right,
+        centerX: rect.left + rect.width / 2,
         centerY: rect.top + rect.height / 2,
       },
     });
@@ -372,18 +348,30 @@ export const useHUDStore = create<HUDState>((set, get) => ({
   computeOptimalPosition: () => {
     const state = get();
     const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
+    const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024;
+    const hudWidth = Math.min(HUD_MAX_WIDTH, Math.max(320, viewportWidth - VIEWPORT_PADDING * 2));
 
     // Helper to clamp topPx within viewport
     const clampTop = (t: number) =>
       Math.max(VIEWPORT_PADDING, Math.min(t, viewportHeight - HUD_HEIGHT - VIEWPORT_PADDING));
+    const clampLeft = (l: number) =>
+      Math.max(VIEWPORT_PADDING, Math.min(l, viewportWidth - hudWidth - VIEWPORT_PADDING));
+    const centerLeft = clampLeft((viewportWidth - hudWidth) / 2);
 
     // No cursor info — fall back to fixed edges
     if (!state.cursorPosition) {
-      if (state.position === 'top') return { side: 'top', topPx: clampTop(VIEWPORT_PADDING) };
-      return { side: 'bottom', topPx: clampTop(viewportHeight - HUD_HEIGHT - VIEWPORT_PADDING) };
+      if (state.position === 'top') {
+        return { side: 'top', topPx: clampTop(VIEWPORT_PADDING), leftPx: centerLeft };
+      }
+      return {
+        side: 'bottom',
+        topPx: clampTop(viewportHeight - HUD_HEIGHT - VIEWPORT_PADDING),
+        leftPx: centerLeft,
+      };
     }
 
-    const { top: cursorTop, bottom: cursorBottom } = state.cursorPosition;
+    const { top: cursorTop, bottom: cursorBottom, centerX } = state.cursorPosition;
+    const leftPx = clampLeft(centerX - hudWidth / 2);
 
     // Preferred: place HUD just below the math-field
     const belowTop = cursorBottom + HUD_MARGIN;
@@ -394,22 +382,26 @@ export const useHUDStore = create<HUDState>((set, get) => ({
 
     // If user set a fixed side, honour it but still use computed pixel position
     if (state.position === 'top') {
-      return { side: 'top', topPx: clampTop(fitsAbove ? aboveTop : VIEWPORT_PADDING) };
+      return { side: 'top', topPx: clampTop(fitsAbove ? aboveTop : VIEWPORT_PADDING), leftPx };
     }
     if (state.position === 'bottom') {
-      return { side: 'bottom', topPx: clampTop(fitsBelow ? belowTop : viewportHeight - HUD_HEIGHT - VIEWPORT_PADDING) };
+      return {
+        side: 'bottom',
+        topPx: clampTop(fitsBelow ? belowTop : viewportHeight - HUD_HEIGHT - VIEWPORT_PADDING),
+        leftPx,
+      };
     }
 
     // Auto: prefer below, fall back to above, last resort centre
     if (fitsBelow) {
-      return { side: 'bottom', topPx: clampTop(belowTop) };
+      return { side: 'bottom', topPx: clampTop(belowTop), leftPx };
     }
     if (fitsAbove) {
-      return { side: 'top', topPx: clampTop(aboveTop) };
+      return { side: 'top', topPx: clampTop(aboveTop), leftPx };
     }
     // Neither fits cleanly — centre vertically
     const centred = clampTop((viewportHeight - HUD_HEIGHT) / 2);
-    return { side: 'bottom', topPx: centred };
+    return { side: 'bottom', topPx: centred, leftPx };
   },
 }));
 

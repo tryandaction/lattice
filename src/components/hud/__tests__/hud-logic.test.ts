@@ -166,8 +166,8 @@ describe('HUD Logic', () => {
   });
 
   describe('shouldCloseHUD', () => {
-    it('returns true for insert action', () => {
-      expect(shouldCloseHUD('insert')).toBe(true);
+    it('returns false for insert action so chained input stays fast', () => {
+      expect(shouldCloseHUD('insert')).toBe(false);
     });
 
     it('returns false for open-variant-menu action', () => {
@@ -212,12 +212,12 @@ describe('HUD Logic', () => {
     });
   });
 
-  describe('Property 6: Insertion Closes HUD', () => {
+  describe('Property 6: Insertion Keeps HUD Open', () => {
     /**
      * Property: For any symbol insertion (via standard selection, shift selection,
-     * or variant selection), the HUD SHALL transition to closed state
+     * or variant selection), the HUD SHALL stay open for chained input.
      */
-    it('HUD closes after any successful insertion', () => {
+    it('HUD stays open after any successful insertion', () => {
       fc.assert(
         fc.property(
           fc.constantFrom(...mappedKeyCodes),
@@ -225,9 +225,9 @@ describe('HUD Logic', () => {
           (keyCode, isShiftHeld) => {
             const result = handleKeySelection(keyCode, isShiftHeld);
             
-            // If action is insert, HUD should close
+            // If action is insert, HUD should stay open for continued formula input
             if (result.action === 'insert') {
-              return shouldCloseHUD(result.action) === true;
+              return shouldCloseHUD(result.action) === false;
             }
             
             // If action is open-variant-menu, HUD should NOT close
@@ -246,8 +246,8 @@ describe('HUD Logic', () => {
     /**
      * Property: Insert action always results in HUD closing
      */
-    it('insert action always closes HUD', () => {
-      expect(shouldCloseHUD('insert')).toBe(true);
+    it('insert action keeps HUD open', () => {
+      expect(shouldCloseHUD('insert')).toBe(false);
     });
 
     /**

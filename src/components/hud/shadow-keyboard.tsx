@@ -95,6 +95,8 @@ export function ShadowKeyboard({
                 physicalLabel={physicalLabel}
                 defaultSymbol={mapping.default}
                 shiftSymbol={mapping.shift}
+                previewSymbol={mapping.preview}
+                title={mapping.title}
                 hasVariants={hasVariants(keyCode) || !!mapping.shift}
                 isShiftHeld={false}
                 isFlashing={flashingKey === keyCode}

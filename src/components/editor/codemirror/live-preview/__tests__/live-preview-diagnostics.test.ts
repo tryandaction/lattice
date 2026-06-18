@@ -63,12 +63,13 @@ describe("live preview diagnostics", () => {
   it("keeps annotation, wiki links, and embeds from stealing each other", () => {
     const text = [
       "See [[paper.pdf#ann-123]] and [[Daily Note#Heading|daily]].",
-      "Embed ![[assets/chart 1.png|Chart]].",
+      "Image ![[assets/chart 1.png|320]] and embed ![[notes/card|Card]].",
       "Inline code `==literal==` and highlight ==marked==.",
     ].join("\n");
 
     const elements = resolveConflicts(parseDocumentFromText(text));
     const inlineLinks = elements.filter((element) => element.type === ElementType.INLINE_LINK);
+    const inlineImages = elements.filter((element) => element.type === ElementType.INLINE_IMAGE);
     const inlineOther = elements.filter((element) => element.type === ElementType.INLINE_OTHER);
 
     const annotation = inlineOther.find((element) => hasDecorationType(element.decorationData, "annotation-link"));
@@ -89,10 +90,46 @@ describe("live preview diagnostics", () => {
     expect(annotationData?.annotationId).toBe("ann-123");
     expect(wikiLinks).toHaveLength(1);
     expect(wikiData?.url).toBe("Daily Note#Heading");
-    expect(embedData?.target).toBe("assets/chart 1.png");
-    expect(embedData?.displayText).toBe("Chart");
+    expect(inlineImages[0]?.decorationData).toMatchObject({
+      type: "image",
+      url: "assets/chart 1.png",
+      width: 320,
+      syntax: "wiki",
+    });
+    expect(embedData?.target).toBe("notes/card");
+    expect(embedData?.displayText).toBe("Card");
     expect(highlights).toHaveLength(1);
     expect(highlights[0]?.content).toBe("marked");
+  });
+
+  it("includes frontmatter properties in text diagnostics parsing", () => {
+    const text = "---\nstatus: draft\naliases:\n  - one\n---\n\n# Note";
+    const elements = resolveConflicts(parseDocumentFromText(text));
+    const properties = elements.find((element) => element.type === ElementType.PROPERTIES);
+
+    expect(properties).toMatchObject({
+      from: 0,
+      lineNumber: 1,
+      startLine: 1,
+      endLine: 5,
+    });
+    expect(properties?.decorationData).toMatchObject({
+      source: "---\nstatus: draft\naliases:\n  - one\n---",
+      isMultiLine: true,
+    });
+  });
+
+  it("preserves callout fold markers in diagnostics parsing", () => {
+    const text = "> [!note-] Original\n> Body";
+    const elements = resolveConflicts(parseDocumentFromText(text));
+    const callout = elements.find((element) => element.type === ElementType.CALLOUT);
+
+    expect(callout?.decorationData).toMatchObject({
+      type: "note",
+      title: "Original",
+      isFolded: true,
+      foldMarker: "-",
+    });
   });
 
   it("parses fixtures without invalid ranges or escaped matches", () => {

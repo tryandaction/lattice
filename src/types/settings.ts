@@ -5,6 +5,8 @@
  * that needs to be persisted across sessions.
  */
 
+import { DEFAULT_ENABLED_PLUGIN_IDS } from "@/lib/plugins/defaults";
+
 export type Locale = 'zh-CN' | 'en-US';
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type ActivityView = 'files' | 'annotations' | 'search';
@@ -72,6 +74,8 @@ export interface AppSettings {
 
   // AI
   aiEnabled: boolean;
+  aiInlineCompletionEnabled: boolean;
+  aiAgentOmittedSummaryEnabled: boolean;
   aiProvider: string | null;
   aiModel: string | null;
   aiTemperature: number;
@@ -104,9 +108,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   annotationsPanelSort: 'latest',
   onboardingCompleted: false,
   windowState: undefined,
-  pluginsEnabled: false,
-  enabledPlugins: [],
-  trustedPlugins: [],
+  pluginsEnabled: true,
+  enabledPlugins: DEFAULT_ENABLED_PLUGIN_IDS,
+  trustedPlugins: DEFAULT_ENABLED_PLUGIN_IDS,
   pluginNetworkAllowlist: [],
   pluginPanelDockSize: 22,
   pluginPanelDockOpen: false,
@@ -114,6 +118,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   pluginPanelRecentIds: [],
   executionDockLayouts: {},
   aiEnabled: false,
+  aiInlineCompletionEnabled: false,
+  aiAgentOmittedSummaryEnabled: false,
   aiProvider: null,
   aiModel: null,
   aiTemperature: 0.7,

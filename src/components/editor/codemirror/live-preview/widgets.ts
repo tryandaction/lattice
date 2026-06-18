@@ -41,8 +41,22 @@ import { imageResolverFacet } from './image-resolver-facet';
 import { MarkdownErrorHandler } from '@/lib/markdown-error-handler';
 import { enterCodeBlockSourceMode, enterMathSourceMode } from './source-mode';
 import { TableEditor } from './table-editor';
+import { PropertiesEditor } from './properties-editor';
 import type { LivePreviewCodeBlockRunRequest } from './types';
-export { tableToMarkdown, insertTableColumn, deleteTableColumn, insertTableDataRow, deleteTableDataRow, setTableColumnAlignment, type TableAlignment } from './table-editor';
+export {
+  tableToMarkdown,
+  insertTableColumn,
+  deleteTableColumn,
+  insertTableDataRow,
+  deleteTableDataRow,
+  duplicateTableDataRow,
+  moveTableDataRow,
+  duplicateTableColumn,
+  moveTableColumn,
+  pasteTableCellMatrix,
+  setTableColumnAlignment,
+  type TableAlignment,
+} from './table-editor';
 
 type KaTeXModule = typeof import('katex').default;
 type HighlightModule = typeof import('highlight.js').default;
@@ -505,7 +519,8 @@ export class LinkWidget extends WidgetType {
     private contentFrom: number = 0,
     private contentTo: number = 0,
     private elementFrom: number = 0,
-    private elementTo: number = 0
+    private elementTo: number = 0,
+    private syntax: 'markdown' | 'wiki' = 'markdown'
   ) {
     super();
   }
@@ -719,7 +734,8 @@ export class ImageWidget extends WidgetType {
     private contentFrom: number = 0,
     private contentTo: number = 0,
     private elementFrom: number = 0,
-    private elementTo: number = 0
+    private elementTo: number = 0,
+    private syntax: 'markdown' | 'wiki' = 'markdown'
   ) {
     super();
   }
@@ -728,8 +744,31 @@ export class ImageWidget extends WidgetType {
     return (
       other.alt === this.alt &&
       other.url === this.url &&
-      other.width === this.width
+      other.width === this.width &&
+      other.syntax === this.syntax
     );
+  }
+
+  private buildSource(width = this.width): string {
+    const nextWidth = width && Number.isFinite(width) && width > 0 ? Math.round(width) : undefined;
+    if (this.syntax === 'wiki') {
+      const meta = nextWidth ? String(nextWidth) : this.alt.trim();
+      return `![[${[this.url, meta].filter(Boolean).join('|')}]]`;
+    }
+    return `![${this.alt}${nextWidth ? `|${nextWidth}` : ''}](${this.url})`;
+  }
+
+  private replaceSource(view: EditorView, source: string, selectSource = false) {
+    view.dispatch({
+      changes: { from: this.elementFrom, to: this.elementTo, insert: source },
+      selection: selectSource
+        ? { anchor: this.elementFrom, head: this.elementFrom + source.length }
+        : { anchor: this.elementFrom + source.length },
+    });
+  }
+
+  private setWidth(view: EditorView, width: number | undefined) {
+    this.replaceSource(view, this.buildSource(width));
   }
 
   toDOM(view: EditorView) {
@@ -739,6 +778,9 @@ export class ImageWidget extends WidgetType {
     container.dataset.contentTo = String(this.contentTo);
     container.dataset.elementFrom = String(this.elementFrom);
     container.dataset.elementTo = String(this.elementTo);
+
+    const frame = document.createElement('span');
+    frame.className = 'cm-image-frame';
 
     const img = document.createElement('img');
     img.className = 'cm-image';
@@ -784,16 +826,58 @@ export class ImageWidget extends WidgetType {
       img.src = this.url;
     }
 
+    const controls = document.createElement('span');
+    controls.className = 'cm-image-controls';
+    controls.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    const makeButton = (label: string, title: string, onClick: () => void) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'cm-image-control';
+      button.textContent = label;
+      button.title = title;
+      button.setAttribute('aria-label', title);
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      });
+      return button;
+    };
+
+    controls.appendChild(makeButton('-', 'Narrow image', () => {
+      this.setWidth(view, Math.max(80, (this.width ?? 320) - 40));
+    }));
+    controls.appendChild(makeButton('+', 'Widen image', () => {
+      this.setWidth(view, Math.min(1600, (this.width ?? 320) + 40));
+    }));
+    controls.appendChild(makeButton('Auto', 'Clear image width', () => {
+      this.setWidth(view, undefined);
+    }));
+    controls.appendChild(makeButton('Path', 'Copy image path', () => {
+      void navigator.clipboard?.writeText(this.url).catch(() => undefined);
+    }));
+    controls.appendChild(makeButton('Src', 'Select image source', () => {
+      this.replaceSource(view, view.state.sliceDoc(this.elementFrom, this.elementTo), true);
+    }));
+
     // 点击定位到alt文本
     container.addEventListener('mousedown', (e) => {
       handleWidgetClick(view, container, e, this.contentFrom, this.contentTo);
     });
 
-    container.appendChild(img);
+    frame.appendChild(img);
+    frame.appendChild(controls);
+    container.appendChild(frame);
     return container;
   }
 
   ignoreEvent(e: Event) {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('.cm-image-controls')) return true;
     return e.type !== 'mousedown';
   }
 }
@@ -1117,6 +1201,72 @@ const CALLOUT_ICONS: Record<string, string> = {
   abstract: '🧾',
 };
 
+const CALLOUT_ALIASES: Record<string, string> = {
+  summary: 'abstract',
+  tldr: 'abstract',
+  hint: 'tip',
+  important: 'tip',
+  check: 'success',
+  done: 'success',
+  help: 'question',
+  faq: 'question',
+  caution: 'warning',
+  attention: 'warning',
+  fail: 'failure',
+  missing: 'failure',
+  error: 'danger',
+  cite: 'quote',
+};
+
+const CALLOUT_TYPES = [
+  'note',
+  'abstract',
+  'info',
+  'todo',
+  'tip',
+  'success',
+  'question',
+  'warning',
+  'failure',
+  'danger',
+  'bug',
+  'example',
+  'quote',
+];
+
+function normalizeCalloutType(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, '-');
+  return normalized || 'note';
+}
+
+function getCalloutCanonicalType(value: string): string {
+  const normalized = normalizeCalloutType(value);
+  return CALLOUT_ALIASES[normalized] ?? normalized;
+}
+
+function getCalloutBodyFromSource(source: string): string {
+  return source
+    .split(/\r?\n/)
+    .slice(1)
+    .map((line) => line.replace(/^>\s?/, ''))
+    .join('\n')
+    .trim();
+}
+
+function getCalloutPlainQuoteFromSource(source: string, fallback: string): string {
+  const bodyLines = source
+    .split(/\r?\n/)
+    .slice(1)
+    .map((line) => line.replace(/^>\s?/, ''));
+  const contentLines = bodyLines.length > 0 && bodyLines.some((line) => line.trim())
+    ? bodyLines
+    : [fallback];
+
+  return contentLines
+    .map((line) => (line.trim() ? `> ${line}` : '>'))
+    .join('\n');
+}
+
 export class CalloutWidget extends WidgetType {
   constructor(
     private calloutType: string,
@@ -1125,6 +1275,7 @@ export class CalloutWidget extends WidgetType {
     private from: number,
     private to: number,
     private isFolded: boolean,
+    private foldMarker: '' | '+' | '-',
     private referenceDefs?: Map<string, ReferenceDefinition>,
     private referenceSignature: string = ''
   ) {
@@ -1137,13 +1288,62 @@ export class CalloutWidget extends WidgetType {
       other.title === this.title &&
       JSON.stringify(other.contentLines) === JSON.stringify(this.contentLines) &&
       other.isFolded === this.isFolded &&
+      other.foldMarker === this.foldMarker &&
       other.referenceSignature === this.referenceSignature
     );
   }
 
+  private buildHeader(type = this.calloutType, title = this.title, foldMarker = this.foldMarker): string {
+    const normalizedType = normalizeCalloutType(type);
+    const normalizedTitle = title.trim();
+    return `> [!${normalizedType}${foldMarker}]${normalizedTitle ? ` ${normalizedTitle}` : ''}`;
+  }
+
+  private replaceHeader(view: EditorView, type = this.calloutType, title = this.title, foldMarker = this.foldMarker) {
+    const firstLine = view.state.doc.lineAt(this.from);
+    const insert = this.buildHeader(type, title, foldMarker);
+    const updatedCalloutEnd = this.to + insert.length - firstLine.length;
+    const nextAnchor = Math.min(updatedCalloutEnd + 1, view.state.doc.length + insert.length - firstLine.length);
+    view.dispatch({
+      changes: { from: firstLine.from, to: firstLine.to, insert },
+      selection: { anchor: nextAnchor },
+    });
+  }
+
+  private copyMarkdown(view: EditorView) {
+    const source = view.state.sliceDoc(this.from, this.to);
+    void navigator.clipboard?.writeText(source).catch(() => undefined);
+  }
+
+  private copyBody(view: EditorView) {
+    const source = view.state.sliceDoc(this.from, this.to);
+    void navigator.clipboard?.writeText(getCalloutBodyFromSource(source)).catch(() => undefined);
+  }
+
+  private duplicate(view: EditorView) {
+    const source = view.state.sliceDoc(this.from, this.to);
+    const insert = `\n\n${source}`;
+    view.dispatch({
+      changes: { from: this.to, insert },
+      selection: { anchor: this.to + insert.length },
+    });
+  }
+
+  private extractBody(view: EditorView) {
+    const source = view.state.sliceDoc(this.from, this.to);
+    const insert = getCalloutPlainQuoteFromSource(source, this.title || this.calloutType || 'Callout');
+    view.dispatch({
+      changes: { from: this.from, to: this.to, insert },
+      selection: { anchor: this.from + insert.length },
+    });
+  }
+
   toDOM(view: EditorView) {
     const container = document.createElement('div');
-    container.className = `cm-callout cm-callout-${this.calloutType}`;
+    const canonicalType = getCalloutCanonicalType(this.calloutType);
+    container.className = `cm-callout cm-callout-${canonicalType}`;
+    container.dataset.calloutType = this.calloutType;
+    container.dataset.calloutCanonicalType = canonicalType;
     container.dataset.from = String(this.from);
     container.dataset.to = String(this.to);
 
@@ -1152,26 +1352,124 @@ export class CalloutWidget extends WidgetType {
 
     const icon = document.createElement('span');
     icon.className = 'cm-callout-icon';
-    icon.textContent = CALLOUT_ICONS[this.calloutType] || 'ℹ️';
+    icon.textContent = CALLOUT_ICONS[canonicalType] || 'ℹ️';
 
     const title = document.createElement('span');
     title.className = 'cm-callout-title';
     title.innerHTML = sanitizeInlineHtml(parseInlineMarkdown(this.title || this.calloutType.toUpperCase(), this.referenceDefs));
 
-    const fold = document.createElement('span');
+    const controls = document.createElement('div');
+    controls.className = 'cm-callout-controls';
+    controls.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+    });
+
+    const typeSelect = document.createElement('select');
+    typeSelect.className = 'cm-callout-type';
+    typeSelect.setAttribute('aria-label', 'Callout type');
+    const currentType = normalizeCalloutType(this.calloutType);
+    const types = CALLOUT_TYPES.includes(currentType)
+      ? CALLOUT_TYPES
+      : [currentType, ...CALLOUT_TYPES];
+    for (const type of types) {
+      const option = document.createElement('option');
+      option.value = type;
+      option.textContent = type;
+      typeSelect.appendChild(option);
+    }
+    typeSelect.value = currentType;
+    typeSelect.addEventListener('change', () => {
+      this.replaceHeader(view, typeSelect.value, titleInput.value, this.foldMarker);
+    });
+
+    const titleInput = document.createElement('input');
+    titleInput.className = 'cm-callout-title-input';
+    titleInput.type = 'text';
+    titleInput.value = this.title;
+    titleInput.placeholder = 'Title';
+    titleInput.setAttribute('aria-label', 'Callout title');
+    titleInput.addEventListener('blur', () => {
+      if (titleInput.dataset.calloutCommitted === 'true') {
+        delete titleInput.dataset.calloutCommitted;
+        return;
+      }
+      this.replaceHeader(view, typeSelect.value, titleInput.value, this.foldMarker);
+    });
+    titleInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      titleInput.dataset.calloutCommitted = 'true';
+      this.replaceHeader(view, typeSelect.value, titleInput.value, this.foldMarker);
+      titleInput.blur();
+    });
+
+    const fold = document.createElement('button');
+    fold.type = 'button';
     fold.className = 'cm-callout-fold';
+    fold.setAttribute('aria-label', this.isFolded ? 'Expand callout' : 'Fold callout');
     fold.textContent = this.isFolded ? '▶' : '▼';
-    fold.addEventListener('mousedown', (e) => {
+    fold.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      this.isFolded = !this.isFolded;
-      fold.textContent = this.isFolded ? '▶' : '▼';
-      content.style.display = this.isFolded ? 'none' : '';
+      const nextFoldMarker = this.isFolded ? '+' : '-';
+      this.replaceHeader(view, typeSelect.value, titleInput.value, nextFoldMarker);
     });
+
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'cm-callout-copy';
+    copy.setAttribute('aria-label', 'Copy callout Markdown');
+    copy.textContent = 'Copy';
+    copy.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.copyMarkdown(view);
+    });
+
+    const copyBody = document.createElement('button');
+    copyBody.type = 'button';
+    copyBody.className = 'cm-callout-copy-body';
+    copyBody.setAttribute('aria-label', 'Copy callout body');
+    copyBody.textContent = 'Body';
+    copyBody.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.copyBody(view);
+    });
+
+    const duplicate = document.createElement('button');
+    duplicate.type = 'button';
+    duplicate.className = 'cm-callout-duplicate';
+    duplicate.setAttribute('aria-label', 'Duplicate callout');
+    duplicate.textContent = 'Duplicate';
+    duplicate.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.duplicate(view);
+    });
+
+    const extract = document.createElement('button');
+    extract.type = 'button';
+    extract.className = 'cm-callout-extract';
+    extract.setAttribute('aria-label', 'Extract callout body');
+    extract.textContent = 'Extract';
+    extract.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.extractBody(view);
+    });
+
+    controls.appendChild(typeSelect);
+    controls.appendChild(titleInput);
+    controls.appendChild(fold);
+    controls.appendChild(copy);
+    controls.appendChild(copyBody);
+    controls.appendChild(duplicate);
+    controls.appendChild(extract);
 
     header.appendChild(icon);
     header.appendChild(title);
-    header.appendChild(fold);
+    header.appendChild(controls);
 
     const content = document.createElement('div');
     content.className = 'cm-callout-content';
@@ -1199,6 +1497,8 @@ export class CalloutWidget extends WidgetType {
   }
 
   ignoreEvent(e: Event) {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('.cm-callout-controls')) return true;
     return e.type !== 'mousedown';
   }
 }
@@ -2023,6 +2323,11 @@ type TableWidgetRootHost = HTMLDivElement & {
   __tableUnmountTimer?: number;
 };
 
+type PropertiesWidgetRootHost = HTMLDivElement & {
+  __propertiesRoot?: Root;
+  __propertiesUnmountTimer?: number;
+};
+
 function scheduleTableRootUnmount(host: TableWidgetRootHost): void {
   if (host.__tableUnmountTimer !== undefined) {
     return;
@@ -2042,6 +2347,29 @@ function scheduleTableRootUnmount(host: TableWidgetRootHost): void {
       root.unmount();
     } catch (error) {
       logger.warn('[TableWidget] delayed unmount failed', error);
+    }
+  }, 32);
+}
+
+function schedulePropertiesRootUnmount(host: PropertiesWidgetRootHost): void {
+  if (host.__propertiesUnmountTimer !== undefined) {
+    return;
+  }
+
+  const root = host.__propertiesRoot;
+  if (!root) {
+    return;
+  }
+
+  host.__propertiesRoot = undefined;
+
+  const win = host.ownerDocument.defaultView ?? window;
+  host.__propertiesUnmountTimer = win.setTimeout(() => {
+    host.__propertiesUnmountTimer = undefined;
+    try {
+      root.unmount();
+    } catch (error) {
+      logger.warn('[PropertiesWidget] delayed unmount failed', error);
     }
   }, 32);
 }
@@ -2304,6 +2632,69 @@ export function renderInlineMarkdownHtml(
   options?: InlineParseOptions
 ): string {
   return sanitizeInlineHtml(parseInlineMarkdown(text, referenceDefs, options));
+}
+
+export class PropertiesWidget extends WidgetType {
+  constructor(
+    private source: string,
+    private from: number,
+    private to: number,
+  ) {
+    super();
+  }
+
+  eq(other: PropertiesWidget) {
+    return other.source === this.source && other.from === this.from && other.to === this.to;
+  }
+
+  get estimatedHeight() {
+    const rowCount = Math.max(1, this.source.split(/\r?\n/).length - 2);
+    return Math.min(280, 64 + rowCount * 40);
+  }
+
+  updateDOM() {
+    return false;
+  }
+
+  toDOM(view: EditorView) {
+    const wrapper = document.createElement('div') as PropertiesWidgetRootHost;
+    wrapper.className = 'cm-properties-widget-wrapper';
+    wrapper.dataset.from = String(this.from);
+    wrapper.dataset.to = String(this.to);
+
+    const root = createRoot(wrapper);
+    wrapper.__propertiesRoot = root;
+    root.render(
+      createElement(PropertiesEditor, {
+        source: this.source,
+        from: this.from,
+        to: this.to,
+        view,
+      })
+    );
+
+    view.requestMeasure();
+    return wrapper;
+  }
+
+  coordsAt(dom: HTMLElement, pos: number) {
+    const rect = dom.getBoundingClientRect();
+    if (!rect.width && !rect.height) {
+      return null;
+    }
+
+    const midpoint = this.from + Math.floor((this.to - this.from) / 2);
+    const x = pos <= midpoint ? rect.left : rect.right;
+    return { left: x, right: x, top: rect.top, bottom: rect.bottom };
+  }
+
+  destroy(dom: HTMLElement) {
+    schedulePropertiesRootUnmount(dom as PropertiesWidgetRootHost);
+  }
+
+  ignoreEvent() {
+    return true;
+  }
 }
 
 /**

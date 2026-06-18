@@ -42,6 +42,8 @@ npm run release:prepare -- --dry-run
 npm run release:prepare -- --upload
 ```
 
+`--skip-qa` 只用于已经完成 `qa:gate` 或等价验证后的产物刷新；正式发布默认走 `npm run release:prepare`，保持产物、测试和 release 元数据同源。
+
 ## 3. 版本一致性
 
 以下版本号必须一致：

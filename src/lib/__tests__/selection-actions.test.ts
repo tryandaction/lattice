@@ -292,4 +292,59 @@ describe('runSelectionAiMode', () => {
     expect(useAiWorkbenchStore.getState().highlightedProposalId).toBe('proposal-1');
     expect(useAiChatStore.getState().isOpen).toBe(true);
   });
+
+  it('routes code selections to the code-change workflow in agent mode', async () => {
+    runResearchAgentForSurfaceMock.mockResolvedValue({
+      chatText: 'Code change plan result',
+      plannerModelInfo: null,
+      agentResult: {
+        sessionId: 'selection-code-session',
+        workflowLabel: 'Code Change Plan',
+      },
+      followUpActions: [
+        { id: 'create-code-change-proposal', label: '生成代码变更计划', kind: 'propose_task' },
+      ],
+      result: {
+        sessionId: 'selection-code-session',
+        promptContext: {
+          nodes: [],
+          prompt: 'Resolved code evidence',
+          evidenceRefs: [],
+          truncated: false,
+        },
+      },
+    });
+
+    const context = createSelectionContext({
+      sourceKind: 'code',
+      paneId: 'pane-code',
+      fileName: 'agent.ts',
+      filePath: 'src/lib/ai/agent.ts',
+      selectedText: 'export function runAgent() {}',
+      documentText: 'export function runAgent() {}',
+      contextText: 'export function runAgent() {}',
+      blockLabel: 'code',
+    });
+
+    const resultPromise = runSelectionAiMode({
+      context,
+      mode: 'agent',
+      prompt: 'Review this function and propose a patch plan',
+      settings,
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await resultPromise;
+
+    expect(result).toEqual({
+      kind: 'chat',
+      title: 'Review this function and propose a patch plan',
+    });
+    expect(runResearchAgentForSurfaceMock).toHaveBeenCalledWith(expect.objectContaining({
+      workflowId: 'code-change-plan',
+      filePath: 'src/lib/ai/agent.ts',
+      content: 'export function runAgent() {}',
+      selection: 'export function runAgent() {}',
+    }));
+  });
 });

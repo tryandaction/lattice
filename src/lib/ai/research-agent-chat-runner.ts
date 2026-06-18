@@ -13,6 +13,7 @@ import {
 } from './research-agent';
 import type { AgentMemoryQuery } from './agent-memory';
 import { createResearchAgentPlannerGenerate } from './research-agent-planner-provider';
+import { evaluateAiUsagePolicy } from './usage-policy';
 import {
   buildResearchAgentWorkflowPlannerHints,
   getResearchAgentWorkflow,
@@ -221,6 +222,14 @@ function buildWorkflowFollowUpActions(input: {
     });
   }
 
+  if (workflowId === 'code-change-plan') {
+    actions.push({
+      id: 'create-code-change-proposal',
+      label: '生成代码变更计划',
+      kind: 'propose_task',
+    });
+  }
+
   return actions;
 }
 
@@ -356,7 +365,27 @@ export async function runResearchAgentForSurface(
       taskType: 'research',
     });
     generatePlan = adapter.generatePlan;
-    generateOmittedSummary = adapter.generateOmittedSummary;
+    const omittedSummaryDecision = evaluateAiUsagePolicy({
+      category: 'automatic-agent-omitted-summary',
+      settings: {
+        aiEnabled: settings.aiEnabled,
+        aiInlineCompletionEnabled: false,
+        aiAgentOmittedSummaryEnabled: settings.agentOmittedSummaryEnabled ?? false,
+        aiModel: settings.model,
+      },
+      inputText: [
+        agentInput.task,
+        agentInput.query,
+        agentInput.filePath,
+        agentInput.selection,
+      ].filter((value): value is string => Boolean(value)).join('\n'),
+      maxOutputTokens: Math.min(settings.maxTokens, 700),
+    });
+    if (omittedSummaryDecision.allowed) {
+      generateOmittedSummary = adapter.generateOmittedSummary;
+    } else {
+      adapterWarnings.push(`Omitted-context model summary skipped: ${omittedSummaryDecision.reason}`);
+    }
     plannerModelInfo = adapter.modelInfo;
     plannerModel = adapter.modelInfo.model
       ? `${adapter.modelInfo.providerName}/${adapter.modelInfo.model}`

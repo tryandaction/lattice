@@ -56,11 +56,11 @@ export function getMappedKeyCodes(): string[] {
 }
 
 /**
- * Determine if HUD should close after an action
- * Property 6: Insertion Closes HUD
+ * Determine if HUD should close after an action.
+ * Quantum Keyboard 2.0 stays open after insertion to support fast chained input.
  */
-export function shouldCloseHUD(action: KeySelectionResult['action']): boolean {
-  return action === 'insert';
+export function shouldCloseHUD(_action: KeySelectionResult['action']): boolean {
+  return false;
 }
 
 

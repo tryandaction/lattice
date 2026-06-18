@@ -136,6 +136,7 @@ export function EvidencePanel({
           maxTokens: settings.aiMaxTokens,
           systemPrompt: settings.aiSystemPrompt,
           preferLocal: settings.aiProvider === "ollama",
+          agentOmittedSummaryEnabled: settings.aiAgentOmittedSummaryEnabled,
         } satisfies AiRuntimeSettings,
         contextValues: buildEvidencePromptContextValues({
           evidenceRefs: promptRunState.refs,

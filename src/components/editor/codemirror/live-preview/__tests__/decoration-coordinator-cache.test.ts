@@ -4,6 +4,7 @@ import {
   decorationCoordinatorField,
   decorationCoordinatorExtension,
 } from "../decoration-coordinator";
+import { PropertiesWidget } from "../widgets";
 
 function createState(doc: string): EditorState {
   return EditorState.create({
@@ -54,6 +55,21 @@ function collectWidgetRangesForSource(
   return ranges;
 }
 
+function collectBlockWidgetRanges(state: EditorState): Array<{ from: number; to: number; widget: unknown }> {
+  const decorations = state.field(decorationCoordinatorField);
+  const ranges: Array<{ from: number; to: number; widget: unknown }> = [];
+
+  decorations.between(0, state.doc.length, (from, to, decoration) => {
+    if (!decoration.spec.block || !decoration.spec.widget) {
+      return;
+    }
+
+    ranges.push({ from, to, widget: decoration.spec.widget });
+  });
+
+  return ranges;
+}
+
 describe("decoration coordinator cache", () => {
   it("recomputes heading marker positions after upstream edits shift line offsets", () => {
     let state = createState("prefix\n### Stable **Heading**\nbody");
@@ -76,5 +92,14 @@ describe("decoration coordinator cache", () => {
     expect(state.doc.sliceString(14, 18)).toBe("### ");
     expect(updatedBoldRanges).toEqual([{ from: 25, to: 36 }]);
     expect(state.doc.sliceString(25, 36)).toBe("**Heading**");
+  });
+
+  it("renders frontmatter as a persistent properties widget", () => {
+    const state = createState("---\nstatus: draft\n---\n\n# Note");
+    const blockWidgets = collectBlockWidgetRanges(state);
+    const propertiesWidget = blockWidgets.find((entry) => entry.widget instanceof PropertiesWidget);
+
+    expect(propertiesWidget).toMatchObject({ from: 0, to: 3 });
+    expect(state.doc.sliceString(0, 3)).toBe("---");
   });
 });

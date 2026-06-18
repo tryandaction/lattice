@@ -17,6 +17,10 @@ export interface KeycapProps {
   defaultSymbol: string;
   /** Shift-modified LaTeX symbol */
   shiftSymbol?: string;
+  /** Optional compact display symbol */
+  previewSymbol?: string;
+  /** Human-readable title */
+  title?: string;
   /** Whether this key has variants/alternatives available */
   hasVariants: boolean;
   /** Whether Shift is currently held (deprecated) */
@@ -35,6 +39,8 @@ export const Keycap = forwardRef<HTMLButtonElement, KeycapProps>(function Keycap
     physicalLabel,
     defaultSymbol,
     shiftSymbol: _shiftSymbol,
+    previewSymbol,
+    title,
     hasVariants,
     isShiftHeld: _isShiftHeld,
     isFlashing,
@@ -44,7 +50,7 @@ export const Keycap = forwardRef<HTMLButtonElement, KeycapProps>(function Keycap
   ref
 ) {
   // Always display default symbol
-  const displaySymbol = defaultSymbol;
+  const displaySymbol = previewSymbol || defaultSymbol;
   const renderLatex = useKaTeXRenderer();
 
   // Render the LaTeX symbol
@@ -60,21 +66,14 @@ export const Keycap = forwardRef<HTMLButtonElement, KeycapProps>(function Keycap
       data-keycode={keyCode}
       data-has-variants={hasVariants}
       className={`
-        relative w-12 h-12 rounded-xl
-        bg-white/5 backdrop-blur-sm
-        border border-white/10
-        hover:bg-white/15 hover:border-white/25
-        hover:shadow-lg hover:shadow-indigo-500/10
-        active:bg-white/20 active:scale-95
+        quantum-keycap
         transition-all duration-150
-        flex flex-col items-center justify-center
-        cursor-pointer select-none
         group
-        ${isFlashing ? 'animate-keycap-flash bg-indigo-400/50 border-indigo-300/60 shadow-xl shadow-indigo-500/40 scale-105' : ''}
-        ${isActive ? 'bg-indigo-500/30 border-indigo-400/40 ring-2 ring-indigo-400/50' : ''}
+        ${isFlashing ? 'animate-keycap-flash quantum-keycap-flashing' : ''}
+        ${isActive ? 'quantum-keycap-active' : ''}
       `}
-      aria-label={`Insert ${displaySymbol}`}
-      title={hasVariants ? 'Click for symbol, Shift+Click for variants' : `Insert ${displaySymbol}`}
+      aria-label={`Insert ${title || defaultSymbol}`}
+      title={hasVariants ? `${title || defaultSymbol} · Shift+Click for variants` : `Insert ${title || defaultSymbol}`}
     >
       {/* Physical key label - top left */}
       <span 

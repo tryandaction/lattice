@@ -61,6 +61,27 @@ export const MATH_TEMPLATES: Record<string, MathTemplate> = {
     keywords: ['root', 'radical', 'nth'],
   },
 
+  abs: {
+    latex: '\\left|#?\\right|',
+    description: 'Absolute value',
+    category: 'Basic',
+    keywords: ['absolute', 'value', 'bars'],
+  },
+
+  norm: {
+    latex: '\\left\\|#?\\right\\|',
+    description: 'Norm',
+    category: 'Basic',
+    keywords: ['norm', 'vector', 'length'],
+  },
+
+  cases: {
+    latex: '\\begin{cases} #? & #? \\\\ #? & #? \\end{cases}',
+    description: 'Piecewise cases',
+    category: 'Basic',
+    keywords: ['cases', 'piecewise'],
+  },
+
   power: {
     latex: '#?^{#?}',
     description: 'Power/Exponent',

@@ -37,6 +37,7 @@ import { useAiChatStore } from "@/stores/ai-chat-store";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { usePluginShortcuts } from "@/hooks/use-plugin-shortcuts";
 import { initKeyStorage } from "@/lib/ai/key-storage";
+import { isEditableElement } from "@/lib/unified-input-handler";
 import { DesktopWindowFrame } from "@/components/layout/desktop-window-frame";
 import {
   buildDesktopWorkbenchLayout,
@@ -455,6 +456,10 @@ function AppLayoutContent() {
     if (isMobile) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isEditableElement(e.target)) {
+        return;
+      }
+
       if ((e.ctrlKey || e.metaKey) && e.key === "b") {
         e.preventDefault();
         toggleSidebar();

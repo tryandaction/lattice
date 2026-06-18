@@ -87,6 +87,21 @@ vi.mock('@/hooks/use-i18n', () => ({
         'chat.workbench.generateTargetDrafts': '生成目标草稿',
         'chat.workbench.standaloneDrafts': 'Standalone Drafts',
         'chat.workbench.linkedDraftsTitle': 'Linked Drafts',
+        'chat.workbench.expandProposal': 'Expand proposal',
+        'chat.workbench.collapseProposal': 'Collapse proposal',
+        'chat.workbench.codingReview.title': 'Coding Review',
+        'chat.workbench.codingReview.files': '{count} files',
+        'chat.workbench.codingReview.qa': 'QA allowed {allowed} / suggested {suggested} / rejected {rejected}',
+        'chat.workbench.codingReview.rejectedWarning': 'Rejected QA commands are deferred; the agent has not executed them.',
+        'chat.workbench.codingReview.targetFiles': 'Target Files',
+        'chat.workbench.codingReview.patchPreview': 'Patch Preview',
+        'chat.workbench.codingReview.risks': 'Risks',
+        'chat.workbench.codingReview.approvalPath': 'Approval Path',
+        'chat.workbench.codingReview.qaPlan': 'QA Command Plan',
+        'chat.workbench.codingReview.allowedQa': 'Allowed QA',
+        'chat.workbench.codingReview.suggestedQa': 'Suggested QA',
+        'chat.workbench.codingReview.rejectedQa': 'Rejected / Deferred QA',
+        'chat.workbench.codingReview.executionBoundary': 'Execution Boundary',
         'chat.workbench.linkedDrafts': '关联草稿：{count}',
       };
       let text = mapping[key] ?? key;
@@ -351,6 +366,77 @@ describe('AiChatPanel selection-origin flows', () => {
     expect(screen.getByText('Standalone note')).not.toBeNull();
     expect(screen.getByText('Linked plan draft')).not.toBeNull();
     expect(screen.getByText('关联草稿：1')).not.toBeNull();
+  });
+
+  it('shows a structured coding review surface for code-change proposals', async () => {
+    useAiWorkbenchStore.setState({
+      drafts: [],
+      proposals: [
+        {
+          id: 'proposal-coding',
+          summary: 'Coding proposal: panel state patch',
+          steps: [
+            { id: 'step-1', title: 'Review target component', description: 'Inspect the smallest safe patch.' },
+          ],
+          requiredApprovals: ['Review patch preview'],
+          plannedWrites: [
+            {
+              targetPath: 'AI Drafts/Panel state patch Code Review Plan.md',
+              mode: 'create',
+              contentPreview: [
+                'Coding proposal: panel state patch',
+                '',
+                'Target files:',
+                '- src/components/panel.tsx',
+                '- src/lib/panel-state.ts',
+                '',
+                'Patch preview:',
+                '- Draft a minimal diff against panel-state.',
+                '',
+                'Risks:',
+                '- Check API contract changes.',
+                '',
+                'Test plan:',
+                'Allowed QA commands:',
+                '- npm run typecheck',
+                '',
+                'Suggested QA commands:',
+                '- npm run qa:agent-smoke -- --unit-only',
+                '',
+                'Rejected / deferred commands:',
+                '- npm run typecheck && git reset --hard',
+                '',
+                'Execution boundary:',
+                '- These are approval-gated command plans only.',
+                '',
+                'Approval path:',
+                '- Review this Workbench proposal.',
+              ].join('\n'),
+            },
+          ],
+          sourceRefs: [],
+          status: 'pending',
+          confirmedApprovals: [],
+          approvedWrites: ['AI Drafts/Panel state patch Code Review Plan.md'],
+          generatedDraftTargets: [],
+          createdAt: Date.now(),
+        },
+      ],
+      highlightedProposalId: null,
+    });
+
+    render(<AiChatPanel />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand proposal' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('coding-proposal-review-surface')).not.toBeNull();
+    });
+    expect(screen.getByText('src/components/panel.tsx')).not.toBeNull();
+    expect(screen.getByText('src/lib/panel-state.ts')).not.toBeNull();
+    expect(screen.getAllByText('npm run typecheck').length).toBeGreaterThan(0);
+    expect(screen.getByText('npm run typecheck && git reset --hard')).not.toBeNull();
+    expect(screen.getByText('These are approval-gated command plans only.')).not.toBeNull();
   });
 
   it('applies a prompt template directly to the chat input', async () => {

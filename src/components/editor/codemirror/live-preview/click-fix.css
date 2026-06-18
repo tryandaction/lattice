@@ -258,9 +258,53 @@
   line-height: var(--cm-markdown-line-height, 1.58) !important;
 }
 
+.live-preview-editor .cm-image-frame {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
 .live-preview-editor .cm-image {
   vertical-align: baseline !important;
   margin: 0 !important;
+}
+
+.live-preview-editor .cm-image-controls {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  display: inline-flex;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border: 1px solid hsl(var(--border, 214.3 31.8% 91.4%));
+  border-radius: 6px;
+  background: hsl(var(--background, 0 0% 100%) / 0.92);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.live-preview-editor .cm-image-frame:hover .cm-image-controls,
+.live-preview-editor .cm-image-controls:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.live-preview-editor .cm-image-control {
+  height: 1.35rem;
+  min-width: 1.35rem;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  padding: 0 0.3rem;
+  color: hsl(var(--foreground, 222.2 84% 4.9%));
+  font-size: 0.68rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.live-preview-editor .cm-image-control:hover {
+  background: hsl(var(--accent, 210 40% 96.1%));
 }
 
 /* Footnote references stay compact in the inline flow. */

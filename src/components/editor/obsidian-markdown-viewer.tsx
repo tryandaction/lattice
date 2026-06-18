@@ -12,12 +12,32 @@
  * - Keyboard shortcuts (Ctrl+E to cycle modes, Ctrl+S to save)
  */
 
-import { useState, useCallback, useEffect, useRef, useMemo, startTransition } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, startTransition, type MouseEvent as ReactMouseEvent } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
+  Bold,
+  Braces,
   ChevronDown,
   ChevronUp,
+  ClipboardPaste,
+  Code2,
+  Copy,
+  FileCode2,
+  Hash,
+  Image as ImageIcon,
+  Italic,
+  Link as LinkIcon,
+  ListChecks,
+  Mic,
+  PanelTop,
+  Pilcrow,
+  Quote,
+  Smile,
+  Sparkles,
+  Table2,
+  Tags,
+  Trash2,
 } from "lucide-react";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
@@ -52,16 +72,24 @@ import { WorkspaceRunnerManager } from "@/components/runner/workspace-runner-man
 import { MarkdownLinksPanel } from "@/components/editor/markdown-links-panel";
 import type { ExecutionProblem } from "@/lib/runner/types";
 import type { IndexedMarkdownLink } from "@/lib/markdown/link-index";
+import type { MarkdownAttachmentCleanupCandidate } from "@/lib/markdown/attachment-cleanup";
 import type { MarkdownUnlinkedMention } from "@/lib/markdown/workspace-link-index";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { WorkbenchContextMenu, type WorkbenchMenuAction } from "@/components/ui/workbench-context-menu";
 import { useExecutionDockLayout } from "@/hooks/use-execution-dock-layout";
 import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
 import { prepareMarkdownForReading } from "@/lib/markdown-reading";
-import { ignoreWorkspaceMarkdownUnlinkedMention, upsertWorkspaceMarkdownFile } from "@/lib/markdown/workspace-link-index";
-import { linkUnlinkedMentionInContent, linkUnlinkedMentionsInContent, repairMarkdownLinkTargetInContent } from "@/lib/markdown/link-maintenance";
+import { findUnreferencedMarkdownAttachments } from "@/lib/markdown/attachment-cleanup";
+import { ignoreWorkspaceMarkdownUnlinkedMention, getWorkspaceMarkdownLinkIndex, upsertWorkspaceMarkdownFile } from "@/lib/markdown/workspace-link-index";
+import { convertMarkdownLinkToWikiInContent, linkUnlinkedMentionInContent, linkUnlinkedMentionsInContent, repairMarkdownLinkTargetInContent } from "@/lib/markdown/link-maintenance";
 import { normalizeWorkspacePath } from "@/lib/link-router/path-utils";
 import { useI18n } from "@/hooks/use-i18n";
 import { buildPersistedFileViewStateKey, loadPersistedFileViewState, savePersistedFileViewState } from "@/lib/file-view-state";
+import type {
+  MarkdownCommandPayload,
+  MarkdownEditingCommandId,
+  MarkdownEditorContext,
+} from "./codemirror/live-preview/markdown-editing-commands";
 
 // Lazy load components
 const LivePreviewEditor = dynamic(
@@ -80,6 +108,26 @@ const MarkdownRenderer = dynamic(
 );
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
+
+type MarkdownMenuState = {
+  x: number;
+  y: number;
+  context: MarkdownEditorContext;
+};
+
+type SpeechRecognitionLike = {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onerror: (() => void) | null;
+  start: () => void;
+};
+
+type SpeechRecognitionWindow = Window & {
+  SpeechRecognition?: new () => SpeechRecognitionLike;
+  webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+};
 
 function formatDuration(durationMs: number | null): string | null {
   if (durationMs === null) return null;
@@ -214,6 +262,9 @@ export function ObsidianMarkdownViewer({
   const [showOutline, setShowOutline] = useState(false);
   const [showLinks, setShowLinks] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [markdownMenuState, setMarkdownMenuState] = useState<MarkdownMenuState | null>(null);
+  const [markdownToolsMenuState, setMarkdownToolsMenuState] = useState<{ x: number; y: number } | null>(null);
+  const [recentEmoji, setRecentEmoji] = useState<string[]>([]);
   const [selectionHubState, setSelectionHubState] = useState<{
     context: SelectionContext;
     mode: SelectionAiMode;
@@ -227,6 +278,7 @@ export function ObsidianMarkdownViewer({
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const workspaceRootName = useWorkspaceStore((state) => state.rootHandle?.name ?? state.fileTree.root?.name ?? null);
+  const workspaceFileTreeRoot = useWorkspaceStore((state) => state.fileTree.root);
   const persistedViewStateKey = useMemo(
     () => buildPersistedFileViewStateKey({
       kind: "markdown",
@@ -320,6 +372,196 @@ export function ObsidianMarkdownViewer({
     defaultOpen: false,
     defaultTab: "run",
   });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem("lattice.markdown.recentEmoji");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setRecentEmoji(parsed.filter((value): value is string => typeof value === "string").slice(0, 8));
+        }
+      }
+    } catch {
+      setRecentEmoji([]);
+    }
+  }, []);
+
+  const rememberEmoji = useCallback((emoji: string) => {
+    setRecentEmoji((current) => {
+      const next = [emoji, ...current.filter((item) => item !== emoji)].slice(0, 8);
+      if (typeof window !== "undefined") {
+        try {
+          window.localStorage.setItem("lattice.markdown.recentEmoji", JSON.stringify(next));
+        } catch {}
+      }
+      return next;
+    });
+  }, []);
+
+  const promptText = useCallback((label: string, fallback = ""): string | null => {
+    if (typeof window === "undefined") return fallback || null;
+    const value = window.prompt(label, fallback);
+    if (value === null) return null;
+    return value;
+  }, []);
+
+  const runMarkdownCommand = useCallback((
+    commandId: MarkdownEditingCommandId,
+    payload?: MarkdownCommandPayload,
+  ) => {
+    const handled = editorRef.current?.runMarkdownCommand(commandId, payload) ?? false;
+    if (!handled) {
+      toast.error("Markdown editor is not ready");
+    }
+    return handled;
+  }, []);
+
+  const copyText = useCallback(async (text: string, successMessage = "Copied") => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) {
+      toast.error("Clipboard is not available");
+      return false;
+    }
+    await navigator.clipboard.writeText(text);
+    toast.success(successMessage);
+    return true;
+  }, []);
+
+  const insertPromptedImage = useCallback((kind: "image" | "gif") => {
+    const url = promptText(kind === "gif" ? "GIF URL" : "Image URL", kind === "gif" ? "https://example.com/animation.gif" : "");
+    if (url === null) return;
+    const alt = promptText("Alt text", kind === "gif" ? "gif" : "image");
+    runMarkdownCommand(kind === "gif" ? "insert.gif" : "insert.image", {
+      url,
+      alt: alt ?? (kind === "gif" ? "gif" : "image"),
+    });
+  }, [promptText, runMarkdownCommand]);
+
+  const replacePromptedImagePath = useCallback((context?: MarkdownEditorContext) => {
+    const url = promptText("Image path", context?.imageUrl ?? "");
+    if (url === null) return;
+    runMarkdownCommand("image.replacePath", { url });
+  }, [promptText, runMarkdownCommand]);
+
+  const setPromptedImageAlt = useCallback((context?: MarkdownEditorContext) => {
+    const alt = promptText("Alt text", context?.imageAlt ?? "");
+    if (alt === null) return;
+    runMarkdownCommand("image.setAlt", { alt });
+  }, [promptText, runMarkdownCommand]);
+
+  const setPromptedImageWidth = useCallback((context?: MarkdownEditorContext) => {
+    const width = promptText("Image width", context?.imageWidth ? String(context.imageWidth) : "320");
+    if (width === null) return;
+    const parsed = Number(width);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      runMarkdownCommand("image.clearWidth");
+      return;
+    }
+    runMarkdownCommand("image.setWidth", { width: parsed });
+  }, [promptText, runMarkdownCommand]);
+
+  const insertPromptedEmoji = useCallback(() => {
+    const emoji = promptText("Emoji or symbol", recentEmoji[0] ?? "\u{1F642}");
+    if (!emoji) return;
+    rememberEmoji(emoji);
+    runMarkdownCommand("insert.emoji", { text: emoji });
+  }, [promptText, recentEmoji, rememberEmoji, runMarkdownCommand]);
+
+  const insertPromptedCodeBlock = useCallback(() => {
+    const language = promptText("Code language", "typescript");
+    if (language === null) return;
+    runMarkdownCommand("insert.codeBlock", { language });
+  }, [promptText, runMarkdownCommand]);
+
+  const insertPromptedCallout = useCallback(() => {
+    const calloutType = promptText("Callout type", "note");
+    if (calloutType === null) return;
+    const calloutTitle = promptText("Callout title", "");
+    if (calloutTitle === null) return;
+    runMarkdownCommand("insert.callout", { calloutType, calloutTitle });
+  }, [promptText, runMarkdownCommand]);
+
+  const setPromptedProperty = useCallback(() => {
+    const propertyKey = promptText("Property key", "status");
+    if (propertyKey === null) return;
+    const propertyValue = promptText("Property value", "draft");
+    if (propertyValue === null) return;
+    runMarkdownCommand("properties.set", { propertyKey, propertyValue });
+  }, [promptText, runMarkdownCommand]);
+
+  const insertProperties = useCallback(() => {
+    const propertyKey = promptText("Property key", "status");
+    if (propertyKey === null) return;
+    const propertyValue = promptText("Property value", "draft");
+    if (propertyValue === null) return;
+    runMarkdownCommand("insert.properties", { propertyKey, propertyValue });
+  }, [promptText, runMarkdownCommand]);
+
+  const updatePromptedCallout = useCallback((context?: MarkdownEditorContext) => {
+    const calloutType = promptText("Callout type", context?.calloutType ?? "note");
+    if (calloutType === null) return;
+    const calloutTitle = promptText("Callout title", context?.calloutTitle ?? "");
+    if (calloutTitle === null) return;
+    runMarkdownCommand("callout.update", { calloutType, calloutTitle });
+  }, [promptText, runMarkdownCommand]);
+
+  const insertPromptedWikiLink = useCallback(() => {
+    const target = promptText("Wiki link target", "");
+    if (target === null) return;
+    const alias = promptText("Alias", "");
+    if (alias === null) return;
+    runMarkdownCommand("insert.wikiLink", { target, alias });
+  }, [promptText, runMarkdownCommand]);
+
+  const insertPromptedHeadingAnchorLink = useCallback(() => {
+    const target = promptText("Wiki link target", filePath?.replace(/\.(md|markdown)$/i, "") ?? "");
+    if (target === null) return;
+    const heading = promptText("Heading", "");
+    if (heading === null) return;
+    const alias = promptText("Alias", heading);
+    if (alias === null) return;
+    runMarkdownCommand("insert.headingAnchorLink", { target, heading, alias });
+  }, [filePath, promptText, runMarkdownCommand]);
+
+  const insertPromptedBlockAnchorLink = useCallback(() => {
+    const target = promptText("Wiki link target", filePath?.replace(/\.(md|markdown)$/i, "") ?? "");
+    if (target === null) return;
+    const blockId = promptText("Block ID", "");
+    if (blockId === null) return;
+    const alias = promptText("Alias", "");
+    if (alias === null) return;
+    runMarkdownCommand("insert.blockAnchorLink", { target, blockId, alias });
+  }, [filePath, promptText, runMarkdownCommand]);
+
+  const insertPromptedEmbed = useCallback(() => {
+    const target = promptText("Embed target", "");
+    if (target === null) return;
+    runMarkdownCommand("insert.embed", { target });
+  }, [promptText, runMarkdownCommand]);
+
+  const startVoiceInput = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const recognitionWindow = window as SpeechRecognitionWindow;
+    const Recognition = recognitionWindow.SpeechRecognition ?? recognitionWindow.webkitSpeechRecognition;
+    if (!Recognition) {
+      toast.error("Voice input is not supported in this browser");
+      return;
+    }
+
+    const recognition = new Recognition();
+    recognition.lang = "zh-CN";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event) => {
+      const transcript = event.results?.[0]?.[0]?.transcript;
+      if (transcript) {
+        runMarkdownCommand("insert.text", { text: transcript });
+      }
+    };
+    recognition.onerror = () => toast.error("Voice input failed");
+    recognition.start();
+  }, [runMarkdownCommand]);
 
   // CRITICAL: Force content update when file changes
   // Use fileId instead of fileName for more reliable detection
@@ -620,6 +862,663 @@ export function ObsidianMarkdownViewer({
     }
   }, [rootHandle, t]);
 
+  const handleConvertMarkdownLinkToWiki = useCallback(async (link: IndexedMarkdownLink) => {
+    if (!rootHandle) {
+      return;
+    }
+
+    try {
+      const fileHandle = await resolveWorkspaceFileHandle(rootHandle, link.sourceFile);
+      const content = await (await fileHandle.getFile()).text();
+      const result = convertMarkdownLinkToWikiInContent(content, link);
+      if (!result.changed) {
+        throw new Error("Link text is no longer available");
+      }
+
+      const writable = await fileHandle.createWritable();
+      await writable.write(result.content);
+      await writable.close();
+      upsertWorkspaceMarkdownFile(link.sourceFile, result.content);
+      emitVaultChange(link.sourceFile);
+      toast.success(t("markdown.links.toast.convertedToWiki"), {
+        description: link.sourceFile,
+      });
+    } catch (error) {
+      toast.error(t("markdown.links.toast.convertToWikiFailed"), {
+        description: error instanceof Error ? error.message : t("markdown.links.toast.createFailedDescription"),
+      });
+    }
+  }, [rootHandle, t]);
+
+  const handleReviewUnreferencedAttachment = useCallback((candidate: MarkdownAttachmentCleanupCandidate) => {
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `${t("markdown.links.confirmAttachmentCleanup")}\n\n${candidate.displayPath}`,
+      );
+      if (!confirmed) return;
+    }
+
+    toast.message(t("markdown.links.toast.attachmentReviewReady"), {
+      description: candidate.displayPath,
+    });
+  }, [t]);
+
+  const copyCurrentBlockAsMarkdown = useCallback(async () => {
+    const copied = await editorRef.current?.copyCurrentBlockAsMarkdown();
+    if (copied) {
+      toast.success("Copied Markdown");
+    }
+  }, []);
+
+  const copyCurrentBlockAsHtml = useCallback(async () => {
+    const copied = await editorRef.current?.copyCurrentBlockAsHtml();
+    if (copied) {
+      toast.success("Copied HTML");
+    }
+  }, []);
+
+  const copyPropertiesYaml = useCallback(async () => {
+    const copied = await editorRef.current?.copyPropertiesYaml();
+    if (copied) {
+      toast.success("Copied properties YAML");
+    } else {
+      toast.error("No properties block found");
+    }
+  }, []);
+
+  const pastePlainText = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard?.readText) {
+      toast.error("Clipboard read is not available");
+      return;
+    }
+    const text = await navigator.clipboard.readText();
+    runMarkdownCommand("insert.text", { text });
+  }, [runMarkdownCommand]);
+
+  const copyFormulaAsLatex = useCallback((context: MarkdownEditorContext) => {
+    const latex = context.blockText
+      .replace(/^\s*\$\$\s*/, "")
+      .replace(/\s*\$\$\s*$/, "")
+      .replace(/^\s*\$/, "")
+      .replace(/\$\s*$/, "")
+      .trim();
+    void copyText(latex, "Copied LaTeX");
+  }, [copyText]);
+
+  const buildMarkdownContextActions = useCallback((menu: MarkdownMenuState): WorkbenchMenuAction[] => {
+    const { context } = menu;
+    const hasSelection = context.selectedText.length > 0;
+    const actions: WorkbenchMenuAction[] = [
+      {
+        id: "cut",
+        label: "Cut",
+        icon: <Trash2 className="h-4 w-4" />,
+        shortcut: "Ctrl+X",
+        disabled: !hasSelection,
+        onSelect: () => {
+          void copyText(context.selectedText, "Cut");
+          runMarkdownCommand("selection.delete");
+        },
+      },
+      {
+        id: "copy",
+        label: "Copy",
+        icon: <Copy className="h-4 w-4" />,
+        shortcut: "Ctrl+C",
+        disabled: !hasSelection,
+        onSelect: () => void copyText(context.selectedText),
+      },
+      {
+        id: "paste-plain",
+        label: "Paste as plain text",
+        icon: <ClipboardPaste className="h-4 w-4" />,
+        shortcut: "Ctrl+Shift+V",
+        onSelect: () => void pastePlainText(),
+      },
+      {
+        id: "select-all",
+        label: "Select all",
+        shortcut: "Ctrl+A",
+        onSelect: () => runMarkdownCommand("selection.selectAll"),
+      },
+      {
+        id: "format-bold",
+        label: "Format: Bold",
+        icon: <Bold className="h-4 w-4" />,
+        shortcut: "Ctrl+B",
+        separatorBefore: true,
+        onSelect: () => runMarkdownCommand("format.bold"),
+      },
+      {
+        id: "format-italic",
+        label: "Format: Italic",
+        icon: <Italic className="h-4 w-4" />,
+        shortcut: "Ctrl+I",
+        onSelect: () => runMarkdownCommand("format.italic"),
+      },
+      {
+        id: "format-link",
+        label: "Add link",
+        icon: <LinkIcon className="h-4 w-4" />,
+        shortcut: "Ctrl+K",
+        onSelect: () => runMarkdownCommand("format.link"),
+      },
+      {
+        id: "format-code",
+        label: "Format: Inline code",
+        icon: <Code2 className="h-4 w-4" />,
+        onSelect: () => runMarkdownCommand("format.code"),
+      },
+      {
+        id: "format-quote",
+        label: "Paragraph: Quote",
+        icon: <Quote className="h-4 w-4" />,
+        onSelect: () => runMarkdownCommand("format.quote"),
+      },
+    ];
+
+    if (context.kind === "table") {
+      actions.push(
+        {
+          id: "copy-table-markdown",
+          label: "Table: Copy as Markdown",
+          icon: <Table2 className="h-4 w-4" />,
+          separatorBefore: true,
+          onSelect: () => void copyCurrentBlockAsMarkdown(),
+        },
+        {
+          id: "copy-table-html",
+          label: "Table: Copy as HTML",
+          onSelect: () => void copyCurrentBlockAsHtml(),
+        },
+        {
+          id: "insert-table",
+          label: "Table: Insert table",
+          icon: <Table2 className="h-4 w-4" />,
+          onSelect: () => runMarkdownCommand("insert.table"),
+        },
+      );
+    }
+
+    if (context.kind === "link" && context.linkTarget) {
+      actions.push(
+        {
+          id: "copy-link-target",
+          label: "Link: Copy target",
+          icon: <LinkIcon className="h-4 w-4" />,
+          separatorBefore: true,
+          onSelect: () => void copyText(context.linkTarget ?? "", "Copied link"),
+        },
+        {
+          id: "convert-markdown-link-to-wiki",
+          label: "Link: Convert to wiki link",
+          icon: <LinkIcon className="h-4 w-4" />,
+          onSelect: () => runMarkdownCommand("link.convertMarkdownToWiki"),
+        },
+      );
+    }
+
+    if (context.kind === "image" && context.imageUrl) {
+      actions.push(
+        {
+          id: "copy-image-target",
+          label: "Image: Copy path",
+          icon: <ImageIcon className="h-4 w-4" />,
+          separatorBefore: true,
+          onSelect: () => void copyText(context.imageUrl ?? "", "Copied image path"),
+        },
+        {
+          id: "image-open-source",
+          label: "Image: Open source",
+          icon: <Code2 className="h-4 w-4" />,
+          onSelect: () => runMarkdownCommand("image.openSource"),
+        },
+        {
+          id: "image-replace-path",
+          label: "Image: Replace path",
+          icon: <ImageIcon className="h-4 w-4" />,
+          onSelect: () => replacePromptedImagePath(context),
+        },
+        {
+          id: "image-set-alt",
+          label: "Image: Set alt text",
+          icon: <Tags className="h-4 w-4" />,
+          onSelect: () => setPromptedImageAlt(context),
+        },
+        {
+          id: "image-set-width",
+          label: "Image: Set width",
+          icon: <ImageIcon className="h-4 w-4" />,
+          onSelect: () => setPromptedImageWidth(context),
+        },
+        {
+          id: "image-clear-width",
+          label: "Image: Clear width",
+          onSelect: () => runMarkdownCommand("image.clearWidth"),
+        },
+      );
+    }
+
+    if (context.kind === "math") {
+      actions.push({
+        id: "copy-latex",
+        label: "Copy as LaTeX",
+        icon: <Braces className="h-4 w-4" />,
+        separatorBefore: true,
+        onSelect: () => copyFormulaAsLatex(context),
+      });
+    }
+
+    if (context.kind === "properties") {
+      actions.push(
+        {
+          id: "properties-set",
+          label: "Properties: Set property",
+          icon: <Tags className="h-4 w-4" />,
+          separatorBefore: true,
+          onSelect: setPromptedProperty,
+        },
+        {
+          id: "properties-copy",
+          label: "Properties: Copy YAML",
+          icon: <Copy className="h-4 w-4" />,
+          onSelect: () => void copyPropertiesYaml(),
+        },
+        {
+          id: "properties-convert-line",
+          label: "Properties: Convert line to property",
+          icon: <PanelTop className="h-4 w-4" />,
+          onSelect: () => runMarkdownCommand("properties.convertLine"),
+        },
+      );
+    }
+
+    if (context.kind === "callout") {
+      actions.push(
+        {
+          id: "callout-edit",
+          label: "Callout: Edit type/title",
+          separatorBefore: true,
+          onSelect: () => updatePromptedCallout(context),
+        },
+        {
+          id: "callout-copy",
+          label: "Callout: Copy Markdown",
+          onSelect: () => void copyCurrentBlockAsMarkdown(),
+        },
+        {
+          id: "callout-copy-body",
+          label: "Callout: Copy body",
+          onSelect: () => runMarkdownCommand("callout.copyBody"),
+        },
+        {
+          id: "callout-duplicate",
+          label: "Callout: Duplicate",
+          onSelect: () => runMarkdownCommand("callout.duplicate"),
+        },
+        {
+          id: "callout-extract-body",
+          label: "Callout: Extract body",
+          onSelect: () => runMarkdownCommand("callout.extractBody"),
+        },
+        {
+          id: "callout-split-body-line",
+          label: "Callout: Split at body line",
+          onSelect: () => runMarkdownCommand("callout.splitAtBodyLine"),
+        },
+      );
+    }
+
+    actions.push(
+      {
+        id: "insert-properties",
+        label: "Insert properties",
+        icon: <PanelTop className="h-4 w-4" />,
+        separatorBefore: true,
+        onSelect: insertProperties,
+      },
+      {
+        id: "convert-line-to-property",
+        label: "Convert line to property",
+        icon: <PanelTop className="h-4 w-4" />,
+        onSelect: () => runMarkdownCommand("properties.convertLine"),
+      },
+      {
+        id: "insert-table-generic",
+        label: "Insert table",
+        icon: <Table2 className="h-4 w-4" />,
+        onSelect: () => runMarkdownCommand("insert.table"),
+      },
+      {
+        id: "insert-callout",
+        label: "Insert callout",
+        icon: <Quote className="h-4 w-4" />,
+        onSelect: insertPromptedCallout,
+      },
+      {
+        id: "insert-task-list",
+        label: "Insert task list",
+        icon: <ListChecks className="h-4 w-4" />,
+        onSelect: () => runMarkdownCommand("insert.taskList"),
+      },
+      {
+        id: "insert-code-block",
+        label: "Insert code block",
+        icon: <FileCode2 className="h-4 w-4" />,
+        onSelect: insertPromptedCodeBlock,
+      },
+      {
+        id: "insert-math-block",
+        label: "Insert math block",
+        icon: <Braces className="h-4 w-4" />,
+        onSelect: () => runMarkdownCommand("insert.mathBlock"),
+      },
+      {
+        id: "insert-image",
+        label: "Insert image",
+        icon: <ImageIcon className="h-4 w-4" />,
+        onSelect: () => insertPromptedImage("image"),
+      },
+      {
+        id: "insert-wiki-link",
+        label: "Insert wiki link",
+        icon: <LinkIcon className="h-4 w-4" />,
+        onSelect: insertPromptedWikiLink,
+      },
+      {
+        id: "insert-heading-anchor-link",
+        label: "Insert heading anchor link",
+        icon: <Hash className="h-4 w-4" />,
+        onSelect: insertPromptedHeadingAnchorLink,
+      },
+      {
+        id: "insert-block-anchor-link",
+        label: "Insert block anchor link",
+        icon: <Pilcrow className="h-4 w-4" />,
+        onSelect: insertPromptedBlockAnchorLink,
+      },
+      {
+        id: "insert-embed",
+        label: "Insert embed",
+        icon: <ImageIcon className="h-4 w-4" />,
+        onSelect: insertPromptedEmbed,
+      },
+      {
+        id: "insert-gif",
+        label: "Insert GIF",
+        icon: <Sparkles className="h-4 w-4" />,
+        onSelect: () => insertPromptedImage("gif"),
+      },
+      {
+        id: "insert-emoji",
+        label: "Insert emoji / symbol",
+        icon: <Smile className="h-4 w-4" />,
+        onSelect: insertPromptedEmoji,
+      },
+      {
+        id: "copy-block-markdown",
+        label: "Copy current block as Markdown",
+        separatorBefore: true,
+        onSelect: () => void copyCurrentBlockAsMarkdown(),
+      },
+      {
+        id: "copy-block-html",
+        label: "Copy current block as HTML",
+        onSelect: () => void copyCurrentBlockAsHtml(),
+      },
+      {
+        id: "more-tools",
+        label: "More Tools",
+        icon: <Sparkles className="h-4 w-4" />,
+        separatorBefore: true,
+        onSelect: () => setMarkdownToolsMenuState({ x: menu.x, y: menu.y }),
+      },
+    );
+
+    return actions;
+  }, [
+    copyCurrentBlockAsHtml,
+    copyCurrentBlockAsMarkdown,
+    copyFormulaAsLatex,
+    copyPropertiesYaml,
+    copyText,
+    insertPromptedCallout,
+    insertPromptedCodeBlock,
+    insertPromptedEmoji,
+    insertPromptedEmbed,
+    insertPromptedBlockAnchorLink,
+    insertPromptedHeadingAnchorLink,
+    insertPromptedImage,
+    insertPromptedWikiLink,
+    insertProperties,
+    pastePlainText,
+    replacePromptedImagePath,
+    runMarkdownCommand,
+    setPromptedImageAlt,
+    setPromptedImageWidth,
+    setPromptedProperty,
+    updatePromptedCallout,
+  ]);
+
+  const buildMarkdownToolsActions = useCallback((): WorkbenchMenuAction[] => {
+    const emojiCategories = [
+      { label: "Recent", items: recentEmoji },
+      { label: "Writing", items: ["\u2705", "\u26A0\uFE0F", "\u{1F4A1}", "\u{1F4CC}"] },
+      { label: "Mood", items: ["\u{1F642}", "\u{1F914}", "\u{1F389}", "\u{1F525}"] },
+    ];
+    const emojiActions: WorkbenchMenuAction[] = emojiCategories.flatMap((category) =>
+      Array.from(new Set(category.items)).slice(0, 4).map((emoji, index) => ({
+      id: `emoji-${category.label.toLowerCase()}-${index}`,
+      label: `${category.label}: ${emoji}`,
+      icon: <Smile className="h-4 w-4" />,
+      onSelect: () => {
+        rememberEmoji(emoji);
+        runMarkdownCommand("insert.emoji", { text: emoji });
+      },
+      })),
+    );
+
+    return [
+      {
+        id: "voice-input",
+        label: "Voice input",
+        icon: <Mic className="h-4 w-4" />,
+        onSelect: startVoiceInput,
+      },
+      {
+        id: "insert-table",
+        label: "Insert table",
+        icon: <Table2 className="h-4 w-4" />,
+        separatorBefore: true,
+        onSelect: () => runMarkdownCommand("insert.table"),
+      },
+      {
+        id: "insert-properties",
+        label: "Insert properties",
+        icon: <PanelTop className="h-4 w-4" />,
+        onSelect: insertProperties,
+      },
+      {
+        id: "set-property",
+        label: "Set property",
+        icon: <Tags className="h-4 w-4" />,
+        onSelect: setPromptedProperty,
+      },
+      {
+        id: "copy-properties-yaml",
+        label: "Copy properties YAML",
+        icon: <Copy className="h-4 w-4" />,
+        onSelect: () => void copyPropertiesYaml(),
+      },
+      {
+        id: "convert-line-to-property",
+        label: "Convert line to property",
+        icon: <PanelTop className="h-4 w-4" />,
+        onSelect: () => runMarkdownCommand("properties.convertLine"),
+      },
+      {
+        id: "insert-callout",
+        label: "Insert callout",
+        icon: <Quote className="h-4 w-4" />,
+        onSelect: insertPromptedCallout,
+      },
+      {
+        id: "edit-callout",
+        label: "Edit current callout",
+        icon: <Quote className="h-4 w-4" />,
+        onSelect: () => updatePromptedCallout(editorRef.current?.getMarkdownContext() ?? undefined),
+      },
+      {
+        id: "insert-task-list",
+        label: "Insert task list",
+        icon: <ListChecks className="h-4 w-4" />,
+        onSelect: () => runMarkdownCommand("insert.taskList"),
+      },
+      {
+        id: "insert-footnote",
+        label: "Insert footnote",
+        icon: <Hash className="h-4 w-4" />,
+        onSelect: () => runMarkdownCommand("insert.footnote"),
+      },
+      {
+        id: "insert-code-block",
+        label: "Insert code block",
+        icon: <FileCode2 className="h-4 w-4" />,
+        onSelect: insertPromptedCodeBlock,
+      },
+      {
+        id: "insert-math-block",
+        label: "Insert math block",
+        icon: <Braces className="h-4 w-4" />,
+        onSelect: () => runMarkdownCommand("insert.mathBlock"),
+      },
+      {
+        id: "insert-image",
+        label: "Insert image / attachment",
+        icon: <ImageIcon className="h-4 w-4" />,
+        onSelect: () => insertPromptedImage("image"),
+      },
+      {
+        id: "insert-wiki-link",
+        label: "Insert wiki link",
+        icon: <LinkIcon className="h-4 w-4" />,
+        onSelect: insertPromptedWikiLink,
+      },
+      {
+        id: "insert-heading-anchor-link",
+        label: "Insert heading anchor link",
+        icon: <Hash className="h-4 w-4" />,
+        onSelect: insertPromptedHeadingAnchorLink,
+      },
+      {
+        id: "insert-block-anchor-link",
+        label: "Insert block anchor link",
+        icon: <Pilcrow className="h-4 w-4" />,
+        onSelect: insertPromptedBlockAnchorLink,
+      },
+      {
+        id: "insert-embed",
+        label: "Insert embed",
+        icon: <ImageIcon className="h-4 w-4" />,
+        onSelect: insertPromptedEmbed,
+      },
+      {
+        id: "insert-gif",
+        label: "Insert GIF URL",
+        icon: <Sparkles className="h-4 w-4" />,
+        onSelect: () => insertPromptedImage("gif"),
+      },
+      {
+        id: "insert-emoji-prompt",
+        label: "Insert emoji / symbol",
+        icon: <Smile className="h-4 w-4" />,
+        separatorBefore: true,
+        onSelect: insertPromptedEmoji,
+      },
+      ...emojiActions,
+      {
+        id: "format-bold",
+        label: "Format selection: Bold",
+        icon: <Bold className="h-4 w-4" />,
+        separatorBefore: true,
+        onSelect: () => runMarkdownCommand("format.bold"),
+      },
+      {
+        id: "format-italic",
+        label: "Format selection: Italic",
+        icon: <Italic className="h-4 w-4" />,
+        onSelect: () => runMarkdownCommand("format.italic"),
+      },
+      {
+        id: "format-code",
+        label: "Format selection: Code",
+        icon: <Code2 className="h-4 w-4" />,
+        onSelect: () => runMarkdownCommand("format.code"),
+      },
+      {
+        id: "format-strike",
+        label: "Format selection: Strikethrough",
+        onSelect: () => runMarkdownCommand("format.strike"),
+      },
+      {
+        id: "format-link",
+        label: "Format selection: Link",
+        icon: <LinkIcon className="h-4 w-4" />,
+        onSelect: () => runMarkdownCommand("format.link"),
+      },
+      {
+        id: "copy-block-markdown",
+        label: "Copy current block as Markdown",
+        icon: <Copy className="h-4 w-4" />,
+        separatorBefore: true,
+        onSelect: () => void copyCurrentBlockAsMarkdown(),
+      },
+      {
+        id: "copy-block-html",
+        label: "Copy current block as HTML",
+        onSelect: () => void copyCurrentBlockAsHtml(),
+      },
+    ];
+  }, [
+    copyCurrentBlockAsHtml,
+    copyCurrentBlockAsMarkdown,
+    copyPropertiesYaml,
+    insertPromptedCallout,
+    insertPromptedCodeBlock,
+    insertPromptedEmoji,
+    insertPromptedEmbed,
+    insertPromptedBlockAnchorLink,
+    insertPromptedHeadingAnchorLink,
+    insertPromptedImage,
+    insertPromptedWikiLink,
+    insertProperties,
+    recentEmoji,
+    rememberEmoji,
+    runMarkdownCommand,
+    setPromptedProperty,
+    startVoiceInput,
+    updatePromptedCallout,
+  ]);
+
+  const handleMarkdownContextMenu = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement | null;
+    if (!target?.closest(".live-preview-editor")) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const currentContext = editorRef.current?.getMarkdownContext();
+    if (!currentContext?.selectedText) {
+      editorRef.current?.setCursorFromPoint(event.clientX, event.clientY);
+    }
+
+    const context = editorRef.current?.getMarkdownContext();
+    if (!context) return;
+    setMarkdownMenuState({ x: event.clientX, y: event.clientY, context });
+  }, []);
+
   const commandBarState = useMemo<CommandBarState>(() => {
     const breadcrumbs = (filePath ?? fileName)
       .split("/")
@@ -649,6 +1548,19 @@ export function ObsidianMarkdownViewer({
           priority: 25,
           group: "secondary",
           onTrigger: () => editorRef.current?.openSearch(),
+        },
+        {
+          id: "markdown-tools",
+          label: "Markdown Tools",
+          icon: "file-pen-line",
+          priority: 26,
+          group: "secondary",
+          disabled: mode === "reading" || (variant === "system-index" && mode !== "source"),
+          onTrigger: () => setMarkdownToolsMenuState({
+            x: typeof window === "undefined" ? 80 : Math.max(16, window.innerWidth - 260),
+            y: 64,
+          }),
+          onContextMenu: (position) => setMarkdownToolsMenuState(position),
         },
         {
           id: "outline",
@@ -702,6 +1614,7 @@ export function ObsidianMarkdownViewer({
     showLinks,
     showOutline,
     t,
+    variant,
   ]);
 
   usePaneCommandBar({
@@ -826,6 +1739,14 @@ export function ObsidianMarkdownViewer({
   }, []);
 
   const readingModeContent = useMemo(() => prepareMarkdownForReading(localContent), [localContent]);
+  const attachmentCleanupCandidates = useMemo(
+    () => findUnreferencedMarkdownAttachments({
+      root: workspaceFileTreeRoot,
+      index: getWorkspaceMarkdownLinkIndex().index,
+      workspaceRootName,
+    }),
+    [localContent, workspaceFileTreeRoot, workspaceRootName],
+  );
 
   const durationLabel = formatDuration(summary.durationMs);
   const shouldRenderRunDock = showRunDock || outputs.length > 0 || problems.length > 0 || isRunning || isLoading;
@@ -851,11 +1772,14 @@ export function ObsidianMarkdownViewer({
             onLinkUnlinkedMentions={handleLinkUnlinkedMentions}
             onIgnoreUnlinkedMention={handleIgnoreUnlinkedMention}
             onRepairBrokenLink={handleRepairBrokenLink}
+            onConvertMarkdownLinkToWiki={handleConvertMarkdownLinkToWiki}
+            attachmentCleanupCandidates={attachmentCleanupCandidates}
+            onReviewUnreferencedAttachment={handleReviewUnreferencedAttachment}
           />
         </div>
       )}
 
-      <div className="flex-1 min-h-0 overflow-auto">
+      <div className="flex-1 min-h-0 overflow-auto" onContextMenu={handleMarkdownContextMenu}>
         {mode === "reading" || (variant === "system-index" && mode !== "source") ? (
           <div className="h-full overflow-auto px-6 py-4">
             <MarkdownRenderer
@@ -893,6 +1817,7 @@ export function ObsidianMarkdownViewer({
     </div>
   ), [
     activeHeading,
+    attachmentCleanupCandidates,
     fileId,
     fileName,
     filePath,
@@ -903,12 +1828,15 @@ export function ObsidianMarkdownViewer({
     handleOutlineChange,
     handleOutlineNavigate,
     handleCreateMissingNote,
+    handleConvertMarkdownLinkToWiki,
     handleIgnoreUnlinkedMention,
     handleLinkUnlinkedMention,
     handleLinkUnlinkedMentions,
     handleRepairBrokenLink,
+    handleReviewUnreferencedAttachment,
     handleSourceLinkNavigate,
     handleSave,
+    handleMarkdownContextMenu,
     localContent,
     mode,
     outline,
@@ -1091,6 +2019,26 @@ export function ObsidianMarkdownViewer({
         filePath={filePath}
         rootHandle={rootHandle}
       />
+
+      {markdownMenuState ? (
+        <WorkbenchContextMenu
+          x={markdownMenuState.x}
+          y={markdownMenuState.y}
+          actions={buildMarkdownContextActions(markdownMenuState)}
+          onClose={() => setMarkdownMenuState(null)}
+          minWidthClassName="min-w-[240px]"
+        />
+      ) : null}
+
+      {markdownToolsMenuState ? (
+        <WorkbenchContextMenu
+          x={markdownToolsMenuState.x}
+          y={markdownToolsMenuState.y}
+          actions={buildMarkdownToolsActions()}
+          onClose={() => setMarkdownToolsMenuState(null)}
+          minWidthClassName="min-w-[250px]"
+        />
+      ) : null}
 
     </div>
   );

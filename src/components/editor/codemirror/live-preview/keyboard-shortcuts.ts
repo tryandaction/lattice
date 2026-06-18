@@ -8,6 +8,7 @@
 import { keymap } from '@codemirror/view';
 import { EditorSelection } from '@codemirror/state';
 import type { Command } from '@codemirror/view';
+import { isReservedShortcut, type ShortcutSpec } from '@/lib/shortcut-policy';
 
 /**
  * Toggle wrapper around selection (bold, italic, etc.)
@@ -507,46 +508,94 @@ const indentLess: Command = (view) => {
   return true;
 };
 
-/**
- * Complete keyboard shortcuts keymap
- */
-export const markdownKeymap = keymap.of([
+export const markdownShortcutSpecs: ShortcutSpec[] = [
   // Text formatting
-  { key: 'Ctrl-b', mac: 'Cmd-b', run: toggleWrapper('**') },
-  { key: 'Ctrl-i', mac: 'Cmd-i', run: toggleWrapper('*') },
-  { key: 'Ctrl-`', run: toggleWrapper('`') },
-  { key: 'Ctrl-Shift-s', run: toggleWrapper('~~') },
-  { key: 'Ctrl-Shift-h', run: toggleWrapper('==') },
+  { id: 'format.bold', scope: 'markdown-editor', key: 'Ctrl-b', mac: 'Cmd-b', enabledByDefault: true },
+  { id: 'format.italic', scope: 'markdown-editor', key: 'Ctrl-i', mac: 'Cmd-i', enabledByDefault: true },
+  { id: 'format.inlineCode', scope: 'markdown-editor', key: 'Ctrl-`', mac: 'Cmd-`', enabledByDefault: true },
+  { id: 'format.highlight', scope: 'markdown-editor', key: 'Ctrl-Shift-h', mac: 'Cmd-Shift-h', enabledByDefault: true },
   
   // Links and media
-  { key: 'Ctrl-k', mac: 'Cmd-k', run: insertLink },
-  { key: 'Ctrl-Shift-`', run: insertCodeBlock },
-  
-  // Math shortcuts
-  { key: 'Ctrl-Shift-m', mac: 'Cmd-Shift-m', run: wrapInlineMath },
-  { key: 'Ctrl-Alt-m', mac: 'Cmd-Alt-m', run: insertBlockMath },
-  { key: 'Ctrl-Shift-f', mac: 'Cmd-Shift-f', run: insertFraction },
-  { key: 'Ctrl-Shift-r', mac: 'Cmd-Shift-r', run: insertSquareRoot },
-  { key: 'Ctrl-Shift-i', mac: 'Cmd-Shift-i', run: insertIntegral },
-  { key: 'Ctrl-Shift-u', mac: 'Cmd-Shift-u', run: insertSum },
-  { key: 'Ctrl-Shift-l', mac: 'Cmd-Shift-l', run: insertLimit },
-  { key: 'Ctrl-Shift-x', mac: 'Cmd-Shift-x', run: insertMatrix },
-  { key: 'Ctrl-Shift-v', mac: 'Cmd-Shift-v', run: insertVector },
-  { key: 'Ctrl-Shift-p', mac: 'Cmd-Shift-p', run: insertPartial },
-  { key: 'Ctrl-ArrowUp', mac: 'Cmd-ArrowUp', run: insertSuperscript },
-  { key: 'Ctrl-ArrowDown', mac: 'Cmd-ArrowDown', run: insertSubscript },
+  { id: 'insert.link', scope: 'markdown-editor', key: 'Ctrl-k', mac: 'Cmd-k', enabledByDefault: true },
+  { id: 'insert.codeBlock', scope: 'markdown-editor', key: 'Ctrl-Shift-`', mac: 'Cmd-Shift-`', enabledByDefault: true },
+
+  // Low-conflict math entry points. Rich structures are handled by the Quantum Keyboard.
+  { id: 'math.inline', scope: 'markdown-editor', key: 'Ctrl-Shift-m', mac: 'Cmd-Shift-m', enabledByDefault: true },
+  { id: 'math.block', scope: 'markdown-editor', key: 'Ctrl-Alt-m', mac: 'Cmd-Alt-m', enabledByDefault: true },
   
   // Line operations
-  { key: 'Alt-ArrowUp', run: moveLineUp },
-  { key: 'Alt-ArrowDown', run: moveLineDown },
-  { key: 'Ctrl-d', mac: 'Cmd-d', run: duplicateLine },
-  { key: 'Ctrl-/', mac: 'Cmd-/', run: toggleComment },
-  { key: 'Ctrl-Enter', mac: 'Cmd-Enter', run: insertLineBelow },
+  { id: 'line.moveUp', scope: 'markdown-editor', key: 'Alt-ArrowUp', enabledByDefault: true },
+  { id: 'line.moveDown', scope: 'markdown-editor', key: 'Alt-ArrowDown', enabledByDefault: true },
+  { id: 'line.duplicate', scope: 'markdown-editor', key: 'Ctrl-d', mac: 'Cmd-d', enabledByDefault: true },
+  { id: 'line.toggleComment', scope: 'markdown-editor', key: 'Ctrl-/', mac: 'Cmd-/', enabledByDefault: true },
+  { id: 'line.insertBelow', scope: 'markdown-editor', key: 'Ctrl-Enter', mac: 'Cmd-Enter', enabledByDefault: true },
   
   // Indentation
-  { key: 'Ctrl-]', mac: 'Cmd-]', run: indentMore },
-  { key: 'Ctrl-[', mac: 'Cmd-[', run: indentLess },
-]);
+  { id: 'indent.more', scope: 'markdown-editor', key: 'Ctrl-]', enabledByDefault: true },
+  { id: 'indent.less', scope: 'markdown-editor', key: 'Ctrl-[', enabledByDefault: true },
+
+  // Disabled by default because these collide with common browser/devtool/system habits.
+  { id: 'format.strike', scope: 'markdown-editor', key: 'Ctrl-Shift-s', mac: 'Cmd-Shift-s', enabledByDefault: false, reason: 'Reserved by save-as and browser/system commands.' },
+  { id: 'math.fraction', scope: 'markdown-editor', key: 'Ctrl-Shift-f', mac: 'Cmd-Shift-f', enabledByDefault: false, reason: 'Reserved by search-in-files habits; use Quantum Keyboard F/4.' },
+  { id: 'math.sqrt', scope: 'markdown-editor', key: 'Ctrl-Shift-r', mac: 'Cmd-Shift-r', enabledByDefault: false, reason: 'Reserved by hard reload habits; use Quantum Keyboard 3.' },
+  { id: 'math.integral', scope: 'markdown-editor', key: 'Ctrl-Shift-i', mac: 'Cmd-Shift-i', enabledByDefault: false, reason: 'Reserved by devtools/system habits; use Quantum Keyboard I/6.' },
+  { id: 'math.sum', scope: 'markdown-editor', key: 'Ctrl-Shift-u', mac: 'Cmd-Shift-u', enabledByDefault: false, reason: 'Reserved by Unicode/input habits; use Quantum Keyboard S/5.' },
+  { id: 'math.limit', scope: 'markdown-editor', key: 'Ctrl-Shift-l', mac: 'Cmd-Shift-l', enabledByDefault: false, reason: 'Use Quantum Keyboard 7/L.' },
+  { id: 'math.matrix', scope: 'markdown-editor', key: 'Ctrl-Shift-x', mac: 'Cmd-Shift-x', enabledByDefault: false, reason: 'Use Quantum Keyboard M/X.' },
+  { id: 'math.vector', scope: 'markdown-editor', key: 'Ctrl-Shift-v', mac: 'Cmd-Shift-v', enabledByDefault: false, reason: 'Reserved by paste-as-plain-text habits; use Quantum Keyboard V.' },
+  { id: 'math.partial', scope: 'markdown-editor', key: 'Ctrl-Alt-p', mac: 'Cmd-Alt-p', enabledByDefault: false, reason: 'Use Quantum Keyboard D/P variants.' },
+  { id: 'math.superscript', scope: 'markdown-editor', key: 'Ctrl-ArrowUp', mac: 'Cmd-ArrowUp', enabledByDefault: false, reason: 'Reserved by navigation/window habits; use Quantum Keyboard 1.' },
+  { id: 'math.subscript', scope: 'markdown-editor', key: 'Ctrl-ArrowDown', mac: 'Cmd-ArrowDown', enabledByDefault: false, reason: 'Reserved by navigation/window habits; use Quantum Keyboard 2.' },
+];
+
+const markdownCommands: Record<string, Command> = {
+  'format.bold': toggleWrapper('**'),
+  'format.italic': toggleWrapper('*'),
+  'format.inlineCode': toggleWrapper('`'),
+  'format.highlight': toggleWrapper('=='),
+  'insert.link': insertLink,
+  'insert.codeBlock': insertCodeBlock,
+  'math.inline': wrapInlineMath,
+  'math.block': insertBlockMath,
+  'line.moveUp': moveLineUp,
+  'line.moveDown': moveLineDown,
+  'line.duplicate': duplicateLine,
+  'line.toggleComment': toggleComment,
+  'line.insertBelow': insertLineBelow,
+  'indent.more': indentMore,
+  'indent.less': indentLess,
+  'format.strike': toggleWrapper('~~'),
+  'math.fraction': insertFraction,
+  'math.sqrt': insertSquareRoot,
+  'math.integral': insertIntegral,
+  'math.sum': insertSum,
+  'math.limit': insertLimit,
+  'math.matrix': insertMatrix,
+  'math.vector': insertVector,
+  'math.partial': insertPartial,
+  'math.superscript': insertSuperscript,
+  'math.subscript': insertSubscript,
+};
+
+export function getDefaultMarkdownShortcutSpecs(): ShortcutSpec[] {
+  return markdownShortcutSpecs.filter((shortcut) => shortcut.enabledByDefault);
+}
+
+/**
+ * Complete keyboard shortcuts keymap. Reserved combinations are filtered even
+ * if a future shortcut is accidentally marked enabled.
+ */
+export const markdownKeymap = keymap.of(
+  markdownShortcutSpecs
+    .filter((shortcut) => shortcut.enabledByDefault)
+    .filter((shortcut) => !isReservedShortcut(shortcut.key) && (!shortcut.mac || !isReservedShortcut(shortcut.mac)))
+    .map((shortcut) => ({
+      key: shortcut.key,
+      mac: shortcut.mac,
+      run: markdownCommands[shortcut.id],
+    }))
+    .filter((binding) => Boolean(binding.run))
+);
 
 // Export individual commands for use elsewhere
 export {

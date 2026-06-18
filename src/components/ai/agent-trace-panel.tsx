@@ -1543,6 +1543,12 @@ function PendingApprovalCard({
 }) {
   const { t } = useI18n();
   const toolTitle = approval.toolLabel ?? approval.toolName;
+  const approvalArgs = approval.request.args;
+  const approvalCode = approvalArgs && typeof approvalArgs === "object" && "code" in approvalArgs
+    ? (approvalArgs as { code?: unknown }).code
+    : null;
+  const isCodingQaApproval = approval.toolLabel === "Approval-gated QA Runner" ||
+    (approval.toolName === "runner.runCode" && typeof approvalCode === "string" && approvalCode.includes("Coding QA Runner Plan"));
   const hasToolContract = Boolean(
     approval.toolDescription ||
     approval.toolArgsSummary ||
@@ -1600,6 +1606,14 @@ function PendingApprovalCard({
             <div className="mt-1 line-clamp-3 rounded border border-destructive/20 bg-destructive/5 px-2 py-1 text-[10px] text-destructive">
               {approval.error}
             </div>
+          )}
+          {isCodingQaApproval && (
+            <a
+              href="/agent-protocol#qa-evidence"
+              className="mt-1 inline-flex rounded border border-border/60 bg-background/70 px-2 py-1 text-[10px] font-medium text-primary hover:bg-accent"
+            >
+              Open QA evidence import
+            </a>
           )}
         </div>
         {!readOnly && (

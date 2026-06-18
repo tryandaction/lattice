@@ -235,7 +235,7 @@ function CommandBarActionButton({
     tooltip?: string;
     active?: boolean;
     disabled?: boolean;
-    group?: "primary" | "secondary" | "utility";
+    group?: "primary" | "secondary" | "utility" | "overflow";
     onTrigger?: () => void;
     onContextMenu?: (position: { x: number; y: number }) => void;
   };
@@ -387,15 +387,25 @@ export function CommandBar({
     const primary = sortedActions.filter((action) => action.group === "primary");
     const secondary = sortedActions.filter((action) => action.group === "secondary");
     const utility = sortedActions.filter((action) => action.group === "utility");
+    const explicitOverflow = sortedActions.filter((action) => action.group === "overflow");
+    const forcedVisibleUtility = utility.filter((action) => action.id === "search");
+    const pinnedUtility = [
+      ...forcedVisibleUtility,
+      ...utility.filter((action) => !forcedVisibleUtility.some((visible) => visible.id === action.id)),
+    ].slice(0, 4);
+    const remainingSlots = Math.max(0, 12 - pinnedUtility.length);
     const visible = [
+      ...pinnedUtility,
       ...primary,
-      ...secondary.slice(0, 6),
-      ...utility.slice(0, 2),
-    ].slice(0, 12);
+      ...secondary,
+    ].slice(0, 12).slice(0, pinnedUtility.length + remainingSlots);
     const visibleIds = new Set(visible.map((action) => action.id));
     return {
       visibleActions: visible,
-      overflowActions: sortedActions.filter((action) => !visibleIds.has(action.id)),
+      overflowActions: [
+        ...explicitOverflow,
+        ...sortedActions.filter((action) => action.group !== "overflow" && !visibleIds.has(action.id)),
+      ],
     };
   }, [sortedActions]);
 

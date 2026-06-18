@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   deleteTableColumn,
   deleteTableDataRow,
+  duplicateTableColumn,
+  duplicateTableDataRow,
   insertTableColumn,
   insertTableDataRow,
+  moveTableColumn,
+  moveTableDataRow,
+  pasteTableCellMatrix,
   setTableColumnAlignment,
   tableToMarkdown,
   type TableAlignment,
@@ -58,7 +63,7 @@ describe('table widget serialization', () => {
     const next = deleteTableColumn(rows, alignments, true, 0);
 
     expect(next.rows[0].length).toBe(1);
-    expect(next.rows[2].length).toBe(1);
+    expect(next.rows[1].length).toBe(1);
     expect(tableToMarkdown(next.rows, next.alignments, true)).toBe('| h1 |\n| --- |\n| r1 |');
   });
 
@@ -71,13 +76,13 @@ describe('table widget serialization', () => {
     const alignments: TableAlignment[] = [null, null];
 
     const withExtra = insertTableDataRow(rows, alignments, true, 2, 'below');
-    expect(withExtra.rows.length).toBe(4);
+    expect(withExtra.rows.length).toBe(3);
 
-    const deletedOnce = deleteTableDataRow(withExtra.rows, withExtra.alignments, true, 3);
-    expect(deletedOnce.rows.length).toBe(3);
+    const deletedOnce = deleteTableDataRow(withExtra.rows, withExtra.alignments, true, 2);
+    expect(deletedOnce.rows.length).toBe(2);
 
-    const protectedDelete = deleteTableDataRow(deletedOnce.rows, deletedOnce.alignments, true, 2);
-    expect(protectedDelete.rows.length).toBe(3);
+    const protectedDelete = deleteTableDataRow(deletedOnce.rows, deletedOnce.alignments, true, 1);
+    expect(protectedDelete.rows.length).toBe(2);
   });
 
   it('updates separator line when switching alignment', () => {
@@ -93,6 +98,63 @@ describe('table widget serialization', () => {
 
     expect(tableToMarkdown(right.rows, right.alignments, true)).toBe(
       '| c1 | c2 |\n| :---: | ---: |\n| v1 | v2 |'
+    );
+  });
+
+  it('duplicates and moves data rows while preserving the header separator', () => {
+    const rows = mkRows([
+      ['h1', 'h2'],
+      ['---', '---'],
+      ['a1', 'a2'],
+      ['b1', 'b2'],
+    ]);
+    const alignments: TableAlignment[] = ['left', 'right'];
+
+    const duplicated = duplicateTableDataRow(rows, alignments, true, 2);
+    expect(tableToMarkdown(duplicated.rows, duplicated.alignments, true)).toBe(
+      '| h1 | h2 |\n| :--- | ---: |\n| a1 | a2 |\n| a1 | a2 |\n| b1 | b2 |'
+    );
+
+    const moved = moveTableDataRow(duplicated.rows, duplicated.alignments, true, 3, -1);
+    expect(tableToMarkdown(moved.rows, moved.alignments, true)).toBe(
+      '| h1 | h2 |\n| :--- | ---: |\n| a1 | a2 |\n| b1 | b2 |\n| a1 | a2 |'
+    );
+  });
+
+  it('duplicates and moves columns with alignment preservation', () => {
+    const rows = mkRows([
+      ['h1', 'h2'],
+      ['---', '---'],
+      ['a1', 'a2'],
+    ]);
+    const alignments: TableAlignment[] = ['center', 'right'];
+
+    const duplicated = duplicateTableColumn(rows, alignments, true, 0);
+    expect(tableToMarkdown(duplicated.rows, duplicated.alignments, true)).toBe(
+      '| h1 | h1 | h2 |\n| :---: | :---: | ---: |\n| a1 | a1 | a2 |'
+    );
+
+    const moved = moveTableColumn(duplicated.rows, duplicated.alignments, true, 2, -1);
+    expect(tableToMarkdown(moved.rows, moved.alignments, true)).toBe(
+      '| h1 | h2 | h1 |\n| :---: | ---: | :---: |\n| a1 | a2 | a1 |'
+    );
+  });
+
+  it('pastes a cell matrix and expands rows and columns as needed', () => {
+    const rows = mkRows([
+      ['h1', 'h2'],
+      ['---', '---'],
+      ['a1', 'a2'],
+    ]);
+    const alignments: TableAlignment[] = [null, 'right'];
+
+    const pasted = pasteTableCellMatrix(rows, alignments, true, 2, 1, [
+      ['x1', 'x2'],
+      ['y1', 'y2'],
+    ]);
+
+    expect(tableToMarkdown(pasted.rows, pasted.alignments, true)).toBe(
+      '| h1 | h2 |  |\n| --- | ---: | --- |\n| a1 | x1 | x2 |\n|  | y1 | y2 |'
     );
   });
 });

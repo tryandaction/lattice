@@ -5,7 +5,7 @@ import { X, ChevronUp, ChevronDown } from "lucide-react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useI18n } from "@/hooks/use-i18n";
 import { getPreferredPdfPageSearchText } from "@/lib/pdf-page-text-engine";
-import { searchPdfPageTextModel, type PdfSearchMatch } from "@/lib/pdf-search";
+import { normalizePdfSearchText, searchPdfPageTextModel, type PdfSearchMatch } from "@/lib/pdf-search";
 import { buildRenderedPdfPageTextModel } from "@/lib/pdf-page-text-cache";
 
 interface PdfSearchOverlayProps {
@@ -35,6 +35,9 @@ export function PdfSearchOverlay({
   const inputRef = useRef<HTMLInputElement>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const documentTokenRef = useRef(0);
+  const stopOverlayEvent = useCallback((event: React.SyntheticEvent) => {
+    event.stopPropagation();
+  }, []);
 
   useEffect(() => {
     if (isOpen && inputRef.current) {
@@ -86,7 +89,7 @@ export function PdfSearchOverlay({
               fileHandle,
               pageNumber,
             });
-            texts.set(pageNumber, text.toLowerCase());
+            texts.set(pageNumber, text);
           } catch {
             // Ignore page extraction failures so search can continue on the rest.
           }
@@ -115,21 +118,27 @@ export function PdfSearchOverlay({
     const windowSize = 36;
     const previewStart = Math.max(0, start - windowSize);
     const previewEnd = Math.min(text.length, start + queryText.length + windowSize);
-    const prefix = previewStart > 0 ? "…" : "";
-    const suffix = previewEnd < text.length ? "…" : "";
+    const prefix = previewStart > 0 ? "..." : "";
+    const suffix = previewEnd < text.length ? "..." : "";
     return `${prefix}${text.slice(previewStart, previewEnd)}${suffix}`;
   }, []);
 
   const doSearch = useCallback((q: string) => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
     if (!q.trim()) {
+      setMatches([]);
+      setCurrentMatch(-1);
+      onActiveMatchChange?.(null);
+      return;
+    }
+    searchTimer.current = setTimeout(() => {
+      const needle = normalizePdfSearchText(q).text;
+      if (!needle) {
         setMatches([]);
         setCurrentMatch(-1);
         onActiveMatchChange?.(null);
         return;
       }
-      searchTimer.current = setTimeout(() => {
-        const needle = q.toLowerCase();
       const found: PdfSearchMatch[] = [];
       for (let page = 1; page <= numPages; page++) {
         const pageElement = document.querySelector<HTMLElement>(`[data-page-number="${page}"]`);
@@ -141,15 +150,19 @@ export function PdfSearchOverlay({
 
         const text = pageTexts.get(page);
         if (!text) continue;
+        const normalizedPage = normalizePdfSearchText(text);
         let idx = 0;
-        while ((idx = text.indexOf(needle, idx)) !== -1) {
+        while ((idx = normalizedPage.text.indexOf(needle, idx)) !== -1) {
+          const start = normalizedPage.indexMap[idx] ?? 0;
+          const end = (normalizedPage.indexMap[idx + needle.length - 1] ?? start) + 1;
           found.push({
             page,
-            index: idx,
-            preview: buildPreview(text, idx, needle),
+            index: start,
+            normalizedIndex: idx,
+            preview: buildPreview(text, start, text.slice(start, end)),
             rects: [],
           });
-          idx += needle.length;
+          idx += Math.max(1, needle.length);
         }
       }
       setMatches(found);
@@ -189,7 +202,21 @@ export function PdfSearchOverlay({
   if (!isOpen) return null;
 
   return (
-    <div className="absolute top-2 right-2 z-50 w-80 rounded-lg border border-border bg-background/95 px-2 py-2 shadow-lg backdrop-blur-sm">
+    <div
+      className="absolute top-2 right-2 z-50 w-80 rounded-lg border border-border bg-background/95 px-2 py-2 shadow-lg backdrop-blur-sm"
+      data-pdf-search-overlay="true"
+      data-testid="pdf-search-overlay"
+      onPointerDown={stopOverlayEvent}
+      onPointerUp={stopOverlayEvent}
+      onMouseDown={stopOverlayEvent}
+      onMouseUp={stopOverlayEvent}
+      onClick={stopOverlayEvent}
+      onDoubleClick={stopOverlayEvent}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+    >
       <div className="flex items-center gap-1">
         <input
           ref={inputRef}
@@ -206,7 +233,11 @@ export function PdfSearchOverlay({
           </span>
         )}
         <button
-          onClick={() => goToMatch(-1)}
+          onPointerDown={stopOverlayEvent}
+          onClick={(event) => {
+            event.stopPropagation();
+            goToMatch(-1);
+          }}
           disabled={matches.length === 0}
           className="p-0.5 rounded hover:bg-accent disabled:opacity-30 transition-colors"
           title={t("pdf.search.prevMatch")}
@@ -214,7 +245,11 @@ export function PdfSearchOverlay({
           <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
         </button>
         <button
-          onClick={() => goToMatch(1)}
+          onPointerDown={stopOverlayEvent}
+          onClick={(event) => {
+            event.stopPropagation();
+            goToMatch(1);
+          }}
           disabled={matches.length === 0}
           className="p-0.5 rounded hover:bg-accent disabled:opacity-30 transition-colors"
           title={t("pdf.search.nextMatch")}
@@ -222,7 +257,11 @@ export function PdfSearchOverlay({
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
         </button>
         <button
-          onClick={onClose}
+          onPointerDown={stopOverlayEvent}
+          onClick={(event) => {
+            event.stopPropagation();
+            onClose();
+          }}
           className="p-0.5 rounded hover:bg-accent transition-colors"
           title={t("pdf.search.close")}
         >
@@ -239,7 +278,9 @@ export function PdfSearchOverlay({
               <button
                 key={`${match.page}-${match.index}-${index}`}
                 type="button"
-                onClick={() => {
+                onPointerDown={stopOverlayEvent}
+                onClick={(event) => {
+                  event.stopPropagation();
                   setCurrentMatch(index);
                   onNavigateToPage(match.page, match.rects);
                   onActiveMatchChange?.(match);

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { EditorView } from '@codemirror/view';
+import { Ellipsis, Grip, Plus } from 'lucide-react';
 
 export type TableAlignment = 'left' | 'center' | 'right' | null;
 
@@ -127,6 +128,21 @@ function getEditableRows(rows: string[][], hasHeader: boolean): string[][] {
   return [[...header], ...body.map((row) => [...row])];
 }
 
+function getDataStartIndex(rows: string[][], hasHeader: boolean): number {
+  if (!hasHeader) return 0;
+  return hasExplicitSeparatorRow(rows, hasHeader) ? 2 : 1;
+}
+
+function getEditableDataStartIndex(hasHeader: boolean): number {
+  return hasHeader ? 1 : 0;
+}
+
+function mapRowIndexToEditableRows(rows: string[][], hasHeader: boolean, rowIndex: number): number {
+  if (!hasExplicitSeparatorRow(rows, hasHeader)) return rowIndex;
+  if (rowIndex <= 0) return rowIndex;
+  return Math.max(1, rowIndex - 1);
+}
+
 function clampCellPosition(
   cell: CellPosition | null,
   rows: string[][],
@@ -226,6 +242,27 @@ function toggleColumnHighlight(
   return nextRows;
 }
 
+function parseClipboardCellMatrix(text: string): string[][] {
+  const trimmed = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  if (!trimmed) return [];
+  const lines = trimmed.split('\n');
+  const markdownTableLines = lines.filter((line) => line.includes('|'));
+  if (markdownTableLines.length >= 2) {
+    return markdownTableLines
+      .filter((line) => !/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line))
+      .map((line) =>
+        line
+          .trim()
+          .replace(/^\|/, '')
+          .replace(/\|$/, '')
+          .split('|')
+          .map((cell) => cell.trim())
+      );
+  }
+
+  return lines.map((line) => line.split('\t').map((cell) => cell.trim()));
+}
+
 export function tableToMarkdown(rows: string[][], alignments: TableAlignment[], hasHeader: boolean): string {
   if (rows.length === 0) return '';
 
@@ -266,17 +303,17 @@ export function insertTableColumn(
   columnIndex: number,
   alignment: TableAlignment = null
 ): TableMutationResult {
-  const colCount = getColumnCount(rows, alignments);
+  const editableRows = getEditableRows(rows, hasHeader);
+  const colCount = getColumnCount(editableRows, alignments);
   const insertAt = Math.max(0, Math.min(columnIndex + 1, colCount));
-  const nextRows = normalizeRows(rows, colCount).map((row, rowIndex) => {
-    const cell = hasExplicitSeparatorRow(rows, hasHeader) && hasHeader && rowIndex === 1 ? '---' : '';
-    row.splice(insertAt, 0, cell);
+  const nextRows = normalizeRows(editableRows, colCount).map((row) => {
+    row.splice(insertAt, 0, '');
     return row;
   });
   const nextAlignments = [...alignments];
   nextAlignments.splice(insertAt, 0, alignment);
   return {
-    rows: hasHeader ? ensureHeaderSeparatorRow(nextRows, nextAlignments) : nextRows,
+    rows: nextRows,
     alignments: nextAlignments,
   };
 }
@@ -287,23 +324,24 @@ export function deleteTableColumn(
   hasHeader: boolean,
   columnIndex: number
 ): TableMutationResult {
-  const colCount = getColumnCount(rows, alignments);
+  const editableRows = getEditableRows(rows, hasHeader);
+  const colCount = getColumnCount(editableRows, alignments);
   if (colCount <= 1) {
     return {
-      rows: hasHeader ? ensureHeaderSeparatorRow(rows, alignments) : cloneRows(rows),
+      rows: editableRows,
       alignments: [...alignments],
     };
   }
 
   const removeAt = Math.max(0, Math.min(columnIndex, colCount - 1));
-  const nextRows = normalizeRows(rows, colCount).map((row) => {
+  const nextRows = normalizeRows(editableRows, colCount).map((row) => {
     row.splice(removeAt, 1);
     return row;
   });
   const nextAlignments = [...alignments];
   nextAlignments.splice(removeAt, 1);
   return {
-    rows: hasHeader ? ensureHeaderSeparatorRow(nextRows, nextAlignments) : nextRows,
+    rows: nextRows,
     alignments: nextAlignments,
   };
 }
@@ -315,14 +353,16 @@ export function insertTableDataRow(
   rowIndex: number,
   position: 'above' | 'below'
 ): TableMutationResult {
-  const colCount = getColumnCount(rows, alignments);
-  const nextRows = cloneRows(rows);
-  const minimumDataIndex = hasHeader ? (hasExplicitSeparatorRow(rows, hasHeader) ? 2 : 1) : 0;
-  const baseIndex = Math.max(minimumDataIndex, rowIndex);
+  const editableRows = getEditableRows(rows, hasHeader);
+  const colCount = getColumnCount(editableRows, alignments);
+  const nextRows = cloneRows(editableRows);
+  const minimumDataIndex = getEditableDataStartIndex(hasHeader);
+  const editableRowIndex = mapRowIndexToEditableRows(rows, hasHeader, rowIndex);
+  const baseIndex = Math.max(minimumDataIndex, editableRowIndex);
   const insertAt = position === 'above' ? baseIndex : baseIndex + 1;
   nextRows.splice(insertAt, 0, Array.from({ length: colCount }, () => ''));
   return {
-    rows: hasHeader ? ensureHeaderSeparatorRow(nextRows, alignments) : nextRows,
+    rows: nextRows,
     alignments: [...alignments],
   };
 }
@@ -333,20 +373,176 @@ export function deleteTableDataRow(
   hasHeader: boolean,
   rowIndex: number
 ): TableMutationResult {
-  const nextRows = cloneRows(rows);
-  const minimumDataIndex = hasHeader ? (hasExplicitSeparatorRow(rows, hasHeader) ? 2 : 1) : 0;
+  const editableRows = getEditableRows(rows, hasHeader);
+  const nextRows = cloneRows(editableRows);
+  const minimumDataIndex = getEditableDataStartIndex(hasHeader);
+  const editableRowIndex = mapRowIndexToEditableRows(rows, hasHeader, rowIndex);
   const dataRowCount = nextRows.length - minimumDataIndex;
-  if (dataRowCount <= 1 || rowIndex < minimumDataIndex || rowIndex >= nextRows.length) {
+  if (dataRowCount <= 1 || editableRowIndex < minimumDataIndex || editableRowIndex >= nextRows.length) {
     return {
-      rows: hasHeader ? ensureHeaderSeparatorRow(nextRows, alignments) : nextRows,
+      rows: nextRows,
       alignments: [...alignments],
     };
   }
 
-  nextRows.splice(rowIndex, 1);
+  nextRows.splice(editableRowIndex, 1);
   return {
-    rows: hasHeader ? ensureHeaderSeparatorRow(nextRows, alignments) : nextRows,
+    rows: nextRows,
     alignments: [...alignments],
+  };
+}
+
+export function duplicateTableDataRow(
+  rows: string[][],
+  alignments: TableAlignment[],
+  hasHeader: boolean,
+  rowIndex: number
+): TableMutationResult {
+  const editableRows = getEditableRows(rows, hasHeader);
+  const nextRows = cloneRows(editableRows);
+  const minimumDataIndex = getEditableDataStartIndex(hasHeader);
+  const editableRowIndex = mapRowIndexToEditableRows(rows, hasHeader, rowIndex);
+  if (editableRowIndex < minimumDataIndex || editableRowIndex >= nextRows.length) {
+    return {
+      rows: nextRows,
+      alignments: [...alignments],
+    };
+  }
+
+  nextRows.splice(editableRowIndex + 1, 0, [...nextRows[editableRowIndex]]);
+  return {
+    rows: nextRows,
+    alignments: [...alignments],
+  };
+}
+
+export function moveTableDataRow(
+  rows: string[][],
+  alignments: TableAlignment[],
+  hasHeader: boolean,
+  rowIndex: number,
+  direction: -1 | 1
+): TableMutationResult {
+  const editableRows = getEditableRows(rows, hasHeader);
+  const nextRows = cloneRows(editableRows);
+  const minimumDataIndex = getEditableDataStartIndex(hasHeader);
+  const editableRowIndex = mapRowIndexToEditableRows(rows, hasHeader, rowIndex);
+  const targetIndex = editableRowIndex + direction;
+  if (
+    editableRowIndex < minimumDataIndex ||
+    editableRowIndex >= nextRows.length ||
+    targetIndex < minimumDataIndex ||
+    targetIndex >= nextRows.length
+  ) {
+    return {
+      rows: nextRows,
+      alignments: [...alignments],
+    };
+  }
+
+  const [row] = nextRows.splice(editableRowIndex, 1);
+  nextRows.splice(targetIndex, 0, row);
+  return {
+    rows: nextRows,
+    alignments: [...alignments],
+  };
+}
+
+export function duplicateTableColumn(
+  rows: string[][],
+  alignments: TableAlignment[],
+  hasHeader: boolean,
+  columnIndex: number
+): TableMutationResult {
+  const editableRows = getEditableRows(rows, hasHeader);
+  const colCount = getColumnCount(editableRows, alignments);
+  const sourceIndex = Math.max(0, Math.min(columnIndex, colCount - 1));
+  const nextRows = normalizeRows(editableRows, colCount).map((row) => {
+    row.splice(sourceIndex + 1, 0, row[sourceIndex] ?? '');
+    return row;
+  });
+  const nextAlignments = [...alignments];
+  nextAlignments.splice(sourceIndex + 1, 0, alignments[sourceIndex] ?? null);
+  return {
+    rows: nextRows,
+    alignments: nextAlignments,
+  };
+}
+
+export function moveTableColumn(
+  rows: string[][],
+  alignments: TableAlignment[],
+  hasHeader: boolean,
+  columnIndex: number,
+  direction: -1 | 1
+): TableMutationResult {
+  const editableRows = getEditableRows(rows, hasHeader);
+  const colCount = getColumnCount(editableRows, alignments);
+  const sourceIndex = Math.max(0, Math.min(columnIndex, colCount - 1));
+  const targetIndex = sourceIndex + direction;
+  if (targetIndex < 0 || targetIndex >= colCount) {
+    return {
+      rows: editableRows,
+      alignments: [...alignments],
+    };
+  }
+
+  const nextRows = normalizeRows(editableRows, colCount).map((row) => {
+    const [cell] = row.splice(sourceIndex, 1);
+    row.splice(targetIndex, 0, cell ?? '');
+    return row;
+  });
+  const nextAlignments = Array.from({ length: colCount }, (_, index) => alignments[index] ?? null);
+  const [alignment] = nextAlignments.splice(sourceIndex, 1);
+  nextAlignments.splice(targetIndex, 0, alignment ?? null);
+  return {
+    rows: nextRows,
+    alignments: nextAlignments,
+  };
+}
+
+export function pasteTableCellMatrix(
+  rows: string[][],
+  alignments: TableAlignment[],
+  hasHeader: boolean,
+  startRow: number,
+  startCol: number,
+  matrix: string[][]
+): TableMutationResult {
+  if (matrix.length === 0 || matrix.every((row) => row.length === 0)) {
+    return {
+      rows: getEditableRows(rows, hasHeader),
+      alignments: [...alignments],
+    };
+  }
+
+  const editableRows = getEditableRows(rows, hasHeader);
+  const editableStartRow = mapRowIndexToEditableRows(rows, hasHeader, startRow);
+  const currentColCount = getColumnCount(editableRows, alignments);
+  const requiredColCount = Math.max(
+    currentColCount,
+    startCol + Math.max(...matrix.map((row) => row.length)),
+  );
+  const nextRows = normalizeRows(editableRows, requiredColCount);
+  const nextAlignments = Array.from({ length: requiredColCount }, (_, index) => alignments[index] ?? null);
+  const minimumDataIndex = getEditableDataStartIndex(hasHeader);
+  const safeStartRow = Math.max(minimumDataIndex, editableStartRow);
+  const safeStartCol = Math.max(0, startCol);
+
+  while (nextRows.length < safeStartRow + matrix.length) {
+    nextRows.push(Array.from({ length: requiredColCount }, () => ''));
+  }
+
+  matrix.forEach((matrixRow, rowOffset) => {
+    const targetRow = nextRows[safeStartRow + rowOffset];
+    matrixRow.forEach((cell, colOffset) => {
+      targetRow[safeStartCol + colOffset] = cell;
+    });
+  });
+
+  return {
+    rows: nextRows,
+    alignments: nextAlignments,
   };
 }
 
@@ -361,9 +557,8 @@ export function setTableColumnAlignment(
   const nextAlignments = Array.from({ length: colCount }, (_, index) => alignments[index] ?? null);
   const targetIndex = Math.max(0, Math.min(columnIndex, colCount - 1));
   nextAlignments[targetIndex] = alignment;
-  const nextRows = hasHeader ? ensureHeaderSeparatorRow(rows, nextAlignments) : cloneRows(rows);
   return {
-    rows: nextRows,
+    rows: getEditableRows(rows, hasHeader),
     alignments: nextAlignments,
   };
 }
@@ -390,6 +585,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({
   const [isHovered, setIsHovered] = useState(false);
   const [overlayMetrics, setOverlayMetrics] = useState<TableOverlayMetrics>({ columnCenters: [], rowCenters: [] });
   const [structureMenu, setStructureMenu] = useState<TableStructureMenuState | null>(null);
+  const [showSource, setShowSource] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -451,6 +647,10 @@ export const TableEditor: React.FC<TableEditorProps> = ({
   }, [rows, alignments, editingCell]);
 
   const columnCount = useMemo(() => getColumnCount(rows, alignments), [rows, alignments]);
+  const currentMarkdown = useMemo(
+    () => tableToMarkdown(rows, alignments, hasHeader),
+    [alignments, hasHeader, rows]
+  );
   const dataRowStart = hasHeader ? 1 : 0;
   const defaultCell = useMemo(
     () => clampCellPosition({ row: Math.min(dataRowStart, Math.max(rows.length - 1, 0)), col: 0 }, rows, alignments),
@@ -754,11 +954,61 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     closeStructureMenu();
   }, [alignments, applyTableState, closeStructureMenu, dataRowStart, hasHeader, rows, selectedCell]);
 
+  const handleDuplicateRow = useCallback((rowIndex: number) => {
+    const result = duplicateTableDataRow(rows, alignments, hasHeader, rowIndex);
+    applyTableState(result.rows, result.alignments, { row: Math.min(rowIndex + 1, result.rows.length - 1), col: selectedCell?.col ?? 0 });
+    closeStructureMenu();
+  }, [alignments, applyTableState, closeStructureMenu, hasHeader, rows, selectedCell]);
+
+  const handleMoveRow = useCallback((rowIndex: number, direction: -1 | 1) => {
+    const result = moveTableDataRow(rows, alignments, hasHeader, rowIndex, direction);
+    applyTableState(result.rows, result.alignments, { row: Math.max(dataRowStart, Math.min(rowIndex + direction, result.rows.length - 1)), col: selectedCell?.col ?? 0 });
+    closeStructureMenu();
+  }, [alignments, applyTableState, closeStructureMenu, dataRowStart, hasHeader, rows, selectedCell]);
+
   const handleSetAlignment = useCallback((colIndex: number, alignment: TableAlignment) => {
     const result = setTableColumnAlignment(rows, alignments, hasHeader, colIndex, alignment);
     applyTableState(result.rows, result.alignments, selectedCell);
     closeStructureMenu();
   }, [alignments, applyTableState, closeStructureMenu, hasHeader, rows, selectedCell]);
+
+  const handleDuplicateColumn = useCallback((colIndex: number) => {
+    const result = duplicateTableColumn(rows, alignments, hasHeader, colIndex);
+    applyTableState(result.rows, result.alignments, { row: selectedCell?.row ?? dataRowStart, col: Math.min(colIndex + 1, result.alignments.length - 1) });
+    closeStructureMenu();
+  }, [alignments, applyTableState, closeStructureMenu, dataRowStart, hasHeader, rows, selectedCell]);
+
+  const handleMoveColumn = useCallback((colIndex: number, direction: -1 | 1) => {
+    const result = moveTableColumn(rows, alignments, hasHeader, colIndex, direction);
+    applyTableState(result.rows, result.alignments, { row: selectedCell?.row ?? dataRowStart, col: Math.max(0, Math.min(colIndex + direction, result.alignments.length - 1)) });
+    closeStructureMenu();
+  }, [alignments, applyTableState, closeStructureMenu, dataRowStart, hasHeader, rows, selectedCell]);
+
+  const handleCopyMarkdown = useCallback(() => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      void navigator.clipboard.writeText(currentMarkdown);
+    }
+    closeStructureMenu();
+  }, [closeStructureMenu, currentMarkdown]);
+
+  const handlePasteMatrix = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.readText) {
+      closeStructureMenu();
+      return;
+    }
+
+    const text = await navigator.clipboard.readText();
+    const matrix = parseClipboardCellMatrix(text);
+    const start = selectedCell ?? activeCell ?? { row: dataRowStart, col: 0 };
+    const result = pasteTableCellMatrix(rows, alignments, hasHeader, start.row, start.col, matrix);
+    applyTableState(result.rows, result.alignments, start);
+    closeStructureMenu();
+  }, [activeCell, alignments, applyTableState, closeStructureMenu, dataRowStart, hasHeader, rows, selectedCell]);
+
+  const handleToggleSource = useCallback(() => {
+    setShowSource((value) => !value);
+    closeStructureMenu();
+  }, [closeStructureMenu]);
 
   const handleHighlightCell = useCallback((cell: CellPosition) => {
     applyTableState(toggleCellHighlight(rows, cell.row, cell.col), alignments, cell);
@@ -809,7 +1059,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => openStructureMenu({ kind: 'column', col: colIndex, x: center, y: 0 })}
         >
-          ⋮
+          <Ellipsis aria-hidden="true" size={14} />
         </button>
       ))}
 
@@ -823,9 +1073,9 @@ export const TableEditor: React.FC<TableEditorProps> = ({
             style={{ left: "-10px", top: `${center}px`, transform: "translate(-100%, -50%)" }}
             aria-label={`Row ${rowIndex + 1} actions`}
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => openStructureMenu({ kind: 'row', row: rowIndex, x: 0, y: center })}
-          >
-            ⋯
+          onClick={() => openStructureMenu({ kind: 'row', row: rowIndex, x: 0, y: center })}
+        >
+            <Ellipsis aria-hidden="true" size={14} />
           </button>
         );
       })}
@@ -834,12 +1084,12 @@ export const TableEditor: React.FC<TableEditorProps> = ({
         <button
           type="button"
           className="table-editor-perimeter-handle table-editor-perimeter-handle--table"
-          style={{ left: "-10px", top: "-10px", transform: "translate(-100%, -100%)" }}
+          style={{ left: "6px", top: "6px" }}
           aria-label="Table actions"
           onMouseDown={(event) => event.preventDefault()}
-          onClick={() => openStructureMenu({ kind: 'table', x: 0, y: 0 })}
+          onClick={() => openStructureMenu({ kind: 'table', x: 6, y: 34 })}
         >
-          ⊕
+          <Plus aria-hidden="true" size={14} />
         </button>
       ) : null}
 
@@ -853,11 +1103,12 @@ export const TableEditor: React.FC<TableEditorProps> = ({
               ? 'translate(calc(-100% - 12px), -50%)'
               : structureMenu.kind === 'column'
                 ? 'translate(-50%, calc(-100% - 12px))'
-                : 'translate(calc(-100% - 12px), calc(-100% - 12px))',
+                : 'none',
           }}
           onMouseDown={(event) => event.preventDefault()}
         >
           <div className="table-editor-panel-meta">
+            <Grip aria-hidden="true" size={12} />
             {structureMenu.kind === 'row'
               ? `Row ${structureMenu.row! + 1}`
               : structureMenu.kind === 'column'
@@ -872,6 +1123,9 @@ export const TableEditor: React.FC<TableEditorProps> = ({
                 <div className="table-editor-panel-actions">
                   <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleInsertColumn(columnCount - 1, 'right')}>Add Column</button>
                   <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleInsertRow(rows.length - 1, 'below')}>Add Row</button>
+                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => void handlePasteMatrix()}>Paste Cells</button>
+                  <button className="btn-icon btn-icon--menu" type="button" onClick={handleCopyMarkdown}>Copy Markdown</button>
+                  <button className="btn-icon btn-icon--menu" type="button" onClick={handleToggleSource}>{showSource ? 'Hide Source' : 'Show Source'}</button>
                 </div>
               </div>
               {selectedCell ? (
@@ -893,6 +1147,9 @@ export const TableEditor: React.FC<TableEditorProps> = ({
                 <div className="table-editor-panel-actions">
                   <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleInsertRow(structureMenu.row!, 'above')}>Insert Above</button>
                   <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleInsertRow(structureMenu.row!, 'below')}>Insert Below</button>
+                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleDuplicateRow(structureMenu.row!)}>Duplicate Row</button>
+                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleMoveRow(structureMenu.row!, -1)}>Move Up</button>
+                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleMoveRow(structureMenu.row!, 1)}>Move Down</button>
                   <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleDeleteRow(structureMenu.row!)}>Delete Row</button>
                   <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleHighlightRow(structureMenu.row!)}>Highlight Row</button>
                 </div>
@@ -907,6 +1164,9 @@ export const TableEditor: React.FC<TableEditorProps> = ({
                 <div className="table-editor-panel-actions">
                   <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleInsertColumn(structureMenu.col!, 'left')}>Insert Left</button>
                   <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleInsertColumn(structureMenu.col!, 'right')}>Insert Right</button>
+                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleDuplicateColumn(structureMenu.col!)}>Duplicate Column</button>
+                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleMoveColumn(structureMenu.col!, -1)}>Move Left</button>
+                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleMoveColumn(structureMenu.col!, 1)}>Move Right</button>
                   <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleDeleteColumn(structureMenu.col!)}>Delete Column</button>
                   <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleHighlightColumn(structureMenu.col!)}>Highlight Column</button>
                 </div>
@@ -917,6 +1177,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({
                   <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleSetAlignment(structureMenu.col!, 'left')}>Left</button>
                   <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleSetAlignment(structureMenu.col!, 'center')}>Center</button>
                   <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleSetAlignment(structureMenu.col!, 'right')}>Right</button>
+                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleSetAlignment(structureMenu.col!, null)}>Clear</button>
                 </div>
               </div>
             </>
@@ -975,6 +1236,11 @@ export const TableEditor: React.FC<TableEditorProps> = ({
           </tbody>
         </table>
       </div>
+      {showSource ? (
+        <pre className="table-editor-source-preview" aria-label="Markdown table source">
+          <code>{currentMarkdown}</code>
+        </pre>
+      ) : null}
     </div>
   );
 };

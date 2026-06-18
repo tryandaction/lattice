@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useMemo, useState, useSyncExternalStore } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, FileText, GitBranch, Link2, MoveUpRight, Search } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, FileText, GitBranch, Link2, MoveUpRight, Paperclip, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/hooks/use-i18n";
 import {
@@ -17,8 +17,9 @@ import {
 } from "@/lib/markdown/workspace-link-index";
 import type { IndexedMarkdownLink, MarkdownBacklink } from "@/lib/markdown/link-index";
 import type { MarkdownGraph } from "@/lib/markdown/graph";
+import type { MarkdownAttachmentCleanupCandidate } from "@/lib/markdown/attachment-cleanup";
 
-type LinkPanelSectionId = "backlinks" | "unlinked" | "outgoing" | "broken" | "graph";
+type LinkPanelSectionId = "backlinks" | "unlinked" | "outgoing" | "broken" | "attachments" | "graph";
 
 type CollapsedSections = Partial<Record<LinkPanelSectionId, boolean>>;
 
@@ -33,6 +34,9 @@ interface MarkdownLinksPanelProps {
   onLinkUnlinkedMentions?: (mentions: MarkdownUnlinkedMention[]) => void;
   onIgnoreUnlinkedMention?: (mention: MarkdownUnlinkedMention) => void;
   onRepairBrokenLink?: (link: IndexedMarkdownLink, targetFile: string) => void;
+  onConvertMarkdownLinkToWiki?: (link: IndexedMarkdownLink) => void;
+  attachmentCleanupCandidates?: MarkdownAttachmentCleanupCandidate[];
+  onReviewUnreferencedAttachment?: (candidate: MarkdownAttachmentCleanupCandidate) => void;
   className?: string;
 }
 
@@ -258,17 +262,21 @@ function BrokenRow({
   createLabel,
   repairLabel,
   repairTargetLabel,
+  convertLabel,
   repairTargets,
   onCreateMissingNote,
   onRepairBrokenLink,
+  onConvertMarkdownLinkToWiki,
 }: {
   link: IndexedMarkdownLink;
   createLabel: string;
   repairLabel: string;
   repairTargetLabel: string;
+  convertLabel: string;
   repairTargets: string[];
   onCreateMissingNote?: (link: IndexedMarkdownLink) => void;
   onRepairBrokenLink?: (link: IndexedMarkdownLink, targetFile: string) => void;
+  onConvertMarkdownLinkToWiki?: (link: IndexedMarkdownLink) => void;
 }) {
   const [selectedTarget, setSelectedTarget] = useState("");
   return (
@@ -293,6 +301,18 @@ function BrokenRow({
           )}
         >
           {createLabel}
+        </button>
+      )}
+      {onConvertMarkdownLinkToWiki && (
+        <button
+          type="button"
+          onClick={() => onConvertMarkdownLinkToWiki(link)}
+          className={cn(
+            "mt-1 ml-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors",
+            "hover:bg-accent/50 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50",
+          )}
+        >
+          {convertLabel}
         </button>
       )}
       {onRepairBrokenLink && repairTargets.length > 0 && (
@@ -325,6 +345,40 @@ function BrokenRow({
             {repairLabel}
           </button>
         </div>
+      )}
+    </div>
+  );
+}
+
+function AttachmentCleanupRow({
+  candidate,
+  reviewLabel,
+  onReview,
+}: {
+  candidate: MarkdownAttachmentCleanupCandidate;
+  reviewLabel: string;
+  onReview?: (candidate: MarkdownAttachmentCleanupCandidate) => void;
+}) {
+  return (
+    <div className="rounded px-2 py-1.5 text-sm" title={candidate.displayPath}>
+      <div className="flex items-center gap-2">
+        <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">{candidate.path}</span>
+        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
+          {candidate.extension}
+        </span>
+      </div>
+      {onReview && (
+        <button
+          type="button"
+          onClick={() => onReview(candidate)}
+          className={cn(
+            "mt-1 ml-5 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors",
+            "hover:bg-accent/50 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50",
+          )}
+        >
+          {reviewLabel}
+        </button>
       )}
     </div>
   );
@@ -511,6 +565,9 @@ function MarkdownLinksPanelComponent({
   onLinkUnlinkedMentions,
   onIgnoreUnlinkedMention,
   onRepairBrokenLink,
+  onConvertMarkdownLinkToWiki,
+  attachmentCleanupCandidates = [],
+  onReviewUnreferencedAttachment,
   className,
 }: MarkdownLinksPanelProps) {
   const { t } = useI18n();
@@ -587,6 +644,14 @@ function MarkdownLinksPanelComponent({
       link.displayText,
     ], normalizedFilter)),
     [broken, normalizedFilter],
+  );
+  const filteredAttachmentCleanupCandidates = useMemo(
+    () => attachmentCleanupCandidates.filter((candidate) => matchesFilter([
+      candidate.path,
+      candidate.displayPath,
+      candidate.extension,
+    ], normalizedFilter)),
+    [attachmentCleanupCandidates, normalizedFilter],
   );
   const filteredGraphNeighbors = useMemo(
     () => localGraphNeighbors.filter((node) => matchesFilter([
@@ -711,13 +776,36 @@ function MarkdownLinksPanelComponent({
               createLabel={t("markdown.links.createNote")}
               repairLabel={t("markdown.links.repairLink")}
               repairTargetLabel={t("markdown.links.repairTarget")}
+              convertLabel={t("markdown.links.convertToWiki")}
               repairTargets={repairTargets}
               onCreateMissingNote={onCreateMissingNote}
               onRepairBrokenLink={onRepairBrokenLink}
+              onConvertMarkdownLinkToWiki={onConvertMarkdownLinkToWiki}
             />
           ))
         ) : (
           <EmptyState label={t("markdown.links.noBroken")} />
+        )}
+      </PanelSection>
+
+      <PanelSection
+        sectionId="attachments"
+        title={t("markdown.links.attachments")}
+        count={filteredAttachmentCleanupCandidates.length}
+        collapsed={Boolean(collapsedSections.attachments)}
+        onToggle={toggleSection}
+      >
+        {filteredAttachmentCleanupCandidates.length > 0 ? (
+          filteredAttachmentCleanupCandidates.map((candidate) => (
+            <AttachmentCleanupRow
+              key={candidate.path}
+              candidate={candidate}
+              reviewLabel={t("markdown.links.reviewAttachment")}
+              onReview={onReviewUnreferencedAttachment}
+            />
+          ))
+        ) : (
+          <EmptyState label={t("markdown.links.noUnreferencedAttachments")} />
         )}
       </PanelSection>
 

@@ -201,6 +201,7 @@ describe('HUD Store', () => {
       const result = useHUDStore.getState().computeOptimalPosition();
       expect(result.side).toBe('bottom');
       expect(typeof result.topPx).toBe('number');
+      expect(typeof result.leftPx).toBe('number');
     });
 
     it('computeOptimalPosition respects fixed position setting', () => {
@@ -209,6 +210,7 @@ describe('HUD Store', () => {
       const result = useHUDStore.getState().computeOptimalPosition();
       expect(result.side).toBe('top');
       expect(typeof result.topPx).toBe('number');
+      expect(typeof result.leftPx).toBe('number');
     });
 
     it('closeHUD preserves position settings', () => {
@@ -243,6 +245,7 @@ describe('HUD Store', () => {
         bottom: 150,
         left: 200,
         right: 400,
+        centerX: 300,
         centerY: 125,
       });
     });

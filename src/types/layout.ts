@@ -118,7 +118,7 @@ export interface CommandBarAction {
   active?: boolean;
   disabled?: boolean;
   priority?: number;
-  group?: "primary" | "secondary" | "utility";
+  group?: "primary" | "secondary" | "utility" | "overflow";
   onTrigger?: () => void;
   onContextMenu?: (position: { x: number; y: number }) => void;
 }

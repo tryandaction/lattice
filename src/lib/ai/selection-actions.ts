@@ -47,8 +47,9 @@ function buildExecutionPrompt(mode: SelectionAiMode, prompt: string, context: Se
 export function inferSelectionResearchWorkflow(context: SelectionContext): ResearchAgentWorkflowId {
   switch (context.sourceKind) {
     case 'notebook':
-    case 'code':
       return 'notebook-analysis';
+    case 'code':
+      return 'code-change-plan';
     default:
       return 'markdown-research';
   }

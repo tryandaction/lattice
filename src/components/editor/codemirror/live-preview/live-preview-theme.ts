@@ -1323,6 +1323,16 @@ export const livePreviewTheme = EditorView.theme({
     lineHeight: '0',
     fontSize: '0',
   },
+
+  '.cm-properties-source-hidden': {
+    visibility: 'hidden',
+    height: '0',
+    overflow: 'hidden',
+    margin: '0',
+    padding: '0',
+    lineHeight: '0',
+    fontSize: '0',
+  },
   
   // Source mode for new elements
   '.cm-superscript-source, .cm-subscript-source, .cm-kbd-source, .cm-footnoteref-source, .cm-embed-source, .cm-mark-source': {

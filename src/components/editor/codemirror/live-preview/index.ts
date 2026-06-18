@@ -22,7 +22,13 @@ export { decorationCoordinatorExtension, parsedElementsField } from './decoratio
 export { foldingExtension } from './folding-plugin';
 export { markdownKeymap } from './keyboard-shortcuts';
 export { autoFormattingExtension } from './auto-formatting';
-export { wikiLinkAutocomplete, updateAvailableFiles } from './wiki-link-autocomplete';
+export {
+  wikiLinkAutocomplete,
+  updateAvailableFiles,
+  updateWikiLinkCompletionContext,
+  rankWikiLinkCompletion,
+  type WikiLinkCompletionContext,
+} from './wiki-link-autocomplete';
 export { createImageDropExtension, imageDropExtension, type ImageUploadHandler } from './image-drop-plugin';
 
 // Accessibility

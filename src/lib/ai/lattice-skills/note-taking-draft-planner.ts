@@ -178,6 +178,7 @@ export function buildNoteTakingDraftSuggestion(
 
     case 'teaching-explain':
     case 'knowledge-organization':
+    case 'code-change-plan':
       return undefined;
 
     case 'markdown-research':

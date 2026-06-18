@@ -69,11 +69,12 @@ npm run release:prepare
 - [快速开始](./docs/guides/quick-start.md)
 - [安装与更新](./docs/guides/installation.md)
 - [桌面功能](./docs/DESKTOP_FEATURES.md)
+- [量子键盘与 Markdown 编辑指南](./docs/guides/quantum-keyboard.md)
 - [发布说明](./docs/RELEASE_NOTES.md)
 
 ### 架构与开发
 
-- [AI 开发指南](./AI_DEVELOPMENT_GUIDE.md)
+- [AI Coding Agent 路线图](./docs/AI_CODING_AGENT_ROADMAP.md)
 - [架构说明](./docs/ARCHITECTURE.md)
 - [桌面构建与产物指南](./docs/guides/desktop-app.md)
 - [GitHub Pages / Release 部署指南](./docs/guides/github-deploy.md)

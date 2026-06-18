@@ -192,6 +192,10 @@ import { AgentTracePanel } from '../agent-trace-panel';
 import { useAiChatStore } from '@/stores/ai-chat-store';
 import { useAgentSessionStore } from '@/stores/agent-session-store';
 import { executeAgentTool } from '@/lib/ai/agent-tool-broker';
+import {
+  buildCodingQaRunnerApprovalRequest,
+  buildCodingQaRunnerViewModel,
+} from '@/lib/ai/coding-qa-runner-view-model';
 
 describe('AgentTracePanel', () => {
   beforeEach(() => {
@@ -267,6 +271,30 @@ describe('AgentTracePanel', () => {
       resultPreview: expect.stringContaining('4'),
     });
     expect(screen.getAllByText('Running').length).toBeGreaterThan(0);
+  });
+
+  it('links coding QA approvals to the protocol evidence import section', () => {
+    const view = buildCodingQaRunnerViewModel({
+      activeTabPath: 'src/lib/__tests__/ai-coding-qa-runner-view-model.test.ts',
+    });
+    const request = buildCodingQaRunnerApprovalRequest(view, {
+      now: 123,
+      idPrefix: 'qa-link',
+    });
+    const store = useAgentSessionStore.getState();
+    store.createSession({
+      id: 'session-qa-link',
+      profile: 'research',
+      task: request.sessionTask,
+      title: request.sessionTitle,
+      now: 100,
+    });
+    store.addPendingApproval('session-qa-link', request.approval);
+
+    render(<AgentTracePanel />);
+
+    const link = screen.getByRole('link', { name: 'Open QA evidence import' });
+    expect(link.getAttribute('href')).toBe('/agent-protocol#qa-evidence');
   });
 
   it('approves a pending code run through the default workspace runner', async () => {

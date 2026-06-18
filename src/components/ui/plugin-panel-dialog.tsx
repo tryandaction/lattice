@@ -9,6 +9,8 @@ import type { PluginCommand, PluginPanel, PluginPanelSchema } from "@/lib/plugin
 import { cn } from "@/lib/utils";
 import { MarkdownRenderer } from "@/components/renderers/markdown-renderer";
 import { highlightMatch } from "@/components/ui/search-highlight";
+import { FormulaExtractorPanel } from "@/plugins/formula-extractor/panel";
+import type { FormulaExtractionResult } from "@/plugins/formula-extractor/types";
 
 export interface PluginPanelDialogProps {
   isOpen: boolean;
@@ -119,6 +121,16 @@ function renderPanelSchema(
           </label>
         ))}
       </div>
+    );
+  }
+
+  if (schema.type === "custom" && props.kind === "formula-extractor.results") {
+    return (
+      <FormulaExtractorPanel
+        result={(props.result as FormulaExtractionResult | null | undefined) ?? null}
+        busy={Boolean(props.busy)}
+        error={typeof props.error === "string" ? props.error : null}
+      />
     );
   }
 

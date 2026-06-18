@@ -12,7 +12,7 @@ import "highlight.js/styles/github-dark.css";
 import { useEffect, useRef, useState, useCallback, memo, forwardRef, useImperativeHandle } from 'react';
 import { Loader2 } from 'lucide-react';
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
-import { EditorState, Extension, Transaction } from '@codemirror/state';
+import { EditorSelection, EditorState, Extension, Transaction } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { bracketMatching } from '@codemirror/language';
@@ -26,7 +26,8 @@ import { foldingExtension } from './folding-plugin';
 import { markdownKeymap } from './keyboard-shortcuts';
 import { autoFormattingExtension } from './auto-formatting';
 import { livePreviewThemeExtension } from './live-preview-theme';
-import { wikiLinkAutocomplete, updateAvailableFiles } from './wiki-link-autocomplete';
+import { wikiLinkAutocomplete, updateAvailableFiles, updateWikiLinkCompletionContext } from './wiki-link-autocomplete';
+import { markdownSmartInputExtension } from './markdown-smart-input';
 import { createImageDropExtension, ImageUploadHandler } from './image-drop-plugin';
 import { createMathPasteExtension } from './math-paste-plugin';
 import { createAccessibilityExtension, addEditorDescription, announceChange } from './accessibility';
@@ -47,6 +48,16 @@ import { imageResolverFacet } from './image-resolver-facet';
 import { enterCodeBlockSourceMode, setCodeBlockSourceMode, setMathSourceMode } from './source-mode';
 import { createLocalImageUrlCache, type LocalImageUrlCache } from './local-image-url-cache';
 import { codeBlockRunContextFacet } from './code-block-run-context';
+import {
+  getCurrentMarkdownBlock,
+  getMarkdownEditorContext,
+  getPropertiesYaml,
+  markdownBlockToHtml,
+  runMarkdownEditingCommand,
+  type MarkdownCommandPayload,
+  type MarkdownEditingCommandId,
+  type MarkdownEditorContext,
+} from './markdown-editing-commands';
 
 // Helper: resolve a relative image path against the current file's directory
 function resolveImagePath(currentFilePath: string, imageUrl: string): string {
@@ -189,6 +200,18 @@ export interface LivePreviewEditorRef {
   revealCodeBlockLine: (request: LivePreviewCodeBlockRevealRequest) => void;
   /** Open the built-in search panel */
   openSearch: () => void;
+  /** Run a standard Markdown editing command */
+  runMarkdownCommand: (commandId: MarkdownEditingCommandId, payload?: MarkdownCommandPayload) => boolean;
+  /** Get the current Markdown block or inline context */
+  getMarkdownContext: () => MarkdownEditorContext | null;
+  /** Move the editor cursor to a screen coordinate */
+  setCursorFromPoint: (x: number, y: number) => boolean;
+  /** Copy the current Markdown block as source */
+  copyCurrentBlockAsMarkdown: () => Promise<boolean>;
+  /** Copy the current Markdown block as simple HTML */
+  copyCurrentBlockAsHtml: () => Promise<boolean>;
+  /** Copy the current YAML properties block */
+  copyPropertiesYaml: () => Promise<boolean>;
 }
 
 /**
@@ -200,7 +223,7 @@ function buildExtensions(
   showFoldGutter: boolean,
   readOnly: boolean,
   autoHeight: boolean,
-  aiEnabled: boolean,
+  aiInlineCompletionEnabled: boolean,
   onChange: (content: string) => void,
   onOutlineChange?: (outline: OutlineItem[]) => void,
   onSave?: () => void,
@@ -314,6 +337,7 @@ function buildExtensions(
       markdownKeymap,
       autoFormattingExtension,
       closeBrackets(),
+      ...markdownSmartInputExtension,
       ...wikiLinkAutocomplete,
       createMathPasteExtension(),
       createImageDropExtension(onImageUpload, useWikiImageStyle)
@@ -322,6 +346,7 @@ function buildExtensions(
     // Source mode: just syntax highlighting, no decorations
     extensions.push(
       closeBrackets(),
+      ...markdownSmartInputExtension,
       createMathPasteExtension(),
       createImageDropExtension(onImageUpload, useWikiImageStyle)
     );
@@ -344,7 +369,8 @@ function buildExtensions(
   extensions.push(...createAccessibilityExtension({ highContrast }));
 
   // AI inline completion (ghost text) — only in edit mode, not read-only
-  if (!readOnly && aiEnabled) {
+  // AI inline completion is opt-in because it calls the configured AI provider.
+  if (!readOnly && aiInlineCompletionEnabled) {
     extensions.push(aiCompletionExtension(true));
   }
 
@@ -381,13 +407,15 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const pendingEditorStateRef = useRef<EditorStateSnapshot | null>(null);
+  const recentWikiLinkFilesRef = useRef<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [librariesLoaded, setLibrariesLoaded] = useState(false);
   const searchParams = useSearchParams();
   const aiEnabled = useSettingsStore((state) => state.settings.aiEnabled);
+  const aiInlineCompletionEnabledSetting = useSettingsStore((state) => state.settings.aiInlineCompletionEnabled);
   const isQaMode = process.env.NODE_ENV === "development" && searchParams?.get("qa") === "1";
-  const aiCompletionEnabled = aiEnabled && !isQaMode;
+  const aiCompletionEnabled = aiEnabled && aiInlineCompletionEnabledSetting && !isQaMode;
 
   // MathEditor state
   const [mathEditor, setMathEditor] = useState<{
@@ -723,6 +751,20 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     if (!viewRef.current || availableFiles.length === 0) return;
     updateAvailableFiles(viewRef.current, availableFiles);
   }, [availableFiles]);
+
+  useEffect(() => {
+    if (!viewRef.current) return;
+    if (filePath) {
+      recentWikiLinkFilesRef.current = [
+        filePath,
+        ...recentWikiLinkFilesRef.current.filter((item) => item !== filePath),
+      ].slice(0, 12);
+    }
+    updateWikiLinkCompletionContext(viewRef.current, {
+      currentFilePath: filePath,
+      recentFiles: recentWikiLinkFilesRef.current,
+    });
+  }, [fileId, filePath]);
   
   // Handle link clicks emitted by live preview widgets and table editor
   useEffect(() => {
@@ -913,6 +955,66 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     openSearchPanel(viewRef.current);
     viewRef.current.focus();
   }, []);
+
+  const runMarkdownCommand = useCallback((
+    commandId: MarkdownEditingCommandId,
+    payload?: MarkdownCommandPayload,
+  ) => {
+    const view = viewRef.current;
+    if (!view) return false;
+    const handled = runMarkdownEditingCommand(view, commandId, payload);
+    if (handled) {
+      view.focus();
+    }
+    return handled;
+  }, []);
+
+  const getMarkdownContext = useCallback((): MarkdownEditorContext | null => {
+    const view = viewRef.current;
+    return view ? getMarkdownEditorContext(view) : null;
+  }, []);
+
+  const setCursorFromPoint = useCallback((x: number, y: number) => {
+    const view = viewRef.current;
+    if (!view) return false;
+    const position = view.posAtCoords({ x, y });
+    if (position === null) return false;
+    view.dispatch({
+      selection: EditorSelection.cursor(position),
+      scrollIntoView: false,
+    });
+    view.focus();
+    return true;
+  }, []);
+
+  const copyCurrentBlockAsMarkdown = useCallback(async () => {
+    const view = viewRef.current;
+    if (!view || typeof navigator === 'undefined' || !navigator.clipboard) {
+      return false;
+    }
+    await navigator.clipboard.writeText(getCurrentMarkdownBlock(view));
+    return true;
+  }, []);
+
+  const copyCurrentBlockAsHtml = useCallback(async () => {
+    const view = viewRef.current;
+    if (!view || typeof navigator === 'undefined' || !navigator.clipboard) {
+      return false;
+    }
+    await navigator.clipboard.writeText(markdownBlockToHtml(getCurrentMarkdownBlock(view)));
+    return true;
+  }, []);
+
+  const copyPropertiesYaml = useCallback(async () => {
+    const view = viewRef.current;
+    if (!view || typeof navigator === 'undefined' || !navigator.clipboard) {
+      return false;
+    }
+    const yaml = getPropertiesYaml(view);
+    if (!yaml) return false;
+    await navigator.clipboard.writeText(yaml);
+    return true;
+  }, []);
   
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
@@ -923,7 +1025,27 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     restoreEditorState: applyEditorState,
     revealCodeBlockLine,
     openSearch,
-  }), [scrollToLine, flashLine, focus, getEditorState, applyEditorState, revealCodeBlockLine, openSearch]);
+    runMarkdownCommand,
+    getMarkdownContext,
+    setCursorFromPoint,
+    copyCurrentBlockAsMarkdown,
+    copyCurrentBlockAsHtml,
+    copyPropertiesYaml,
+  }), [
+    scrollToLine,
+    flashLine,
+    focus,
+    getEditorState,
+    applyEditorState,
+    revealCodeBlockLine,
+    openSearch,
+    runMarkdownCommand,
+    getMarkdownContext,
+    setCursorFromPoint,
+    copyCurrentBlockAsMarkdown,
+    copyCurrentBlockAsHtml,
+    copyPropertiesYaml,
+  ]);
 
   if (!librariesLoaded) {
     return (

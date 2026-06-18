@@ -48,6 +48,10 @@ import { renderPromptTemplate } from "@/lib/prompt/render";
 import { usePromptTemplateStore } from "@/stores/prompt-template-store";
 import { toast } from "sonner";
 import { buildAiResultViewModel, type AiResultSectionViewModel, type AiResultViewModel } from "@/lib/ai/result-view-model";
+import {
+  buildCodingProposalViewModel,
+  type CodingProposalViewModel,
+} from "@/lib/ai/coding-proposal-view-model";
 import { isFileTabState } from "@/types/layout";
 import { executeUserApprovedAgentTool } from "@/lib/ai/agent-tool-broker";
 import { runResearchAgentForChat } from "@/lib/ai/research-agent-chat-runner";
@@ -118,6 +122,7 @@ function toRuntimeSettings(settings: ReturnType<typeof useSettingsStore.getState
     maxTokens: settings.aiMaxTokens,
     systemPrompt: settings.aiSystemPrompt,
     preferLocal: settings.aiProvider === "ollama",
+    agentOmittedSummaryEnabled: settings.aiAgentOmittedSummaryEnabled,
   };
 }
 
@@ -890,6 +895,131 @@ function SelectionOriginBadge({
   );
 }
 
+function CodingProposalList({
+  title,
+  items,
+  tone = "default",
+}: {
+  title: string;
+  items: string[];
+  tone?: "default" | "warning" | "danger";
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="min-w-0">
+      <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        {title}
+      </div>
+      <ul className="space-y-1 text-[11px] leading-relaxed">
+        {items.map((item) => (
+          <li
+            key={`${title}:${item}`}
+            className={cn(
+              "break-words border-l pl-2",
+              tone === "danger" && "border-destructive/40 text-destructive",
+              tone === "warning" && "border-amber-500/40 text-amber-700 dark:text-amber-300",
+              tone === "default" && "border-border/70 text-muted-foreground",
+            )}
+          >
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function CodingProposalReviewSurface({ view }: { view: CodingProposalViewModel }) {
+  const { t } = useI18n();
+  const allowedCount = view.qa.allowed.length;
+  const suggestedCount = view.qa.suggested.length;
+  const rejectedCount = view.qa.rejected.length;
+
+  return (
+    <div
+      data-testid="coding-proposal-review-surface"
+      className="border-y border-sky-500/20 bg-sky-500/5 px-2 py-2"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2 text-[11px] font-medium text-sky-950 dark:text-sky-50">
+          <GitCompareArrows className="h-3.5 w-3.5 shrink-0" />
+          <span>{t("chat.workbench.codingReview.title")}</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1 text-[10px] text-sky-900/80 dark:text-sky-100/80">
+          <span className="rounded-full border border-sky-500/25 bg-background/60 px-1.5 py-0.5">
+            {t("chat.workbench.codingReview.files", { count: view.targetFiles.length })}
+          </span>
+          <span className="rounded-full border border-sky-500/25 bg-background/60 px-1.5 py-0.5">
+            {t("chat.workbench.codingReview.qa", {
+              allowed: allowedCount,
+              suggested: suggestedCount,
+              rejected: rejectedCount,
+            })}
+          </span>
+        </div>
+      </div>
+
+      {view.hasRejectedQaCommands && (
+        <div className="mt-2 flex items-start gap-1.5 text-[11px] text-destructive">
+          <ShieldCheck className="mt-0.5 h-3 w-3 shrink-0" />
+          <span>{t("chat.workbench.codingReview.rejectedWarning")}</span>
+        </div>
+      )}
+
+      <div className="mt-2 grid gap-3 md:grid-cols-2">
+        <CodingProposalList
+          title={t("chat.workbench.codingReview.targetFiles")}
+          items={view.targetFiles}
+        />
+        <CodingProposalList
+          title={t("chat.workbench.codingReview.patchPreview")}
+          items={view.patchPreview}
+        />
+        <CodingProposalList
+          title={t("chat.workbench.codingReview.risks")}
+          items={view.risks}
+          tone="warning"
+        />
+        <CodingProposalList
+          title={t("chat.workbench.codingReview.approvalPath")}
+          items={view.approvalPath}
+        />
+      </div>
+
+      {(allowedCount > 0 || suggestedCount > 0 || rejectedCount > 0 || view.qa.executionBoundary.length > 0) && (
+        <div className="mt-3 border-t border-sky-500/15 pt-2">
+          <div className="mb-2 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            <ListTodo className="h-3 w-3" />
+            {t("chat.workbench.codingReview.qaPlan")}
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <CodingProposalList
+              title={t("chat.workbench.codingReview.allowedQa")}
+              items={view.qa.allowed}
+            />
+            <CodingProposalList
+              title={t("chat.workbench.codingReview.suggestedQa")}
+              items={view.qa.suggested}
+            />
+            <CodingProposalList
+              title={t("chat.workbench.codingReview.rejectedQa")}
+              items={view.qa.rejected}
+              tone="danger"
+            />
+            <CodingProposalList
+              title={t("chat.workbench.codingReview.executionBoundary")}
+              items={view.qa.executionBoundary}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AgentResultSection({
   section,
   messageId,
@@ -1353,6 +1483,7 @@ function WorkbenchPanel() {
                   {(() => {
                     const draftSummary = summarizeProposalTargetDrafts(proposal, drafts);
                     const linkedDrafts = drafts.filter((draft) => draft.originProposalId === proposal.id);
+                    const codingProposalView = buildCodingProposalViewModel(proposal);
                     return (
                       <>
                   <div className="flex items-start justify-between gap-2">
@@ -1396,6 +1527,16 @@ function WorkbenchPanel() {
                         type="button"
                         onClick={() => toggleProposalExpanded(proposal.id)}
                         className="rounded border border-border/70 bg-background/70 p-1 text-muted-foreground hover:bg-accent"
+                        aria-label={
+                          expandedProposalIds.includes(proposal.id)
+                            ? t("chat.workbench.collapseProposal")
+                            : t("chat.workbench.expandProposal")
+                        }
+                        title={
+                          expandedProposalIds.includes(proposal.id)
+                            ? t("chat.workbench.collapseProposal")
+                            : t("chat.workbench.expandProposal")
+                        }
                       >
                         {expandedProposalIds.includes(proposal.id)
                           ? <ChevronDown className="h-3.5 w-3.5" />
@@ -1405,6 +1546,10 @@ function WorkbenchPanel() {
                   </div>
                   {expandedProposalIds.includes(proposal.id) && (
                     <div className="mt-3 space-y-3">
+                      {codingProposalView && (
+                        <CodingProposalReviewSurface view={codingProposalView} />
+                      )}
+
                       <div>
                         <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">{t("chat.workbench.steps")}</div>
                         <div className="space-y-1">

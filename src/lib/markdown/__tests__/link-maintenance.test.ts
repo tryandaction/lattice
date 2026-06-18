@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildMarkdownLinkToWikiReplacement,
   buildWikiTarget,
+  convertMarkdownLinkToWikiInContent,
   linkMentionInLine,
   linkUnlinkedMentionInContent,
   linkUnlinkedMentionsInContent,
@@ -33,6 +35,28 @@ function indexedLink(content: string, rawTarget: string, input: Partial<IndexedM
     },
     parsedTarget: null,
     broken: true,
+    ...input,
+  };
+}
+
+function indexedFullLink(
+  content: string,
+  linkSource: string,
+  rawTarget: string,
+  input: Partial<IndexedMarkdownLink> = {},
+): IndexedMarkdownLink {
+  const start = content.indexOf(linkSource);
+  return {
+    sourceFile: "daily/source.md",
+    rawTarget,
+    displayText: undefined,
+    embedded: linkSource.startsWith("!"),
+    range: {
+      start: { line: 0, col: start, offset: start },
+      end: { line: 0, col: start + linkSource.length, offset: start + linkSource.length },
+    },
+    parsedTarget: null,
+    broken: false,
     ...input,
   };
 }
@@ -126,6 +150,41 @@ describe("markdown link maintenance", () => {
     expect(repairMarkdownLinkTargetInContent(content, staleLink, "Target.md")).toEqual({
       changed: false,
       content,
+    });
+  });
+
+  it("builds wiki replacements from markdown links and embeds", () => {
+    expect(buildMarkdownLinkToWikiReplacement("[Guide](docs/Guide%20Note.md#API)")).toMatchObject({
+      replacement: "[[docs/Guide Note#API|Guide]]",
+      target: "docs/Guide Note#API",
+      alias: "Guide",
+      embedded: false,
+    });
+
+    expect(buildMarkdownLinkToWikiReplacement("![Chart](assets/chart.png)")).toMatchObject({
+      replacement: "![[assets/chart.png|Chart]]",
+      target: "assets/chart.png",
+      alias: "Chart",
+      embedded: true,
+    });
+  });
+
+  it("converts a markdown link range to wiki syntax without touching wiki links", () => {
+    const content = "See [old note](missing.md#Heading) and [[Existing]].";
+    expect(
+      convertMarkdownLinkToWikiInContent(
+        content,
+        indexedFullLink(content, "[old note](missing.md#Heading)", "missing.md#Heading"),
+      ),
+    ).toEqual({
+      changed: true,
+      content: "See [[missing#Heading|old note]] and [[Existing]].",
+    });
+
+    const wikiContent = "See [[Missing|old note]].";
+    expect(convertMarkdownLinkToWikiInContent(wikiContent, indexedLink(wikiContent, "Missing"))).toEqual({
+      changed: false,
+      content: wikiContent,
     });
   });
 });

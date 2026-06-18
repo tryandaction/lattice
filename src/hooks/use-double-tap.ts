@@ -18,6 +18,8 @@ export interface UseDoubleTapOptions {
   shouldIntercept?: () => boolean;
   /** Optional callback on first tap - useful for saving state before Tab changes things */
   onFirstTap?: () => void;
+  /** Optionally prevent default on first tap when intercepting */
+  preventDefaultOnFirstTap?: boolean | (() => boolean);
 }
 
 /**
@@ -39,6 +41,7 @@ export function useDoubleTap({
   enabled = true,
   shouldIntercept,
   onFirstTap,
+  preventDefaultOnFirstTap,
 }: UseDoubleTapOptions): void {
   const lastPressTimeRef = useRef<number>(0);
   const pendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -78,6 +81,16 @@ export function useDoubleTap({
         // First tap - record time and call onFirstTap if provided
         // This allows saving cursor position BEFORE Tab changes it
         lastPressTimeRef.current = now;
+
+        const shouldPreventFirstTap =
+          typeof preventDefaultOnFirstTap === 'function'
+            ? preventDefaultOnFirstTap()
+            : Boolean(preventDefaultOnFirstTap);
+
+        if (shouldPreventFirstTap) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
         
         // Call onFirstTap to save current state
         if (onFirstTap) {
@@ -91,7 +104,7 @@ export function useDoubleTap({
         }, threshold);
       }
     },
-    [key, threshold, onDoubleTap, enabled, shouldIntercept, onFirstTap]
+    [key, threshold, onDoubleTap, enabled, shouldIntercept, onFirstTap, preventDefaultOnFirstTap]
   );
 
   useEffect(() => {

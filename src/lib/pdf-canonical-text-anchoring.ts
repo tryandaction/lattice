@@ -58,6 +58,36 @@ export interface PdfCanonicalPointerBoundaryResult {
   columnIndex?: number;
 }
 
+export interface PdfCanonicalTextAnchor {
+  startOffset: number;
+  endOffset: number;
+  pageText: string;
+  textQuote: PdfTextQuote;
+  rects: BoundingBox[];
+}
+
+export type PdfCanonicalTextAnchorResolveReason =
+  | "empty-exact"
+  | "exact-not-found-in-pdf-text-model"
+  | "context-mismatch"
+  | "ambiguous-exact-quote"
+  | "ambiguous-geometry"
+  | "invalid-anchor";
+
+export type PdfCanonicalTextAnchorResolveResult =
+  | {
+      ok: true;
+      anchor: PdfCanonicalTextAnchor;
+      candidateCount: number;
+      ambiguityScore?: number;
+    }
+  | {
+      ok: false;
+      reason: PdfCanonicalTextAnchorResolveReason;
+      candidateCount: number;
+      candidates?: Array<{ startOffset: number; endOffset: number; rects: BoundingBox[] }>;
+    };
+
 function normalizeText(text: string | null | undefined): string {
   return (text ?? "").replace(PDF_CONTROL_CHARS, " ").replace(/\s+/g, " ").trim();
 }
@@ -922,15 +952,21 @@ function scorePdfQuoteCandidateByRects(input: {
   };
 }
 
-export function resolvePdfExactQuoteOffsets(input: {
+function resolvePdfExactQuoteOffsetCandidates(input: {
   model: PdfPageTextModel;
   exact: string | null | undefined;
   preferredRects?: BoundingBox[];
-}): { startOffset: number; endOffset: number } | null {
+}): Array<{
+  startOffset: number;
+  endOffset: number;
+  compactIndex: number;
+  rects: BoundingBox[];
+  score?: { overlapRatio: number; overlapArea: number; centerDistance: number };
+}> {
   const exact = input.exact ?? "";
   const strictNeedles = buildPdfExactSearchNeedles(exact);
   if (strictNeedles.length === 0) {
-    return null;
+    return [];
   }
 
   const candidates: Array<{ startOffset: number; endOffset: number; compactIndex: number }> = [];
@@ -976,19 +1012,15 @@ export function resolvePdfExactQuoteOffsets(input: {
   }
 
   if (candidates.length === 0) {
-    return null;
+    return [];
   }
 
   const preferredRects = (input.preferredRects ?? []).filter(isUsablePdfPreferredRect);
-  if (candidates.length === 1 || preferredRects.length === 0) {
-    const { startOffset, endOffset } = candidates[0];
-    return { startOffset, endOffset };
-  }
-
   const scoredCandidates = candidates.map((candidate) => {
     const candidateRects = buildPdfRectsForOffsets(input.model, candidate.startOffset, candidate.endOffset);
     return {
       candidate,
+      rects: candidateRects,
       score: scorePdfQuoteCandidateByRects({
         candidateRects,
         preferredRects,
@@ -1009,8 +1041,20 @@ export function resolvePdfExactQuoteOffsets(input: {
     return left.candidate.compactIndex - right.candidate.compactIndex;
   });
 
-  const { startOffset, endOffset } = scoredCandidates[0].candidate;
-  return { startOffset, endOffset };
+  return scoredCandidates.map(({ candidate, rects, score }) => ({
+    ...candidate,
+    rects,
+    score: preferredRects.length > 0 ? score : undefined,
+  }));
+}
+
+export function resolvePdfExactQuoteOffsets(input: {
+  model: PdfPageTextModel;
+  exact: string | null | undefined;
+  preferredRects?: BoundingBox[];
+}): { startOffset: number; endOffset: number } | null {
+  const candidate = resolvePdfExactQuoteOffsetCandidates(input)[0];
+  return candidate ? { startOffset: candidate.startOffset, endOffset: candidate.endOffset } : null;
 }
 
 export function buildPdfTextAnchorFromOffsets(input: {
@@ -1019,13 +1063,7 @@ export function buildPdfTextAnchorFromOffsets(input: {
   endOffset: number;
   source?: PdfTextQuote["source"];
   fallbackRects?: BoundingBox[];
-}): {
-  startOffset: number;
-  endOffset: number;
-  pageText: string;
-  textQuote: PdfTextQuote;
-  rects: BoundingBox[];
-} | null {
+}): PdfCanonicalTextAnchor | null {
   const clampedStart = clampOffset(input.startOffset, input.model.normalizedText.length);
   const clampedEnd = clampOffset(input.endOffset, input.model.normalizedText.length);
   const trimmed = trimPdfOffsetsToText(input.model.normalizedText, clampedStart, clampedEnd);
@@ -1054,5 +1092,118 @@ export function buildPdfTextAnchorFromOffsets(input: {
       const rebuiltRects = buildPdfRectsForOffsets(input.model, trimmed.startOffset, trimmed.endOffset);
       return rebuiltRects.length > 0 ? rebuiltRects : input.fallbackRects ?? [];
     })(),
+  };
+}
+
+export function resolveCanonicalPdfTextAnchorFromExact(input: {
+  model: PdfPageTextModel;
+  exact: string | null | undefined;
+  prefix?: string | null | undefined;
+  suffix?: string | null | undefined;
+  preferredRects?: BoundingBox[];
+  requireUnique?: boolean;
+  source?: PdfTextQuote["source"];
+}): PdfCanonicalTextAnchorResolveResult {
+  const exact = normalizePdfReadableText(input.exact ?? "");
+  if (!exact) {
+    return { ok: false, reason: "empty-exact", candidateCount: 0 };
+  }
+
+  const candidates = resolvePdfExactQuoteOffsetCandidates({
+    model: input.model,
+    exact,
+    preferredRects: input.preferredRects,
+  });
+  if (candidates.length === 0) {
+    return { ok: false, reason: "exact-not-found-in-pdf-text-model", candidateCount: 0 };
+  }
+
+  const prefixCompact = compactText(input.prefix ?? "");
+  const suffixCompact = compactText(input.suffix ?? "");
+  const contextCandidates = candidates.filter((candidate) => {
+    const contextRadius = Math.max(
+      PDF_TEXT_CONTEXT_RADIUS,
+      Math.ceil(Math.max(prefixCompact.length, suffixCompact.length) * 2.5),
+    );
+    const before = input.model.normalizedText.slice(Math.max(0, candidate.startOffset - contextRadius), candidate.startOffset);
+    const after = input.model.normalizedText.slice(candidate.endOffset, Math.min(input.model.normalizedText.length, candidate.endOffset + contextRadius));
+    return (!prefixCompact || compactText(before).endsWith(prefixCompact)) &&
+      (!suffixCompact || compactText(after).startsWith(suffixCompact));
+  });
+  const scopedCandidates = (prefixCompact || suffixCompact) ? contextCandidates : candidates;
+  if (scopedCandidates.length === 0) {
+    return {
+      ok: false,
+      reason: "context-mismatch",
+      candidateCount: candidates.length,
+      candidates: candidates.map(({ startOffset, endOffset, rects }) => ({ startOffset, endOffset, rects })),
+    };
+  }
+
+  const usableCandidates = scopedCandidates.filter((candidate) => candidate.rects.length > 0);
+  if (usableCandidates.length === 0) {
+    return {
+      ok: false,
+      reason: "invalid-anchor",
+      candidateCount: candidates.length,
+      candidates: candidates.map(({ startOffset, endOffset, rects }) => ({ startOffset, endOffset, rects })),
+    };
+  }
+
+  const hasPreferredRects = (input.preferredRects ?? []).some(isUsablePdfPreferredRect);
+  if (input.requireUnique !== false && usableCandidates.length > 1) {
+    if (!hasPreferredRects) {
+      return {
+        ok: false,
+        reason: "ambiguous-exact-quote",
+        candidateCount: usableCandidates.length,
+        candidates: usableCandidates.map(({ startOffset, endOffset, rects }) => ({ startOffset, endOffset, rects })),
+      };
+    }
+
+    const [best, second] = usableCandidates;
+    const bestScore = best?.score;
+    const secondScore = second?.score;
+    const overlapGap = (bestScore?.overlapRatio ?? 0) - (secondScore?.overlapRatio ?? 0);
+    const distanceGap = (secondScore?.centerDistance ?? 0) - (bestScore?.centerDistance ?? 0);
+    if (
+      !bestScore ||
+      bestScore.overlapRatio < 0.18 ||
+      (
+        second &&
+        overlapGap < 0.08 &&
+        distanceGap < 0.025
+      )
+    ) {
+      return {
+        ok: false,
+        reason: "ambiguous-geometry",
+        candidateCount: usableCandidates.length,
+        candidates: usableCandidates.map(({ startOffset, endOffset, rects }) => ({ startOffset, endOffset, rects })),
+      };
+    }
+  }
+
+  const candidate = usableCandidates[0];
+  const anchor = buildPdfTextAnchorFromOffsets({
+    model: input.model,
+    startOffset: candidate.startOffset,
+    endOffset: candidate.endOffset,
+    source: input.source ?? "pdfjs-text-model",
+  });
+  if (!anchor || anchor.rects.length === 0) {
+    return {
+      ok: false,
+      reason: "invalid-anchor",
+      candidateCount: usableCandidates.length,
+      candidates: usableCandidates.map(({ startOffset, endOffset, rects }) => ({ startOffset, endOffset, rects })),
+    };
+  }
+
+  return {
+    ok: true,
+    anchor,
+    candidateCount: usableCandidates.length,
+    ambiguityScore: candidate.score?.overlapRatio,
   };
 }

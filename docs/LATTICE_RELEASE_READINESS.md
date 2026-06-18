@@ -124,9 +124,17 @@ Current PDF regression status:
 
 Current v2.3.0 desktop artifacts in `releases/v2.3.0/`:
 
-- `Lattice_2.3.0_x64_en-US.msi` SHA256 `3e74a2079c958453bd655f3a8e27e45a92e0a14c4f6873acc00072301f8ba24c`
-- `Lattice_2.3.0_x64-setup.exe` SHA256 `d8d7b1005e1014ec964514e70788ec4b1f769b65680630ad70f150a5d15bedbb`
-- `lattice.exe` SHA256 `c04b3fa677f1a545f43663d8ea9254c5910b0ebe0bc8382170a8dfb7deae86f2`
+- `Lattice_2.3.0_x64_en-US.msi` SHA256 `02910b717af4429b99e4818ff01d231e82d6ca00697eea5a1edaaf86e67a1a68`
+- `Lattice_2.3.0_x64-setup.exe` SHA256 `2466165d25384d225d7482f76fd26705afd09d73b66d03fa7651ce8b9bf63b8f`
+- `lattice.exe` SHA256 `d16796bd2b5af362970cd7b8e183842280c494793b0334bf2a5b26469bab18c4`
+
+Current AI / coding agent release status:
+
+- `code-change-plan` produces reviewable coding proposals without direct writes.
+- Approval-gated QA Runner creates trace-visible approval requests and imports resolved results into Evidence.
+- Evidence entries imported from QA approvals link back to the source Agent Trace.
+- Co-work Session Inbox aggregates local Agent session status and workspace risk.
+- Shell, network, git, direct workspace write, and automatic QA execution remain intentionally disabled by default.
 
 Remaining manual gate before final publish:
 

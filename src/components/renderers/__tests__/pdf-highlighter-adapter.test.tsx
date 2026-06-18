@@ -3319,6 +3319,157 @@ describe('PDFHighlighterAdapter', () => {
     });
   });
 
+  it('keeps the current anchor stable when toggling the PDF sidebar', async () => {
+    useContentCacheStore.getState().saveEditorState('paper-left', {
+      cursorPosition: 0,
+      scrollTop: 240,
+      scrollLeft: 48,
+      viewState: {
+        pdf: {
+          scale: 1.2,
+          zoomMode: 'fit-width',
+          showSidebar: false,
+        },
+      },
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().commandBarByPane['pane-left']).toBeTruthy();
+      expect(screen.getByTestId('pdf-anchor-page-pane-left').textContent).toBe('1');
+    });
+
+    const toggleSidebarAction = useWorkspaceStore
+      .getState()
+      .commandBarByPane['pane-left']
+      ?.actions.find((item) => item.id === 'toggle-sidebar');
+    expect(toggleSidebarAction).toBeTruthy();
+
+    pdfMockState.viewerMetrics.width = 680;
+    pdfMockState.viewerMetrics.scrollWidth = 1600;
+    await act(async () => {
+      toggleSidebarAction?.onTrigger?.();
+      await Promise.resolve();
+      triggerResizeObservers();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-restore-actual-page-pane-left').textContent).toBe('1');
+      expect(Number(screen.getByTestId('pdf-restore-delta-top-pane-left').textContent)).toBeLessThan(0.01);
+      expect(Number(screen.getByTestId('pdf-restore-delta-left-pane-left').textContent)).toBeLessThan(0.01);
+    });
+  });
+
+  it('replaces the browser PDF right-click menu with a Lattice PDF tools menu', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    const scrollContainer = await screen.findByTestId('pdf-scroll-container-pane-left');
+    const contextMenuEvent = createEvent.contextMenu(scrollContainer, {
+      clientX: 420,
+      clientY: 260,
+    });
+    const preventDefault = vi.spyOn(contextMenuEvent, 'preventDefault');
+
+    fireEvent(scrollContainer, contextMenuEvent);
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(await screen.findByTestId('pdf-viewer-context-menu')).toBeTruthy();
+    expect(screen.getByText('PDF 工具')).toBeTruthy();
+    expect(screen.getByTestId('pdf-context-menu-action-open-search')).toBeTruthy();
+    expect(screen.queryByText('Save as')).toBeNull();
+    expect(screen.queryByText('Share')).toBeNull();
+    expect(screen.queryByText('Inspect')).toBeNull();
+  });
+
+  it('routes PDF right-click actions through real search and sidebar handlers', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    const scrollContainer = await screen.findByTestId('pdf-scroll-container-pane-left');
+
+    fireEvent.contextMenu(scrollContainer, { clientX: 420, clientY: 260 });
+    fireEvent.click(await screen.findByTestId('pdf-context-menu-action-open-search'));
+
+    await waitFor(() => {
+      const searchAction = useWorkspaceStore
+        .getState()
+        .commandBarByPane['pane-left']
+        ?.actions.find((item) => item.id === 'search');
+      expect(searchAction?.active).toBe(true);
+    });
+
+    fireEvent.contextMenu(scrollContainer, { clientX: 420, clientY: 260 });
+    fireEvent.click(await screen.findByTestId('pdf-context-menu-action-toggle-sidebar'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-annotation-sidebar')).toBeTruthy();
+    });
+  });
+
+  it('keeps the PDF search overlay open while interacting with its input', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().commandBarByPane['pane-left']).toBeTruthy();
+    });
+
+    const searchAction = useWorkspaceStore
+      .getState()
+      .commandBarByPane['pane-left']
+      ?.actions.find((item) => item.id === 'search');
+    expect(searchAction).toBeTruthy();
+
+    await act(async () => {
+      searchAction?.onTrigger?.();
+    });
+
+    const overlay = await screen.findByTestId('pdf-search-overlay');
+    const input = overlay.querySelector('input');
+    expect(input).toBeTruthy();
+    if (!input) {
+      throw new Error('Missing PDF search input');
+    }
+    fireEvent.pointerDown(input);
+    fireEvent.mouseDown(input);
+    fireEvent.click(input);
+    fireEvent.change(input, { target: { value: 'Selected PDF' } });
+
+    expect(overlay).toBeTruthy();
+    await waitFor(() => {
+      const activeSearchAction = useWorkspaceStore
+        .getState()
+        .commandBarByPane['pane-left']
+        ?.actions.find((item) => item.id === 'search');
+      expect(activeSearchAction?.active).toBe(true);
+    });
+  });
+
+  it('keeps the PDF search overlay open when the command bar search button is triggered again', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().commandBarByPane['pane-left']).toBeTruthy();
+    });
+
+    const getSearchAction = () => useWorkspaceStore
+      .getState()
+      .commandBarByPane['pane-left']
+      ?.actions.find((item) => item.id === 'search');
+
+    await act(async () => {
+      getSearchAction()?.onTrigger?.();
+    });
+
+    expect(await screen.findByTestId('pdf-search-overlay')).toBeTruthy();
+
+    await act(async () => {
+      getSearchAction()?.onTrigger?.();
+    });
+
+    expect(screen.getByTestId('pdf-search-overlay')).toBeTruthy();
+  });
+
   it('passes annotation loading state to the PDF sidebar instead of showing an empty state', async () => {
     useContentCacheStore.getState().saveEditorState('paper-left', {
       cursorPosition: 0,
@@ -4003,6 +4154,19 @@ describe('PDFHighlighterAdapter', () => {
 
     expect(searchAction).toBeTruthy();
     expect(searchAction?.active).toBe(false);
+    expect(searchAction?.group).toBe('utility');
+
+    const zoomInAction = useWorkspaceStore
+      .getState()
+      .commandBarByPane['pane-left']
+      ?.actions.find((item) => item.id === 'zoom-in');
+    const zoomOutAction = useWorkspaceStore
+      .getState()
+      .commandBarByPane['pane-left']
+      ?.actions.find((item) => item.id === 'zoom-out');
+
+    expect(zoomInAction?.group).toBe('overflow');
+    expect(zoomOutAction?.group).toBe('overflow');
 
     await act(async () => {
       searchAction?.onTrigger?.();
@@ -4273,6 +4437,138 @@ describe('PDFHighlighterAdapter', () => {
     expect(Number.parseFloat(areaOverlay.style.top)).toBeCloseTo(20, 6);
     expect(Number.parseFloat(areaOverlay.style.width)).toBeCloseTo(18, 6);
     expect(Number.parseFloat(areaOverlay.style.height)).toBeCloseTo(10, 6);
+  });
+
+  it('resizes a stored area annotation by dragging a corner handle', async () => {
+    const updateAnnotation = vi.fn();
+    const annotation = {
+      id: 'ann-area-resize',
+      target: { type: 'pdf' as const, page: 1, rects: [{ x1: 0.10, y1: 0.20, x2: 0.28, y2: 0.30 }] },
+      style: { color: '#4CAF50', type: 'area' as const },
+      content: 'area',
+      author: 'user',
+      createdAt: 1,
+    };
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [annotation],
+      error: null,
+      addAnnotation: vi.fn(),
+      updateAnnotation,
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    const areaSegment = await waitFor(() => {
+      const segment = document.querySelector<HTMLElement>(
+        '.pdf-stored-annotation-overlay-ann-area-resize [data-pdf-stored-annotation-segment="true"]',
+      );
+      expect(segment).toBeTruthy();
+      return segment as HTMLElement;
+    });
+    fireEvent.pointerDown(areaSegment, { button: 0, clientX: 116, clientY: 240, pointerId: 1 });
+    fireEvent.click(areaSegment, { clientX: 116, clientY: 240 });
+
+    const seHandle = await screen.findByLabelText('Adjust area se');
+    expect(seHandle.getAttribute('data-pdf-stored-annotation-id')).toBe('ann-area-resize');
+    const page = screen.getByTestId('mock-react-pdf-page-1');
+    const pageRect = page.getBoundingClientRect();
+    fireEvent.pointerDown(seHandle, {
+      button: 0,
+      clientX: pageRect.left + (0.28 * pageRect.width),
+      clientY: pageRect.top + (0.30 * pageRect.height),
+      pointerId: 7,
+    });
+    fireEvent.pointerMove(document, {
+      clientX: pageRect.left + (0.34 * pageRect.width),
+      clientY: pageRect.top + (0.36 * pageRect.height),
+      pointerId: 7,
+    });
+    fireEvent.pointerUp(document, {
+      clientX: pageRect.left + (0.34 * pageRect.width),
+      clientY: pageRect.top + (0.36 * pageRect.height),
+      pointerId: 7,
+    });
+
+    await waitFor(() => {
+      expect(updateAnnotation).toHaveBeenCalled();
+    });
+    const lastCall = updateAnnotation.mock.calls.at(-1);
+    expect(lastCall?.[0]).toBe('ann-area-resize');
+    expect(lastCall?.[1]?.target?.rects?.[0]).toMatchObject({
+      x1: 0.10,
+      y1: 0.20,
+      x2: 0.34,
+      y2: 0.36,
+    });
+  });
+
+  it('moves a stored area annotation by dragging the selected area body', async () => {
+    const updateAnnotation = vi.fn();
+    const annotation = {
+      id: 'ann-area-move',
+      target: { type: 'pdf' as const, page: 1, rects: [{ x1: 0.10, y1: 0.20, x2: 0.30, y2: 0.35 }] },
+      style: { color: '#4CAF50', type: 'area' as const },
+      content: 'area',
+      author: 'user',
+      createdAt: 1,
+    };
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [annotation],
+      error: null,
+      addAnnotation: vi.fn(),
+      updateAnnotation,
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    const areaSegment = await waitFor(() => {
+      const segment = document.querySelector<HTMLElement>(
+        '.pdf-stored-annotation-overlay-ann-area-move [data-pdf-stored-annotation-segment="true"]',
+      );
+      expect(segment).toBeTruthy();
+      return segment as HTMLElement;
+    });
+
+    fireEvent.pointerDown(areaSegment, { button: 0, clientX: 128, clientY: 240, pointerId: 11 });
+    fireEvent.click(areaSegment, { clientX: 128, clientY: 240 });
+
+    await waitFor(() => {
+      expect(areaSegment.getAttribute('data-pdf-annotation-area-handle')).toBe('move');
+    });
+
+    const page = screen.getByTestId('mock-react-pdf-page-1');
+    const pageRect = page.getBoundingClientRect();
+    fireEvent.pointerDown(areaSegment, {
+      button: 0,
+      clientX: pageRect.left + (0.20 * pageRect.width),
+      clientY: pageRect.top + (0.275 * pageRect.height),
+      pointerId: 12,
+    });
+    fireEvent.pointerMove(document, {
+      clientX: pageRect.left + (0.25 * pageRect.width),
+      clientY: pageRect.top + (0.325 * pageRect.height),
+      pointerId: 12,
+    });
+    fireEvent.pointerUp(document, {
+      clientX: pageRect.left + (0.25 * pageRect.width),
+      clientY: pageRect.top + (0.325 * pageRect.height),
+      pointerId: 12,
+    });
+
+    await waitFor(() => {
+      expect(updateAnnotation).toHaveBeenCalled();
+    });
+    const lastCall = updateAnnotation.mock.calls.at(-1);
+    expect(lastCall?.[0]).toBe('ann-area-move');
+    const movedRect = lastCall?.[1]?.target?.rects?.[0];
+    expect(movedRect?.x1).toBeCloseTo(0.15, 6);
+    expect(movedRect?.y1).toBeCloseTo(0.25, 6);
+    expect(movedRect?.x2).toBeCloseTo(0.35, 6);
+    expect(movedRect?.y2).toBeCloseTo(0.40, 6);
   });
 
   it('closes the stored annotation popup when clicking another PDF location', async () => {
@@ -4601,6 +4897,86 @@ describe('PDFHighlighterAdapter', () => {
       const displayed = sidebarAnnotations?.find((item) => item.id === 'ann-convert-optimistic');
       expect(displayed?.style.type).toBe('underline');
     });
+  });
+
+  it('applies stored annotation menu actions for comment, color, and style conversion', async () => {
+    const updateAnnotation = vi.fn();
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [
+        {
+          id: 'ann-menu-actions',
+          target: {
+            type: 'pdf',
+            page: 1,
+            rects: [{ x1: 0.18, y1: 0.125, x2: 0.40, y2: 0.15 }],
+            textQuote: {
+              exact: 'phenomenon, which',
+              prefix: 'This ',
+              suffix: ' we call',
+              source: 'pdfjs-text-model',
+              confidence: 'exact',
+            },
+          },
+          style: { color: '#FFEB3B', type: 'highlight' },
+          content: 'phenomenon, which',
+          author: 'user',
+          createdAt: 1,
+        },
+      ],
+      error: null,
+      addAnnotation: vi.fn(),
+      updateAnnotation,
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    fireEvent.click(screen.getByTestId('mock-react-pdf-page-1'), {
+      clientX: 180,
+      clientY: 132,
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-pdf-annotation-menu="ann-menu-actions"]')).toBeTruthy();
+    });
+
+    const firstMenu = document.querySelector<HTMLElement>('[data-pdf-annotation-menu="ann-menu-actions"]');
+    const firstMenuButtons = Array.from(firstMenu?.querySelectorAll('button') ?? []);
+    fireEvent.click(firstMenuButtons[0]);
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'Important note' },
+    });
+    const commentEditor = document.querySelector<HTMLElement>('[data-pdf-annotation-menu="ann-menu-actions"]');
+    const editorButtons = Array.from(commentEditor?.querySelectorAll('button') ?? []);
+    fireEvent.click(editorButtons[editorButtons.length - 1]);
+    expect(updateAnnotation).toHaveBeenCalledWith('ann-menu-actions', { comment: 'Important note' });
+
+    fireEvent.click(screen.getByTestId('mock-react-pdf-page-1'), {
+      clientX: 180,
+      clientY: 132,
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-pdf-annotation-menu="ann-menu-actions"]')).toBeTruthy();
+    });
+    const secondMenu = document.querySelector<HTMLElement>('[data-pdf-annotation-menu="ann-menu-actions"]');
+    const secondMenuButtons = Array.from(secondMenu?.querySelectorAll('button') ?? []);
+    fireEvent.click(secondMenuButtons[1]);
+    const colorMenu = document.querySelector<HTMLElement>('[data-pdf-annotation-menu="ann-menu-actions"]');
+    const colorButtons = Array.from(colorMenu?.querySelectorAll('button') ?? []);
+    fireEvent.click(colorButtons[4]);
+    expect(updateAnnotation).toHaveBeenCalledWith('ann-menu-actions', { style: { color: '#2EA8E5' } });
+
+    fireEvent.click(screen.getByTestId('mock-react-pdf-page-1'), {
+      clientX: 180,
+      clientY: 132,
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-pdf-annotation-menu="ann-menu-actions"]')).toBeTruthy();
+    });
+    const thirdMenu = document.querySelector<HTMLElement>('[data-pdf-annotation-menu="ann-menu-actions"]');
+    const thirdMenuButtons = Array.from(thirdMenu?.querySelectorAll('button') ?? []);
+    fireEvent.click(thirdMenuButtons[2]);
+    expect(updateAnnotation).toHaveBeenCalledWith('ann-menu-actions', { style: { type: 'underline' } });
   });
 
   it('opens stored PDF annotation controls for area, pin, text, and ink annotations', async () => {

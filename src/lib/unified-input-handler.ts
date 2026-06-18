@@ -23,6 +23,7 @@ export interface UnifiedInputTarget {
   element: HTMLElement;
   insertText: (text: string) => void;
   insertLatex: (latex: string) => void;
+  insertMathLiveLatex?: (latex: string) => void;
   wrapSelection: (before: string, after: string) => void;
   getSelection: () => { from: number; to: number; text: string };
   focus: () => void;
@@ -49,6 +50,45 @@ let lastActiveTarget: UnifiedInputTarget | null = null;
 
 // Store references to CodeMirror views
 const codeMirrorViews = new WeakMap<HTMLElement, EditorView>();
+
+function toHTMLElement(target: EventTarget | null): HTMLElement | null {
+  if (target instanceof HTMLElement) {
+    return target;
+  }
+  if (target instanceof Node) {
+    return target.parentElement;
+  }
+  return null;
+}
+
+export function toMathLivePlaceholders(latex: string): string {
+  return latex
+    .replace(/\{\s*\}/g, "{\\placeholder{}}")
+    .replace(/\[\s*\]/g, "[\\placeholder{}]")
+    .replace(/\^\{\s+\}/g, "^{\\placeholder{}}")
+    .replace(/_\{\s+\}/g, "_{\\placeholder{}}");
+}
+
+function findFirstFillPosition(text: string): number | null {
+  const candidates = ["{}", "{ }", "[]", "[ ]"];
+  const positions = candidates
+    .map((marker) => {
+      const index = text.indexOf(marker);
+      return index >= 0 ? index + 1 : null;
+    })
+    .filter((position): position is number => position !== null);
+  if (positions.length === 0) return null;
+  return Math.min(...positions);
+}
+
+function insertTextIntoCodeMirror(view: EditorView, text: string): void {
+  const { from, to } = view.state.selection.main;
+  const fillOffset = findFirstFillPosition(text);
+  view.dispatch({
+    changes: { from, to, insert: text },
+    selection: { anchor: from + (fillOffset ?? text.length) },
+  });
+}
 
 /**
  * Register a CodeMirror view for unified input handling
@@ -93,6 +133,44 @@ function detectInputType(element: HTMLElement): InputTargetType | null {
   }
 
   return null;
+}
+
+export function getInputTargetTypeFromElement(target: EventTarget | null): InputTargetType | null {
+  const element = toHTMLElement(target);
+  if (!element) return null;
+
+  const directType = detectInputType(element);
+  if (directType) {
+    return directType;
+  }
+
+  if (element.closest('math-field')) {
+    return 'mathlive';
+  }
+  if (element.closest('.cm-editor')) {
+    return 'codemirror';
+  }
+
+  return null;
+}
+
+export function isEditableElement(target: EventTarget | null): boolean {
+  const element = toHTMLElement(target);
+  if (!element) return false;
+
+  if (
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLSelectElement
+  ) {
+    return true;
+  }
+
+  if (element.isContentEditable || element.closest('[contenteditable="true"]')) {
+    return true;
+  }
+
+  return getInputTargetTypeFromElement(element) !== null;
 }
 
 /**
@@ -144,19 +222,16 @@ function createCodeMirrorTargetFromView(element: HTMLElement, view: EditorView):
     type: 'codemirror',
     element,
     insertText: (text: string) => {
-      const { from, to } = view.state.selection.main;
-      view.dispatch({
-        changes: { from, to, insert: text },
-        selection: { anchor: from + text.length },
-      });
+      insertTextIntoCodeMirror(view, text);
     },
     insertLatex: (latex: string) => {
       // For CodeMirror, wrap LaTeX in $ delimiters
       const { from, to } = view.state.selection.main;
       const wrappedLatex = `$${latex}$`;
+      const fillOffset = findFirstFillPosition(wrappedLatex);
       view.dispatch({
         changes: { from, to, insert: wrappedLatex },
-        selection: { anchor: from + wrappedLatex.length },
+        selection: { anchor: from + (fillOffset ?? wrappedLatex.length) },
       });
     },
     wrapSelection: (before: string, after: string) => {
@@ -200,8 +275,18 @@ function createMathLiveTarget(element: HTMLElement): UnifiedInputTarget {
     },
     insertLatex: (latex: string) => {
       // For MathLive, insert LaTeX directly
+      const mathLiveLatex = toMathLivePlaceholders(latex);
+      if (mathField.executeCommand) {
+        mathField.executeCommand(['insert', mathLiveLatex]);
+        mathField.executeCommand('moveToNextPlaceholder');
+      } else if (mathField.insert) {
+        mathField.insert(mathLiveLatex);
+      }
+    },
+    insertMathLiveLatex: (latex: string) => {
       if (mathField.executeCommand) {
         mathField.executeCommand(['insert', latex]);
+        mathField.executeCommand('moveToNextPlaceholder');
       } else if (mathField.insert) {
         mathField.insert(latex);
       }
@@ -427,7 +512,7 @@ export function insertTextAtCursor(text: string): boolean {
  */
 export function insertLatexAtCursor(
   latex: string,
-  options: { displayMode?: boolean; format?: 'latex' | 'markdown' } = {}
+  options: { displayMode?: boolean; format?: 'latex' | 'markdown'; mathLiveLatex?: string } = {}
 ): boolean {
   const target = getActiveInputTarget() || getLastActiveInputTarget();
   if (!target) return false;
@@ -436,7 +521,11 @@ export function insertLatexAtCursor(
   const displayMode = options.displayMode ?? normalized.displayMode;
 
   if (target.type === 'mathlive') {
-    target.insertLatex(normalized.latex);
+    if (options.mathLiveLatex && target.insertMathLiveLatex) {
+      target.insertMathLiveLatex(options.mathLiveLatex);
+    } else {
+      target.insertLatex(normalized.latex);
+    }
     return true;
   }
 

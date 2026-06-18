@@ -301,6 +301,12 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   const executionDockLayouts = normalizeExecutionDockLayouts(raw.executionDockLayouts);
   if (executionDockLayouts) normalized.executionDockLayouts = executionDockLayouts;
   if (typeof raw.aiEnabled === 'boolean') normalized.aiEnabled = raw.aiEnabled;
+  if (typeof raw.aiInlineCompletionEnabled === 'boolean') {
+    normalized.aiInlineCompletionEnabled = raw.aiInlineCompletionEnabled;
+  }
+  if (typeof raw.aiAgentOmittedSummaryEnabled === 'boolean') {
+    normalized.aiAgentOmittedSummaryEnabled = raw.aiAgentOmittedSummaryEnabled;
+  }
   assignIfDefined('aiProvider', stringOrNull(raw.aiProvider));
   assignIfDefined('aiModel', stringOrNull(raw.aiModel));
   if (typeof raw.aiTemperature === 'number') normalized.aiTemperature = raw.aiTemperature;

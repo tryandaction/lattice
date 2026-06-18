@@ -1510,6 +1510,27 @@ function buildWorkflowOutputSection(input: {
         evidenceBlock,
       ].join('\n');
 
+    case 'code-change-plan':
+      return [
+        `Workflow output: ${workflowTitle}`,
+        'Target files:',
+        evidenceCues.length > 0
+          ? evidenceCues.map((line) => `- ${line}`).join('\n')
+          : `- Start from the active code context: ${primaryCue}`,
+        'Patch preview:',
+        '- Prepare a minimal, reviewable diff only after confirming the target files above.',
+        '- Keep this as a Workbench proposal; no source file has been modified by this workflow.',
+        'Risks:',
+        '- Check API contracts, UI regressions, data migration needs, path safety, and stale tests.',
+        '- Do not run shell, network, package manager, git, or direct write operations from this workflow.',
+        'Test plan:',
+        `- Use completed read observations to choose focused tests: ${toolSignal}`,
+        '- Run typecheck when TypeScript contracts, shared types, or UI components are touched.',
+        '- Add focused unit coverage before broad QA.',
+        'Proposal next step:',
+        '- Generate a Workbench proposal with target files, patch preview, risks, test plan, and approval path.',
+      ].join('\n');
+
     case 'literature-matrix':
       return [
         `Workflow output: ${workflowTitle}`,

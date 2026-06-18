@@ -1,0 +1,3 @@
+export const FORMULA_EXTRACTOR_PLUGIN_ID = 'formula-extractor';
+
+export const DEFAULT_ENABLED_PLUGIN_IDS = [FORMULA_EXTRACTOR_PLUGIN_ID];

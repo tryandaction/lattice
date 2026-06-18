@@ -17,6 +17,7 @@ export type ResearchAgentWorkflowId =
   | 'markdown-research'
   | 'reading-note'
   | 'notebook-analysis'
+  | 'code-change-plan'
   | 'literature-matrix'
   | 'knowledge-organization'
   | 'teaching-explain'
@@ -238,6 +239,43 @@ export const RESEARCH_AGENT_WORKFLOW_PRESETS: ResearchAgentWorkflowPreset[] = [
     },
   },
   {
+    id: 'code-change-plan',
+    title: 'Code Change Plan',
+    description: 'Inspect code context and produce a reviewable patch plan without direct file writes.',
+    promptPreset: 'Review the relevant code and produce a safe code-change plan. Include target files, patch preview, risks, tests, and Workbench proposal handoff.',
+    plannerHints: [
+      'Use workspace.search and workspace.readIndexedContext before proposing code changes.',
+      'Resolve Lattice path identity for concrete files before file-targeted planning.',
+      'Return target files, intended diff summary, risk assessment, and focused test plan.',
+      'List QA commands only as approval-gated command plans with allowed, suggested, and rejected/deferred sections.',
+      'Use Workbench proposal handoff for patch plans; do not write files, run shell commands, use git, or update dependencies.',
+    ],
+    contextProfile: {
+      ...BASE_RESEARCH_CONTEXT,
+      includeAnnotations: false,
+      maxContextTokens: 28000,
+      contextBudgetProfileId: 'notebook',
+    },
+    allowedTools: [...READ_TOOLS, 'workbench.createProposal'],
+    outputArtifactPolicy: 'proposal-optional',
+    approvalPolicy: {
+      ...ASK_WRITE_APPROVAL,
+      createDraft: 'deny',
+      runCode: 'deny',
+    },
+    traceLabels: {
+      run: 'Code change plan',
+      plan: 'Plan code review workflow',
+      result: 'Reviewable code change proposal',
+    },
+    defaultNoteConfig: {
+      noteStyle: 'concise',
+      quotePolicy: 'short-quotes-only',
+      annotationPolicy: 'none',
+      sections: ['Target files', 'Patch preview', 'Risks', 'Test plan', 'Approval path'],
+    },
+  },
+  {
     id: 'literature-matrix',
     title: 'Literature Matrix',
     description: 'Compare multiple sources and produce a structured evidence matrix.',
@@ -436,6 +474,8 @@ export interface InferResearchAgentWorkflowInput {
   selection?: string;
 }
 
+const CODE_FILE_PATTERN = /\.(?:[cm]?[jt]sx?|tsx?|py|rs|go|java|kt|kts|cs|cpp|cc|cxx|c|h|hpp|swift|rb|php|vue|svelte|astro|css|scss|sass|less|json|ya?ml|toml|ini|sh|ps1|mjs|cjs)$/i;
+
 function containsAny(text: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(text));
 }
@@ -449,6 +489,42 @@ export function inferResearchAgentWorkflow(input: InferResearchAgentWorkflowInpu
     input.content?.slice(0, 2000),
     filePath,
   ].filter(Boolean).join('\n').toLowerCase();
+
+  const hasCodingIntent = containsAny(text, [
+    /\bcode review\b/,
+    /\breview code\b/,
+    /\bchange plan\b/,
+    /\bpatch\b/,
+    /\bdiff\b/,
+    /\bbug\s*fix\b/,
+    /\bfix bug\b/,
+    /\brefactor\b/,
+    /\btypecheck\b/,
+    /\bunit test\b/,
+    /\btest plan\b/,
+    /\btsx?\b/,
+    /\bjsx?\b/,
+    /\bpython\b/,
+    /\brust\b/,
+    /\btypescript\b/,
+    /代码审查/,
+    /代码评审/,
+    /代码变更/,
+    /变更计划/,
+    /补丁/,
+    /修复.*(?:bug|错误|问题|代码)/,
+    /(?:bug|错误|问题).*修复/,
+    /重构/,
+    /差异/,
+    /测试计划/,
+  ]);
+
+  if (
+    !filePath.endsWith('.ipynb') &&
+    (CODE_FILE_PATTERN.test(filePath) || hasCodingIntent)
+  ) {
+    return 'code-change-plan';
+  }
 
   if (
     filePath.endsWith('.ipynb') ||

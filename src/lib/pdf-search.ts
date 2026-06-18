@@ -10,8 +10,14 @@ export interface PdfSearchMatchRect {
 export interface PdfSearchMatch {
   page: number;
   index: number;
+  normalizedIndex: number;
   preview: string;
   rects: PdfSearchMatchRect[];
+}
+
+interface PdfNormalizedSearchText {
+  text: string;
+  indexMap: number[];
 }
 
 function buildPreview(text: string, start: number, query: string): string {
@@ -53,24 +59,46 @@ function buildMatchRects(model: PdfPageTextModel, start: number, end: number): P
   return rects;
 }
 
+export function normalizePdfSearchText(text: string): PdfNormalizedSearchText {
+  const chars: string[] = [];
+  const indexMap: number[] = [];
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (/\s/.test(char)) {
+      continue;
+    }
+
+    chars.push(char.toLocaleLowerCase());
+    indexMap.push(index);
+  }
+
+  return { text: chars.join(""), indexMap };
+}
+
 export function searchPdfPageTextModel(model: PdfPageTextModel, query: string): PdfSearchMatch[] {
-  const needle = query.trim().toLowerCase();
+  const needle = normalizePdfSearchText(query.trim()).text;
   if (!needle) {
     return [];
   }
 
-  const text = model.normalizedText.toLowerCase();
+  const normalizedPage = normalizePdfSearchText(model.normalizedText);
+  const text = normalizedPage.text;
   const matches: PdfSearchMatch[] = [];
   let index = 0;
 
   while ((index = text.indexOf(needle, index)) !== -1) {
+    const start = normalizedPage.indexMap[index] ?? 0;
+    const lastNeedleIndex = index + needle.length - 1;
+    const end = (normalizedPage.indexMap[lastNeedleIndex] ?? start) + 1;
     matches.push({
       page: model.pageNumber,
-      index,
-      preview: buildPreview(model.normalizedText, index, needle),
-      rects: buildMatchRects(model, index, index + needle.length),
+      index: start,
+      normalizedIndex: index,
+      preview: buildPreview(model.normalizedText, start, model.normalizedText.slice(start, end)),
+      rects: buildMatchRects(model, start, end),
     });
-    index += needle.length;
+    index += Math.max(1, needle.length);
   }
 
   return matches;

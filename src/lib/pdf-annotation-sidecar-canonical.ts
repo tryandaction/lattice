@@ -1,8 +1,10 @@
 import {
   buildCanonicalPdfTextMarkupAnnotationFromExact,
+  buildPdfQuadsFromRects,
   canonicalizePdfTextAnnotationFromModel,
   repairPdfTextAnnotationFromModel,
 } from "@/lib/pdf-annotation-text-repair";
+import { resolveCanonicalPdfTextAnchorFromExact } from "@/lib/pdf-canonical-text-anchoring";
 import { normalizePdfReadableText } from "@/lib/pdf-readable-text";
 import {
   loadAnnotationsFromDisk,
@@ -27,6 +29,8 @@ export interface UpsertCanonicalPdfTextMarkupAnnotationInput {
   annotationFile: UniversalAnnotationFile;
   model: PdfPageTextModel;
   exact: string;
+  prefix?: string;
+  suffix?: string;
   styleType: CanonicalPdfTextMarkupType;
   color: string;
   author: string;
@@ -183,30 +187,62 @@ export function upsertCanonicalPdfTextMarkupAnnotationInFile(
     : null;
   const id = input.id ?? existing?.id ?? generateAnnotationId();
   const createdAt = input.createdAt ?? existing?.createdAt ?? input.now ?? Date.now();
-  const canonical = buildCanonicalPdfTextMarkupAnnotationFromExact({
+  const resolvedAnchor = resolveCanonicalPdfTextAnchorFromExact({
     model: input.model,
     exact: normalizedExact,
-    styleType: input.styleType,
-    color: input.color,
-    author: input.author,
-    underlineStyle: input.underlineStyle,
-    id,
-    createdAt,
+    prefix: input.prefix,
+    suffix: input.suffix,
+    requireUnique: true,
+    source: "pdfjs-text-model",
   });
-
-  if (!canonical) {
+  if (!resolvedAnchor.ok) {
     return {
       ok: false,
       annotationFile: input.annotationFile,
       changed: false,
-      reason: "exact-not-found-in-pdf-text-model",
+      reason: resolvedAnchor.reason,
+    };
+  }
+
+  const rects = resolvedAnchor.anchor.rects.filter((rect) =>
+    Number.isFinite(rect.x1) &&
+    Number.isFinite(rect.y1) &&
+    Number.isFinite(rect.x2) &&
+    Number.isFinite(rect.y2) &&
+    rect.x2 > rect.x1 &&
+    rect.y2 > rect.y1
+  );
+  if (rects.length === 0) {
+    return {
+      ok: false,
+      annotationFile: input.annotationFile,
+      changed: false,
+      reason: "invalid-anchor",
     };
   }
 
   const annotation: AnnotationItem = {
-    ...canonical,
     id,
     createdAt,
+    target: {
+      type: "pdf",
+      page: input.model.pageNumber,
+      rects,
+      textQuote: resolvedAnchor.anchor.textQuote,
+      textKernelVersion: 1,
+      startCharIndex: resolvedAnchor.anchor.startOffset,
+      endCharIndex: resolvedAnchor.anchor.endOffset,
+      quads: buildPdfQuadsFromRects(rects),
+      textSource: resolvedAnchor.anchor.textQuote.source,
+      textConfidence: 1,
+    },
+    style: {
+      color: input.color,
+      type: input.styleType,
+      underlineStyle: input.styleType === "underline" ? (input.underlineStyle ?? "solid") : undefined,
+    },
+    content: normalizePdfReadableText(resolvedAnchor.anchor.textQuote.exact),
+    author: input.author,
     comment: input.comment ?? existing?.comment,
     tags: normalizeAnnotationTags(input.tags ?? existing?.tags),
   };
@@ -316,6 +352,8 @@ export async function writeCanonicalPdfTextMarkupAnnotationToDisk(input: {
   fileId: string;
   model: PdfPageTextModel;
   exact: string;
+  prefix?: string;
+  suffix?: string;
   styleType: CanonicalPdfTextMarkupType;
   color: string;
   author: string;
@@ -330,6 +368,8 @@ export async function writeCanonicalPdfTextMarkupAnnotationToDisk(input: {
     annotationFile,
     model: input.model,
     exact: input.exact,
+    prefix: input.prefix,
+    suffix: input.suffix,
     styleType: input.styleType,
     color: input.color,
     author: input.author,

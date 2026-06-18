@@ -20,7 +20,17 @@ This guide explains how math input, normalization, rendering, and copy/export wo
 
 ### MathLive (Visual Editor)
 - Double-click a rendered formula to open the MathLive editor.
-- Use the symbol palette or Quantum Keyboard for structured input.
+- Use the symbol palette or Quantum Keyboard for structure-first input.
+- Tab moves through MathLive placeholders; Shift+Tab moves backward.
+
+### Quantum Keyboard 2.0
+- Double-tap `Tab` in an editor or formula input target to open the compact formula HUD.
+- Pick a common structure directly, or press a visible QWERTY key to insert the mapped symbol.
+- Use `Shift + key` to open variants for that key.
+- Use `Tab` inside the HUD to switch inline/block output.
+- Use `Shift+Tab` inside the HUD to switch Markdown/LaTeX output.
+- Global app shortcuts and plugin shortcuts yield to active editing targets, so Markdown and formula input keep priority while typing.
+- See `docs/guides/quantum-keyboard.md` for the full product model and key strategy.
 
 ---
 
@@ -62,6 +72,10 @@ Key helpers:
   - Shift/Alt + right-click → copies pure LaTeX
 - **Math Editor overlay:**
   - “Copy MD” and “Copy LaTeX” buttons
+- **Formula Extractor plugin:**
+  - Extract formulas from the current PDF, DOCX, Markdown, HTML document, or selection
+  - Copy all formulas as Markdown
+  - Export formulas as `.md`, `.tex`, or `.json`
 
 ---
 
@@ -93,8 +107,14 @@ If clipboard content looks like regular Markdown:
 - `src/components/editor/codemirror/live-preview/widgets.ts`
 - `src/components/editor/codemirror/live-preview/math-paste-plugin.ts`
 - `src/components/editor/math-editor.tsx`
+- `src/components/editor/math-symbol-palette.tsx`
+- `src/components/hud/keyboard-hud.tsx`
+- `src/config/quantum-keymap.ts`
+- `src/lib/unified-input-handler.ts`
 - `src/components/editor/extensions/latex-paste-handler.ts`
 - `src/components/editor/extensions/mathlive-node.tsx`
+- `src/plugins/formula-extractor/`
+- `docs/guides/quantum-keyboard.md`
 
 ---
 

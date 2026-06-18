@@ -502,7 +502,11 @@ export class PluginWorkerHost {
 
   private startActiveFileListener(): void {
     if (!this.worker) return;
-    if (!this.options.permissions.includes('file:read')) return;
+    if (
+      !this.options.permissions.includes('file:read') &&
+      !this.options.permissions.includes('read-current-document') &&
+      !this.options.permissions.includes('read-workspace-file')
+    ) return;
     const store = useWorkspaceStore;
     this.lastActiveFile = getActiveFilePath();
     this.worker.postMessage({

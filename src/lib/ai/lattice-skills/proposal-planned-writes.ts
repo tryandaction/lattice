@@ -1,5 +1,9 @@
 import type { AiPlannedWrite, AiTaskProposalStep, EvidenceRef } from '../types';
 import { buildDraftArtifactDefaultPath } from '../workbench-actions';
+import {
+  buildLatticeCodingProposalPlannedWrites,
+  isLikelyCodingProposal,
+} from './coding-proposal-planned-writes';
 
 export interface RawPlannedWrite {
   targetPath?: string;
@@ -13,6 +17,7 @@ export interface LatticeProposalPlannedWritesInput {
   summary: string;
   steps: AiTaskProposalStep[];
   evidenceRefs: EvidenceRef[];
+  filePath?: string;
 }
 
 function normalizeTitle(value: string): string {
@@ -89,6 +94,10 @@ function normalizeRequestedWrites(input: LatticeProposalPlannedWritesInput): AiP
 export function buildLatticeProposalPlannedWrites(
   input: LatticeProposalPlannedWritesInput,
 ): AiPlannedWrite[] {
+  if (isLikelyCodingProposal(input)) {
+    return buildLatticeCodingProposalPlannedWrites(input);
+  }
+
   const normalized = normalizeRequestedWrites(input);
   if (normalized.length > 0) {
     return normalized;

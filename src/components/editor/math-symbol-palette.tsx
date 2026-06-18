@@ -1,22 +1,14 @@
 "use client";
 
 /**
- * MathSymbolPalette - Mathematical Symbol Picker
+ * MathSymbolPalette - searchable, structure-first formula palette.
  *
- * Provides quick access to 100+ mathematical symbols organized by category.
- * Integrates with MathEditor for seamless symbol insertion.
- *
- * Features:
- * - 6 categories: Greek, Operators, Relations, Arrows, Logic, Sets
- * - Click to insert symbol into MathLive
- * - Keyboard shortcut: Ctrl+Shift+M to toggle
- * - Floating panel with grid layout
- * - Search functionality
- * - Hover tooltips showing LaTeX code
+ * It is the discoverable companion to the Quantum Keyboard: users can search
+ * by name or LaTeX, then insert the same reliable commands into MathLive.
  */
 
-import { useState, useEffect, useRef } from 'react';
-import { X, Search } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Search, X } from "lucide-react";
 
 export interface MathSymbolPaletteProps {
   /** Callback when user clicks a symbol */
@@ -29,156 +21,223 @@ export interface MathSymbolPaletteProps {
   isOpen: boolean;
 }
 
-/**
- * Symbol categories with Unicode symbols and LaTeX mappings
- */
-const SYMBOL_CATEGORIES = {
-  Greek: {
-    name: 'Greek Letters',
+type SymbolCategory =
+  | "Common"
+  | "Structures"
+  | "Greek"
+  | "Calculus"
+  | "Linear"
+  | "Relations"
+  | "Sets"
+  | "Logic"
+  | "Arrows"
+  | "Physics";
+
+interface MathSymbolItem {
+  symbol: string;
+  latex: string;
+  name: string;
+  keywords?: string[];
+}
+
+const SYMBOL_CATEGORIES: Record<SymbolCategory, { name: string; symbols: MathSymbolItem[] }> = {
+  Common: {
+    name: "常用",
     symbols: [
-      { symbol: 'α', latex: '\\alpha', name: 'alpha' },
-      { symbol: 'β', latex: '\\beta', name: 'beta' },
-      { symbol: 'γ', latex: '\\gamma', name: 'gamma' },
-      { symbol: 'δ', latex: '\\delta', name: 'delta' },
-      { symbol: 'ε', latex: '\\epsilon', name: 'epsilon' },
-      { symbol: 'ζ', latex: '\\zeta', name: 'zeta' },
-      { symbol: 'η', latex: '\\eta', name: 'eta' },
-      { symbol: 'θ', latex: '\\theta', name: 'theta' },
-      { symbol: 'ι', latex: '\\iota', name: 'iota' },
-      { symbol: 'κ', latex: '\\kappa', name: 'kappa' },
-      { symbol: 'λ', latex: '\\lambda', name: 'lambda' },
-      { symbol: 'μ', latex: '\\mu', name: 'mu' },
-      { symbol: 'ν', latex: '\\nu', name: 'nu' },
-      { symbol: 'ξ', latex: '\\xi', name: 'xi' },
-      { symbol: 'π', latex: '\\pi', name: 'pi' },
-      { symbol: 'ρ', latex: '\\rho', name: 'rho' },
-      { symbol: 'σ', latex: '\\sigma', name: 'sigma' },
-      { symbol: 'τ', latex: '\\tau', name: 'tau' },
-      { symbol: 'υ', latex: '\\upsilon', name: 'upsilon' },
-      { symbol: 'φ', latex: '\\phi', name: 'phi' },
-      { symbol: 'χ', latex: '\\chi', name: 'chi' },
-      { symbol: 'ψ', latex: '\\psi', name: 'psi' },
-      { symbol: 'ω', latex: '\\omega', name: 'omega' },
-      { symbol: 'Γ', latex: '\\Gamma', name: 'Gamma' },
-      { symbol: 'Δ', latex: '\\Delta', name: 'Delta' },
-      { symbol: 'Θ', latex: '\\Theta', name: 'Theta' },
-      { symbol: 'Λ', latex: '\\Lambda', name: 'Lambda' },
-      { symbol: 'Ξ', latex: '\\Xi', name: 'Xi' },
-      { symbol: 'Π', latex: '\\Pi', name: 'Pi' },
-      { symbol: 'Σ', latex: '\\Sigma', name: 'Sigma' },
-      { symbol: 'Φ', latex: '\\Phi', name: 'Phi' },
-      { symbol: 'Ψ', latex: '\\Psi', name: 'Psi' },
-      { symbol: 'Ω', latex: '\\Omega', name: 'Omega' },
+      { symbol: "x/y", latex: "\\frac{}{}", name: "fraction", keywords: ["分数", "divide"] },
+      { symbol: "√", latex: "\\sqrt{}", name: "square root", keywords: ["根号", "root"] },
+      { symbol: "x²", latex: "^{ }", name: "superscript", keywords: ["上标", "power"] },
+      { symbol: "xᵢ", latex: "_{ }", name: "subscript", keywords: ["下标", "index"] },
+      { symbol: "Σ", latex: "\\sum_{}^{}", name: "summation", keywords: ["求和", "series"] },
+      { symbol: "∫", latex: "\\int_{}^{}", name: "integral", keywords: ["积分"] },
+      { symbol: "lim", latex: "\\lim_{}", name: "limit", keywords: ["极限"] },
+      { symbol: "∞", latex: "\\infty", name: "infinity", keywords: ["无穷"] },
+      { symbol: "→", latex: "\\to", name: "to", keywords: ["arrow"] },
+      { symbol: "≈", latex: "\\approx", name: "approximately", keywords: ["约等于"] },
     ],
   },
-  Operators: {
-    name: 'Operators',
+  Structures: {
+    name: "结构",
     symbols: [
-      { symbol: '∑', latex: '\\sum', name: 'sum' },
-      { symbol: '∏', latex: '\\prod', name: 'product' },
-      { symbol: '∫', latex: '\\int', name: 'integral' },
-      { symbol: '∮', latex: '\\oint', name: 'contour integral' },
-      { symbol: '∂', latex: '\\partial', name: 'partial' },
-      { symbol: '∇', latex: '\\nabla', name: 'nabla' },
-      { symbol: '±', latex: '\\pm', name: 'plus-minus' },
-      { symbol: '∓', latex: '\\mp', name: 'minus-plus' },
-      { symbol: '×', latex: '\\times', name: 'times' },
-      { symbol: '÷', latex: '\\div', name: 'divide' },
-      { symbol: '·', latex: '\\cdot', name: 'dot' },
-      { symbol: '∘', latex: '\\circ', name: 'circle' },
-      { symbol: '√', latex: '\\sqrt{}', name: 'square root' },
-      { symbol: '∛', latex: '\\sqrt[3]{}', name: 'cube root' },
-      { symbol: '∜', latex: '\\sqrt[4]{}', name: 'fourth root' },
-      { symbol: '∞', latex: '\\infty', name: 'infinity' },
+      { symbol: "a/b", latex: "\\frac{}{}", name: "fraction", keywords: ["分数"] },
+      { symbol: "d/dx", latex: "\\frac{d}{d}", name: "derivative", keywords: ["导数"] },
+      { symbol: "∂/∂x", latex: "\\frac{\\partial}{\\partial}", name: "partial derivative", keywords: ["偏导"] },
+      { symbol: "√x", latex: "\\sqrt{}", name: "square root", keywords: ["根号"] },
+      { symbol: "ⁿ√x", latex: "\\sqrt[]{}", name: "nth root", keywords: ["n次根"] },
+      { symbol: "( )", latex: "\\left(\\right)", name: "parentheses", keywords: ["括号"] },
+      { symbol: "[ ]", latex: "\\left[\\right]", name: "brackets", keywords: ["方括号"] },
+      { symbol: "{ }", latex: "\\left\\{\\right\\}", name: "braces", keywords: ["花括号"] },
+      { symbol: "|x|", latex: "\\left|\\right|", name: "absolute value", keywords: ["绝对值"] },
+      { symbol: "||x||", latex: "\\left\\|\\right\\|", name: "norm", keywords: ["范数"] },
+      { symbol: "2x2", latex: "\\begin{pmatrix} & \\\\ & \\end{pmatrix}", name: "2 by 2 matrix", keywords: ["矩阵"] },
+      { symbol: "{", latex: "\\begin{cases}  &  \\\\  &  \\end{cases}", name: "cases", keywords: ["分段"] },
+    ],
+  },
+  Greek: {
+    name: "希腊",
+    symbols: [
+      { symbol: "α", latex: "\\alpha", name: "alpha" },
+      { symbol: "β", latex: "\\beta", name: "beta" },
+      { symbol: "γ", latex: "\\gamma", name: "gamma" },
+      { symbol: "Γ", latex: "\\Gamma", name: "Gamma" },
+      { symbol: "δ", latex: "\\delta", name: "delta" },
+      { symbol: "Δ", latex: "\\Delta", name: "Delta" },
+      { symbol: "ε", latex: "\\epsilon", name: "epsilon" },
+      { symbol: "η", latex: "\\eta", name: "eta" },
+      { symbol: "θ", latex: "\\theta", name: "theta" },
+      { symbol: "Θ", latex: "\\Theta", name: "Theta" },
+      { symbol: "κ", latex: "\\kappa", name: "kappa" },
+      { symbol: "λ", latex: "\\lambda", name: "lambda" },
+      { symbol: "Λ", latex: "\\Lambda", name: "Lambda" },
+      { symbol: "μ", latex: "\\mu", name: "mu" },
+      { symbol: "ν", latex: "\\nu", name: "nu" },
+      { symbol: "ξ", latex: "\\xi", name: "xi" },
+      { symbol: "Ξ", latex: "\\Xi", name: "Xi" },
+      { symbol: "π", latex: "\\pi", name: "pi" },
+      { symbol: "Π", latex: "\\Pi", name: "Pi" },
+      { symbol: "ρ", latex: "\\rho", name: "rho" },
+      { symbol: "σ", latex: "\\sigma", name: "sigma" },
+      { symbol: "Σ", latex: "\\Sigma", name: "Sigma" },
+      { symbol: "τ", latex: "\\tau", name: "tau" },
+      { symbol: "φ", latex: "\\phi", name: "phi" },
+      { symbol: "Φ", latex: "\\Phi", name: "Phi" },
+      { symbol: "ψ", latex: "\\psi", name: "psi" },
+      { symbol: "Ψ", latex: "\\Psi", name: "Psi" },
+      { symbol: "ω", latex: "\\omega", name: "omega" },
+      { symbol: "Ω", latex: "\\Omega", name: "Omega" },
+    ],
+  },
+  Calculus: {
+    name: "微积分",
+    symbols: [
+      { symbol: "∫", latex: "\\int", name: "integral", keywords: ["积分"] },
+      { symbol: "∬", latex: "\\iint", name: "double integral" },
+      { symbol: "∭", latex: "\\iiint", name: "triple integral" },
+      { symbol: "∮", latex: "\\oint", name: "contour integral" },
+      { symbol: "Σ", latex: "\\sum_{}^{}", name: "sum", keywords: ["求和"] },
+      { symbol: "Π", latex: "\\prod_{}^{}", name: "product" },
+      { symbol: "lim", latex: "\\lim_{}", name: "limit", keywords: ["极限"] },
+      { symbol: "∂", latex: "\\partial", name: "partial" },
+      { symbol: "∇", latex: "\\nabla", name: "nabla" },
+      { symbol: "∞", latex: "\\infty", name: "infinity" },
+      { symbol: "dx", latex: "\\,dx", name: "d x" },
+      { symbol: "dy", latex: "\\,dy", name: "d y" },
+    ],
+  },
+  Linear: {
+    name: "线代",
+    symbols: [
+      { symbol: "v⃗", latex: "\\vec{}", name: "vector", keywords: ["向量"] },
+      { symbol: "x̄", latex: "\\bar{}", name: "bar" },
+      { symbol: "x̂", latex: "\\hat{}", name: "hat" },
+      { symbol: "Aᵀ", latex: "^{T}", name: "transpose" },
+      { symbol: "A†", latex: "^{\\dagger}", name: "dagger" },
+      { symbol: "det", latex: "\\det", name: "determinant" },
+      { symbol: "tr", latex: "\\tr", name: "trace" },
+      { symbol: "rank", latex: "\\rank", name: "rank" },
+      { symbol: "diag", latex: "\\diag", name: "diagonal" },
+      { symbol: "pmat", latex: "\\begin{pmatrix} & \\\\ & \\end{pmatrix}", name: "parentheses matrix" },
+      { symbol: "bmat", latex: "\\begin{bmatrix} & \\\\ & \\end{bmatrix}", name: "bracket matrix" },
+      { symbol: "‖x‖", latex: "\\norm{}", name: "norm" },
     ],
   },
   Relations: {
-    name: 'Relations',
+    name: "关系",
     symbols: [
-      { symbol: '≤', latex: '\\leq', name: 'less than or equal' },
-      { symbol: '≥', latex: '\\geq', name: 'greater than or equal' },
-      { symbol: '≠', latex: '\\neq', name: 'not equal' },
-      { symbol: '≈', latex: '\\approx', name: 'approximately' },
-      { symbol: '≡', latex: '\\equiv', name: 'equivalent' },
-      { symbol: '∈', latex: '\\in', name: 'element of' },
-      { symbol: '∉', latex: '\\notin', name: 'not element of' },
-      { symbol: '⊂', latex: '\\subset', name: 'subset' },
-      { symbol: '⊃', latex: '\\supset', name: 'superset' },
-      { symbol: '⊆', latex: '\\subseteq', name: 'subset or equal' },
-      { symbol: '⊇', latex: '\\supseteq', name: 'superset or equal' },
-      { symbol: '∝', latex: '\\propto', name: 'proportional' },
-      { symbol: '∼', latex: '\\sim', name: 'similar' },
-      { symbol: '≅', latex: '\\cong', name: 'congruent' },
-      { symbol: '⊥', latex: '\\perp', name: 'perpendicular' },
-      { symbol: '∥', latex: '\\parallel', name: 'parallel' },
-    ],
-  },
-  Arrows: {
-    name: 'Arrows',
-    symbols: [
-      { symbol: '→', latex: '\\to', name: 'right arrow' },
-      { symbol: '←', latex: '\\leftarrow', name: 'left arrow' },
-      { symbol: '↔', latex: '\\leftrightarrow', name: 'left-right arrow' },
-      { symbol: '⇒', latex: '\\Rightarrow', name: 'implies' },
-      { symbol: '⇐', latex: '\\Leftarrow', name: 'implied by' },
-      { symbol: '⇔', latex: '\\Leftrightarrow', name: 'if and only if' },
-      { symbol: '↑', latex: '\\uparrow', name: 'up arrow' },
-      { symbol: '↓', latex: '\\downarrow', name: 'down arrow' },
-      { symbol: '↗', latex: '\\nearrow', name: 'northeast arrow' },
-      { symbol: '↘', latex: '\\searrow', name: 'southeast arrow' },
-      { symbol: '↖', latex: '\\nwarrow', name: 'northwest arrow' },
-      { symbol: '↙', latex: '\\swarrow', name: 'southwest arrow' },
-      { symbol: '↦', latex: '\\mapsto', name: 'maps to' },
-      { symbol: '⟶', latex: '\\longrightarrow', name: 'long right arrow' },
-      { symbol: '⟵', latex: '\\longleftarrow', name: 'long left arrow' },
-      { symbol: '⟷', latex: '\\longleftrightarrow', name: 'long left-right arrow' },
-    ],
-  },
-  Logic: {
-    name: 'Logic',
-    symbols: [
-      { symbol: '∀', latex: '\\forall', name: 'for all' },
-      { symbol: '∃', latex: '\\exists', name: 'exists' },
-      { symbol: '∄', latex: '\\nexists', name: 'not exists' },
-      { symbol: '∧', latex: '\\land', name: 'and' },
-      { symbol: '∨', latex: '\\lor', name: 'or' },
-      { symbol: '¬', latex: '\\neg', name: 'not' },
-      { symbol: '⊕', latex: '\\oplus', name: 'xor' },
-      { symbol: '⊗', latex: '\\otimes', name: 'tensor product' },
-      { symbol: '⊤', latex: '\\top', name: 'top' },
-      { symbol: '⊥', latex: '\\bot', name: 'bottom' },
-      { symbol: '⊢', latex: '\\vdash', name: 'proves' },
-      { symbol: '⊨', latex: '\\models', name: 'models' },
+      { symbol: "≤", latex: "\\leq", name: "less or equal" },
+      { symbol: "≥", latex: "\\geq", name: "greater or equal" },
+      { symbol: "≠", latex: "\\neq", name: "not equal" },
+      { symbol: "≈", latex: "\\approx", name: "approximately" },
+      { symbol: "≡", latex: "\\equiv", name: "equivalent" },
+      { symbol: "∝", latex: "\\propto", name: "proportional" },
+      { symbol: "∼", latex: "\\sim", name: "similar" },
+      { symbol: "≅", latex: "\\cong", name: "congruent" },
+      { symbol: "⊥", latex: "\\perp", name: "perpendicular" },
+      { symbol: "∥", latex: "\\parallel", name: "parallel" },
+      { symbol: "≪", latex: "\\ll", name: "much less" },
+      { symbol: "≫", latex: "\\gg", name: "much greater" },
     ],
   },
   Sets: {
-    name: 'Sets',
+    name: "集合",
     symbols: [
-      { symbol: '∅', latex: '\\emptyset', name: 'empty set' },
-      { symbol: 'ℕ', latex: '\\mathbb{N}', name: 'natural numbers' },
-      { symbol: 'ℤ', latex: '\\mathbb{Z}', name: 'integers' },
-      { symbol: 'ℚ', latex: '\\mathbb{Q}', name: 'rational numbers' },
-      { symbol: 'ℝ', latex: '\\mathbb{R}', name: 'real numbers' },
-      { symbol: 'ℂ', latex: '\\mathbb{C}', name: 'complex numbers' },
-      { symbol: '∪', latex: '\\cup', name: 'union' },
-      { symbol: '∩', latex: '\\cap', name: 'intersection' },
-      { symbol: '∖', latex: '\\setminus', name: 'set difference' },
-      { symbol: '△', latex: '\\triangle', name: 'symmetric difference' },
-      { symbol: '⊎', latex: '\\uplus', name: 'multiset union' },
-      { symbol: '⊔', latex: '\\sqcup', name: 'square union' },
+      { symbol: "∅", latex: "\\emptyset", name: "empty set" },
+      { symbol: "∈", latex: "\\in", name: "in" },
+      { symbol: "∉", latex: "\\notin", name: "not in" },
+      { symbol: "⊂", latex: "\\subset", name: "subset" },
+      { symbol: "⊆", latex: "\\subseteq", name: "subset equal" },
+      { symbol: "⊃", latex: "\\supset", name: "superset" },
+      { symbol: "⊇", latex: "\\supseteq", name: "superset equal" },
+      { symbol: "∪", latex: "\\cup", name: "union" },
+      { symbol: "∩", latex: "\\cap", name: "intersection" },
+      { symbol: "ℕ", latex: "\\mathbb{N}", name: "natural numbers" },
+      { symbol: "ℤ", latex: "\\mathbb{Z}", name: "integers" },
+      { symbol: "ℚ", latex: "\\mathbb{Q}", name: "rationals" },
+      { symbol: "ℝ", latex: "\\mathbb{R}", name: "reals" },
+      { symbol: "ℂ", latex: "\\mathbb{C}", name: "complex" },
     ],
   },
-} as const;
+  Logic: {
+    name: "逻辑",
+    symbols: [
+      { symbol: "∀", latex: "\\forall", name: "for all" },
+      { symbol: "∃", latex: "\\exists", name: "exists" },
+      { symbol: "¬", latex: "\\neg", name: "not" },
+      { symbol: "∧", latex: "\\land", name: "and" },
+      { symbol: "∨", latex: "\\lor", name: "or" },
+      { symbol: "⇒", latex: "\\Rightarrow", name: "implies" },
+      { symbol: "⇔", latex: "\\Leftrightarrow", name: "if and only if" },
+      { symbol: "⊢", latex: "\\vdash", name: "proves" },
+      { symbol: "⊨", latex: "\\models", name: "models" },
+      { symbol: "⊕", latex: "\\oplus", name: "oplus" },
+      { symbol: "⊗", latex: "\\otimes", name: "tensor" },
+      { symbol: "⊥", latex: "\\bot", name: "bottom" },
+    ],
+  },
+  Arrows: {
+    name: "箭头",
+    symbols: [
+      { symbol: "→", latex: "\\to", name: "to" },
+      { symbol: "←", latex: "\\leftarrow", name: "left arrow" },
+      { symbol: "↔", latex: "\\leftrightarrow", name: "left right arrow" },
+      { symbol: "⇒", latex: "\\Rightarrow", name: "Rightarrow" },
+      { symbol: "⇐", latex: "\\Leftarrow", name: "Leftarrow" },
+      { symbol: "⇔", latex: "\\Leftrightarrow", name: "Leftrightarrow" },
+      { symbol: "↦", latex: "\\mapsto", name: "maps to" },
+      { symbol: "⟶", latex: "\\longrightarrow", name: "long right arrow" },
+      { symbol: "↑", latex: "\\uparrow", name: "up arrow" },
+      { symbol: "↓", latex: "\\downarrow", name: "down arrow" },
+      { symbol: "↗", latex: "\\nearrow", name: "northeast arrow" },
+      { symbol: "↘", latex: "\\searrow", name: "southeast arrow" },
+    ],
+  },
+  Physics: {
+    name: "物理",
+    symbols: [
+      { symbol: "ℏ", latex: "\\hbar", name: "h bar", keywords: ["hbar"] },
+      { symbol: "|ψ⟩", latex: "\\ket{\\psi}", name: "ket psi", keywords: ["quantum"] },
+      { symbol: "⟨ψ|", latex: "\\bra{\\psi}", name: "bra psi", keywords: ["quantum"] },
+      { symbol: "⟨a|b⟩", latex: "\\braket{a}{b}", name: "braket", keywords: ["quantum"] },
+      { symbol: "Ĥ", latex: "\\hat{H}", name: "Hamiltonian" },
+      { symbol: "E", latex: "\\mathbf{E}", name: "electric field" },
+      { symbol: "B", latex: "\\mathbf{B}", name: "magnetic field" },
+      { symbol: "∇·", latex: "\\nabla \\cdot", name: "divergence" },
+      { symbol: "∇×", latex: "\\nabla \\times", name: "curl" },
+      { symbol: "μ₀", latex: "\\mu_0", name: "mu naught" },
+      { symbol: "ε₀", latex: "\\epsilon_0", name: "epsilon naught" },
+      { symbol: "†", latex: "^{\\dagger}", name: "dagger" },
+    ],
+  },
+};
 
-/**
- * MathSymbolPalette Component
- */
+const CATEGORY_ORDER = Object.keys(SYMBOL_CATEGORIES) as SymbolCategory[];
+
 export function MathSymbolPalette({ onInsert, onClose, isOpen }: MathSymbolPaletteProps) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeCategory, setActiveCategory] = useState<keyof typeof SYMBOL_CATEGORIES>('Greek');
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeCategory, setActiveCategory] = useState<SymbolCategory>("Common");
   const paletteRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
-  // Handle click outside to close
   useEffect(() => {
     if (!isOpen) return;
 
@@ -188,68 +247,71 @@ export function MathSymbolPalette({ onInsert, onClose, isOpen }: MathSymbolPalet
       }
     };
 
-    // Add listener after a brief delay to avoid immediate trigger
     const timeoutId = setTimeout(() => {
-      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener("mousedown", handleClickOutside);
+      searchRef.current?.focus();
     }, 100);
 
     return () => {
       clearTimeout(timeoutId);
-      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [isOpen, onClose]);
 
-  // Handle Escape key to close
   useEffect(() => {
     if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === "Escape") {
         e.preventDefault();
         onClose();
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
+  const filteredSymbols = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    const pool = query
+      ? CATEGORY_ORDER.flatMap((category) => SYMBOL_CATEGORIES[category].symbols)
+      : SYMBOL_CATEGORIES[activeCategory].symbols;
+
+    if (!query) return pool;
+
+    return pool.filter((item) => {
+      const haystack = [
+        item.symbol,
+        item.latex,
+        item.name,
+        ...(item.keywords ?? []),
+      ].join(" ").toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [activeCategory, searchQuery]);
+
   if (!isOpen) return null;
-
-  // Filter symbols based on search query
-  const getFilteredSymbols = () => {
-    if (!searchQuery) {
-      return SYMBOL_CATEGORIES[activeCategory].symbols;
-    }
-
-    const query = searchQuery.toLowerCase();
-    return SYMBOL_CATEGORIES[activeCategory].symbols.filter(
-      (s) =>
-        s.name.toLowerCase().includes(query) ||
-        s.latex.toLowerCase().includes(query) ||
-        s.symbol.includes(query)
-    );
-  };
-
-  const filteredSymbols = getFilteredSymbols();
 
   return (
     <div
       ref={paletteRef}
       className="math-symbol-palette"
       style={{
-        position: 'fixed',
-        right: '20px',
-        top: '100px',
-        width: '320px',
-        maxHeight: '600px',
+        position: "fixed",
+        right: "20px",
+        top: "96px",
+        width: "360px",
+        maxHeight: "min(680px, calc(100vh - 128px))",
         zIndex: 999,
       }}
     >
       <div className="palette-container">
-        {/* Header */}
         <div className="palette-header">
-          <h3 className="palette-title">Math Symbols</h3>
+          <div>
+            <h3 className="palette-title">公式符号</h3>
+            <p className="palette-subtitle">搜索结构、符号或 LaTeX</p>
+          </div>
           <button
             onClick={onClose}
             className="palette-close"
@@ -259,94 +321,103 @@ export function MathSymbolPalette({ onInsert, onClose, isOpen }: MathSymbolPalet
           </button>
         </div>
 
-        {/* Search */}
         <div className="palette-search">
           <Search className="h-4 w-4 search-icon" />
           <input
+            ref={searchRef}
             type="text"
-            placeholder="Search symbols..."
+            placeholder="Search: frac, alpha, 矩阵..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="search-input"
           />
         </div>
 
-        {/* Category Tabs */}
-        <div className="category-tabs">
-          {(Object.keys(SYMBOL_CATEGORIES) as Array<keyof typeof SYMBOL_CATEGORIES>).map(
-            (category) => (
-              <button
-                key={category}
-                onClick={() => setActiveCategory(category)}
-                className={`category-tab ${activeCategory === category ? 'active' : ''}`}
-              >
-                {category}
-              </button>
-            )
-          )}
+        <div className="category-tabs" aria-label="Formula symbol categories">
+          {CATEGORY_ORDER.map((category) => (
+            <button
+              key={category}
+              onClick={() => setActiveCategory(category)}
+              className={`category-tab ${activeCategory === category && !searchQuery ? "active" : ""}`}
+            >
+              {SYMBOL_CATEGORIES[category].name}
+            </button>
+          ))}
         </div>
 
-        {/* Symbol Grid */}
         <div className="symbol-grid-container">
-          <h4 className="category-name">{SYMBOL_CATEGORIES[activeCategory].name}</h4>
+          <div className="category-name">
+            {searchQuery ? "搜索结果" : SYMBOL_CATEGORIES[activeCategory].name}
+            <span>{filteredSymbols.length}</span>
+          </div>
           <div className="symbol-grid">
             {filteredSymbols.map((item) => (
               <button
-                key={item.latex}
+                key={`${item.latex}-${item.name}`}
                 onClick={() => onInsert(item.latex)}
                 className="symbol-button"
                 title={`${item.name}\n${item.latex}`}
               >
-                {item.symbol}
+                <span className="symbol-glyph">{item.symbol}</span>
+                <span className="symbol-latex">{item.latex}</span>
               </button>
             ))}
           </div>
           {filteredSymbols.length === 0 && (
-            <div className="no-results">No symbols found</div>
+            <div className="no-results">没有找到匹配的符号</div>
           )}
         </div>
 
-        {/* Footer hint */}
         <div className="palette-footer">
-          <span className="footer-hint">Click symbol to insert • Esc to close</span>
+          <span className="footer-hint">点击插入 · Esc 关闭</span>
         </div>
       </div>
 
       <style jsx>{`
         .palette-container {
-          background: white;
+          display: flex;
+          max-height: inherit;
+          flex-direction: column;
+          overflow: hidden;
           border: 1px solid hsl(var(--border));
           border-radius: 8px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-          overflow: hidden;
-          display: flex;
-          flex-direction: column;
+          background: hsl(var(--background));
+          color: hsl(var(--foreground));
+          box-shadow: 0 18px 60px rgba(15, 23, 42, 0.18);
         }
 
         .palette-header {
           display: flex;
+          align-items: flex-start;
           justify-content: space-between;
-          align-items: center;
-          padding: 12px 16px;
+          gap: 12px;
           border-bottom: 1px solid hsl(var(--border));
-          background: hsl(var(--muted) / 0.3);
+          padding: 12px 14px;
+          background: hsl(var(--muted) / 0.24);
         }
 
         .palette-title {
-          font-size: 16px;
-          font-weight: 600;
-          color: hsl(var(--foreground));
           margin: 0;
+          font-size: 15px;
+          font-weight: 650;
+        }
+
+        .palette-subtitle {
+          margin: 2px 0 0;
+          color: hsl(var(--muted-foreground));
+          font-size: 12px;
         }
 
         .palette-close {
-          background: none;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
           border: none;
-          cursor: pointer;
-          padding: 4px;
-          border-radius: 4px;
+          border-radius: 6px;
+          background: transparent;
           color: hsl(var(--muted-foreground));
-          transition: all 0.2s;
+          cursor: pointer;
+          padding: 5px;
         }
 
         .palette-close:hover {
@@ -356,13 +427,13 @@ export function MathSymbolPalette({ onInsert, onClose, isOpen }: MathSymbolPalet
 
         .palette-search {
           position: relative;
-          padding: 12px 16px;
           border-bottom: 1px solid hsl(var(--border));
+          padding: 10px 14px;
         }
 
         .search-icon {
           position: absolute;
-          left: 24px;
+          left: 23px;
           top: 50%;
           transform: translateY(-50%);
           color: hsl(var(--muted-foreground));
@@ -370,136 +441,133 @@ export function MathSymbolPalette({ onInsert, onClose, isOpen }: MathSymbolPalet
 
         .search-input {
           width: 100%;
-          padding: 8px 12px 8px 32px;
           border: 1px solid hsl(var(--border));
-          border-radius: 4px;
-          font-size: 14px;
+          border-radius: 6px;
           background: hsl(var(--background));
           color: hsl(var(--foreground));
+          font-size: 13px;
+          padding: 8px 10px 8px 32px;
         }
 
         .search-input:focus {
           outline: 2px solid hsl(var(--ring));
-          outline-offset: 2px;
+          outline-offset: 1px;
         }
 
         .category-tabs {
           display: flex;
           gap: 4px;
-          padding: 8px 12px;
-          border-bottom: 1px solid hsl(var(--border));
           overflow-x: auto;
-          background: hsl(var(--muted) / 0.2);
+          border-bottom: 1px solid hsl(var(--border));
+          background: hsl(var(--muted) / 0.18);
+          padding: 7px 10px;
         }
 
         .category-tab {
-          padding: 6px 12px;
+          flex: 0 0 auto;
           border: none;
-          border-radius: 4px;
-          font-size: 12px;
-          font-weight: 500;
-          cursor: pointer;
-          white-space: nowrap;
+          border-radius: 5px;
           background: transparent;
           color: hsl(var(--muted-foreground));
-          transition: all 0.2s;
+          cursor: pointer;
+          font-size: 12px;
+          padding: 5px 8px;
         }
 
-        .category-tab:hover {
-          background: hsl(var(--accent));
-          color: hsl(var(--foreground));
-        }
-
+        .category-tab:hover,
         .category-tab.active {
-          background: hsl(var(--primary));
-          color: hsl(var(--primary-foreground));
+          background: hsl(var(--background));
+          color: hsl(var(--foreground));
+          box-shadow: 0 0 0 1px hsl(var(--border)) inset;
         }
 
         .symbol-grid-container {
-          padding: 16px;
+          min-height: 0;
           overflow-y: auto;
-          max-height: 400px;
+          padding: 12px;
         }
 
         .category-name {
-          font-size: 14px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 10px;
+          color: hsl(var(--muted-foreground));
+          font-size: 12px;
           font-weight: 600;
-          color: hsl(var(--foreground));
-          margin: 0 0 12px 0;
         }
 
         .symbol-grid {
           display: grid;
-          grid-template-columns: repeat(6, 1fr);
-          gap: 6px;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 7px;
         }
 
         .symbol-button {
-          aspect-ratio: 1;
-          border: 1px solid hsl(var(--border));
-          border-radius: 4px;
-          background: hsl(var(--background));
-          cursor: pointer;
-          font-size: 20px;
-          display: flex;
+          display: grid;
+          grid-template-rows: 28px auto;
+          min-width: 0;
+          min-height: 60px;
           align-items: center;
-          justify-content: center;
-          transition: all 0.2s;
+          justify-items: center;
+          border: 1px solid hsl(var(--border));
+          border-radius: 6px;
+          background: hsl(var(--background));
           color: hsl(var(--foreground));
+          cursor: pointer;
+          padding: 6px 5px;
+          transition: background 120ms ease, border-color 120ms ease;
         }
 
         .symbol-button:hover {
-          background: hsl(var(--accent));
-          transform: scale(1.1);
-          border-color: hsl(var(--primary));
-          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+          border-color: hsl(var(--primary) / 0.5);
+          background: hsl(var(--primary) / 0.07);
         }
 
-        .symbol-button:active {
-          transform: scale(0.95);
+        .symbol-glyph {
+          max-width: 100%;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 18px;
+          line-height: 1;
+        }
+
+        .symbol-latex {
+          width: 100%;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          color: hsl(var(--muted-foreground));
+          font-family: var(--font-geist-mono), ui-monospace, monospace;
+          font-size: 10px;
+          text-align: center;
         }
 
         .no-results {
-          text-align: center;
-          padding: 32px;
+          border: 1px dashed hsl(var(--border));
+          border-radius: 6px;
           color: hsl(var(--muted-foreground));
-          font-size: 14px;
+          font-size: 13px;
+          padding: 24px;
+          text-align: center;
         }
 
         .palette-footer {
-          padding: 8px 16px;
           border-top: 1px solid hsl(var(--border));
-          background: hsl(var(--muted) / 0.2);
+          background: hsl(var(--muted) / 0.18);
+          padding: 8px 14px;
         }
 
         .footer-hint {
-          font-size: 12px;
           color: hsl(var(--muted-foreground));
+          font-size: 12px;
         }
 
-        /* Dark mode support */
-        @media (prefers-color-scheme: dark) {
-          .palette-container {
-            background: hsl(var(--background));
+        @media (max-width: 520px) {
+          .symbol-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
           }
-        }
-
-        /* Scrollbar styling */
-        .symbol-grid-container::-webkit-scrollbar {
-          width: 8px;
-        }
-
-        .symbol-grid-container::-webkit-scrollbar-track {
-          background: hsl(var(--muted) / 0.2);
-        }
-
-        .symbol-grid-container::-webkit-scrollbar-thumb {
-          background: hsl(var(--muted-foreground) / 0.3);
-          border-radius: 4px;
-        }
-
-        .symbol-grid-container::-webkit-scrollbar-thumb:hover {
-          background: hsl(var(--muted-foreground) / 0.5);
         }
       `}</style>
     </div>

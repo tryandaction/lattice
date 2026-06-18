@@ -4,6 +4,7 @@ import type { AgentToolName } from '../agent-tool-broker';
 export type LatticeOperationContractId =
   | 'path-identity'
   | 'workbench-draft-handoff'
+  | 'coding-change-review'
   | 'pdf-item-workspace'
   | 'pdf-annotation-sidecar'
   | 'notebook-workflow-boundary'
@@ -61,6 +62,30 @@ export const LATTICE_OPERATION_CONTRACTS: Record<LatticeOperationContractId, Lat
     prohibitions: [
       'Do not write markdown files directly from Agent code outside Workbench draft/proposal writeback.',
       'Do not silently overwrite an existing note, child document, or notebook.',
+    ],
+  },
+  'coding-change-review': {
+    id: 'coding-change-review',
+    title: 'Coding Change Review',
+    owner: 'ai-agent-thread',
+    status: 'approval-gated',
+    requiredTools: ['workspace.search', 'workspace.readIndexedContext', 'lattice.resolvePathIdentity', 'evidence.resolve', 'workbench.createProposal'],
+    requiredCapabilities: ['search_workspace', 'read_workspace', 'lattice_read_identity', 'resolve_evidence', 'propose_write'],
+    summary: 'Plan code reviews and code changes as reviewable Workbench proposals with target files, patch previews, risks, and tests.',
+    rules: [
+      'Use workspace.search and workspace.readIndexedContext to inspect code context before proposing a change.',
+      'Resolve Lattice path identity for concrete target files before planning file-specific edits.',
+      'A coding proposal must name target files, summarize intended diffs, include a patch or pseudo-diff preview, list risks, and include a focused test plan.',
+      'QA commands may be listed only as approval-gated command plans with command, reason, risk, and approval status.',
+      'Workbench proposals are the handoff boundary for code changes; generated target drafts may be reviewed before any workspace writeback.',
+      'Test commands are suggestions until an approval-gated runner or future command plan executes them.',
+    ],
+    prohibitions: [
+      'Do not write source files directly from the Research Agent coding workflow.',
+      'Do not run shell, git, package manager, network, or production API commands from this workflow.',
+      'Do not mark QA command plans as executed or passed unless a separate approved execution result is present in Trace.',
+      'Do not present uncited code changes as applied; clearly label them as proposals or patch previews.',
+      'Do not include absolute paths, parent traversal, secrets, or environment-specific machine paths in planned writes.',
     ],
   },
   'pdf-item-workspace': {

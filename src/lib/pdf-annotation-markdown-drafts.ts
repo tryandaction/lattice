@@ -9,6 +9,8 @@ export interface PdfAnnotationMarkdownDraft {
   id: string;
   page: number;
   exact: string;
+  prefix?: string;
+  suffix?: string;
   styleType: CanonicalPdfTextMarkupType;
   color: string;
   comment?: string;
@@ -103,6 +105,8 @@ export function parsePdfAnnotationMarkdownDrafts(markdown: string): PdfAnnotatio
       id: normalizeDraftId(currentAttrs.id, page, exact),
       page,
       exact,
+      prefix: currentFields.prefix || currentAttrs.prefix || undefined,
+      suffix: currentFields.suffix || currentAttrs.suffix || undefined,
       styleType: normalizeStyleType(currentAttrs.type ?? currentFields.type),
       color: currentAttrs.color || currentFields.color || DEFAULT_DRAFT_COLOR,
       comment: currentFields.comment || currentFields.note || undefined,

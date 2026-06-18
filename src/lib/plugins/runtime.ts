@@ -7,13 +7,17 @@ import { useAnnotationStore } from '@/stores/annotation-store';
 import { deriveFileId } from '@/lib/annotation-storage';
 import { useSettingsStore } from '@/stores/settings-store';
 import { extractMarkdownDocument } from '@/lib/markdown/extract';
+import { buildRenderedPdfPageTextModel } from '@/lib/pdf-page-text-cache';
+import { isFileTabState } from '@/types/layout';
 import type {
   PluginCommand,
   PluginContext,
   PluginManifest,
   PluginModule,
   PluginPanel,
+  PluginPdfTextPage,
   PluginPermission,
+  PluginViewerType,
   CachedFileMetadata,
   CachedHeading,
   CachedLink,
@@ -30,6 +34,7 @@ const commands = new Map<string, RegisteredCommand>();
 const panels = new Map<string, RegisteredPanel>();
 // Live panel props — updated by plugins via ctx.panels.update()
 const panelProps = new Map<string, Record<string, unknown>>();
+const EMPTY_PANEL_PROPS: Record<string, unknown> = {};
 const panelPropsListeners = new Set<() => void>();
 const assetUrls = new Map<string, Set<string>>();
 const registryListeners = new Set<() => void>();
@@ -345,7 +350,7 @@ export function subscribePluginRegistry(listener: () => void) {
 }
 
 export function getPanelProps(panelId: string): Record<string, unknown> {
-  return panelProps.get(panelId) ?? {};
+  return panelProps.get(panelId) ?? EMPTY_PANEL_PROPS;
 }
 
 export function subscribePanelProps(listener: () => void): () => void {
@@ -515,7 +520,10 @@ function registerPanel(pluginId: string, panel: PluginPanel) {
 
 function registerManifestPanels(manifest: PluginManifest, permissions: PluginPermission[]) {
   if (!permissions.includes('ui:panels')) return;
-  const defined = manifest.ui?.panels ?? [];
+  const defined = [
+    ...(manifest.ui?.panels ?? []),
+    ...(manifest.contributes?.panels ?? []),
+  ];
   for (const panel of defined) {
     registerPanel(manifest.id, panel);
   }
@@ -566,12 +574,174 @@ function unregisterUIItemsFor(pluginId: string) {
   }
 }
 
+function hasPermission(permissions: PluginPermission[], permission: PluginPermission): boolean {
+  return permissions.includes(permission);
+}
+
+function canReadCurrentDocument(permissions: PluginPermission[]): boolean {
+  return hasPermission(permissions, 'read-current-document') || hasPermission(permissions, 'file:read');
+}
+
+function canReadWorkspaceFile(permissions: PluginPermission[]): boolean {
+  return hasPermission(permissions, 'read-workspace-file') || hasPermission(permissions, 'file:read');
+}
+
+function canWriteClipboard(permissions: PluginPermission[]): boolean {
+  return hasPermission(permissions, 'clipboard-write');
+}
+
+function canExportFile(permissions: PluginPermission[]): boolean {
+  return hasPermission(permissions, 'export-file') || hasPermission(permissions, 'file:write');
+}
+
+function getViewerTypeFromPath(path: string | null | undefined): PluginViewerType {
+  const lower = (path ?? '').toLowerCase();
+  if (lower.endsWith('.pdf')) return 'pdf';
+  if (lower.endsWith('.docx') || lower.endsWith('.doc')) return 'docx';
+  if (lower.endsWith('.md') || lower.endsWith('.markdown')) return 'md';
+  if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'html';
+  return 'unknown';
+}
+
+function getActiveDocumentInfo() {
+  const state = useWorkspaceStore.getState();
+  const pane = state.getActivePane();
+  const tab = state.getActiveTab();
+  return {
+    filePath: tab?.filePath ?? null,
+    fileName: tab?.fileName ?? null,
+    viewerType: getViewerTypeFromPath(tab?.filePath),
+    paneId: pane?.id ?? null,
+    tabId: tab?.id ?? null,
+  };
+}
+
+function getCurrentSelectionText(): string {
+  if (typeof window === 'undefined' || typeof window.getSelection !== 'function') {
+    return '';
+  }
+  return window.getSelection()?.toString().trim() ?? '';
+}
+
+async function readCurrentDocumentContent(permissions: PluginPermission[]) {
+  if (!canReadCurrentDocument(permissions)) {
+    throw new Error('Permission denied');
+  }
+  const tab = useWorkspaceStore.getState().getActiveTab();
+  const info = getActiveDocumentInfo();
+  if (!tab || !isFileTabState(tab)) {
+    return { info };
+  }
+  const file = await tab.fileHandle.getFile();
+  const viewerType = info.viewerType;
+  if (viewerType === 'docx' || viewerType === 'pdf') {
+    return {
+      info,
+      arrayBuffer: await file.arrayBuffer(),
+    };
+  }
+  return {
+    info,
+    text: await file.text(),
+  };
+}
+
+function getPdfTextPagesFromRenderedDom(options?: { scope?: 'visible' | 'current-page' | 'all' }): PluginPdfTextPage[] {
+  if (typeof document === 'undefined') {
+    return [];
+  }
+  const scope = options?.scope ?? 'visible';
+  const pageElements = Array.from(document.querySelectorAll<HTMLElement>('[data-page-number]'))
+    .filter((element) => element.querySelector('.textLayer'));
+  const visiblePages = pageElements.filter((element) => element.dataset.pdfPageVisible === 'true');
+  const candidates = scope === 'all'
+    ? pageElements
+    : visiblePages.length > 0
+      ? visiblePages
+      : pageElements.slice(0, 1);
+  const selected = scope === 'current-page' ? candidates.slice(0, 1) : candidates;
+
+  return selected.flatMap((element): PluginPdfTextPage[] => {
+    const model = buildRenderedPdfPageTextModel(element);
+    if (!model?.normalizedText) return [];
+    return [{
+      pageNumber: model.pageNumber,
+      text: model.normalizedText,
+      visible: element.dataset.pdfPageVisible === 'true',
+      source: 'rendered-text-layer',
+      items: model.segments.map((segment) => {
+        const rect = model.itemRects.find((itemRect) => itemRect.itemIndex === segment.itemIndex);
+        return {
+          text: segment.text,
+          normalizedText: segment.normalizedText,
+          bbox: rect
+            ? {
+                x1: rect.left / Math.max(1, model.viewportWidth),
+                y1: rect.top / Math.max(1, model.viewportHeight),
+                x2: (rect.left + rect.width) / Math.max(1, model.viewportWidth),
+                y2: (rect.top + rect.height) / Math.max(1, model.viewportHeight),
+              }
+            : undefined,
+          lineIndex: segment.lineIndex,
+          blockIndex: segment.blockIndex,
+        };
+      }),
+    }];
+  });
+}
+
+async function writeClipboardText(text: string, permissions: PluginPermission[]): Promise<void> {
+  if (!canWriteClipboard(permissions)) {
+    throw new Error('Permission denied');
+  }
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  throw new Error('Clipboard API unavailable');
+}
+
+async function exportPluginFile(
+  options: { suggestedName: string; content: string; mimeType?: string },
+  permissions: PluginPermission[],
+): Promise<boolean> {
+  if (!canExportFile(permissions)) {
+    throw new Error('Permission denied');
+  }
+  if (typeof window === 'undefined') return false;
+  const picker = (window as Window & {
+    showSaveFilePicker?: (options?: {
+      suggestedName?: string;
+      types?: Array<{ description: string; accept: Record<string, string[]> }>;
+    }) => Promise<FileSystemFileHandle>;
+  }).showSaveFilePicker;
+  const mimeType = options.mimeType ?? 'text/plain;charset=utf-8';
+  if (picker) {
+    const handle = await picker({
+      suggestedName: options.suggestedName,
+      types: [{ description: 'Export file', accept: { [mimeType]: [options.suggestedName.slice(options.suggestedName.lastIndexOf('.')) || '.txt'] } }],
+    });
+    const writable = await handle.createWritable();
+    await writable.write(new Blob([options.content], { type: mimeType }));
+    await writable.close();
+    return true;
+  }
+  const blob = new Blob([options.content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = options.suggestedName;
+  link.click();
+  URL.revokeObjectURL(url);
+  return true;
+}
+
 function createContext(manifest: PluginManifest): PluginContext {
   const pluginId = manifest.id;
   const permissions = manifest.permissions ?? [];
   const canRegisterCommands = permissions.includes('ui:commands');
   const canRegisterPanels = permissions.includes('ui:panels');
-  const canReadFiles = permissions.includes('file:read');
+  const canReadFiles = canReadWorkspaceFile(permissions);
   const canWriteFiles = permissions.includes('file:write');
   const workspaceListeners = new Set<(path: string | null) => void>();
   let subscription: { dispose: () => void } | null = null;
@@ -717,6 +887,31 @@ function createContext(manifest: PluginManifest): PluginContext {
         return () => activeFileChangeListeners.delete(cb);
       },
     },
+    document: {
+      getActive: async () => getActiveDocumentInfo(),
+      getViewerType: async () => getActiveDocumentInfo().viewerType,
+      getSelectionText: async () => getCurrentSelectionText(),
+      readCurrent: async () => readCurrentDocumentContent(permissions),
+      getPdfTextPages: async (options) => {
+        if (!canReadCurrentDocument(permissions)) {
+          throw new Error('Permission denied');
+        }
+        return getPdfTextPagesFromRenderedDom(options);
+      },
+    },
+    ui: {
+      openPanel: async (panelId) => {
+        const settingsStore = useSettingsStore.getState();
+        await settingsStore.updateSettings({
+          pluginPanelDockOpen: true,
+          ...(panelId ? { pluginPanelLastActiveId: panelId } : {}),
+        });
+      },
+    },
+    clipboard: {
+      writeText: async (text) => writeClipboardText(text, permissions),
+    },
+    exportFile: async (options) => exportPluginFile(options, permissions),
     settings: {
       get: (key) => {
         return pluginKvGet(`lattice-plugin-kv:${pluginId}:setting:${key}`);
@@ -815,7 +1010,7 @@ function createContext(manifest: PluginManifest): PluginContext {
     },
     workspace: {
       listFiles: async () => {
-        if (!permissions.includes('file:read')) return [];
+        if (!canReadWorkspaceFile(permissions)) return [];
         const tree = useWorkspaceStore.getState().fileTree.root;
         if (!tree) return [];
         const paths: string[] = [];
@@ -823,7 +1018,7 @@ function createContext(manifest: PluginManifest): PluginContext {
         return paths;
       },
       readFile: async (path) => {
-        if (!permissions.includes('file:read')) {
+        if (!canReadWorkspaceFile(permissions)) {
           throw new Error('Permission denied');
         }
         const rootHandle = getWorkspaceRootHandle();
@@ -1359,7 +1554,7 @@ function createWorkerHost(
       }
 
       if (action === 'workspace.listFiles') {
-        if (!permissions.includes('file:read')) {
+        if (!canReadWorkspaceFile(permissions)) {
           throw new Error('Permission denied');
         }
         const tree = useWorkspaceStore.getState().fileTree.root;
@@ -1369,7 +1564,7 @@ function createWorkerHost(
         return paths;
       }
       if (action === 'workspace.activeFile') {
-        if (!permissions.includes('file:read')) {
+        if (!canReadCurrentDocument(permissions)) {
           throw new Error('Permission denied');
         }
         return getActiveFilePath();
@@ -1399,7 +1594,7 @@ function createWorkerHost(
         return true;
       }
       if (action === 'workspace.readFile') {
-        if (!permissions.includes('file:read')) {
+        if (!canReadWorkspaceFile(permissions)) {
           throw new Error('Permission denied');
         }
         const { path } = payload as { path: string };

@@ -9,7 +9,7 @@ import { LanguageSelector } from './language-selector';
 import { ThemeSelector } from './theme-selector';
 import { FolderSelector } from './folder-selector';
 import { isTauri } from '@/lib/storage-adapter';
-import { getAvailablePlugins } from '@/lib/plugins/registry';
+import { getAvailablePlugins, getRecommendedPlugins } from '@/lib/plugins/registry';
 import {
   getRegisteredCommands,
   subscribePluginRegistry,
@@ -45,6 +45,30 @@ const tabs: { id: SettingsTab; icon: typeof Settings; labelKey: 'settings.genera
 const APP_VERSION = packageJson.version;
 
 const PERMISSION_META: Record<PluginPermission, { titleKey: TranslationKey; descKey: TranslationKey }> = {
+  'read-current-document': {
+    titleKey: 'settings.plugins.permission.fileRead.title',
+    descKey: 'settings.plugins.permission.fileRead.desc',
+  },
+  'read-workspace-file': {
+    titleKey: 'settings.plugins.permission.fileRead.title',
+    descKey: 'settings.plugins.permission.fileRead.desc',
+  },
+  'clipboard-write': {
+    titleKey: 'settings.plugins.permission.storage.title',
+    descKey: 'settings.plugins.permission.storage.desc',
+  },
+  'export-file': {
+    titleKey: 'settings.plugins.permission.fileWrite.title',
+    descKey: 'settings.plugins.permission.fileWrite.desc',
+  },
+  'use-ocr': {
+    titleKey: 'settings.plugins.permission.fileRead.title',
+    descKey: 'settings.plugins.permission.fileRead.desc',
+  },
+  'use-ai': {
+    titleKey: 'settings.ai.title' as TranslationKey,
+    descKey: 'settings.ai.description' as TranslationKey,
+  },
   'file:read': {
     titleKey: 'settings.plugins.permission.fileRead.title',
     descKey: 'settings.plugins.permission.fileRead.desc',
@@ -179,6 +203,14 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
       return [];
     }
   }, []);
+  const recommendedPlugins = useMemo(() => {
+    try {
+      return getRecommendedPlugins();
+    } catch (err) {
+      console.error('Failed to get recommended plugins:', err);
+      return [];
+    }
+  }, []);
   const builtInById = useMemo(() => {
     return new Map(builtInPlugins.map((plugin) => [plugin.id, plugin]));
   }, [builtInPlugins]);
@@ -216,6 +248,10 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
       return haystack.includes(normalizedPluginQuery);
     });
   }, [availablePlugins, normalizedPluginQuery]);
+  const filteredRecommendedPlugins = useMemo(() => {
+    const recommendedIds = new Set(recommendedPlugins.map((plugin) => plugin.id));
+    return filteredPlugins.filter((plugin) => recommendedIds.has(plugin.id));
+  }, [filteredPlugins, recommendedPlugins]);
 
   const pluginNameById = useMemo(
     () => new Map(availablePlugins.map((plugin) => [plugin.id, plugin.name])),
@@ -425,6 +461,9 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
 
             {activeTab === 'shortcuts' && (
               <div className="space-y-6">
+                <p className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                  {t('settings.shortcuts.contextNote')}
+                </p>
                 {/* App shortcuts */}
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">
@@ -472,7 +511,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     <ShortcutItem label={t('settings.shortcuts.limit')} shortcut="Ctrl+Shift+L" />
                     <ShortcutItem label={t('settings.shortcuts.matrix')} shortcut="Ctrl+Shift+X" />
                     <ShortcutItem label={t('settings.shortcuts.vector')} shortcut="Ctrl+Shift+V" />
-                    <ShortcutItem label={t('settings.shortcuts.partial')} shortcut="Ctrl+Shift+P" />
+                    <ShortcutItem label={t('settings.shortcuts.partial')} shortcut="Ctrl+Alt+P" />
                     <ShortcutItem label={t('settings.shortcuts.superscript')} shortcut="Ctrl+↑" />
                     <ShortcutItem label={t('settings.shortcuts.subscript')} shortcut="Ctrl+↓" />
                   </div>
@@ -654,6 +693,48 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                 </div>
 
                 <div>
+                  {filteredRecommendedPlugins.length > 0 && (
+                    <div className="mb-4 space-y-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Official recommended
+                      </div>
+                      {filteredRecommendedPlugins.map((plugin) => {
+                        const isEnabled = settings.enabledPlugins.includes(plugin.id);
+                        const isTrusted = settings.trustedPlugins.includes(plugin.id);
+                        const status = settings.pluginsEnabled && isEnabled ? 'Enabled' : 'Disabled';
+                        return (
+                          <div
+                            key={`recommended-${plugin.id}`}
+                            className="rounded-lg border border-primary/25 bg-primary/5 p-3"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+                                  <span>{plugin.name}</span>
+                                  <span className="rounded-full border border-primary/30 px-2 py-0.5 text-[10px] uppercase tracking-wide text-primary">
+                                    Recommended
+                                  </span>
+                                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                    {status}
+                                  </span>
+                                </div>
+                                {plugin.description && (
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    {plugin.description}
+                                  </div>
+                                )}
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                  v{plugin.version}{plugin.author ? ` · ${plugin.author}` : ''} · {plugin.id}
+                                  {!isTrusted ? ' · Trust required' : ''}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   {availablePlugins.length === 0 ? (
                     <div className="text-xs text-muted-foreground">{t('settings.plugins.none')}</div>
                   ) : filteredPlugins.length === 0 ? (
@@ -960,7 +1041,14 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     type="checkbox"
                     className="mt-1 h-4 w-4 rounded border-border text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     checked={settings.aiEnabled}
-                    onChange={(event) => updateSetting('aiEnabled', event.target.checked)}
+                    onChange={(event) => {
+                      const enabled = event.target.checked;
+                      void updateSettings({
+                        aiEnabled: enabled,
+                        aiInlineCompletionEnabled: enabled ? settings.aiInlineCompletionEnabled : false,
+                        aiAgentOmittedSummaryEnabled: enabled ? settings.aiAgentOmittedSummaryEnabled : false,
+                      });
+                    }}
                   />
                 </div>
 
@@ -1025,6 +1113,46 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     {settings.aiProvider && (
                       <AiProviderConnectionTest provider={settings.aiProvider} />
                     )}
+
+                    <div className="rounded-lg border border-amber-400/50 bg-amber-50/60 p-3 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="text-sm font-medium">{t('settings.ai.inlineCompletion.enable')}</div>
+                          <p className="mt-1 text-xs leading-relaxed">
+                            {t('settings.ai.inlineCompletion.description')}
+                          </p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4 rounded border-border text-primary"
+                          checked={settings.aiInlineCompletionEnabled}
+                          onChange={(e) => updateSetting('aiInlineCompletionEnabled', e.target.checked)}
+                        />
+                      </div>
+                      <p className="mt-2 text-xs leading-relaxed text-amber-800 dark:text-amber-300">
+                        {t('settings.ai.inlineCompletion.costHint')}
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg border border-amber-400/50 bg-amber-50/60 p-3 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="text-sm font-medium">{t('settings.ai.agentOmittedSummary.enable')}</div>
+                          <p className="mt-1 text-xs leading-relaxed">
+                            {t('settings.ai.agentOmittedSummary.description')}
+                          </p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4 rounded border-border text-primary"
+                          checked={settings.aiAgentOmittedSummaryEnabled}
+                          onChange={(e) => updateSetting('aiAgentOmittedSummaryEnabled', e.target.checked)}
+                        />
+                      </div>
+                      <p className="mt-2 text-xs leading-relaxed text-amber-800 dark:text-amber-300">
+                        {t('settings.ai.agentOmittedSummary.costHint')}
+                      </p>
+                    </div>
 
                     {/* Temperature */}
                     <div className="space-y-2">

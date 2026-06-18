@@ -82,6 +82,12 @@ npm run release:prepare -- --skip-qa
 npm run release:prepare -- --upload
 ```
 
+说明：
+
+- 正式发布默认使用 `npm run release:prepare`，它会先跑完整 `qa:gate`。
+- 已经完成完整验证且只需要刷新本地 `releases/vX.Y.Z/` 产物元数据时，才使用 `--skip-qa`。
+- 发布目录会包含 `checksums.txt`、`release-manifest.json` 和 `RELEASE_SUMMARY.md`，用于核对 artifact hash。
+
 如需直接把当前静态站点发布到 Cloudflare Pages：
 
 ```bash

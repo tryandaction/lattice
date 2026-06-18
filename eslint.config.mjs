@@ -1,11 +1,15 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTypescript from "eslint-config-next/typescript";
+import reactHooks from "eslint-plugin-react-hooks";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTypescript,
   {
+    plugins: {
+      "react-hooks": reactHooks,
+    },
     rules: {
       // Allow unused vars with underscore prefix (common pattern)
       "@typescript-eslint/no-unused-vars": ["warn", { 
@@ -34,6 +38,8 @@ const eslintConfig = defineConfig([
   },
   globalIgnores([
     "node_modules/**",
+    ".codex/**",
+    ".codex_tmp/**",
     ".next/**",
     "out/**",
     "web-dist*/**",

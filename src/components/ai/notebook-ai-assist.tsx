@@ -55,6 +55,7 @@ export function NotebookAiAssist({ cellSource, cellOutput, cellError, onInsertCo
       maxTokens: settings.aiMaxTokens,
       systemPrompt: settings.aiSystemPrompt,
       preferLocal: settings.aiProvider === "ollama",
+      agentOmittedSummaryEnabled: settings.aiAgentOmittedSummaryEnabled,
     };
 
     let researchAction: "answer_question" | "explain_code" | "interpret_output";

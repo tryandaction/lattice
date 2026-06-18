@@ -5,6 +5,8 @@
 
 import { getDefaultProvider } from './providers';
 import type { AiMessage } from './types';
+import { useSettingsStore } from '@/stores/settings-store';
+import { evaluateAiUsagePolicy } from './usage-policy';
 
 interface CompletionCacheEntry {
   text: string;
@@ -68,6 +70,17 @@ export async function requestCompletion(
       content: `File: ${fileName}\n\n<prefix>\n${prefix.slice(-1500)}\n</prefix>\n<cursor/>\n<suffix>\n${suffix.slice(0, 500)}\n</suffix>`,
     },
   ];
+
+  const settings = useSettingsStore.getState().settings;
+  const usageDecision = evaluateAiUsagePolicy({
+    category: 'automatic-inline-completion',
+    settings,
+    messages,
+    maxOutputTokens: 150,
+  });
+  if (!usageDecision.allowed) {
+    return null;
+  }
 
   try {
     const result = await provider.generate(messages, {

@@ -4,6 +4,19 @@
 
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  addAgentPendingApproval,
+  appendAgentTraceEvent,
+  completeAgentSession,
+  createAgentSession,
+  failAgentSession,
+  resolveAgentPendingApproval,
+} from "@/lib/ai/agent-session";
+import {
+  buildCodingQaRunnerApprovalRequest,
+  buildCodingQaRunnerViewModel,
+} from "@/lib/ai/coding-qa-runner-view-model";
+import { useAgentSessionStore } from "@/stores/agent-session-store";
 import { AgentProtocolCenter } from "../agent-protocol-center";
 
 const CURRENT_VALIDATION_STORAGE_KEY = "lattice-agent-protocol-current-validation-recorded-v1";
@@ -31,10 +44,21 @@ describe("AgentProtocolCenter", () => {
         writeText: vi.fn(async () => undefined),
       },
     });
+    useAgentSessionStore.setState({
+      sessions: [],
+      activeSessionId: null,
+      focusTarget: null,
+    });
   });
 
   it("renders the executable protocol dashboard", () => {
     render(<AgentProtocolCenter />);
+
+    expect(screen.getByTestId("agent-cowork-inbox")).not.toBeNull();
+    expect(screen.getByText("Co-work Session Inbox")).not.toBeNull();
+    expect(screen.getByText("Workspace risk: clean")).not.toBeNull();
+    expect(screen.getByTestId("coding-qa-runner")).not.toBeNull();
+    expect(screen.getByText("Approval-gated QA Runner")).not.toBeNull();
 
     expect(screen.getByRole("heading", { name: "Agent 协议中心" })).not.toBeNull();
     expect(screen.getByRole("tab", { name: /执行/ })).not.toBeNull();
@@ -54,6 +78,239 @@ describe("AgentProtocolCenter", () => {
     expect(screen.getByText("决策记录")).not.toBeNull();
     expect(screen.getByText("交接摘要")).not.toBeNull();
     expect(screen.getByText("运行快照")).not.toBeNull();
+  });
+
+  it("surfaces co-work agent sessions and focuses the selected trace", async () => {
+    let approvalSession = createAgentSession({
+      id: "session-approval",
+      profile: "research",
+      task: "Review code proposal",
+      title: "Approval run",
+      now: 100,
+    });
+    approvalSession = addAgentPendingApproval(approvalSession, {
+      id: "approval-1",
+      capability: "write_workspace",
+      toolName: "workbench.createProposal",
+      request: { name: "workbench.createProposal", args: {} },
+      decision: {
+        capability: "write_workspace",
+        permission: "ask",
+        requiresApproval: true,
+        allowed: true,
+      },
+      now: 120,
+    });
+    const blockedSession = failAgentSession(createAgentSession({
+      id: "session-blocked",
+      profile: "research",
+      task: "Fix typecheck",
+      title: "Blocked run",
+      now: 90,
+    }), "Typecheck failed.", 130);
+    const handoffSession = completeAgentSession(appendAgentTraceEvent(createAgentSession({
+      id: "session-handoff",
+      profile: "research",
+      task: "Create handoff proposal",
+      title: "Handoff run",
+      now: 80,
+    }), {
+      kind: "proposal_created",
+      message: "Workbench proposal created.",
+      timestamp: 140,
+      artifactId: "proposal-1",
+    }), "Completed handoff.", 150);
+
+    useAgentSessionStore.setState({
+      sessions: [handoffSession, blockedSession, approvalSession],
+      activeSessionId: "session-approval",
+      focusTarget: null,
+    });
+
+    render(<AgentProtocolCenter />);
+
+    expect(screen.getByText("3 sessions / 1 approvals / 1 blocked / 1 handoffs")).not.toBeNull();
+    expect(screen.getByText("Approval run")).not.toBeNull();
+    expect(screen.getByText("Blocked run")).not.toBeNull();
+    expect(screen.getByText("Handoff run")).not.toBeNull();
+    expect(screen.getByText("Typecheck failed.")).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "查看 Trace" })[1]);
+    });
+
+    expect(useAgentSessionStore.getState().activeSessionId).toBe("session-blocked");
+    expect(useAgentSessionStore.getState().focusTarget).toBe("trace");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "复制协议" }));
+    });
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining("Co-work Session Inbox:"),
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining("Workspace risk: clean"),
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining("Coding QA Runner:"),
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining("session: session-blocked"),
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining("detail: Typecheck failed."),
+    );
+  });
+
+  it("surfaces an approval-gated coding QA plan without executing commands", async () => {
+    const session = appendAgentTraceEvent(createAgentSession({
+      id: "session-qa-plan",
+      profile: "research",
+      task: "Review coding QA plan",
+      title: "QA plan run",
+      now: 100,
+    }), {
+      kind: "proposal_created",
+      message: "Created QA proposal.",
+      timestamp: 120,
+      targetPath: "src/lib/__tests__/ai-coding-qa-runner-view-model.test.ts",
+    });
+
+    useAgentSessionStore.setState({
+      sessions: [session],
+      activeSessionId: "session-qa-plan",
+      focusTarget: null,
+    });
+
+    render(<AgentProtocolCenter />);
+
+    const qaRunner = within(screen.getByTestId("coding-qa-runner"));
+    expect(qaRunner.getByText("Approval-gated QA Runner")).not.toBeNull();
+    expect(qaRunner.getByText(/approval-gated commands/)).not.toBeNull();
+    expect(qaRunner.getByText(/npx vitest run/)).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "复制 QA 计划" }));
+    });
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining("Coding QA Runner Plan"),
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining("Execution boundary:"),
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "创建审批请求" }));
+    });
+
+    const approvalSession = useAgentSessionStore.getState().getActiveSession();
+    expect(approvalSession).toMatchObject({
+      title: "Coding QA approval",
+      status: "waiting_approval",
+    });
+    expect(approvalSession?.pendingApprovals[0]).toMatchObject({
+      status: "pending",
+      toolName: "runner.runCode",
+      toolLabel: "Approval-gated QA Runner",
+      request: {
+        name: "runner.runCode",
+      },
+    });
+    expect(approvalSession?.trace.map((event) => event.kind)).toEqual(
+      expect.arrayContaining(["session_started", "approval_required"]),
+    );
+    expect(useAgentSessionStore.getState().focusTarget).toBe("trace");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "填入证据草稿" }));
+    });
+
+    expect(screen.getByDisplayValue("Coding QA Runner plan")).not.toBeNull();
+    expect(screen.getByDisplayValue(/npx vitest run/)).not.toBeNull();
+  });
+
+  it("imports resolved coding QA approval results as evidence", async () => {
+    const view = buildCodingQaRunnerViewModel({
+      activeTabPath: "src/lib/__tests__/ai-coding-qa-runner-view-model.test.ts",
+    });
+    const request = buildCodingQaRunnerApprovalRequest(view, {
+      now: 123,
+      idPrefix: "qa-request",
+    });
+    const session = resolveAgentPendingApproval(addAgentPendingApproval(createAgentSession({
+      id: "session-qa-import",
+      profile: "research",
+      task: "QA approval",
+      title: "QA approval",
+      now: 100,
+    }), request.approval), {
+      id: request.approval.id,
+      status: "completed",
+      resultPreview: "Runner output captured.",
+      now: 140,
+    });
+
+    useAgentSessionStore.setState({
+      sessions: [session],
+      activeSessionId: "session-qa-import",
+      focusTarget: null,
+    });
+
+    render(<AgentProtocolCenter />);
+
+    expect(screen.getByText("Approval result evidence")).not.toBeNull();
+    expect(screen.getByText("Coding QA Runner completed")).not.toBeNull();
+    expect(screen.getAllByText("pending imports: 1").length).toBeGreaterThanOrEqual(2);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "导入证据" }));
+    });
+
+    expect(screen.getAllByText("Runner output captured.").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("pending imports: 0").length).toBeGreaterThanOrEqual(2);
+
+    const storedEvidence = JSON.parse(window.localStorage.getItem("lattice-agent-protocol-evidence-v1") ?? "[]");
+    expect(storedEvidence[0]).toMatchObject({
+      importedKey: `coding-qa:${session.id}:${request.approval.id}:completed`,
+      sourceKind: "coding-qa",
+      sourceSessionId: session.id,
+      sourceApprovalId: request.approval.id,
+    });
+
+    useAgentSessionStore.setState({ activeSessionId: null, focusTarget: null });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /查看来源 Trace/ }));
+    });
+    expect(useAgentSessionStore.getState().activeSessionId).toBe(session.id);
+    expect(useAgentSessionStore.getState().focusTarget).toBe("trace");
+
+    expect((screen.getByRole("button", { name: "已导入" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("1 条")).not.toBeNull();
+  });
+
+  it("focuses the QA evidence section from a protocol deep link", () => {
+    const scrollIntoView = vi.fn();
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+    window.location.hash = "#qa-evidence";
+    Object.defineProperty(window.HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+
+    render(<AgentProtocolCenter />);
+
+    expect(document.getElementById("qa-evidence")).not.toBeNull();
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+
+    window.location.hash = "";
+    requestAnimationFrameSpy.mockRestore();
   });
 
   it("records the current validation progress into the dashboard", async () => {

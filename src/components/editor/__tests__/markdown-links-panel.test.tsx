@@ -50,6 +50,8 @@ describe("MarkdownLinksPanel", () => {
     const onLinkUnlinkedMentions = vi.fn();
     const onIgnoreUnlinkedMention = vi.fn();
     const onRepairBrokenLink = vi.fn();
+    const onConvertMarkdownLinkToWiki = vi.fn();
+    const onReviewUnreferencedAttachment = vi.fn();
 
     let rendered: ReturnType<typeof render>;
     act(() => {
@@ -63,6 +65,14 @@ describe("MarkdownLinksPanel", () => {
           onLinkUnlinkedMentions={onLinkUnlinkedMentions}
           onIgnoreUnlinkedMention={onIgnoreUnlinkedMention}
           onRepairBrokenLink={onRepairBrokenLink}
+          onConvertMarkdownLinkToWiki={onConvertMarkdownLinkToWiki}
+          attachmentCleanupCandidates={[{
+            path: "assets/orphan.png",
+            displayPath: "vault/assets/orphan.png",
+            extension: "png",
+            referenced: false,
+          }]}
+          onReviewUnreferencedAttachment={onReviewUnreferencedAttachment}
         />,
       );
     });
@@ -72,6 +82,7 @@ describe("MarkdownLinksPanel", () => {
     expect(screen.getByText("markdown.links.outgoing")).toBeTruthy();
     expect(screen.getByText("markdown.links.unlinkedMentions")).toBeTruthy();
     expect(screen.getByText("markdown.links.broken")).toBeTruthy();
+    expect(screen.getByText("markdown.links.attachments")).toBeTruthy();
     expect(screen.getByText("markdown.links.localGraph")).toBeTruthy();
     expect(screen.getByRole("img", { name: "markdown.links.localGraph.preview" })).toBeTruthy();
     expect(screen.getByText("target note")).toBeTruthy();
@@ -99,6 +110,16 @@ describe("MarkdownLinksPanel", () => {
     );
 
     act(() => {
+      fireEvent.click(screen.getByText("markdown.links.convertToWiki"));
+    });
+    expect(onConvertMarkdownLinkToWiki).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rawTarget: "missing.md",
+        broken: true,
+      }),
+    );
+
+    act(() => {
       fireEvent.change(screen.getByLabelText("markdown.links.repairTarget"), {
         target: { value: "Target.md" },
       });
@@ -115,6 +136,15 @@ describe("MarkdownLinksPanel", () => {
     );
 
     act(() => {
+      fireEvent.click(screen.getByText("markdown.links.reviewAttachment"));
+    });
+    expect(onReviewUnreferencedAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: "assets/orphan.png",
+      }),
+    );
+
+    act(() => {
       rerender(
         <MarkdownLinksPanel
           filePath="Target.md"
@@ -125,6 +155,7 @@ describe("MarkdownLinksPanel", () => {
           onLinkUnlinkedMentions={onLinkUnlinkedMentions}
           onIgnoreUnlinkedMention={onIgnoreUnlinkedMention}
           onRepairBrokenLink={onRepairBrokenLink}
+          onConvertMarkdownLinkToWiki={onConvertMarkdownLinkToWiki}
         />,
       );
     });

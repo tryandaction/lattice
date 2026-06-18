@@ -9,6 +9,7 @@ import {
   Download,
   FileText,
   ListChecks,
+  MessageSquare,
   Pencil,
   RotateCcw,
   ShieldCheck,
@@ -17,7 +18,23 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import {
+  buildCodingQaRunnerApprovalRequest,
+  buildCodingQaEvidenceCandidates,
+  buildCodingQaRunnerViewModel,
+  type CodingQaEvidenceCandidate,
+  type CodingQaRunnerViewModel,
+} from "@/lib/ai/coding-qa-runner-view-model";
+import {
+  buildAgentCoworkInboxViewModel,
+  formatAgentCoworkInboxMarkdown,
+  type AgentCoworkInboxItem,
+  type AgentCoworkInboxItemKind,
+  type AgentCoworkInboxWorkspaceRisk,
+} from "@/lib/ai/agent-cowork-inbox-view-model";
+import { focusAgentSession } from "@/lib/ai/agent-session-focus";
 import { findPane, getAllPaneIds } from "@/lib/layout-utils";
+import { useAgentSessionStore } from "@/stores/agent-session-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import type { LayoutNode, TabState } from "@/types/layout";
 
@@ -59,6 +76,10 @@ interface EvidenceEntry {
   command: string;
   result: string;
   status: EvidenceStatus;
+  importedKey?: string;
+  sourceKind?: "coding-qa";
+  sourceSessionId?: string;
+  sourceApprovalId?: string;
 }
 
 interface EvidenceDraft {
@@ -96,6 +117,7 @@ interface WorkbenchContextSnapshot {
   paneCount: number;
   openTabCount: number;
   dirtyTabCount: number;
+  dirtyTabPaths: string[];
   activeTabName: string;
   activeTabPath: string;
   activeTabKind: string;
@@ -496,6 +518,10 @@ function readEvidenceEntries(): EvidenceEntry[] {
         command: typeof record.command === "string" ? record.command : "",
         result: typeof record.result === "string" ? record.result : "",
         status,
+        importedKey: typeof record.importedKey === "string" ? record.importedKey : undefined,
+        sourceKind: record.sourceKind === "coding-qa" ? "coding-qa" : undefined,
+        sourceSessionId: typeof record.sourceSessionId === "string" ? record.sourceSessionId : undefined,
+        sourceApprovalId: typeof record.sourceApprovalId === "string" ? record.sourceApprovalId : undefined,
       }];
     });
   } catch (error) {
@@ -559,6 +585,8 @@ function buildRunSnapshotText({
   decisionCount,
   activeStageTitle,
   workbenchContextText,
+  coworkInboxMarkdown,
+  codingQaRunnerMarkdown,
   capturedAt,
   pagePath,
 }: {
@@ -571,6 +599,8 @@ function buildRunSnapshotText({
   decisionCount: number;
   activeStageTitle: string;
   workbenchContextText: string;
+  coworkInboxMarkdown: string;
+  codingQaRunnerMarkdown: string;
   capturedAt: string;
   pagePath: string;
 }): string {
@@ -588,6 +618,12 @@ function buildRunSnapshotText({
     "",
     "工作台上下文：",
     workbenchContextText,
+    "",
+    "Co-work Session Inbox:",
+    coworkInboxMarkdown,
+    "",
+    "Coding QA Runner:",
+    codingQaRunnerMarkdown,
   ].join("\n");
 }
 
@@ -733,6 +769,313 @@ function getStatusClassName(status: ProtocolStatus): string {
   return "border-border bg-background text-muted-foreground";
 }
 
+function getInboxItemClassName(kind: AgentCoworkInboxItemKind): string {
+  switch (kind) {
+    case "needs_approval":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200";
+    case "blocked":
+      return "border-destructive/30 bg-destructive/10 text-destructive";
+    case "running":
+      return "border-primary/30 bg-primary/10 text-primary";
+    case "handoff":
+      return "border-sky-500/30 bg-sky-500/10 text-sky-800 dark:text-sky-200";
+    default:
+      return "border-border bg-background text-muted-foreground";
+  }
+}
+
+function inboxKindLabel(kind: AgentCoworkInboxItemKind): string {
+  switch (kind) {
+    case "needs_approval":
+      return "待审批";
+    case "blocked":
+      return "阻塞";
+    case "running":
+      return "运行中";
+    case "handoff":
+      return "待交接";
+    case "completed":
+      return "已完成";
+  }
+}
+
+function AgentCoworkInbox({
+  summary,
+  nextAction,
+  items,
+  pendingApprovalCount,
+  blockedCount,
+  runningCount,
+  handoffCount,
+  totalSessionCount,
+  workspaceRisk,
+  onFocusSession,
+}: {
+  summary: string;
+  nextAction: string;
+  items: AgentCoworkInboxItem[];
+  pendingApprovalCount: number;
+  blockedCount: number;
+  runningCount: number;
+  handoffCount: number;
+  totalSessionCount: number;
+  workspaceRisk: AgentCoworkInboxWorkspaceRisk;
+  onFocusSession: (sessionId: string) => void;
+}) {
+  const hasWorkspaceRisk = workspaceRisk.level !== "clean";
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-4" data-testid="agent-cowork-inbox">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <MessageSquare className="h-4 w-4" />
+            Co-work Session Inbox
+          </div>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            聚合当前 Agent sessions、待审批、阻塞状态和交接结果，用于跨窗口继续协作。
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+            <span className="rounded-md border border-border bg-background px-2 py-1">{summary || "0 sessions"}</span>
+            <span className="rounded-md border border-border bg-background px-2 py-1">next: {nextAction}</span>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+          <div className="rounded-md border border-border bg-background px-3 py-2">
+            <div className="text-muted-foreground">审批</div>
+            <div className="mt-1 text-base font-semibold">{pendingApprovalCount}</div>
+          </div>
+          <div className="rounded-md border border-border bg-background px-3 py-2">
+            <div className="text-muted-foreground">阻塞</div>
+            <div className="mt-1 text-base font-semibold">{blockedCount}</div>
+          </div>
+          <div className="rounded-md border border-border bg-background px-3 py-2">
+            <div className="text-muted-foreground">运行</div>
+            <div className="mt-1 text-base font-semibold">{runningCount}</div>
+          </div>
+          <div className="rounded-md border border-border bg-background px-3 py-2">
+            <div className="text-muted-foreground">交接</div>
+            <div className="mt-1 text-base font-semibold">{handoffCount}</div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        className={cn(
+          "mt-4 rounded-md border p-3 text-sm",
+          hasWorkspaceRisk
+            ? "border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-100"
+            : "border-emerald-500/25 bg-emerald-500/10 text-emerald-900 dark:text-emerald-100",
+        )}
+      >
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div className="font-medium">Workspace risk: {workspaceRisk.level}</div>
+          <div className="text-xs opacity-80">{workspaceRisk.summary}</div>
+        </div>
+        {workspaceRisk.detail ? (
+          <div className="mt-1 text-xs opacity-85">{workspaceRisk.detail}</div>
+        ) : null}
+      </div>
+
+      {items.length > 0 ? (
+        <ul className="mt-4 space-y-2">
+          {items.map((item) => (
+            <li
+              key={item.id}
+              className={cn(
+                "rounded-md border p-3",
+                getInboxItemClassName(item.kind),
+                item.isActiveSession && "ring-1 ring-primary/40",
+              )}
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded bg-background/70 px-2 py-0.5 text-[10px] font-medium">
+                      {inboxKindLabel(item.kind)}
+                    </span>
+                    {item.isActiveSession ? (
+                      <span className="rounded bg-background/70 px-2 py-0.5 text-[10px]">active</span>
+                    ) : null}
+                    <span className="truncate font-medium text-foreground">{item.title}</span>
+                  </div>
+                  <div className="mt-1 text-sm text-muted-foreground">{item.summary}</div>
+                  {item.detail ? (
+                    <div className="mt-1 line-clamp-2 text-xs text-muted-foreground/90">{item.detail}</div>
+                  ) : null}
+                  <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+                    <span>{item.status}</span>
+                    <span>{item.pendingApprovalCount} approvals</span>
+                    <span>{item.evidenceCount} evidence</span>
+                    <span>{item.traceCount} trace events</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onFocusSession(item.sessionId)}
+                  className="inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-border bg-background px-2 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+                >
+                  查看 Trace
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-4 rounded-md border border-border bg-background p-3 text-sm text-muted-foreground">
+          暂无 Agent sessions。运行 Research Agent 后，这里会汇总审批、阻塞和交接状态。
+        </p>
+      )}
+      {totalSessionCount > items.length ? (
+        <p className="mt-3 text-xs text-muted-foreground">
+          仅显示前 {items.length} 个高优先级 session，共 {totalSessionCount} 个。
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function CodingQaRunnerPanel({
+  view,
+  evidenceCandidates,
+  importedEvidenceKeys,
+  onCopyPlan,
+  onPrepareEvidenceDraft,
+  onCreateApprovalRequest,
+  onImportEvidence,
+}: {
+  view: CodingQaRunnerViewModel;
+  evidenceCandidates: CodingQaEvidenceCandidate[];
+  importedEvidenceKeys: Set<string>;
+  onCopyPlan: () => void;
+  onPrepareEvidenceDraft: () => void;
+  onCreateApprovalRequest: () => void;
+  onImportEvidence: (candidate: CodingQaEvidenceCandidate) => void;
+}) {
+  const sections = [
+    { title: "Allowed", items: view.plan.allowed },
+    { title: "Suggested", items: view.plan.suggested },
+    { title: "Rejected", items: view.plan.rejected },
+  ];
+  const pendingImportCount = evidenceCandidates.filter((candidate) =>
+    !importedEvidenceKeys.has(candidate.importedKey)
+  ).length;
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-4" data-testid="coding-qa-runner">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <ShieldCheck className="h-4 w-4" />
+            Approval-gated QA Runner
+          </div>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            Reviewable validation plan only. Commands require explicit user approval and are not executed by this panel.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+            <span className="rounded-md border border-border bg-background px-2 py-1">status: {view.status}</span>
+            <span className="rounded-md border border-border bg-background px-2 py-1">{view.summary}</span>
+            <span className={cn(
+              "rounded-md border px-2 py-1",
+              pendingImportCount > 0
+                ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                : "border-border bg-background",
+            )}>
+              pending imports: {pendingImportCount}
+            </span>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onPrepareEvidenceDraft}
+            className="inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-2 text-xs font-medium transition-colors hover:bg-accent"
+          >
+            填入证据草稿
+          </button>
+          <button
+            type="button"
+            onClick={onCopyPlan}
+            className="inline-flex h-8 items-center justify-center rounded-md bg-primary px-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            复制 QA 计划
+          </button>
+          <button
+            type="button"
+            onClick={onCreateApprovalRequest}
+            className="inline-flex h-8 items-center justify-center rounded-md border border-primary bg-primary/10 px-2 text-xs font-medium text-primary transition-colors hover:bg-primary/15"
+          >
+            创建审批请求
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-3">
+        {sections.map((section) => (
+          <div key={section.title} className="rounded-md border border-border bg-background p-3">
+            <div className="text-xs font-semibold text-muted-foreground">{section.title}</div>
+            {section.items.length > 0 ? (
+              <ul className="mt-2 space-y-2">
+                {section.items.map((item) => (
+                  <li key={`${section.title}-${item.command}`} className="rounded-md border border-border bg-card p-2">
+                    <div className="break-words font-mono text-[11px] text-foreground">{item.command}</div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">approval: {item.approval}</div>
+                    <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{item.reason}</div>
+                    <div className="mt-1 line-clamp-2 text-xs text-amber-700 dark:text-amber-300">{item.risk}</div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-xs text-muted-foreground">No commands.</p>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 rounded-md border border-border bg-background p-3 text-xs text-muted-foreground">
+        Execution boundary: plan only; no shell, git, network, package manager, release, or destructive command is executed here.
+      </div>
+
+      <div id="qa-evidence" className="mt-4 scroll-mt-24 rounded-md border border-border bg-background p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-xs font-semibold text-muted-foreground">Approval result evidence</div>
+          <div className="rounded-md border border-border bg-card px-2 py-1 text-[11px] text-muted-foreground">
+            pending imports: {pendingImportCount}
+          </div>
+        </div>
+        {evidenceCandidates.length > 0 ? (
+          <ul className="mt-2 space-y-2">
+            {evidenceCandidates.map((candidate) => {
+              const imported = importedEvidenceKeys.has(candidate.importedKey);
+              return (
+                <li key={candidate.id} className="flex flex-col gap-2 rounded-md border border-border bg-card p-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-foreground">{candidate.label}</div>
+                    <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{candidate.result}</div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">status: {candidate.status}</div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={imported}
+                    onClick={() => onImportEvidence(candidate)}
+                    className="inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-border bg-background px-2 text-xs font-medium transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {imported ? "已导入" : "导入证据"}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="mt-2 text-xs text-muted-foreground">
+            No completed, failed, or rejected QA Runner approvals are ready to import.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function AgentProtocolCenter() {
   const [protocolState, setProtocolState] = useState<Record<string, ProtocolStatus>>(() => createDefaultState());
   const [checkState, setCheckState] = useState<Record<string, boolean>>(() => createDefaultCheckState());
@@ -752,6 +1095,12 @@ export function AgentProtocolCenter() {
   const rootHandleName = useWorkspaceStore((state) => state.rootHandle?.name ?? null);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const layout = useWorkspaceStore((state) => state.layout);
+  const agentSessions = useAgentSessionStore((state) => state.sessions);
+  const activeAgentSessionId = useAgentSessionStore((state) => state.activeSessionId);
+  const focusSession = useAgentSessionStore((state) => state.focusSession);
+  const createAgentSessionFromProtocol = useAgentSessionStore((state) => state.createSession);
+  const appendAgentTraceFromProtocol = useAgentSessionStore((state) => state.appendTrace);
+  const addAgentPendingApprovalFromProtocol = useAgentSessionStore((state) => state.addPendingApproval);
 
   useEffect(() => {
     // Restore client-only persisted state after mount to avoid SSR hydration drift.
@@ -768,6 +1117,15 @@ export function AgentProtocolCenter() {
       pagePath: window.location.pathname,
     });
     setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || window.location.hash !== "#qa-evidence") {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      document.getElementById("qa-evidence")?.scrollIntoView({ block: "start" });
+    });
   }, []);
 
   useEffect(() => {
@@ -855,6 +1213,7 @@ export function AgentProtocolCenter() {
       paneCount: getAllPaneIds(layout.root).length,
       openTabCount: tabs.length,
       dirtyTabCount: tabs.filter((tab) => tab.isDirty).length,
+      dirtyTabPaths: tabs.filter((tab) => tab.isDirty).map((tab) => tab.filePath),
       activeTabName: activeWorkbenchTab?.fileName ?? "无活动标签",
       activeTabPath: activeWorkbenchTab?.filePath ?? "无",
       activeTabKind: getTabKindLabel(activeWorkbenchTab),
@@ -863,6 +1222,44 @@ export function AgentProtocolCenter() {
   const workbenchContextText = useMemo(
     () => buildWorkbenchContextText(workbenchContext),
     [workbenchContext],
+  );
+  const coworkInbox = useMemo(
+    () => buildAgentCoworkInboxViewModel(agentSessions, activeAgentSessionId, {
+      limit: 6,
+      workspace: {
+        openTabCount: workbenchContext.openTabCount,
+        dirtyTabCount: workbenchContext.dirtyTabCount,
+        dirtyPaths: workbenchContext.dirtyTabPaths,
+        activeTabName: workbenchContext.activeTabName,
+        activeTabPath: workbenchContext.activeTabPath,
+      },
+    }),
+    [activeAgentSessionId, agentSessions, workbenchContext],
+  );
+
+  const focusInboxSession = useCallback((sessionId: string) => {
+    focusAgentSession({ focusSession }, sessionId, "trace");
+  }, [focusSession]);
+
+  const coworkInboxMarkdown = useMemo(
+    () => formatAgentCoworkInboxMarkdown(coworkInbox),
+    [coworkInbox],
+  );
+  const codingQaRunner = useMemo(
+    () => buildCodingQaRunnerViewModel({
+      activeTabPath: workbenchContext.activeTabPath,
+      dirtyTabPaths: workbenchContext.dirtyTabPaths,
+      agentSessions,
+    }),
+    [agentSessions, workbenchContext],
+  );
+  const codingQaEvidenceCandidates = useMemo(
+    () => buildCodingQaEvidenceCandidates(agentSessions),
+    [agentSessions],
+  );
+  const importedEvidenceKeys = useMemo(
+    () => new Set(evidenceEntries.map((entry) => entry.importedKey).filter((key): key is string => Boolean(key))),
+    [evidenceEntries],
   );
   const filteredEvidenceEntries = useMemo(
     () => evidenceFilter === "all"
@@ -912,14 +1309,18 @@ export function AgentProtocolCenter() {
       decisionCount: decisionRecords.length,
       activeStageTitle: activeStage?.title ?? "暂无进行中阶段",
       workbenchContextText,
+      coworkInboxMarkdown,
+      codingQaRunnerMarkdown: codingQaRunner.markdown,
       capturedAt: runSnapshotMeta.capturedAt,
       pagePath: runSnapshotMeta.pagePath,
     }),
     [
       activeStage?.title,
+      codingQaRunner.markdown,
       completedCheckCount,
       completedClosureGateCount,
       completedCount,
+      coworkInboxMarkdown,
       decisionRecords.length,
       evidenceEntries.length,
       runSnapshotMeta.capturedAt,
@@ -1054,6 +1455,81 @@ export function AgentProtocolCenter() {
     setActiveTab("evidence");
     toast.success("验证模板已填入");
   }, []);
+
+  const copyCodingQaPlan = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(codingQaRunner.markdown);
+      toast.success("Coding QA 计划已复制");
+    } catch (error) {
+      console.error("Failed to copy coding QA plan:", error);
+      toast.error("复制失败，请检查剪贴板权限");
+    }
+  }, [codingQaRunner.markdown]);
+
+  const prepareCodingQaEvidenceDraft = useCallback(() => {
+    const commands = [...codingQaRunner.plan.allowed, ...codingQaRunner.plan.suggested]
+      .map((item) => item.command)
+      .join("\n");
+    setEvidenceDraft({
+      label: "Coding QA Runner plan",
+      command: commands || "No approval-gated QA commands inferred.",
+      result: codingQaRunner.summary,
+      status: codingQaRunner.status === "blocked" ? "blocked" : "passed",
+    });
+    setEditingEvidenceId(null);
+    setEvidenceFilter("all");
+    setActiveTab("evidence");
+    toast.success("Coding QA 证据草稿已填入");
+  }, [codingQaRunner]);
+
+  const createCodingQaApprovalRequest = useCallback(() => {
+    const request = buildCodingQaRunnerApprovalRequest(codingQaRunner);
+    const sessionId = createAgentSessionFromProtocol({
+      profile: "research",
+      title: request.sessionTitle,
+      task: request.sessionTask,
+    });
+    appendAgentTraceFromProtocol(sessionId, request.trace);
+    addAgentPendingApprovalFromProtocol(sessionId, request.approval);
+    focusAgentSession({ focusSession }, sessionId, "trace");
+    toast.success("Coding QA 审批请求已创建");
+  }, [
+    addAgentPendingApprovalFromProtocol,
+    appendAgentTraceFromProtocol,
+    codingQaRunner,
+    createAgentSessionFromProtocol,
+    focusSession,
+  ]);
+
+  const importCodingQaEvidence = useCallback((candidate: CodingQaEvidenceCandidate) => {
+    setEvidenceEntries((current) => {
+      if (current.some((entry) => entry.importedKey === candidate.importedKey)) {
+        return current;
+      }
+      return [...current, {
+        id: `evidence-${candidate.importedKey}`,
+        label: candidate.label,
+        command: candidate.command,
+        result: candidate.result,
+        status: candidate.status,
+        importedKey: candidate.importedKey,
+        sourceKind: "coding-qa",
+        sourceSessionId: candidate.sessionId,
+        sourceApprovalId: candidate.approvalId,
+      }];
+    });
+    setEvidenceFilter("all");
+    setActiveTab("evidence");
+    toast.success("Coding QA 结果已导入证据");
+  }, []);
+
+  const focusEvidenceSourceTrace = useCallback((entry: EvidenceEntry) => {
+    if (!entry.sourceSessionId) {
+      return;
+    }
+    focusAgentSession({ focusSession }, entry.sourceSessionId, "trace");
+    toast.success("已聚焦来源 Agent Trace");
+  }, [focusSession]);
 
   const addEvidenceEntry = useCallback(() => {
     if (!evidenceDraft.label.trim() && !evidenceDraft.command.trim() && !evidenceDraft.result.trim()) {
@@ -1419,6 +1895,29 @@ export function AgentProtocolCenter() {
       <div className="mx-auto grid max-w-7xl gap-5 px-5 py-5">
         <section className={cn("min-w-0 space-y-4", activeTab === "handoff" && "hidden")}>
           <div className={cn("space-y-4", activeTab !== "execution" && "hidden")}>
+          <AgentCoworkInbox
+            summary={coworkInbox.summary}
+            nextAction={coworkInbox.nextAction}
+            items={coworkInbox.items}
+            pendingApprovalCount={coworkInbox.pendingApprovalCount}
+            blockedCount={coworkInbox.blockedCount}
+            runningCount={coworkInbox.runningCount}
+            handoffCount={coworkInbox.handoffCount}
+            totalSessionCount={coworkInbox.totalSessionCount}
+            workspaceRisk={coworkInbox.workspaceRisk}
+            onFocusSession={focusInboxSession}
+          />
+
+          <CodingQaRunnerPanel
+            view={codingQaRunner}
+            evidenceCandidates={codingQaEvidenceCandidates}
+            importedEvidenceKeys={importedEvidenceKeys}
+            onCopyPlan={() => void copyCodingQaPlan()}
+            onPrepareEvidenceDraft={prepareCodingQaEvidenceDraft}
+            onCreateApprovalRequest={createCodingQaApprovalRequest}
+            onImportEvidence={importCodingQaEvidence}
+          />
+
           <section className="rounded-lg border border-border bg-card p-4">
             <div className="flex items-center gap-2 text-sm font-semibold">
               <FileText className="h-4 w-4" />
@@ -1754,6 +2253,17 @@ export function AgentProtocolCenter() {
                         <p className="mt-1 text-sm text-muted-foreground">{entry.result || "未填写结果"}</p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
+                        {entry.sourceSessionId ? (
+                          <button
+                            type="button"
+                            onClick={() => focusEvidenceSourceTrace(entry)}
+                            aria-label={`查看来源 Trace: ${entry.label}`}
+                            title="查看来源 Agent Trace"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          >
+                            <MessageSquare className="h-3.5 w-3.5" />
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => editEvidenceEntry(entry)}

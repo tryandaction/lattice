@@ -1,3 +1,7 @@
+.live-preview-editor .cm-table-widget-wrapper.cm-table-widget:has(.table-editor-wrapper) {
+  overflow: visible !important;
+}
+
 .table-editor-wrapper {
   --table-border: hsl(var(--border));
   --table-surface: hsl(var(--card));
@@ -13,6 +17,7 @@
   color: var(--table-text);
   margin: 0.6rem 0;
   position: relative;
+  z-index: 1;
   overflow: visible;
   outline: none;
 }
@@ -208,7 +213,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  z-index: 3;
+  z-index: 12;
+  pointer-events: auto;
 }
 
 .table-editor-perimeter-handle:hover {
@@ -244,7 +250,8 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  z-index: 3;
+  z-index: 13;
+  pointer-events: auto;
 }
 
 .table-editor-panel-meta {
@@ -278,6 +285,26 @@
   border-radius: 8px;
   padding: 0 10px;
   font-size: 11px;
+}
+
+.table-editor-source-preview {
+  margin-top: 8px;
+  max-height: 168px;
+  overflow: auto;
+  border: 1px solid hsl(var(--border) / 0.9);
+  border-radius: 10px;
+  background: hsl(var(--muted) / 0.54);
+  padding: 10px 12px;
+  color: var(--table-text);
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.table-editor-source-preview code {
+  font: inherit;
+  color: inherit;
 }
 
 .dark .table-editor-wrapper {

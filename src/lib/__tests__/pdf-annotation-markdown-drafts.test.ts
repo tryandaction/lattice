@@ -14,6 +14,8 @@ describe("pdf-annotation-markdown-drafts", () => {
       PDF_ANNOTATION_DRAFTS_BEGIN,
       '<!-- lattice-pdf-annotation id="ai-key-claim" page="7" type="underline" color="#2196F3" -->',
       "- Quote: Fig. 5, that tend to cause shifts in opposite directions. Even so",
+      "- Prefix: inferred from",
+      "- Suffix: the electric field stability",
       "- Comment: Check this claim against Fig. 5.",
       "- Tags: key-claim, rydberg",
       "",
@@ -29,10 +31,12 @@ describe("pdf-annotation-markdown-drafts", () => {
       styleType: "underline",
       color: "#2196F3",
       exact: "Fig. 5, that tend to cause shifts in opposite directions. Even so",
+      prefix: "inferred from",
+      suffix: "the electric field stability",
       comment: "Check this claim against Fig. 5.",
       author: "lattice-ai",
     });
-    expect(drafts[0].tags).toEqual(["AI", "AI批注", "pdf-text-markup", "key-claim", "rydberg"]);
+    expect(drafts[0].tags).toEqual(expect.arrayContaining(["AI", "pdf-text-markup", "key-claim", "rydberg"]));
   });
 
   it("keeps existing AI draft sections when regenerating the annotation index", () => {

@@ -6,6 +6,31 @@
 
 ## 本次重点
 
+### 2026-06-18 AI / Coding Agent、Markdown 输入与桌面产物收口
+
+- AI / Coding Agent 闭环已完成本轮产品化：
+  - `code-change-plan` workflow、`coding-change-review` contract、代码变更 proposal planned writes 已形成只读、证据优先、审批优先的 coding review 路线。
+  - Agent Protocol Center 已加入 Co-work Session Inbox，聚合本地 Agent sessions、pending approvals、handoff、blocked/running 状态与 workspace dirty risk。
+  - Approval-gated QA Runner 已能从当前文件、dirty tabs 和 Agent trace 推断验证目标，生成 allowed/suggested/rejected command plan。
+  - QA Runner 只创建 `runner.runCode` 审批请求和 Trace，不直接执行 shell、network、git 或 direct workspace write。
+  - 已完成 Trace -> protocol deep link、resolved QA approval -> Evidence import、Evidence -> source Agent Trace backlink 的双向审计链。
+- Markdown / 量子键盘文档收口：
+  - 保留 `docs/guides/quantum-keyboard.md` 作为最终产品说明。
+  - 移除未引用的阶段性长草稿，避免同一能力在 docs 下出现多套过时口径。
+- v2.3.0 桌面产物已在 2026-06-18 重新构建并同步到 `releases/v2.3.0/`：
+  - `Lattice_2.3.0_x64_en-US.msi` SHA256 `02910b717af4429b99e4818ff01d231e82d6ca00697eea5a1edaaf86e67a1a68`
+  - `Lattice_2.3.0_x64-setup.exe` SHA256 `2466165d25384d225d7482f76fd26705afd09d73b66d03fa7651ce8b9bf63b8f`
+  - `lattice.exe` SHA256 `d16796bd2b5af362970cd7b8e183842280c494793b0334bf2a5b26469bab18c4`
+- 本轮验证：
+  - `npm run typecheck -- --pretty false --incremental false`
+  - `npm run qa:agent-smoke -- --unit-only`
+  - `npm run test:docs`
+  - `npm run build`
+  - `npm run tauri:build`
+  - `npm run lint`
+  - `npm run test:run`
+  - `npm run release:prepare -- --skip-qa`
+
 ### 2026-03-28 桌面壳层与 AI 集成专题收口
 
 - Phase 1 blocker 已完成：

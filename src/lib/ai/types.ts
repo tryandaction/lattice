@@ -262,6 +262,7 @@ export interface AiRuntimeSettings {
   maxTokens: number;
   systemPrompt: string;
   preferLocal?: boolean;
+  agentOmittedSummaryEnabled?: boolean;
 }
 
 export interface AiContextNode {

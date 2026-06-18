@@ -18,6 +18,18 @@ export interface RepairMarkdownLinkTargetResult {
   changed: boolean;
 }
 
+export interface MarkdownLinkToWikiResult {
+  content: string;
+  changed: boolean;
+}
+
+export interface MarkdownLinkToWikiReplacement {
+  replacement: string;
+  target: string;
+  alias?: string;
+  embedded: boolean;
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -101,6 +113,42 @@ function stripMarkdownExtension(path: string): string {
   return normalizeWorkspacePath(path).replace(/\.(md|markdown)$/i, "");
 }
 
+function decodeMarkdownTarget(target: string): string {
+  try {
+    return decodeURIComponent(target);
+  } catch {
+    return target;
+  }
+}
+
+function normalizeMarkdownLinkTargetForWiki(rawTarget: string): string {
+  const [pathPart, ...fragmentParts] = decodeMarkdownTarget(rawTarget).split("#");
+  const normalizedPath = normalizeWorkspacePath(pathPart).replace(/\.(md|markdown)$/i, "");
+  const fragment = fragmentParts.length > 0 ? `#${fragmentParts.join("#")}` : "";
+  return `${normalizedPath}${fragment}`;
+}
+
+export function buildMarkdownLinkToWikiReplacement(
+  markdownLinkSource: string,
+): MarkdownLinkToWikiReplacement | null {
+  const match = markdownLinkSource.match(/^(!?)\[([^\]]*?)\]\(([^)]+?)\)$/);
+  if (!match) return null;
+
+  const embedded = match[1] === "!";
+  const label = match[2]?.trim() ?? "";
+  const target = normalizeMarkdownLinkTargetForWiki(match[3].trim());
+  if (!target) return null;
+
+  const alias = label && label !== target ? label : undefined;
+  const aliasSuffix = alias ? `|${alias}` : "";
+  return {
+    replacement: `${embedded ? "!" : ""}[[${target}${aliasSuffix}]]`,
+    target,
+    alias,
+    embedded,
+  };
+}
+
 function buildReplacementTarget(sourceFile: string, targetFile: string, preserveMarkdownExtension: boolean): string {
   const relative = buildWikiTarget(sourceFile, targetFile);
   return preserveMarkdownExtension ? relative : stripMarkdownExtension(relative);
@@ -141,6 +189,32 @@ export function repairMarkdownLinkTargetInContent(
 
   return {
     content: `${content.slice(0, start)}${repaired}${content.slice(end)}`,
+    changed: true,
+  };
+}
+
+export function convertMarkdownLinkToWikiInContent(
+  content: string,
+  link: IndexedMarkdownLink,
+): MarkdownLinkToWikiResult {
+  const start = link.range.start.offset;
+  const end = link.range.end.offset;
+  if (start < 0 || end <= start || end > content.length) {
+    return { content, changed: false };
+  }
+
+  const original = content.slice(start, end);
+  if (!original.includes(link.rawTarget) || isTargetInsideWikiLink(content, start)) {
+    return { content, changed: false };
+  }
+
+  const replacement = buildMarkdownLinkToWikiReplacement(original);
+  if (!replacement || replacement.replacement === original) {
+    return { content, changed: false };
+  }
+
+  return {
+    content: `${content.slice(0, start)}${replacement.replacement}${content.slice(end)}`,
     changed: true,
   };
 }

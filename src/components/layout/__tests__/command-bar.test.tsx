@@ -311,6 +311,104 @@ describe("CommandBar desktop interactions", () => {
     expect(button.getAttribute("title")).toBe("复制网址：https://example.com/paper");
   });
 
+  it("routes explicit overflow actions into the more menu", () => {
+    const commandBarByPane = workspaceState.commandBarByPane as Record<string, unknown>;
+    commandBarByPane["pane-1"] = {
+      breadcrumbs: [],
+      actions: [
+        { id: "search", label: "Search", icon: "search", group: "utility", onTrigger: () => {} },
+        { id: "zoom-in", label: "Zoom in", icon: "zoom-in", group: "overflow", onTrigger: () => {} },
+        { id: "zoom-out", label: "Zoom out", icon: "zoom-out", group: "overflow", onTrigger: () => {} },
+      ],
+    };
+
+    render(
+      <CommandBar
+        onOpenWorkspace={() => {}}
+      />,
+    );
+
+    expect(screen.getByLabelText("Search")).toBeTruthy();
+    expect(screen.queryByLabelText("Zoom in")).toBeNull();
+
+    fireEvent.click(screen.getByLabelText("workbench.commandBar.more"));
+
+    expect(screen.getByText("Zoom in")).toBeTruthy();
+    expect(screen.getByText("Zoom out")).toBeTruthy();
+  });
+
+  it("keeps utility actions visible before primary tools fill the bar", () => {
+    const commandBarByPane = workspaceState.commandBarByPane as Record<string, unknown>;
+    commandBarByPane["pane-1"] = {
+      breadcrumbs: [],
+      actions: [
+        { id: "search", label: "Search", icon: "search", group: "utility", priority: 6, onTrigger: () => {} },
+        { id: "toggle-sidebar", label: "Sidebar", icon: "panel-left", group: "utility", priority: 5, onTrigger: () => {} },
+        ...Array.from({ length: 12 }, (_, index) => ({
+          id: `tool-${index}`,
+          label: `Tool ${index}`,
+          group: "primary" as const,
+          priority: 10 + index,
+          onTrigger: () => {},
+        })),
+        { id: "zoom-in", label: "Zoom in", icon: "zoom-in", group: "overflow", onTrigger: () => {} },
+      ],
+    };
+
+    render(
+      <CommandBar
+        onOpenWorkspace={() => {}}
+      />,
+    );
+
+    expect(screen.getByLabelText("Search")).toBeTruthy();
+    expect(screen.getByLabelText("Sidebar")).toBeTruthy();
+    expect(screen.queryByLabelText("Zoom in")).toBeNull();
+
+    fireEvent.click(screen.getByLabelText("workbench.commandBar.more"));
+
+    expect(screen.getByText("Zoom in")).toBeTruthy();
+  });
+
+  it("keeps search visible even when other utility actions have higher priority", () => {
+    const commandBarByPane = workspaceState.commandBarByPane as Record<string, unknown>;
+    commandBarByPane["pane-1"] = {
+      breadcrumbs: [],
+      actions: [
+        ...Array.from({ length: 6 }, (_, index) => ({
+          id: `utility-${index}`,
+          label: `Utility ${index}`,
+          icon: "command",
+          group: "utility" as const,
+          priority: index,
+          onTrigger: () => {},
+        })),
+        { id: "search", label: "Search", icon: "search", group: "utility", priority: 99, onTrigger: () => {} },
+        ...Array.from({ length: 8 }, (_, index) => ({
+          id: `tool-${index}`,
+          label: `Tool ${index}`,
+          group: "primary" as const,
+          priority: 100 + index,
+          onTrigger: () => {},
+        })),
+        { id: "zoom-in", label: "Zoom in", icon: "zoom-in", group: "overflow", onTrigger: () => {} },
+      ],
+    };
+
+    render(
+      <CommandBar
+        onOpenWorkspace={() => {}}
+      />,
+    );
+
+    expect(screen.getByLabelText("Search")).toBeTruthy();
+    expect(screen.queryByLabelText("Zoom in")).toBeNull();
+
+    fireEvent.click(screen.getByLabelText("workbench.commandBar.more"));
+
+    expect(screen.getByText("Zoom in")).toBeTruthy();
+  });
+
   it("passes command bar action context menu positions to the active pane", () => {
     const onContextMenu = vi.fn();
     const commandBarByPane = workspaceState.commandBarByPane as Record<string, unknown>;

@@ -154,7 +154,7 @@ describe('Quantum Keymap', () => {
     });
 
     it('returns shift symbol when shift is held and shift is defined', () => {
-      expect(getDisplaySymbol('KeyI', true)).toBe('\\infty');
+      expect(getDisplaySymbol('KeyI', true)).toBe('\\iint');
       expect(getDisplaySymbol('KeyP', true)).toBe('\\prod');
     });
 
@@ -199,7 +199,7 @@ describe('Quantum Keymap', () => {
   describe('getVariants', () => {
     it('returns variants array for keys with variants', () => {
       const variants = getVariants('KeyI');
-      expect(variants).toContain('\\iint');
+      expect(variants).toContain('\\iiint');
       expect(variants).toContain('\\oint');
     });
 

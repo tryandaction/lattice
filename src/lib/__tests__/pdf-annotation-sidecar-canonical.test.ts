@@ -203,6 +203,134 @@ describe("pdf-annotation-sidecar-canonical", () => {
     }
   });
 
+  it("rejects AI exact-quote writes when the quote is ambiguous on the page", () => {
+    const repeated = "same repeated claim";
+    const model: PdfPageTextModel = {
+      pageNumber: 2,
+      viewportWidth: 640,
+      viewportHeight: 960,
+      textContent: { items: [], styles: {}, lang: null },
+      items: [],
+      normalizedText: `${repeated} other text ${repeated}`,
+      itemRects: [
+        { itemIndex: 0, left: 80, top: 120, width: 220, height: 24 },
+        { itemIndex: 1, left: 80, top: 180, width: 360, height: 24 },
+      ],
+      segments: [
+        {
+          itemIndex: 0,
+          text: repeated,
+          normalizedText: repeated,
+          hasEOL: true,
+          pageTextStart: 0,
+          pageTextEnd: repeated.length,
+          lineIndex: 0,
+          blockIndex: 0,
+          columnIndex: 0,
+          layoutClass: "main",
+        },
+        {
+          itemIndex: 1,
+          text: `other text ${repeated}`,
+          normalizedText: `other text ${repeated}`,
+          hasEOL: false,
+          pageTextStart: repeated.length + 1,
+          pageTextEnd: `${repeated} other text ${repeated}`.length,
+          lineIndex: 1,
+          blockIndex: 0,
+          columnIndex: 0,
+          layoutClass: "main",
+        },
+      ],
+    };
+
+    const result = upsertCanonicalPdfTextMarkupAnnotationInFile({
+      annotationFile: createAnnotationFile([]),
+      model,
+      exact: repeated,
+      styleType: "highlight",
+      color: "#FFD400",
+      author: "lattice-ai",
+      id: "ann-ai-ambiguous",
+      createdAt: 20,
+      now: 21,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.changed).toBe(false);
+    expect(result.reason).toBe("ambiguous-exact-quote");
+    expect(result.annotationFile.annotations).toHaveLength(0);
+  });
+
+  it("disambiguates repeated AI quotes with prefix and suffix without re-resolving the wrong occurrence", () => {
+    const repeated = "same repeated claim";
+    const normalizedText = `alpha ${repeated} beta gamma ${repeated} delta`;
+    const model: PdfPageTextModel = {
+      pageNumber: 3,
+      viewportWidth: 640,
+      viewportHeight: 960,
+      textContent: { items: [], styles: {}, lang: null },
+      items: [],
+      normalizedText,
+      itemRects: [
+        { itemIndex: 0, left: 80, top: 120, width: 240, height: 24 },
+        { itemIndex: 1, left: 80, top: 160, width: 320, height: 24 },
+      ],
+      segments: [
+        {
+          itemIndex: 0,
+          text: `alpha ${repeated}`,
+          normalizedText: `alpha ${repeated}`,
+          hasEOL: true,
+          pageTextStart: 0,
+          pageTextEnd: `alpha ${repeated}`.length,
+          lineIndex: 0,
+          blockIndex: 0,
+          columnIndex: 0,
+          layoutClass: "main",
+        },
+        {
+          itemIndex: 1,
+          text: `beta gamma ${repeated} delta`,
+          normalizedText: `beta gamma ${repeated} delta`,
+          hasEOL: false,
+          pageTextStart: `alpha ${repeated} `.length,
+          pageTextEnd: normalizedText.length,
+          lineIndex: 1,
+          blockIndex: 0,
+          columnIndex: 0,
+          layoutClass: "main",
+        },
+      ],
+    };
+
+    const secondStart = normalizedText.lastIndexOf(repeated);
+    const result = upsertCanonicalPdfTextMarkupAnnotationInFile({
+      annotationFile: createAnnotationFile([]),
+      model,
+      exact: repeated,
+      prefix: "beta gamma",
+      suffix: "delta",
+      styleType: "highlight",
+      color: "#FFD400",
+      author: "lattice-ai",
+      id: "ann-ai-disambiguated",
+      createdAt: 30,
+      now: 31,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.annotation?.target.type).toBe("pdf");
+    if (result.annotation?.target.type === "pdf") {
+      expect(result.annotation.target.startCharIndex).toBe(secondStart);
+      expect(result.annotation.target.endCharIndex).toBe(secondStart + repeated.length);
+      expect(result.annotation.target.textQuote?.exact).toBe(repeated);
+      expect(result.annotation.target.textQuote?.prefix).toContain("beta gamma");
+      expect(result.annotation.target.textQuote?.suffix).toContain("delta");
+      expect(result.annotation.target.rects[0].y1).toBeCloseTo(160 / 960);
+    }
+  });
+
   it("reports non-canonical sidecar annotations before repair", () => {
     const model = createSaffmanFigFiveModel();
     const annotation = upsertCanonicalPdfTextMarkupAnnotationInFile({

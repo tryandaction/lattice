@@ -57,6 +57,7 @@ function toRuntimeSettings(settings: ReturnType<typeof useSettingsStore.getState
     maxTokens: settings.aiMaxTokens,
     systemPrompt: settings.aiSystemPrompt,
     preferLocal: settings.aiProvider === "ollama",
+    agentOmittedSummaryEnabled: settings.aiAgentOmittedSummaryEnabled,
   };
 }
 

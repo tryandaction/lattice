@@ -19,6 +19,7 @@ describe('lattice skill registry', () => {
       'path-identity',
       'note-taking',
       'notebook-analysis',
+      'coding-change-review',
       'knowledge-organization',
       'pdf-annotation',
     ]);
@@ -37,6 +38,10 @@ describe('lattice skill registry', () => {
     expect(listLatticeSkillsForWorkflow('pdf-annotation', { includePdfScoped: true }).map((skill) => skill.id)).toEqual([
       'path-identity',
       'pdf-annotation',
+    ]);
+    expect(listLatticeSkillsForWorkflow('code-change-plan').map((skill) => skill.id)).toEqual([
+      'path-identity',
+      'coding-change-review',
     ]);
     expect(getLatticeSkill('path-identity')).toMatchObject({
       status: 'ready',
@@ -57,6 +62,20 @@ describe('lattice skill registry', () => {
       'path-identity',
       'workbench-draft-handoff',
     ]);
+    expect(getLatticeSkill('coding-change-review')).toMatchObject({
+      status: 'foundation',
+      approvalMode: 'approval-gated',
+      allowedTools: ['workspace.search', 'workspace.readIndexedContext', 'lattice.resolvePathIdentity', 'evidence.resolve', 'workbench.createProposal'],
+      requiredCapabilities: [
+        'search_workspace',
+        'read_workspace',
+        'lattice_read_identity',
+        'resolve_evidence',
+        'propose_write',
+      ],
+      operationContractIds: ['path-identity', 'coding-change-review'],
+      writesWorkspace: true,
+    });
     expect(getLatticeSkill('pdf-item-workspace')).toMatchObject({
       owner: 'pdf-thread',
       status: 'reserved',
@@ -93,6 +112,15 @@ describe('lattice skill registry', () => {
       requiredTools: ['lattice.resolvePathIdentity', 'evidence.resolve', 'workbench.createProposal'],
       requiredCapabilities: expect.arrayContaining(['propose_write', 'lattice_write_pdf_annotation']),
     });
+    expect(getLatticeOperationContract('coding-change-review')).toMatchObject({
+      owner: 'ai-agent-thread',
+      status: 'approval-gated',
+      requiredTools: ['workspace.search', 'workspace.readIndexedContext', 'lattice.resolvePathIdentity', 'evidence.resolve', 'workbench.createProposal'],
+      requiredCapabilities: ['search_workspace', 'read_workspace', 'lattice_read_identity', 'resolve_evidence', 'propose_write'],
+    });
+    expect(getLatticeOperationContract('coding-change-review').prohibitions.join('\n')).toContain(
+      'Do not run shell, git, package manager, network, or production API commands',
+    );
 
     expect(listLatticeOperationContracts([
       'path-identity',
@@ -107,10 +135,11 @@ describe('lattice skill registry', () => {
   it('summarizes readiness for P6 planning without enabling silent writes', () => {
     const readiness = buildLatticeSkillReadiness();
 
-    expect(readiness.summary).toBe('5 current-thread skills / 1 PDF-reserved skills / 4 approval-gated skills');
+    expect(readiness.summary).toBe('6 current-thread skills / 1 PDF-reserved skills / 5 approval-gated skills');
     expect(readiness.approvalGated.map((skill) => skill.id)).toEqual([
       'note-taking',
       'notebook-analysis',
+      'coding-change-review',
       'knowledge-organization',
       'pdf-annotation',
     ]);

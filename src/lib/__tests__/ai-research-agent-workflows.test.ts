@@ -19,6 +19,7 @@ describe('research-agent-workflows', () => {
       'markdown-research',
       'reading-note',
       'notebook-analysis',
+      'code-change-plan',
       'literature-matrix',
       'knowledge-organization',
       'teaching-explain',
@@ -83,6 +84,41 @@ describe('research-agent-workflows', () => {
     expect(hints).toContain('Do not write markdown files directly from Agent code outside Workbench draft/proposal writeback.');
   });
 
+  it('injects coding change review rules into code-change planner hints', () => {
+    const workflow = getResearchAgentWorkflow('code-change-plan');
+    const profile = buildResearchAgentWorkflowExecutionProfile(workflow);
+    const hints = buildResearchAgentWorkflowPlannerHints(workflow);
+
+    expect(workflow.allowedTools).toEqual([
+      'workspace.search',
+      'workspace.readIndexedContext',
+      'lattice.resolvePathIdentity',
+      'evidence.resolve',
+      'workbench.createProposal',
+    ]);
+    expect(workflow.approvalPolicy).toMatchObject({
+      createDraft: 'deny',
+      createProposal: 'ask',
+      runCode: 'deny',
+    });
+    expect(profile.currentThreadSkills.map((skill) => skill.id)).toEqual([
+      'path-identity',
+      'coding-change-review',
+    ]);
+    expect(profile.operationContracts.map((contract) => contract.id)).toEqual([
+      'path-identity',
+      'coding-change-review',
+    ]);
+    expect(hints).toContain('Workflow: Code Change Plan (code-change-plan)');
+    expect(hints).toContain('Lattice operation contract: Coding Change Review [approval-gated/ai-agent-thread].');
+    expect(hints).toContain('A coding proposal must name target files, summarize intended diffs, include a patch or pseudo-diff preview, list risks, and include a focused test plan.');
+    expect(hints).toContain('QA commands may be listed only as approval-gated command plans with command, reason, risk, and approval status.');
+    expect(hints).toContain('Do not write source files directly from the Research Agent coding workflow.');
+    expect(hints).toContain('Do not mark QA command plans as executed or passed unless a separate approved execution result is present in Trace.');
+    expect(hints).toContain('Do not run shell, git, package manager, network, or production API commands from this workflow.');
+    expect(hints).toContain('Hint: List QA commands only as approval-gated command plans with allowed, suggested, and rejected/deferred sections.');
+  });
+
   it('builds a Lattice execution profile without exposing PDF writes by default', () => {
     const workflow = getResearchAgentWorkflow('paper-reading');
     const profile = buildResearchAgentWorkflowExecutionProfile(workflow);
@@ -123,6 +159,7 @@ describe('research-agent-workflows', () => {
   it('maps workflow families to restrained internal context budget profiles', () => {
     expect(getResearchAgentWorkflow('markdown-research').contextProfile.contextBudgetProfileId).toBe('research');
     expect(getResearchAgentWorkflow('reading-note').contextProfile.contextBudgetProfileId).toBe('research');
+    expect(getResearchAgentWorkflow('code-change-plan').contextProfile.contextBudgetProfileId).toBe('notebook');
     expect(getResearchAgentWorkflow('literature-matrix').contextProfile.contextBudgetProfileId).toBe('knowledge-organization');
     expect(getResearchAgentWorkflow('knowledge-organization').contextProfile.contextBudgetProfileId).toBe('knowledge-organization');
     expect(getResearchAgentWorkflow('teaching-explain').contextProfile.contextBudgetProfileId).toBe('chat');
@@ -134,6 +171,13 @@ describe('research-agent-workflows', () => {
       filePath: 'analysis/run.ipynb',
       task: 'Explain this output cell',
     })).toBe('notebook-analysis');
+    expect(inferResearchAgentWorkflow({
+      filePath: 'src/components/agent-panel.tsx',
+      task: 'Review this component and propose a safe patch',
+    })).toBe('code-change-plan');
+    expect(inferResearchAgentWorkflow({
+      task: 'Create a code review with patch preview, risk assessment, and test plan',
+    })).toBe('code-change-plan');
     expect(inferResearchAgentWorkflow({
       task: '解释这个笔记本里的代码单元输出和结果图',
     })).toBe('notebook-analysis');
