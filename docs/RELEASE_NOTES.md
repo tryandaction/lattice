@@ -9,6 +9,7 @@ This build closes the current polish pass for the web and desktop products, with
 ## Highlights
 
 - PDF item workspaces now support folders and arbitrary file types instead of limiting companion entries to Markdown and notebooks.
+- PDF item folders now expand in Explorer and the PDF Item panel, so nested companion files of any type can be browsed and opened.
 - Dragging a file or folder onto a PDF in Explorer moves it into that PDF's item workspace and immediately refreshes the PDF's virtual child tree.
 - PDF item routing now recovers annotations and companion files across PDF moves, renames, copies, and alternate workspace roots through manifest and fingerprint lookup.
 - Quantum Keyboard now follows the physical-keyboard model: only the 26 QWERTY letter keys are shown in the HUD, while number keys keep normal keyboard behavior.
@@ -25,7 +26,7 @@ Completed on 2026-06-28:
 
 - `npm audit --registry=https://registry.npmjs.org --audit-level=moderate`: 0 vulnerabilities
 - `npm run typecheck`: passed
-- PDF item drag/drop focused regression tests: `src/lib/__tests__/pdf-item.test.ts`, `src/components/renderers/__tests__/pdf-item-workspace-panel.test.tsx`, `src/components/explorer/__tests__/tree-view.test.tsx`, and `src/components/main-area/__tests__/universal-file-viewer.test.tsx` passed, 37 tests total
+- PDF item drag/drop and nested-folder focused regression tests: `src/lib/__tests__/pdf-item.test.ts`, `src/components/renderers/__tests__/pdf-item-workspace-panel.test.tsx`, `src/components/explorer/__tests__/tree-view.test.tsx`, `src/components/main-area/__tests__/universal-file-viewer.test.tsx`, and `src/stores/__tests__/workspace-store-execution.test.ts` passed
 - `npm run lint`: passed with 0 errors and 120 existing warnings
 - `npm run test:docs`: passed, 40 files checked
 - Focused regression tests for Markdown extraction, workspace indexing, Quantum Keyboard, formula copy, unified input, and HUD behavior: 36 tests passed
@@ -42,9 +43,9 @@ Note: the full Vitest run still emits jsdom's informational `Not implemented: na
 
 Artifacts are available in `releases/v2.3.1/`:
 
-- `Lattice_2.3.1_x64_en-US.msi` SHA256 `f81d4693de133e01bd709364b900ea29cb73368835a7a6da5a81ae47fcce60e3`
-- `Lattice_2.3.1_x64-setup.exe` SHA256 `5c6e29dce80adf6549a548306986be0f960968117a68ae772af41a61b15340d1`
-- `lattice.exe` SHA256 `e89cfab49fca9c6cbfdf3c3397ca3193c72a16a7bf568fc104e86c9401b4ddd8`
+- `Lattice_2.3.1_x64_en-US.msi` SHA256 `a058fed7fd4b1a3c2305e302b2b0f58971863acdeefa7e9d9b1737aa4f7bd5d5`
+- `Lattice_2.3.1_x64-setup.exe` SHA256 `8ffe0b7f053a5476043b21fff1e6a46f838e591ae9f03e18cfcfab0c65198ef6`
+- `lattice.exe` SHA256 `6b2039593ab01d6e89ed0b48f437619de6c3451589fcf5041f57feade2901dfc`
 
 ## Desktop/Web Sync
 

@@ -158,6 +158,7 @@ export function PdfItemWorkspacePanel({
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [expandedEntryPaths, setExpandedEntryPaths] = useState<Set<string>>(() => new Set());
   const [copyMenuOpen, setCopyMenuOpen] = useState(false);
   const [summary, setSummary] = useState<PdfBibliographicSummary | null>(null);
   const [enrichment, setEnrichment] = useState<PdfBibliographicEnrichment | null>(null);
@@ -171,6 +172,19 @@ export function PdfItemWorkspacePanel({
     const paths = currentManifest?.knownPdfPaths ?? [];
     return paths.find((path) => path !== filePath) ?? null;
   }, [currentManifest?.knownPdfPaths, filePath]);
+  const visibleEntries = useMemo(() => entries.filter((entry) => {
+    if (!entry.path) {
+      return false;
+    }
+    let parentPath = getParentPath(entry.path);
+    while (parentPath && parentPath !== currentManifest?.itemFolderPath) {
+      if (!expandedEntryPaths.has(parentPath)) {
+        return false;
+      }
+      parentPath = getParentPath(parentPath);
+    }
+    return true;
+  }), [currentManifest?.itemFolderPath, entries, expandedEntryPaths]);
 
   const loadItemState = useCallback(async () => {
     setIsLoading(true);
@@ -304,6 +318,15 @@ export function PdfItemWorkspacePanel({
     try {
       if (entry.type === "directory") {
         setSelectedDirectoryPath(entry.path);
+        setExpandedEntryPaths((current) => {
+          const next = new Set(current);
+          if (next.has(entry.path)) {
+            next.delete(entry.path);
+          } else {
+            next.add(entry.path);
+          }
+          return next;
+        });
         return;
       }
       const resolvedEntry = await resolveEntry(rootHandle, entry.path);
@@ -565,9 +588,11 @@ export function PdfItemWorkspacePanel({
             <div className="mt-1 text-[10px] text-muted-foreground">{t("pdf.workspace.loading")}</div>
           ) : null}
 
-          {!isLoading && entries.length > 0 ? (
+          {!isLoading && visibleEntries.length > 0 ? (
             <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
-              {entries.map((note) => (
+              {visibleEntries.map((note) => {
+                const isDirectoryExpanded = note.type === "directory" && expandedEntryPaths.has(note.path);
+                return (
                 <div
                   key={note.path}
                   className="inline-flex items-center rounded border border-border bg-muted/30 transition-colors hover:bg-muted"
@@ -580,7 +605,7 @@ export function PdfItemWorkspacePanel({
                     title={`${noteLabel(note.type, t)} ${note.path}`}
                   >
                     {note.type === "directory" ? (
-                      <FolderOpen className="h-3 w-3" />
+                      isDirectoryExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />
                     ) : note.type === "file" ? (
                       <FileIcon className="h-3 w-3" />
                     ) : null}
@@ -598,7 +623,8 @@ export function PdfItemWorkspacePanel({
                     </button>
                   ) : null}
                 </div>
-              ))}
+              );
+              })}
             </div>
           ) : null}
         </>

@@ -83,6 +83,14 @@ function toggleNodeExpansion(
         isExpanded: !node.isExpanded,
       };
     }
+    if (node.children?.length) {
+      return {
+        ...node,
+        children: node.children.map((child) =>
+          toggleNodeExpansion(child, targetPath)
+        ),
+      };
+    }
     return node;
   }
 

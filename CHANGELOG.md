@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - PDF item workspaces now accept folders and arbitrary file types, not only Markdown notes and notebooks.
+- PDF item folders can now be expanded in both Explorer and the PDF Item panel, including nested arbitrary files such as images, CSVs, and unknown extensions.
 - Explorer drag-and-drop can move files or folders directly onto a PDF to attach them to that PDF's item workspace.
 - PDF item workspace routing now uses manifest/fingerprint recovery so moved, renamed, or copied PDFs can reopen their annotations and related files from any workspace root.
 - Quantum Keyboard now follows the physical-keyboard model: the HUD shows only the 26 QWERTY letter keys, while number keys keep their native keyboard behavior.
@@ -28,9 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 发布收口
 - �?Web 端生产构建已刷新到最�?`web-dist`，Tauri 桌面构建继续通过 `frontendDist: "../web-dist"` 打包同一套静态前端�?- �?桌面版本已同步到 `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` �?`2.3.1`�?- �?本地桌面 release 已生成到 `releases/v2.3.1/`，包含安装包、裸可执行文件、manifest、checksum �?summary�?- �?量子键盘 HUD 的结构键与符号键源码已按 UTF-8 code point 核验，PowerShell 乱码为终端显示问题，实际 UI 映射保持 `上标/下标/...` �?`θ/π/α/γ/δ/η`�?
 ### 桌面产物
-- `releases/v2.3.1/Lattice_2.3.1_x64_en-US.msi` SHA256 `54a5e122b4185b47cc3c347bc154af834edf23b36807f442bfa76512989ac31e`
-- `releases/v2.3.1/Lattice_2.3.1_x64-setup.exe` SHA256 `345f946336e2d9df26995731c85170b3bb7a8441530beee6c1d65a58efa0373a`
-- `releases/v2.3.1/lattice.exe` SHA256 `41613e1413d21f3a99680a196d7671bd0462dbdb529adb7e0ccc1d399e490a07`
+- `releases/v2.3.1/Lattice_2.3.1_x64_en-US.msi` SHA256 `a058fed7fd4b1a3c2305e302b2b0f58971863acdeefa7e9d9b1737aa4f7bd5d5`
+- `releases/v2.3.1/Lattice_2.3.1_x64-setup.exe` SHA256 `8ffe0b7f053a5476043b21fff1e6a46f838e591ae9f03e18cfcfab0c65198ef6`
+- `releases/v2.3.1/lattice.exe` SHA256 `6b2039593ab01d6e89ed0b48f437619de6c3451589fcf5041f57feade2901dfc`
 
 ### 验证
 - `npm run test:run -- src/__tests__/prepare-release-script.test.ts src/lib/__tests__/formula-composer.test.ts src/stores/__tests__/quantum-formula-library-store.test.ts src/config/__tests__/quantum-keymap.test.ts`�? files / 34 tests passed�?- `npm run typecheck`：通过�?- `npm run build`：通过，Next static export 成功�?- `npm run tauri:build`：通过，生�?Windows MSI �?NSIS 安装包�?- `npm run release:prepare -- --version 2.3.1 --artifacts-dir src-tauri/target/release`：通过�?

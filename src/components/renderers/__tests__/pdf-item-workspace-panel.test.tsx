@@ -43,7 +43,10 @@ const mocks = vi.hoisted(() => {
     setSelectedDirectoryPath: vi.fn(),
     setExplorerSelection: vi.fn(),
     copyToClipboard: vi.fn(async (_text: string) => true),
-    resolveEntry: vi.fn<() => Promise<{ kind: "file"; handle: FileSystemFileHandle } | null>>(async () => null),
+    resolveEntry: vi.fn<(
+      rootHandle: FileSystemDirectoryHandle,
+      path: string,
+    ) => Promise<{ kind: "file"; handle: FileSystemFileHandle } | null>>(async () => null),
     resolveDirectoryHandle: vi.fn<() => Promise<FileSystemDirectoryHandle | null>>(async () => null),
     listPdfItemNotes: vi.fn<() => Promise<PdfItemNoteSummary[]>>(async () => []),
     loadPdfItemManifest: vi.fn(),
@@ -325,10 +328,10 @@ describe("PdfItemWorkspacePanel", () => {
         depth: 0,
       },
     ]);
-    resolveEntry.mockResolvedValue({
-      kind: "file",
-      handle: { name: "data.csv" } as FileSystemFileHandle,
-    });
+    resolveEntry.mockImplementation(async (_rootHandle: FileSystemDirectoryHandle, path: string) => ({
+      kind: "file" as const,
+      handle: { name: String(path).split("/").pop() } as FileSystemFileHandle,
+    }));
     splitPane.mockReturnValue("pane-side");
 
     render(
@@ -346,13 +349,19 @@ describe("PdfItemWorkspacePanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("assets")).toBeTruthy();
-      expect(screen.getByText("plot.png")).toBeTruthy();
       expect(screen.getByText("data.csv")).toBeTruthy();
     });
+    expect(screen.queryByText("plot.png")).toBeNull();
 
     fireEvent.click(screen.getByText("assets"));
     expect(setSelectedDirectoryPath).toHaveBeenCalledWith(".lattice/items/item-1/assets");
     expect(resolveEntry).not.toHaveBeenCalled();
+    expect(screen.getByText("plot.png")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("plot.png"));
+    await waitFor(() => {
+      expect(openFileInPane).toHaveBeenCalledWith("pane-side", { name: "plot.png" }, ".lattice/items/item-1/assets/plot.png");
+    });
 
     fireEvent.click(screen.getByText("data.csv"));
     await waitFor(() => {
