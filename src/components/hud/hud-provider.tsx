@@ -20,12 +20,12 @@ import {
   getActiveInputTarget,
   getLastActiveInputTarget,
   getInputTargetTypeFromElement,
-  insertLatexAtCursor,
+  insertFormulaAtCursor,
   isEditableElement,
   setActiveInputTargetFromElement,
   toMathLivePlaceholders,
 } from '@/lib/unified-input-handler';
-import { wrapLatexForMarkdown, normalizeFormulaInput } from '@/lib/formula-utils';
+import { findFormulaFillPosition, wrapLatexForMarkdown, normalizeFormulaInput } from '@/lib/formula-utils';
 
 export interface HUDProviderProps {
   children: React.ReactNode;
@@ -54,6 +54,11 @@ type CodeMirrorContentElement = HTMLElement & {
       }) => void;
     };
   };
+};
+
+type MathfieldWithInsert = MathfieldElement & {
+  executeCommand?: (command: unknown) => void;
+  insert?: (latex: string, options?: Record<string, unknown>) => void;
 };
 
 // ============================================================================
@@ -164,7 +169,23 @@ function shouldHandleQuantumDoubleTab(): boolean {
 
 function shouldPreventFirstQuantumTab(): boolean {
   const targetType = getCurrentQuantumTargetType();
-  return targetType === 'mathlive' || targetType === 'textarea' || targetType === 'contenteditable';
+  return targetType === 'codemirror' || targetType === 'mathlive' || targetType === 'textarea' || targetType === 'contenteditable';
+}
+
+function insertIntoMathField(mf: MathfieldElement, latex: string, mathLiveLatex?: string): void {
+  const field = mf as MathfieldWithInsert;
+  const source = mathLiveLatex ?? toMathLivePlaceholders(latex);
+
+  if (field.insert) {
+    field.insert(source, {
+      insertionMode: 'insertAfter',
+      selectionMode: 'after',
+    });
+  } else if (field.executeCommand) {
+    field.executeCommand(['insert', source]);
+  }
+
+  field.executeCommand?.('moveToNextPlaceholder');
 }
 
 async function getActiveCodeMirrorView(): Promise<EditorView | null> {
@@ -432,12 +453,27 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
     enabled,
   });
 
+  useEffect(() => {
+    if (!enabled || typeof window === 'undefined') return;
+
+    const handleOpenQuantumKeyboard = () => {
+      handleFirstTap();
+      handleDoubleTap();
+    };
+
+    window.addEventListener('lattice-open-quantum-keyboard', handleOpenQuantumKeyboard);
+    return () => {
+      window.removeEventListener('lattice-open-quantum-keyboard', handleOpenQuantumKeyboard);
+    };
+  }, [enabled, handleDoubleTap, handleFirstTap]);
+
   // 符号插入处理 - 支持 MathLive、Tiptap 和 CodeMirror
   const handleInsertSymbol = useCallback((input: string | QuantumInsertPayload) => {
     const payload = typeof input === 'string' ? { latex: input } : input;
     const { latex, mathLiveLatex, displayMode } = payload;
     // Unified input handling (CodeMirror / MathLive / textarea)
-    if (insertLatexAtCursor(latex, { displayMode, mathLiveLatex })) {
+    const inserted = insertFormulaAtCursor({ latex, displayMode, mathLiveLatex });
+    if (inserted.handled) {
       return;
     }
 
@@ -447,10 +483,7 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
     if (mf) {
       // 有活动的 math-field，直接插入
       try {
-        mf.insert(mathLiveLatex ?? toMathLivePlaceholders(latex), {
-          insertionMode: 'insertAfter',
-          selectionMode: 'after',
-        });
+        insertIntoMathField(mf, latex, mathLiveLatex);
         return;
       } catch (e) {
         console.error('[HUD] MathLive 插入失败:', e);
@@ -469,9 +502,10 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
             const { from, to } = view.state.selection.main;
             const normalized = normalizeFormulaInput(latex, { preferDisplay: displayMode });
             const wrappedLatex = wrapLatexForMarkdown(normalized.latex, normalized.displayMode);
+            const fillOffset = findFormulaFillPosition(wrappedLatex);
             view.dispatch({
               changes: { from, to, insert: wrappedLatex },
-              selection: { anchor: from + wrappedLatex.length },
+              selection: { anchor: from + (fillOffset ?? wrappedLatex.length) },
             });
             return;
           } catch (e) {
@@ -493,9 +527,10 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
             const { from, to } = view.state.selection.main;
             const normalized = normalizeFormulaInput(latex, { preferDisplay: displayMode });
             const wrappedLatex = wrapLatexForMarkdown(normalized.latex, normalized.displayMode);
+            const fillOffset = findFormulaFillPosition(wrappedLatex);
             view.dispatch({
               changes: { from, to, insert: wrappedLatex },
-              selection: { anchor: from + wrappedLatex.length },
+              selection: { anchor: from + (fillOffset ?? wrappedLatex.length) },
             });
             return;
           } catch (e) {
@@ -511,10 +546,7 @@ export function HUDProvider({ children, enabled = true }: HUDProviderProps) {
 
       createMathLiveAtPosition(globalTiptapEditor, pos).then((newMf) => {
         if (newMf) {
-          newMf.insert(mathLiveLatex ?? toMathLivePlaceholders(latex), {
-            insertionMode: 'insertAfter',
-            selectionMode: 'after',
-          });
+          insertIntoMathField(newMf, latex, mathLiveLatex);
           // 更新 HUD 位置
           updateCursorPosition(newMf.getBoundingClientRect());
         }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { BUILTIN_PROMPT_TEMPLATES, localizePromptTemplate } from "@/lib/prompt/builtin-templates";
 import { renderPromptTemplate } from "@/lib/prompt/render";
 import type { PromptTemplate } from "@/lib/prompt/types";
 
@@ -31,7 +32,29 @@ describe("renderPromptTemplate", () => {
     expect(rendered.renderedPrompt).toContain("Main body");
     expect(rendered.missingRequiredContext).toEqual([]);
     expect(rendered.missingOptionalContext).toEqual(["selected_text"]);
-    expect(rendered.contextSummary).toContain("Current File: ready");
+    expect(rendered.contextSummary).toContain("Current file: ready");
+  });
+
+  it("renders context summaries in Chinese when a Chinese locale is provided", () => {
+    const rendered = renderPromptTemplate(template, {
+      current_file: "notes.md",
+      current_file_content: "Main body",
+    }, "zh-CN");
+
+    expect(rendered.contextSummary).toContain("当前文件：已就绪");
+  });
+
+  it("localizes builtin prompt templates without mutating user templates", () => {
+    const builtin = BUILTIN_PROMPT_TEMPLATES.find((item) => item.id === "builtin-paper-summary");
+    expect(builtin).toBeTruthy();
+
+    const localized = localizePromptTemplate(builtin!, "zh-CN");
+    expect(localized.title).toBe("论文摘要");
+    expect(localized.userPrompt).toContain("当前文件内容");
+    expect(BUILTIN_PROMPT_TEMPLATES.find((item) => item.id === "builtin-paper-summary")?.title).toBe("Paper Summary");
+
+    const userTemplate = { ...template, builtin: false };
+    expect(localizePromptTemplate(userTemplate, "zh-CN")).toBe(userTemplate);
   });
 
   it("blocks execution when required context is missing", () => {

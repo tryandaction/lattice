@@ -36,7 +36,7 @@
 
 import { EditorView, DecorationSet, Decoration } from '@codemirror/view';
 import { EditorState, StateField, StateEffect, Text } from '@codemirror/state';
-import { shouldRevealAt } from './cursor-context-plugin';
+import { cursorContextField, shouldRevealAt, type CursorContext } from './cursor-context-plugin';
 import { codeBlockSourceModeField, isCodeBlockSourceMode, mathSourceModeField, isMathSourceMode } from './source-mode';
 import { codeBlockRunContextFacet } from './code-block-run-context';
 import { logger } from '@/lib/logger';
@@ -197,7 +197,31 @@ export interface ParsedElement {
 
 type ParsedElementsCarrier = {
   _parsedElements?: ParsedElement[];
+  _decorationRevealSignature?: string;
 };
+
+function sortedSetSignature(values: Set<string | number>): string {
+  if (values.size === 0) {
+    return '';
+  }
+  return [...values].sort().join(',');
+}
+
+function getDecorationRevealSignature(state: EditorState): string {
+  const context = state.field(cursorContextField, false) as CursorContext | undefined;
+  if (!context) {
+    return 'no-context';
+  }
+
+  return [
+    context.cursorLine,
+    context.cursorElement ? `${context.cursorElement.type}:${context.cursorElement.from}:${context.cursorElement.to}` : 'no-element',
+    context.hasSelection ? `${context.selectionFrom}-${context.selectionTo}` : 'cursor',
+    sortedSetSignature(context.revealElements),
+    sortedSetSignature(context.revealLines),
+    sortedSetSignature(context.revealRanges),
+  ].join('|');
+}
 
 type DecorationData = Partial<{
   // Common flags
@@ -4461,6 +4485,7 @@ export const decorationCoordinatorField = StateField.define<DecorationSet>({
     try {
       const elements = parseDocument(state, false);
       (state as ParsedElementsCarrier)._parsedElements = elements;
+      (state as ParsedElementsCarrier)._decorationRevealSignature = getDecorationRevealSignature(state);
       const resolved = resolveConflicts(elements);
       return buildDecorationsFromElements(resolved, state);
     } catch (err) {
@@ -4474,6 +4499,7 @@ export const decorationCoordinatorField = StateField.define<DecorationSet>({
       try {
         const elements = parseDocument(tr.state, false);
         (tr.state as ParsedElementsCarrier)._parsedElements = elements;
+        (tr.state as ParsedElementsCarrier)._decorationRevealSignature = getDecorationRevealSignature(tr.state);
         const resolved = resolveConflicts(elements);
         return buildDecorationsFromElements(resolved, tr.state);
       } catch (err) {
@@ -4484,15 +4510,22 @@ export const decorationCoordinatorField = StateField.define<DecorationSet>({
       // Selection only changed — reuse parsed elements, rebuild decorations for reveal state
       try {
         const prevState = tr.startState as ParsedElementsCarrier;
+        const previousSignature = prevState._decorationRevealSignature ?? getDecorationRevealSignature(tr.startState);
+        const nextSignature = getDecorationRevealSignature(tr.state);
         const elements = prevState._parsedElements;
         if (elements && elements.length > 0) {
           (tr.state as ParsedElementsCarrier)._parsedElements = elements;
+          (tr.state as ParsedElementsCarrier)._decorationRevealSignature = nextSignature;
+          if (previousSignature === nextSignature) {
+            return value;
+          }
           const resolved = resolveConflicts(elements);
           return buildDecorationsFromElements(resolved, tr.state);
         }
         // Fallback: full re-parse if no cached elements
         const freshElements = parseDocument(tr.state, false);
         (tr.state as ParsedElementsCarrier)._parsedElements = freshElements;
+        (tr.state as ParsedElementsCarrier)._decorationRevealSignature = nextSignature;
         const resolved = resolveConflicts(freshElements);
         return buildDecorationsFromElements(resolved, tr.state);
       } catch (err) {

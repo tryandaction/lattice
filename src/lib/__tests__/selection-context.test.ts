@@ -18,8 +18,8 @@ describe('selection context', () => {
       },
     });
 
-    expect(context.sourceLabel).toContain('第 2-3 行');
-    expect(context.contextSummary).toContain('上下文前后各 3 行');
+    expect(context.sourceLabel).toContain('line 2-3');
+    expect(context.contextSummary).toContain('3 lines of context on each side');
     expect(context.anchor).toEqual(expect.objectContaining({
       lineStart: 2,
       lineEnd: 3,
@@ -87,7 +87,7 @@ describe('selection context', () => {
         }),
       }),
     );
-    expect(context.contextSummary).toContain('已捕获区域锚点');
+    expect(context.contextSummary).toContain('captured region anchors');
   });
 
   it('builds html and word block contexts with block labels', () => {
@@ -99,14 +99,14 @@ describe('selection context', () => {
       selectedText: 'Rendered paragraph',
       documentText: '<p>Rendered paragraph</p>',
       contextText: 'Heading\n\nRendered paragraph\n\nNext paragraph',
-      blockLabel: '段落 · Rendered paragraph',
+      blockLabel: 'Paragraph · Rendered paragraph',
     });
 
     expect(htmlContext.anchor).toEqual(expect.objectContaining({
-      blockLabel: '段落 · Rendered paragraph',
+      blockLabel: 'Paragraph · Rendered paragraph',
     }));
     expect(htmlContext.contextText).toContain('Next paragraph');
-    expect(htmlContext.contextSummary).toContain('HTML 块级选区');
+    expect(htmlContext.contextSummary).toContain('HTML block selection');
 
     const wordContext = createSelectionContext({
       sourceKind: 'word',
@@ -116,16 +116,16 @@ describe('selection context', () => {
       selectedText: 'Word section',
       documentText: 'Word section body',
       contextText: 'Heading\n\nWord section body\n\nClosing note',
-      blockLabel: '标题 · Proposal',
+      blockLabel: 'Heading · Proposal',
     });
 
     expect(wordContext.anchor).toEqual(expect.objectContaining({
-      blockLabel: '标题 · Proposal',
+      blockLabel: 'Heading · Proposal',
     }));
-    expect(wordContext.contextSummary).toContain('Word 块级选区');
+    expect(wordContext.contextSummary).toContain('Word block selection');
   });
 
-  it('returns stable default prompts for chat, agent, and plan', () => {
+  it('returns localized default prompts for chat, agent, and plan', () => {
     const context = createSelectionContext({
       sourceKind: 'markdown',
       paneId: 'pane-main',
@@ -135,8 +135,9 @@ describe('selection context', () => {
       documentText: 'A highlighted paragraph',
     });
 
-    expect(defaultPromptForSelectionMode('chat', context)).toContain('关键的证据');
-    expect(defaultPromptForSelectionMode('agent', context)).toContain('Conclusion / Evidence / Next Actions');
-    expect(defaultPromptForSelectionMode('plan', context)).toContain('目标草稿');
+    expect(defaultPromptForSelectionMode('chat', context, 'zh-CN')).toContain('最关键的证据');
+    expect(defaultPromptForSelectionMode('agent', context, 'zh-CN')).toContain('Conclusion / Evidence / Next Actions');
+    expect(defaultPromptForSelectionMode('plan', context, 'zh-CN')).toContain('目标草稿');
+    expect(defaultPromptForSelectionMode('chat', context, 'en-US')).toContain('most important evidence');
   });
 });

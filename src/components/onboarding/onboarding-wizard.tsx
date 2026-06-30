@@ -7,6 +7,8 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { LanguageSelector } from '@/components/settings/language-selector';
 import { ThemeSelector } from '@/components/settings/theme-selector';
 import { FolderSelector } from '@/components/settings/folder-selector';
+import { cn } from '@/lib/utils';
+import { UI_LAYER_CLASS } from '@/lib/ui-layers';
 
 type OnboardingStep = 'welcome' | 'language' | 'theme' | 'folder' | 'complete';
 
@@ -57,7 +59,7 @@ export function OnboardingWizard() {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className={cn("fixed inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm", UI_LAYER_CLASS.dialog)}>
       <div className="relative w-full max-w-lg mx-4 bg-background rounded-2xl shadow-2xl border border-border overflow-hidden">
         {/* Progress indicator */}
         <div className="absolute top-0 left-0 right-0 h-1 bg-muted">

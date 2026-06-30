@@ -83,7 +83,7 @@ describe('TableEditor', () => {
     expect(screen.queryByDisplayValue('A1 updated')).toBeNull();
   });
 
-  it('shows perimeter handles and column actions on hover', () => {
+  it('shows perimeter handles and column actions in a persistent portal panel', () => {
     const { container } = renderTableEditor();
     const wrapper = screen.getByRole('group', { name: 'Markdown table editor' });
 
@@ -92,7 +92,11 @@ describe('TableEditor', () => {
     expect(screen.getByRole('button', { name: 'Table actions' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Column 1 actions' }));
     expect(screen.getByText('Insert Right')).toBeTruthy();
-    expect(container.querySelector('.table-editor-perimeter-panel')).toBeTruthy();
+    expect(container.querySelector('.table-editor-perimeter-panel')).toBeNull();
+    expect(document.body.querySelector('.table-editor-perimeter-panel')).toBeTruthy();
+
+    fireEvent.mouseLeave(wrapper);
+    expect(screen.getByText('Insert Right')).toBeTruthy();
   });
 
   it('supports highlighting a selected cell from the table action menu', () => {

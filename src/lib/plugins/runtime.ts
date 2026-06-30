@@ -7,7 +7,9 @@ import { useAnnotationStore } from '@/stores/annotation-store';
 import { deriveFileId } from '@/lib/annotation-storage';
 import { useSettingsStore } from '@/stores/settings-store';
 import { extractMarkdownDocument } from '@/lib/markdown/extract';
-import { buildRenderedPdfPageTextModel } from '@/lib/pdf-page-text-cache';
+import { buildRenderedPdfPageTextModel, getPdfPageTextModel } from '@/lib/pdf-page-text-cache';
+import { getActivePdfSelectionImage } from '@/lib/pdf-selection-image-provider';
+import { loadPdfJsDocument } from '@/lib/pdf-js-document-loader';
 import { isFileTabState } from '@/types/layout';
 import type {
   PluginCommand,
@@ -15,6 +17,7 @@ import type {
   PluginManifest,
   PluginModule,
   PluginPanel,
+  PluginDocumentRevealTarget,
   PluginPdfTextPage,
   PluginPermission,
   PluginViewerType,
@@ -594,8 +597,34 @@ function canExportFile(permissions: PluginPermission[]): boolean {
   return hasPermission(permissions, 'export-file') || hasPermission(permissions, 'file:write');
 }
 
-function getViewerTypeFromPath(path: string | null | undefined): PluginViewerType {
-  const lower = (path ?? '').toLowerCase();
+function denyPluginPermission(pluginId: string, permission: PluginPermission, action: string): never {
+  recordPluginAudit({
+    pluginId,
+    level: 'warn',
+    action: 'permission-denied',
+    message: `Permission denied: ${permission}`,
+    data: { permission, request: action },
+  });
+  throw new Error(`Permission denied: ${permission}`);
+}
+
+function assertPluginPermission(
+  pluginId: string,
+  permissions: PluginPermission[],
+  permission: PluginPermission,
+  action: string,
+): void {
+  if (!permissions.includes(permission)) {
+    denyPluginPermission(pluginId, permission, action);
+  }
+}
+
+export const __pluginRuntimeTest = {
+  assertPluginPermission,
+};
+
+function getViewerTypeFromPath(path: string | null | undefined, fallbackName?: string | null): PluginViewerType {
+  const lower = `${path ?? ''} ${fallbackName ?? ''}`.toLowerCase();
   if (lower.endsWith('.pdf')) return 'pdf';
   if (lower.endsWith('.docx') || lower.endsWith('.doc')) return 'docx';
   if (lower.endsWith('.md') || lower.endsWith('.markdown')) return 'md';
@@ -610,7 +639,7 @@ function getActiveDocumentInfo() {
   return {
     filePath: tab?.filePath ?? null,
     fileName: tab?.fileName ?? null,
-    viewerType: getViewerTypeFromPath(tab?.filePath),
+    viewerType: getViewerTypeFromPath(tab?.filePath, tab?.fileName),
     paneId: pane?.id ?? null,
     tabId: tab?.id ?? null,
   };
@@ -653,13 +682,27 @@ function getPdfTextPagesFromRenderedDom(options?: { scope?: 'visible' | 'current
   const scope = options?.scope ?? 'visible';
   const pageElements = Array.from(document.querySelectorAll<HTMLElement>('[data-page-number]'))
     .filter((element) => element.querySelector('.textLayer'));
-  const visiblePages = pageElements.filter((element) => element.dataset.pdfPageVisible === 'true');
+  const visiblePages = pageElements.filter((element) => (
+    element.dataset.pdfPageVisible === 'true' ||
+    element.dataset.pdfPageVisible === '1' ||
+    element.getAttribute('data-pdf-page-visible') === 'true' ||
+    element.getAttribute('data-pdf-page-visible') === '1'
+  ));
   const candidates = scope === 'all'
     ? pageElements
     : visiblePages.length > 0
       ? visiblePages
       : pageElements.slice(0, 1);
-  const selected = scope === 'current-page' ? candidates.slice(0, 1) : candidates;
+  const selected = scope === 'current-page'
+    ? candidates
+      .slice()
+      .sort((left, right) => {
+        if (typeof window === 'undefined') return 0;
+        const anchor = window.innerHeight * 0.35;
+        return Math.abs(left.getBoundingClientRect().top - anchor) - Math.abs(right.getBoundingClientRect().top - anchor);
+      })
+      .slice(0, 1)
+    : candidates;
 
   return selected.flatMap((element): PluginPdfTextPage[] => {
     const model = buildRenderedPdfPageTextModel(element);
@@ -667,7 +710,7 @@ function getPdfTextPagesFromRenderedDom(options?: { scope?: 'visible' | 'current
     return [{
       pageNumber: model.pageNumber,
       text: model.normalizedText,
-      visible: element.dataset.pdfPageVisible === 'true',
+      visible: element.dataset.pdfPageVisible === 'true' || element.getAttribute('data-pdf-page-visible') === 'true',
       source: 'rendered-text-layer',
       items: model.segments.map((segment) => {
         const rect = model.itemRects.find((itemRect) => itemRect.itemIndex === segment.itemIndex);
@@ -684,10 +727,156 @@ function getPdfTextPagesFromRenderedDom(options?: { scope?: 'visible' | 'current
             : undefined,
           lineIndex: segment.lineIndex,
           blockIndex: segment.blockIndex,
+          columnIndex: segment.columnIndex,
+          layoutClass: segment.layoutClass,
         };
       }),
     }];
   });
+}
+
+async function getPdfTextPagesFromDocumentModel(): Promise<PluginPdfTextPage[]> {
+  const content = await readCurrentDocumentContent(['read-current-document']);
+  if (!content.arrayBuffer) return [];
+  const pdf = await loadPdfJsDocument({
+    data: content.arrayBuffer,
+    label: 'formula-extractor-pdf-text',
+    timeoutMs: 45000,
+  });
+  try {
+    const pages: PluginPdfTextPage[] = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const model = await getPdfPageTextModel(pdf, pageNumber);
+      if (!model.normalizedText) continue;
+      pages.push({
+        pageNumber,
+        text: model.normalizedText,
+        visible: false,
+        source: 'pdfjs-text-model',
+        items: model.segments.map((segment) => {
+          const rect = model.itemRects.find((itemRect) => itemRect.itemIndex === segment.itemIndex);
+          return {
+            text: segment.text,
+            normalizedText: segment.normalizedText,
+            bbox: rect
+              ? {
+                  x1: rect.left / Math.max(1, model.viewportWidth),
+                  y1: rect.top / Math.max(1, model.viewportHeight),
+                  x2: (rect.left + rect.width) / Math.max(1, model.viewportWidth),
+                  y2: (rect.top + rect.height) / Math.max(1, model.viewportHeight),
+                }
+              : undefined,
+            lineIndex: segment.lineIndex,
+            blockIndex: segment.blockIndex,
+            columnIndex: segment.columnIndex,
+            layoutClass: segment.layoutClass,
+          };
+        }),
+      });
+      if (pageNumber % 8 === 0) {
+        await new Promise((resolve) => {
+          if (typeof window !== 'undefined') {
+            window.setTimeout(resolve, 0);
+            return;
+          }
+          setTimeout(resolve, 0);
+        });
+      }
+    }
+    return pages;
+  } finally {
+    await pdf.destroy();
+  }
+}
+
+function removePluginRevealHighlights() {
+  if (typeof document === 'undefined') return;
+  document.querySelectorAll('[data-plugin-reveal-highlight="true"]').forEach((element) => element.remove());
+}
+
+function revealPdfTarget(target: PluginDocumentRevealTarget): boolean {
+  if (typeof document === 'undefined') return false;
+  const pageNumber = target.page;
+  if (!Number.isInteger(pageNumber) || !pageNumber || pageNumber < 1) return false;
+
+  const pageElement = document.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`);
+  if (!pageElement) return false;
+
+  const scrollContainer = pageElement.closest<HTMLElement>('[data-testid^="pdf-viewer-container-"]')
+    ?? pageElement.parentElement?.closest<HTMLElement>('.overflow-auto')
+    ?? null;
+
+  pageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+  if (target.bbox) {
+    removePluginRevealHighlights();
+    const pageBox = pageElement.getBoundingClientRect();
+    const highlight = document.createElement('div');
+    const x1 = Math.max(0, Math.min(1, target.bbox.x1));
+    const y1 = Math.max(0, Math.min(1, target.bbox.y1));
+    const x2 = Math.max(x1, Math.min(1, target.bbox.x2));
+    const y2 = Math.max(y1, Math.min(1, target.bbox.y2));
+    highlight.dataset.pluginRevealHighlight = 'true';
+    highlight.setAttribute('aria-hidden', 'true');
+    highlight.style.position = 'absolute';
+    highlight.style.pointerEvents = 'none';
+    highlight.style.left = `${x1 * pageBox.width}px`;
+    highlight.style.top = `${y1 * pageBox.height}px`;
+    highlight.style.width = `${Math.max(8, (x2 - x1) * pageBox.width)}px`;
+    highlight.style.height = `${Math.max(8, (y2 - y1) * pageBox.height)}px`;
+    highlight.style.border = '2px solid rgba(14, 165, 233, 0.95)';
+    highlight.style.background = 'rgba(14, 165, 233, 0.16)';
+    highlight.style.borderRadius = '4px';
+    highlight.style.boxShadow = '0 0 0 3px rgba(14, 165, 233, 0.12)';
+    highlight.style.zIndex = '40';
+    const previousPosition = pageElement.style.position;
+    if (!previousPosition) {
+      pageElement.style.position = 'relative';
+    }
+    pageElement.appendChild(highlight);
+    window.setTimeout(() => {
+      highlight.remove();
+      if (!previousPosition && pageElement.isConnected) {
+        pageElement.style.position = '';
+      }
+    }, 2600);
+  }
+
+  if (scrollContainer) {
+    scrollContainer.dispatchEvent(new Event('scroll'));
+  }
+  return true;
+}
+
+function revealTextQuote(quote: string): boolean {
+  if (typeof document === 'undefined') return false;
+  const needle = quote.trim();
+  if (!needle) return false;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let current = walker.nextNode();
+  while (current) {
+    const text = current.textContent ?? '';
+    if (text.includes(needle)) {
+      current.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return true;
+    }
+    current = walker.nextNode();
+  }
+  return false;
+}
+
+async function revealDocumentTarget(target: PluginDocumentRevealTarget, permissions: PluginPermission[]): Promise<boolean> {
+  if (!canReadCurrentDocument(permissions)) {
+    throw new Error('Permission denied');
+  }
+  const viewerType = target.viewerType ?? getActiveDocumentInfo().viewerType;
+  if (viewerType === 'pdf' || target.page) {
+    return revealPdfTarget(target);
+  }
+  if (target.quote) {
+    return revealTextQuote(target.quote);
+  }
+  return false;
 }
 
 async function writeClipboardText(text: string, permissions: PluginPermission[]): Promise<void> {
@@ -896,8 +1085,22 @@ function createContext(manifest: PluginManifest): PluginContext {
         if (!canReadCurrentDocument(permissions)) {
           throw new Error('Permission denied');
         }
+        if (options?.scope === 'all') {
+          try {
+            return await getPdfTextPagesFromDocumentModel();
+          } catch (error) {
+            console.warn('Plugin PDF document text extraction failed, falling back to rendered pages:', error);
+          }
+        }
         return getPdfTextPagesFromRenderedDom(options);
       },
+      getPdfSelectionImage: async () => {
+        if (!canReadCurrentDocument(permissions)) {
+          throw new Error('Permission denied');
+        }
+        return await getActivePdfSelectionImage();
+      },
+      reveal: async (target) => revealDocumentTarget(target, permissions),
     },
     ui: {
       openPanel: async (panelId) => {
@@ -1462,9 +1665,7 @@ function createWorkerHost(
     onRequest: async (action, payload) => {
       const rootHandle = getWorkspaceRootHandle();
       if (action === 'annotations.resolveFileId') {
-        if (!permissions.includes('annotations:read')) {
-          throw new Error('Permission denied');
-        }
+        assertPluginPermission(manifest.id, permissions, 'annotations:read', action);
         const { filePath } = payload as { filePath?: string };
         if (!filePath) {
           throw new Error('filePath is required');
@@ -1472,17 +1673,13 @@ function createWorkerHost(
         return deriveFileId(filePath);
       }
       if (action === 'annotations.list') {
-        if (!permissions.includes('annotations:read')) {
-          throw new Error('Permission denied');
-        }
+        assertPluginPermission(manifest.id, permissions, 'annotations:read', action);
         const fileId = resolveAnnotationFileId(payload as { fileId?: string; filePath?: string });
         if (!fileId) return [];
         return useAnnotationStore.getState().getAnnotationsForFile(fileId);
       }
       if (action === 'annotations.add') {
-        if (!permissions.includes('annotations:write')) {
-          throw new Error('Permission denied');
-        }
+        assertPluginPermission(manifest.id, permissions, 'annotations:write', action);
         const annotation = (payload as { annotation?: LatticeAnnotation })?.annotation;
         if (!annotation?.fileId) {
           throw new Error('Annotation fileId is required');
@@ -1491,9 +1688,7 @@ function createWorkerHost(
         return true;
       }
       if (action === 'annotations.update') {
-        if (!permissions.includes('annotations:write')) {
-          throw new Error('Permission denied');
-        }
+        assertPluginPermission(manifest.id, permissions, 'annotations:write', action);
         const { id, updates } = payload as {
           id: string;
           updates: Partial<Omit<LatticeAnnotation, 'id' | 'fileId'>>;
@@ -1502,38 +1697,37 @@ function createWorkerHost(
         return true;
       }
       if (action === 'annotations.remove') {
-        if (!permissions.includes('annotations:write')) {
-          throw new Error('Permission denied');
-        }
+        assertPluginPermission(manifest.id, permissions, 'annotations:write', action);
         const { id } = payload as { id: string };
         useAnnotationStore.getState().deleteAnnotation(id);
         return true;
       }
       if (action === 'storage.get') {
-        if (!permissions.includes('storage')) {
-          throw new Error('Permission denied');
-        }
+        assertPluginPermission(manifest.id, permissions, 'storage', action);
         const key = (payload as { key?: string })?.key ?? '';
         return localStorage.getItem(`lattice-plugin-kv:${manifest.id}:${key}`);
       }
       if (action === 'storage.set') {
-        if (!permissions.includes('storage')) {
-          throw new Error('Permission denied');
-        }
+        assertPluginPermission(manifest.id, permissions, 'storage', action);
         const { key, value } = payload as { key: string; value: string };
         localStorage.setItem(`lattice-plugin-kv:${manifest.id}:${key}`, value);
         return true;
       }
       if (action === 'storage.remove') {
-        if (!permissions.includes('storage')) {
-          throw new Error('Permission denied');
-        }
+        assertPluginPermission(manifest.id, permissions, 'storage', action);
         const key = (payload as { key?: string })?.key ?? '';
         localStorage.removeItem(`lattice-plugin-kv:${manifest.id}:${key}`);
         return true;
       }
 
       if (action === 'assets.getUrl') {
+        recordPluginAudit({
+          pluginId: manifest.id,
+          level: 'info',
+          action: 'asset-read',
+          message: 'Plugin asset URL requested',
+          data: { request: action },
+        });
         const { path } = payload as { path?: string };
         if (!path) {
           throw new Error('path is required');
@@ -1542,6 +1736,13 @@ function createWorkerHost(
       }
 
       if (action === 'assets.readText') {
+        recordPluginAudit({
+          pluginId: manifest.id,
+          level: 'info',
+          action: 'asset-read',
+          message: 'Plugin asset text requested',
+          data: { request: action },
+        });
         const { path } = payload as { path?: string };
         if (!path) {
           throw new Error('path is required');
@@ -1555,7 +1756,7 @@ function createWorkerHost(
 
       if (action === 'workspace.listFiles') {
         if (!canReadWorkspaceFile(permissions)) {
-          throw new Error('Permission denied');
+          denyPluginPermission(manifest.id, 'file:read', action);
         }
         const tree = useWorkspaceStore.getState().fileTree.root;
         if (!tree) return [];
@@ -1565,37 +1766,31 @@ function createWorkerHost(
       }
       if (action === 'workspace.activeFile') {
         if (!canReadCurrentDocument(permissions)) {
-          throw new Error('Permission denied');
+          denyPluginPermission(manifest.id, 'read-current-document', action);
         }
         return getActiveFilePath();
       }
       if (action === 'workspace.createFile') {
-        if (!permissions.includes('file:write')) {
-          throw new Error('Permission denied');
-        }
+        assertPluginPermission(manifest.id, permissions, 'file:write', action);
         const { path, content } = payload as { path: string; content?: string };
         await createWorkspaceFile(path, content ?? '', true);
         return true;
       }
       if (action === 'workspace.deleteFile') {
-        if (!permissions.includes('file:write')) {
-          throw new Error('Permission denied');
-        }
+        assertPluginPermission(manifest.id, permissions, 'file:write', action);
         const { path } = payload as { path: string };
         await deleteWorkspaceFile(path, true);
         return true;
       }
       if (action === 'workspace.renameFile') {
-        if (!permissions.includes('file:write')) {
-          throw new Error('Permission denied');
-        }
+        assertPluginPermission(manifest.id, permissions, 'file:write', action);
         const { path, newPath } = payload as { path: string; newPath: string };
         await renameWorkspaceFile(path, newPath, true);
         return true;
       }
       if (action === 'workspace.readFile') {
         if (!canReadWorkspaceFile(permissions)) {
-          throw new Error('Permission denied');
+          denyPluginPermission(manifest.id, 'file:read', action);
         }
         const { path } = payload as { path: string };
         const handle = await resolveFileHandle(rootHandle, path);
@@ -1603,9 +1798,7 @@ function createWorkerHost(
         return await file.text();
       }
       if (action === 'workspace.writeFile') {
-        if (!permissions.includes('file:write')) {
-          throw new Error('Permission denied');
-        }
+        assertPluginPermission(manifest.id, permissions, 'file:write', action);
         const { path, content } = payload as { path: string; content: string };
         const handle = await resolveFileHandle(rootHandle, path);
         const writable = await handle.createWritable();
@@ -1780,8 +1973,16 @@ export function getRegisteredPanels(): PluginPanel[] {
 export async function runPluginCommand(commandId: string, payload?: unknown): Promise<void> {
   const entry = commands.get(commandId);
   if (!entry?.command?.run) {
-    console.warn(`Command not found: ${commandId}`);
-    return;
+    const message = `Command not found: ${commandId}`;
+    recordPluginAudit({
+      pluginId: 'system',
+      level: 'warn',
+      action: 'command',
+      message,
+      data: { commandId },
+    });
+    console.warn(message);
+    throw new Error(message);
   }
   try {
     await entry.command.run(payload);
@@ -1803,6 +2004,7 @@ export async function runPluginCommand(commandId: string, payload?: unknown): Pr
       data: { commandId },
     });
     console.error(`Plugin command ${commandId} failed:`, error);
+    throw error;
   }
 }
 

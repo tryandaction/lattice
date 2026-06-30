@@ -677,6 +677,47 @@ describe("pdf-selection-reconciler", () => {
     }
   });
 
+  it("clips geometry-first single-line selections to the actual drag bounds", () => {
+    const line = "prefixABCDEFGHIJsuffix";
+    const selectedText = "CDEFGH";
+    const lineLeft = 80;
+    const lineTop = 300;
+    const lineWidth = 440;
+    const page = createPageContext({
+      fragments: [
+        { text: "0", left: 540, top: 212, width: 10, height: 12 },
+        { text: line, left: lineLeft, top: lineTop, width: lineWidth, height: 24 },
+      ],
+    });
+    const range = createRangeWithinFragment("0", "0");
+    const charWidth = lineWidth / line.length;
+    const selectedStart = line.indexOf(selectedText);
+    const selectedEnd = selectedStart + selectedText.length;
+    const selectedLeft = lineLeft + (selectedStart * charWidth);
+    const selectedRight = lineLeft + (selectedEnd * charWidth);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: "0",
+      pages: [page],
+      clientRects: [
+        { left: lineLeft, right: lineLeft + lineWidth, top: lineTop, bottom: lineTop + 24 },
+      ],
+      dragStartPoint: { x: selectedLeft + 1, y: lineTop + 12 },
+      dragEndPoint: { x: selectedRight - 1, y: lineTop + 12 },
+      ignoreDomText: true,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(selectedText);
+      expect(result.selection.textQuote.exact).not.toContain("prefix");
+      expect(result.selection.textQuote.exact).not.toContain("suffix");
+      expect(result.selection.pageRects[0]?.x1).toBeGreaterThan((lineLeft + charWidth) / 640);
+      expect(result.selection.pageRects[0]?.x2).toBeLessThan((lineLeft + lineWidth - charWidth) / 640);
+    }
+  });
+
   it("rejects a masthead vertical strip and rebuilds the text quote from pointer boundaries", () => {
     const abstractLine = "Rydberg atoms with principal quantum number n have exaggerated atomic properties including";
     const selectedText = "Rydberg atoms with principal quantum number";
@@ -1135,6 +1176,48 @@ describe("pdf-selection-reconciler", () => {
       expect(result.selection.textQuote.exact).toBe(intendedText);
       expect(["pdfium-native", "pdfjs-text-model"]).toContain(result.selection.textQuote.source);
       expect(result.selection.pageRects[0]?.x1).toBeCloseTo(intendedLeft / 640, 3);
+    }
+  });
+
+  it("keeps frozen geometry when identical repeated text drifts to a later occurrence", () => {
+    const repeatedText = "repeat phrase";
+    const line = `alpha ${repeatedText} beta ${repeatedText} gamma`;
+    const lineLeft = 40;
+    const lineTop = 120;
+    const charWidth = 8;
+    const page = createPageContext({
+      fragments: [
+        { text: line, left: lineLeft, top: lineTop, width: line.length * charWidth, height: 24 },
+      ],
+    });
+    const firstStart = line.indexOf(repeatedText);
+    const secondStart = line.lastIndexOf(repeatedText);
+    const intendedLeft = lineLeft + (firstStart * charWidth);
+    const intendedRight = intendedLeft + (repeatedText.length * charWidth);
+    const range = createRangeAcrossFragments({
+      startFragment: line,
+      startOffset: secondStart,
+      endFragment: line,
+      endOffset: secondStart + repeatedText.length,
+    });
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: repeatedText,
+      pages: [page],
+      clientRects: [{
+        left: intendedLeft,
+        right: intendedRight,
+        top: lineTop,
+        bottom: lineTop + 24,
+      }],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(repeatedText);
+      expect(result.selection.pageRects[0]?.x1).toBeCloseTo(intendedLeft / 640, 3);
+      expect(result.selection.pageRects[0]?.x2).toBeCloseTo(intendedRight / 640, 3);
     }
   });
 

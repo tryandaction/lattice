@@ -5,8 +5,10 @@ import { Bot, CornerDownLeft, ListTodo, MessageSquare, Sparkles } from "lucide-r
 import type { SelectionContext, SelectionAiMode } from "@/lib/ai/selection-context";
 import type { SelectionContextMenuState } from "@/hooks/use-selection-context-menu";
 import { cn } from "@/lib/utils";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 import { getSelectionModeMeta } from "@/lib/ai/selection-ui";
 import { useSelectionAiStore } from "@/stores/selection-ai-store";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface SelectionContextMenuAction {
   id: string;
@@ -39,6 +41,7 @@ export function SelectionContextMenu({
   const actionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const preferredMode = useSelectionAiStore((store) => store.preferredMode);
+  const { locale, t } = useI18n();
 
   const modeActions = useMemo(() => {
     const prioritized = [...MODE_ORDER].sort((left, right) => {
@@ -49,11 +52,11 @@ export function SelectionContextMenu({
 
     return prioritized.map((mode) => ({
       mode,
-      meta: getSelectionModeMeta(mode),
+      meta: getSelectionModeMeta(mode, locale),
       icon: MODE_ICONS[mode],
       preferred: mode === preferredMode,
     }));
-  }, [preferredMode]);
+  }, [locale, preferredMode]);
 
   const totalActionCount = state?.context ? modeActions.length + extraActions.length : 0;
 
@@ -131,11 +134,11 @@ export function SelectionContextMenu({
   return (
     <div
       ref={menuRef}
-      className="fixed z-[120] w-[23rem] rounded-2xl border border-border bg-popover/95 p-2 shadow-2xl backdrop-blur"
+      className={cn("fixed w-[23rem] rounded-2xl border border-border bg-popover/95 p-2 shadow-2xl backdrop-blur", UI_LAYER_CLASS.floatingPanel)}
       style={{ left: state.position.x, top: state.position.y }}
       role="menu"
       tabIndex={-1}
-      aria-label="Selection AI menu"
+      aria-label={t("ai.selection.menuAria")}
       onKeyDown={handleKeyDown}
       onBlurCapture={(event) => {
         const nextTarget = event.relatedTarget;
@@ -147,11 +150,11 @@ export function SelectionContextMenu({
       <div className="rounded-xl border border-border/60 bg-background/80 px-3 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            Selection AI
+            {t("ai.selection.menuTitle")}
           </div>
           <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
             <CornerDownLeft className="h-3 w-3" />
-            <span>Enter 打开</span>
+            <span>{t("ai.selection.enterOpen")}</span>
           </div>
         </div>
         {state.context ? (
@@ -165,9 +168,9 @@ export function SelectionContextMenu({
           </>
         ) : (
           <>
-            <div className="mt-1 text-xs font-medium text-foreground">当前未启用 Selection AI</div>
+            <div className="mt-1 text-xs font-medium text-foreground">{t("ai.selection.disabledTitle")}</div>
             <div className="mt-1 line-clamp-3 text-xs text-muted-foreground">
-              {state.selectedText || "尚未选中文本"}
+              {state.selectedText || t("ai.selection.noSelection")}
             </div>
             <div className="mt-2 rounded-lg border border-dashed border-border/70 bg-muted/30 px-2.5 py-2 text-[11px] text-muted-foreground">
               {state.disabledReason}
@@ -205,7 +208,7 @@ export function SelectionContextMenu({
                     <span className="text-sm font-medium text-foreground">{item.meta.label}</span>
                     {item.preferred && (
                       <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
-                        最近使用
+                        {t("ai.selection.preferred")}
                       </span>
                     )}
                   </div>
@@ -233,7 +236,7 @@ export function SelectionContextMenu({
                       action.onSelect();
                       onClose({ restoreFocus: false });
                     }}
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-accent transition-colors"
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
                   >
                     <span>{action.label}</span>
                   </button>

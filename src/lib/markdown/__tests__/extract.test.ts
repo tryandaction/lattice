@@ -71,4 +71,35 @@ print("hello")
     expect(document.links).toHaveLength(0);
     expect(document.tags).toHaveLength(0);
   });
+
+  it("parses simple frontmatter scalars and inline lists without a YAML runtime dependency", () => {
+    const document = extractMarkdownDocument(`---
+title: "Qubit Notes"
+draft: false
+priority: 2
+aliases: [qbit, neutral atom]
+empty:
+---
+# Body
+`);
+
+    expect(document.frontmatter).toEqual({
+      title: "Qubit Notes",
+      draft: false,
+      priority: 2,
+      aliases: ["qbit", "neutral atom"],
+      empty: "",
+    });
+    expect(document.body).toContain("# Body");
+  });
+
+  it("keeps malformed frontmatter as body content", () => {
+    const document = extractMarkdownDocument(`---
+title: Missing close
+# Body
+`);
+
+    expect(document.frontmatter).toBeUndefined();
+    expect(document.body).toContain("title: Missing close");
+  });
 });

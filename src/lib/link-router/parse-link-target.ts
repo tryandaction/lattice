@@ -8,19 +8,37 @@ import {
 } from "./path-utils";
 import type { LinkTarget, ParsedLinkTarget, ParseLinkTargetOptions } from "./types";
 
+function unwrapWikiLinkTarget(target: string): string {
+  const match = target.match(/^!?\[\[([\s\S]+)\]\]$/);
+  if (!match) {
+    return target;
+  }
+
+  const inner = match[1].trim();
+  const aliasIndex = inner.indexOf("|");
+  return (aliasIndex >= 0 ? inner.slice(0, aliasIndex) : inner).trim();
+}
+
+function isPdfWorkspacePath(path: string): boolean {
+  return /\.pdf$/i.test(path);
+}
+
 function parseFragmentTarget(path: string, fragment: string): LinkTarget {
   const params = new URLSearchParams(fragment);
   const page = params.get("page");
   const line = params.get("line");
   const cellId = params.get("cell");
-  const annotationId = params.get("annotation");
+  const annotationId = params.get("annotation") ?? params.get("ann");
 
   if (fragment.startsWith("ann-")) {
     return { type: "pdf_annotation", path, annotationId: fragment };
   }
 
   if (annotationId?.trim()) {
-    return { type: "pdf_annotation", path, annotationId };
+    const pageNumber = page ? Number.parseInt(page, 10) : Number.NaN;
+    return Number.isFinite(pageNumber) && pageNumber > 0
+      ? { type: "pdf_annotation", path, annotationId, page: pageNumber }
+      : { type: "pdf_annotation", path, annotationId };
   }
 
   if (page) {
@@ -39,6 +57,10 @@ function parseFragmentTarget(path: string, fragment: string): LinkTarget {
 
   if (cellId) {
     return { type: "notebook_cell", path, cellId };
+  }
+
+  if (isPdfWorkspacePath(path)) {
+    return { type: "pdf_annotation", path, annotationId: fragment };
   }
 
   return { type: "workspace_heading", path, heading: fragment };
@@ -64,7 +86,7 @@ export function parseLinkTarget(
   rawTarget: string,
   options: ParseLinkTargetOptions = {}
 ): ParsedLinkTarget {
-  const normalized = safeDecodeLinkTarget(rawTarget.trim());
+  const normalized = unwrapWikiLinkTarget(safeDecodeLinkTarget(rawTarget.trim()));
   if (!normalized) {
     return { raw: rawTarget, normalized, target: null };
   }

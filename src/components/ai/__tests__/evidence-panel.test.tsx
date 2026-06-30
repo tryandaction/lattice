@@ -115,8 +115,8 @@ describe("EvidencePanel", () => {
       />,
     );
 
-    expect(screen.getByText("Evidence Panel")).not.toBeNull();
-    expect(screen.getByText("Reference Tree")).not.toBeNull();
+    expect(screen.getByText("证据面板")).not.toBeNull();
+    expect(screen.getByText("引用树")).not.toBeNull();
     expect(screen.queryByText(/^References$/)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /Second conclusion/i }));

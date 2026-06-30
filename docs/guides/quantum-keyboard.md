@@ -1,166 +1,79 @@
-# 量子键盘与 Markdown 编辑指南
+# 量子键盘与 Markdown 公式输入指南
 
-量子键盘是 Lattice 面向 Markdown、HTML、LaTeX、PDF/DOCX 提取结果的统一公式输入与复制体系。它的目标不是让用户记住更多 LaTeX 命令，而是让用户在写作时看见结构、按下直觉键、得到可复制和可导出的标准公式。
+量子键盘是 Lattice 的结构化公式输入层。它不是一块装满说明文字的工具面板，而是实体键盘的可视映射：用户看到电脑键盘上的 26 个英文字母排布，每个字母键直接显示它在公式输入中的含义。
 
-本文是当前保留的最终说明，已合并原 Markdown/Obsidian 编辑升级草稿与量子键盘升级草稿中的有效结论；过时的阶段性方案文档不再保留。
+当前目标是低记忆成本、高输入效率：看见键位即可上手，熟悉后用实体键盘高速输入。
 
-## 设计结论
+## 当前产品模型
 
-### 核心原则
+### 1. 只显示 26 个字母键
 
-- 结构优先：先插入分数、根号、求和、积分、矩阵、分段函数等结构，再填空。
-- 低记忆负担：常用结构可见，字母键按读音或语义映射，Shift 打开变体，不要求背长命令。
-- 输出可控：同一套输入可写入 MathLive、Markdown、普通文本区和内容可编辑区域。
-- 复制可靠：公式可复制为 Markdown 或纯 LaTeX；提取插件可批量导出 `.md`、`.tex`、`.json`。
-- 渐进增强：新手点按钮，熟手按键，专家仍可直接输入 LaTeX。
-- AI 自动调用默认关闭：量子键盘和 Markdown 增强不会静默触发模型请求，也不会在后台消耗 token。
+量子键盘使用 QWERTY 字母区布局：
 
-### 竞品和技术依据
+- 第一行：Q W E R T Y U I O P
+- 第二行：A S D F G H J K L
+- 第三行：Z X C V B N M
 
-- Mogan STEM / GNU TeXmacs：独立数学模式、结构编辑、Tab 循环和丰富符号库是高效科学写作的核心。
-- Liii STEM：把快速数学输入、Magic Paste、矩阵/上下标/分段函数等常见任务做成直接入口。
-- MathLive：`MathfieldElement` 原生支持可视化公式、插入 LaTeX、占位符和自定义快捷键。
-- CodeMirror 6：通过 transaction/dispatch 原子替换选区，适合 Markdown Live Preview 中的公式写入。
+数字键不显示在量子键盘界面中。数字键保留实体键盘本义，例如：
 
-## 产品形态
+- `4` 仍输入数字 `4`
+- `Shift+4` 仍是 `$`
 
-### 1. 量子 HUD
+### 2. 字母键承载公式含义
 
-打开方式：在公式或编辑输入上下文内双击 `Tab`。
+每个字母键都有默认候选和扩展候选：
 
-打开后显示三层能力：
+- `I`：默认积分 `\int`
+- `Shift+1+I`：选择 `I` 的第 1 个候选，也就是 `\int`
+- `Shift+2+I`：选择 `I` 的第 2 个候选，例如 `\iint`
+- `Shift+3+I`：选择 `I` 的第 3 个候选，例如 `\iiint`
 
-- 常用结构条：分数、根号、上下标、求和、积分、极限、矩阵、分段函数、向量、括号。
-- 可见键盘：QWERTY 键位直接显示默认公式符号。
-- 变体选择：`Shift + 键` 打开该键的完整候选，例如 `I` 包含积分、二重积分、环路积分、无穷。
+如果只按 `Shift+字母`，会打开该字母的候选选择器，适合浏览或编辑该键的扩展含义。
 
-HUD 保持紧凑，不遮挡当前输入点。用户可以拖动位置，`Esc` 关闭。
-单击 `Tab` 仍优先保留给编辑器本身；只有在 HUD 已打开时，`Tab` / `Shift+Tab` 才切换 HUD 输出模式。
+### 3. 结构优先
 
-### 2. 符号与结构搜索
+高频结构通过容易联想的字母承载：
 
-Math Editor 内的符号面板提供搜索和分类：
+- `F`：fraction，默认分式 `\frac{}{}`
+- `I`：integral，积分族
+- `S`：sum/sigma/sqrt，求和与相关结构
+- `M`：matrix，矩阵
+- `V`：vector，向量/粗体/列向量
+- `K`：ket/bra，量子态符号
+- `B`：bracket，括号族：圆括号、方括号、大括号、cases
 
-- 常用
-- 结构
-- 希腊字母
-- 微积分
-- 线性代数
-- 关系
-- 集合
-- 逻辑
-- 箭头
-- 物理
+括号、分式、矩阵、cases 等结构在 MathLive 中会转换为空位占位符，插入后自动进入第一个空位；继续按 `Tab` / `Shift+Tab` 可在占位符之间移动。
 
-搜索支持 LaTeX 命令、英文关键词和分类关键词。点击结果直接插入。
+### 4. 启动方式
 
-### 3. 输出模式
+- 在 Markdown/CodeMirror、MathLive、textarea、contenteditable 等编辑上下文中双击 `Tab` 打开。
+- 在 Markdown 编辑器顶部更多菜单中选择 `Quantum keyboard` 打开。
+- 双击 `Tab` 打开时会拦截第一次 Tab，避免在 Markdown 文件中留下多余缩进或空白。
 
-量子 HUD 有两个切换：
+### 5. 复制 Markdown 或 LaTeX
 
-- 行内 / 块级：控制 Markdown 写入 `$...$` 或 `$$...$$`。
-- Markdown / LaTeX：控制写入完整 Markdown 公式，还是纯 LaTeX。
+复制公式格式不属于量子键盘本体功能。用户应在渲染后的公式上右键，选择：
 
-在 MathLive 输入框内始终插入结构化 LaTeX；在 Markdown/HTML/普通文本区按当前输出模式写入文本。
+- `Copy Markdown formula`
+- `Copy LaTeX formula`
 
-### 4. 复制与导出
-
-- Markdown Live Preview：右键复制 Markdown 公式，`Shift/Alt + 右键` 复制纯 LaTeX。
-- Math Editor：提供 Copy MD 和 Copy LaTeX。
-- Formula Extractor 插件：从当前文档或选区提取公式，支持复制 Markdown、导出 `.md`、`.tex`、`.json`。
-
-## 键位策略
-
-### 结构优先键
-
-数字行保留给高频结构和边界：
-
-| 键 | 默认 | 用途 |
-| --- | --- | --- |
-| 1 | `^{}` | 上标 |
-| 2 | `_{}` | 下标 |
-| 3 | `\sqrt{}` | 根号 |
-| 4 | `\frac{}{}` | 分数 |
-| 5 | `\sum` | 求和 |
-| 6 | `\int` | 积分 |
-| 7 | `\lim` | 极限 |
-| 8 | `\infty` | 无穷 |
-| 9 | `\left(` | 左边界 |
-| 0 | `\right)` | 右边界 |
-
-### 字母助记键
-
-- A/E/G/L/M/N/P/Q/R/S/T/W/X/Z：优先希腊字母或近似读音。
-- F：fraction，默认分数。
-- I：integral，默认积分。
-- V：vector，默认向量。
-- C/U：cap/cup，集合交并。
-- D：delta，同时提供 partial/nabla。
-- H：hbar/hat。
-
-### 变体规则
-
-- 默认键：最快插入最常见项。
-- `Shift + 键`：打开变体列表。
-- 变体列表可用方向键、空格和 Enter 选择。
-- 自定义符号保留，但不压过默认符号。
-
-## 使用方式
-
-### Markdown / Obsidian 风格增强
-
-- 表格在阅读时保持干净，hover/focus 后显示行列、对齐、复制 Markdown/HTML 等操作。
-- 右键菜单和 Markdown Tools 提供表格、属性、callout、任务列表、脚注、代码块、数学块、图片、GIF、emoji、wiki link、embed 等标准 Markdown 写入动作。
-- URL 粘贴、wiki link、callout、properties/frontmatter 等动作通过 CodeMirror transaction 写回文档，不直接改 DOM。
-- Emoji/GIF/图片命令必须真实写入 Markdown 内容，例如 `![alt](url.gif)`。
-- 只保留低冲突编辑器快捷键；高冲突公式组合优先交给量子键盘物理键完成。
-
-### 新手路径
-
-1. 在编辑器或公式输入处双击 `Tab` 打开量子键盘。
-2. 点击常用结构，例如 Fraction。
-3. 在 MathLive 中填空，按 `Tab` 到下一个占位。
-4. 右键公式复制 Markdown，或用 Copy LaTeX 导出纯公式。
-
-### 熟手路径
-
-1. 在编辑器或公式输入处双击 `Tab`。
-2. 按 `F` 插入分数，按 `I` 插入积分，按 `Shift + S` 选择求和变体。
-3. HUD 打开后，用 `Tab` 切行内/块级，`Shift + Tab` 切 Markdown/LaTeX 输出。
-4. `Esc` 收起 HUD，继续写正文。
-
-### 编辑器快捷键
-
-- `Ctrl+Shift+M`：行内公式
-- `Ctrl+Alt+M`：块级公式
-- `Ctrl+Shift+F`：分数
-- `Ctrl+Shift+R`：根号
-- `Ctrl+Shift+I`：积分
-- `Ctrl+Shift+U`：求和
-- `Ctrl+Shift+L`：极限
-- `Ctrl+Shift+X`：矩阵
-- `Ctrl+Shift+V`：向量
-- `Ctrl+Alt+P`：偏导
-
-这些快捷键只在编辑器上下文生效。应用级 `Ctrl+B`、`Ctrl+K`、`Ctrl+Shift+P` 不会再压过正在编辑的 Markdown/公式输入。
-
-### 专家路径
-
-直接输入 LaTeX、粘贴 MathML/OMML/LaTeX，系统会规范化为 Lattice 支持的公式格式。需要批量迁移时使用 Formula Extractor。
+这样复制动作发生在公式阅读/渲染位置，而不是把量子键盘界面变成复制工具箱。
 
 ## 实现边界
 
-- 不引入新公式语言，不要求用户学习复杂规则。
-- 不替代 MathLive；量子键盘是 MathLive 与 Markdown 编辑器之上的低摩擦输入层。
-- 不把所有罕见符号塞进第一屏；罕见符号通过搜索和变体承载。
-- 不自动写文件或更新桌面发行产物；复制和导出保持用户触发。
-- 不绕过 AI 设置策略；自动补全、自动摘要和插件触发 AI 都必须有显式开关与权限边界。
+- 不新增独立公式语言。
+- 不要求用户记忆长 LaTeX 命令。
+- 不把数字键放入 HUD UI。
+- 不在 HUD 中放大量说明文案。
+- 不把复制、导出、公式库管理堆进量子键盘主界面。
+- MathLive、CodeMirror、textarea、contenteditable 共享统一插入链路。
 
 ## 验收标准
 
-- 打开 HUD 后，常用结构和键盘一屏可见。
-- 无乱码文案，无明显重叠，无过度装饰。
-- MathLive、CodeMirror、textarea、contenteditable 都能插入公式。
-- Markdown 和 LaTeX 输出模式可预测。
-- 公式面板搜索可覆盖常用数学、物理、集合、逻辑、箭头符号。
-- 相关单元测试、类型检查通过。
+- HUD 打开后只显示 26 个字母键和极简状态栏。
+- `Shift+数字+字母` 能按一基索引选择候选。
+- `Tab Tab` 打开 HUD 时不污染 Markdown 内容。
+- 分式、括号、矩阵、cases 插入后进入可填写占位符。
+- 渲染公式右键菜单可复制 Markdown 与 LaTeX。
+- 明暗主题下 HUD 与右键菜单均使用主题 token，不残留硬编码白底/黑字。
+- 相关类型检查与重点单元测试通过。

@@ -7,6 +7,23 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { SelectionContextMenu } from '../selection-context-menu';
 import { useSelectionAiStore } from '@/stores/selection-ai-store';
 
+vi.mock("@/hooks/use-i18n", () => ({
+  useI18n: () => ({
+    locale: "zh-CN",
+    t: (key: string) => {
+      const zh: Record<string, string> = {
+        "ai.selection.menuAria": "选区 AI 菜单",
+        "ai.selection.menuTitle": "选区 AI",
+        "ai.selection.enterOpen": "Enter 打开",
+        "ai.selection.preferred": "最近使用",
+        "ai.selection.disabledTitle": "当前未启用 Selection AI",
+        "ai.selection.noSelection": "尚未选中文本",
+      };
+      return zh[key] ?? key;
+    },
+  }),
+}));
+
 describe('SelectionContextMenu', () => {
   const context = {
     sourceKind: 'markdown' as const,
@@ -14,7 +31,7 @@ describe('SelectionContextMenu', () => {
     fileName: 'notes.md',
     filePath: 'notes/notes.md',
     selectedText: 'Meaningful selected text',
-    sourceLabel: 'notes.md · 选区',
+    sourceLabel: 'notes.md · selection',
     evidenceRefs: [],
   };
 
@@ -25,7 +42,7 @@ describe('SelectionContextMenu', () => {
     });
   });
 
-  it('supports keyboard navigation and opens the preferred action first', () => {
+  it('supports keyboard navigation and opens the next action after ArrowDown', () => {
     const onOpenHub = vi.fn();
 
     render(
@@ -40,7 +57,9 @@ describe('SelectionContextMenu', () => {
       />,
     );
 
-    const menu = screen.getByRole('menu');
+    const menu = screen.getByRole('menu', { name: '选区 AI 菜单' });
+    expect(screen.queryByText('最近使用')).not.toBeNull();
+
     fireEvent.keyDown(menu, { key: 'ArrowDown' });
     fireEvent.keyDown(menu, { key: 'Enter' });
 

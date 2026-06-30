@@ -221,6 +221,43 @@ describe("TreeView rename keyboard handling", () => {
     expect(hydratePdfVirtualChildren).not.toHaveBeenCalled();
   });
 
+  it("uses file icons instead of rendering redundant file type badges", () => {
+    render(
+      <TreeView
+        root={{
+          name: "workspace",
+          kind: "directory",
+          path: "workspace",
+          isExpanded: true,
+          children: [
+            {
+              name: "note.md",
+              kind: "file",
+              handle: {} as FileSystemFileHandle,
+              extension: "md",
+              path: "workspace/note.md",
+              badgeLabel: "Markdown",
+            },
+            {
+              name: "_annotations.md",
+              kind: "file",
+              handle: {} as FileSystemFileHandle,
+              extension: "md",
+              path: "workspace/_annotations.md",
+              badgeLabel: "批注",
+            },
+          ],
+          handle: {} as FileSystemDirectoryHandle,
+        }}
+      />
+    );
+
+    expect(screen.getByText("note.md")).toBeTruthy();
+    expect(screen.getByText("_annotations.md")).toBeTruthy();
+    expect(screen.queryByText("Markdown")).toBeNull();
+    expect(screen.queryByText("批注")).toBeNull();
+  });
+
   it("shows VS Code-style core file context actions", () => {
     render(
       <TreeView

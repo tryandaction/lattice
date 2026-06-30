@@ -119,7 +119,7 @@ describe('runSelectionAiMode', () => {
       title: 'Summarize this selection',
     });
     expect(runChatMock).toHaveBeenCalledWith(expect.objectContaining({
-      prompt: expect.stringContaining('Selected excerpt from notes.md · 选区:'),
+      prompt: expect.stringContaining('Selected excerpt from notes.md · selection:'),
       explicitEvidenceRefs: context.evidenceRefs,
       filePath: 'notes/notes.md',
       content: 'Local context block',

@@ -6,6 +6,7 @@ import { useI18n } from '@/hooks/use-i18n';
 import { showInFolder } from '@/lib/export-adapter';
 import { isTauri } from '@/lib/storage-adapter';
 import { cn } from '@/lib/utils';
+import { UI_LAYER_CLASS } from '@/lib/ui-layers';
 
 export interface ExportToastData {
   id: string;
@@ -159,7 +160,7 @@ export function ExportToastContainer() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed bottom-20 right-4 z-50 flex flex-col gap-2 max-w-sm">
+    <div className={cn("fixed bottom-20 right-4 flex max-w-sm flex-col gap-2", UI_LAYER_CLASS.hud)}>
       {toasts.map(toast => (
         <ExportToastItem
           key={toast.id}

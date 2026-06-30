@@ -25,6 +25,33 @@ describe("parseLinkTarget", () => {
     });
   });
 
+  it("resolves exported source PDF links with relative paths and fragments", () => {
+    expect(parseLinkTarget("../paper.pdf#page=2", { currentFilePath: "notes/a/code.md" }).target).toEqual({
+      type: "pdf_page",
+      path: "notes/paper.pdf",
+      page: 2,
+    });
+
+    expect(parseLinkTarget("../paper.pdf#annotation=ann-1", { currentFilePath: "notes/a/code.md" }).target).toEqual({
+      type: "pdf_annotation",
+      path: "notes/paper.pdf",
+      annotationId: "ann-1",
+    });
+  });
+
+  it("resolves relative markdown headings and html files from the current document", () => {
+    expect(parseLinkTarget("../source file.md#Heading One", { currentFilePath: "notes/a/code.md" }).target).toEqual({
+      type: "workspace_heading",
+      path: "notes/source file.md",
+      heading: "Heading One",
+    });
+
+    expect(parseLinkTarget("./demo.html", { currentFilePath: "notes/a/code.md" }).target).toEqual({
+      type: "workspace_file",
+      path: "notes/a/demo.html",
+    });
+  });
+
   it("decodes escaped spaces in workspace links before resolving", () => {
     expect(parseLinkTarget("Daily%20Note.md#Deep%20Heading", { currentFilePath: "notes/index.md" }).target).toEqual({
       type: "workspace_heading",
@@ -46,6 +73,40 @@ describe("parseLinkTarget", () => {
       type: "pdf_page",
       path: "papers/math.pdf",
       page: 12,
+    });
+  });
+
+  it("preserves page hints on PDF annotation links", () => {
+    expect(parseLinkTarget("papers/math.pdf#page=2&annotation=ann-123").target).toEqual({
+      type: "pdf_annotation",
+      path: "papers/math.pdf",
+      annotationId: "ann-123",
+      page: 2,
+    });
+  });
+
+  it("accepts ann as a PDF annotation parameter alias", () => {
+    expect(parseLinkTarget("papers/math.pdf#page=2&ann=ann-123").target).toEqual({
+      type: "pdf_annotation",
+      path: "papers/math.pdf",
+      annotationId: "ann-123",
+      page: 2,
+    });
+  });
+
+  it("treats bare PDF fragments as annotation ids for durable exported links", () => {
+    expect(parseLinkTarget("papers/math.pdf#550e8400-e29b-41d4-a716-446655440000").target).toEqual({
+      type: "pdf_annotation",
+      path: "papers/math.pdf",
+      annotationId: "550e8400-e29b-41d4-a716-446655440000",
+    });
+  });
+
+  it("parses raw wiki link targets with aliases", () => {
+    expect(parseLinkTarget("[[notes/Deep Work#Core Idea|read this]]", { currentFilePath: "index.md" }).target).toEqual({
+      type: "workspace_heading",
+      path: "notes/Deep Work",
+      heading: "Core Idea",
     });
   });
 

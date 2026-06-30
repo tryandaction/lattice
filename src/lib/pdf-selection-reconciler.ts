@@ -1123,6 +1123,15 @@ function constrainViewportRectsToDragBounds(input: {
       let right = rect.left + rect.width;
       const overlapsFirstLine = first.y >= rect.top - toleranceY && first.y <= rectBottom + toleranceY;
       const overlapsLastLine = last.y >= rect.top - toleranceY && last.y <= rectBottom + toleranceY;
+      const lineEdgeTolerance = Math.max(24, rect.height * 1.5);
+      const shouldClipFirstLine = overlapsFirstLine && (
+        !input.preserveLineEdges ||
+        first.x > rect.left + lineEdgeTolerance
+      );
+      const shouldClipLastLine = overlapsLastLine && (
+        !input.preserveLineEdges ||
+        last.x < rect.left + rect.width - lineEdgeTolerance
+      );
       if (
         columnLeft !== null &&
         columnRight !== null &&
@@ -1137,10 +1146,10 @@ function constrainViewportRectsToDragBounds(input: {
         left = clippedLeft;
         right = clippedRight;
       }
-      if (!input.preserveLineEdges && overlapsFirstLine) {
+      if (shouldClipFirstLine) {
         left = Math.max(left, first.x);
       }
-      if (!input.preserveLineEdges && overlapsLastLine) {
+      if (shouldClipLastLine) {
         right = Math.min(right, last.x);
       }
       if (right <= left) {

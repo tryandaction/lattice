@@ -11,6 +11,7 @@ import {
 import { useAgentSessionStore } from '@/stores/agent-session-store';
 import { runResearchAgentForSurface } from './research-agent-chat-runner';
 import type { ResearchAgentWorkflowId } from './research-agent-workflows';
+import type { Locale } from '@/types/settings';
 
 function failSessionIfOpen(sessionId: string, error: string) {
   const store = useAgentSessionStore.getState();
@@ -21,8 +22,8 @@ function failSessionIfOpen(sessionId: string, error: string) {
   store.failSession(sessionId, error);
 }
 
-function buildExecutionPrompt(mode: SelectionAiMode, prompt: string, context: SelectionContext): string {
-  const normalizedPrompt = prompt.trim() || defaultPromptForSelectionMode(mode, context);
+function buildExecutionPrompt(mode: SelectionAiMode, prompt: string, context: SelectionContext, locale: Locale): string {
+  const normalizedPrompt = prompt.trim() || defaultPromptForSelectionMode(mode, context, locale);
   const parts = [
     normalizedPrompt,
     `Selected excerpt from ${context.sourceLabel}:`,
@@ -60,18 +61,20 @@ export async function runSelectionAiMode(input: {
   mode: SelectionAiMode;
   prompt: string;
   settings: AiRuntimeSettings;
+  locale?: Locale;
 }): Promise<{ kind: 'chat' | 'proposal'; title: string }> {
   if (!input.settings.aiEnabled) {
     throw new Error('AI is disabled in settings');
   }
 
-  const prompt = buildExecutionPrompt(input.mode, input.prompt, input.context);
+  const locale = input.locale ?? 'zh-CN';
+  const prompt = buildExecutionPrompt(input.mode, input.prompt, input.context, locale);
   const origin = buildSelectionOrigin(input.context, input.mode);
   const chatStore = useAiChatStore.getState();
   const agentStore = useAgentSessionStore.getState();
 
   if (input.mode === 'agent') {
-    const displayPrompt = input.prompt.trim() || defaultPromptForSelectionMode(input.mode, input.context);
+    const displayPrompt = input.prompt.trim() || defaultPromptForSelectionMode(input.mode, input.context, locale);
     chatStore.setOpen(true);
     chatStore.addUserMessage(displayPrompt, { origin });
     const messageId = chatStore.startAssistantMessage();
@@ -171,7 +174,7 @@ export async function runSelectionAiMode(input: {
   }
 
   const historyBefore = chatStore.getMessagesForApi();
-  const displayPrompt = input.prompt.trim() || defaultPromptForSelectionMode(input.mode, input.context);
+  const displayPrompt = input.prompt.trim() || defaultPromptForSelectionMode(input.mode, input.context, locale);
   chatStore.setOpen(true);
   chatStore.addUserMessage(displayPrompt, { origin });
   const messageId = chatStore.startAssistantMessage();

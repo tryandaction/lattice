@@ -204,6 +204,21 @@ struct CommandAvailability {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FormulaOcrPix2texRequest {
+    image_data_url: String,
+    command: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FormulaOcrPix2texResponse {
+    latex: String,
+    backend: String,
+    command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct LocalExecutionRequest {
     session_id: Option<String>,
     runner_type: RunnerType,
@@ -1746,6 +1761,118 @@ fn probe_command_availability(command: String) -> Result<CommandAvailability, St
     Ok(probe_command(&command))
 }
 
+fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
+    fn value(byte: u8) -> Option<u8> {
+        match byte {
+            b'A'..=b'Z' => Some(byte - b'A'),
+            b'a'..=b'z' => Some(byte - b'a' + 26),
+            b'0'..=b'9' => Some(byte - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+
+    let bytes: Vec<u8> = input.bytes().filter(|byte| !byte.is_ascii_whitespace()).collect();
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    if bytes.len() % 4 != 0 {
+        return Err("Invalid base64 length".to_string());
+    }
+
+    let mut output = Vec::with_capacity(bytes.len() / 4 * 3);
+    for chunk in bytes.chunks(4) {
+        let pad = chunk.iter().rev().take_while(|byte| **byte == b'=').count();
+        if pad > 2 {
+            return Err("Invalid base64 padding".to_string());
+        }
+        let sextets = [
+            value(chunk[0]).ok_or_else(|| "Invalid base64 character".to_string())?,
+            value(chunk[1]).ok_or_else(|| "Invalid base64 character".to_string())?,
+            if chunk[2] == b'=' { 0 } else { value(chunk[2]).ok_or_else(|| "Invalid base64 character".to_string())? },
+            if chunk[3] == b'=' { 0 } else { value(chunk[3]).ok_or_else(|| "Invalid base64 character".to_string())? },
+        ];
+        output.push((sextets[0] << 2) | (sextets[1] >> 4));
+        if pad < 2 {
+            output.push((sextets[1] << 4) | (sextets[2] >> 2));
+        }
+        if pad < 1 {
+            output.push((sextets[2] << 6) | sextets[3]);
+        }
+    }
+    Ok(output)
+}
+
+#[tauri::command]
+fn formula_ocr_pix2tex(request: FormulaOcrPix2texRequest) -> Result<FormulaOcrPix2texResponse, String> {
+    let command_name = request
+        .command
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("pix2tex")
+        .to_string();
+    let availability = probe_command(&command_name);
+    if !availability.available {
+        return Err(availability.error.unwrap_or_else(|| {
+            format!("pix2tex is not available. Install LaTeX-OCR and ensure `{command_name}` is on PATH.")
+        }));
+    }
+
+    let data_url = request.image_data_url.trim();
+    let base64_payload = data_url
+        .strip_prefix("data:image/png;base64,")
+        .ok_or_else(|| "Expected a PNG data URL".to_string())?;
+    let image_bytes = decode_base64(base64_payload)?;
+    if image_bytes.is_empty() {
+        return Err("OCR image is empty".to_string());
+    }
+
+    let image_path = env::temp_dir().join(format!("lattice-formula-ocr-{}.png", Uuid::new_v4()));
+    fs::write(&image_path, image_bytes).map_err(|error| error.to_string())?;
+
+    let output_result = (|| {
+        let mut command = StdCommand::new(&command_name);
+        configure_std_command(&mut command);
+        command.arg(&image_path);
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+        command.output().map_err(|error| error.to_string())
+    })();
+
+    let _ = fs::remove_file(&image_path);
+
+    let output = output_result?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("pix2tex exited with status {}", output.status)
+        } else {
+            stderr
+        });
+    }
+
+    let latex = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .last()
+        .unwrap_or("")
+        .trim_matches('`')
+        .trim()
+        .to_string();
+    if latex.is_empty() {
+        return Err("pix2tex returned an empty result".to_string());
+    }
+
+    Ok(FormulaOcrPix2texResponse {
+        latex,
+        backend: "pix2tex".to_string(),
+        command: command_name,
+    })
+}
+
 #[tauri::command]
 async fn start_local_execution(
     app: AppHandle,
@@ -2517,6 +2644,7 @@ fn main() {
             desktop_window_close,
             detect_python_environments,
             probe_command_availability,
+            formula_ocr_pix2tex,
             start_local_execution,
             terminate_local_execution,
             start_python_session,

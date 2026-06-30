@@ -1,11 +1,12 @@
 import JSZip from "jszip";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { AnnotationItem } from "@/types/universal-annotation";
 import type { EvidenceRef } from "@/lib/ai/types";
 import {
   buildMarkdownExportPreview,
   markdownExportInternals,
 } from "@/lib/markdown-export";
+import { getLocaleDisplayName, setLocale } from "@/lib/i18n";
 
 describe("markdown export", () => {
   const annotations: AnnotationItem[] = [
@@ -51,7 +52,11 @@ describe("markdown export", () => {
     },
   ];
 
-  it("builds appendix preview with source locators", async () => {
+  beforeEach(() => {
+    setLocale("zh-CN");
+  });
+
+  it("builds localized appendix preview with source locators", async () => {
     const preview = await buildMarkdownExportPreview(
       "# Title\n\n| A | B |\n| - | - |\n| 1 | 2 |\n",
       {
@@ -67,10 +72,14 @@ describe("markdown export", () => {
     );
 
     expect(preview.entryCount).toBe(3);
-    expect(preview.html).toContain("Annotation Appendix");
+    expect(preview.html).toContain('lang="zh-CN"');
+    expect(preview.html).toContain("批注附录");
+    expect(preview.html).toContain("PDF 第 4 页");
+    expect(preview.html).toContain("代码第 42 行");
     expect(preview.html).toContain("papers/paper.md#line=42");
     expect(preview.html).toContain("notes/research.md#methodology");
     expect(preview.html).toContain("<table");
+    expect(preview.html).not.toMatch(/绗|浠|瀵|鏍|鎵|鍓|鍦|涓|锛|�/);
   });
 
   it("normalizes annotations and evidence into unified entries", () => {
@@ -101,6 +110,33 @@ describe("markdown export", () => {
     );
   });
 
+  it("builds English export chrome when the active locale is English", async () => {
+    setLocale("en-US");
+
+    const preview = await buildMarkdownExportPreview("# Title\n\nBody", {
+      format: "docx",
+      fileName: "paper.md",
+      filePath: "papers/paper.md",
+      annotationMode: "appendix",
+      includeAnnotations: true,
+      visualMode: "document",
+      annotations,
+      evidenceRefs,
+    });
+
+    expect(preview.html).toContain('lang="en-US"');
+    expect(preview.html).toContain("Annotation Appendix");
+    expect(preview.html).toContain("PDF page 4");
+    expect(preview.html).toContain("Code line 42");
+    expect(preview.html).toContain("Notes");
+    expect(preview.html).not.toContain("批注附录");
+  });
+
+  it("returns readable locale display names", () => {
+    expect(getLocaleDisplayName("zh-CN")).toBe("简体中文");
+    expect(getLocaleDisplayName("en-US")).toBe("English");
+  });
+
   it("creates a docx package with HTML altChunk payload", async () => {
     const bytes = await markdownExportInternals.createDocxBytes(
       markdownExportInternals.createHtmlDocument({
@@ -109,6 +145,7 @@ describe("markdown export", () => {
         css: "body { color: black; }",
         entryCount: 0,
         generatedAt: "2026-03-17 16:00",
+        locale: "zh-CN",
       })
     );
 
@@ -116,7 +153,7 @@ describe("markdown export", () => {
     const rels = await zip.file("word/_rels/document.xml.rels")?.async("text");
     const html = await zip.file("word/afchunk/export.html")?.async("text");
 
-    expect(rels).toContain('relationships/aFChunk');
+    expect(rels).toContain("relationships/aFChunk");
     expect(html).toContain("<main><h1>Export</h1><p>Body</p></main>");
     expect(zip.file("[Content_Types].xml")).toBeTruthy();
   });

@@ -4,6 +4,21 @@ export type LivePreviewFixture = {
   url: string;
 };
 
+export type SupportedGuideLocale = "zh-CN" | "en-US";
+
+export type LocalizedText = Record<SupportedGuideLocale, string>;
+
+export type LatticeGuideSection = {
+  id: string;
+  title: LocalizedText;
+  summary: LocalizedText;
+  entry: LocalizedText;
+  actions: LocalizedText[];
+  tips: LocalizedText[];
+  related: LocalizedText[];
+  demoMarkdown?: LocalizedText;
+};
+
 export type LivePreviewGuideScenario = {
   id: string;
   title: string;
@@ -14,214 +29,330 @@ export type LivePreviewGuideScenario = {
 };
 
 export const LIVE_PREVIEW_DIAGNOSTIC_FIXTURES: LivePreviewFixture[] = [
-  { id: 'test-render-interaction-agent.md', label: '交互回归', url: '/test-render-interaction-agent.md' },
-  { id: 'test-rendering.md', label: '渲染回归', url: '/test-rendering.md' },
-  { id: 'test-markdown-coverage.md', label: '语法覆盖', url: '/test-markdown-coverage.md' },
-  { id: 'test-advanced-markdown.md', label: '高级块级元素', url: '/test-advanced-markdown.md' },
-  { id: 'test-formula-rendering.md', label: '数学公式', url: '/test-formula-rendering.md' },
-  { id: 'test-syntax-hiding.md', label: '语法隐藏', url: '/test-syntax-hiding.md' },
-  { id: 'test-nested-formatting.md', label: '嵌套格式', url: '/test-nested-formatting.md' },
-  { id: 'test-text-duplication.md', label: '文本重复', url: '/test-text-duplication.md' },
-  { id: 'test-10000-lines.md', label: '超长文档', url: '/test-10000-lines.md' },
+  { id: "test-render-interaction-agent.md", label: "交互回归", url: "/test-render-interaction-agent.md" },
+  { id: "test-rendering.md", label: "渲染回归", url: "/test-rendering.md" },
+  { id: "test-markdown-coverage.md", label: "语法覆盖", url: "/test-markdown-coverage.md" },
+  { id: "test-advanced-markdown.md", label: "高级块级元素", url: "/test-advanced-markdown.md" },
+  { id: "test-formula-rendering.md", label: "数学公式", url: "/test-formula-rendering.md" },
+  { id: "test-syntax-hiding.md", label: "语法隐藏", url: "/test-syntax-hiding.md" },
+  { id: "test-nested-formatting.md", label: "嵌套格式", url: "/test-nested-formatting.md" },
+  { id: "test-text-duplication.md", label: "文本重复", url: "/test-text-duplication.md" },
+  { id: "test-10000-lines.md", label: "超长文档", url: "/test-10000-lines.md" },
 ];
 
-export const LIVE_PREVIEW_GUIDE_SCENARIOS: LivePreviewGuideScenario[] = [
+export const LATTICE_GUIDE_SECTIONS: LatticeGuideSection[] = [
   {
-    id: 'basics',
-    title: '基础排版与列表',
-    summary: '从标题、强调、引用、列表开始，先建立“边编辑边渲染”的基本心智模型。',
-    syntax: ['# 标题', '**粗体**', '*斜体*', '> 引用', '- 列表', '1. 有序列表'],
-    focus: [
-      '理解实时预览不是阅读模式，而是可继续编辑的渲染态',
-      '点击渲染后的文本周边时，光标按渲染视觉结果落位',
-      '列表、引用、标题都可以在渲染态和源码态之间自然切换'
+    id: "quick-start",
+    title: {
+      "zh-CN": "快速开始",
+      "en-US": "Quick Start",
+    },
+    summary: {
+      "zh-CN": "先理解 Lattice 的基本工作方式：左侧管理知识库，中间编辑和阅读，右侧协作与智能辅助。",
+      "en-US": "Understand the basic Lattice flow: manage your workspace on the left, read and edit in the center, and collaborate with AI on the right.",
+    },
+    entry: {
+      "zh-CN": "从左侧文件树打开文件，用顶部命令栏切换视图、搜索、导出和工具。",
+      "en-US": "Open files from the left tree, then use the top command bar for view modes, search, export, and tools.",
+    },
+    actions: [
+      {
+        "zh-CN": "打开一个 Markdown、PDF、HTML 或 Notebook 文件。",
+        "en-US": "Open a Markdown, PDF, HTML, or notebook file.",
+      },
+      {
+        "zh-CN": "使用标签页并排处理多个材料。",
+        "en-US": "Use tabs to work across multiple materials.",
+      },
+      {
+        "zh-CN": "拖动面板分割线调整阅读、批注和 AI 区域。",
+        "en-US": "Drag panel splitters to resize reading, annotation, and AI areas.",
+      },
     ],
-    content: `# Lattice 实时预览
+    tips: [
+      {
+        "zh-CN": "先从文件、搜索、命令栏三个入口建立工作节奏。",
+        "en-US": "Start with three anchors: files, search, and the command bar.",
+      },
+    ],
+    related: [
+      {
+        "zh-CN": "入口：左侧文件树、顶部命令栏、右侧 AI Chat。",
+        "en-US": "Entry points: left file tree, top command bar, right AI Chat.",
+      },
+    ],
+  },
+  {
+    id: "markdown",
+    title: {
+      "zh-CN": "Markdown 编辑",
+      "en-US": "Markdown Editing",
+    },
+    summary: {
+      "zh-CN": "实时预览用于在渲染态直接编辑 Markdown，适合公式、表格、引用、链接和长笔记。",
+      "en-US": "Live Preview lets you edit Markdown directly in its rendered form, including formulas, tables, quotes, links, and long notes.",
+    },
+    entry: {
+      "zh-CN": "打开 `.md` 文件后，用顶部按钮切换实时预览、源码、阅读模式。",
+      "en-US": "Open a `.md` file and switch between Live Preview, Source, and Reading modes from the top bar.",
+    },
+    actions: [
+      {
+        "zh-CN": "用搜索按钮打开文内查找与替换。",
+        "en-US": "Use Search to find and replace inside the document.",
+      },
+      {
+        "zh-CN": "用 Markdown Tools 插入表格、Callout、代码块、链接、媒体和符号。",
+        "en-US": "Use Markdown Tools to insert tables, callouts, code blocks, links, media, and symbols.",
+      },
+      {
+        "zh-CN": "右键选中文本可快速加粗、链接、引用或复制块内容。",
+        "en-US": "Right-click selected text to format, link, quote, or copy block content.",
+      },
+    ],
+    tips: [
+      {
+        "zh-CN": "表格先选择再编辑，避免误触；公式可用量子键盘快速输入。",
+        "en-US": "Select tables before editing to avoid misclicks; use the Quantum Keyboard for fast formula input.",
+      },
+    ],
+    related: [
+      {
+        "zh-CN": "入口：顶部 Markdown Tools、右键菜单、搜索按钮、导出按钮。",
+        "en-US": "Entry points: Markdown Tools, context menu, search button, export button.",
+      },
+    ],
+    demoMarkdown: {
+      "zh-CN": `# Markdown 实时预览
 
-这是 **粗体**、这是 *斜体*、这是 ~~删除线~~、这是 ==高亮==。
+这里可以直接编辑 **粗体**、$E=mc^2$、[链接](https://example.com)。
 
-> 实时预览的重点不是“好看”，而是“渲染后仍然好编辑”。
-
-- 单击普通文本，直接落光标
-- 单击渲染后的元素附近，定位也应符合视觉
-- 继续输入时仍然保留 Markdown 原码
-
-1. 有序列表第一项
-2. 有序列表第二项
-3. 有序列表第三项
+| 类型 | 示例 |
+| --- | --- |
+| 公式 | $x^2+y^2$ |
+| Callout | > [!NOTE] 重点 |
 `,
-  },
-  {
-    id: 'inline-formatting',
-    title: '行内格式、标签与链接',
-    summary: '集中演练行内语法，包括代码、标签、普通链接、Wiki 链接、脚注和引用式链接。',
-    syntax: ['`code`', '#tag', '[链接](url)', '[[Wiki]]', '[^1]', '[text][ref]'],
-    focus: [
-      '行内语法替换后仍需保持可精确点击与继续编辑',
-      '链接类元素既要可识别，也要避免误触打断编辑流',
-      '不同语法的视觉风格需要与普通文本有明确区分'
-    ],
-    content: `## 行内元素
+      "en-US": `# Markdown Live Preview
 
-这是 \`inline code\`，这是 #lattice/tag，这里有 [OpenAI](https://openai.com)。
+Edit **bold text**, $E=mc^2$, and [links](https://example.com) directly.
 
-这里还有 [[Daily Note]]、[[Knowledge Base#渲染逻辑|知识库跳转]] 和脚注引用[^preview]。
-
-引用式链接：[设计文档][design]；引用式图片：![封面][cover]
-
-[^preview]: 脚注正文也应该在实时预览中保持稳定布局。
-
-[design]: https://example.com/design "设计说明"
-[cover]: https://placehold.co/320x120/png
+| Type | Example |
+| --- | --- |
+| Formula | $x^2+y^2$ |
+| Callout | > [!NOTE] Key idea |
 `,
+    },
   },
   {
-    id: 'math',
-    title: '数学公式与源码态切换',
-    summary: '覆盖行内公式、块级公式、\\( \\)、\\[ \\] 与带环境的公式，验证点击、恢复源码和外部文本落点。',
-    syntax: ['$x^2$', '$$E=mc^2$$', '\\(a+b\\)', '\\[\\int_0^1 x dx\\]', '\\begin{aligned}'],
-    focus: [
-      '单击公式本体应进入源码态，光标落在起始定界符后',
-      '点击公式外部文本时，公式恢复渲染，后续文本定位仍准确',
-      '不同定界符在源码态下要有清晰差异着色，并适配明暗主题'
+    id: "pdf",
+    title: {
+      "zh-CN": "PDF 批注与子文档",
+      "en-US": "PDF Annotations And Sidecars",
+    },
+    summary: {
+      "zh-CN": "PDF 工作区用于阅读论文、拖拽选文、添加高亮/区域批注，并生成可读的本地 Markdown 批注文档。",
+      "en-US": "The PDF workspace is for reading papers, selecting text, adding highlights or area notes, and generating readable local Markdown annotation files.",
+    },
+    entry: {
+      "zh-CN": "打开 PDF 后，左侧/侧边批注栏显示批注、相关文件、复制摘要和引用操作。",
+      "en-US": "Open a PDF to use the annotation side panel for notes, related files, summaries, and citations.",
+    },
+    actions: [
+      {
+        "zh-CN": "拖拽文字创建高亮，或用区域工具保存截图式批注。",
+        "en-US": "Drag text to create highlights, or use area tools for screenshot-style annotations.",
+      },
+      {
+        "zh-CN": "在批注栏编辑长备注，不应被固定高度截断。",
+        "en-US": "Edit long notes in the annotation panel without fixed-height clipping.",
+      },
+      {
+        "zh-CN": "导出 `_annotations.md`，保留颜色、页面链接、批注链接和区域截图。",
+        "en-US": "Export `_annotations.md` with color, page links, annotation links, and area captures.",
+      },
     ],
-    content: `行内公式：$x^2 + y^2 = z^2$、$r/r_d$、\\(\\alpha + \\beta\\)。
-
-单行块级公式：
-$$E = mc^2$$
-
-多行块级公式：
-$$
-\\begin{aligned}
-f(x) &= x^2 + 2x + 1 \\\\
-g(x) &= \\int_0^1 x^2 \\, dx
-\\end{aligned}
-$$
-
-另一种块定界符：
-\\[
-\\int_0^1 x^3 \\, dx = \\frac{1}{4}
-\\]
-
-公式下方这一行文字，用来测试点击与光标定位。
-`,
+    tips: [
+      {
+        "zh-CN": "PDF 批注链接应能跳回源 PDF 的页面或具体批注。",
+        "en-US": "PDF annotation links should jump back to the source page or exact annotation.",
+      },
+    ],
+    related: [
+      {
+        "zh-CN": "入口：PDF 工具栏、批注侧栏、复制摘要/引用按钮、在文件夹中定位。",
+        "en-US": "Entry points: PDF toolbar, annotation side panel, copy summary/citation buttons, reveal in file tree.",
+      },
+    ],
   },
   {
-    id: 'rules-callouts',
-    title: '横线、引用与 Callout',
-    summary: '验证块级渲染后的真实高度是否参与命中测试，避免“视觉在这里、光标跑下面”的错位。',
-    syntax: ['---', '> 引用', '> [!NOTE]', '> [!TIP]'],
-    focus: [
-      '横线渲染后下方文本的点击位置必须与视觉一致',
-      'Callout 的整体高度必须进入坐标测量，不允许下方点击偏移',
-      'Callout 内部的行内格式和公式也必须按渲染态交互'
+    id: "quantum-keyboard",
+    title: {
+      "zh-CN": "量子键盘",
+      "en-US": "Quantum Keyboard",
+    },
+    summary: {
+      "zh-CN": "量子键盘是公式输入法与管理器，把实体键盘的 26 个字母映射为常用数学、物理和工程符号。",
+      "en-US": "Quantum Keyboard is a formula input method and manager that maps the 26 letter keys to common math, physics, and engineering symbols.",
+    },
+    entry: {
+      "zh-CN": "在 Markdown 中双击 Tab 启动，也可从 Markdown Tools 打开。",
+      "en-US": "Double-tap Tab in Markdown, or open it from Markdown Tools.",
+    },
+    actions: [
+      {
+        "zh-CN": "直接按字母输入默认含义，例如 I 输入积分类符号。",
+        "en-US": "Press a letter for its default meaning, such as I for integral symbols.",
+      },
+      {
+        "zh-CN": "按住 Shift 或 Ctrl 查看并输入不同层级的含义。",
+        "en-US": "Hold Shift or Ctrl to view and enter alternate layers.",
+      },
+      {
+        "zh-CN": "在公式渲染处右键，可复制 Markdown 或 LaTeX 公式。",
+        "en-US": "Right-click a rendered formula to copy it as Markdown or LaTeX.",
+      },
     ],
-    content: `上一段文字用于测试横线上方的点击。
-
----
-
-横线下方这一行，请直接点击行中文字中部，光标不应要求你“往上点一点”。
-
-> 普通引用块也需要参与真实高度测量。
-> 第二行用于验证多行块之后的光标是否仍然准确。
-
-> [!NOTE] Callout 标题
-> 第一行内容
-> 第二行内容包含 **粗体**、[链接](https://example.com) 和 $x+y$。
-
-Callout 下方这一行同样用于测试垂直方向点击定位。
-`,
+    tips: [
+      {
+        "zh-CN": "它不是记忆题：按键上会显示含义，用户应看得懂再输入。",
+        "en-US": "It is not a memory test: key meanings are shown directly on the keys.",
+      },
+    ],
+    related: [
+      {
+        "zh-CN": "入口：Markdown Tools、双击 Tab、设置中的量子键盘配置。",
+        "en-US": "Entry points: Markdown Tools, double-tap Tab, Quantum Keyboard settings.",
+      },
+    ],
   },
   {
-    id: 'tables',
-    title: '表格：选择、编辑与单元格渲染',
-    summary: '表格是实时预览里最复杂的块级元素，需要同时保证结构编辑、单元格渲染和表格外点击定位。',
-    syntax: ['| A | B |', '| --- | --- |', '| $x^2$ | [link](url) |'],
-    focus: [
-      '单击单元格先选中，双击或 Enter/F2 再进入编辑，降低误触',
-      '单元格展示态必须支持公式、链接、代码和高亮等内联渲染',
-      '表格下方文本点击不能因为表格视觉高度变化而错位'
+    id: "ai",
+    title: {
+      "zh-CN": "AI 工作台",
+      "en-US": "AI Workspace",
+    },
+    summary: {
+      "zh-CN": "AI Chat 用于基于当前文件、选区和工作区上下文提问、总结、改写和生成行动建议。",
+      "en-US": "AI Chat uses the current file, selection, and workspace context for questions, summaries, rewrites, and next actions.",
+    },
+    entry: {
+      "zh-CN": "打开右侧 AI Chat，选择 Chat 或 Agent 模式，输入问题或使用模板。",
+      "en-US": "Open AI Chat on the right, choose Chat or Agent mode, then ask a question or use a template.",
+    },
+    actions: [
+      {
+        "zh-CN": "基于当前文件生成摘要、证据和下一步。",
+        "en-US": "Generate conclusions, evidence, and next actions from the current file.",
+      },
+      {
+        "zh-CN": "选中文本后调用 AI 操作，减少复制粘贴。",
+        "en-US": "Select text and invoke AI actions without copying and pasting.",
+      },
+      {
+        "zh-CN": "使用 Agent Memory 保留长期偏好与项目上下文。",
+        "en-US": "Use Agent Memory to retain long-term preferences and project context.",
+      },
     ],
-    content: `| 类型 | 示例 | 说明 |
-| :--- | :---: | ---: |
-| 行内公式 | $x^2$ | 单元格内应正常渲染 |
-| 块公式 | $$E=mc^2$$ | 单行块公式也应可见 |
-| 另一种定界符 | \\(a+b\\) | 不止支持 $ $ |
-| 链接 | [OpenAI](https://openai.com) | 单击选择，Ctrl/Cmd+单击打开 |
-| 代码 | \`const x = 1\` | 保持内联代码风格 |
-| 高亮 | ==重点== | 与普通文本区分 |
-
-表格下方这一行用于验证点击定位准确性。
-`,
+    tips: [
+      {
+        "zh-CN": "AI 应明确知道当前打开文件和选区；若上下文不足，应提示补充。",
+        "en-US": "AI should know the active file and selection; if context is missing, it should ask for what it needs.",
+      },
+    ],
+    related: [
+      {
+        "zh-CN": "入口：右侧 AI Chat、选区 AI 菜单、Templates、Agent Memory。",
+        "en-US": "Entry points: right AI Chat, selection AI menu, Templates, Agent Memory.",
+      },
+    ],
   },
   {
-    id: 'code-details',
-    title: '代码块、任务项与折叠块',
-    summary: '复杂块级元素需要共享统一的进入源码态和恢复渲染态逻辑。',
-    syntax: ['```ts', '- [ ] 任务', '<details>', '<summary>'],
-    focus: [
-      '代码块点击进入源码态时，不应破坏周围布局和命中区域',
-      '折叠块、任务列表和代码块都要保持光标落点稳定',
-      '复杂块之后的普通文本仍要可精确点击'
+    id: "plugins",
+    title: {
+      "zh-CN": "插件与命令",
+      "en-US": "Plugins And Commands",
+    },
+    summary: {
+      "zh-CN": "插件系统用于扩展工作流，命令面板用于快速打开工具、指南、诊断和插件动作。",
+      "en-US": "Plugins extend workflows, while the command palette quickly opens tools, guides, diagnostics, and plugin actions.",
+    },
+    entry: {
+      "zh-CN": "从左侧插件入口或命令按钮打开插件面板与命令面板。",
+      "en-US": "Open plugin panels and the command palette from the left rail or command button.",
+    },
+    actions: [
+      {
+        "zh-CN": "用命令面板搜索工具，而不是记忆入口位置。",
+        "en-US": "Search tools in the command palette instead of memorizing where they live.",
+      },
+      {
+        "zh-CN": "插件可读取文档目标、显示面板并执行特定工作流。",
+        "en-US": "Plugins can read document targets, show panels, and run specific workflows.",
+      },
     ],
-    content: `- [ ] 跟进公式交互
-- [x] 修复表格下方点击错位
-
-§§§ts
-const energy = (mass: number) => mass * c ** 2;
-console.log(energy(2));
-§§§
-
-<details>
-<summary>点击展开详情</summary>
-
-这里是折叠块内容，包含 **粗体**、$x^2$ 和 [链接](https://example.com)。
-
-</details>
-
-上面复杂块级元素的下方这一行，用于测试点击是否仍然精准。
-`.replace(/§/g, '`'),
+    tips: [
+      {
+        "zh-CN": "把高频动作放进命令面板和插件面板，比堆按钮更清晰。",
+        "en-US": "Keep frequent actions in the command palette and plugin panels instead of crowding the toolbar.",
+      },
+    ],
+    related: [
+      {
+        "zh-CN": "入口：命令按钮、插件面板、设置中的插件配置。",
+        "en-US": "Entry points: command button, plugin panel, plugin settings.",
+      },
+    ],
   },
   {
-    id: 'mixed-document',
-    title: '混合文档总回归',
-    summary: '把常见语法混在一个真实文档里，检查不同块之间的切换、几何与编辑状态是否相互干扰。',
-    syntax: ['---', '$$ $$', '| table |', '> [!TIP]', '```', '#tag'],
-    focus: [
-      '验证多种块级元素连续出现时，点击命中和光标定位依然稳定',
-      '检查混合文档中公式、表格、横线、Callout 不互相污染',
-      '作为最终体验回归，贴近真实笔记写作流程'
+    id: "links-files",
+    title: {
+      "zh-CN": "链接与文件体系",
+      "en-US": "Links And Files",
+    },
+    summary: {
+      "zh-CN": "Lattice 的链接体系用于在 Markdown、PDF、HTML、网页、批注和文件之间稳定跳转。",
+      "en-US": "Lattice links connect Markdown, PDFs, HTML, web pages, annotations, and local files with stable navigation.",
+    },
+    entry: {
+      "zh-CN": "点击文档中的链接，或打开 Links 面板查看当前文件的出链、反链和待修复链接。",
+      "en-US": "Click document links, or open the Links panel to inspect outgoing links, backlinks, and broken links.",
+    },
+    actions: [
+      {
+        "zh-CN": "Markdown 链接可跳转到文件、标题、网页或 PDF 页面。",
+        "en-US": "Markdown links can jump to files, headings, web pages, or PDF pages.",
+      },
+      {
+        "zh-CN": "PDF 批注链接应能回到源页面或具体批注。",
+        "en-US": "PDF annotation links should return to the source page or exact annotation.",
+      },
+      {
+        "zh-CN": "Links 面板优先显示当前文件相关链接，避免无关链接干扰。",
+        "en-US": "The Links panel prioritizes current-file links to reduce noise.",
+      },
     ],
-    content: `# 项目周报
-
-今天处理了 #editor/live-preview 与 #math/rendering 两类问题。
-
-> [!TIP] 本周重点
-> 修复渲染态几何与源码态范围映射。
-
----
-
-本段后面接一个公式：$f(x)=x^2+1$，然后继续写文字测试内联命中。
-
-$$
-\\begin{aligned}
-S &= \\sum_{i=1}^{n} i \\\\
-  &= \\frac{n(n+1)}{2}
-\\end{aligned}
-$$
-
-| 模块 | 状态 | 备注 |
-| --- | :---: | --- |
-| 公式 | 正在优化 | \\(a+b\\)、$$E=mc^2$$ |
-| 表格 | 已重构 | 支持选择、编辑、对齐 |
-| 横线 | 已修复 | 下方点击不再错位 |
-
-§§§md
-> [!NOTE]
-> 代码块之后点击普通文本，光标也必须稳定。
-§§§
-
-文档末尾这一段，请直接点击任意位置测试是否依然精准。
-`.replace(/§/g, '`'),
+    tips: [
+      {
+        "zh-CN": "链接无响应就是 bug：应显示反馈、修复候选或清晰错误。",
+        "en-US": "A dead click is a bug: links should show feedback, repair candidates, or a clear error.",
+      },
+    ],
+    related: [
+      {
+        "zh-CN": "入口：Links 面板、文档内链接、PDF 批注文档、文件树。",
+        "en-US": "Entry points: Links panel, document links, PDF annotation docs, file tree.",
+      },
+    ],
   },
 ];
+
+export const LIVE_PREVIEW_GUIDE_SCENARIOS: LivePreviewGuideScenario[] = LATTICE_GUIDE_SECTIONS
+  .filter((section) => section.demoMarkdown)
+  .map((section) => ({
+    id: section.id,
+    title: section.title["zh-CN"],
+    summary: section.summary["zh-CN"],
+    syntax: section.actions.map((action) => action["zh-CN"]),
+    content: section.demoMarkdown?.["zh-CN"] ?? "",
+    focus: section.tips.map((tip) => tip["zh-CN"]),
+  }));

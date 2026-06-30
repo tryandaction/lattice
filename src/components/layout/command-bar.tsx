@@ -44,6 +44,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { cn } from "@/lib/utils";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 import { useI18n } from "@/hooks/use-i18n";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 import {
@@ -507,7 +508,7 @@ export function CommandBar({
 
   return (
     <div
-      className="relative z-[70] grid grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-border bg-background/95 pl-2 pr-0 backdrop-blur"
+      className={cn("relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-border bg-background/95 pl-2 pr-0 backdrop-blur", UI_LAYER_CLASS.chrome)}
       style={{ height: DESKTOP_COMMAND_BAR_HEIGHT, WebkitAppRegion: "drag" } as CSSProperties}
       data-tauri-drag-region={isWindowsDesktop ? "true" : undefined}
       data-desktop-webview-safe-zone="true"
@@ -556,7 +557,7 @@ export function CommandBar({
             </button>
             {workspaceMenuOpen ? (
               <div
-                className="absolute left-0 top-[calc(100%+0.5rem)] z-[140] min-w-80 max-w-[28rem] rounded-lg border border-border bg-popover p-2 shadow-xl"
+                className={cn("absolute left-0 top-[calc(100%+0.5rem)] min-w-80 max-w-[28rem] rounded-lg border border-border bg-popover p-2 shadow-xl", UI_LAYER_CLASS.chromeMenu)}
                 data-testid="desktop-commandbar-workspace-menu"
               >
                 <div className="px-2 py-1">
@@ -642,7 +643,7 @@ export function CommandBar({
               <MoreHorizontal className="h-4 w-4" />
             </button>
             {overflowOpen ? (
-              <div className="absolute right-0 top-[calc(100%+0.5rem)] z-[140] min-w-44 rounded-lg border border-border bg-popover p-1 shadow-xl">
+              <div className={cn("absolute right-0 top-[calc(100%+0.5rem)] min-w-44 rounded-lg border border-border bg-popover p-1 shadow-xl", UI_LAYER_CLASS.chromeMenu)}>
                 {overflowActions.map((action) => {
                   const iconKey = resolveActionIcon(action) as ActionIconKey;
                   const IconComponent = ACTION_ICON_MAP[iconKey];
@@ -684,7 +685,7 @@ export function CommandBar({
 
       {isWindowsDesktop ? (
         <div
-          className="relative z-[120] ml-2 flex shrink-0 items-center justify-end gap-1 border-l border-border pl-2 pr-1 pointer-events-auto"
+          className={cn("relative ml-2 flex shrink-0 items-center justify-end gap-1 border-l border-border pl-2 pr-1 pointer-events-auto", UI_LAYER_CLASS.floatingPanel)}
           data-tauri-drag-region="false"
           data-testid="desktop-window-controls"
           onMouseDown={(event) => event.stopPropagation()}

@@ -15,6 +15,9 @@ import {
   updateCellSource,
   setActiveCell,
   changeCellType,
+  resolveNotebookCodeEditorLanguage,
+  resolveNotebookKernelLabel,
+  resolveNotebookLanguage,
   type NotebookEditorState,
 } from "../notebook-utils";
 
@@ -45,6 +48,39 @@ describe("notebook-utils", () => {
 
     it("should handle empty string", () => {
       expect(sourceToArray("")).toEqual([]);
+    });
+  });
+
+  describe("notebook language resolvers", () => {
+    it("prefers language_info over kernelspec language", () => {
+      expect(resolveNotebookLanguage({
+        language_info: { name: "javascript" },
+        kernelspec: {
+          display_name: "Python 3",
+          language: "python",
+          name: "python3",
+        },
+      })).toBe("javascript");
+    });
+
+    it("falls back to kernelspec language and kernel label", () => {
+      const metadata = {
+        kernelspec: {
+          display_name: "C++ 17",
+          language: "c++",
+          name: "xeus-cpp",
+        },
+      };
+
+      expect(resolveNotebookLanguage(metadata)).toBe("c++");
+      expect(resolveNotebookKernelLabel(metadata)).toBe("C++ 17");
+    });
+
+    it("maps codemirror mode and unknown notebook languages to supported editor languages", () => {
+      expect(resolveNotebookCodeEditorLanguage("python")).toBe("python");
+      expect(resolveNotebookCodeEditorLanguage("python", "javascript")).toBe("javascript");
+      expect(resolveNotebookCodeEditorLanguage("c++")).toBe("cpp");
+      expect(resolveNotebookCodeEditorLanguage("r")).toBe("plaintext");
     });
   });
 
@@ -109,10 +145,48 @@ describe("notebook-utils", () => {
       expect(state.cells[0].cell_type).toBe("code");
     });
 
-    it("should handle invalid JSON gracefully", () => {
+    it("should preserve invalid JSON as a raw cell instead of silently replacing the notebook", () => {
       const state = parseNotebook("invalid json");
       expect(state.cells).toHaveLength(1);
+      expect(state.cells[0].cell_type).toBe("raw");
+      expect(state.cells[0].source).toBe("invalid json");
       expect(state.nbformat).toBe(4);
+    });
+
+    it("should preserve non-notebook JSON as a raw cell", () => {
+      const state = parseNotebook(JSON.stringify({ hello: "world" }));
+
+      expect(state.cells).toHaveLength(1);
+      expect(state.cells[0].cell_type).toBe("raw");
+      expect(state.cells[0].source).toContain('"hello": "world"');
+      expect(state.activeCellId).toBe(state.cells[0].id);
+    });
+
+    it("should locally degrade invalid editable cells without throwing", () => {
+      const json = JSON.stringify({
+        cells: [
+          { cell_type: "code", source: 123, metadata: null },
+          { cell_type: "unknown", source: ["raw fallback"], metadata: {} },
+          null,
+          { cell_type: "markdown", source: ["# Good\n", "cell"], metadata: {} },
+        ],
+        metadata: {},
+        nbformat: 4,
+        nbformat_minor: 5,
+      });
+
+      const state = parseNotebook(json);
+
+      expect(state.cells).toHaveLength(4);
+      expect(state.cells[0].cell_type).toBe("raw");
+      expect(state.cells[0].source).toBe("123");
+      expect(state.cells[0].metadata).toEqual({});
+      expect(state.cells[1].cell_type).toBe("raw");
+      expect(state.cells[1].source).toBe("raw fallback");
+      expect(state.cells[2].cell_type).toBe("raw");
+      expect(state.cells[2].source).toContain("Invalid notebook cell");
+      expect(state.cells[3].cell_type).toBe("markdown");
+      expect(state.cells[3].source).toBe("# Good\ncell");
     });
   });
 

@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 
 export interface MathSymbolPaletteProps {
   /** Callback when user clicks a symbol */
@@ -296,14 +297,13 @@ export function MathSymbolPalette({ onInsert, onClose, isOpen }: MathSymbolPalet
   return (
     <div
       ref={paletteRef}
-      className="math-symbol-palette"
+      className={`math-symbol-palette ${UI_LAYER_CLASS.dialogElevated}`}
       style={{
         position: "fixed",
         right: "20px",
         top: "96px",
         width: "360px",
         maxHeight: "min(680px, calc(100vh - 128px))",
-        zIndex: 999,
       }}
     >
       <div className="palette-container">

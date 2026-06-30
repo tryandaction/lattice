@@ -11,6 +11,8 @@ export interface PdfSearchMatch {
   page: number;
   index: number;
   normalizedIndex: number;
+  normalizedLength: number;
+  normalizedQuery: string;
   preview: string;
   rects: PdfSearchMatchRect[];
 }
@@ -95,6 +97,8 @@ export function searchPdfPageTextModel(model: PdfPageTextModel, query: string): 
       page: model.pageNumber,
       index: start,
       normalizedIndex: index,
+      normalizedLength: needle.length,
+      normalizedQuery: needle,
       preview: buildPreview(model.normalizedText, start, model.normalizedText.slice(start, end)),
       rects: buildMatchRects(model, start, end),
     });

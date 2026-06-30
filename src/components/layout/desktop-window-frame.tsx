@@ -6,6 +6,7 @@ import {
   startDesktopWindowResize,
   type DesktopResizeDirection,
 } from "@/lib/desktop-window";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 
 const RESIZE_HANDLES: Array<{
   direction: DesktopResizeDirection;
@@ -67,7 +68,7 @@ export const DesktopWindowFrame = memo(function DesktopWindowFrame() {
 
   return (
     <>
-      <div className="pointer-events-none absolute inset-0 z-[90]" aria-hidden="true">
+      <div className={`pointer-events-none absolute inset-0 ${UI_LAYER_CLASS.desktopResizeHandle}`} aria-hidden="true">
         {RESIZE_HANDLES.map((handle) => (
           <button
             key={handle.direction}

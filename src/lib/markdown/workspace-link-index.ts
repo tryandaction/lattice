@@ -37,6 +37,20 @@ export interface MarkdownRenameLinkUpdate {
 }
 
 const UNLINKED_MENTION_IGNORE_STORAGE_KEY = "lattice-markdown-unlinked-mention-ignore";
+const GENERIC_UNLINKED_MENTION_CANDIDATES = new Set([
+  "code",
+  "demo",
+  "draft",
+  "file",
+  "index",
+  "main",
+  "note",
+  "notes",
+  "paper",
+  "readme",
+  "test",
+  "untitled",
+]);
 const listeners = new Set<() => void>();
 const notesByPath = new Map<string, MarkdownIndexNote>();
 const ignoredUnlinkedMentionKeys = new Set<string>();
@@ -146,7 +160,20 @@ function getMentionCandidates(filePath: string): string[] {
   if (!basename) return [];
 
   const readable = basename.replace(/[-_]+/g, " ").trim();
-  return Array.from(new Set([basename, readable].filter((candidate) => candidate.length >= 2)));
+  return Array.from(new Set([basename, readable].filter(isMeaningfulUnlinkedMentionCandidate)));
+}
+
+function isMeaningfulUnlinkedMentionCandidate(candidate: string): boolean {
+  const normalized = candidate.trim().toLowerCase();
+  if (!normalized || GENERIC_UNLINKED_MENTION_CANDIDATES.has(normalized)) {
+    return false;
+  }
+
+  if (/\p{Script=Han}/u.test(normalized)) {
+    return normalized.length >= 2;
+  }
+
+  return normalized.replace(/[^a-z0-9]/gi, "").length >= 4;
 }
 
 function stripInlineLinkSyntax(line: string): string {

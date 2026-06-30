@@ -14,6 +14,7 @@ export type WorkbenchPanelScope = 'all' | 'current';
 export type AnnotationPanelSort = 'latest' | 'count' | 'name';
 export type SearchPanelMode = 'name_and_content' | 'file_name_only';
 export type SearchPanelSort = 'relevance' | 'name';
+export type PdfExternalLinkOpenMode = 'internal' | 'browser';
 
 export interface WindowState {
   width: number;
@@ -44,6 +45,7 @@ export interface AppSettings {
   workspaceDisplayPaths: Record<string, string>;
   rememberWindowState: boolean;
   markdownUpdateLinksOnRename: boolean;
+  pdfExternalLinkOpenMode: PdfExternalLinkOpenMode;
 
   // Workbench
   activityView: ActivityView;
@@ -98,6 +100,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   workspaceDisplayPaths: {},
   rememberWindowState: true,
   markdownUpdateLinksOnRename: false,
+  pdfExternalLinkOpenMode: 'internal',
   activityView: 'files',
   sidePanelWidth: 22,
   sidePanelCollapsed: false,

@@ -1,40 +1,46 @@
 import type { PluginManifest, PluginPermission } from './types';
+import {
+  getKnownPluginPermissions,
+  isKnownPluginPermission,
+  normalizePluginPermissions,
+} from './permission-catalog';
 
 const REQUIRED_FIELDS = ['id', 'name', 'version'] as const;
 const ID_PATTERN = /^[a-z0-9._-]+$/;
 
-const KNOWN_PERMISSIONS: PluginPermission[] = [
-  'read-current-document',
-  'read-workspace-file',
-  'clipboard-write',
-  'export-file',
-  'use-ocr',
-  'use-ai',
-  'file:read',
-  'file:write',
-  'annotations:read',
-  'annotations:write',
-  'network',
-  'ui:commands',
-  'ui:panels',
-  'ui:sidebar',
-  'ui:toolbar',
-  'ui:statusbar',
-  'editor:extensions',
-  'themes',
-  'storage',
-];
+const KNOWN_PERMISSIONS: PluginPermission[] = getKnownPluginPermissions();
 
 export interface ManifestValidationResult {
   valid: boolean;
   errors: string[];
+  warnings: string[];
   manifest?: PluginManifest;
+}
+
+function isSafeMainPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!normalized.endsWith('.js')) return false;
+  if (!normalized || normalized.includes('\0')) return false;
+  return normalized.split('/').every((part) => part.length > 0 && part !== '.' && part !== '..');
+}
+
+function collectDuplicateIds(items: Array<{ id?: string }>, label: string, errors: string[]) {
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (!item.id) continue;
+    if (seen.has(item.id)) {
+      errors.push(`Duplicate ${label} id: ${item.id}`);
+      continue;
+    }
+    seen.add(item.id);
+  }
 }
 
 export function validatePluginManifest(raw: unknown): ManifestValidationResult {
   const errors: string[] = [];
+  const warnings: string[] = [];
   if (!raw || typeof raw !== 'object') {
-    return { valid: false, errors: ['Manifest must be an object'] };
+    return { valid: false, errors: ['Manifest must be an object'], warnings };
   }
 
   const manifest = raw as PluginManifest;
@@ -49,10 +55,23 @@ export function validatePluginManifest(raw: unknown): ManifestValidationResult {
   }
 
   if (manifest.permissions) {
-    const invalid = manifest.permissions.filter((p) => !KNOWN_PERMISSIONS.includes(p));
+    const invalid = manifest.permissions.filter((p) => !isKnownPluginPermission(p));
     if (invalid.length > 0) {
       errors.push(`Unknown permissions: ${invalid.join(', ')}`);
     }
+    const normalized = normalizePluginPermissions(manifest.permissions.filter((p) => KNOWN_PERMISSIONS.includes(p)));
+    if (normalized.length !== manifest.permissions.filter((p) => KNOWN_PERMISSIONS.includes(p)).length) {
+      const duplicatePermissions = manifest.permissions.filter((permission, index) => (
+        manifest.permissions?.indexOf(permission) !== index && KNOWN_PERMISSIONS.includes(permission)
+      ));
+      warnings.push(`Duplicate permissions were removed: ${normalizePluginPermissions(duplicatePermissions).join(', ')}`);
+    }
+    manifest.permissions = normalized;
+  }
+
+  const mainPath = manifest.main || manifest.entry;
+  if (mainPath && (!isSafeMainPath(mainPath))) {
+    errors.push('Main entry must be a relative .js file path inside the plugin package');
   }
 
   const panels = [
@@ -69,10 +88,13 @@ export function validatePluginManifest(raw: unknown): ManifestValidationResult {
       }
     }
   }
+  collectDuplicateIds(manifest.contributes?.commands ?? [], 'command', errors);
+  collectDuplicateIds(panels, 'panel', errors);
 
   return {
     valid: errors.length === 0,
     errors,
+    warnings,
     manifest: errors.length === 0 ? manifest : undefined,
   };
 }

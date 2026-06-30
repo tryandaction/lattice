@@ -7,7 +7,7 @@ import dynamic from "next/dynamic";
 import type { PaneId } from "@/stores/workspace-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { normalizeScientificText } from "@/lib/markdown-converter";
-import { navigateLink } from "@/lib/link-router/navigate-link";
+import { navigateLinkWithFeedback } from "@/lib/link-router/navigate-link-with-feedback";
 import { findClosestAnchorHref, shouldOpenLinkExternally } from "@/lib/link-router/link-click";
 import { t } from "@/lib/i18n";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
@@ -629,7 +629,7 @@ export function UniversalFileViewer({
   filePath,
 }: UniversalFileViewerProps) {
   const handleNavigateToFile = useCallback(async (target: string) => {
-    const success = await navigateLink(target, {
+    const success = await navigateLinkWithFeedback(target, {
       paneId,
       rootHandle,
       currentFilePath: filePath,
@@ -647,7 +647,7 @@ export function UniversalFileViewer({
 
     event.preventDefault();
     event.stopPropagation();
-    void navigateLink(href, {
+    void navigateLinkWithFeedback(href, {
       paneId,
       rootHandle,
       currentFilePath: filePath,

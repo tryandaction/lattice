@@ -17,6 +17,8 @@ import {
   updateExportToast,
 } from "@/components/ui/export-toast";
 import { useI18n } from "@/hooks/use-i18n";
+import { cn } from "@/lib/utils";
+import { UI_MODAL_OVERLAY_CLASS, UI_MODAL_OVERLAY_STYLE, UI_MODAL_PANEL_CLASS } from "@/lib/ui-layers";
 
 interface MarkdownExportDialogProps {
   isOpen: boolean;
@@ -303,24 +305,34 @@ export function MarkdownExportDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-[180] flex items-start justify-center overflow-y-auto bg-black/50 px-4 pb-4 pt-6 md:pt-20" onClick={onClose}>
+    <div
+      className={cn(
+        UI_MODAL_OVERLAY_CLASS,
+        "flex items-start justify-center overflow-y-auto px-3 pb-4 pt-4 md:px-4 md:pt-10",
+      )}
+      style={UI_MODAL_OVERLAY_STYLE}
+      onClick={onClose}
+    >
       <div
-        className="flex w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="markdown-export-dialog-title"
+        className={cn("flex w-full max-w-5xl flex-col overflow-hidden rounded-xl max-h-[calc(100vh-2rem)]", UI_MODAL_PANEL_CLASS)}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+        <div className="flex items-start justify-between border-b border-border px-5 py-4">
           <div className="space-y-1">
-            <h2 className="text-xl font-semibold">{texts.title}</h2>
-            <p className="text-sm text-muted-foreground">{texts.subtitle}</p>
+            <h2 id="markdown-export-dialog-title" className="text-lg font-semibold">{texts.title}</h2>
+            <p className="max-w-3xl text-sm text-muted-foreground">{texts.subtitle}</p>
           </div>
           <Button variant="ghost" size="icon" onClick={onClose}>
             <X className="h-4 w-4" />
           </Button>
         </div>
 
-        <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto px-6 py-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] xl:overflow-hidden">
-          <div className="grid gap-6 pr-1 xl:min-h-0 xl:overflow-y-auto">
-            <section className="space-y-3 rounded-xl border border-border p-4">
+        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-5 py-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(380px,1.05fr)] xl:overflow-hidden">
+          <div className="grid gap-4 pr-1 xl:min-h-0 xl:overflow-y-auto">
+            <section className="space-y-3 rounded-lg border border-border bg-card/40 p-3">
               <div className="flex items-center gap-2">
                 <TextCursorInput className="h-4 w-4" />
                 <div>
@@ -332,7 +344,7 @@ export function MarkdownExportDialog({
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
                 placeholder={texts.exportTitlePlaceholder}
-                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary"
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary"
               />
             </section>
 
@@ -350,7 +362,7 @@ export function MarkdownExportDialog({
                     key={option.value}
                     type="button"
                     onClick={() => setFormat(option.value)}
-                    className={`rounded-xl border p-4 text-left transition-colors ${
+                    className={`rounded-lg border p-3 text-left transition-colors ${
                       active ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"
                     }`}
                   >
@@ -366,7 +378,7 @@ export function MarkdownExportDialog({
           </section>
 
           <section className="grid gap-4 md:grid-cols-[1.2fr_1fr]">
-            <div className="space-y-3 rounded-xl border border-border p-4">
+            <div className="space-y-3 rounded-lg border border-border bg-card/40 p-3">
               <div>
                 <h3 className="text-sm font-medium">{texts.annotationTitle}</h3>
                 <p className="text-xs text-muted-foreground">{texts.annotationDetected}</p>
@@ -393,7 +405,7 @@ export function MarkdownExportDialog({
                       type="button"
                       disabled={!annotationsEnabled && option.value !== "clean"}
                       onClick={() => setAnnotationMode(option.value)}
-                      className={`rounded-xl border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                      className={`rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                         active ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"
                       }`}
                     >
@@ -408,7 +420,7 @@ export function MarkdownExportDialog({
               </div>
             </div>
 
-            <div className="space-y-4 rounded-xl border border-border p-4">
+            <div className="space-y-4 rounded-lg border border-border bg-card/40 p-3">
               <div>
                 <h3 className="text-sm font-medium">{texts.visualTitle}</h3>
                 <p className="text-xs text-muted-foreground">{texts.visualHint}</p>
@@ -418,7 +430,7 @@ export function MarkdownExportDialog({
                 <button
                   type="button"
                   onClick={() => setVisualMode("document")}
-                  className={`rounded-xl border p-3 text-left transition-colors ${
+                  className={`rounded-lg border p-3 text-left transition-colors ${
                     visualMode === "document" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"
                   }`}
                 >
@@ -428,7 +440,7 @@ export function MarkdownExportDialog({
                 <button
                   type="button"
                   onClick={() => setVisualMode("rendered")}
-                  className={`rounded-xl border p-3 text-left transition-colors ${
+                  className={`rounded-lg border p-3 text-left transition-colors ${
                     visualMode === "rendered" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"
                   }`}
                 >
@@ -437,23 +449,23 @@ export function MarkdownExportDialog({
                 </button>
               </div>
 
-              <div className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
-                <p>{texts.currentFile}：{fileName}</p>
-                <p>{texts.outputMode}：{format.toUpperCase()} / {effectiveMode} / {visualMode}</p>
-                <p>{texts.documentTitle}：{title || texts.notSet}</p>
+              <div className="rounded-lg bg-muted/45 p-3 text-sm text-muted-foreground">
+                <p>{texts.currentFile}: {fileName}</p>
+                <p>{texts.outputMode}: {format.toUpperCase()} / {effectiveMode} / {visualMode}</p>
+                <p>{texts.documentTitle}: {title || texts.notSet}</p>
                 <p>{texts.exportModelHint}</p>
               </div>
             </div>
           </section>
 
           {error ? (
-            <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
               {error}
             </div>
           ) : null}
           </div>
 
-          <section className="flex min-h-[420px] flex-col rounded-xl border border-border bg-muted/20 xl:min-h-0">
+          <section className="flex min-h-[420px] flex-col rounded-lg border border-border bg-muted/20 xl:min-h-0">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <div className="flex items-center gap-2">
                 <Eye className="h-4 w-4" />
@@ -483,7 +495,7 @@ export function MarkdownExportDialog({
                   title={texts.previewTitle}
                   sandbox=""
                   srcDoc={previewHtml}
-                  className="h-full w-full rounded-b-xl bg-white"
+                  className="h-full w-full rounded-b-lg bg-white"
                 />
               ) : (
                 <div className="flex h-full items-center justify-center px-6 text-sm text-muted-foreground">
@@ -494,7 +506,7 @@ export function MarkdownExportDialog({
           </section>
         </div>
 
-        <div className="flex items-center justify-between border-t border-border px-6 py-4">
+        <div className="flex items-center justify-between border-t border-border px-5 py-3">
           <p className="text-xs text-muted-foreground">
             {annotationsCount === 0
               ? texts.noAnnotations

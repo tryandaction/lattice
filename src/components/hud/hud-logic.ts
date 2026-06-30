@@ -3,12 +3,76 @@
  * Separates business logic from React components
  */
 
-import { quantumKeymap, getDisplaySymbol, hasVariants } from '../../config/quantum-keymap';
+import {
+  quantumKeymap,
+  getDisplaySymbol,
+  hasVariants,
+  type QuantumKeyMeaning,
+  type QuantumLayerId,
+} from '../../config/quantum-keymap';
+import {
+  getEffectiveQuantumLayerMeanings,
+  getEffectiveQuantumMeaning,
+  type QuantumKeymapOverrides,
+} from '../../stores/quantum-keymap-store';
 
 export interface KeySelectionResult {
   action: 'insert' | 'open-variant-menu' | 'ignore';
   symbol?: string;
   keyCode?: string;
+}
+
+export interface QuantumInputState {
+  keyCode: string;
+  shiftKey: boolean;
+  ctrlKey: boolean;
+  candidatePrefix: number | null;
+}
+
+export interface QuantumInputResult {
+  action: 'insert' | 'ignore';
+  latex?: string;
+  meaning?: QuantumKeyMeaning;
+  keyCode?: string;
+  layer?: QuantumLayerId;
+  index?: number;
+}
+
+function resolveLayer(input: QuantumInputState): QuantumLayerId {
+  return input.ctrlKey ? 'ctrl' : 'base';
+}
+
+function resolveCandidateIndex(
+  input: QuantumInputState,
+  layer: QuantumLayerId,
+  overrides?: QuantumKeymapOverrides,
+): number {
+  const meanings = getEffectiveQuantumLayerMeanings(input.keyCode, layer, overrides);
+  if (meanings.length === 0) return 1;
+  const requested = input.candidatePrefix ?? 1;
+  return Math.max(1, Math.min(Math.trunc(requested), meanings.length));
+}
+
+export function resolveQuantumKeyboardInput(
+  input: QuantumInputState,
+  overrides?: QuantumKeymapOverrides,
+): QuantumInputResult {
+  const layer = resolveLayer(input);
+  const index = resolveCandidateIndex(input, layer, overrides);
+  const meaning = getEffectiveQuantumMeaning(input.keyCode, layer, index, overrides);
+
+  if (!meaning) {
+    return { action: 'ignore' };
+  }
+
+  return {
+    action: 'insert',
+    latex: meaning.latex,
+    meaning,
+    keyCode: input.keyCode,
+    layer,
+    index,
+  };
 }
 
 /**

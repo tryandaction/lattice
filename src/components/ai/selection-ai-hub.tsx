@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bot, History, ListTodo, Loader2, MessageSquare, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useI18n } from "@/hooks/use-i18n";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useSelectionAiStore } from "@/stores/selection-ai-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -10,17 +11,18 @@ import { usePromptTemplateStore } from "@/stores/prompt-template-store";
 import type { SelectionAiMode, SelectionContext } from "@/lib/ai/selection-context";
 import { defaultPromptForSelectionMode } from "@/lib/ai/selection-context";
 import { runSelectionAiMode } from "@/lib/ai/selection-actions";
-import { getSelectionModeMeta } from "@/lib/ai/selection-ui";
+import { buildSelectionOrigin, getSelectionModeMeta } from "@/lib/ai/selection-ui";
 import type { AiRuntimeSettings } from "@/lib/ai/types";
 import type { PromptTemplate } from "@/lib/prompt/types";
-import { buildSelectionOrigin } from "@/lib/ai/selection-ui";
 import { buildSelectionPromptContextValues } from "@/lib/prompt/context-builders";
 import { executePromptTemplateForSurface } from "@/lib/prompt/surface-actions";
+import { localizePromptTemplates } from "@/lib/prompt/builtin-templates";
 import { PromptPicker } from "@/components/prompt/prompt-picker";
 import { PromptEditorDialog } from "@/components/prompt/prompt-editor-dialog";
 import { PromptRunSheet } from "@/components/prompt/prompt-run-sheet";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 
 interface SelectionAiHubProps {
   context: SelectionContext | null;
@@ -62,6 +64,7 @@ function toRuntimeSettings(settings: ReturnType<typeof useSettingsStore.getState
 }
 
 export function SelectionAiHub({ context, initialMode = null, returnFocusTo, runMode, onClose }: SelectionAiHubProps) {
+  const { locale, t } = useI18n();
   const settings = useSettingsStore((state) => state.settings);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
@@ -99,20 +102,20 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
   );
   const initialHubMode = initialMode ?? preferredMode;
 
-  const modeMeta = getSelectionModeMeta(mode);
+  const modeMeta = getSelectionModeMeta(mode, locale);
   const placeholder = useMemo(() => {
     if (!context) return "";
-    return defaultPromptForSelectionMode(mode, context);
-  }, [context, mode]);
+    return defaultPromptForSelectionMode(mode, context, locale);
+  }, [context, locale, mode]);
 
   const filteredRecentPrompts = useMemo(
     () => recentPrompts.filter((item) => item.mode === mode).slice(0, 4),
     [mode, recentPrompts],
   );
   const selectionTemplates = useMemo(
-    () =>
-      getTemplatesForSurface("selection").filter((template) => templateMatchesMode(mode, template)),
-    [getTemplatesForSurface, mode],
+    () => localizePromptTemplates(getTemplatesForSurface("selection"), locale)
+      .filter((template) => templateMatchesMode(mode, template)),
+    [getTemplatesForSurface, locale, mode],
   );
 
   useEffect(() => {
@@ -143,6 +146,23 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
     setPreferredMode(nextMode);
   }, [setPreferredMode]);
 
+  const closeAndRestoreFocus = useCallback(() => {
+    onClose();
+    returnFocusTo?.focus?.();
+  }, [onClose, returnFocusTo]);
+
+  const showRunSuccess = useCallback((kind: "chat" | "draft" | "proposal") => {
+    if (kind === "proposal") {
+      toast.success(t("ai.selection.toast.proposalCreated"));
+      return;
+    }
+    if (kind === "draft") {
+      toast.success(t("prompt.run.toast.draftCreated"));
+      return;
+    }
+    toast.success(mode === "agent" ? t("ai.selection.toast.agentStarted") : t("ai.selection.toast.quickSent"));
+  }, [mode, t]);
+
   const handleSubmit = useCallback(async () => {
     if (!context || isRunning) {
       return;
@@ -166,6 +186,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
         mode,
         prompt,
         settings: toRuntimeSettings(settings),
+        locale,
       });
 
       if (prompt.trim()) {
@@ -173,33 +194,29 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
       }
       setPreferredMode(mode);
 
-      toast.success(
-        result.kind === "proposal" ? "已生成整理计划" : mode === "agent" ? "已启动深度分析" : "已发送到快速问答",
-        {
-          description: result.title,
-        },
-      );
-      onClose();
-      returnFocusTo?.focus?.();
+      showRunSuccess(result.kind === "proposal" ? "proposal" : "chat");
+      closeAndRestoreFocus();
     } catch (error) {
-      toast.error("AI 执行失败", {
+      toast.error(t("ai.selection.toast.failed"), {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
       setIsRunning(false);
     }
   }, [
+    closeAndRestoreFocus,
     context,
     isRunning,
+    locale,
     mode,
-    onClose,
     promptByMode,
-    selectedTemplateByMode,
     rememberPrompt,
-    returnFocusTo,
     runMode,
+    selectedTemplateByMode,
     setPreferredMode,
     settings,
+    showRunSuccess,
+    t,
   ]);
 
   const handlePromptTemplateConfirm = useCallback(async (payload: {
@@ -231,6 +248,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
         query: payload.renderedPrompt,
         explicitEvidenceRefs: context.evidenceRefs,
         origin,
+        locale,
       });
 
       if (payload.renderedPrompt.trim()) {
@@ -238,28 +256,29 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
       }
       setPreferredMode(mode);
 
-      toast.success(
-        result.kind === "proposal"
-          ? "已生成整理计划"
-          : result.kind === "draft"
-            ? "已生成草稿"
-            : mode === "agent"
-              ? "已启动深度分析"
-              : "已发送到快速问答",
-        {
-          description: result.title,
-        },
-      );
-      onClose();
-      returnFocusTo?.focus?.();
+      showRunSuccess(result.kind);
+      closeAndRestoreFocus();
     } catch (error) {
-      toast.error("AI 执行失败", {
+      toast.error(t("ai.selection.toast.failed"), {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
       setIsRunning(false);
     }
-  }, [context, mode, onClose, promptRunState, rememberPrompt, returnFocusTo, setPreferredMode, settings, workspaceKey, workspaceRootPath]);
+  }, [
+    closeAndRestoreFocus,
+    context,
+    locale,
+    mode,
+    promptRunState,
+    rememberPrompt,
+    setPreferredMode,
+    settings,
+    showRunSuccess,
+    t,
+    workspaceKey,
+    workspaceRootPath,
+  ]);
 
   useEffect(() => {
     if (!context) return;
@@ -267,8 +286,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
-        returnFocusTo?.focus?.();
+        closeAndRestoreFocus();
         return;
       }
 
@@ -294,18 +312,26 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [context, handleModeChange, handleSubmit, onClose, returnFocusTo]);
+  }, [closeAndRestoreFocus, context, handleModeChange, handleSubmit]);
 
   if (!context) {
     return null;
   }
 
+  const selectedTemplate = selectedTemplateByMode[mode];
+  const promptHint = selectedTemplate
+    ? t("ai.selection.promptHint.templateSelected")
+    : t("ai.selection.promptHint.default");
+
   return (
     <aside
-      className="fixed inset-y-0 right-0 z-[185] flex w-full max-w-[34rem] flex-col border-l border-border bg-background shadow-2xl sm:w-[min(34rem,calc(100vw-4rem))]"
+      className={cn(
+        "fixed inset-y-0 right-0 flex w-full max-w-[34rem] flex-col border-l border-border bg-background shadow-2xl sm:w-[min(34rem,calc(100vw-4rem))]",
+        UI_LAYER_CLASS.dialogElevated,
+      )}
       role="dialog"
       aria-modal="false"
-      aria-label="Selection AI side panel"
+      aria-label={t("ai.selection.aria")}
       data-testid="selection-ai-dock"
     >
       <PromptPicker
@@ -349,20 +375,15 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
       <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
         <div className="flex items-start justify-between border-b border-border px-4 py-4">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Selection AI Hub</div>
-            <h2 className="mt-1 text-xl font-semibold">{context.sourceLabel}</h2>
+            <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+              {t("ai.selection.title")}
+            </div>
+            <h2 className="mt-1 text-xl font-semibold text-foreground">{context.sourceLabel}</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              {context.contextSummary ?? "围绕当前选区发起快速问答、深度分析或直接生成整理计划。"}
+              {context.contextSummary ?? t("ai.selection.defaultSummary")}
             </p>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => {
-              onClose();
-              returnFocusTo?.focus?.();
-            }}
-          >
+          <Button variant="ghost" size="icon" onClick={closeAndRestoreFocus} aria-label={t("common.close")}>
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -371,9 +392,9 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
           <div className="space-y-4">
             <div className="rounded-2xl border border-border bg-muted/20 p-4">
               <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-                <span>Selected Text</span>
+                <span>{t("ai.selection.selectedText")}</span>
                 <span className="rounded-full bg-background px-2 py-0.5 normal-case text-[11px] text-foreground">
-                  {context.evidenceRefs.length} 个 evidence
+                  {t("ai.selection.evidenceCount", { count: context.evidenceRefs.length })}
                 </span>
                 {context.anchor?.blockLabel && (
                   <span className="rounded-full bg-background px-2 py-0.5 normal-case text-[11px] text-foreground">
@@ -388,7 +409,9 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
 
             {context.contextText && (
               <div className="rounded-2xl border border-border bg-background p-4">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Local Context</div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  {t("ai.selection.localContext")}
+                </div>
                 <div className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
                   {context.contextText}
                 </div>
@@ -399,7 +422,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-2">
               {MODE_ORDER.map((candidate) => {
-                const meta = getSelectionModeMeta(candidate);
+                const meta = getSelectionModeMeta(candidate, locale);
                 const Icon = MODE_ICONS[candidate];
                 const active = mode === candidate;
                 return (
@@ -436,24 +459,24 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
                 {modeMeta.description}
               </p>
               <div className="mt-2 rounded-xl bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
-                执行去向：{modeMeta.executionTarget}
+                {t("ai.selection.executionTarget", { target: modeMeta.executionTarget })}
               </div>
             </div>
 
             <div className="rounded-2xl border border-border p-4">
               <div className="flex items-center justify-between gap-2">
-                <div className="text-sm font-medium">Prompt Templates</div>
+                <div className="text-sm font-medium">{t("prompt.picker.title")}</div>
                 <button
                   type="button"
                   onClick={() => setPromptPickerOpen(true)}
                   className="rounded-full border border-border bg-background px-3 py-1.5 text-[11px] text-foreground hover:bg-accent"
                 >
-                  选择模板
+                  {t("ai.selection.chooseTemplate")}
                 </button>
               </div>
-              {selectedTemplateByMode[mode] && (
+              {selectedTemplate && (
                 <div className="mt-3 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
-                  当前模板：{selectedTemplateByMode[mode]?.title}
+                  {t("ai.selection.currentTemplate", { title: selectedTemplate.title })}
                 </div>
               )}
               <div className="mt-2 flex flex-wrap gap-2">
@@ -464,7 +487,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
                     onClick={() => setSelectedTemplateByMode((current) => ({ ...current, [mode]: template }))}
                     className={cn(
                       "rounded-full border px-3 py-1.5 text-[11px]",
-                      selectedTemplateByMode[mode]?.id === template.id
+                      selectedTemplate?.id === template.id
                         ? "border-primary bg-primary/10 text-primary"
                         : "border-border bg-background text-foreground hover:bg-accent",
                     )}
@@ -478,7 +501,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
             <div className="rounded-2xl border border-border p-4">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <History className="h-4 w-4 text-muted-foreground" />
-                <span>Recent Prompts</span>
+                <span>{t("ai.selection.recentPrompts")}</span>
               </div>
               {filteredRecentPrompts.length > 0 ? (
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -495,22 +518,22 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
                 </div>
               ) : (
                 <p className="mt-2 text-xs text-muted-foreground">
-                  当前模式还没有最近使用的提示。成功提交后的非空 prompt 会自动记录在这里。
+                  {t("ai.selection.noRecentPrompts")}
                 </p>
               )}
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">你的问题 / 指令</label>
+              <label className="text-sm font-medium">{t("ai.selection.inputLabel")}</label>
               <textarea
                 ref={textareaRef}
                 value={promptByMode[mode]}
                 onChange={(event) => setPromptByMode((current) => ({ ...current, [mode]: event.target.value }))}
-                placeholder={selectedTemplateByMode[mode]?.title ? `可选：补充对模板的额外要求` : placeholder}
-                className="min-h-[180px] w-full rounded-2xl border border-border bg-background px-3 py-3 text-sm outline-none transition-colors focus:border-primary"
+                placeholder={selectedTemplate ? t("ai.selection.templateInstructionPlaceholder") : placeholder}
+                className="min-h-[180px] w-full rounded-2xl border border-border bg-background px-3 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary"
               />
               <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span>{selectedTemplateByMode[mode] ? "已选择模板，输入内容会作为补充说明。" : "留空会使用当前模式默认提示。"} Alt+1/2/3 切模式，Ctrl/Cmd+Enter 提交。</span>
+                <span>{promptHint} {t("ai.selection.shortcutHint")}</span>
                 <span>{modeMeta.executionTarget}</span>
               </div>
             </div>
@@ -519,19 +542,16 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
 
         <div className="flex items-center justify-between border-t border-border px-4 py-3">
           <div className="text-xs text-muted-foreground">
-            当前模式：{modeMeta.label}
+            {t("ai.selection.currentMode", { mode: modeMeta.label })}
           </div>
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
-              onClick={() => {
-                onClose();
-                returnFocusTo?.focus?.();
-              }}
+              onClick={closeAndRestoreFocus}
               disabled={isRunning}
               data-testid="selection-ai-cancel"
             >
-              取消
+              {t("common.cancel")}
             </Button>
             <Button onClick={() => void handleSubmit()} disabled={isRunning} data-testid="selection-ai-submit">
               {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}

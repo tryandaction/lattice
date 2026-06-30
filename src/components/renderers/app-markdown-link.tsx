@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, type ComponentPropsWithoutRef, type ReactNode } from "react";
-import { navigateLink } from "@/lib/link-router/navigate-link";
+import { navigateLinkWithFeedback } from "@/lib/link-router/navigate-link-with-feedback";
 import { parseLinkTarget } from "@/lib/link-router/parse-link-target";
 import type { PaneId } from "@/types/layout";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -48,7 +48,7 @@ export function AppMarkdownLink({
         event.preventDefault();
         event.stopPropagation();
         anchorProps.onClick?.(event);
-        void navigateLink(href, {
+        void navigateLinkWithFeedback(href, {
           paneId: effectivePaneId,
           rootHandle: effectiveRootHandle,
           currentFilePath,

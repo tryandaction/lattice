@@ -2,10 +2,10 @@
  * HUD State Store
  * Manages the global state for the Quantum Keyboard HUD
  * 
- * Smart Positioning:
- * - Tracks cursor/math field position in viewport
- * - Automatically positions keyboard to avoid blocking input
- * - Supports user drag customization
+ * Stable positioning:
+ * - Opens near top or bottom center based on the last focus/click point
+ * - Does not chase the caret while open
+ * - Supports persisted user drag customization
  */
 
 import { create } from 'zustand';
@@ -22,6 +22,11 @@ export type HUDPosition = 'top' | 'bottom' | 'auto';
 export interface HUDCoordinates {
   x: number;
   y: number;
+}
+
+export interface HUDSize {
+  width: number;
+  height: number;
 }
 
 /** Simplified cursor position info (serializable) */
@@ -48,6 +53,7 @@ export interface HUDState {
   customOffset: HUDCoordinates | null;
   isDragging: boolean;
   cursorPosition: CursorPosition | null;
+  hudSize: HUDSize;
   
   // Computed
   mode: HUDMode;
@@ -69,24 +75,117 @@ export interface HUDState {
   setCustomOffset: (offset: HUDCoordinates | null) => void;
   setIsDragging: (isDragging: boolean) => void;
   updateCursorPosition: (rect: DOMRect | null) => void;
+  updateHUDSize: (size: HUDSize) => void;
   resetPosition: () => void;
   
   // Utility
   getCurrentSymbols: () => string[];
   getHighlightedSymbol: () => string | null;
   getTotalItems: () => number;
-  computeOptimalPosition: () => { side: 'top' | 'bottom'; topPx: number; leftPx: number };
+  computeOptimalPosition: () => SafeHUDPosition;
 }
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const HUD_HEIGHT = 360;
-const HUD_MAX_WIDTH = 760;
-const HUD_MARGIN = 14;
+const DEFAULT_HUD_SIZE: HUDSize = { width: 500, height: 178 };
+const HUD_MAX_WIDTH = 500;
+const HUD_MIN_WIDTH = 320;
+const HUD_MARGIN = 8;
 const VIEWPORT_PADDING = 12;
 const POSITION_STORAGE_KEY = 'lattice-quantum-keyboard-position';
+
+export interface HUDViewport {
+  width: number;
+  height: number;
+}
+
+export interface SafeHUDPosition {
+  side: 'top' | 'bottom';
+  topPx: number;
+  leftPx: number;
+  widthPx: number;
+  heightPx: number;
+  maxHeightPx: number;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (max < min) return min;
+  return Math.max(min, Math.min(value, max));
+}
+
+export function getSafeHUDWidth(viewportWidth: number): number {
+  const available = Math.max(HUD_MIN_WIDTH, viewportWidth - VIEWPORT_PADDING * 2);
+  return Math.min(HUD_MAX_WIDTH, available, DEFAULT_HUD_SIZE.width);
+}
+
+export function computeSafeHUDPosition({
+  cursorPosition,
+  hudSize,
+  viewport,
+  position,
+}: {
+  cursorPosition: CursorPosition | null;
+  hudSize: HUDSize;
+  viewport: HUDViewport;
+  position: HUDPosition;
+}): SafeHUDPosition {
+  const widthPx = getSafeHUDWidth(viewport.width);
+  const maxHeightPx = Math.max(DEFAULT_HUD_SIZE.height, viewport.height - VIEWPORT_PADDING * 2);
+  const heightPx = Math.min(Math.max(40, hudSize.height || DEFAULT_HUD_SIZE.height), maxHeightPx);
+  const clampTop = (top: number) => clamp(top, VIEWPORT_PADDING, viewport.height - heightPx - VIEWPORT_PADDING);
+  const clampLeft = (left: number) => clamp(left, VIEWPORT_PADDING, viewport.width - widthPx - VIEWPORT_PADDING);
+  const centerLeft = clampLeft((viewport.width - widthPx) / 2);
+  const topDock = VIEWPORT_PADDING;
+  const bottomDock = viewport.height - heightPx - VIEWPORT_PADDING;
+
+  if (!cursorPosition) {
+    const fallbackTop = position === 'top' ? topDock : bottomDock;
+    return {
+      side: position === 'top' ? 'top' : 'bottom',
+      topPx: clampTop(fallbackTop),
+      leftPx: centerLeft,
+      widthPx,
+      heightPx,
+      maxHeightPx,
+    };
+  }
+
+  if (position === 'top') {
+    return {
+      side: 'top',
+      topPx: clampTop(topDock),
+      leftPx: centerLeft,
+      widthPx,
+      heightPx,
+      maxHeightPx,
+    };
+  }
+
+  if (position === 'bottom') {
+    return {
+      side: 'bottom',
+      topPx: clampTop(bottomDock),
+      leftPx: centerLeft,
+      widthPx,
+      heightPx,
+      maxHeightPx,
+    };
+  }
+
+  const topDockBottom = topDock + heightPx;
+  const wouldCoverCursorFromTop = cursorPosition.top < topDockBottom + VIEWPORT_PADDING * 2;
+  const side = wouldCoverCursorFromTop ? 'bottom' : 'top';
+  return {
+    side,
+    topPx: clampTop(side === 'top' ? topDock : bottomDock),
+    leftPx: centerLeft,
+    widthPx,
+    heightPx,
+    maxHeightPx,
+  };
+}
 
 // ============================================================================
 // Position Persistence Helpers
@@ -163,6 +262,7 @@ export const useHUDStore = create<HUDState>((set, get) => ({
   customOffset: loadSavedPosition(),  // Load saved position on init
   isDragging: false,
   cursorPosition: null,
+  hudSize: DEFAULT_HUD_SIZE,
   
   // Computed mode
   get mode(): HUDMode {
@@ -302,6 +402,17 @@ export const useHUDStore = create<HUDState>((set, get) => ({
       },
     });
   },
+
+  updateHUDSize: (size: HUDSize) => {
+    const nextWidth = Number.isFinite(size.width) && size.width > 0 ? size.width : DEFAULT_HUD_SIZE.width;
+    const nextHeight = Number.isFinite(size.height) && size.height > 0 ? size.height : DEFAULT_HUD_SIZE.height;
+    set({
+      hudSize: {
+        width: nextWidth,
+        height: nextHeight,
+      },
+    });
+  },
   
   resetPosition: () => {
     set({ position: 'auto', customOffset: null });
@@ -334,74 +445,20 @@ export const useHUDStore = create<HUDState>((set, get) => ({
   },
   
   /**
-   * Compute optimal position based on cursor location
-   * Returns 'top' if keyboard should appear above cursor, 'bottom' otherwise
-   * 
-   * Decision logic (Bug 5 fix - ensure keyboard never blocks formula):
-   * 1. If user has set a fixed position (not 'auto'), use it
-   * 2. If user has dragged to a custom offset, maintain current position
-   * 3. Calculate if keyboard would overlap with the math field
-   * 4. If cursor is in bottom half of screen -> show on top
-   * 5. If not enough space below cursor -> show on top (if space above)
-   * 6. Default to bottom
+   * Compute a stable top/bottom dock. It intentionally does not follow the caret
+   * after the keyboard is open; user drag controls the custom final position.
    */
   computeOptimalPosition: () => {
     const state = get();
-    const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
-    const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024;
-    const hudWidth = Math.min(HUD_MAX_WIDTH, Math.max(320, viewportWidth - VIEWPORT_PADDING * 2));
-
-    // Helper to clamp topPx within viewport
-    const clampTop = (t: number) =>
-      Math.max(VIEWPORT_PADDING, Math.min(t, viewportHeight - HUD_HEIGHT - VIEWPORT_PADDING));
-    const clampLeft = (l: number) =>
-      Math.max(VIEWPORT_PADDING, Math.min(l, viewportWidth - hudWidth - VIEWPORT_PADDING));
-    const centerLeft = clampLeft((viewportWidth - hudWidth) / 2);
-
-    // No cursor info — fall back to fixed edges
-    if (!state.cursorPosition) {
-      if (state.position === 'top') {
-        return { side: 'top', topPx: clampTop(VIEWPORT_PADDING), leftPx: centerLeft };
-      }
-      return {
-        side: 'bottom',
-        topPx: clampTop(viewportHeight - HUD_HEIGHT - VIEWPORT_PADDING),
-        leftPx: centerLeft,
-      };
-    }
-
-    const { top: cursorTop, bottom: cursorBottom, centerX } = state.cursorPosition;
-    const leftPx = clampLeft(centerX - hudWidth / 2);
-
-    // Preferred: place HUD just below the math-field
-    const belowTop = cursorBottom + HUD_MARGIN;
-    const aboveTop = cursorTop - HUD_HEIGHT - HUD_MARGIN;
-
-    const fitsBelow = belowTop + HUD_HEIGHT + VIEWPORT_PADDING <= viewportHeight;
-    const fitsAbove = aboveTop >= VIEWPORT_PADDING;
-
-    // If user set a fixed side, honour it but still use computed pixel position
-    if (state.position === 'top') {
-      return { side: 'top', topPx: clampTop(fitsAbove ? aboveTop : VIEWPORT_PADDING), leftPx };
-    }
-    if (state.position === 'bottom') {
-      return {
-        side: 'bottom',
-        topPx: clampTop(fitsBelow ? belowTop : viewportHeight - HUD_HEIGHT - VIEWPORT_PADDING),
-        leftPx,
-      };
-    }
-
-    // Auto: prefer below, fall back to above, last resort centre
-    if (fitsBelow) {
-      return { side: 'bottom', topPx: clampTop(belowTop), leftPx };
-    }
-    if (fitsAbove) {
-      return { side: 'top', topPx: clampTop(aboveTop), leftPx };
-    }
-    // Neither fits cleanly — centre vertically
-    const centred = clampTop((viewportHeight - HUD_HEIGHT) / 2);
-    return { side: 'bottom', topPx: centred, leftPx };
+    return computeSafeHUDPosition({
+      cursorPosition: state.cursorPosition,
+      hudSize: state.hudSize,
+      viewport: {
+        width: typeof window !== 'undefined' ? window.innerWidth : 1024,
+        height: typeof window !== 'undefined' ? window.innerHeight : 800,
+      },
+      position: state.position,
+    });
   },
 }));
 

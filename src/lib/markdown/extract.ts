@@ -1,4 +1,3 @@
-import matter from "gray-matter";
 import type {
   MarkdownCallout,
   MarkdownCodeBlock,
@@ -22,16 +21,83 @@ function normalizeLineEndings(content: string): string {
   return content.replace(/\r\n?/g, "\n");
 }
 
-function parseFrontmatter(content: string): { body: string; frontmatter?: Record<string, unknown> } {
-  try {
-    const parsed = matter(content);
-    return {
-      body: normalizeLineEndings(parsed.content),
-      frontmatter: Object.keys(parsed.data).length > 0 ? parsed.data : undefined,
-    };
-  } catch {
-    return { body: normalizeLineEndings(content) };
+function parseFrontmatterScalar(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
   }
+  if (/^(true|false)$/i.test(trimmed)) return trimmed.toLowerCase() === "true";
+  if (/^(null|~)$/i.test(trimmed)) return null;
+  if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return Number(trimmed);
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    const items = trimmed
+      .slice(1, -1)
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return items.map(parseFrontmatterScalar);
+  }
+  return trimmed;
+}
+
+function parseSimpleFrontmatter(frontmatter: string): Record<string, unknown> {
+  const data: Record<string, unknown> = {};
+  const lines = frontmatter.split("\n");
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim() || line.trimStart().startsWith("#")) continue;
+    const match = line.match(/^([A-Za-z0-9_-]+):(?:\s*(.*))?$/);
+    if (!match) continue;
+
+    const key = match[1];
+    const value = match[2] ?? "";
+    if (value.trim()) {
+      data[key] = parseFrontmatterScalar(value);
+      continue;
+    }
+
+    const list: unknown[] = [];
+    let nextIndex = index + 1;
+    while (nextIndex < lines.length) {
+      const itemMatch = lines[nextIndex].match(/^\s{1,}-\s*(.*)$/);
+      if (!itemMatch) break;
+      list.push(parseFrontmatterScalar(itemMatch[1]));
+      nextIndex += 1;
+    }
+
+    if (list.length > 0) {
+      data[key] = list;
+      index = nextIndex - 1;
+    } else {
+      data[key] = "";
+    }
+  }
+
+  return data;
+}
+
+function parseFrontmatter(content: string): { body: string; frontmatter?: Record<string, unknown> } {
+  const normalized = normalizeLineEndings(content);
+  const lines = normalized.split("\n");
+  if (lines[0]?.trim() !== "---") {
+    return { body: normalized };
+  }
+
+  const closingIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+  if (closingIndex === -1) {
+    return { body: normalized };
+  }
+
+  const data = parseSimpleFrontmatter(lines.slice(1, closingIndex).join("\n"));
+  return {
+    body: lines.slice(closingIndex + 1).join("\n"),
+    frontmatter: Object.keys(data).length > 0 ? data : undefined,
+  };
 }
 
 function linesWithOffsets(content: string): LineInfo[] {

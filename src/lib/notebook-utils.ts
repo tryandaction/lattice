@@ -1,4 +1,5 @@
 import type { ExecutionPanelMeta } from "@/lib/runner/types";
+import type { CodeEditorLanguage } from "@/components/editor/codemirror/code-editor";
 
 /**
  * Jupyter Notebook Utilities
@@ -51,6 +52,7 @@ export interface JupyterMetadata {
   language_info?: {
     name: string;
     version?: string;
+    codemirror_mode?: unknown;
   };
   [key: string]: unknown;
 }
@@ -116,70 +118,124 @@ export function sourceToArray(source: string): string[] {
   return lines.map((line, i) => (i < lines.length - 1 ? line + "\n" : line));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function formatUnknownNotebookValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function createRawNotebookCell(source: string, metadata: Record<string, unknown> = {}): NotebookCell {
+  return {
+    id: generateCellId(),
+    cell_type: "raw",
+    source,
+    metadata,
+  };
+}
+
+function normalizeEditableNotebookSource(source: unknown): { source: string; valid: boolean } {
+  if (typeof source === "string") {
+    return { source, valid: true };
+  }
+  if (Array.isArray(source) && source.every((item) => typeof item === "string")) {
+    return { source: normalizeSource(source), valid: true };
+  }
+  return { source: formatUnknownNotebookValue(source), valid: false };
+}
+
+function isNotebookCellType(value: unknown): value is NotebookCell["cell_type"] {
+  return value === "markdown" || value === "code" || value === "raw";
+}
+
 /**
  * Parse a Jupyter Notebook JSON string into editor state
  */
 export function parseNotebook(jsonString: string): NotebookEditorState {
+  let parsed: unknown;
   try {
-    const notebook = JSON.parse(jsonString) as JupyterNotebook;
-    
-    const cells: NotebookCell[] = notebook.cells.map((cell) => ({
-      id: cell.id || generateCellId(),
-      cell_type: cell.cell_type,
-      source: normalizeSource(cell.source),
-      metadata: cell.metadata || {},
-      outputs: cell.outputs,
-      execution_count: cell.execution_count,
-    }));
+    parsed = JSON.parse(jsonString);
+  } catch {
+    const fallbackCell = createRawNotebookCell(jsonString, {
+      latticeInvalidNotebookReason: "invalid-json",
+    });
 
-    // Ensure at least one cell exists
-    if (cells.length === 0) {
-      cells.push({
-        id: generateCellId(),
-        cell_type: "code",
-        source: "",
-        metadata: {},
-        outputs: [],
-        execution_count: null,
+    return {
+      cells: [fallbackCell],
+      activeCellId: fallbackCell.id,
+      metadata: {},
+      nbformat: 4,
+      nbformat_minor: 5,
+    };
+  }
+
+  if (!isRecord(parsed) || !Array.isArray(parsed.cells)) {
+    const fallbackCell = createRawNotebookCell(formatUnknownNotebookValue(parsed), {
+      latticeInvalidNotebookReason: "invalid-notebook",
+    });
+    return {
+      cells: [fallbackCell],
+      activeCellId: fallbackCell.id,
+      metadata: isRecord(parsed) && isRecord(parsed.metadata) ? parsed.metadata as JupyterMetadata : {},
+      nbformat: isRecord(parsed) && typeof parsed.nbformat === "number" ? parsed.nbformat : 4,
+      nbformat_minor: isRecord(parsed) && typeof parsed.nbformat_minor === "number" ? parsed.nbformat_minor : 5,
+    };
+  }
+
+  const notebook = parsed as Record<string, unknown>;
+  const cells: NotebookCell[] = parsed.cells.map((rawCell) => {
+    if (!isRecord(rawCell)) {
+      return createRawNotebookCell("Invalid notebook cell", {
+        latticeInvalidNotebookReason: "invalid-cell",
       });
     }
 
+    const rawType = rawCell.cell_type;
+    const normalizedSource = normalizeEditableNotebookSource(rawCell.source);
+    const cellType = isNotebookCellType(rawType) && normalizedSource.valid ? rawType : "raw";
+    const metadata = isRecord(rawCell.metadata) ? rawCell.metadata : {};
+
     return {
-      cells,
-      activeCellId: cells[0]?.id || null,
-      metadata: notebook.metadata || {},
-      nbformat: notebook.nbformat || 4,
-      nbformat_minor: notebook.nbformat_minor || 5,
+      id: typeof rawCell.id === "string" ? rawCell.id : generateCellId(),
+      cell_type: cellType,
+      source: normalizedSource.source,
+      metadata,
+      ...(cellType === "code" && {
+        outputs: Array.isArray(rawCell.outputs) ? rawCell.outputs as JupyterOutput[] : [],
+        execution_count: typeof rawCell.execution_count === "number" || rawCell.execution_count === null
+          ? rawCell.execution_count
+          : null,
+      }),
     };
-  } catch {
-    // Return empty notebook on parse error
-    const defaultCell: NotebookCell = {
+  });
+
+  // Ensure at least one cell exists
+  if (cells.length === 0) {
+    cells.push({
       id: generateCellId(),
       cell_type: "code",
       source: "",
       metadata: {},
       outputs: [],
       execution_count: null,
-    };
-
-    return {
-      cells: [defaultCell],
-      activeCellId: defaultCell.id,
-      metadata: {
-        kernelspec: {
-          display_name: "Python 3",
-          language: "python",
-          name: "python3",
-        },
-        language_info: {
-          name: "python",
-          version: "3.9.0",
-        },
-      },
-      nbformat: 4,
-      nbformat_minor: 5,
-    };
+    });
   }
+
+  return {
+    cells,
+    activeCellId: cells[0]?.id || null,
+    metadata: isRecord(notebook.metadata) ? notebook.metadata as JupyterMetadata : {},
+    nbformat: typeof notebook.nbformat === "number" ? notebook.nbformat : 4,
+    nbformat_minor: typeof notebook.nbformat_minor === "number" ? notebook.nbformat_minor : 5,
+  };
 }
 
 /**
@@ -360,6 +416,35 @@ export function setActiveCell(
     ...state,
     activeCellId: cellId,
   };
+}
+
+export function resolveNotebookLanguage(metadata: JupyterMetadata | null | undefined): string {
+  return metadata?.language_info?.name?.trim()
+    || metadata?.kernelspec?.language?.trim()
+    || "python";
+}
+
+export function resolveNotebookKernelLabel(metadata: JupyterMetadata | null | undefined): string | null {
+  return metadata?.kernelspec?.display_name?.trim()
+    || metadata?.kernelspec?.name?.trim()
+    || null;
+}
+
+export function resolveNotebookCodeEditorLanguage(
+  language: string,
+  codemirrorMode?: unknown,
+): CodeEditorLanguage {
+  const mode = typeof codemirrorMode === "string" ? codemirrorMode.trim().toLowerCase() : "";
+  const normalized = (mode || language).trim().toLowerCase();
+  if (normalized === "python" || normalized === "py" || normalized === "ipython") return "python";
+  if (normalized === "javascript" || normalized === "js" || normalized === "node" || normalized === "node.js") return "javascript";
+  if (normalized === "typescript" || normalized === "ts") return "typescript";
+  if (normalized === "c") return "c";
+  if (normalized === "cpp" || normalized === "c++" || normalized === "cc" || normalized === "cxx") return "cpp";
+  if (normalized === "json") return "json";
+  if (normalized === "html" || normalized === "xml") return "html";
+  if (normalized === "markdown" || normalized === "md") return "markdown";
+  return "plaintext";
 }
 
 /**

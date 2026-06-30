@@ -1,8 +1,9 @@
 export const DESKTOP_PANEL_MIN = 16;
 export const DESKTOP_PANEL_MAX = 45;
 export const DESKTOP_AI_PANEL_DEFAULT = 28;
-export const DESKTOP_AI_PANEL_MIN = 22;
+export const DESKTOP_AI_PANEL_MIN = 18;
 export const DESKTOP_AI_PANEL_MAX = 42;
+export const DESKTOP_AI_PANEL_RESET_THRESHOLD = 52;
 export const DESKTOP_MAIN_PANEL_MIN = 24;
 
 export const clampDesktopPluginPanelSize = (value: number) =>
@@ -10,6 +11,18 @@ export const clampDesktopPluginPanelSize = (value: number) =>
 
 export const clampDesktopAiPanelSize = (value: number) =>
   Math.min(DESKTOP_AI_PANEL_MAX, Math.max(DESKTOP_AI_PANEL_MIN, value));
+
+export const normalizePersistedDesktopAiPanelSize = (value: unknown) => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DESKTOP_AI_PANEL_DEFAULT;
+  }
+
+  if (value > DESKTOP_AI_PANEL_RESET_THRESHOLD) {
+    return DESKTOP_AI_PANEL_DEFAULT;
+  }
+
+  return clampDesktopAiPanelSize(value);
+};
 
 export type DesktopRightPanelKind = "plugin" | "ai";
 
@@ -26,9 +39,32 @@ export interface DesktopWorkbenchLayout {
   sizes: number[];
 }
 
+export interface DesktopWorkbenchResizeState {
+  sidebarSize?: number;
+  pluginPanelSize?: number;
+  aiPanelSize?: number;
+}
+
 export function getDesktopSidebarMaxSize(rightPanels: DesktopWorkbenchPanel[]): number {
   const reservedRightMin = rightPanels.reduce((sum, panel) => sum + panel.minSize, 0);
   return Math.min(42, Math.max(14, 100 - DESKTOP_MAIN_PANEL_MIN - reservedRightMin));
+}
+
+export function getDesktopPluginPanelIndex(sidebarCollapsed: boolean): number {
+  return sidebarCollapsed ? 1 : 2;
+}
+
+export function getDesktopPluginResizeHandleIndex(sidebarCollapsed: boolean): number {
+  return getDesktopPluginPanelIndex(sidebarCollapsed) - 1;
+}
+
+export function getDesktopAiPanelIndex(sidebarCollapsed: boolean, showPluginPanels: boolean): number {
+  const mainPanelIndex = sidebarCollapsed ? 0 : 1;
+  return mainPanelIndex + (showPluginPanels ? 2 : 1);
+}
+
+export function getDesktopAiResizeHandleIndex(sidebarCollapsed: boolean, showPluginPanels: boolean): number {
+  return getDesktopAiPanelIndex(sidebarCollapsed, showPluginPanels) - 1;
 }
 
 function fitRightPanelsToAvailableSpace(
@@ -121,4 +157,36 @@ export function buildDesktopWorkbenchLayout(options: {
     rightPanels: fittedRightPanels,
     sizes: [sidebarSize, 100 - sidebarSize - rightTotal, ...fittedRightPanels.map((panel) => panel.size)],
   };
+}
+
+export function resolveDesktopWorkbenchResize(options: {
+  sidebarCollapsed: boolean;
+  sizes: number[];
+  rightPanels: DesktopWorkbenchPanel[];
+}): DesktopWorkbenchResizeState {
+  const next: DesktopWorkbenchResizeState = {};
+
+  if (!options.sidebarCollapsed && typeof options.sizes[0] === "number") {
+    next.sidebarSize = Math.min(
+      getDesktopSidebarMaxSize(options.rightPanels),
+      Math.max(14, options.sizes[0]),
+    );
+  }
+
+  const rightPanelStartIndex = options.sidebarCollapsed ? 1 : 2;
+  options.rightPanels.forEach((panel, index) => {
+    const size = options.sizes[rightPanelStartIndex + index];
+    if (typeof size !== "number") {
+      return;
+    }
+
+    if (panel.kind === "plugin") {
+      next.pluginPanelSize = clampDesktopPluginPanelSize(size);
+      return;
+    }
+
+    next.aiPanelSize = clampDesktopAiPanelSize(size);
+  });
+
+  return next;
 }

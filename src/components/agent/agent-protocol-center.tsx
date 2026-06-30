@@ -33,9 +33,11 @@ import {
   type AgentCoworkInboxWorkspaceRisk,
 } from "@/lib/ai/agent-cowork-inbox-view-model";
 import { focusAgentSession } from "@/lib/ai/agent-session-focus";
+import type { TranslationKey } from "@/lib/i18n";
 import { findPane, getAllPaneIds } from "@/lib/layout-utils";
 import { useAgentSessionStore } from "@/stores/agent-session-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useI18n } from "@/hooks/use-i18n";
 import type { LayoutNode, TabState } from "@/types/layout";
 
 type ProtocolStatus = "pending" | "in_progress" | "completed";
@@ -138,19 +140,129 @@ const DECISION_STORAGE_KEY = "lattice-agent-protocol-decisions-v1";
 const CURRENT_VALIDATION_STORAGE_KEY = "lattice-agent-protocol-current-validation-recorded-v1";
 const CURRENT_VALIDATION_RECORD_ID = "agent-protocol-desktop-build-20260603";
 
-const STATUS_LABELS: Record<ProtocolStatus, string> = {
+const STATUS_LABEL_KEYS: Record<ProtocolStatus, TranslationKey> = {
+  pending: "agentProtocol.status.pending",
+  in_progress: "agentProtocol.status.inProgress",
+  completed: "agentProtocol.status.completed",
+};
+const DEFAULT_STATUS_LABELS: Record<ProtocolStatus, string> = {
   pending: "未开始",
   in_progress: "进行中",
   completed: "已完成",
 };
 
 const STATUS_ORDER: ProtocolStatus[] = ["pending", "in_progress", "completed"];
-const WORKSPACE_TABS: Array<{ id: WorkspaceTab; label: string; description: string }> = [
-  { id: "execution", label: "执行", description: "任务上下文、阶段追踪和收尾门禁" },
-  { id: "evidence", label: "证据", description: "验证证据沉淀、筛选和编辑" },
-  { id: "decisions", label: "决策", description: "技术决策记录和影响追踪" },
-  { id: "handoff", label: "交接", description: "报告、危险操作确认和协议预览" },
-];
+const WORKSPACE_TAB_LABEL_KEYS: Record<WorkspaceTab, { label: TranslationKey; description: TranslationKey }> = {
+  execution: {
+    label: "agentProtocol.tab.execution",
+    description: "agentProtocol.tab.execution.description",
+  },
+  evidence: {
+    label: "agentProtocol.tab.evidence",
+    description: "agentProtocol.tab.evidence.description",
+  },
+  decisions: {
+    label: "agentProtocol.tab.decisions",
+    description: "agentProtocol.tab.decisions.description",
+  },
+  handoff: {
+    label: "agentProtocol.tab.handoff",
+    description: "agentProtocol.tab.handoff.description",
+  },
+};
+const WORKSPACE_TAB_IDS: WorkspaceTab[] = ["execution", "evidence", "decisions", "handoff"];
+const EVIDENCE_STATUS_LABEL_KEYS: Record<EvidenceStatus, TranslationKey> = {
+  passed: "agentProtocol.evidenceStatus.passed",
+  failed: "agentProtocol.evidenceStatus.failed",
+  blocked: "agentProtocol.evidenceStatus.blocked",
+};
+const AGENT_PROTOCOL_COPY_KEYS = [
+  "agentProtocol.main.eyebrow",
+  "agentProtocol.main.title",
+  "agentProtocol.main.description",
+  "agentProtocol.main.recordValidation",
+  "agentProtocol.main.copyProtocol",
+  "agentProtocol.main.exportMarkdown",
+  "agentProtocol.main.reset",
+  "agentProtocol.tabs.aria",
+  "agentProtocol.inbox.description",
+  "agentProtocol.task.title",
+  "agentProtocol.task.goal",
+  "agentProtocol.task.goalPlaceholder",
+  "agentProtocol.task.scope",
+  "agentProtocol.task.scopePlaceholder",
+  "agentProtocol.task.notes",
+  "agentProtocol.task.notesPlaceholder",
+  "agentProtocol.progress.stageProgress",
+  "agentProtocol.progress.completedStages",
+  "agentProtocol.progress.completedHint",
+  "agentProtocol.progress.checkProgress",
+  "agentProtocol.progress.currentFocus",
+  "agentProtocol.progress.noActiveStage",
+  "agentProtocol.progress.focusHint",
+  "agentProtocol.closure.title",
+  "agentProtocol.closure.description",
+  "agentProtocol.closure.hasEvidence",
+  "agentProtocol.closure.needsEvidence",
+  "agentProtocol.evidence.title",
+  "agentProtocol.evidence.description",
+  "agentProtocol.evidence.templates",
+  "agentProtocol.evidence.filter.all",
+  "agentProtocol.evidence.name",
+  "agentProtocol.evidence.namePlaceholder",
+  "agentProtocol.evidence.status",
+  "agentProtocol.evidence.command",
+  "agentProtocol.evidence.commandPlaceholder",
+  "agentProtocol.evidence.result",
+  "agentProtocol.evidence.resultPlaceholder",
+  "agentProtocol.evidence.cancelEdit",
+  "agentProtocol.evidence.update",
+  "agentProtocol.evidence.record",
+  "agentProtocol.evidence.emptyCommand",
+  "agentProtocol.evidence.emptyResult",
+  "agentProtocol.evidence.viewSourceTraceTitle",
+  "agentProtocol.evidence.emptyFilter",
+  "agentProtocol.decision.title",
+  "agentProtocol.decision.description",
+  "agentProtocol.decision.titleField",
+  "agentProtocol.decision.titlePlaceholder",
+  "agentProtocol.decision.basis",
+  "agentProtocol.decision.basisPlaceholder",
+  "agentProtocol.decision.impact",
+  "agentProtocol.decision.impactPlaceholder",
+  "agentProtocol.decision.cancelEdit",
+  "agentProtocol.decision.update",
+  "agentProtocol.decision.save",
+  "agentProtocol.decision.empty",
+  "agentProtocol.report.title",
+  "agentProtocol.report.completedStages",
+  "agentProtocol.report.confirmedChecks",
+  "agentProtocol.report.nextStep",
+  "agentProtocol.report.allChecksDone",
+  "agentProtocol.report.closureReady",
+  "agentProtocol.handoff.title",
+  "agentProtocol.handoff.copyAria",
+  "agentProtocol.runSnapshot.title",
+  "agentProtocol.runSnapshot.copyAria",
+  "agentProtocol.workbench.title",
+  "agentProtocol.workbench.copyAria",
+  "agentProtocol.workbench.workspace",
+  "agentProtocol.workbench.rootPath",
+  "agentProtocol.workbench.activePane",
+  "agentProtocol.workbench.activeTab",
+  "agentProtocol.workbench.openTabs",
+  "agentProtocol.workbench.dirtyTabs",
+  "agentProtocol.risk.title",
+  "agentProtocol.risk.copyAria",
+  "agentProtocol.risk.operationType",
+  "agentProtocol.risk.impactScope",
+  "agentProtocol.risk.riskAssessment",
+  "agentProtocol.protocolPreview.title",
+  "agentProtocol.dangerGate.title",
+  "agentProtocol.dangerGate.description",
+  "agentProtocol.common.copy",
+] as const satisfies readonly TranslationKey[];
+type AgentProtocolCopyKey = (typeof AGENT_PROTOCOL_COPY_KEYS)[number];
 
 const DEFAULT_TASK_CONTEXT: TaskContext = {
   goal: "",
@@ -705,7 +817,7 @@ function buildProtocolMarkdown(
   ];
 
   PROTOCOL_STAGES.forEach((stage, index) => {
-    lines.push(`${index + 1}. ${stage.title} - ${STATUS_LABELS[state[stage.id] ?? "pending"]}`);
+    lines.push(`${index + 1}. ${stage.title} - ${DEFAULT_STATUS_LABELS[state[stage.id] ?? "pending"]}`);
     lines.push(`   - ${stage.description}`);
     stage.checks.forEach((check, checkIndex) => {
       const marker = checkState[getCheckId(stage.id, checkIndex)] ? "x" : " ";
@@ -784,18 +896,18 @@ function getInboxItemClassName(kind: AgentCoworkInboxItemKind): string {
   }
 }
 
-function inboxKindLabel(kind: AgentCoworkInboxItemKind): string {
+function inboxKindLabel(kind: AgentCoworkInboxItemKind, translate: (key: TranslationKey, params?: Record<string, string | number>) => string): string {
   switch (kind) {
     case "needs_approval":
-      return "待审批";
+      return translate("agentProtocol.inbox.kind.needsApproval");
     case "blocked":
-      return "阻塞";
+      return translate("agentProtocol.inbox.kind.blocked");
     case "running":
-      return "运行中";
+      return translate("agentProtocol.inbox.kind.running");
     case "handoff":
-      return "待交接";
+      return translate("agentProtocol.inbox.kind.handoff");
     case "completed":
-      return "已完成";
+      return translate("agentProtocol.inbox.kind.completed");
   }
 }
 
@@ -822,6 +934,7 @@ function AgentCoworkInbox({
   workspaceRisk: AgentCoworkInboxWorkspaceRisk;
   onFocusSession: (sessionId: string) => void;
 }) {
+  const { t } = useI18n();
   const hasWorkspaceRisk = workspaceRisk.level !== "clean";
 
   return (
@@ -830,31 +943,33 @@ function AgentCoworkInbox({
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm font-semibold">
             <MessageSquare className="h-4 w-4" />
-            Co-work Session Inbox
+            {t("agentProtocol.inbox.title")}
           </div>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            聚合当前 Agent sessions、待审批、阻塞状态和交接结果，用于跨窗口继续协作。
+            {t("agentProtocol.inbox.description")}
           </p>
           <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
             <span className="rounded-md border border-border bg-background px-2 py-1">{summary || "0 sessions"}</span>
-            <span className="rounded-md border border-border bg-background px-2 py-1">next: {nextAction}</span>
+            <span className="rounded-md border border-border bg-background px-2 py-1">
+              {t("agentProtocol.inbox.next", { nextAction })}
+            </span>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
           <div className="rounded-md border border-border bg-background px-3 py-2">
-            <div className="text-muted-foreground">审批</div>
+            <div className="text-muted-foreground">{t("agentProtocol.inbox.approvals")}</div>
             <div className="mt-1 text-base font-semibold">{pendingApprovalCount}</div>
           </div>
           <div className="rounded-md border border-border bg-background px-3 py-2">
-            <div className="text-muted-foreground">阻塞</div>
+            <div className="text-muted-foreground">{t("agentProtocol.inbox.blocked")}</div>
             <div className="mt-1 text-base font-semibold">{blockedCount}</div>
           </div>
           <div className="rounded-md border border-border bg-background px-3 py-2">
-            <div className="text-muted-foreground">运行</div>
+            <div className="text-muted-foreground">{t("agentProtocol.inbox.running")}</div>
             <div className="mt-1 text-base font-semibold">{runningCount}</div>
           </div>
           <div className="rounded-md border border-border bg-background px-3 py-2">
-            <div className="text-muted-foreground">交接</div>
+            <div className="text-muted-foreground">{t("agentProtocol.inbox.handoff")}</div>
             <div className="mt-1 text-base font-semibold">{handoffCount}</div>
           </div>
         </div>
@@ -869,7 +984,7 @@ function AgentCoworkInbox({
         )}
       >
         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <div className="font-medium">Workspace risk: {workspaceRisk.level}</div>
+          <div className="font-medium">{t("agentProtocol.inbox.workspaceRisk", { level: workspaceRisk.level })}</div>
           <div className="text-xs opacity-80">{workspaceRisk.summary}</div>
         </div>
         {workspaceRisk.detail ? (
@@ -892,7 +1007,7 @@ function AgentCoworkInbox({
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="rounded bg-background/70 px-2 py-0.5 text-[10px] font-medium">
-                      {inboxKindLabel(item.kind)}
+                      {inboxKindLabel(item.kind, t)}
                     </span>
                     {item.isActiveSession ? (
                       <span className="rounded bg-background/70 px-2 py-0.5 text-[10px]">active</span>
@@ -915,7 +1030,7 @@ function AgentCoworkInbox({
                   onClick={() => onFocusSession(item.sessionId)}
                   className="inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-border bg-background px-2 text-xs font-medium text-foreground transition-colors hover:bg-accent"
                 >
-                  查看 Trace
+                  {t("agentProtocol.inbox.viewTrace")}
                 </button>
               </div>
             </li>
@@ -923,12 +1038,12 @@ function AgentCoworkInbox({
         </ul>
       ) : (
         <p className="mt-4 rounded-md border border-border bg-background p-3 text-sm text-muted-foreground">
-          暂无 Agent sessions。运行 Research Agent 后，这里会汇总审批、阻塞和交接状态。
+          {t("agentProtocol.inbox.empty")}
         </p>
       )}
       {totalSessionCount > items.length ? (
         <p className="mt-3 text-xs text-muted-foreground">
-          仅显示前 {items.length} 个高优先级 session，共 {totalSessionCount} 个。
+          {t("agentProtocol.inbox.limitNotice", { visible: items.length, total: totalSessionCount })}
         </p>
       ) : null}
     </section>
@@ -952,6 +1067,7 @@ function CodingQaRunnerPanel({
   onCreateApprovalRequest: () => void;
   onImportEvidence: (candidate: CodingQaEvidenceCandidate) => void;
 }) {
+  const { t } = useI18n();
   const sections = [
     { title: "Allowed", items: view.plan.allowed },
     { title: "Suggested", items: view.plan.suggested },
@@ -973,7 +1089,9 @@ function CodingQaRunnerPanel({
             Reviewable validation plan only. Commands require explicit user approval and are not executed by this panel.
           </p>
           <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-            <span className="rounded-md border border-border bg-background px-2 py-1">status: {view.status}</span>
+            <span className="rounded-md border border-border bg-background px-2 py-1">
+              {t("agentProtocol.qa.status", { status: view.status })}
+            </span>
             <span className="rounded-md border border-border bg-background px-2 py-1">{view.summary}</span>
             <span className={cn(
               "rounded-md border px-2 py-1",
@@ -981,7 +1099,7 @@ function CodingQaRunnerPanel({
                 ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
                 : "border-border bg-background",
             )}>
-              pending imports: {pendingImportCount}
+              {t("agentProtocol.qa.pendingImports", { count: pendingImportCount })}
             </span>
           </div>
         </div>
@@ -991,21 +1109,21 @@ function CodingQaRunnerPanel({
             onClick={onPrepareEvidenceDraft}
             className="inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-2 text-xs font-medium transition-colors hover:bg-accent"
           >
-            填入证据草稿
+            {t("agentProtocol.qa.fillEvidenceDraft")}
           </button>
           <button
             type="button"
             onClick={onCopyPlan}
             className="inline-flex h-8 items-center justify-center rounded-md bg-primary px-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
-            复制 QA 计划
+            {t("agentProtocol.qa.copyPlan")}
           </button>
           <button
             type="button"
             onClick={onCreateApprovalRequest}
             className="inline-flex h-8 items-center justify-center rounded-md border border-primary bg-primary/10 px-2 text-xs font-medium text-primary transition-colors hover:bg-primary/15"
           >
-            创建审批请求
+            {t("agentProtocol.qa.createApprovalRequest")}
           </button>
         </div>
       </div>
@@ -1019,28 +1137,30 @@ function CodingQaRunnerPanel({
                 {section.items.map((item) => (
                   <li key={`${section.title}-${item.command}`} className="rounded-md border border-border bg-card p-2">
                     <div className="break-words font-mono text-[11px] text-foreground">{item.command}</div>
-                    <div className="mt-1 text-[11px] text-muted-foreground">approval: {item.approval}</div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      {t("agentProtocol.qa.approvalLabel", { approval: item.approval })}
+                    </div>
                     <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{item.reason}</div>
                     <div className="mt-1 line-clamp-2 text-xs text-amber-700 dark:text-amber-300">{item.risk}</div>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="mt-2 text-xs text-muted-foreground">No commands.</p>
+              <p className="mt-2 text-xs text-muted-foreground">{t("agentProtocol.qa.noCommands")}</p>
             )}
           </div>
         ))}
       </div>
 
       <div className="mt-3 rounded-md border border-border bg-background p-3 text-xs text-muted-foreground">
-        Execution boundary: plan only; no shell, git, network, package manager, release, or destructive command is executed here.
+        {t("agentProtocol.qa.executionBoundary")}
       </div>
 
       <div id="qa-evidence" className="mt-4 scroll-mt-24 rounded-md border border-border bg-background p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-xs font-semibold text-muted-foreground">Approval result evidence</div>
+          <div className="text-xs font-semibold text-muted-foreground">{t("agentProtocol.qa.approvalEvidence")}</div>
           <div className="rounded-md border border-border bg-card px-2 py-1 text-[11px] text-muted-foreground">
-            pending imports: {pendingImportCount}
+            {t("agentProtocol.qa.pendingImports", { count: pendingImportCount })}
           </div>
         </div>
         {evidenceCandidates.length > 0 ? (
@@ -1052,7 +1172,9 @@ function CodingQaRunnerPanel({
                   <div className="min-w-0">
                     <div className="text-xs font-medium text-foreground">{candidate.label}</div>
                     <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{candidate.result}</div>
-                    <div className="mt-1 text-[11px] text-muted-foreground">status: {candidate.status}</div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      {t("agentProtocol.qa.status", { status: candidate.status })}
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -1060,7 +1182,7 @@ function CodingQaRunnerPanel({
                     onClick={() => onImportEvidence(candidate)}
                     className="inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-border bg-background px-2 text-xs font-medium transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {imported ? "已导入" : "导入证据"}
+                    {imported ? t("agentProtocol.qa.imported") : t("agentProtocol.qa.importEvidence")}
                   </button>
                 </li>
               );
@@ -1068,7 +1190,7 @@ function CodingQaRunnerPanel({
           </ul>
         ) : (
           <p className="mt-2 text-xs text-muted-foreground">
-            No completed, failed, or rejected QA Runner approvals are ready to import.
+            {t("agentProtocol.qa.emptyApprovals")}
           </p>
         )}
       </div>
@@ -1077,6 +1199,7 @@ function CodingQaRunnerPanel({
 }
 
 export function AgentProtocolCenter() {
+  const { t, formatDate } = useI18n();
   const [protocolState, setProtocolState] = useState<Record<string, ProtocolStatus>>(() => createDefaultState());
   const [checkState, setCheckState] = useState<Record<string, boolean>>(() => createDefaultCheckState());
   const [taskContext, setTaskContext] = useState<TaskContext>(() => DEFAULT_TASK_CONTEXT);
@@ -1101,6 +1224,30 @@ export function AgentProtocolCenter() {
   const createAgentSessionFromProtocol = useAgentSessionStore((state) => state.createSession);
   const appendAgentTraceFromProtocol = useAgentSessionStore((state) => state.appendTrace);
   const addAgentPendingApprovalFromProtocol = useAgentSessionStore((state) => state.addPendingApproval);
+  const copy = useMemo(
+    () => Object.fromEntries(AGENT_PROTOCOL_COPY_KEYS.map((key) => [key, t(key)])) as Record<AgentProtocolCopyKey, string>,
+    [t],
+  );
+  const statusLabels = useMemo(
+    () => Object.fromEntries(
+      STATUS_ORDER.map((status) => [status, t(STATUS_LABEL_KEYS[status])]),
+    ) as Record<ProtocolStatus, string>,
+    [t],
+  );
+  const evidenceStatusLabels = useMemo(
+    () => Object.fromEntries(
+      (["passed", "failed", "blocked"] as EvidenceStatus[]).map((status) => [status, t(EVIDENCE_STATUS_LABEL_KEYS[status])]),
+    ) as Record<EvidenceStatus, string>,
+    [t],
+  );
+  const workspaceTabs = useMemo(
+    () => WORKSPACE_TAB_IDS.map((id) => ({
+      id,
+      label: t(WORKSPACE_TAB_LABEL_KEYS[id].label),
+      description: t(WORKSPACE_TAB_LABEL_KEYS[id].description),
+    })),
+    [t],
+  );
 
   useEffect(() => {
     // Restore client-only persisted state after mount to avoid SSR hydration drift.
@@ -1113,11 +1260,11 @@ export function AgentProtocolCenter() {
     setEvidenceEntries(readEvidenceEntries());
     setDecisionRecords(readDecisionRecords());
     setRunSnapshotMeta({
-      capturedAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+      capturedAt: formatDate(new Date(), { hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }),
       pagePath: window.location.pathname,
     });
     setMounted(true);
-  }, []);
+  }, [formatDate]);
 
   useEffect(() => {
     if (typeof window === "undefined" || window.location.hash !== "#qa-evidence") {
@@ -1453,18 +1600,18 @@ export function AgentProtocolCenter() {
     setEditingEvidenceId(null);
     setEvidenceFilter("all");
     setActiveTab("evidence");
-    toast.success("验证模板已填入");
-  }, []);
+    toast.success(t("agentProtocol.toast.templateFilled"));
+  }, [t]);
 
   const copyCodingQaPlan = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(codingQaRunner.markdown);
-      toast.success("Coding QA 计划已复制");
+      toast.success(t("agentProtocol.toast.qaPlanCopied"));
     } catch (error) {
       console.error("Failed to copy coding QA plan:", error);
-      toast.error("复制失败，请检查剪贴板权限");
+      toast.error(t("agentProtocol.toast.copyFailed"));
     }
-  }, [codingQaRunner.markdown]);
+  }, [codingQaRunner.markdown, t]);
 
   const prepareCodingQaEvidenceDraft = useCallback(() => {
     const commands = [...codingQaRunner.plan.allowed, ...codingQaRunner.plan.suggested]
@@ -1479,8 +1626,8 @@ export function AgentProtocolCenter() {
     setEditingEvidenceId(null);
     setEvidenceFilter("all");
     setActiveTab("evidence");
-    toast.success("Coding QA 证据草稿已填入");
-  }, [codingQaRunner]);
+    toast.success(t("agentProtocol.toast.qaDraftFilled"));
+  }, [codingQaRunner, t]);
 
   const createCodingQaApprovalRequest = useCallback(() => {
     const request = buildCodingQaRunnerApprovalRequest(codingQaRunner);
@@ -1492,13 +1639,14 @@ export function AgentProtocolCenter() {
     appendAgentTraceFromProtocol(sessionId, request.trace);
     addAgentPendingApprovalFromProtocol(sessionId, request.approval);
     focusAgentSession({ focusSession }, sessionId, "trace");
-    toast.success("Coding QA 审批请求已创建");
+    toast.success(t("agentProtocol.toast.qaApprovalCreated"));
   }, [
     addAgentPendingApprovalFromProtocol,
     appendAgentTraceFromProtocol,
     codingQaRunner,
     createAgentSessionFromProtocol,
     focusSession,
+    t,
   ]);
 
   const importCodingQaEvidence = useCallback((candidate: CodingQaEvidenceCandidate) => {
@@ -1520,25 +1668,25 @@ export function AgentProtocolCenter() {
     });
     setEvidenceFilter("all");
     setActiveTab("evidence");
-    toast.success("Coding QA 结果已导入证据");
-  }, []);
+    toast.success(t("agentProtocol.toast.qaEvidenceImported"));
+  }, [t]);
 
   const focusEvidenceSourceTrace = useCallback((entry: EvidenceEntry) => {
     if (!entry.sourceSessionId) {
       return;
     }
     focusAgentSession({ focusSession }, entry.sourceSessionId, "trace");
-    toast.success("已聚焦来源 Agent Trace");
-  }, [focusSession]);
+    toast.success(t("agentProtocol.toast.focusedTrace"));
+  }, [focusSession, t]);
 
   const addEvidenceEntry = useCallback(() => {
     if (!evidenceDraft.label.trim() && !evidenceDraft.command.trim() && !evidenceDraft.result.trim()) {
-      toast.error("请先填写验证证据");
+      toast.error(t("agentProtocol.toast.fillEvidence"));
       return;
     }
     const nextEntry = {
       id: editingEvidenceId ?? crypto.randomUUID(),
-      label: evidenceDraft.label.trim() || "未命名证据",
+      label: evidenceDraft.label.trim() || t("agentProtocol.evidence.name"),
       command: evidenceDraft.command.trim(),
       result: evidenceDraft.result.trim(),
       status: evidenceDraft.status,
@@ -1549,8 +1697,8 @@ export function AgentProtocolCenter() {
     );
     setEvidenceDraft(DEFAULT_EVIDENCE_DRAFT);
     setEditingEvidenceId(null);
-    toast.success(editingEvidenceId ? "验证证据已更新" : "验证证据已记录");
-  }, [editingEvidenceId, evidenceDraft]);
+    toast.success(editingEvidenceId ? t("agentProtocol.toast.evidenceUpdated") : t("agentProtocol.toast.evidenceRecorded"));
+  }, [editingEvidenceId, evidenceDraft, t]);
 
   const editEvidenceEntry = useCallback((entry: EvidenceEntry) => {
     setEvidenceDraft({
@@ -1575,12 +1723,12 @@ export function AgentProtocolCenter() {
 
   const addDecisionRecord = useCallback(() => {
     if (!decisionDraft.title.trim() && !decisionDraft.basis.trim() && !decisionDraft.impact.trim()) {
-      toast.error("请先填写决策记录");
+      toast.error(t("agentProtocol.toast.fillDecision"));
       return;
     }
     const nextRecord = {
       id: editingDecisionId ?? crypto.randomUUID(),
-      title: decisionDraft.title.trim() || "未命名决策",
+      title: decisionDraft.title.trim() || t("agentProtocol.decision.title"),
       basis: decisionDraft.basis.trim(),
       impact: decisionDraft.impact.trim(),
     };
@@ -1590,8 +1738,8 @@ export function AgentProtocolCenter() {
     );
     setDecisionDraft(DEFAULT_DECISION_DRAFT);
     setEditingDecisionId(null);
-    toast.success(editingDecisionId ? "决策记录已更新" : "决策记录已保存");
-  }, [decisionDraft, editingDecisionId]);
+    toast.success(editingDecisionId ? t("agentProtocol.toast.decisionUpdated") : t("agentProtocol.toast.decisionSaved"));
+  }, [decisionDraft, editingDecisionId, t]);
 
   const editDecisionRecord = useCallback((record: DecisionRecord) => {
     setDecisionDraft({
@@ -1713,9 +1861,9 @@ export function AgentProtocolCenter() {
     setActiveTab("execution");
     window.localStorage.setItem(CURRENT_VALIDATION_STORAGE_KEY, CURRENT_VALIDATION_RECORD_ID);
     if (!options?.silent) {
-      toast.success("本轮验证结果已记录");
+      toast.success(t("agentProtocol.toast.validationRecorded"));
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (!mounted) {
@@ -1738,12 +1886,12 @@ export function AgentProtocolCenter() {
   const copyProtocol = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(protocolMarkdown);
-      toast.success("Agent 协议已复制");
+      toast.success(t("agentProtocol.toast.protocolCopied"));
     } catch (error) {
       console.error("Failed to copy agent protocol:", error);
-      toast.error("复制失败，请检查剪贴板权限");
+      toast.error(t("agentProtocol.toast.copyFailed"));
     }
-  }, [protocolMarkdown]);
+  }, [protocolMarkdown, t]);
 
   const downloadProtocol = useCallback(() => {
     const blob = new Blob([protocolMarkdown], { type: "text/markdown;charset=utf-8" });
@@ -1755,48 +1903,48 @@ export function AgentProtocolCenter() {
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(url);
-    toast.success("Agent 协议已导出");
-  }, [protocolMarkdown]);
+    toast.success(t("agentProtocol.toast.protocolExported"));
+  }, [protocolMarkdown, t]);
 
   const copyRiskConfirmation = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(riskConfirmationText);
-      toast.success("危险操作确认文本已复制");
+      toast.success(t("agentProtocol.toast.riskCopied"));
     } catch (error) {
       console.error("Failed to copy risk confirmation:", error);
-      toast.error("复制失败，请检查剪贴板权限");
+      toast.error(t("agentProtocol.toast.copyFailed"));
     }
-  }, [riskConfirmationText]);
+  }, [riskConfirmationText, t]);
 
   const copyHandoffSummary = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(handoffSummary);
-      toast.success("交接摘要已复制");
+      toast.success(t("agentProtocol.toast.handoffCopied"));
     } catch (error) {
       console.error("Failed to copy handoff summary:", error);
-      toast.error("复制失败，请检查剪贴板权限");
+      toast.error(t("agentProtocol.toast.copyFailed"));
     }
-  }, [handoffSummary]);
+  }, [handoffSummary, t]);
 
   const copyRunSnapshot = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(runSnapshot);
-      toast.success("运行快照已复制");
+      toast.success(t("agentProtocol.toast.snapshotCopied"));
     } catch (error) {
       console.error("Failed to copy run snapshot:", error);
-      toast.error("复制失败，请检查剪贴板权限");
+      toast.error(t("agentProtocol.toast.copyFailed"));
     }
-  }, [runSnapshot]);
+  }, [runSnapshot, t]);
 
   const copyWorkbenchContext = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(workbenchContextText);
-      toast.success("工作台上下文已复制");
+      toast.success(t("agentProtocol.toast.workbenchCopied"));
     } catch (error) {
       console.error("Failed to copy workbench context:", error);
-      toast.error("复制失败，请检查剪贴板权限");
+      toast.error(t("agentProtocol.toast.copyFailed"));
     }
-  }, [workbenchContextText]);
+  }, [workbenchContextText, t]);
 
   const resetProtocol = useCallback(() => {
     setProtocolState(createDefaultState());
@@ -1813,8 +1961,8 @@ export function AgentProtocolCenter() {
     setEditingDecisionId(null);
     setActiveTab("execution");
     window.localStorage.setItem(CURRENT_VALIDATION_STORAGE_KEY, CURRENT_VALIDATION_RECORD_ID);
-    toast.success("执行状态已重置");
-  }, []);
+    toast.success(t("agentProtocol.toast.reset"));
+  }, [t]);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -1823,13 +1971,13 @@ export function AgentProtocolCenter() {
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
               <ClipboardCheck className="h-4 w-4" />
-              Agent Protocol
+              {copy["agentProtocol.main.eyebrow"]}
             </div>
             <h1 className="mt-2 text-2xl font-semibold tracking-normal text-foreground">
-              Agent 协议中心
+              {copy["agentProtocol.main.title"]}
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-              将 Cursor 风格工程规则转成可执行的产品工作流：追踪阶段状态、复制协议文本、导出 Markdown，并在 Lattice 内形成可复用的开发协作入口。
+              {copy["agentProtocol.main.description"]}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1839,7 +1987,7 @@ export function AgentProtocolCenter() {
               className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
             >
               <ClipboardCheck className="h-4 w-4" />
-              记录本轮验证
+              {copy["agentProtocol.main.recordValidation"]}
             </button>
             <button
               type="button"
@@ -1847,7 +1995,7 @@ export function AgentProtocolCenter() {
               className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium transition-colors hover:bg-accent"
             >
               <Copy className="h-4 w-4" />
-              复制协议
+              {copy["agentProtocol.main.copyProtocol"]}
             </button>
             <button
               type="button"
@@ -1855,7 +2003,7 @@ export function AgentProtocolCenter() {
               className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium transition-colors hover:bg-accent"
             >
               <Download className="h-4 w-4" />
-              导出 Markdown
+              {copy["agentProtocol.main.exportMarkdown"]}
             </button>
             <button
               type="button"
@@ -1863,15 +2011,15 @@ export function AgentProtocolCenter() {
               className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               <RotateCcw className="h-4 w-4" />
-              重置
+              {copy["agentProtocol.main.reset"]}
             </button>
           </div>
         </div>
       </div>
 
       <div className="border-b border-border bg-background">
-        <div className="mx-auto flex max-w-7xl gap-2 overflow-x-auto px-5 py-3" role="tablist" aria-label="Agent 协议中心工作区">
-          {WORKSPACE_TABS.map((tab) => (
+        <div className="mx-auto flex max-w-7xl gap-2 overflow-x-auto px-5 py-3" role="tablist" aria-label={copy["agentProtocol.tabs.aria"]}>
+          {workspaceTabs.map((tab) => (
             <button
               key={tab.id}
               type="button"
@@ -1921,35 +2069,35 @@ export function AgentProtocolCenter() {
           <section className="rounded-lg border border-border bg-card p-4">
             <div className="flex items-center gap-2 text-sm font-semibold">
               <FileText className="h-4 w-4" />
-              任务上下文
+              {copy["agentProtocol.task.title"]}
             </div>
             <div className="mt-4 grid gap-3 lg:grid-cols-2">
               <label className="space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground">当前目标</span>
+                <span className="text-xs font-medium text-muted-foreground">{copy["agentProtocol.task.goal"]}</span>
                 <input
                   type="text"
                   value={taskContext.goal}
                   onChange={(event) => updateTaskContext("goal", event.target.value)}
-                  placeholder="例如：完善 Agent 协议中心并完成产品验证"
+                  placeholder={copy["agentProtocol.task.goalPlaceholder"]}
                   className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground">影响范围</span>
+                <span className="text-xs font-medium text-muted-foreground">{copy["agentProtocol.task.scope"]}</span>
                 <input
                   type="text"
                   value={taskContext.scope}
                   onChange={(event) => updateTaskContext("scope", event.target.value)}
-                  placeholder="例如：Lattice / Agent 协议中心"
+                  placeholder={copy["agentProtocol.task.scopePlaceholder"]}
                   className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
               </label>
               <label className="space-y-1.5 lg:col-span-2">
-                <span className="text-xs font-medium text-muted-foreground">执行备注</span>
+                <span className="text-xs font-medium text-muted-foreground">{copy["agentProtocol.task.notes"]}</span>
                 <textarea
                   value={taskContext.notes}
                   onChange={(event) => updateTaskContext("notes", event.target.value)}
-                  placeholder="记录限制、用户要求、暂不执行的动作，例如：部署由用户自行执行，收尾时提醒桌面打包更新。"
+                  placeholder={copy["agentProtocol.task.notesPlaceholder"]}
                   rows={3}
                   className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
@@ -1961,7 +2109,7 @@ export function AgentProtocolCenter() {
             <div className="rounded-lg border border-border bg-card p-4">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <ListChecks className="h-4 w-4" />
-                阶段进度
+                {copy["agentProtocol.progress.stageProgress"]}
               </div>
               <div className="mt-3 text-3xl font-semibold">{progressPercent}%</div>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
@@ -1971,33 +2119,33 @@ export function AgentProtocolCenter() {
             <div className="rounded-lg border border-border bg-card p-4">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <CheckCircle2 className="h-4 w-4" />
-                已完成阶段
+                {copy["agentProtocol.progress.completedStages"]}
               </div>
               <div className="mt-3 text-3xl font-semibold">
                 {completedCount}
                 <span className="text-base text-muted-foreground"> / {PROTOCOL_STAGES.length}</span>
               </div>
-              <p className="mt-3 text-sm text-muted-foreground">完成后仍可回退状态，用于下一轮任务复盘。</p>
+              <p className="mt-3 text-sm text-muted-foreground">{copy["agentProtocol.progress.completedHint"]}</p>
             </div>
             <div className="rounded-lg border border-border bg-card p-4">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <ClipboardCheck className="h-4 w-4" />
-                检查项进度
+                {copy["agentProtocol.progress.checkProgress"]}
               </div>
               <div className="mt-3 text-3xl font-semibold">{checkProgressPercent}%</div>
               <div className="mt-3 text-sm text-muted-foreground">
-                {completedCheckCount} / {totalCheckCount} 项已确认
+                {t("agentProtocol.progress.confirmedItems", { completed: completedCheckCount, total: totalCheckCount })}
               </div>
             </div>
             <div className="rounded-lg border border-border bg-card p-4">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <ShieldCheck className="h-4 w-4" />
-                当前焦点
+                {copy["agentProtocol.progress.currentFocus"]}
               </div>
               <div className="mt-3 truncate text-lg font-semibold">
-                {activeStage?.title ?? "暂无进行中阶段"}
+                {activeStage?.title ?? copy["agentProtocol.progress.noActiveStage"]}
               </div>
-              <p className="mt-3 text-sm text-muted-foreground">设置新的进行中阶段时，会自动清除其他进行中状态。</p>
+              <p className="mt-3 text-sm text-muted-foreground">{copy["agentProtocol.progress.focusHint"]}</p>
             </div>
           </div>
 
@@ -2014,7 +2162,7 @@ export function AgentProtocolCenter() {
                         </span>
                         <h2 className="text-base font-semibold">{stage.title}</h2>
                         <span className={cn("inline-flex rounded-md border px-2 py-1 text-xs font-medium", getStatusClassName(status))}>
-                          {STATUS_LABELS[status]}
+                          {statusLabels[status]}
                         </span>
                       </div>
                       <p className="mt-2 text-sm leading-6 text-muted-foreground">{stage.description}</p>
@@ -2033,7 +2181,7 @@ export function AgentProtocolCenter() {
                               : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground",
                           )}
                         >
-                          {STATUS_LABELS[nextStatus]}
+                          {statusLabels[nextStatus]}
                         </button>
                       ))}
                     </div>
@@ -2073,10 +2221,10 @@ export function AgentProtocolCenter() {
               <div>
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   <ShieldCheck className="h-4 w-4" />
-                  收尾门禁
+                  {copy["agentProtocol.closure.title"]}
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  将测试、构建、桌面产品打包更新和交接说明收口到同一个发布前检查面板。
+                  {copy["agentProtocol.closure.description"]}
                 </p>
               </div>
               <span className={cn(
@@ -2085,7 +2233,7 @@ export function AgentProtocolCenter() {
                   ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                   : "border-border bg-background text-muted-foreground",
               )}>
-                {completedClosureGateCount} / {CLOSURE_GATES.length} 已确认
+                {t("agentProtocol.closure.confirmed", { completed: completedClosureGateCount, total: CLOSURE_GATES.length })}
               </span>
             </div>
             <ul className="mt-4 grid gap-2 lg:grid-cols-2">
@@ -2103,7 +2251,7 @@ export function AgentProtocolCenter() {
                         type="checkbox"
                         checked={checked}
                         onChange={() => toggleClosureGate(gate.id)}
-                        aria-label={`收尾门禁: ${gate.title}`}
+                        aria-label={t("agentProtocol.closure.aria", { title: gate.title })}
                         className="mt-1 h-4 w-4 shrink-0 rounded border-border"
                       />
                       <span className="min-w-0">
@@ -2115,7 +2263,7 @@ export function AgentProtocolCenter() {
                             ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                             : "border-border bg-background text-muted-foreground",
                         )}>
-                          {gateEvidenceState[gate.id] ? "已有通过证据" : "仍需验证证据"}
+                          {gateEvidenceState[gate.id] ? copy["agentProtocol.closure.hasEvidence"] : copy["agentProtocol.closure.needsEvidence"]}
                         </span>
                       </span>
                     </label>
@@ -2131,18 +2279,18 @@ export function AgentProtocolCenter() {
               <div>
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   <ClipboardCheck className="h-4 w-4" />
-                  验证证据
+                  {copy["agentProtocol.evidence.title"]}
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  记录验证命令、结果和状态，作为收尾报告的事实依据。
+                  {copy["agentProtocol.evidence.description"]}
                 </p>
               </div>
               <span className="inline-flex w-fit rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground">
-                {evidenceEntries.length} 条
+                {t("agentProtocol.evidence.count", { count: evidenceEntries.length })}
               </span>
             </div>
             <div className="mt-4 rounded-md border border-border bg-background p-3">
-              <div className="text-xs font-medium text-muted-foreground">验证模板</div>
+              <div className="text-xs font-medium text-muted-foreground">{copy["agentProtocol.evidence.templates"]}</div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {EVIDENCE_TEMPLATES.map((template) => (
                   <button
@@ -2170,49 +2318,49 @@ export function AgentProtocolCenter() {
                       : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground",
                   )}
                 >
-                  {filter === "all" ? "全部" : EVIDENCE_STATUS_LABELS[filter]}
+                  {filter === "all" ? copy["agentProtocol.evidence.filter.all"] : evidenceStatusLabels[filter]}
                 </button>
               ))}
             </div>
             <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_10rem]">
               <label className="space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground">证据名称</span>
+                <span className="text-xs font-medium text-muted-foreground">{copy["agentProtocol.evidence.name"]}</span>
                 <input
                   type="text"
                   value={evidenceDraft.label}
                   onChange={(event) => updateEvidenceDraft("label", event.target.value)}
-                  placeholder="例如：Agent 协议中心组件测试"
+                  placeholder={copy["agentProtocol.evidence.namePlaceholder"]}
                   className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground">状态</span>
+                <span className="text-xs font-medium text-muted-foreground">{copy["agentProtocol.evidence.status"]}</span>
                 <select
                   value={evidenceDraft.status}
                   onChange={(event) => updateEvidenceStatus(event.target.value as EvidenceStatus)}
                   className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors focus:border-primary"
                 >
-                  <option value="passed">通过</option>
-                  <option value="failed">失败</option>
-                  <option value="blocked">阻塞</option>
+                  <option value="passed">{evidenceStatusLabels.passed}</option>
+                  <option value="failed">{evidenceStatusLabels.failed}</option>
+                  <option value="blocked">{evidenceStatusLabels.blocked}</option>
                 </select>
               </label>
               <label className="space-y-1.5 lg:col-span-2">
-                <span className="text-xs font-medium text-muted-foreground">命令 / 操作</span>
+                <span className="text-xs font-medium text-muted-foreground">{copy["agentProtocol.evidence.command"]}</span>
                 <input
                   type="text"
                   value={evidenceDraft.command}
                   onChange={(event) => updateEvidenceDraft("command", event.target.value)}
-                  placeholder="例如：npx vitest run src/components/agent/__tests__/agent-protocol-center.test.tsx"
+                  placeholder={copy["agentProtocol.evidence.commandPlaceholder"]}
                   className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
               </label>
               <label className="space-y-1.5 lg:col-span-2">
-                <span className="text-xs font-medium text-muted-foreground">结果摘要</span>
+                <span className="text-xs font-medium text-muted-foreground">{copy["agentProtocol.evidence.result"]}</span>
                 <textarea
                   value={evidenceDraft.result}
                   onChange={(event) => updateEvidenceDraft("result", event.target.value)}
-                  placeholder="例如：9 个用例通过，覆盖任务上下文、门禁和复制报告。"
+                  placeholder={copy["agentProtocol.evidence.resultPlaceholder"]}
                   rows={2}
                   className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
@@ -2226,7 +2374,7 @@ export function AgentProtocolCenter() {
                   className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
                   <X className="h-4 w-4" />
-                  取消编辑
+                  {copy["agentProtocol.evidence.cancelEdit"]}
                 </button>
               ) : null}
               <button
@@ -2234,7 +2382,7 @@ export function AgentProtocolCenter() {
                 onClick={addEvidenceEntry}
                 className="inline-flex h-9 items-center rounded-md border border-border bg-background px-3 text-sm font-medium transition-colors hover:bg-accent"
               >
-                {editingEvidenceId ? "更新证据" : "记录证据"}
+                {editingEvidenceId ? copy["agentProtocol.evidence.update"] : copy["agentProtocol.evidence.record"]}
               </button>
             </div>
             {filteredEvidenceEntries.length > 0 ? (
@@ -2246,19 +2394,19 @@ export function AgentProtocolCenter() {
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-medium">{entry.label}</span>
                           <span className="rounded bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                            {EVIDENCE_STATUS_LABELS[entry.status]}
+                            {evidenceStatusLabels[entry.status]}
                           </span>
                         </div>
-                        <div className="mt-1 break-words font-mono text-xs text-muted-foreground">{entry.command || "未填写命令"}</div>
-                        <p className="mt-1 text-sm text-muted-foreground">{entry.result || "未填写结果"}</p>
+                        <div className="mt-1 break-words font-mono text-xs text-muted-foreground">{entry.command || copy["agentProtocol.evidence.emptyCommand"]}</div>
+                        <p className="mt-1 text-sm text-muted-foreground">{entry.result || copy["agentProtocol.evidence.emptyResult"]}</p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         {entry.sourceSessionId ? (
                           <button
                             type="button"
                             onClick={() => focusEvidenceSourceTrace(entry)}
-                            aria-label={`查看来源 Trace: ${entry.label}`}
-                            title="查看来源 Agent Trace"
+                            aria-label={t("agentProtocol.evidence.viewSourceTrace", { label: entry.label })}
+                            title={copy["agentProtocol.evidence.viewSourceTraceTitle"]}
                             className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                           >
                             <MessageSquare className="h-3.5 w-3.5" />
@@ -2267,7 +2415,7 @@ export function AgentProtocolCenter() {
                         <button
                           type="button"
                           onClick={() => editEvidenceEntry(entry)}
-                          aria-label={`编辑证据: ${entry.label}`}
+                          aria-label={t("agentProtocol.evidence.edit", { label: entry.label })}
                           className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                         >
                           <Pencil className="h-3.5 w-3.5" />
@@ -2275,7 +2423,7 @@ export function AgentProtocolCenter() {
                         <button
                           type="button"
                           onClick={() => removeEvidenceEntry(entry.id)}
-                          aria-label={`删除证据: ${entry.label}`}
+                          aria-label={t("agentProtocol.evidence.delete", { label: entry.label })}
                           className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -2287,7 +2435,7 @@ export function AgentProtocolCenter() {
               </ul>
             ) : evidenceEntries.length > 0 ? (
               <p className="mt-4 rounded-md border border-border bg-background p-3 text-sm text-muted-foreground">
-                当前筛选条件下暂无证据。
+                {copy["agentProtocol.evidence.emptyFilter"]}
               </p>
             ) : null}
           </section>
@@ -2297,43 +2445,43 @@ export function AgentProtocolCenter() {
               <div>
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   <FileText className="h-4 w-4" />
-                  决策记录
+                  {copy["agentProtocol.decision.title"]}
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  记录关键技术决策、依据和影响，减少后续交接时的信息丢失。
+                  {copy["agentProtocol.decision.description"]}
                 </p>
               </div>
               <span className="inline-flex w-fit rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground">
-                {decisionRecords.length} 条
+                {t("agentProtocol.evidence.count", { count: decisionRecords.length })}
               </span>
             </div>
             <div className="mt-4 grid gap-3">
               <label className="space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground">决策标题</span>
+                <span className="text-xs font-medium text-muted-foreground">{copy["agentProtocol.decision.titleField"]}</span>
                 <input
                   type="text"
                   value={decisionDraft.title}
                   onChange={(event) => updateDecisionDraft("title", event.target.value)}
-                  placeholder="例如：保持 Agent 协议中心为本地优先单页工作台"
+                  placeholder={copy["agentProtocol.decision.titlePlaceholder"]}
                   className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground">依据</span>
+                <span className="text-xs font-medium text-muted-foreground">{copy["agentProtocol.decision.basis"]}</span>
                 <textarea
                   value={decisionDraft.basis}
                   onChange={(event) => updateDecisionDraft("basis", event.target.value)}
-                  placeholder="例如：避免引入服务端状态，符合 Lattice 本地优先定位。"
+                  placeholder={copy["agentProtocol.decision.basisPlaceholder"]}
                   rows={2}
                   className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground">影响</span>
+                <span className="text-xs font-medium text-muted-foreground">{copy["agentProtocol.decision.impact"]}</span>
                 <textarea
                   value={decisionDraft.impact}
                   onChange={(event) => updateDecisionDraft("impact", event.target.value)}
-                  placeholder="例如：所有记录保存在浏览器本地，导出 Markdown 作为跨环境交接材料。"
+                  placeholder={copy["agentProtocol.decision.impactPlaceholder"]}
                   rows={2}
                   className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
@@ -2347,7 +2495,7 @@ export function AgentProtocolCenter() {
                   className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
                   <X className="h-4 w-4" />
-                  取消编辑
+                  {copy["agentProtocol.decision.cancelEdit"]}
                 </button>
               ) : null}
               <button
@@ -2355,7 +2503,7 @@ export function AgentProtocolCenter() {
                 onClick={addDecisionRecord}
                 className="inline-flex h-9 items-center rounded-md border border-border bg-background px-3 text-sm font-medium transition-colors hover:bg-accent"
               >
-                {editingDecisionId ? "更新决策" : "保存决策"}
+                {editingDecisionId ? copy["agentProtocol.decision.update"] : copy["agentProtocol.decision.save"]}
               </button>
             </div>
             {decisionRecords.length > 0 ? (
@@ -2365,14 +2513,18 @@ export function AgentProtocolCenter() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="font-medium">{record.title}</div>
-                        <p className="mt-1 text-sm text-muted-foreground">依据：{record.basis || "未填写"}</p>
-                        <p className="mt-1 text-sm text-muted-foreground">影响：{record.impact || "未填写"}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {t("agentProtocol.decision.basisLine", { value: record.basis || copy["agentProtocol.decision.empty"] })}
+                        </p>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {t("agentProtocol.decision.impactLine", { value: record.impact || copy["agentProtocol.decision.empty"] })}
+                        </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         <button
                           type="button"
                           onClick={() => editDecisionRecord(record)}
-                          aria-label={`编辑决策: ${record.title}`}
+                          aria-label={t("agentProtocol.decision.edit", { title: record.title })}
                           className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                         >
                           <Pencil className="h-3.5 w-3.5" />
@@ -2380,7 +2532,7 @@ export function AgentProtocolCenter() {
                         <button
                           type="button"
                           onClick={() => removeDecisionRecord(record.id)}
-                          aria-label={`删除决策: ${record.title}`}
+                          aria-label={t("agentProtocol.decision.delete", { title: record.title })}
                           className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -2398,29 +2550,29 @@ export function AgentProtocolCenter() {
           <section className="rounded-lg border border-border bg-card p-4">
             <div className="flex items-center gap-2 text-sm font-semibold">
               <ClipboardCheck className="h-4 w-4" />
-              执行报告
+              {copy["agentProtocol.report.title"]}
             </div>
             <dl className="mt-3 space-y-3 text-sm">
               <div className="flex items-center justify-between gap-3">
-                <dt className="text-muted-foreground">阶段完成</dt>
+                <dt className="text-muted-foreground">{copy["agentProtocol.report.completedStages"]}</dt>
                 <dd className="font-medium">{completedCount} / {PROTOCOL_STAGES.length}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
-                <dt className="text-muted-foreground">检查项确认</dt>
+                <dt className="text-muted-foreground">{copy["agentProtocol.report.confirmedChecks"]}</dt>
                 <dd className="font-medium">{completedCheckCount} / {totalCheckCount}</dd>
               </div>
               <div className="flex items-start justify-between gap-3">
-                <dt className="shrink-0 text-muted-foreground">下一步建议</dt>
+                <dt className="shrink-0 text-muted-foreground">{copy["agentProtocol.report.nextStep"]}</dt>
                 <dd className="text-right font-medium">
                   {nextOpenCheck
                     ? `${nextOpenCheck.stageTitle}：${nextOpenCheck.check}`
-                    : "全部检查项已确认，可以进入复盘或提交前确认。"}
+                    : copy["agentProtocol.report.allChecksDone"]}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3">
-                <dt className="text-muted-foreground">收尾门禁</dt>
+                <dt className="text-muted-foreground">{copy["agentProtocol.closure.title"]}</dt>
                 <dd className={cn("font-medium", closureReady ? "text-emerald-600 dark:text-emerald-300" : "text-amber-600 dark:text-amber-300")}>
-                  {closureReady ? "已就绪" : `${completedClosureGateCount} / ${CLOSURE_GATES.length}`}
+                  {closureReady ? copy["agentProtocol.report.closureReady"] : `${completedClosureGateCount} / ${CLOSURE_GATES.length}`}
                 </dd>
               </div>
             </dl>
@@ -2430,16 +2582,16 @@ export function AgentProtocolCenter() {
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <FileText className="h-4 w-4" />
-                交接摘要
+                {copy["agentProtocol.handoff.title"]}
               </div>
               <button
                 type="button"
                 onClick={() => void copyHandoffSummary()}
-                aria-label="复制交接摘要"
+                aria-label={copy["agentProtocol.handoff.copyAria"]}
                 className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 text-xs font-medium transition-colors hover:bg-accent"
               >
                 <Copy className="h-3.5 w-3.5" />
-                复制
+                {copy["agentProtocol.common.copy"]}
               </button>
             </div>
             <pre className="mt-3 max-h-72 overflow-auto rounded-md border border-border bg-background p-3 text-xs leading-5 text-muted-foreground">
@@ -2451,16 +2603,16 @@ export function AgentProtocolCenter() {
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <ListChecks className="h-4 w-4" />
-                运行快照
+                {copy["agentProtocol.runSnapshot.title"]}
               </div>
               <button
                 type="button"
                 onClick={() => void copyRunSnapshot()}
-                aria-label="复制运行快照"
+                aria-label={copy["agentProtocol.runSnapshot.copyAria"]}
                 className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 text-xs font-medium transition-colors hover:bg-accent"
               >
                 <Copy className="h-3.5 w-3.5" />
-                复制
+                {copy["agentProtocol.common.copy"]}
               </button>
             </div>
             <pre className="mt-3 max-h-56 overflow-auto rounded-md border border-border bg-background p-3 text-xs leading-5 text-muted-foreground">
@@ -2472,41 +2624,41 @@ export function AgentProtocolCenter() {
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <ClipboardCheck className="h-4 w-4" />
-                工作台上下文
+                {copy["agentProtocol.workbench.title"]}
               </div>
               <button
                 type="button"
                 onClick={() => void copyWorkbenchContext()}
-                aria-label="复制工作台上下文"
+                aria-label={copy["agentProtocol.workbench.copyAria"]}
                 className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 text-xs font-medium transition-colors hover:bg-accent"
               >
                 <Copy className="h-3.5 w-3.5" />
-                复制
+                {copy["agentProtocol.common.copy"]}
               </button>
             </div>
             <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
               <div className="rounded-md border border-border bg-background p-3">
-                <dt className="text-xs text-muted-foreground">工作区</dt>
+                <dt className="text-xs text-muted-foreground">{copy["agentProtocol.workbench.workspace"]}</dt>
                 <dd className="mt-1 break-words font-medium">{workbenchContext.workspaceName}</dd>
               </div>
               <div className="rounded-md border border-border bg-background p-3">
-                <dt className="text-xs text-muted-foreground">根路径</dt>
+                <dt className="text-xs text-muted-foreground">{copy["agentProtocol.workbench.rootPath"]}</dt>
                 <dd className="mt-1 break-words font-medium">{workbenchContext.workspaceRootPath}</dd>
               </div>
               <div className="rounded-md border border-border bg-background p-3">
-                <dt className="text-xs text-muted-foreground">活动 Pane</dt>
+                <dt className="text-xs text-muted-foreground">{copy["agentProtocol.workbench.activePane"]}</dt>
                 <dd className="mt-1 break-words font-medium">{workbenchContext.activePaneId}</dd>
               </div>
               <div className="rounded-md border border-border bg-background p-3">
-                <dt className="text-xs text-muted-foreground">活动标签</dt>
+                <dt className="text-xs text-muted-foreground">{copy["agentProtocol.workbench.activeTab"]}</dt>
                 <dd className="mt-1 break-words font-medium">{workbenchContext.activeTabName}</dd>
               </div>
               <div className="rounded-md border border-border bg-background p-3">
-                <dt className="text-xs text-muted-foreground">打开标签</dt>
+                <dt className="text-xs text-muted-foreground">{copy["agentProtocol.workbench.openTabs"]}</dt>
                 <dd className="mt-1 font-medium">{workbenchContext.openTabCount}</dd>
               </div>
               <div className="rounded-md border border-border bg-background p-3">
-                <dt className="text-xs text-muted-foreground">未保存标签</dt>
+                <dt className="text-xs text-muted-foreground">{copy["agentProtocol.workbench.dirtyTabs"]}</dt>
                 <dd className="mt-1 font-medium">{workbenchContext.dirtyTabCount}</dd>
               </div>
             </dl>
@@ -2519,21 +2671,21 @@ export function AgentProtocolCenter() {
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 font-semibold">
                 <AlertTriangle className="h-4 w-4" />
-                危险操作确认生成器
+                {copy["agentProtocol.risk.title"]}
               </div>
               <button
                 type="button"
                 onClick={() => void copyRiskConfirmation()}
-                aria-label="复制危险操作确认文本"
+                aria-label={copy["agentProtocol.risk.copyAria"]}
                 className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-amber-500/30 bg-background/70 px-2 text-xs font-medium transition-colors hover:bg-background"
               >
                 <Copy className="h-3.5 w-3.5" />
-                复制
+                {copy["agentProtocol.common.copy"]}
               </button>
             </div>
             <div className="mt-3 space-y-3">
               <label className="block space-y-1.5">
-                <span className="text-xs font-medium">操作类型</span>
+                <span className="text-xs font-medium">{copy["agentProtocol.risk.operationType"]}</span>
                 <input
                   type="text"
                   value={riskDraft.operationType}
@@ -2542,7 +2694,7 @@ export function AgentProtocolCenter() {
                 />
               </label>
               <label className="block space-y-1.5">
-                <span className="text-xs font-medium">影响范围</span>
+                <span className="text-xs font-medium">{copy["agentProtocol.risk.impactScope"]}</span>
                 <textarea
                   value={riskDraft.impactScope}
                   onChange={(event) => updateRiskDraft("impactScope", event.target.value)}
@@ -2551,7 +2703,7 @@ export function AgentProtocolCenter() {
                 />
               </label>
               <label className="block space-y-1.5">
-                <span className="text-xs font-medium">风险评估</span>
+                <span className="text-xs font-medium">{copy["agentProtocol.risk.riskAssessment"]}</span>
                 <textarea
                   value={riskDraft.riskAssessment}
                   onChange={(event) => updateRiskDraft("riskAssessment", event.target.value)}
@@ -2568,7 +2720,7 @@ export function AgentProtocolCenter() {
           <section className="rounded-lg border border-border bg-card p-4">
             <div className="flex items-center gap-2 text-sm font-semibold">
               <FileText className="h-4 w-4" />
-              协议预览
+              {copy["agentProtocol.protocolPreview.title"]}
             </div>
             <pre className="mt-3 max-h-[28rem] overflow-auto rounded-md border border-border bg-background p-3 text-xs leading-5 text-muted-foreground">
               {protocolMarkdown}
@@ -2578,10 +2730,10 @@ export function AgentProtocolCenter() {
           <section className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-200">
             <div className="flex items-center gap-2 font-semibold">
               <AlertTriangle className="h-4 w-4" />
-              危险操作门禁
+              {copy["agentProtocol.dangerGate.title"]}
             </div>
             <p className="mt-2 leading-6">
-              删除、批量修改、提交推送、生产 API、数据库结构变更、全局包管理等操作必须先展示影响范围与风险评估，并等待明确确认。
+              {copy["agentProtocol.dangerGate.description"]}
             </p>
           </section>
         </aside>

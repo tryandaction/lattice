@@ -10,6 +10,7 @@ import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useAnnotationStore } from "@/stores/annotation-store";
 import { useAgentSessionStore } from "@/stores/agent-session-store";
 import { aiOrchestrator } from "@/lib/ai/orchestrator";
+import { aiContextGraph } from "@/lib/ai/context-graph";
 import { X, Send, Square, Plus, Trash2, MessageSquare, Copy, Check, GitCompareArrows, Bot, FileText, ShieldCheck, Wand2, ChevronDown, ChevronUp, ChevronRight, FolderPen, FileOutput, ListTodo, Save, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MarkdownRenderer } from "@/components/renderers/markdown-renderer";
@@ -21,6 +22,7 @@ import { AgentTracePanel } from "./agent-trace-panel";
 import { AgentMemoryPanel } from "./agent-memory-panel";
 import { PromptPicker } from "@/components/prompt/prompt-picker";
 import { PromptEditorDialog } from "@/components/prompt/prompt-editor-dialog";
+import { Portal } from "@/components/ui/portal";
 import { parseMentions, resolveMentions } from "@/lib/ai/mention-resolver";
 import { extractCodeBlocks } from "@/lib/ai/diff-utils";
 import { deriveFileId } from "@/lib/annotation-storage";
@@ -65,6 +67,8 @@ import {
   type AgentComposerViewModel,
 } from "@/lib/ai/agent-composer-view-model";
 import { focusAgentSession } from "@/lib/ai/agent-session-focus";
+import { loadPdfJsDocument } from "@/lib/pdf-js-document-loader";
+import { getPdfPageSearchText } from "@/lib/pdf-page-text-cache";
 
 interface ChatPromptContextOptions {
   includeCurrentFileContent: boolean;
@@ -73,10 +77,58 @@ interface ChatPromptContextOptions {
 }
 
 const DEFAULT_CHAT_PROMPT_CONTEXT_OPTIONS: ChatPromptContextOptions = {
-  includeCurrentFileContent: false,
-  includeAnnotations: false,
+  includeCurrentFileContent: true,
+  includeAnnotations: true,
   includeWorkspaceSummary: false,
 };
+
+const CHAT_AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
+const AI_CONTEXT_FILE_MAX_CHARS = 70000;
+const AI_CONTEXT_PDF_MAX_PAGES = 16;
+
+function isPdfFile(filePath: string | undefined, file: File): boolean {
+  return file.type === "application/pdf" || /\.pdf$/i.test(filePath ?? file.name);
+}
+
+function clampAiContextText(text: string, maxChars = AI_CONTEXT_FILE_MAX_CHARS): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  return `${text.slice(0, maxChars)}\n\n[AI context truncated after ${maxChars} characters.]`;
+}
+
+export async function readFileForAiContext(file: File, label: string): Promise<string> {
+  if (!isPdfFile(label, file)) {
+    return clampAiContextText(await file.text());
+  }
+
+  const pdfDocument = await loadPdfJsDocument({
+    data: await file.arrayBuffer(),
+    label: `ai-context:${label}`,
+  });
+
+  try {
+    const pageCount = Math.min(pdfDocument.numPages, AI_CONTEXT_PDF_MAX_PAGES);
+    const sections = [
+      `[PDF text extracted from ${label}; pages 1-${pageCount}${pdfDocument.numPages > pageCount ? ` of ${pdfDocument.numPages}` : ""}.]`,
+    ];
+
+    for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+      const pageText = (await getPdfPageSearchText(pdfDocument, pageNumber)).trim();
+      if (pageText) {
+        sections.push(`--- Page ${pageNumber} ---\n${pageText}`);
+      }
+    }
+
+    if (pdfDocument.numPages > pageCount) {
+      sections.push(`[PDF extraction truncated after ${pageCount} pages. Ask for a specific page or selection for more detail.]`);
+    }
+
+    return clampAiContextText(sections.join("\n\n"));
+  } finally {
+    void pdfDocument.destroy();
+  }
+}
 
 async function readWorkspaceFile(
   rootHandle: FileSystemDirectoryHandle,
@@ -89,25 +141,25 @@ async function readWorkspaceFile(
   }
   const fileHandle = await directory.getFileHandle(parts[parts.length - 1]);
   const file = await fileHandle.getFile();
-  return file.text();
+  return readFileForAiContext(file, filePath);
 }
 
 async function resolveActiveFileContent(
   activeTab: ReturnType<typeof useWorkspaceStore.getState>["getActiveTab"] extends () => infer T ? T : never,
   activeContent: string | null,
 ): Promise<string | undefined> {
-  if (typeof activeContent === "string") {
+  if (typeof activeContent === "string" && activeContent.trim().length > 0) {
     return activeContent;
   }
   if (!activeTab) {
-    return undefined;
+    return activeContent ?? undefined;
   }
   if (!isFileTabState(activeTab)) {
     return activeContent ?? undefined;
   }
   try {
     const file = await activeTab.fileHandle.getFile();
-    return await file.text();
+    return await readFileForAiContext(file, activeTab.filePath || activeTab.fileName);
   } catch {
     return undefined;
   }
@@ -223,6 +275,7 @@ export function AiChatPanel({
   className?: string;
   onClose?: () => void;
 } = {}) {
+  const { t } = useI18n();
   const isOpen = useAiChatStore((s) => s.isOpen);
   const setOpen = useAiChatStore((s) => s.setOpen);
   const loadConversations = useAiChatStore((s) => s.loadConversations);
@@ -293,16 +346,16 @@ export function AiChatPanel({
         sourceRefs: input.refs ?? [],
         content: input.content,
       },
-      task: `Create evidence draft: ${input.title}`,
+      task: t("ai.evidence.workbench.createDraftTask", { title: input.title }),
       title: input.title,
       evidenceRefs: input.refs ?? [],
-      approvalNote: "User clicked save draft from the Evidence Panel.",
+      approvalNote: t("ai.evidence.workbench.createDraftApproval"),
     }).catch((error) => {
-      toast.error("Failed to create draft", {
+      toast.error(t("ai.evidence.workbench.createDraftFailed"), {
         description: error instanceof Error ? error.message : String(error),
       });
     });
-  }, []);
+  }, [t]);
 
   const handleProposeEvidenceTask = useCallback(async (input: {
     prompt: string;
@@ -322,16 +375,19 @@ export function AiChatPanel({
     });
     await createWorkbenchProposalWithTrace({
       proposal,
-      task: `Create evidence proposal: ${input.prompt.slice(0, 80)}`,
-      title: "Evidence proposal",
-      approvalNote: "User clicked generate plan from the Evidence Panel.",
+      task: t("ai.evidence.workbench.createProposalTask", { prompt: input.prompt.slice(0, 80) }),
+      title: t("ai.evidence.workbench.createProposalTitle"),
+      approvalNote: t("ai.evidence.workbench.createProposalApproval"),
     });
-  }, [activeTab, getCachedContent, settings]);
+  }, [activeTab, getCachedContent, settings, t]);
 
   if (!isOpen) return null;
 
   return (
-    <div className={cn("flex h-full min-h-0 flex-col bg-background", className)}>
+    <div
+      className={cn("flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background", className)}
+      data-testid="ai-chat-panel"
+    >
       <ChatHeader onClose={() => {
         if (onClose) {
           onClose();
@@ -348,7 +404,7 @@ export function AiChatPanel({
         onProposeTask={handleProposeEvidenceTask}
         onClose={() => setEvidencePanelOpen(false)}
       />
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="ai-chat-message-frame">
         <ChatMessages
         onOpenEvidence={(messageId) => {
           if (isEvidencePanelVisible && selectedEvidenceMessage?.id === messageId) {
@@ -517,14 +573,14 @@ function FollowUpActions({
           writeMode: draftSuggestion?.writeMode,
           originMessageId: messageId,
         },
-        task: `Create draft from message ${messageId}`,
+        task: t("ai.chat.workbench.createDraftTask", { messageId }),
         title: draftSuggestion?.title || `AI Draft ${messageId}`,
         evidenceRefs,
-        approvalNote: "User clicked save draft from an AI chat message.",
+        approvalNote: t("ai.chat.workbench.createDraftApproval"),
       });
       setDraftSaved(true);
     } catch (error) {
-      toast.error("Failed to create draft", {
+      toast.error(t("ai.chat.workbench.createDraftFailed"), {
         description: error instanceof Error ? error.message : String(error),
       });
     }
@@ -554,11 +610,11 @@ function FollowUpActions({
         proposal,
         task: `Create proposal from message ${messageId}`,
         title: proposal.summary,
-        approvalNote: "User clicked generate proposal from an AI chat message.",
+        approvalNote: t("ai.chat.workbench.createProposalApproval"),
       });
       setProposalDone(true);
     } catch (error) {
-      toast.error("Failed to create proposal", {
+      toast.error(t("ai.chat.workbench.createProposalFailed"), {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
@@ -1352,7 +1408,7 @@ function WorkbenchPanel() {
   }
 
   return (
-    <div className="border-t border-border bg-background/95">
+      <div className="border-t border-border bg-background/95">
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
@@ -1369,7 +1425,7 @@ function WorkbenchPanel() {
         </div>
       </button>
       {expanded && (
-        <div className="max-h-64 space-y-3 overflow-y-auto border-t border-border/60 px-3 py-3">
+        <div className="max-h-[min(16rem,40vh)] space-y-3 overflow-y-auto border-t border-border/60 px-3 py-3">
           {standaloneDrafts.length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -1724,6 +1780,7 @@ function ChatMessages({
   const { t } = useI18n();
   const conv = useAiChatStore((s) => s.getActiveConversation());
   const scrollRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
   const [diffState, setDiffState] = useState<{ msgId: string; code: string } | null>(null);
   const activeTab = useWorkspaceStore((s) => s.getActiveTab());
   const activeContent = useContentCacheStore((s) => {
@@ -1733,14 +1790,26 @@ function ChatMessages({
   });
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const scrollElement = scrollRef.current;
+    if (scrollElement && shouldAutoScrollRef.current) {
+      scrollElement.scrollTop = scrollElement.scrollHeight;
     }
   }, [conv?.messages]);
 
+  const handleScroll = useCallback(() => {
+    const scrollElement = scrollRef.current;
+    if (!scrollElement) {
+      return;
+    }
+
+    const distanceFromBottom =
+      scrollElement.scrollHeight - scrollElement.clientHeight - scrollElement.scrollTop;
+    shouldAutoScrollRef.current = distanceFromBottom <= CHAT_AUTO_SCROLL_BOTTOM_THRESHOLD_PX;
+  }, []);
+
   if (!conv || conv.messages.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center p-4">
+      <div className="flex h-full min-h-0 flex-1 items-center justify-center p-4" data-testid="ai-chat-message-scroll">
         <p className="text-xs text-muted-foreground text-center">
           {t('chat.empty')}
         </p>
@@ -1749,7 +1818,12 @@ function ChatMessages({
   }
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3">
+    <div
+      ref={scrollRef}
+      onScroll={handleScroll}
+      className="h-full min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-3"
+      data-testid="ai-chat-message-scroll"
+    >
       {conv.messages.map((msg) => (
         <div
           key={msg.id}
@@ -1884,7 +1958,7 @@ function ChatMessages({
 }
 
 function ChatInput() {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const [input, setInput] = useState("");
   const [isPromptPickerOpen, setPromptPickerOpen] = useState(false);
   const [promptEditorState, setPromptEditorState] = useState<{
@@ -2050,6 +2124,28 @@ function ChatInput() {
     };
   }, [buildChatContextSnapshot, rootHandle]);
 
+  const preservePreparedContextMetadata = useCallback((
+    messageId: string,
+    preparedContext: Awaited<ReturnType<typeof prepareChatExecution>> | null,
+  ) => {
+    if (!preparedContext) {
+      return;
+    }
+
+    const promptContext = aiContextGraph.buildPromptContext({
+      filePath: activeTab?.filePath,
+      content: preparedContext.activeContent ?? undefined,
+      selection: preparedContext.contextValues.selected_text ?? undefined,
+      references: preparedContext.references,
+      annotations: preparedContext.annotations,
+      explicitEvidenceRefs: preparedContext.explicitEvidenceRefs,
+    });
+    setAssistantMetadata(messageId, {
+      evidenceRefs: promptContext.evidenceRefs,
+      promptContext,
+    });
+  }, [activeTab?.filePath, setAssistantMetadata]);
+
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || isGenerating) return;
@@ -2060,6 +2156,7 @@ function ChatInput() {
     const msgId = startAssistantMessage();
     const controller = new AbortController();
     setGenerating(true, controller);
+    let preparedContext: Awaited<ReturnType<typeof prepareChatExecution>> | null = null;
 
     try {
       if (!settings.aiEnabled) {
@@ -2067,20 +2164,18 @@ function ChatInput() {
         return;
       }
 
-      const execution = await prepareChatExecution(text, {
-        includeCurrentFileContent: false,
-        includeAnnotations: false,
-        includeWorkspaceSummary: false,
-      });
+      const execution = await prepareChatExecution(text, DEFAULT_CHAT_PROMPT_CONTEXT_OPTIONS);
+      preparedContext = execution;
 
       const result = await aiOrchestrator.runChat({
         prompt: text,
         history: historyBeforeSend,
         settings: toRuntimeSettings(settings),
         filePath: activeTab?.filePath,
-        content: undefined,
+        content: execution.activeContent ?? undefined,
+        selection: execution.contextValues.selected_text ?? undefined,
         references: execution.references,
-        annotations: [],
+        annotations: execution.annotations,
         explicitEvidenceRefs: execution.explicitEvidenceRefs,
       });
 
@@ -2103,6 +2198,7 @@ function ChatInput() {
         finishAssistantMessage(msgId);
       } else {
         setAssistantError(msgId, (err as Error).message ?? "Request failed");
+        preservePreparedContextMetadata(msgId, preparedContext);
       }
     }
   }, [
@@ -2115,6 +2211,7 @@ function ChatInput() {
     settings,
     activeTab,
     prepareChatExecution,
+    preservePreparedContextMetadata,
     appendToAssistantMessage,
     finishAssistantMessage,
     setAssistantError,
@@ -2132,6 +2229,7 @@ function ChatInput() {
     const msgId = startAssistantMessage();
     const controller = new AbortController();
     setGenerating(true, controller);
+    let preparedContext: Awaited<ReturnType<typeof prepareChatExecution>> | null = null;
 
     try {
       if (!settings.aiEnabled) {
@@ -2144,6 +2242,7 @@ function ChatInput() {
         includeAnnotations: true,
         includeWorkspaceSummary: true,
       });
+      preparedContext = execution;
 
       if (controller.signal.aborted) {
         finishAssistantMessage(msgId);
@@ -2191,6 +2290,7 @@ function ChatInput() {
         finishAssistantMessage(msgId);
       } else {
         setAssistantError(msgId, (err as Error).message ?? "Research agent failed");
+        preservePreparedContextMetadata(msgId, preparedContext);
       }
     }
   }, [
@@ -2204,6 +2304,7 @@ function ChatInput() {
     isGenerating,
     continuationForRun,
     prepareChatExecution,
+    preservePreparedContextMetadata,
     rootHandle,
     selectedResearchWorkflowId,
     setAssistantError,
@@ -2219,7 +2320,7 @@ function ChatInput() {
   const applyPromptTemplateToInput = useCallback(async (template: PromptTemplate) => {
     setPromptPickerOpen(false);
     const snapshot = await buildChatContextSnapshot(DEFAULT_CHAT_PROMPT_CONTEXT_OPTIONS);
-    const rendered = renderPromptTemplate(template, snapshot.contextValues);
+    const rendered = renderPromptTemplate(template, snapshot.contextValues, locale);
     const prompt = rendered.renderedPrompt.trim();
     setInput((current) => {
       const existing = current.trim();
@@ -2233,7 +2334,7 @@ function ChatInput() {
       workspaceRootPath,
     });
     requestAnimationFrame(() => textareaRef.current?.focus());
-  }, [buildChatContextSnapshot, rememberTemplateUsage, workspaceKey, workspaceRootPath]);
+  }, [buildChatContextSnapshot, locale, rememberTemplateUsage, workspaceKey, workspaceRootPath]);
 
   const applyModelQuickSwitch = useCallback(async () => {
     await updateSettings({
@@ -2260,31 +2361,33 @@ function ChatInput() {
 
   return (
     <div className="border-t border-border p-2 relative">
-      <PromptPicker
-        isOpen={isPromptPickerOpen}
-        surface="chat"
-        workspaceKey={workspaceKey}
-        workspaceRootPath={workspaceRootPath}
-        currentInput={input}
-        onClose={() => setPromptPickerOpen(false)}
-        onSelectTemplate={(template) => void applyPromptTemplateToInput(template)}
-        onCreateTemplate={(seed) => {
-          setPromptPickerOpen(false);
-          setPromptEditorState({ seedUserPrompt: seed?.userPrompt });
-        }}
-        onEditTemplate={(template) => {
-          setPromptPickerOpen(false);
-          setPromptEditorState({ template });
-        }}
-      />
-      <PromptEditorDialog
-        key={`prompt-editor:${promptEditorState?.template?.id ?? "new"}:${promptEditorState?.seedUserPrompt ?? ""}`}
-        isOpen={Boolean(promptEditorState)}
-        surface="chat"
-        template={promptEditorState?.template ?? null}
-        seedUserPrompt={promptEditorState?.seedUserPrompt}
-        onClose={() => setPromptEditorState(null)}
-      />
+      <Portal>
+        <PromptPicker
+          isOpen={isPromptPickerOpen}
+          surface="chat"
+          workspaceKey={workspaceKey}
+          workspaceRootPath={workspaceRootPath}
+          currentInput={input}
+          onClose={() => setPromptPickerOpen(false)}
+          onSelectTemplate={(template) => void applyPromptTemplateToInput(template)}
+          onCreateTemplate={(seed) => {
+            setPromptPickerOpen(false);
+            setPromptEditorState({ seedUserPrompt: seed?.userPrompt });
+          }}
+          onEditTemplate={(template) => {
+            setPromptPickerOpen(false);
+            setPromptEditorState({ template });
+          }}
+        />
+        <PromptEditorDialog
+          key={`prompt-editor:${promptEditorState?.template?.id ?? "new"}:${promptEditorState?.seedUserPrompt ?? ""}`}
+          isOpen={Boolean(promptEditorState)}
+          surface="chat"
+          template={promptEditorState?.template ?? null}
+          seedUserPrompt={promptEditorState?.seedUserPrompt}
+          onClose={() => setPromptEditorState(null)}
+        />
+      </Portal>
       {mentionQuery !== null && (
         <MentionAutocomplete
           query={mentionQuery}

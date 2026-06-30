@@ -13,6 +13,7 @@ import type {
   PromptSurface,
   PromptTemplate,
 } from "@/lib/prompt/types";
+import type { Locale } from "@/types/settings";
 
 export interface PromptSurfaceExecutionInput {
   template: PromptTemplate;
@@ -33,6 +34,25 @@ export interface PromptSurfaceExecutionInput {
   query?: string;
   explicitEvidenceRefs?: AiChatRequest["explicitEvidenceRefs"];
   origin?: SelectionAiOrigin;
+  locale?: Locale;
+}
+
+function promptTaskText(locale: Locale, kind: "draft" | "proposal", surface: PromptSurface, title: string): string {
+  if (locale === "zh-CN") {
+    return `创建 ${surface} 提示词${kind === "draft" ? "草稿" : "计划"}：${title}`;
+  }
+  return `Create ${surface} prompt ${kind}: ${title}`;
+}
+
+function promptApprovalNote(locale: Locale, kind: "draft" | "proposal"): string {
+  if (locale === "zh-CN") {
+    return kind === "draft"
+      ? "用户确认了一个输出草稿的提示词模板。"
+      : "用户确认了一个输出计划的提示词模板。";
+  }
+  return kind === "draft"
+    ? "User confirmed a prompt template that outputs a draft."
+    : "User confirmed a prompt template that outputs a proposal.";
 }
 
 export async function executePromptTemplateForSurface(
@@ -40,6 +60,7 @@ export async function executePromptTemplateForSurface(
 ): Promise<{ kind: "chat" | "draft" | "proposal"; title: string; runId: string }> {
   const promptStore = usePromptTemplateStore.getState();
   const chatStore = useAiChatStore.getState();
+  const locale = input.locale ?? "en-US";
 
   const runId = promptStore.addRun({
     templateId: input.template.id,
@@ -129,10 +150,10 @@ export async function executePromptTemplateForSurface(
         },
       }, {
         profile: "research",
-        task: `Create ${input.surface} prompt draft: ${input.template.title}`,
+        task: promptTaskText(locale, "draft", input.surface, input.template.title),
         title: result.draft.title,
         evidenceRefs: result.chatResult.evidenceRefs,
-        approvalNote: "User confirmed a prompt template that outputs a draft.",
+        approvalNote: promptApprovalNote(locale, "draft"),
       });
       const draftId = brokerResult.result?.draftId;
       if (!draftId) {
@@ -157,10 +178,10 @@ export async function executePromptTemplateForSurface(
         args: { proposal },
       }, {
         profile: "research",
-        task: `Create ${input.surface} prompt proposal: ${input.template.title}`,
+        task: promptTaskText(locale, "proposal", input.surface, input.template.title),
         title: proposal.summary,
         evidenceRefs: proposal.sourceRefs,
-        approvalNote: "User confirmed a prompt template that outputs a proposal.",
+        approvalNote: promptApprovalNote(locale, "proposal"),
       });
       const proposalId = brokerResult.result?.proposalId;
       if (!proposalId) {

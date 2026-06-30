@@ -2,22 +2,21 @@
 
 import { useEffect, useState } from "react";
 import { X, Download, Zap, FolderOpen, Gauge } from "lucide-react";
+import { useI18n } from "@/hooks/use-i18n";
 import { isTauriHost } from "@/lib/storage-adapter";
 
 export function DownloadAppDialog() {
+  const { t } = useI18n();
   const isDesktopApp = isTauriHost();
   const [isOpen, setIsOpen] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
 
   useEffect(() => {
-    // 如果已经在 Tauri 环境中，不显示
     if (isDesktopApp) return;
 
-    // 检查是否已经选择不再显示
     const dismissed = localStorage.getItem("lattice-download-dismissed");
     if (dismissed === "true") return;
 
-    // 延迟 2 秒后显示，让用户先看到应用
     const timer = setTimeout(() => {
       setIsOpen(true);
     }, 2000);
@@ -36,111 +35,92 @@ export function DownloadAppDialog() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 px-4 pb-4 pt-6 backdrop-blur-sm md:pt-20">
-      <div className="relative w-full max-w-lg bg-white dark:bg-gray-900 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-700 max-h-[calc(100vh-2rem)] overflow-y-auto md:max-h-[calc(100vh-6rem)]">
-        {/* 关闭按钮 */}
+      <div
+        className="relative max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-lg border border-border bg-card text-card-foreground shadow-2xl md:max-h-[calc(100vh-6rem)]"
+        data-testid="download-app-dialog"
+      >
         <button
+          type="button"
           onClick={handleClose}
-          className="absolute top-4 right-4 p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          aria-label="关闭"
+          className="absolute right-4 top-4 rounded-lg p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label={t("common.close")}
         >
-          <X className="w-5 h-5 text-gray-500" />
+          <X className="h-5 w-5" />
         </button>
 
-        {/* 内容 */}
         <div className="p-6">
-          {/* 标题 */}
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
-              <Download className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+          <div className="mb-4 flex items-center gap-3">
+            <div className="rounded-lg bg-primary/10 p-2">
+              <Download className="h-6 w-6 text-primary" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                下载桌面应用
-              </h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                获得更好的使用体验
-              </p>
+              <h2 className="text-xl font-semibold text-foreground">{t("downloadApp.title")}</h2>
+              <p className="text-sm text-muted-foreground">{t("downloadApp.subtitle")}</p>
             </div>
           </div>
 
-          {/* 优势列表 */}
-          <div className="space-y-3 mb-6">
+          <div className="mb-6 space-y-3">
             <div className="flex items-start gap-3">
-              <div className="p-1.5 bg-green-100 dark:bg-green-900/30 rounded-md mt-0.5">
-                <Zap className="w-4 h-4 text-green-600 dark:text-green-400" />
+              <div className="mt-0.5 rounded-md bg-emerald-500/10 p-1.5">
+                <Zap className="h-4 w-4 text-emerald-500" />
               </div>
               <div>
-                <h3 className="font-medium text-gray-900 dark:text-white">
-                  启动更快，体积更小
-                </h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  仅 6MB，启动速度提升 3 倍，内存占用降低 50%
-                </p>
+                <h3 className="font-medium text-foreground">{t("downloadApp.benefit.performance.title")}</h3>
+                <p className="text-sm text-muted-foreground">{t("downloadApp.benefit.performance.description")}</p>
               </div>
             </div>
 
             <div className="flex items-start gap-3">
-              <div className="p-1.5 bg-purple-100 dark:bg-purple-900/30 rounded-md mt-0.5">
-                <FolderOpen className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+              <div className="mt-0.5 rounded-md bg-violet-500/10 p-1.5">
+                <FolderOpen className="h-4 w-4 text-violet-500" />
               </div>
               <div>
-                <h3 className="font-medium text-gray-900 dark:text-white">
-                  记住工作目录
-                </h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  自动记住上次打开的文件夹，设置默认工作目录
-                </p>
+                <h3 className="font-medium text-foreground">{t("downloadApp.benefit.workspace.title")}</h3>
+                <p className="text-sm text-muted-foreground">{t("downloadApp.benefit.workspace.description")}</p>
               </div>
             </div>
 
             <div className="flex items-start gap-3">
-              <div className="p-1.5 bg-orange-100 dark:bg-orange-900/30 rounded-md mt-0.5">
-                <Gauge className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+              <div className="mt-0.5 rounded-md bg-amber-500/10 p-1.5">
+                <Gauge className="h-4 w-4 text-amber-500" />
               </div>
               <div>
-                <h3 className="font-medium text-gray-900 dark:text-white">
-                  原生窗口体验
-                </h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  无需浏览器，双击即用，更好的文件系统访问权限
-                </p>
+                <h3 className="font-medium text-foreground">{t("downloadApp.benefit.native.title")}</h3>
+                <p className="text-sm text-muted-foreground">{t("downloadApp.benefit.native.description")}</p>
               </div>
             </div>
           </div>
 
-          {/* 下载按钮 */}
           <div className="space-y-3">
             <a
               href="https://github.com/tryandaction/lattice/releases/latest"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 font-medium text-primary-foreground transition-colors hover:bg-primary/90"
               onClick={handleClose}
             >
-              <Download className="w-5 h-5" />
-              前往下载页面
+              <Download className="h-5 w-5" />
+              {t("downloadApp.download")}
             </a>
 
             <button
+              type="button"
               onClick={handleClose}
-              className="w-full px-4 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white font-medium transition-colors"
+              className="w-full px-4 py-2 font-medium text-muted-foreground transition-colors hover:text-foreground"
             >
-              继续使用网页版
+              {t("downloadApp.continueWeb")}
             </button>
           </div>
 
-          {/* 不再显示选项 */}
-          <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-            <label className="flex items-center gap-2 cursor-pointer">
+          <div className="mt-4 border-t border-border pt-4">
+            <label className="flex cursor-pointer items-center gap-2">
               <input
                 type="checkbox"
                 checked={dontShowAgain}
                 onChange={(e) => setDontShowAgain(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                className="h-4 w-4 rounded border-border text-primary focus:ring-ring"
               />
-              <span className="text-sm text-gray-600 dark:text-gray-400">
-                不再显示此提示
-              </span>
+              <span className="text-sm text-muted-foreground">{t("downloadApp.dontShowAgain")}</span>
             </label>
           </div>
         </div>

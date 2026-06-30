@@ -11,6 +11,10 @@ import {
   validateKeymap,
   isValidLatexCommand,
   getDisplaySymbol,
+  getCandidateSymbol,
+  getCandidateSymbols,
+  getQuantumLayerMeanings,
+  getQuantumMeaning,
   hasVariants,
   getVariants,
   KEY_LABELS,
@@ -18,6 +22,9 @@ import {
   type KeyMapping,
   type QuantumKeymap,
 } from '../quantum-keymap';
+import { FORMULA_TEMPLATES } from '../../lib/formula-templates';
+
+const MOJIBAKE_PATTERN = /[�]|(?:涓|婃|嬫|鍒|嗘|绉|姹|鏋|侀|檺|鐭|鍚|鏍|骞|鎷|鏃|泦|瑙|堕|爣|庡|彿|戦|噺)/;
 
 describe('Quantum Keymap', () => {
   describe('Property 11: Keymap Schema Validation', () => {
@@ -108,7 +115,10 @@ describe('Quantum Keymap', () => {
      */
     it('rejects invalid LaTeX commands', () => {
       const invalidLatexCommand = fc.string({ minLength: 1, maxLength: 10 })
-        .filter(s => !s.startsWith('\\') && !s.startsWith('^') && !s.startsWith('_'));
+        .filter((s) => {
+          const trimmed = s.trim();
+          return !trimmed.startsWith('\\') && !trimmed.startsWith('^') && !trimmed.startsWith('_');
+        });
 
       fc.assert(
         fc.property(
@@ -209,6 +219,13 @@ describe('Quantum Keymap', () => {
   });
 
   describe('Keyboard Layout', () => {
+    it('renders exactly the 26 physical letter keys and no number row', () => {
+      const layoutKeys = QWERTY_LAYOUT.flatMap(row => row.keys);
+      expect(layoutKeys).toHaveLength(26);
+      expect(layoutKeys.every((key) => /^Key[A-Z]$/.test(key))).toBe(true);
+      expect(layoutKeys.some((key) => key.startsWith('Digit'))).toBe(false);
+    });
+
     it('QWERTY_LAYOUT covers all mapped keys', () => {
       const layoutKeys = QWERTY_LAYOUT.flatMap(row => row.keys);
       const keymapKeys = Object.keys(quantumKeymap);
@@ -225,6 +242,76 @@ describe('Quantum Keymap', () => {
         expect(KEY_LABELS[key]).toBeDefined();
         expect(KEY_LABELS[key].length).toBeGreaterThan(0);
       }
+    });
+  });
+
+  describe('Formula input data quality', () => {
+    it('exposes official base and ctrl layer meanings for the physical I key', () => {
+      expect(getQuantumLayerMeanings('KeyI', 'base').map((meaning) => meaning.label)).toEqual([
+        'integral',
+        'double integral',
+        'triple integral',
+        'contour integral',
+        'bounded integral',
+      ]);
+      expect(getQuantumLayerMeanings('KeyI', 'ctrl').map((meaning) => meaning.label)).toEqual([
+        'current I',
+        'identity',
+        'indicator',
+        'inertia I',
+      ]);
+      expect(getQuantumMeaning('KeyI', 'base', 3)?.latex).toBe('\\iiint');
+      expect(getQuantumMeaning('KeyI', 'ctrl', 1)?.latex).toBe('I');
+    });
+
+    it('provides a non-empty ctrl second layer for every physical letter key', () => {
+      for (const keyCode of QWERTY_LAYOUT.flatMap(row => row.keys)) {
+        expect(getQuantumLayerMeanings(keyCode, 'ctrl').length, `${keyCode} ctrl layer`).toBeGreaterThan(0);
+      }
+    });
+
+    it('does not expose duplicate commands inside a key candidate list', () => {
+      for (const [keyCode, mapping] of Object.entries(quantumKeymap)) {
+        const candidates = [mapping.default, mapping.shift, ...(mapping.variants ?? [])].filter(Boolean);
+        expect(new Set(candidates).size, `${keyCode} has duplicate candidates`).toBe(candidates.length);
+      }
+    });
+
+    it('keeps keymap labels, titles, previews, and keywords free of mojibake', () => {
+      for (const [keyCode, mapping] of Object.entries(quantumKeymap)) {
+        const visibleTerms = [
+          mapping.label,
+          mapping.title,
+          mapping.preview,
+          ...(mapping.keywords ?? []),
+        ].filter(Boolean);
+
+        for (const term of visibleTerms) {
+          expect(term, `${keyCode} contains mojibake: ${term}`).not.toMatch(MOJIBAKE_PATTERN);
+        }
+      }
+    });
+
+    it('keeps formula template labels and keywords readable', () => {
+      for (const template of Object.values(FORMULA_TEMPLATES)) {
+        const visibleTerms = [template.label, ...template.keywords];
+
+        for (const term of visibleTerms) {
+          expect(term, `${template.id} contains mojibake: ${term}`).not.toMatch(MOJIBAKE_PATTERN);
+        }
+      }
+    });
+
+    it('uses one-based candidate selection for Shift+number then letter', () => {
+      expect(getCandidateSymbol('KeyI', 1)).toBe('\\int');
+      expect(getCandidateSymbol('KeyI', 2)).toBe('\\iint');
+      expect(getCandidateSymbol('KeyI', 3)).toBe('\\iiint');
+      expect(getCandidateSymbols('KeyB').slice(0, 4)).toEqual([
+        '\\left({}\\right)',
+        '\\left[{}\\right]',
+        '\\left\\{{}\\right\\}',
+        '\\begin{cases}{}&{}\\\\{}&{}\\end{cases}',
+      ]);
     });
   });
 });

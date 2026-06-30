@@ -1,3 +1,5 @@
+import type { Locale } from "@/types/settings";
+
 export type PromptSurface =
   | "chat"
   | "selection"
@@ -36,6 +38,12 @@ export interface PromptTemplate {
   id: string;
   title: string;
   description: string;
+  localized?: Partial<Record<Locale, {
+    title: string;
+    description: string;
+    systemPrompt?: string;
+    userPrompt: string;
+  }>>;
   category: PromptCategory;
   systemPrompt?: string;
   userPrompt: string;

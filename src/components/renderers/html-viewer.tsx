@@ -16,8 +16,9 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
 import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
 import { buildHtmlPreviewDocument } from "@/lib/html-preview";
+import { shouldLetHtmlPreviewHandleAnchor } from "@/lib/html-navigation";
 import { getDesktopPreviewPath, resolveDesktopPreviewUrl } from "@/lib/desktop-preview";
-import { navigateLink } from "@/lib/link-router/navigate-link";
+import { navigateLinkWithFeedback } from "@/lib/link-router/navigate-link-with-feedback";
 import { findClosestAnchorHref, shouldOpenLinkExternally } from "@/lib/link-router/link-click";
 import { CodeEditorViewer } from "@/components/renderers/code-editor-viewer";
 
@@ -252,9 +253,13 @@ export function HTMLViewer({
           return;
         }
 
+        if (shouldLetHtmlPreviewHandleAnchor(href)) {
+          return;
+        }
+
         event.preventDefault();
         event.stopPropagation();
-        void navigateLink(href, {
+        void navigateLinkWithFeedback(href, {
           paneId,
           rootHandle,
           currentFilePath: filePath,

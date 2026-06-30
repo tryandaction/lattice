@@ -12,7 +12,11 @@ import {
 
 vi.mock("@/hooks/use-i18n", () => ({
   useI18n: () => ({
-    t: (key: string) => key,
+    t: (key: string, params?: Record<string, unknown>) => (
+      key === "markdown.links.moreResults"
+        ? `+${params?.count ?? 0} more`
+        : key
+    ),
   }),
 }));
 
@@ -84,15 +88,21 @@ describe("MarkdownLinksPanel", () => {
     expect(screen.getByText("markdown.links.broken")).toBeTruthy();
     expect(screen.getByText("markdown.links.attachments")).toBeTruthy();
     expect(screen.getByText("markdown.links.localGraph")).toBeTruthy();
-    expect(screen.getByRole("img", { name: "markdown.links.localGraph.preview" })).toBeTruthy();
+    expect(screen.getByText("markdown.links.backlinks").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByText("markdown.links.unlinkedMentions").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByText("markdown.links.localGraph").closest("button")?.getAttribute("aria-expanded")).toBe("false");
     expect(screen.getByText("target note")).toBeTruthy();
     expect(screen.getAllByText("Missing")).toHaveLength(2);
-    expect(screen.getAllByText("Target").length).toBeGreaterThan(0);
 
     act(() => {
       fireEvent.click(screen.getByText("target note"));
     });
-    expect(onNavigate).toHaveBeenCalledWith("Target");
+    expect(onNavigate).toHaveBeenCalledWith("Target.md");
+
+    act(() => {
+      fireEvent.click(screen.getByText("markdown.links.localGraph"));
+    });
+    expect(screen.getByRole("img", { name: "markdown.links.localGraph.preview" })).toBeTruthy();
 
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: "markdown.links.localGraph.preview: Target.md" }));
@@ -136,6 +146,9 @@ describe("MarkdownLinksPanel", () => {
     );
 
     act(() => {
+      fireEvent.click(screen.getByText("markdown.links.attachments"));
+    });
+    act(() => {
       fireEvent.click(screen.getByText("markdown.links.reviewAttachment"));
     });
     expect(onReviewUnreferencedAttachment).toHaveBeenCalledWith(
@@ -161,6 +174,9 @@ describe("MarkdownLinksPanel", () => {
     });
     await flushPanelEffects();
 
+    act(() => {
+      fireEvent.click(screen.getByText("markdown.links.backlinks"));
+    });
     const backlinkButton = container.querySelector('button[title="index.md:2"]') as HTMLButtonElement;
     expect(backlinkButton).toBeTruthy();
     act(() => {
@@ -168,6 +184,9 @@ describe("MarkdownLinksPanel", () => {
     });
     expect(onNavigateToSource).toHaveBeenCalledWith("index.md", 2);
 
+    act(() => {
+      fireEvent.click(screen.getByText("markdown.links.unlinkedMentions"));
+    });
     const unlinkedMentionButton = container.querySelector('button[title="daily.md:1"]') as HTMLButtonElement;
     expect(unlinkedMentionButton).toBeTruthy();
     act(() => {
@@ -219,12 +238,40 @@ describe("MarkdownLinksPanel", () => {
     await flushPanelEffects();
 
     act(() => {
+      fireEvent.click(screen.getByText("markdown.links.unlinkedMentions"));
+    });
+    act(() => {
       fireEvent.click(screen.getByText("markdown.links.linkAllVisible"));
     });
     expect(onLinkUnlinkedMentions).toHaveBeenCalledWith([
       expect.objectContaining({ sourceFile: "daily.md" }),
       expect.objectContaining({ sourceFile: "weekly.md" }),
     ]);
+  });
+
+  it("prioritizes indexed repair candidates for broken links", async () => {
+    act(() => {
+      upsertWorkspaceMarkdownFile("index.md", "[Old Target](missing.md)");
+      upsertWorkspaceMarkdownFile("notes/Old Target.md", "# Renamed");
+      upsertWorkspaceMarkdownFile("zzz/unrelated.md", "# Unrelated");
+    });
+
+    const onRepairBrokenLink = vi.fn();
+    act(() => {
+      render(
+        <MarkdownLinksPanel
+          filePath="index.md"
+          onNavigate={vi.fn()}
+          onNavigateToSource={vi.fn()}
+          onRepairBrokenLink={onRepairBrokenLink}
+        />,
+      );
+    });
+    await flushPanelEffects();
+
+    const options = Array.from(screen.getByLabelText("markdown.links.repairTarget").querySelectorAll("option"))
+      .map((option) => option.value);
+    expect(options).toEqual(["", "notes/Old Target.md"]);
   });
 
   it("filters visible link rows and remembers collapsed sections", async () => {
@@ -271,5 +318,28 @@ describe("MarkdownLinksPanel", () => {
     });
     await flushPanelEffects();
     expect(screen.getByText("markdown.links.outgoing").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("limits large visible link sections while preserving counts", async () => {
+    act(() => {
+      const outgoingLinks = Array.from({ length: 95 }, (_, index) => `[[Target ${index}]]`).join(" ");
+      upsertWorkspaceMarkdownFile("index.md", outgoingLinks);
+      for (let index = 0; index < 95; index += 1) {
+        upsertWorkspaceMarkdownFile(`Target ${index}.md`, `# Target ${index}`);
+      }
+    });
+
+    const { container } = render(
+      <MarkdownLinksPanel
+        filePath="index.md"
+        onNavigate={vi.fn()}
+        onNavigateToSource={vi.fn()}
+      />,
+    );
+    await flushPanelEffects();
+
+    expect(screen.getAllByText("95").length).toBeGreaterThan(0);
+    expect(screen.getByText("+15 more")).toBeTruthy();
+    expect(container.querySelectorAll('button[title^="Target "]')).toHaveLength(80);
   });
 });

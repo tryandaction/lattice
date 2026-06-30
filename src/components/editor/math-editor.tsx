@@ -21,6 +21,7 @@ import { getTemplateByPrefix, insertTemplate, type MathTemplate } from '@/lib/ma
 import { copyToClipboard } from '@/lib/clipboard';
 import { formatFormulaForClipboard, normalizeFormulaInput } from '@/lib/formula-utils';
 import { setActiveInputTargetFromElement } from '@/lib/unified-input-handler';
+import { UI_LAYER_CLASS } from '@/lib/ui-layers';
 
 export interface MathEditorProps {
   /** Initial LaTeX content */
@@ -234,12 +235,11 @@ export function MathEditor({
 
   return (
     <div
-      className="math-editor-overlay"
+      className={`math-editor-overlay ${UI_LAYER_CLASS.dialogElevated}`}
       style={{
         position: 'fixed',
         top: `${position.top}px`,
         left: `${position.left}px`,
-        zIndex: 1000,
       }}
     >
       <div className="math-editor-container">

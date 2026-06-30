@@ -98,6 +98,38 @@ export async function exportPdfWithAnnotations(
   }
 }
 
+export async function exportOriginalPdf(
+  originalContent: ArrayBuffer,
+  fileName: string,
+): Promise<void> {
+  const exportFileName = fileName.replace(/\.pdf$/i, '') + '.pdf';
+  const result = await exportFile(new Uint8Array(originalContent), {
+    defaultFileName: exportFileName,
+    filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
+  });
+
+  if (result.cancelled) {
+    return;
+  }
+
+  if (result.success) {
+    showExportToast({
+      type: 'success',
+      message: 'Export successful',
+      filePath: result.filePath,
+    });
+    return;
+  }
+
+  const errorMessage = result.error || 'Export failed';
+  showExportToast({
+    type: 'error',
+    message: 'Export failed',
+    error: errorMessage,
+  });
+  throw new Error(errorMessage);
+}
+
 // ============================================================================
 // Component
 // ============================================================================

@@ -1,6 +1,6 @@
 {
   "name": "lattice",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "private": true,
   "scripts": {
     "clean": "node scripts/clean-workspace.mjs",
@@ -13,6 +13,7 @@
     "typecheck": "node scripts/ensure-next-type-shims.mjs && tsc --noEmit --incremental false",
     "test": "vitest",
     "test:docs": "node scripts/check-docs.mjs",
+    "test:ux-hygiene": "node scripts/ux-hygiene-audit.mjs --json",
     "test:pdf-ab": "node scripts/pdf-selection-ab-regression.mjs",
     "test:pdf-corpus": "node scripts/pdf-corpus-audit.mjs",
     "test:pdf-corpus:gate": "node scripts/pdf-corpus-audit.mjs --fail-on-errors",
@@ -64,7 +65,6 @@
     "dompurify": "^3.3.1",
     "framer-motion": "^12.23.26",
     "geist": "^1.5.1",
-    "gray-matter": "^4.0.3",
     "highlight.js": "^11.11.1",
     "html2canvas": "^1.4.1",
     "immer": "^11.1.4",
@@ -120,6 +120,7 @@
   },
   "overrides": {
     "canvas": "3.2.1",
+    "esbuild": "0.28.1",
     "minimatch": "^10.2.1",
     "postcss": "$postcss",
     "pptx-preview": {

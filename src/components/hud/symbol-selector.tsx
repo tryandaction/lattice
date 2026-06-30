@@ -9,6 +9,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Pencil, Trash2, X, Check } from 'lucide-react';
 import { useKaTeXRenderer } from './katex-renderer';
+import { useI18n } from '@/hooks/use-i18n';
 
 export interface SymbolSelectorProps {
   /** Key code this selector is for */
@@ -54,6 +55,7 @@ export function SymbolSelector({
   onNavigate: _onNavigate,
   isVisible,
 }: SymbolSelectorProps) {
+  const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [isAddingNew, setIsAddingNew] = useState(false);
@@ -134,19 +136,19 @@ export function SymbolSelector({
           exit={{ opacity: 0, y: -10, scale: 0.95 }}
           transition={{ duration: 0.15, ease: 'easeOut' }}
           role="listbox"
-          aria-label={`符号选择 - ${keyLabel}`}
+          aria-label={t("quantum.symbolSelector.aria", { key: keyLabel })}
         >
           {/* Header */}
           <div className="symbol-selector-header">
             <span className="symbol-selector-key">{keyLabel}</span>
             <span className="symbol-selector-title">
-              {isEditMode ? '编辑模式' : '选择符号'}
+              {isEditMode ? t("quantum.symbolSelector.editMode") : t("quantum.symbolSelector.selectSymbol")}
             </span>
             {isEditMode && (
               <button
                 className="symbol-selector-close"
                 onClick={onToggleEditMode}
-                aria-label="退出编辑"
+                aria-label={t("quantum.symbolSelector.exitEdit")}
               >
                 <X size={14} />
               </button>
@@ -174,13 +176,13 @@ export function SymbolSelector({
                       e.stopPropagation();
                       onRemoveSymbol(symbol.latex);
                     }}
-                    aria-label={`删除 ${symbol.latex}`}
+                    aria-label={t("quantum.symbolSelector.delete", { symbol: symbol.latex })}
                   >
                     <Trash2 size={14} />
                   </button>
                 )}
                 {index === 0 && (
-                  <span className="symbol-selector-default-badge">默认</span>
+                  <span className="symbol-selector-default-badge">{t("quantum.symbolSelector.default")}</span>
                 )}
               </div>
             ))}
@@ -194,7 +196,7 @@ export function SymbolSelector({
                   value={newSymbol}
                   onChange={(e) => setNewSymbol(e.target.value)}
                   onKeyDown={handleInputKeyDown}
-                  placeholder="输入 LaTeX，如 \alpha"
+                  placeholder={t("quantum.symbolSelector.placeholder")}
                   className="symbol-selector-input"
                 />
                 {newSymbolPreview && (
@@ -210,7 +212,7 @@ export function SymbolSelector({
                     disabled={!newSymbol.trim()}
                   >
                     <Check size={14} />
-                    <span>添加</span>
+                    <span>{t("quantum.symbolSelector.add")}</span>
                   </button>
                   <button
                     className="symbol-selector-cancel"
@@ -220,7 +222,7 @@ export function SymbolSelector({
                     }}
                   >
                     <X size={14} />
-                    <span>取消</span>
+                    <span>{t("common.cancel")}</span>
                   </button>
                 </div>
               </div>
@@ -232,7 +234,7 @@ export function SymbolSelector({
                 aria-selected={highlightedIndex === addButtonIndex}
               >
                 <Plus size={16} />
-                <span>添加符号</span>
+                <span>{t("quantum.symbolSelector.addSymbol")}</span>
               </div>
             )}
 
@@ -244,15 +246,15 @@ export function SymbolSelector({
               aria-selected={highlightedIndex === editButtonIndex}
             >
               <Pencil size={16} />
-              <span>{isEditMode ? '完成编辑' : '编辑符号'}</span>
+              <span>{isEditMode ? t("quantum.symbolSelector.doneEdit") : t("quantum.symbolSelector.editSymbol")}</span>
             </div>
           </div>
 
           {/* Footer hint */}
           <div className="symbol-selector-footer">
-            <span>↑↓/空格 选择</span>
-            <span>Enter 确认</span>
-            <span>Esc 关闭</span>
+            <span>{t("quantum.hint.arrowsSpace")}</span>
+            <span>{t("quantum.hint.enterConfirm")}</span>
+            <span>{t("quantum.hint.escClose")}</span>
           </div>
         </motion.div>
       )}

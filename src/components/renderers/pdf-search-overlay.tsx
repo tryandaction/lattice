@@ -12,20 +12,24 @@ interface PdfSearchOverlayProps {
   pdfDocument: PDFDocumentProxy | null;
   fileHandle?: FileSystemFileHandle | null;
   numPages: number;
-  onNavigateToPage: (page: number, rects?: PdfSearchMatch["rects"]) => void;
+  onNavigateToMatch?: (match: PdfSearchMatch) => void;
+  onNavigateToPage?: (page: number, rects?: PdfSearchMatch["rects"]) => void;
   onActiveMatchChange?: (match: PdfSearchMatch | null) => void;
   isOpen: boolean;
   onClose: () => void;
+  initialQuery?: string;
 }
 
 export function PdfSearchOverlay({
   pdfDocument,
   fileHandle,
   numPages,
+  onNavigateToMatch,
   onNavigateToPage,
   onActiveMatchChange,
   isOpen,
   onClose,
+  initialQuery,
 }: PdfSearchOverlayProps) {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
@@ -38,6 +42,13 @@ export function PdfSearchOverlay({
   const stopOverlayEvent = useCallback((event: React.SyntheticEvent) => {
     event.stopPropagation();
   }, []);
+  const navigateToMatch = useCallback((match: PdfSearchMatch) => {
+    if (onNavigateToMatch) {
+      onNavigateToMatch(match);
+      return;
+    }
+    onNavigateToPage?.(match.page, match.rects);
+  }, [onNavigateToMatch, onNavigateToPage]);
 
   useEffect(() => {
     if (isOpen && inputRef.current) {
@@ -159,6 +170,8 @@ export function PdfSearchOverlay({
             page,
             index: start,
             normalizedIndex: idx,
+            normalizedLength: needle.length,
+            normalizedQuery: needle,
             preview: buildPreview(text, start, text.slice(start, end)),
             rects: [],
           });
@@ -168,26 +181,38 @@ export function PdfSearchOverlay({
       setMatches(found);
       setCurrentMatch(found.length > 0 ? 0 : -1);
       if (found.length > 0) {
-        onNavigateToPage(found[0].page, found[0].rects);
+        navigateToMatch(found[0]);
         onActiveMatchChange?.(found[0]);
       } else {
         onActiveMatchChange?.(null);
       }
     }, 300);
-  }, [buildPreview, numPages, onActiveMatchChange, onNavigateToPage, pageTexts]);
+  }, [buildPreview, navigateToMatch, numPages, onActiveMatchChange, pageTexts]);
 
   const handleQueryChange = useCallback((val: string) => {
     setQuery(val);
     doSearch(val);
   }, [doSearch]);
 
+  useEffect(() => {
+    if (!isOpen || typeof initialQuery !== "string") {
+      return;
+    }
+    const nextQuery = initialQuery.trim();
+    if (!nextQuery || nextQuery === query) {
+      return;
+    }
+    setQuery(nextQuery);
+    doSearch(nextQuery);
+  }, [doSearch, initialQuery, isOpen, query]);
+
   const goToMatch = useCallback((direction: 1 | -1) => {
     if (matches.length === 0) return;
     const next = (currentMatch + direction + matches.length) % matches.length;
     setCurrentMatch(next);
-    onNavigateToPage(matches[next].page, matches[next].rects);
+    navigateToMatch(matches[next]);
     onActiveMatchChange?.(matches[next]);
-  }, [matches, currentMatch, onActiveMatchChange, onNavigateToPage]);
+  }, [matches, currentMatch, navigateToMatch, onActiveMatchChange]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
@@ -282,7 +307,7 @@ export function PdfSearchOverlay({
                 onClick={(event) => {
                   event.stopPropagation();
                   setCurrentMatch(index);
-                  onNavigateToPage(match.page, match.rects);
+                  navigateToMatch(match);
                   onActiveMatchChange?.(match);
                 }}
                 className={`w-full border-b border-border/50 px-3 py-2 text-left text-[11px] transition-colors last:border-b-0 hover:bg-accent/50 ${

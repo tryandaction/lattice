@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import { useMemo } from "react";
 import { computeDiff } from "@/lib/ai/diff-utils";
 import { cn } from "@/lib/utils";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 import { useI18n } from "@/hooks/use-i18n";
 
 export interface FileCompareDialogInput {
@@ -28,7 +29,7 @@ export function FileCompareDialog({ compare, onClose }: FileCompareDialogProps) 
   );
 
   return (
-    <div className="fixed inset-0 z-[175] flex items-start justify-center overflow-hidden bg-black/45 px-4 pb-4 pt-8 backdrop-blur-sm md:pt-16">
+    <div className={cn("fixed inset-0 flex items-start justify-center overflow-hidden bg-black/45 px-4 pb-4 pt-8 backdrop-blur-sm md:pt-16", UI_LAYER_CLASS.dialog)}>
       <div className="flex h-[min(82vh,760px)] w-full max-w-6xl flex-col overflow-hidden rounded-md border border-border bg-background shadow-xl">
         <div className="flex min-h-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div className="min-w-0">

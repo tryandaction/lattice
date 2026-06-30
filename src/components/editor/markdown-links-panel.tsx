@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState, useSyncExternalStore } from "react";
+import { memo, useDeferredValue, useMemo, useState, useSyncExternalStore } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, FileText, GitBranch, Link2, MoveUpRight, Paperclip, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/hooks/use-i18n";
@@ -24,6 +24,13 @@ type LinkPanelSectionId = "backlinks" | "unlinked" | "outgoing" | "broken" | "at
 type CollapsedSections = Partial<Record<LinkPanelSectionId, boolean>>;
 
 const COLLAPSED_SECTIONS_STORAGE_KEY = "lattice-markdown-links-panel-collapsed";
+const MAX_VISIBLE_LINK_PANEL_ROWS = 80;
+const DEFAULT_COLLAPSED_SECTIONS: CollapsedSections = {
+  backlinks: true,
+  unlinked: true,
+  attachments: true,
+  graph: true,
+};
 
 interface MarkdownLinksPanelProps {
   filePath?: string;
@@ -56,19 +63,45 @@ function formatTarget(link: IndexedMarkdownLink): string {
   return link.displayText || link.rawTarget;
 }
 
+function buildOutgoingNavigationTarget(link: IndexedMarkdownLink): string {
+  const resolvedPath = link.resolvedPath;
+  if (!resolvedPath || !link.parsedTarget || !("path" in link.parsedTarget)) {
+    return link.rawTarget;
+  }
+
+  switch (link.parsedTarget.type) {
+    case "workspace_file":
+      return resolvedPath;
+    case "workspace_heading":
+      return `${resolvedPath}#${link.parsedTarget.heading}`;
+    case "pdf_page":
+      return `${resolvedPath}#page=${link.parsedTarget.page}`;
+    case "pdf_annotation":
+      return link.parsedTarget.page
+        ? `${resolvedPath}#page=${link.parsedTarget.page}&annotation=${link.parsedTarget.annotationId}`
+        : `${resolvedPath}#annotation=${link.parsedTarget.annotationId}`;
+    case "code_line":
+      return `${resolvedPath}#line=${link.parsedTarget.line}`;
+    case "notebook_cell":
+      return `${resolvedPath}#cell=${link.parsedTarget.cellId}`;
+    default:
+      return link.rawTarget;
+  }
+}
+
 function formatBacklink(backlink: MarkdownBacklink): string {
   return backlink.displayText || backlink.rawTarget;
 }
 
 function loadCollapsedSections(): CollapsedSections {
   if (typeof window === "undefined") {
-    return {};
+    return DEFAULT_COLLAPSED_SECTIONS;
   }
   try {
     const raw = window.localStorage.getItem(COLLAPSED_SECTIONS_STORAGE_KEY);
-    return raw ? JSON.parse(raw) as CollapsedSections : {};
+    return raw ? { ...DEFAULT_COLLAPSED_SECTIONS, ...JSON.parse(raw) as CollapsedSections } : DEFAULT_COLLAPSED_SECTIONS;
   } catch {
-    return {};
+    return DEFAULT_COLLAPSED_SECTIONS;
   }
 }
 
@@ -92,6 +125,23 @@ function matchesFilter(values: Array<string | undefined>, filter: string): boole
 
 function EmptyState({ label }: { label: string }) {
   return <div className="px-3 py-1.5 text-xs text-muted-foreground">{label}</div>;
+}
+
+function OverflowState({ hiddenCount, label }: { hiddenCount: number; label: string }) {
+  if (hiddenCount <= 0) {
+    return null;
+  }
+  return (
+    <div className="px-3 py-1.5 text-xs text-muted-foreground">
+      {label}
+    </div>
+  );
+}
+
+function takeVisibleRows<T>(items: T[]): T[] {
+  return items.length > MAX_VISIBLE_LINK_PANEL_ROWS
+    ? items.slice(0, MAX_VISIBLE_LINK_PANEL_ROWS)
+    : items;
 }
 
 function PanelSection({
@@ -239,7 +289,7 @@ function OutgoingRow({
   return (
     <button
       type="button"
-      onClick={() => onNavigate(link.rawTarget)}
+      onClick={() => onNavigate(buildOutgoingNavigationTarget(link))}
       className={cn(
         "w-full rounded px-2 py-1.5 text-left text-sm transition-colors",
         "hover:bg-accent/50 focus:outline-none focus:ring-1 focus:ring-primary/50",
@@ -279,6 +329,9 @@ function BrokenRow({
   onConvertMarkdownLinkToWiki?: (link: IndexedMarkdownLink) => void;
 }) {
   const [selectedTarget, setSelectedTarget] = useState("");
+  const effectiveRepairTargets = link.resolution.repairCandidates.length > 0
+    ? link.resolution.repairCandidates
+    : repairTargets;
   return (
     <div
       className="rounded px-2 py-1.5 text-sm"
@@ -315,7 +368,7 @@ function BrokenRow({
           {convertLabel}
         </button>
       )}
-      {onRepairBrokenLink && repairTargets.length > 0 && (
+      {onRepairBrokenLink && effectiveRepairTargets.length > 0 && (
         <div className="mt-1 ml-5 flex min-w-0 items-center gap-1">
           <select
             aria-label={repairTargetLabel}
@@ -324,7 +377,7 @@ function BrokenRow({
             className="min-w-0 flex-1 rounded border border-border bg-background px-1.5 py-0.5 text-xs text-foreground"
           >
             <option value="">{repairTargetLabel}</option>
-            {repairTargets.map((target) => (
+            {effectiveRepairTargets.map((target) => (
               <option key={target} value={target}>{target}</option>
             ))}
           </select>
@@ -572,6 +625,7 @@ function MarkdownLinksPanelComponent({
 }: MarkdownLinksPanelProps) {
   const { t } = useI18n();
   const [filterText, setFilterText] = useState("");
+  const deferredFilterText = useDeferredValue(filterText);
   const [collapsedSections, setCollapsedSections] = useState<CollapsedSections>(() => loadCollapsedSections());
   useSyncExternalStore(
     subscribeWorkspaceMarkdownLinkIndex,
@@ -611,7 +665,7 @@ function MarkdownLinksPanelComponent({
     () => getWorkspaceMarkdownFiles().filter((target) => target !== filePath),
     [filePath],
   );
-  const normalizedFilter = filterText.trim().toLowerCase();
+  const normalizedFilter = deferredFilterText.trim().toLowerCase();
   const filteredBacklinks = useMemo(
     () => backlinks.filter((backlink) => matchesFilter([
       backlink.sourceFile,
@@ -660,6 +714,15 @@ function MarkdownLinksPanelComponent({
     ], normalizedFilter)),
     [localGraphNeighbors, normalizedFilter],
   );
+  const visibleOutgoing = useMemo(() => takeVisibleRows(filteredOutgoing), [filteredOutgoing]);
+  const visibleBroken = useMemo(() => takeVisibleRows(filteredBroken), [filteredBroken]);
+  const visibleBacklinks = useMemo(() => takeVisibleRows(filteredBacklinks), [filteredBacklinks]);
+  const visibleUnlinkedMentions = useMemo(() => takeVisibleRows(filteredUnlinkedMentions), [filteredUnlinkedMentions]);
+  const visibleAttachmentCleanupCandidates = useMemo(
+    () => takeVisibleRows(filteredAttachmentCleanupCandidates),
+    [filteredAttachmentCleanupCandidates],
+  );
+  const visibleGraphNeighbors = useMemo(() => takeVisibleRows(filteredGraphNeighbors), [filteredGraphNeighbors]);
   const toggleSection = (sectionId: LinkPanelSectionId) => {
     setCollapsedSections((current) => {
       const next = { ...current, [sectionId]: !current[sectionId] };
@@ -688,20 +751,81 @@ function MarkdownLinksPanelComponent({
       </div>
 
       <PanelSection
+        sectionId="outgoing"
+        title={t("markdown.links.outgoing")}
+        count={filteredOutgoing.length}
+        collapsed={Boolean(collapsedSections.outgoing)}
+        onToggle={toggleSection}
+      >
+        {visibleOutgoing.length > 0 ? (
+          <>
+            {visibleOutgoing.map((link, index) => (
+              <OutgoingRow key={`${link.rawTarget}-${index}`} link={link} onNavigate={onNavigate} />
+            ))}
+            <OverflowState
+              hiddenCount={filteredOutgoing.length - visibleOutgoing.length}
+              label={t("markdown.links.moreResults", { count: filteredOutgoing.length - visibleOutgoing.length })}
+            />
+          </>
+        ) : (
+          <EmptyState label={t("markdown.links.noOutgoing")} />
+        )}
+      </PanelSection>
+
+      <PanelSection
+        sectionId="broken"
+        title={t("markdown.links.broken")}
+        count={filteredBroken.length}
+        collapsed={Boolean(collapsedSections.broken)}
+        onToggle={toggleSection}
+      >
+        {visibleBroken.length > 0 ? (
+          <>
+            {visibleBroken.map((link, index) => (
+              <BrokenRow
+                key={`${link.rawTarget}-${index}`}
+                link={link}
+                createLabel={t("markdown.links.createNote")}
+                repairLabel={t("markdown.links.repairLink")}
+                repairTargetLabel={t("markdown.links.repairTarget")}
+                convertLabel={t("markdown.links.convertToWiki")}
+                repairTargets={repairTargets}
+                onCreateMissingNote={onCreateMissingNote}
+                onRepairBrokenLink={onRepairBrokenLink}
+                onConvertMarkdownLinkToWiki={onConvertMarkdownLinkToWiki}
+              />
+            ))}
+            <OverflowState
+              hiddenCount={filteredBroken.length - visibleBroken.length}
+              label={t("markdown.links.moreResults", { count: filteredBroken.length - visibleBroken.length })}
+            />
+          </>
+        ) : (
+          <EmptyState label={t("markdown.links.noBroken")} />
+        )}
+      </PanelSection>
+
+      <PanelSection
         sectionId="backlinks"
         title={t("markdown.links.backlinks")}
         count={filteredBacklinks.length}
         collapsed={Boolean(collapsedSections.backlinks)}
         onToggle={toggleSection}
       >
-        {filteredBacklinks.length > 0 ? (
-          filteredBacklinks.map((backlink, index) => (
-            <BacklinkRow
-              key={`${backlink.sourceFile}-${backlink.sourceLine}-${index}`}
-              backlink={backlink}
-              onNavigateToSource={onNavigateToSource}
+        {visibleBacklinks.length > 0 ? (
+          <>
+            {visibleBacklinks.map((backlink, index) => (
+              <BacklinkRow
+                key={`${backlink.sourceFile}-${backlink.sourceLine}-${index}`}
+                backlink={backlink}
+                onNavigateToSource={onNavigateToSource}
+              />
+            ))}
+            <OverflowState
+              hiddenCount={filteredBacklinks.length - visibleBacklinks.length}
+              label={t("markdown.links.moreResults", { count: filteredBacklinks.length - visibleBacklinks.length })}
             />
-          ))
+          </>
         ) : (
           <EmptyState label={t("markdown.links.noBacklinks")} />
         )}
@@ -728,63 +852,26 @@ function MarkdownLinksPanelComponent({
             </button>
           </div>
         )}
-        {filteredUnlinkedMentions.length > 0 ? (
-          filteredUnlinkedMentions.map((mention, index) => (
-            <UnlinkedMentionRow
-              key={`${mention.sourceFile}-${mention.sourceLine}-${index}`}
-              mention={mention}
-              linkLabel={t("markdown.links.linkMention")}
-              ignoreLabel={t("markdown.links.ignoreMention")}
-              onNavigateToSource={onNavigateToSource}
-              onLinkUnlinkedMention={onLinkUnlinkedMention}
-              onIgnoreUnlinkedMention={onIgnoreUnlinkedMention}
+        {visibleUnlinkedMentions.length > 0 ? (
+          <>
+            {visibleUnlinkedMentions.map((mention, index) => (
+              <UnlinkedMentionRow
+                key={`${mention.sourceFile}-${mention.sourceLine}-${index}`}
+                mention={mention}
+                linkLabel={t("markdown.links.linkMention")}
+                ignoreLabel={t("markdown.links.ignoreMention")}
+                onNavigateToSource={onNavigateToSource}
+                onLinkUnlinkedMention={onLinkUnlinkedMention}
+                onIgnoreUnlinkedMention={onIgnoreUnlinkedMention}
+              />
+            ))}
+            <OverflowState
+              hiddenCount={filteredUnlinkedMentions.length - visibleUnlinkedMentions.length}
+              label={t("markdown.links.moreResults", { count: filteredUnlinkedMentions.length - visibleUnlinkedMentions.length })}
             />
-          ))
+          </>
         ) : (
           <EmptyState label={t("markdown.links.noUnlinkedMentions")} />
-        )}
-      </PanelSection>
-
-      <PanelSection
-        sectionId="outgoing"
-        title={t("markdown.links.outgoing")}
-        count={filteredOutgoing.length}
-        collapsed={Boolean(collapsedSections.outgoing)}
-        onToggle={toggleSection}
-      >
-        {filteredOutgoing.length > 0 ? (
-          filteredOutgoing.map((link, index) => (
-            <OutgoingRow key={`${link.rawTarget}-${index}`} link={link} onNavigate={onNavigate} />
-          ))
-        ) : (
-          <EmptyState label={t("markdown.links.noOutgoing")} />
-        )}
-      </PanelSection>
-
-      <PanelSection
-        sectionId="broken"
-        title={t("markdown.links.broken")}
-        count={filteredBroken.length}
-        collapsed={Boolean(collapsedSections.broken)}
-        onToggle={toggleSection}
-      >
-        {filteredBroken.length > 0 ? (
-          filteredBroken.map((link, index) => (
-            <BrokenRow
-              key={`${link.rawTarget}-${index}`}
-              link={link}
-              createLabel={t("markdown.links.createNote")}
-              repairLabel={t("markdown.links.repairLink")}
-              repairTargetLabel={t("markdown.links.repairTarget")}
-              convertLabel={t("markdown.links.convertToWiki")}
-              repairTargets={repairTargets}
-              onCreateMissingNote={onCreateMissingNote}
-              onRepairBrokenLink={onRepairBrokenLink}
-              onConvertMarkdownLinkToWiki={onConvertMarkdownLinkToWiki}
-            />
-          ))
-        ) : (
-          <EmptyState label={t("markdown.links.noBroken")} />
         )}
       </PanelSection>
 
@@ -795,15 +882,21 @@ function MarkdownLinksPanelComponent({
         collapsed={Boolean(collapsedSections.attachments)}
         onToggle={toggleSection}
       >
-        {filteredAttachmentCleanupCandidates.length > 0 ? (
-          filteredAttachmentCleanupCandidates.map((candidate) => (
-            <AttachmentCleanupRow
-              key={candidate.path}
-              candidate={candidate}
-              reviewLabel={t("markdown.links.reviewAttachment")}
-              onReview={onReviewUnreferencedAttachment}
+        {visibleAttachmentCleanupCandidates.length > 0 ? (
+          <>
+            {visibleAttachmentCleanupCandidates.map((candidate) => (
+              <AttachmentCleanupRow
+                key={candidate.path}
+                candidate={candidate}
+                reviewLabel={t("markdown.links.reviewAttachment")}
+                onReview={onReviewUnreferencedAttachment}
+              />
+            ))}
+            <OverflowState
+              hiddenCount={filteredAttachmentCleanupCandidates.length - visibleAttachmentCleanupCandidates.length}
+              label={t("markdown.links.moreResults", { count: filteredAttachmentCleanupCandidates.length - visibleAttachmentCleanupCandidates.length })}
             />
-          ))
+          </>
         ) : (
           <EmptyState label={t("markdown.links.noUnreferencedAttachments")} />
         )}
@@ -816,14 +909,20 @@ function MarkdownLinksPanelComponent({
         collapsed={Boolean(collapsedSections.graph)}
         onToggle={toggleSection}
       >
-        {filePath && filteredGraphNeighbors.length > 0 ? (
-          <LocalGraphRow
-            centerLabel={localGraphCenterLabel}
-            neighbors={filteredGraphNeighbors}
-            edgeCountLabel={t("markdown.links.localGraph.edgeCount", { count: localGraph.edges.length })}
-            previewLabel={t("markdown.links.localGraph.preview")}
-            onNavigate={onNavigate}
-          />
+        {filePath && visibleGraphNeighbors.length > 0 ? (
+          <>
+            <LocalGraphRow
+              centerLabel={localGraphCenterLabel}
+              neighbors={visibleGraphNeighbors}
+              edgeCountLabel={t("markdown.links.localGraph.edgeCount", { count: localGraph.edges.length })}
+              previewLabel={t("markdown.links.localGraph.preview")}
+              onNavigate={onNavigate}
+            />
+            <OverflowState
+              hiddenCount={filteredGraphNeighbors.length - visibleGraphNeighbors.length}
+              label={t("markdown.links.moreResults", { count: filteredGraphNeighbors.length - visibleGraphNeighbors.length })}
+            />
+          </>
         ) : (
           <EmptyState label={t("markdown.links.noLocalGraph")} />
         )}

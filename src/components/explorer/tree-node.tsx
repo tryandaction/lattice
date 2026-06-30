@@ -679,11 +679,6 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
               className="h-4 w-4 shrink-0 text-muted-foreground"
             />
             <span className="truncate">{node.displayName ?? node.name}</span>
-            {node.badgeLabel ? (
-              <span className="ml-2 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
-                {node.badgeLabel}
-              </span>
-            ) : null}
             {openCount > 1 && (
               <span className="ml-auto text-xs text-muted-foreground">{openCount}</span>
             )}

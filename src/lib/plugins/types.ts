@@ -277,7 +277,27 @@ export interface PluginPdfTextPage {
     bbox?: { x1: number; y1: number; x2: number; y2: number };
     lineIndex?: number;
     blockIndex?: number;
+    columnIndex?: number;
+    layoutClass?: string;
   }>;
+}
+
+export interface PluginPdfSelectionImage {
+  pageNumber: number;
+  dataUrl: string;
+  mimeType: "image/png";
+  width: number;
+  height: number;
+  bbox: { x1: number; y1: number; x2: number; y2: number };
+  source: "current-selection" | "current-page";
+}
+
+export interface PluginDocumentRevealTarget {
+  viewerType?: PluginViewerType;
+  page?: number;
+  bbox?: { x1: number; y1: number; x2: number; y2: number };
+  quote?: string;
+  location?: string;
 }
 
 export interface PluginDocumentAPI {
@@ -286,6 +306,8 @@ export interface PluginDocumentAPI {
   getSelectionText: () => Promise<string>;
   readCurrent: () => Promise<PluginDocumentContent>;
   getPdfTextPages: (options?: { scope?: 'visible' | 'current-page' | 'all' }) => Promise<PluginPdfTextPage[]>;
+  getPdfSelectionImage: () => Promise<PluginPdfSelectionImage | null>;
+  reveal: (target: PluginDocumentRevealTarget) => Promise<boolean>;
 }
 
 export interface PluginUiAPI {

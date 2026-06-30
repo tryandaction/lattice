@@ -9,6 +9,7 @@ import { PaneWrapper } from "../pane-wrapper";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useExplorerStore } from "@/stores/explorer-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { setLocale } from "@/lib/i18n";
 
 const refreshDirectoryMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const desktopPreviewMocks = vi.hoisted(() => ({
@@ -31,15 +32,17 @@ vi.mock("@dnd-kit/core", () => ({
 }));
 
 vi.mock("../tab-bar", () => ({
-  TabBar: () => <div data-testid="mock-tab-bar" />,
+  TabBar: ({ onTabClose }: { onTabClose?: (index: number) => void }) => (
+    <div data-testid="mock-tab-bar">
+      <button type="button" onClick={() => onTabClose?.(0)}>
+        close tab
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock("../drop-zone", () => ({
   DropZones: () => null,
-}));
-
-vi.mock("@/components/ui/save-reminder-dialog", () => ({
-  SaveReminderDialog: () => null,
 }));
 
 vi.mock("@/hooks/use-file-system", () => ({
@@ -173,6 +176,7 @@ class FakeDirectoryHandle {
 describe("PaneWrapper", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setLocale("en-US");
     universalViewerMock.mockImplementation((props: unknown) => {
       const {
         onContentChange,
@@ -184,10 +188,10 @@ describe("PaneWrapper", () => {
 
       return (
         <div>
-          <button type="button" onClick={() => onContentChange?.("# My Title\n\nBody")}>
+          <button type="button" data-testid="mock-edit-button" aria-label="缂栬緫" onClick={() => onContentChange?.("# My Title\n\nBody")}>
             编辑
           </button>
-          <button type="button" onClick={() => void onSave?.()}>
+          <button type="button" data-testid="mock-save-button" aria-label="淇濆瓨" onClick={() => void onSave?.()}>
             保存
           </button>
         </div>
@@ -253,8 +257,8 @@ describe("PaneWrapper", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.click(screen.getByTestId("mock-edit-button"));
+    fireEvent.click(screen.getByTestId("mock-save-button"));
 
     await waitFor(() => {
       const pane = useWorkspaceStore.getState().layout.root;
@@ -267,6 +271,57 @@ describe("PaneWrapper", () => {
 
     expect(useExplorerStore.getState().selectedPath).toBe("workspace/My Title-1.md");
     expect(refreshDirectoryMock).toHaveBeenCalled();
+  });
+
+  it("keeps pane focus styling inside the pane so split handles remain the only divider line", () => {
+    render(
+      <PaneWrapper
+        paneId="pane-left"
+        isActive={true}
+        onActivate={vi.fn()}
+        onSplitRight={vi.fn()}
+        onSplitDown={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const pane = screen.getByTestId("pane-wrapper-pane-left");
+    expect(pane.className).toContain("shadow-[inset_0_2px_0_0_var(--workbench-focus)]");
+    expect(pane.className).not.toContain("border-blue");
+    expect(pane.className).not.toContain("ring-2");
+  });
+
+  it("shows a save reminder dialog before closing a dirty markdown tab", async () => {
+    render(
+      <PaneWrapper
+        paneId="pane-left"
+        isActive={true}
+        onActivate={vi.fn()}
+        onSplitRight={vi.fn()}
+        onSplitDown={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      const latestProps = universalViewerMock.mock.calls.at(-1)?.[0] as unknown as {
+        content?: { kind: string; text?: string };
+      };
+      expect(latestProps.content).toEqual({ kind: "text", text: "Old content" });
+    });
+    fireEvent.click(screen.getByTestId("mock-edit-button"));
+    await waitFor(() => {
+      const pane = useWorkspaceStore.getState().layout.root;
+      if (pane.type !== "pane") {
+        throw new Error("Expected pane layout");
+      }
+      expect(pane.tabs[0]?.isDirty).toBe(true);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "close tab" }));
+
+    expect(await screen.findByRole("dialog", { name: "Save changes?" })).toBeTruthy();
+    expect(screen.getByText('File "Untitled.md" has unsaved changes.')).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Don't Save" })).toBeTruthy();
   });
 
   it("uses desktop preview urls for desktop pdf tabs without calling getFile or caching binary content", async () => {

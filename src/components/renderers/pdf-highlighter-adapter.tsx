@@ -25,19 +25,17 @@ import {
   ChevronDown,
   Copy,
   Search,
-  PanelLeft,
-  ArrowLeftRight,
-  Maximize2,
-  RotateCcw,
-  FileOutput,
-  FileText,
+  Bot,
+  Link2,
+  PanelRightClose,
+  PanelRightOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAnnotationSystem, type AnnotationUpdates } from "@/hooks/use-annotation-system";
 import { useAnnotationNavigation } from "@/hooks/use-annotation-navigation";
 import { useInkAnnotation, type MergedInkAnnotation, type InkStroke } from "@/hooks/use-ink-annotation";
 import { HIGHLIGHT_COLORS, BACKGROUND_COLORS, TEXT_COLORS, TEXT_FONT_SIZES, DEFAULT_TEXT_STYLE, DEFAULT_HIGHLIGHT_COLOR, hexToRGB, resolveHighlightColor } from "@/lib/annotation-colors";
-import { exportPdfWithAnnotations } from "./pdf-export-button";
+import { exportOriginalPdf, exportPdfWithAnnotations } from "./pdf-export-button";
 import { PdfAnnotationSidebar } from "./pdf-annotation-sidebar";
 import { PdfItemWorkspacePanel } from "./pdf-item-workspace-panel";
 import { InkWidthPicker } from "./ink-color-picker";
@@ -56,9 +54,11 @@ import { createSelectionContext, type SelectionAiMode, type SelectionContext } f
 import { useSelectionContextMenu } from "@/hooks/use-selection-context-menu";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useI18n } from "@/hooks/use-i18n";
 import type { TranslationKey } from "@/lib/i18n";
+import { UI_LAYER, UI_LAYER_CLASS } from "@/lib/ui-layers";
 import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
 import { getDesktopPreviewPath, readDesktopFileBytesRaw } from "@/lib/desktop-preview";
 import {
@@ -95,6 +95,12 @@ import {
   type AnnotationBacklink,
 } from "@/lib/annotation-backlinks";
 import { navigateLink } from "@/lib/link-router/navigate-link";
+import {
+  getPdfLinkElementFromTarget,
+  isPdfLinkAnnotationTarget,
+  parsePdfLinkTargetFromElement,
+  shouldOpenPdfExternalLinkInBrowser,
+} from "@/lib/pdf-link-navigation";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { copyToClipboard } from "@/lib/clipboard";
 import {
@@ -148,6 +154,8 @@ import {
 } from "@/lib/pdf-canonical-text-anchoring";
 import { buildPersistedFileViewStateKey, loadPersistedFileViewState, savePersistedFileViewState, type PersistedFileViewState } from "@/lib/file-view-state";
 import { logger } from "@/lib/logger";
+import { setPdfSelectionImageProvider } from "@/lib/pdf-selection-image-provider";
+import type { PluginPdfSelectionImage } from "@/lib/plugins/types";
 import {
   createPinAnnotation as createPdfPinAnnotation,
   isPinAnnotation,
@@ -179,7 +187,7 @@ import {
   buildPdfTextKernelRunRects,
   type PdfTextKernelPage,
 } from "@/lib/pdf-text-kernel";
-import type { PdfSearchMatch } from "@/lib/pdf-search";
+import { searchPdfPageTextModel, type PdfSearchMatch } from "@/lib/pdf-search";
 import {
   isLikelyCoarseTextMarkupGeometry,
   isPlausibleTextMarkupBox,
@@ -239,12 +247,6 @@ interface PdfRestoreDebugState {
   deltaTopRatio: number | null;
   deltaLeftRatio: number | null;
   captureRevision: number | null;
-}
-
-interface PdfRepairedAnnotationEntry {
-  sourceSignature: string;
-  repairedSignature: string;
-  annotation: AnnotationItem;
 }
 
 interface NativePdfSelectionSnapshot {
@@ -444,11 +446,6 @@ function compareAnchorPair(
   return comparePdfViewAnchor(expected, actual);
 }
 
-function isPdfLinkAnnotationTarget(target: EventTarget | null | undefined): target is HTMLElement {
-  return target instanceof HTMLElement &&
-    Boolean(target.closest(".annotationLayer a, .annotationLayer [role='link'], .linkAnnotation"));
-}
-
 function isPdfAnnotationAdjustHandleTarget(target: EventTarget | null | undefined): target is HTMLElement {
   return target instanceof HTMLElement &&
     Boolean(target.closest("[data-pdf-annotation-adjust-handle]"));
@@ -517,7 +514,7 @@ function isSuspiciousPdfNativeSelectionText(text: string): boolean {
   if (compact.length <= 2) {
     return true;
   }
-  return /^[`'"“”‘’.,;:!?()[\]{}<>|/\\+\-=_*^~0]+$/u.test(compact);
+  return /^[`'"鈥溾€濃€樷€?,;:!?()[\]{}<>|/\\+\-=_*^~0]+$/u.test(compact);
 }
 
 function isPdfReadableWordCharacter(character: string): boolean {
@@ -547,8 +544,8 @@ function shouldInsertPdfReadableSpaceForGeometryGap(
     return false;
   }
 
-  return /[\p{L}\p{N}=+\-*/<>≤≥√|)\]]/u.test(previousCharacter) &&
-    /[\p{L}\p{N}=+\-*/<>≤≥√|([{\u0394\u03a9]/u.test(nextCharacter);
+  return /[\p{L}\p{N}=+\-*/<>鈮も墺鈭殀)\]]/u.test(previousCharacter) &&
+    /[\p{L}\p{N}=+\-*/<>鈮も墺鈭殀([{\u0394\u03a9]/u.test(nextCharacter);
 }
 
 function appendPdfReadableSpace(output: string, nextCharacter: string): string {
@@ -1130,34 +1127,44 @@ function resolvePdfTextMarkupView(
     return null;
   }
 
+  const originalTarget = annotation.target as PdfTarget;
+  const originalQuote = originalTarget.textQuote?.exact ?? annotation.content;
+  const directStoredView = buildDirectPdfTextMarkupView(annotation, originalTarget.rects);
+  const shouldUseReadOnlyRepair = (
+    !directStoredView ||
+    hasBlockLikeTextMarkupGeometry(originalTarget.rects) ||
+    (
+      isLikelyCoarseTextMarkupGeometry(originalTarget.rects, originalQuote) &&
+      !hasOnlyThinTextLineGeometry(originalTarget.rects)
+    )
+  );
+  if (!model || !shouldUseReadOnlyRepair) {
+    return directStoredView;
+  }
+
   const modelResolvedAnnotation = model
     ? repairPdfTextAnnotationFromModel(annotation, model) ??
       canonicalizePdfTextAnnotationFromModel(annotation, model) ??
       annotation
     : annotation;
-  const originalTarget = annotation.target as PdfTarget;
   const modelResolvedTarget = modelResolvedAnnotation.target as PdfTarget;
-  if (model) {
-    const anchorCandidates = [
-      resolvePdfAnnotationTextAnchor(model, modelResolvedTarget),
-      modelResolvedTarget === originalTarget ? null : resolvePdfAnnotationTextAnchor(model, originalTarget),
-    ];
-    for (const anchor of anchorCandidates) {
-      if (!anchor) {
-        continue;
-      }
-      const anchorAnnotation = buildPdfTextMarkupAnnotationFromAnchor(modelResolvedAnnotation, anchor);
-      const anchorView = buildPdfTextMarkupViewFromRects(anchorAnnotation, anchor.rects);
-      if (anchorView) {
-        return anchorView;
-      }
+  const anchorCandidates = [
+    resolvePdfAnnotationTextAnchor(model, modelResolvedTarget),
+    modelResolvedTarget === originalTarget ? null : resolvePdfAnnotationTextAnchor(model, originalTarget),
+  ];
+  for (const anchor of anchorCandidates) {
+    if (!anchor) {
+      continue;
     }
-
-    return buildDirectPdfTextMarkupView(modelResolvedAnnotation, modelResolvedTarget.rects) ??
-      buildDirectPdfTextMarkupView(annotation, originalTarget.rects);
+    const anchorAnnotation = buildPdfTextMarkupAnnotationFromAnchor(modelResolvedAnnotation, anchor);
+    const anchorView = buildPdfTextMarkupViewFromRects(anchorAnnotation, anchor.rects);
+    if (anchorView) {
+      return anchorView;
+    }
   }
 
-  return buildDirectPdfTextMarkupView(annotation, originalTarget.rects);
+  return buildDirectPdfTextMarkupView(modelResolvedAnnotation, modelResolvedTarget.rects) ??
+    directStoredView;
 }
 
 function buildPdfTextRepairSignature(annotation: AnnotationItem | null | undefined): string | null {
@@ -1207,6 +1214,20 @@ function buildPdfTextRepairSignature(annotation: AnnotationItem | null | undefin
   ].join("::");
 }
 
+function shouldAttemptPdfTextRepair(annotation: AnnotationItem): annotation is AnnotationItem & { target: PdfTarget } {
+  if (!isPdfTextMarkupAnnotation(annotation)) {
+    return false;
+  }
+
+  const target = annotation.target as PdfTarget;
+  const quote = target.textQuote?.exact ?? annotation.content;
+  return (
+    !hasPdfTextMarkupRects(target.rects) ||
+    hasBlockLikeTextMarkupGeometry(target.rects) ||
+    isLikelyCoarseTextMarkupGeometry(target.rects, quote)
+  );
+}
+
 function mergeAnnotationUpdatesForDisplay(
   annotation: AnnotationItem,
   updates: AnnotationUpdates,
@@ -1227,6 +1248,27 @@ function mergeAnnotationUpdatesForDisplay(
   };
 }
 
+function doesPdfAnnotationSatisfyMarkdownDraft(
+  annotation: AnnotationItem | null | undefined,
+  draft: { page: number; exact: string },
+): boolean {
+  if (!annotation || annotation.target.type !== "pdf") {
+    return false;
+  }
+  if (annotation.style.type !== "highlight" && annotation.style.type !== "underline") {
+    return false;
+  }
+
+  const target = annotation.target as PdfTarget;
+  if (target.page !== draft.page) {
+    return false;
+  }
+
+  const annotationText = normalizePdfReadableReferenceText(target.textQuote?.exact ?? annotation.content ?? "");
+  const draftText = normalizePdfReadableReferenceText(draft.exact);
+  return Boolean(annotationText && draftText && annotationText === draftText);
+}
+
 function buildPdfTextMarkupViewCacheKey(
   annotation: AnnotationItem,
   model?: PdfPageTextModel | null,
@@ -1241,84 +1283,6 @@ function buildPdfTextMarkupViewCacheKey(
       ].join(":")
     : "no-model";
   return `${annotation.id}::${repairSignature}::${modelSignature}`;
-}
-
-function shouldAttemptPdfTextRepair(annotation: AnnotationItem): boolean {
-  if (annotation.target.type !== "pdf") {
-    return false;
-  }
-  return annotation.style.type === "highlight" || annotation.style.type === "underline";
-}
-
-function getCompactPdfAnnotationText(annotation: AnnotationItem): string {
-  const target = annotation.target.type === "pdf" ? annotation.target as PdfTarget : null;
-  return normalizePdfReadableReferenceText(target?.textQuote?.exact ?? annotation.content ?? "")
-    .replace(/\s+/g, "");
-}
-
-function getPdfTargetRectsArea(rects: PdfTarget["rects"]): number {
-  return rects.reduce((sum, rect) => (
-    sum + Math.max(0, rect.x2 - rect.x1) * Math.max(0, rect.y2 - rect.y1)
-  ), 0);
-}
-
-function isSafePdfTextRepairWriteback(source: AnnotationItem, repaired: AnnotationItem): boolean {
-  if (source.target.type !== "pdf" || repaired.target.type !== "pdf") {
-    return false;
-  }
-  if (source.style.type !== "highlight" && source.style.type !== "underline") {
-    return false;
-  }
-  if (repaired.style.type !== "highlight" && repaired.style.type !== "underline") {
-    return false;
-  }
-
-  const sourceTarget = source.target as PdfTarget;
-  const repairedTarget = repaired.target as PdfTarget;
-  const sourceText = getCompactPdfAnnotationText(source);
-  const repairedText = getCompactPdfAnnotationText(repaired);
-  if (!sourceText || !repairedText) {
-    return false;
-  }
-  const sourceIsBrokenBoundary =
-    sourceText.length <= 3 ||
-    /^(?:\W*)?5,thattend/i.test(sourceText) ||
-    /direcns/i.test(sourceText) ||
-    /arkshifts/i.test(sourceText);
-  if (sourceText !== repairedText) {
-    const isTinySafeBoundaryRepair =
-      sourceIsBrokenBoundary &&
-      repairedText.includes(sourceText.replace(/^\W+/, "")) &&
-      repairedText.length <= sourceText.length + Math.max(24, Math.ceil(sourceText.length * 0.28));
-    if (!isTinySafeBoundaryRepair) {
-      return false;
-    }
-  }
-
-  if (
-    Number.isInteger(sourceTarget.startCharIndex) &&
-    Number.isInteger(sourceTarget.endCharIndex) &&
-    typeof sourceTarget.startCharIndex === "number" &&
-    typeof sourceTarget.endCharIndex === "number" &&
-    Number.isInteger(repairedTarget.startCharIndex) &&
-    Number.isInteger(repairedTarget.endCharIndex) &&
-    typeof repairedTarget.startCharIndex === "number" &&
-    typeof repairedTarget.endCharIndex === "number"
-  ) {
-    const sourceSpan = sourceTarget.endCharIndex - sourceTarget.startCharIndex;
-    const repairedSpan = repairedTarget.endCharIndex - repairedTarget.startCharIndex;
-    if (repairedSpan > sourceSpan + Math.max(8, Math.ceil(sourceSpan * 0.08))) {
-      return false;
-    }
-  }
-
-  const sourceArea = getPdfTargetRectsArea(sourceTarget.rects);
-  const repairedArea = getPdfTargetRectsArea(repairedTarget.rects);
-  if (!sourceIsBrokenBoundary && sourceArea > 0 && repairedArea > sourceArea * 1.08) {
-    return false;
-  }
-
-  return repairedTarget.rects.length > 0;
 }
 
 function isPdfTextMarkupAnnotation(annotation: AnnotationItem): annotation is AnnotationItem & { target: PdfTarget } {
@@ -1898,6 +1862,83 @@ function buildPdfAnnotationPreviewFromPageElement(
   }) ?? undefined;
 }
 
+function buildPdfSelectionImageFromPageElement(
+  pageElement: HTMLElement | null,
+  selection: PdfSelectionSnapshot | null | undefined,
+): PluginPdfSelectionImage | null {
+  if (!pageElement || !selection) {
+    return null;
+  }
+
+  const pageNumber = selection.pageNumbers[0] ?? selection.pageNumber;
+  if (!Number.isInteger(pageNumber) || pageNumber !== selection.pageNumber || selection.pageNumbers.length !== 1) {
+    return null;
+  }
+
+  const canvas = pageElement.querySelector("canvas");
+  if (!(canvas instanceof HTMLCanvasElement) || canvas.width <= 1 || canvas.height <= 1) {
+    return null;
+  }
+
+  const pageRect = pageElement.getBoundingClientRect();
+  const pageRects = selection.pageRects
+    .filter((rect) => rect.x2 > rect.x1 && rect.y2 > rect.y1)
+    .filter((rect) => (
+      rect.x1 >= -0.02 &&
+      rect.y1 >= -0.02 &&
+      rect.x2 <= 1.02 &&
+      rect.y2 <= 1.02
+    ));
+  const fallbackRects = (selection.overlayRectsByPage[pageNumber] ?? [])
+    .filter((rect) => rect.width > 0 && rect.height > 0)
+    .map((rect) => ({
+      x1: rect.left / Math.max(1, pageRect.width),
+      y1: rect.top / Math.max(1, pageRect.height),
+      x2: (rect.left + rect.width) / Math.max(1, pageRect.width),
+      y2: (rect.top + rect.height) / Math.max(1, pageRect.height),
+    }));
+  const rects = pageRects.length > 0 ? pageRects : fallbackRects;
+  const previewRect = buildPdfPreviewRect({
+    rects,
+    pageWidth: pageRect.width,
+    pageHeight: pageRect.height,
+    paddingRatio: 0.018,
+    minCssWidth: 72,
+    minCssHeight: 40,
+  });
+  if (!previewRect) {
+    return null;
+  }
+
+  const cropX = Math.max(0, Math.floor(previewRect.x1 * canvas.width));
+  const cropY = Math.max(0, Math.floor(previewRect.y1 * canvas.height));
+  const cropRight = Math.min(canvas.width, Math.ceil(previewRect.x2 * canvas.width));
+  const cropBottom = Math.min(canvas.height, Math.ceil(previewRect.y2 * canvas.height));
+  const cropWidth = Math.max(1, cropRight - cropX);
+  const cropHeight = Math.max(1, cropBottom - cropY);
+  const cropCanvas = document.createElement("canvas");
+  cropCanvas.width = cropWidth;
+  cropCanvas.height = cropHeight;
+  const context = cropCanvas.getContext("2d");
+  if (!context) {
+    return null;
+  }
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, cropWidth, cropHeight);
+  context.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+  return {
+    pageNumber,
+    dataUrl: cropCanvas.toDataURL("image/png"),
+    mimeType: "image/png",
+    width: cropWidth,
+    height: cropHeight,
+    bbox: previewRect,
+    source: "current-selection",
+  };
+}
+
 function toHighlightFillColor(color: string): string {
   const resolved = resolveHighlightColor(color);
   if (resolved === "transparent") {
@@ -1931,8 +1972,10 @@ function ensurePdfPageOverlayContainer(input: {
   if (!overlay) {
     overlay = document.createElement('div');
     overlay.className = input.overlayClassName;
-    overlay.style.cssText = input.overlayStyle;
     pageElement.appendChild(overlay);
+  }
+  if (overlay.style.cssText !== input.overlayStyle) {
+    overlay.style.cssText = input.overlayStyle;
   }
 
   return { pageElement, overlay };
@@ -2188,6 +2231,10 @@ const MIN_INK_POINT_DELTA_SQUARED = 0.000004;
 const MIN_SCROLL_OVERFLOW_PX = 24;
 const DOM_SELECTION_SETTLE_WINDOW_MS = 140;
 const PDF_DOCUMENT_LOAD_TIMEOUT_MS = 30000;
+const PDF_ANNOTATION_SIDEBAR_MIN_SIZE = 18;
+const PDF_ANNOTATION_SIDEBAR_DEFAULT_SIZE = 32;
+const PDF_ANNOTATION_SIDEBAR_MAX_SIZE = 72;
+const PDF_VIEWPORT_MIN_SIZE_WITH_ANNOTATION_SIDEBAR = 24;
 const USE_REACT_PDF_DOCUMENT_OWNER = false;
 const PAGE_BUFFER = 2;
 const ESTIMATED_PAGE_HEIGHT = 842;
@@ -2198,6 +2245,16 @@ const UNDERLINE_STYLE_OPTIONS: Array<{ value: UnderlineStyleType; labelKey: Tran
   { value: "double", labelKey: "pdf.underline.style.double" },
   { value: "dashed", labelKey: "pdf.underline.style.dashed" },
 ];
+
+function clampPdfAnnotationSidebarSize(value: number | null | undefined): number {
+  if (!Number.isFinite(value)) {
+    return PDF_ANNOTATION_SIDEBAR_DEFAULT_SIZE;
+  }
+  return Math.min(
+    PDF_ANNOTATION_SIDEBAR_MAX_SIZE,
+    Math.max(PDF_ANNOTATION_SIDEBAR_MIN_SIZE, Number(value)),
+  );
+}
 
 const reactPdfWorkerUrl = pdfJsWorkerUrl;
 
@@ -2210,9 +2267,8 @@ function buildPdfUnderlineDecorationStyle(input: {
   const baseColor = input.color;
   const opacity = 1;
   const baselineHeight = Math.max(2, Math.min(3.5, input.segment.baselineHeight * 0.16));
-  const baselineTop = Math.max(0, input.segment.baselineTop - input.segment.top + input.segment.baselineHeight - baselineHeight);
   const cssBaselineHeight = `${baselineHeight}px`;
-  const cssBaselineTop = `${baselineTop}px`;
+  const cssBaselineTop = `calc(100% - ${cssBaselineHeight})`;
 
   if (input.underlineStyle === "wavy") {
     const waveHeight = Math.max(4, Math.min(8, input.segment.baselineHeight * 0.28));
@@ -2227,7 +2283,7 @@ function buildPdfUnderlineDecorationStyle(input: {
       backgroundColor: "transparent",
       backgroundImage: `url("data:image/svg+xml,${encoded}")`,
       backgroundRepeat: "repeat-x",
-      backgroundPosition: `left ${baselineTop}px`,
+      backgroundPosition: `left calc(100% - ${waveHeight}px)`,
       backgroundSize: `16px ${waveHeight}px`,
       opacity,
     };
@@ -2235,12 +2291,11 @@ function buildPdfUnderlineDecorationStyle(input: {
 
   if (input.underlineStyle === "double") {
     const lineGap = Math.max(1.8, baselineHeight * 1.8);
-    const lowerTop = Math.min(Math.max(0, input.segment.height - baselineHeight), baselineTop + lineGap);
-    const upperTop = Math.max(0, Math.min(baselineTop, lowerTop - lineGap));
+    const upperOffset = baselineHeight + lineGap;
     return {
       backgroundColor: "transparent",
       backgroundImage: `linear-gradient(${baseColor}, ${baseColor}), linear-gradient(${baseColor}, ${baseColor})`,
-      backgroundPosition: `left ${upperTop}px, left ${lowerTop}px`,
+      backgroundPosition: `left calc(100% - ${upperOffset}px), left ${cssBaselineTop}`,
       backgroundRepeat: "repeat-x",
       backgroundSize: `100% ${cssBaselineHeight}, 100% ${cssBaselineHeight}`,
       opacity,
@@ -2784,7 +2839,7 @@ function PdfSelectionDraftMenu({ selection, position, anchorRect, avoidRect, onC
         position: "fixed",
         left: adjustedPosition.x,
         top: adjustedPosition.y,
-        zIndex: 80,
+        zIndex: UI_LAYER.pdfSelectionToolbar,
       }}
     >
       <ColorPicker
@@ -2949,7 +3004,7 @@ function PdfAnnotationDefaultsMenu({
         position: "fixed",
         left: adjustedPosition.x,
         top: adjustedPosition.y,
-        zIndex: 150,
+        zIndex: UI_LAYER.pdfAnnotationDefaultsMenu,
         minWidth: 208,
       }}
       role="menu"
@@ -3654,7 +3709,7 @@ function TextAnnotationOverlay({ annotation, scale, onClick, isHighlighted }: Te
         border: hasBackground ? '1px solid rgba(0,0,0,0.1)' : '1px solid rgba(0,0,0,0.2)',
         boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
         maxWidth: '50%',
-        zIndex: 15,
+        zIndex: UI_LAYER.pdfTextAnnotation,
         pointerEvents: 'auto',
       }}
       onClick={(e) => {
@@ -4066,7 +4121,7 @@ function PdfTransientSelectionOverlay({ selection, paneId, page, color, styleTyp
       className="absolute inset-0 pointer-events-none"
       data-pdf-transient-selection-overlay="true"
       data-testid={`pdf-transient-selection-${paneId}-page-${page}`}
-      style={{ zIndex: 12 }}
+      style={{ zIndex: UI_LAYER.pdfTransientSelectionOverlay }}
     >
       {mergedRects.map((rect, index) => (
         <div
@@ -4111,7 +4166,7 @@ function PdfSearchMatchOverlay({ match }: PdfSearchMatchOverlayProps) {
   }
 
   return (
-    <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 11 }}>
+    <div className="absolute inset-0 pointer-events-none" style={{ zIndex: UI_LAYER.pdfSearchMatchOverlay }}>
       {match.rects.map((rect, index) => (
         <div
           key={`${match.page}-${match.index}-${index}`}
@@ -4266,7 +4321,7 @@ function PdfStoredAnnotationMenu({
         position: "fixed",
         left: adjustedPosition.x,
         top: adjustedPosition.y,
-        zIndex: 90,
+        zIndex: UI_LAYER.pdfStoredAnnotationPopup,
       }}
     >
       <HighlightPopupContent
@@ -4316,38 +4371,37 @@ interface PdfViewerContextMenuAction {
 
 interface PdfViewerContextMenuProps {
   state: PdfViewerContextMenuState;
-  showSidebar: boolean;
-  zoomMode: PdfZoomMode;
   onClose: () => void;
   onCopySelection: () => void;
-  onCopyPageReference: () => void;
   onOpenSearch: () => void;
+  onSearchSelection: () => void;
+  onHighlightSelection: () => void;
+  onUnderlineSelection: () => void;
+  onAskAiSelection: () => void;
+  onCopyPageReference: () => void;
   onToggleSidebar: () => void;
-  onFitWidth: () => void;
-  onFitPage: () => void;
-  onResetZoom: () => void;
-  onExportPdf: () => void;
+  isSidebarOpen: boolean;
 }
 
 function PdfViewerContextMenu({
   state,
-  showSidebar,
-  zoomMode,
   onClose,
   onCopySelection,
-  onCopyPageReference,
   onOpenSearch,
+  onSearchSelection,
+  onHighlightSelection,
+  onUnderlineSelection,
+  onAskAiSelection,
+  onCopyPageReference,
   onToggleSidebar,
-  onFitWidth,
-  onFitPage,
-  onResetZoom,
-  onExportPdf,
+  isSidebarOpen,
 }: PdfViewerContextMenuProps) {
+  const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
   const popupSize = useMeasuredPopupSize(
     menuRef,
-    { width: 272, height: 390 },
-    `${state.position.x}:${state.position.y}:${state.pageNumber ?? 0}:${state.selectedText.length}:${showSidebar}:${zoomMode}`,
+    { width: 288, height: 360 },
+    `${state.position.x}:${state.position.y}:${state.selectedText.length}`,
   );
   const adjustedPosition = adjustPopupPosition(state.position, popupSize, 12);
   const hasSelection = state.selectedText.trim().length > 0;
@@ -4386,60 +4440,58 @@ function PdfViewerContextMenu({
     onClose();
   };
 
-  const primaryActions: PdfViewerContextMenuAction[] = [
-    hasSelection ? {
+  const selectionActions: PdfViewerContextMenuAction[] = [
+    {
       id: "copy-selection",
-      label: "复制选中文本",
+      label: t("pdf.context.copySelection"),
       icon: Copy,
       onSelect: onCopySelection,
-    } : null,
-    {
-      id: "copy-page-reference",
-      label: state.pageNumber ? `复制页引用：Page ${state.pageNumber}` : "复制页引用",
-      icon: FileText,
-      disabled: !state.pageNumber,
-      onSelect: onCopyPageReference,
     },
     {
+      id: "search-selection",
+      label: t("pdf.context.searchSelection"),
+      icon: Search,
+      onSelect: onSearchSelection,
+    },
+    {
+      id: "highlight-selection",
+      label: t("pdf.context.highlightSelection"),
+      icon: Highlighter,
+      onSelect: onHighlightSelection,
+    },
+    {
+      id: "underline-selection",
+      label: t("pdf.context.underlineSelection"),
+      icon: Underline,
+      onSelect: onUnderlineSelection,
+    },
+    {
+      id: "ask-ai-selection",
+      label: t("pdf.context.askAiSelection"),
+      icon: Bot,
+      onSelect: onAskAiSelection,
+    },
+  ];
+
+  const pageActions: PdfViewerContextMenuAction[] = [
+    {
       id: "open-search",
-      label: "在 PDF 内搜索",
+      label: hasSelection ? t("pdf.context.openSearch") : t("pdf.context.searchPdf"),
       icon: Search,
       onSelect: onOpenSearch,
     },
     {
-      id: "export-pdf",
-      label: "导出带批注 PDF",
-      icon: FileOutput,
-      onSelect: onExportPdf,
+      id: "copy-page-reference",
+      label: t("pdf.context.copyPageReference"),
+      icon: Link2,
+      disabled: !state.pageNumber,
+      onSelect: onCopyPageReference,
     },
-  ].filter((action): action is PdfViewerContextMenuAction => Boolean(action));
-
-  const viewActions: PdfViewerContextMenuAction[] = [
     {
       id: "toggle-sidebar",
-      label: showSidebar ? "隐藏批注栏" : "显示批注栏",
-      icon: PanelLeft,
+      label: isSidebarOpen ? t("pdf.context.hideAnnotations") : t("pdf.context.showAnnotations"),
+      icon: isSidebarOpen ? PanelRightClose : PanelRightOpen,
       onSelect: onToggleSidebar,
-    },
-    {
-      id: "fit-width",
-      label: "适宽显示",
-      icon: ArrowLeftRight,
-      disabled: zoomMode === "fit-width",
-      onSelect: onFitWidth,
-    },
-    {
-      id: "fit-page",
-      label: "适页显示",
-      icon: Maximize2,
-      disabled: zoomMode === "fit-page",
-      onSelect: onFitPage,
-    },
-    {
-      id: "reset-zoom",
-      label: "重置缩放",
-      icon: RotateCcw,
-      onSelect: onResetZoom,
     },
   ];
 
@@ -4466,13 +4518,22 @@ function PdfViewerContextMenu({
     );
   };
 
+  const renderSection = (label: string, actions: PdfViewerContextMenuAction[]) => (
+    <div className="space-y-0.5">
+      <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      {actions.map(renderAction)}
+    </div>
+  );
+
   return ReactDOM.createPortal(
     <div
       ref={menuRef}
       role="menu"
-      aria-label="PDF context menu"
+      aria-label={t("pdf.context.menuAria")}
       data-testid="pdf-viewer-context-menu"
-      className="fixed z-[130] w-[17rem] rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-xl"
+      className={`fixed ${UI_LAYER_CLASS.pdfFloating} w-[18rem] rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-xl`}
       style={{ left: adjustedPosition.x, top: adjustedPosition.y }}
       onContextMenu={(event) => {
         event.preventDefault();
@@ -4483,22 +4544,24 @@ function PdfViewerContextMenu({
       onClick={stopMenuEventPropagation}
     >
       <div className="px-3 py-2">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          PDF 工具
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {t("pdf.context.title")}
+          </div>
+          {state.pageNumber ? (
+            <div className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {t("pdf.context.page", { page: state.pageNumber })}
+            </div>
+          ) : null}
         </div>
         {snippet ? (
           <div className="mt-1 line-clamp-2 rounded-md bg-muted/60 px-2 py-1.5 text-xs leading-relaxed text-muted-foreground">
-            “{snippet}”
+            {snippet}
           </div>
         ) : null}
       </div>
-      <div className="space-y-0.5">
-        {primaryActions.map(renderAction)}
-      </div>
-      <div className="my-1 border-t border-border" />
-      <div className="space-y-0.5">
-        {viewActions.map(renderAction)}
-      </div>
+      {hasSelection ? renderSection(t("pdf.context.selectionSection"), selectionActions) : null}
+      {renderSection(t("pdf.context.pageSection"), pageActions)}
     </div>,
     document.body,
   );
@@ -4509,6 +4572,7 @@ interface PdfStoredAnnotationOverlayProps {
   activeTool: AnnotationTool;
   isActive: boolean;
   onClick: () => void;
+  onErase: () => void;
   onHoverChange: (isHovered: boolean) => void;
   textMarkupView?: PdfTextMarkupView | null;
   adjustmentDraft?: PdfAnnotationAdjustmentDraft | null;
@@ -4523,6 +4587,7 @@ function PdfStoredAnnotationOverlay({
   activeTool,
   isActive,
   onClick,
+  onErase,
   onHoverChange,
   textMarkupView,
   adjustmentDraft,
@@ -4570,7 +4635,7 @@ function PdfStoredAnnotationOverlay({
     const pinY = rect.y1 * 100;
 
     return (
-      <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 18 }}>
+      <div className="absolute inset-0 pointer-events-none" style={{ zIndex: UI_LAYER.pdfPinAnnotation }}>
         <div
           className={`absolute cursor-pointer transition-transform ${isActive ? "animate-pulse scale-110" : ""}`}
           data-pdf-stored-annotation-id={annotation.id}
@@ -4586,6 +4651,10 @@ function PdfStoredAnnotationOverlay({
           onMouseLeave={() => onHoverChange(false)}
           onClick={(event) => {
             event.stopPropagation();
+            if (activeTool === "eraser") {
+              onErase();
+              return;
+            }
             onClick();
           }}
         >
@@ -4617,7 +4686,13 @@ function PdfStoredAnnotationOverlay({
     : "none";
 
   return (
-    <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 24 }}>
+    <div
+      className="absolute inset-0"
+      style={{
+        zIndex: UI_LAYER.pdfStoredAnnotationOverlay,
+        pointerEvents: (isArea && showAreaAdjustmentHandles) ? "auto" : "none",
+      }}
+    >
       {overlaySegments.map((rect, index) => {
         const style: React.CSSProperties = {
           position: "absolute",
@@ -4684,6 +4759,10 @@ function PdfStoredAnnotationOverlay({
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
+              if (activeTool === "eraser") {
+                onErase();
+                return;
+              }
               onClick();
             }}
           />
@@ -4851,6 +4930,7 @@ interface PdfStoredAnnotationPortalProps {
   paneRootRef: React.RefObject<HTMLElement | null>;
   isActive: boolean;
   onClick: (annotation: AnnotationItem) => void;
+  onErase: (annotation: AnnotationItem) => void;
   onHoverChange: (isHovered: boolean) => void;
   getTextModelForPage: (pageNumber: number) => PdfPageTextModel | null;
   getTextMarkupView: (annotation: AnnotationItem, model?: PdfPageTextModel | null) => PdfTextMarkupView | null;
@@ -4868,6 +4948,7 @@ function PdfStoredAnnotationPortal({
   paneRootRef,
   isActive,
   onClick,
+  onErase,
   onHoverChange,
   getTextModelForPage,
   getTextMarkupView,
@@ -4881,8 +4962,8 @@ function PdfStoredAnnotationPortal({
     paneRootRef,
     page,
     overlayClassName: `pdf-stored-annotation-overlay-${annotation.id}`,
-    overlayStyle: "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:24;",
-    dependencyKey: `${annotation.id}:${page}`,
+    overlayStyle: `position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:${annotation.style.type === "area" && showAreaAdjustmentHandles ? "auto" : "none"};z-index:24;`,
+    dependencyKey: `${annotation.id}:${page}:${annotation.style.type}:${showAreaAdjustmentHandles ? "interactive" : "passive"}`,
   });
   const textModel = getTextModelForPage(page);
 
@@ -4905,6 +4986,7 @@ function PdfStoredAnnotationPortal({
       activeTool={activeTool}
       isActive={isActive}
       onClick={() => onClick(renderAnnotation)}
+      onErase={() => onErase(renderAnnotation)}
       onHoverChange={onHoverChange}
       textMarkupView={textMarkupView}
       adjustmentDraft={adjustmentDraft}
@@ -4940,6 +5022,7 @@ export function PDFHighlighterAdapter({
 
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
+  const pdfExternalLinkOpenMode = useSettingsStore((state) => state.settings.pdfExternalLinkOpenMode);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const isDiagnosticsMode = pathname?.includes("/diagnostics") ?? false;
@@ -5007,7 +5090,7 @@ export function PDFHighlighterAdapter({
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(false);
   const [searchOpen, setSearchOpen] = useState(cachedToolbarState.searchOpen);
-  const [sidebarSize, setSidebarSize] = useState(cachedPdfViewState?.sidebarSize ?? 28);
+  const [sidebarSize, setSidebarSize] = useState(() => clampPdfAnnotationSidebarSize(cachedPdfViewState?.sidebarSize));
   const [pdfSidebarViewState, setPdfSidebarViewState] = useState<PdfAnnotationSidebarViewState>(
     cachedPdfViewState?.sidebarState ?? DEFAULT_PDF_ANNOTATION_SIDEBAR_VIEW_STATE,
   );
@@ -5044,11 +5127,9 @@ export function PDFHighlighterAdapter({
     [annotations],
   );
   const dedupedAnnotationsRef = useRef<AnnotationItem[]>(dedupedAnnotations);
-  const [repairedAnnotationsById, setRepairedAnnotationsById] = useState<Record<string, PdfRepairedAnnotationEntry>>({});
   const [optimisticAnnotationsById, setOptimisticAnnotationsById] = useState<Record<string, AnnotationItem>>({});
   const [pdfTextLayerRevision, setPdfTextLayerRevision] = useState(0);
   const pageTextLayerRevisionRef = useRef<Map<number, number>>(new Map());
-  const repairedAnnotationUpdateSignatureRef = useRef<Record<string, string>>({});
   const processedMarkdownDraftSignatureRef = useRef<string | null>(null);
   const renderedPageTextModelCacheRef = useRef<Map<number, { revision: number; model: PdfPageTextModel | null }>>(new Map());
   const pdfTextMarkupViewCacheRef = useRef<Map<string, PdfTextMarkupView | null>>(new Map());
@@ -5056,15 +5137,6 @@ export function PDFHighlighterAdapter({
     annotationId: string,
     updates: AnnotationUpdates,
   ) => {
-    setRepairedAnnotationsById((previous) => {
-      if (!previous[annotationId]) {
-        return previous;
-      }
-      const next = { ...previous };
-      delete next[annotationId];
-      return next;
-    });
-    repairedAnnotationUpdateSignatureRef.current[annotationId] = "";
     for (const key of Array.from(pdfTextMarkupViewCacheRef.current.keys())) {
       if (key.startsWith(`${annotationId}::`)) {
         pdfTextMarkupViewCacheRef.current.delete(key);
@@ -5102,16 +5174,9 @@ export function PDFHighlighterAdapter({
   const displayAnnotations = useMemo(() => (
     dedupedAnnotations.map((annotation) => {
       const optimistic = optimisticAnnotationsById[annotation.id];
-      const baseAnnotation = optimistic ?? annotation;
-      const repaired = repairedAnnotationsById[annotation.id];
-      if (!repaired) {
-        return baseAnnotation;
-      }
-      return !optimistic && repaired.sourceSignature === buildPdfTextRepairSignature(annotation)
-        ? repaired.annotation
-        : baseAnnotation;
+      return optimistic ?? annotation;
     })
-  ), [dedupedAnnotations, optimisticAnnotationsById, repairedAnnotationsById]);
+  ), [dedupedAnnotations, optimisticAnnotationsById]);
   const manifestSeedId = useMemo(() => generateFileId(filePath), [filePath]);
   const annotationMirrorTimeoutRef = useRef<number | null>(null);
   const pdfAnnotationCount = useMemo(() => (
@@ -5483,7 +5548,7 @@ export function PDFHighlighterAdapter({
     setFitScale(persistedPdfViewState.scale);
     setZoomMode(persistedPdfViewState.zoomMode);
     setShowSidebar(persistedPdfViewState.showSidebar);
-    setSidebarSize(persistedPdfViewState.sidebarSize ?? 28);
+    setSidebarSize(clampPdfAnnotationSidebarSize(persistedPdfViewState.sidebarSize));
     setPdfSidebarViewState(persistedPdfViewState.sidebarState ?? DEFAULT_PDF_ANNOTATION_SIDEBAR_VIEW_STATE);
     const toolbarState = persistedPdfViewState.toolbarState ?? DEFAULT_PDF_ANNOTATION_TOOLBAR_VIEW_STATE;
     setActiveTool(toolbarState.activeTool as AnnotationTool);
@@ -5636,6 +5701,7 @@ export function PDFHighlighterAdapter({
     returnFocusTo?: HTMLElement | null;
   } | null>(null);
   const [activeSearchMatch, setActiveSearchMatch] = useState<PdfSearchMatch | null>(null);
+  const [pdfSearchInitialQuery, setPdfSearchInitialQuery] = useState("");
   const [pendingSelectionDraft, setPendingSelectionDraft] = useState<{
     selection: PdfResolvedSelection;
     position: { x: number; y: number };
@@ -5664,8 +5730,6 @@ export function PDFHighlighterAdapter({
   const timeoutIdsRef = useRef<number[]>([]);
   const persistTimeoutRef = useRef<number | null>(null);
   const persistIdleRef = useRef<number | null>(null);
-  const repairWritebackIdleRef = useRef<number | null>(null);
-  const repairWritebackQueueRef = useRef<Map<string, AnnotationItem>>(new Map());
   const lastPersistSignatureRef = useRef<string | null>(null);
   const lastPersistedEditorStateRef = useRef<{
     fileId: string;
@@ -5753,9 +5817,25 @@ export function PDFHighlighterAdapter({
           lastModified: Date.now(),
         };
         const imported: AnnotationItem[] = [];
+        const resolvedDraftIds: string[] = [];
+        const blockedExistingDraftIds: string[] = [];
         for (const draft of drafts) {
           if (cancelled) {
             return;
+          }
+
+          const existing = dedupedAnnotationsRef.current.find((annotation) => annotation.id === draft.id);
+          if (existing) {
+            if (doesPdfAnnotationSatisfyMarkdownDraft(existing, draft)) {
+              resolvedDraftIds.push(draft.id);
+            } else {
+              blockedExistingDraftIds.push(draft.id);
+              logger.warn("[PDF] Markdown annotation draft id already exists; refusing to overwrite existing annotation:", {
+                id: draft.id,
+                page: draft.page,
+              });
+            }
+            continue;
           }
 
           const model = await getPdfPageTextModel(pdfDocument, draft.page);
@@ -5788,18 +5868,24 @@ export function PDFHighlighterAdapter({
 
           virtualFile = result.annotationFile;
           imported.push(result.annotation);
+          resolvedDraftIds.push(result.annotation.id);
         }
 
-        if (cancelled || imported.length === 0) {
+        if (cancelled || resolvedDraftIds.length === 0) {
+          if (!cancelled && blockedExistingDraftIds.length > 0) {
+            processedMarkdownDraftSignatureRef.current = signature;
+          }
           return;
         }
 
         processedMarkdownDraftSignatureRef.current = signature;
-        upsertAnnotations(imported);
+        if (imported.length > 0) {
+          upsertAnnotations(imported);
+        }
         removeResolvedPdfItemAnnotationMarkdownDrafts(
           rootHandle,
           pdfItemManifest,
-          imported.map((annotation) => annotation.id),
+          resolvedDraftIds,
         ).catch((error) => {
           logger.warn("[PDF] Imported markdown annotation drafts could not be cleared:", error);
         });
@@ -6023,6 +6109,21 @@ export function PDFHighlighterAdapter({
       getSelectionSnapshot: () => buildPdfSelectionMenuSnapshot(visiblePdfSelection, containerRef.current),
     },
   );
+
+  useEffect(() => {
+    if (!isPaneActive) {
+      return;
+    }
+    return setPdfSelectionImageProvider(() => {
+      const selection = pdfSelectionSessionRef.current.snapshot ?? visiblePdfSelection;
+      const pageNumber = selection?.pageNumbers[0] ?? selection?.pageNumber ?? null;
+      const pageElement = Number.isInteger(pageNumber) && pageNumber
+        ? findPdfPageElementInScope(containerRef.current, pageNumber)
+        : null;
+      return buildPdfSelectionImageFromPageElement(pageElement, selection);
+    });
+  }, [isPaneActive, paneId, visiblePdfSelection]);
+
   const pendingNavigation = useLinkNavigationStore((state) => state.pendingByPane[paneId]);
   const consumePendingNavigation = useLinkNavigationStore((state) => state.consumePendingNavigation);
   const commitPdfSelectionSession = useCallback((nextState: PdfSelectionSessionState) => {
@@ -7464,23 +7565,6 @@ export function PDFHighlighterAdapter({
     };
   }, []);
 
-  const handlePdfSurfaceClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (Date.now() <= suppressPdfSurfaceClickUntilRef.current) {
-      event.preventDefault();
-      event.stopPropagation();
-      suppressPdfSurfaceClickUntilRef.current = 0;
-      return;
-    }
-    if (!suppressNextLinkClickRef.current) {
-      return;
-    }
-    if (isPdfLinkAnnotationTarget(event.target)) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-    suppressNextLinkClickRef.current = false;
-  }, []);
-
   const handlePdfSurfaceDragStartCapture = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     if (!suppressNextLinkClickRef.current) {
       return;
@@ -7883,7 +7967,7 @@ export function PDFHighlighterAdapter({
     setScale(cachedPdfViewState?.scale ?? 1.2);
     setZoomMode(cachedPdfViewState?.zoomMode ?? "fit-width");
     setShowSidebar(cachedPdfViewState?.showSidebar ?? false);
-    setSidebarSize(cachedPdfViewState?.sidebarSize ?? 28);
+    setSidebarSize(clampPdfAnnotationSidebarSize(cachedPdfViewState?.sidebarSize));
     setPdfSidebarViewState(cachedPdfViewState?.sidebarState ?? DEFAULT_PDF_ANNOTATION_SIDEBAR_VIEW_STATE);
     const nextToolbarState = cachedPdfViewState?.toolbarState ?? DEFAULT_PDF_ANNOTATION_TOOLBAR_VIEW_STATE;
     setActiveTool(nextToolbarState.activeTool as AnnotationTool);
@@ -8140,53 +8224,6 @@ export function PDFHighlighterAdapter({
     }, delay);
   }, [clearScheduledPersist, persistPdfViewStateNow]);
 
-  const flushPdfRepairWritebacks = useCallback(() => {
-    repairWritebackIdleRef.current = null;
-    const queued = Array.from(repairWritebackQueueRef.current.values());
-    repairWritebackQueueRef.current.clear();
-    queued.forEach((annotation) => {
-      if (annotation.target.type !== "pdf") {
-        return;
-      }
-      const target = annotation.target as PdfTarget;
-      commitAnnotationUpdate(annotation.id, {
-        content: annotation.content,
-        target: {
-          rects: target.rects,
-          textQuote: target.textQuote,
-          startCharIndex: target.startCharIndex,
-          endCharIndex: target.endCharIndex,
-          quads: target.quads,
-          textKernelVersion: target.textKernelVersion,
-          textSource: target.textSource,
-          textConfidence: target.textConfidence,
-        },
-      });
-    });
-  }, [commitAnnotationUpdate]);
-
-  const queuePdfRepairWritebacks = useCallback((annotationsToWrite: AnnotationItem[]) => {
-    if (annotationsToWrite.length === 0) {
-      return;
-    }
-    annotationsToWrite.forEach((annotation) => {
-      repairWritebackQueueRef.current.set(annotation.id, annotation);
-    });
-    if (repairWritebackIdleRef.current !== null) {
-      return;
-    }
-
-    const idleWindow = window as Window & {
-      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
-    };
-    if (idleWindow.requestIdleCallback) {
-      repairWritebackIdleRef.current = idleWindow.requestIdleCallback(flushPdfRepairWritebacks, { timeout: 2500 });
-      return;
-    }
-
-    repairWritebackIdleRef.current = window.setTimeout(flushPdfRepairWritebacks, 900);
-  }, [flushPdfRepairWritebacks]);
-
   useEffect(() => {
     const viewerContainer = getViewerScrollContainer();
     if (!viewerContainer) {
@@ -8343,17 +8380,25 @@ export function PDFHighlighterAdapter({
       return;
     }
 
-    element.animate(
-      [
-        { boxShadow: '0 0 0 0 rgba(59, 130, 246, 0.00)', backgroundColor: 'rgba(59, 130, 246, 0.00)' },
-        { boxShadow: '0 0 0 3px rgba(59, 130, 246, 0.20)', backgroundColor: 'rgba(59, 130, 246, 0.08)' },
-        { boxShadow: '0 0 0 0 rgba(59, 130, 246, 0.00)', backgroundColor: 'rgba(59, 130, 246, 0.00)' },
-      ],
-      {
-        duration: 1800,
-        easing: 'ease-out',
-      },
-    );
+    if (typeof element.animate === 'function') {
+      element.animate(
+        [
+          { boxShadow: '0 0 0 0 rgba(59, 130, 246, 0.00)', backgroundColor: 'rgba(59, 130, 246, 0.00)' },
+          { boxShadow: '0 0 0 3px rgba(59, 130, 246, 0.20)', backgroundColor: 'rgba(59, 130, 246, 0.08)' },
+          { boxShadow: '0 0 0 0 rgba(59, 130, 246, 0.00)', backgroundColor: 'rgba(59, 130, 246, 0.00)' },
+        ],
+        {
+          duration: 1800,
+          easing: 'ease-out',
+        },
+      );
+      return;
+    }
+
+    element.classList.add('pdf-target-flash-fallback');
+    window.setTimeout(() => {
+      element.classList.remove('pdf-target-flash-fallback');
+    }, 1800);
   }, []);
 
   // Ink annotation merge callback - creates merged annotation from buffered strokes
@@ -8482,15 +8527,6 @@ export function PDFHighlighterAdapter({
         window.cancelAnimationFrame(inkPreviewFrameRef.current);
         inkPreviewFrameRef.current = null;
       }
-      if (repairWritebackIdleRef.current !== null) {
-        const idleWindow = window as Window & {
-          cancelIdleCallback?: (handle: number) => void;
-        };
-        idleWindow.cancelIdleCallback?.(repairWritebackIdleRef.current);
-        window.clearTimeout(repairWritebackIdleRef.current);
-        repairWritebackIdleRef.current = null;
-      }
-      repairWritebackQueueRef.current.clear();
       timeoutIdsRef.current.forEach((id) => window.clearTimeout(id));
       timeoutIdsRef.current = [];
     };
@@ -8510,6 +8546,52 @@ export function PDFHighlighterAdapter({
 
     return true;
   }, [getActivePdfSelectionText]);
+
+  const createTextMarkupFromSelection = useCallback((input: {
+    selection: PdfResolvedSelection;
+    styleType: "highlight" | "underline";
+    color?: string;
+    token?: number;
+  }) => {
+    const pageElement = findPdfPageElementInScope(containerRef.current, input.selection.pageNumber);
+    const normalizedSelection = normalizePdfResolvedSelectionViewportGeometry(
+      input.selection,
+      pageElement,
+    );
+    const signature = buildPdfSelectionSignature({
+      tool: input.styleType,
+      selection: normalizedSelection,
+    });
+    const snapshot = createPdfSelectionSnapshot({
+      selection: normalizedSelection,
+      signature,
+    });
+    const model = pageElement ? buildRenderedPdfPageTextModel(pageElement) : null;
+    const annotationData = resolvedTextSelectionToAnnotationData({
+      selection: normalizedSelection,
+      color: input.color ?? activeColor,
+      author: "user",
+      styleType: input.styleType,
+      underlineStyle: input.styleType === "underline" ? activeUnderlineStyle : undefined,
+      model: selectionAlreadyHasPreciseTextMarkupGeometry(normalizedSelection) ||
+        selectionAlreadyHasMultiLineTextMarkupGeometry(normalizedSelection)
+        ? null
+        : model,
+    });
+    const annotationId = addAnnotation(annotationData);
+    setPendingSelectionDraft(null);
+    dismissTransientSelectionTip();
+    commitTextMarkupSelection({ snapshot, token: input.token, annotationId });
+    clearNativePdfSelectionLater();
+    return annotationId;
+  }, [
+    activeColor,
+    activeUnderlineStyle,
+    addAnnotation,
+    clearNativePdfSelectionLater,
+    commitTextMarkupSelection,
+    dismissTransientSelectionTip,
+  ]);
 
   useEffect(() => {
     const handleCopy = (event: ClipboardEvent) => {
@@ -8556,85 +8638,6 @@ export function PDFHighlighterAdapter({
   useEffect(() => {
     pdfTextMarkupViewCacheRef.current.clear();
   }, [pdfTextLayerRevision, renderScale, fileId]);
-
-  useEffect(() => {
-    if (annotationsLoading || dedupedAnnotations.length === 0 || renderedPages.size === 0) {
-      return;
-    }
-
-    const nextRepaired: Record<string, PdfRepairedAnnotationEntry> = {};
-    const updates: AnnotationItem[] = [];
-
-    dedupedAnnotations.forEach((annotation) => {
-      if (
-        annotation.target.type !== "pdf" ||
-        !shouldAttemptPdfTextRepair(annotation) ||
-        !renderedPages.has(annotation.target.page)
-      ) {
-        return;
-      }
-
-      const pageElement = findPdfPageElementInScope(containerRef.current, annotation.target.page);
-      if (!pageElement) {
-        return;
-      }
-      const model = getRenderedPdfPageTextModelForPage(annotation.target.page);
-      if (!model) {
-        return;
-      }
-
-      const resolvedView = getPdfTextMarkupView(annotation, model);
-      const repaired = resolvedView?.annotation;
-      if (!repaired) {
-        return;
-      }
-
-      const repairedSignature = buildPdfTextRepairSignature(repaired);
-      const currentSignature = buildPdfTextRepairSignature(annotation);
-      const displayedEntry = repairedAnnotationsById[annotation.id];
-      if (!repairedSignature || repairedSignature === currentSignature) {
-        return;
-      }
-
-      if (
-        displayedEntry?.sourceSignature !== currentSignature ||
-        displayedEntry.repairedSignature !== repairedSignature
-      ) {
-        nextRepaired[annotation.id] = {
-          sourceSignature: currentSignature ?? "",
-          repairedSignature,
-          annotation: repaired,
-        };
-      }
-      if (
-        repairedAnnotationUpdateSignatureRef.current[annotation.id] !== repairedSignature &&
-        isSafePdfTextRepairWriteback(annotation, repaired)
-      ) {
-        repairedAnnotationUpdateSignatureRef.current[annotation.id] = repairedSignature;
-        updates.push(repaired);
-      }
-    });
-
-    if (Object.keys(nextRepaired).length > 0) {
-      setRepairedAnnotationsById((previous) => {
-        let changed = false;
-        const merged = { ...previous };
-        Object.entries(nextRepaired).forEach(([annotationId, entry]) => {
-          const previousEntry = previous[annotationId];
-          if (
-            previousEntry?.sourceSignature !== entry.sourceSignature ||
-            previousEntry?.repairedSignature !== entry.repairedSignature
-          ) {
-            merged[annotationId] = entry;
-            changed = true;
-          }
-        });
-        return changed ? merged : previous;
-      });
-    }
-
-    queuePdfRepairWritebacks(updates);
-  }, [annotationsLoading, dedupedAnnotations, getPdfTextMarkupView, getRenderedPdfPageTextModelForPage, pdfTextLayerRevision, queuePdfRepairWritebacks, renderedPages, repairedAnnotationsById]);
 
   useEffect(() => {
     if (!isDiagnosticsMode || numPages <= 0) {
@@ -8896,7 +8899,7 @@ export function PDFHighlighterAdapter({
     setAnnotationDefaultsMenu({ tool, position });
   }, []);
 
-  const handleExportPdf = useCallback(async () => {
+  const getSourcePdfBytesForExport = useCallback(async () => {
     const pdfBytes = source.kind === "buffer"
       ? source.data
       : await (async () => {
@@ -8910,8 +8913,18 @@ export function PDFHighlighterAdapter({
           return rawBytes.buffer.slice(rawBytes.byteOffset, rawBytes.byteOffset + rawBytes.byteLength) as ArrayBuffer;
         })();
 
+    return pdfBytes;
+  }, [fileHandle, source]);
+
+  const handleExportOriginalPdf = useCallback(async () => {
+    const pdfBytes = await getSourcePdfBytesForExport();
+    await exportOriginalPdf(pdfBytes, fileName);
+  }, [fileName, getSourcePdfBytesForExport]);
+
+  const handleExportPdfWithAnnotations = useCallback(async () => {
+    const pdfBytes = await getSourcePdfBytesForExport();
     await exportPdfWithAnnotations(pdfBytes, displayAnnotations, fileName);
-  }, [displayAnnotations, fileHandle, fileName, source]);
+  }, [displayAnnotations, fileName, getSourcePdfBytesForExport]);
 
   const commandBarState = useMemo<CommandBarState>(() => {
     const breadcrumbs = filePath.split("/").filter(Boolean).map((segment) => ({ label: segment }));
@@ -9052,13 +9065,23 @@ export function PDFHighlighterAdapter({
           onTrigger: () => setSearchOpen(true),
         },
         {
-          id: "export",
-          label: t("workbench.commandBar.export"),
+          id: "export-original",
+          label: t("pdf.export.original"),
           icon: "file-output",
-          priority: 40,
-          group: "secondary",
+          priority: 34,
+          group: "overflow",
           onTrigger: () => {
-            void handleExportPdf();
+            void handleExportOriginalPdf();
+          },
+        },
+        {
+          id: "export-annotated",
+          label: t("pdf.export.withAnnotations"),
+          icon: "file-output",
+          priority: 35,
+          group: "overflow",
+          onTrigger: () => {
+            void handleExportPdfWithAnnotations();
           },
         },
       ],
@@ -9067,7 +9090,8 @@ export function PDFHighlighterAdapter({
     activeTool,
     applyZoomMode,
     filePath,
-    handleExportPdf,
+    handleExportOriginalPdf,
+    handleExportPdfWithAnnotations,
     openAnnotationDefaultsMenu,
     searchOpen,
     setShowSidebarPreservingPdfAnchor,
@@ -9096,25 +9120,74 @@ export function PDFHighlighterAdapter({
     }
 
     setAnnotationDefaultsMenu(null);
+    const pageElementAtPointer = findPdfPageElementAtClientPoint(
+      containerRef.current,
+      event.clientX,
+      event.clientY,
+    );
+    const pointerPageNumber = Number(pageElementAtPointer?.dataset.pageNumber ?? "");
+    const resolvedPageNumber = Number.isInteger(pointerPageNumber) && pointerPageNumber > 0
+      ? pointerPageNumber
+      : getPrimaryVisiblePageState()?.pageNumber ?? 1;
     setPdfContextMenu({
       position: { x: event.clientX, y: event.clientY },
-      pageNumber: getPrimaryVisiblePageState()?.pageNumber ?? null,
+      pageNumber: resolvedPageNumber,
       selectedText: getActivePdfSelectionText(),
     });
   }, [getActivePdfSelectionText, getPrimaryVisiblePageState, isPaneActive, paneId]);
 
-  const copyPdfPageReference = useCallback(() => {
-    const pageNumber = pdfContextMenu?.pageNumber ?? getPrimaryVisiblePageState()?.pageNumber ?? null;
-    const reference = pageNumber ? `${fileName}#page=${pageNumber}` : fileName;
-    void copyToClipboard(reference);
-  }, [fileName, getPrimaryVisiblePageState, pdfContextMenu?.pageNumber]);
-
   const openPdfSearchFromContextMenu = useCallback(() => {
+    setPdfSearchInitialQuery("");
     setSearchOpen(true);
   }, []);
 
-  const toggleSidebarFromContextMenu = useCallback(() => {
-    setShowSidebarPreservingPdfAnchor((value) => !value);
+  const searchSelectedTextFromContextMenu = useCallback(() => {
+    const selectedText = pdfContextMenu?.selectedText.trim();
+    if (selectedText) {
+      setPdfSearchInitialQuery(selectedText);
+    }
+    setSearchOpen(true);
+  }, [pdfContextMenu?.selectedText]);
+
+  const createTextMarkupFromContextMenu = useCallback((styleType: "highlight" | "underline") => {
+    const selection = visiblePdfSelection;
+    if (!selection) {
+      return;
+    }
+    createTextMarkupFromSelection({ selection, styleType });
+  }, [createTextMarkupFromSelection, visiblePdfSelection]);
+
+  const askAiAboutPdfSelectionFromContextMenu = useCallback(() => {
+    const selectedText = pdfContextMenu?.selectedText.trim() || getPdfResolvedSelectionExactText(visiblePdfSelection);
+    if (!selectedText) {
+      return;
+    }
+
+    const frozenContext = buildPdfSelectionRectsFromSnapshot(visiblePdfSelection, containerRef.current);
+    const pageNumber = frozenContext.pageNumber ?? pdfContextMenu?.pageNumber ?? undefined;
+    setSelectionHubState({
+      context: createSelectionContext({
+        sourceKind: "pdf",
+        paneId,
+        fileName,
+        filePath,
+        selectedText,
+        pdfPage: pageNumber ?? undefined,
+        pdfRects: frozenContext.rects ?? [],
+      }),
+      mode: "chat",
+      returnFocusTo: containerRef.current,
+    });
+  }, [fileName, filePath, paneId, pdfContextMenu?.pageNumber, pdfContextMenu?.selectedText, visiblePdfSelection]);
+
+  const copyPdfPageReferenceFromContextMenu = useCallback(() => {
+    const pageNumber = pdfContextMenu?.pageNumber ?? getPrimaryVisiblePageState()?.pageNumber ?? null;
+    const locator = pageNumber ? `${filePath}#page=${pageNumber}` : filePath;
+    void copyToClipboard(locator);
+  }, [filePath, getPrimaryVisiblePageState, pdfContextMenu?.pageNumber]);
+
+  const togglePdfSidebarFromContextMenu = useCallback(() => {
+    setShowSidebarPreservingPdfAnchor((current) => !current);
   }, [setShowSidebarPreservingPdfAnchor]);
 
   const annotationById = useMemo(() => {
@@ -10476,6 +10549,17 @@ export function PDFHighlighterAdapter({
         }
         return;
       }
+      if (activeTool === "eraser") {
+        event.preventDefault();
+        event.stopPropagation();
+        clearTransientSelection({ nextPhase: "cancelled" });
+        clearActiveAnnotationUi();
+        if (annotationMenuState) {
+          closeAnnotationMenu();
+        }
+        deleteAnnotation(annotation.id);
+        return;
+      }
 
       event.preventDefault();
       event.stopPropagation();
@@ -10519,7 +10603,7 @@ export function PDFHighlighterAdapter({
     if (annotationMenuState) {
       closeAnnotationMenu();
     }
-  }, [activeTool, annotationAdjustmentDraft, annotationMenuState, clearActiveAnnotationUi, clearTransientSelection, closeAnnotationMenu, findPdfAnnotationAtClientPoint, handlePdfClick, highlightedId, hoveredAnnotationId, openAnnotationMenu, openTextAnnotationEditor, selectedAnnotationId]);
+  }, [activeTool, annotationAdjustmentDraft, annotationMenuState, clearActiveAnnotationUi, clearTransientSelection, closeAnnotationMenu, deleteAnnotation, findPdfAnnotationAtClientPoint, handlePdfClick, highlightedId, hoveredAnnotationId, openAnnotationMenu, openTextAnnotationEditor, selectedAnnotationId]);
 
   const resetAreaSelectionDraft = useCallback(() => {
     areaSelectionDocumentCleanupRef.current?.();
@@ -11148,17 +11232,54 @@ export function PDFHighlighterAdapter({
     pendingAnnotationScrollFrameRef.current = window.requestAnimationFrame(run);
   }, [cancelPendingAnnotationScroll, scrollPdfTargetIntoView]);
 
-  const jumpToPdfPage = useCallback((pageNumber: number, rects?: PdfSearchMatch["rects"]) => {
+  const resolveRenderedSearchMatch = useCallback((match: PdfSearchMatch): PdfSearchMatch => {
+    if (match.rects.length > 0) {
+      return match;
+    }
+
+    const model = getRenderedPdfPageTextModelForPage(match.page);
+    if (!model) {
+      return match;
+    }
+
+    const renderedMatches = searchPdfPageTextModel(model, match.normalizedQuery);
+    const exactRenderedMatch = renderedMatches.find((candidate) => candidate.normalizedIndex === match.normalizedIndex);
+    return exactRenderedMatch ?? renderedMatches[0] ?? match;
+  }, [getRenderedPdfPageTextModelForPage]);
+
+  const jumpToPdfSearchMatch = useCallback((match: PdfSearchMatch) => {
+    const pageNumber = match.page;
     if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > numPages) {
       return;
     }
 
+    warmVisiblePages(pageNumber);
+    const resolvedMatch = resolveRenderedSearchMatch(match);
     schedulePdfTargetIntoViewAfterLayout({
       page: pageNumber,
-      rects: pdfSearchRectsToTargetRects(rects),
+      rects: pdfSearchRectsToTargetRects(resolvedMatch.rects),
       flashPage: true,
     });
-  }, [numPages, schedulePdfTargetIntoViewAfterLayout]);
+    setActiveSearchMatch(resolvedMatch);
+    if (resolvedMatch.rects.length === 0) {
+      let framesLeft = 4;
+      const retry = () => {
+        framesLeft -= 1;
+        const nextMatch = resolveRenderedSearchMatch(match);
+        if (nextMatch.rects.length > 0 || framesLeft <= 0) {
+          schedulePdfTargetIntoViewAfterLayout({
+            page: pageNumber,
+            rects: pdfSearchRectsToTargetRects(nextMatch.rects),
+            flashPage: true,
+          });
+          setActiveSearchMatch(nextMatch);
+          return;
+        }
+        window.requestAnimationFrame(retry);
+      };
+      window.requestAnimationFrame(retry);
+    }
+  }, [numPages, resolveRenderedSearchMatch, schedulePdfTargetIntoViewAfterLayout, warmVisiblePages]);
 
   useEffect(() => {
     if (!isDiagnosticsMode) {
@@ -11253,6 +11374,121 @@ export function PDFHighlighterAdapter({
     },
   });
 
+  const resolvePdfNamedDestinationPage = useCallback(async (destination: string): Promise<number | null> => {
+    if (!pdfDocument || !destination.trim()) {
+      return null;
+    }
+
+    try {
+      const explicitDestination = await pdfDocument.getDestination(destination.trim());
+      const destinationRef = explicitDestination?.[0];
+      if (typeof destinationRef === "number") {
+        return Number.isInteger(destinationRef) && destinationRef >= 0 ? destinationRef + 1 : null;
+      }
+      if (destinationRef) {
+        const pageIndex = await pdfDocument.getPageIndex(destinationRef);
+        return Number.isInteger(pageIndex) && pageIndex >= 0 ? pageIndex + 1 : null;
+      }
+    } catch (error) {
+      console.warn("Failed to resolve PDF destination", { destination, error });
+    }
+
+    return null;
+  }, [pdfDocument]);
+
+  const handlePdfLinkClick = useCallback((event: React.MouseEvent<HTMLDivElement>): boolean => {
+    const linkElement = getPdfLinkElementFromTarget(event.target);
+    if (!linkElement) {
+      return false;
+    }
+
+    const target = parsePdfLinkTargetFromElement(linkElement);
+    if (!target) {
+      return false;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (target.type === "external") {
+      const externalUrlMode = shouldOpenPdfExternalLinkInBrowser(event.nativeEvent, pdfExternalLinkOpenMode)
+        ? "external"
+        : "internal";
+      void navigateLink(target.url, {
+        paneId,
+        rootHandle,
+        currentFilePath: filePath,
+        externalUrlMode,
+      });
+      return true;
+    }
+
+    if (target.type === "annotation") {
+      const annotation = annotationById.get(target.annotationId);
+      if (annotation) {
+        handleSidebarSelect(annotation);
+        return true;
+      }
+      setShowSidebar(true);
+      setSelectedAnnotationId(target.annotationId);
+      setHighlightedId(target.annotationId);
+      scheduleTimeout(() => setHighlightedId(null), 2000);
+      return true;
+    }
+
+    if (target.type === "page") {
+      warmVisiblePages(target.page);
+      schedulePdfTargetIntoViewAfterLayout({
+        page: target.page,
+        flashPage: true,
+      });
+      return true;
+    }
+
+    void resolvePdfNamedDestinationPage(target.destination).then((page) => {
+      if (!page) {
+        return;
+      }
+      warmVisiblePages(page);
+      schedulePdfTargetIntoViewAfterLayout({
+        page,
+        flashPage: true,
+      });
+    });
+    return true;
+  }, [
+    annotationById,
+    filePath,
+    handleSidebarSelect,
+    paneId,
+    pdfExternalLinkOpenMode,
+    resolvePdfNamedDestinationPage,
+    rootHandle,
+    schedulePdfTargetIntoViewAfterLayout,
+    scheduleTimeout,
+    warmVisiblePages,
+  ]);
+
+  const handlePdfSurfaceClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (Date.now() <= suppressPdfSurfaceClickUntilRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      suppressPdfSurfaceClickUntilRef.current = 0;
+      return;
+    }
+
+    if (suppressNextLinkClickRef.current) {
+      if (isPdfLinkAnnotationTarget(event.target)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      suppressNextLinkClickRef.current = false;
+      return;
+    }
+
+    void handlePdfLinkClick(event);
+  }, [handlePdfLinkClick]);
+
   useEffect(() => {
     if (!pendingNavigation || !isSameWorkspacePath(pendingNavigation.filePath, filePath)) {
       return;
@@ -11271,6 +11507,7 @@ export function PDFHighlighterAdapter({
 
     const pendingTarget = deferredNavigation.target;
     let frameId = 0;
+    let usedAnnotationPageHint = false;
 
     const finish = () => {
       setDeferredNavigation((current) => (
@@ -11291,6 +11528,13 @@ export function PDFHighlighterAdapter({
       if (pendingTarget.type === "pdf_annotation") {
         const annotation = annotationById.get(pendingTarget.annotationId);
         if (!annotation) {
+          if (pendingTarget.page && !usedAnnotationPageHint) {
+            usedAnnotationPageHint = true;
+            schedulePdfTargetIntoViewAfterLayout({
+              page: pendingTarget.page,
+              flashPage: true,
+            });
+          }
           if (Date.now() - deferredNavigation.requestedAt > 15000) {
             setShowSidebar(true);
             setSelectedAnnotationId(pendingTarget.annotationId);
@@ -11412,13 +11656,14 @@ export function PDFHighlighterAdapter({
             pdfDocument={pdfDocument}
             fileHandle={fileHandle}
             numPages={numPages}
-            onNavigateToPage={jumpToPdfPage}
+            onNavigateToMatch={jumpToPdfSearchMatch}
             onActiveMatchChange={setActiveSearchMatch}
             isOpen={searchOpen}
             onClose={() => {
               setSearchOpen(false);
               setActiveSearchMatch(null);
             }}
+            initialQuery={pdfSearchInitialQuery}
           />
           {pdfDocument && numPages > 0 ? (
               <div
@@ -11476,6 +11721,13 @@ export function PDFHighlighterAdapter({
             isActive={highlightedId === annotation.id || hoveredAnnotationId === annotation.id || selectedAnnotationId === annotation.id}
             onHoverChange={(isHovered) => setHoveredAnnotationId(isHovered ? annotation.id : null)}
             onClick={(effectiveAnnotation) => openAnnotationMenu(effectiveAnnotation)}
+            onErase={(effectiveAnnotation) => {
+              clearActiveAnnotationUi();
+              if (annotationMenuState) {
+                closeAnnotationMenu();
+              }
+              deleteAnnotation(effectiveAnnotation.id);
+            }}
             getTextModelForPage={getRenderedPdfPageTextModelForPage}
             getTextMarkupView={getPdfTextMarkupView}
             adjustmentDraft={annotationAdjustmentDraft}
@@ -11630,21 +11882,18 @@ export function PDFHighlighterAdapter({
       {pdfContextMenu ? (
         <PdfViewerContextMenu
           state={pdfContextMenu}
-          showSidebar={showSidebar}
-          zoomMode={zoomMode}
           onClose={closePdfContextMenu}
           onCopySelection={() => {
             handlePdfCopy();
           }}
-          onCopyPageReference={copyPdfPageReference}
           onOpenSearch={openPdfSearchFromContextMenu}
-          onToggleSidebar={toggleSidebarFromContextMenu}
-          onFitWidth={() => applyZoomMode("fit-width")}
-          onFitPage={() => applyZoomMode("fit-page")}
-          onResetZoom={resetZoom}
-          onExportPdf={() => {
-            void handleExportPdf();
-          }}
+          onSearchSelection={searchSelectedTextFromContextMenu}
+          onHighlightSelection={() => createTextMarkupFromContextMenu("highlight")}
+          onUnderlineSelection={() => createTextMarkupFromContextMenu("underline")}
+          onAskAiSelection={askAiAboutPdfSelectionFromContextMenu}
+          onCopyPageReference={copyPdfPageReferenceFromContextMenu}
+          onToggleSidebar={togglePdfSidebarFromContextMenu}
+          isSidebarOpen={showSidebar}
         />
       ) : null}
 
@@ -11679,35 +11928,12 @@ export function PDFHighlighterAdapter({
           anchorRect={pendingSelectionDraft.anchorRect}
           avoidRect={pendingSelectionDraft.avoidRect}
           onColorSelect={(color) => {
-            const pageElement = findPdfPageElementInScope(containerRef.current, pendingSelectionDraft.selection.pageNumber);
-            const normalizedSelection = normalizePdfResolvedSelectionViewportGeometry(
-              pendingSelectionDraft.selection,
-              pageElement,
-            );
-            const signature = buildPdfSelectionSignature({
-              tool: "highlight",
-              selection: normalizedSelection,
-            });
-            const snapshot = createPdfSelectionSnapshot({
-              selection: normalizedSelection,
-              signature,
-            });
-            const model = pageElement ? buildRenderedPdfPageTextModel(pageElement) : null;
-            const annotationData = resolvedTextSelectionToAnnotationData({
-              selection: normalizedSelection,
+            createTextMarkupFromSelection({
+              selection: pendingSelectionDraft.selection,
+              styleType: "highlight",
               color,
-              author: 'user',
-              styleType: 'highlight',
-              model: selectionAlreadyHasPreciseTextMarkupGeometry(normalizedSelection) ||
-                selectionAlreadyHasMultiLineTextMarkupGeometry(normalizedSelection)
-                ? null
-                : model,
+              token: pendingSelectionDraft.token,
             });
-            const annotationId = addAnnotation(annotationData);
-            setPendingSelectionDraft(null);
-            dismissTransientSelectionTip();
-            commitTextMarkupSelection({ snapshot, annotationId });
-            clearNativePdfSelectionLater();
           }}
           onCancel={() => {
             clearTransientSelection({ nextPhase: 'cancelled' });
@@ -11824,12 +12050,18 @@ export function PDFHighlighterAdapter({
             sizes={[sidebarSize, 100 - sidebarSize]}
             onSizesChange={(sizes) => {
               if (sizes[0]) {
-                setSidebarSizePreservingPdfAnchor(Math.min(42, Math.max(18, sizes[0])));
+                setSidebarSizePreservingPdfAnchor(clampPdfAnnotationSidebarSize(sizes[0]));
               }
             }}
           >
-            <ResizablePanel index={0} defaultSize={sidebarSize} minSize={18} maxSize={42} className="min-h-0 overflow-hidden">
-              <div className="h-full border-r border-border bg-background overflow-hidden flex flex-col">
+            <ResizablePanel
+              index={0}
+              defaultSize={sidebarSize}
+              minSize={PDF_ANNOTATION_SIDEBAR_MIN_SIZE}
+              maxSize={PDF_ANNOTATION_SIDEBAR_MAX_SIZE}
+              className="min-h-0 overflow-hidden"
+            >
+              <div className="h-full bg-background overflow-hidden flex flex-col">
                 <PdfItemWorkspacePanel
                   rootHandle={rootHandle}
                   documentId={effectiveBinding?.documentId ?? pdfItemManifest?.itemId ?? null}
@@ -11886,7 +12118,12 @@ export function PDFHighlighterAdapter({
               </div>
             </ResizablePanel>
             <ResizableHandle withHandle index={0} />
-            <ResizablePanel index={1} defaultSize={100 - sidebarSize} minSize={40} className="min-h-0 overflow-hidden">
+            <ResizablePanel
+              index={1}
+              defaultSize={100 - sidebarSize}
+              minSize={PDF_VIEWPORT_MIN_SIZE_WITH_ANNOTATION_SIDEBAR}
+              className="min-h-0 overflow-hidden"
+            >
               {renderPdfViewport(true)}
             </ResizablePanel>
           </ResizablePanelGroup>

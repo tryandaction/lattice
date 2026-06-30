@@ -451,6 +451,20 @@ function RunnableCodeBlock({
  * Custom components for ReactMarkdown
  */
 const components: Components = {
+  span({ children, className, style, node: _node, ...props }: MarkdownProps<"span">) {
+    const dataProps = props as { "data-color"?: unknown };
+    const color = typeof dataProps["data-color"] === "string" ? dataProps["data-color"] : undefined;
+    const nextStyle = color
+      ? ({ ...style, "--annotation-color": color } as CSSProperties)
+      : style;
+
+    return (
+      <span className={className} style={nextStyle} {...props}>
+        {children}
+      </span>
+    );
+  },
+
   // Code blocks with syntax highlighting and copy button
   code({ inline, className, children, style: _style, node: _node, ...props }: MarkdownCodeProps) {
     const match = /language-([^\s]+)/.exec(className || "");

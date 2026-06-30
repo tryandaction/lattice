@@ -30,6 +30,7 @@ import { wikiLinkAutocomplete, updateAvailableFiles, updateWikiLinkCompletionCon
 import { markdownSmartInputExtension } from './markdown-smart-input';
 import { createImageDropExtension, ImageUploadHandler } from './image-drop-plugin';
 import { createMathPasteExtension } from './math-paste-plugin';
+import { activateQuantumMathEdit, quantumMathEditingExtension } from './quantum-math-editing';
 import { createAccessibilityExtension, addEditorDescription, announceChange } from './accessibility';
 import type {
   ViewMode,
@@ -98,6 +99,7 @@ type LivePreviewViewWithHandlers = EditorView & {
   _unifiedInputFocusHandler?: () => void;
   _unifiedInputBlurHandler?: () => void;
   _mathEditorHandler?: (e: Event) => void;
+  _quantumFormulaInsertedHandler?: (e: Event) => void;
   _resolvedImageUrls?: LocalImageUrlCache;
 };
 
@@ -340,6 +342,7 @@ function buildExtensions(
       ...markdownSmartInputExtension,
       ...wikiLinkAutocomplete,
       createMathPasteExtension(),
+      quantumMathEditingExtension,
       createImageDropExtension(onImageUpload, useWikiImageStyle)
     );
   } else if (mode === 'source') {
@@ -517,6 +520,10 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           if (existingMathHandler) {
             existingView.dom.removeEventListener('open-math-editor', existingMathHandler);
           }
+          const existingQuantumFormulaHandler = (existingView as LivePreviewViewWithHandlers)._quantumFormulaInsertedHandler;
+          if (existingQuantumFormulaHandler) {
+            existingView.dom.removeEventListener('quantum-formula-inserted', existingQuantumFormulaHandler);
+          }
           clearExposedEditorView(existingView);
           unregisterCodeMirrorView(existingView.dom);
           existingView.destroy();
@@ -629,6 +636,33 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         // Store handler for cleanup
         (view as LivePreviewViewWithHandlers)._mathEditorHandler = handleOpenMathEditor;
 
+        const handleQuantumFormulaInserted = (e: Event) => {
+          const customEvent = e as CustomEvent<{
+            from: number;
+            to: number;
+            latex: string;
+            displayMode: boolean;
+          }>;
+          const detail = customEvent.detail;
+          if (
+            !detail ||
+            !Number.isFinite(detail.from) ||
+            !Number.isFinite(detail.to) ||
+            !detail.latex
+          ) {
+            return;
+          }
+
+          activateQuantumMathEdit(view, {
+            from: detail.from,
+            to: detail.to,
+            latex: detail.latex,
+            displayMode: Boolean(detail.displayMode),
+          });
+        };
+        view.dom.addEventListener('quantum-formula-inserted', handleQuantumFormulaInserted);
+        (view as LivePreviewViewWithHandlers)._quantumFormulaInsertedHandler = handleQuantumFormulaInserted;
+
         // Register unified input target for CodeMirror integration
         registerCodeMirrorView(view.dom, view);
         const focusHandler = () => {
@@ -717,6 +751,10 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         const existingMathHandler = (existingView as LivePreviewViewWithHandlers)._mathEditorHandler;
         if (existingMathHandler) {
           existingView.dom.removeEventListener('open-math-editor', existingMathHandler);
+        }
+        const existingQuantumFormulaHandler = (existingView as LivePreviewViewWithHandlers)._quantumFormulaInsertedHandler;
+        if (existingQuantumFormulaHandler) {
+          existingView.dom.removeEventListener('quantum-formula-inserted', existingQuantumFormulaHandler);
         }
         clearExposedEditorView(existingView);
         unregisterCodeMirrorView(existingView.dom);

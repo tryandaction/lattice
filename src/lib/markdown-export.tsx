@@ -21,6 +21,8 @@ import type { EvidenceRef } from "@/lib/ai/types";
 import { exportFile, type ExportResult } from "@/lib/export-adapter";
 import { loadAnnotationsFromDisk, generateFileId } from "@/lib/universal-annotation-storage";
 import { KATEX_MACROS } from "@/lib/katex-config";
+import { getLocale } from "@/lib/i18n";
+import type { Locale } from "@/types/settings";
 
 type MarkdownProps<T extends keyof JSX.IntrinsicElements> = ComponentPropsWithoutRef<T> & {
   node?: unknown;
@@ -62,6 +64,7 @@ interface ExportDocumentData {
   css: string;
   entryCount: number;
   generatedAt: string;
+  locale: Locale;
 }
 
 const REMARK_PLUGINS: PluggableList = [remarkGfm, remarkMath];
@@ -77,8 +80,95 @@ const A4_PAGE_HEIGHT_PX = 1123;
 const A4_PAGE_WIDTH_PT = 595.28;
 const A4_PAGE_HEIGHT_PT = 841.89;
 
-function formatExportTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleString("zh-CN", {
+interface MarkdownExportCopy {
+  annotation: string;
+  evidence: string;
+  notes: string;
+  file: string;
+  path: string;
+  generatedAt: string;
+  annotationMode: string;
+  sourceItems: string;
+  studyNoteTitle: string;
+  studyNoteLead: string;
+  sourceIndex: string;
+  annotationSummary: string;
+  sourceItemCount: (count: number) => string;
+  appendixTitle: string;
+  appendixLead: string;
+  targetLabel: (target: AnnotationTarget) => string;
+}
+
+function getMarkdownExportCopy(locale: Locale = getLocale()): MarkdownExportCopy {
+  if (locale === "en-US") {
+    return {
+      annotation: "Annotation",
+      evidence: "Evidence",
+      notes: "Notes",
+      file: "File",
+      path: "Path",
+      generatedAt: "Generated at",
+      annotationMode: "Annotation mode",
+      sourceItems: "Source items",
+      studyNoteTitle: "Study Note Digest",
+      studyNoteLead: "This export organizes the document body together with collected annotations and evidence for later review, learning, and research citation.",
+      sourceIndex: "Source Index",
+      annotationSummary: "Annotation Summary",
+      sourceItemCount: (count) => `${count} item${count === 1 ? "" : "s"}`,
+      appendixTitle: "Annotation Appendix",
+      appendixLead: "The body stays clean while annotations and evidence references are preserved in an appendix for research archiving and sharing.",
+      targetLabel: (target) => {
+        switch (target.type) {
+          case "pdf":
+            return `PDF page ${target.page}`;
+          case "code_line":
+            return `Code line ${target.line}`;
+          case "image":
+            return "Image region";
+          case "text_anchor":
+            return `Anchor ${target.elementId}`;
+          default:
+            return "Annotation";
+        }
+      },
+    };
+  }
+
+  return {
+    annotation: "标注",
+    evidence: "证据",
+    notes: "笔记",
+    file: "文件",
+    path: "路径",
+    generatedAt: "导出时间",
+    annotationMode: "标注模式",
+    sourceItems: "来源条目",
+    studyNoteTitle: "学习笔记摘要",
+    studyNoteLead: "当前导出将文档正文与已收集的标注/证据整理为学习与科研笔记视图，便于后续复盘与引用。",
+    sourceIndex: "来源索引",
+    annotationSummary: "标注摘要",
+    sourceItemCount: (count) => `${count} 条`,
+    appendixTitle: "批注附录",
+    appendixLead: "正文保持纯净呈现，来源标注与证据引用按附录方式集中保留，适合科研归档与分享。",
+    targetLabel: (target) => {
+      switch (target.type) {
+        case "pdf":
+          return `PDF 第 ${target.page} 页`;
+        case "code_line":
+          return `代码第 ${target.line} 行`;
+        case "image":
+          return "图片区域";
+        case "text_anchor":
+          return `锚点 ${target.elementId}`;
+        default:
+          return "标注";
+      }
+    },
+  };
+}
+
+function formatExportTime(timestamp: number, locale: Locale = getLocale()): string {
+  return new Date(timestamp).toLocaleString(locale, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -127,21 +217,6 @@ function dedupeEntries(entries: ExportSourceEntry[]): ExportSourceEntry[] {
   });
 }
 
-function annotationTargetLabel(target: AnnotationTarget): string {
-  switch (target.type) {
-    case "pdf":
-      return `PDF 第 ${target.page} 页`;
-    case "code_line":
-      return `代码第 ${target.line} 行`;
-    case "image":
-      return "图片区域";
-    case "text_anchor":
-      return `锚点 ${target.elementId}`;
-    default:
-      return "标注";
-  }
-}
-
 function buildAnnotationLocator(filePath: string | undefined, target: AnnotationTarget): string {
   const base = filePath || "";
   switch (target.type) {
@@ -162,15 +237,17 @@ function toExportEntries(
   annotations: AnnotationItem[],
   evidenceRefs: EvidenceRef[],
   filePath: string | undefined,
-  fileName: string
+  fileName: string,
+  locale: Locale = getLocale(),
 ): ExportSourceEntry[] {
+  const copy = getMarkdownExportCopy(locale);
   const annotationEntries = annotations.map<ExportSourceEntry>((annotation) => {
     const locator = buildAnnotationLocator(filePath, annotation.target);
     const sourcePath = locatorPath(locator) || filePath || fileName;
     return {
       id: annotation.id,
       kind: "annotation",
-      title: annotationTargetLabel(annotation.target),
+      title: copy.targetLabel(annotation.target),
       locator,
       sourcePath,
       sourceLabel: titleFromPath(sourcePath || fileName),
@@ -223,13 +300,13 @@ function splitEntriesBySource(entries: ExportSourceEntry[]): Array<{
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function renderEntryCards(entries: ExportSourceEntry[]): ReactNode {
+function renderEntryCards(entries: ExportSourceEntry[], copy: MarkdownExportCopy, locale: Locale): ReactNode {
   return entries.map((entry, index) => (
     <article key={`${entry.id}-${index}`} className="lattice-export-note">
       <div className="lattice-export-note-meta">
-        <span className="lattice-export-note-kind">{entry.kind === "annotation" ? "标注" : "证据"}</span>
+        <span className="lattice-export-note-kind">{entry.kind === "annotation" ? copy.annotation : copy.evidence}</span>
         <span>{entry.title}</span>
-        {entry.createdAt ? <span>{formatExportTime(entry.createdAt)}</span> : null}
+        {entry.createdAt ? <span>{formatExportTime(entry.createdAt, locale)}</span> : null}
       </div>
       <div className="lattice-export-note-source">
         <strong>{entry.sourceLabel}</strong>
@@ -238,7 +315,7 @@ function renderEntryCards(entries: ExportSourceEntry[]): ReactNode {
       {entry.excerpt ? <blockquote className="lattice-export-note-block">{entry.excerpt}</blockquote> : null}
       {entry.note ? (
         <div className="lattice-export-note-comment">
-          <span className="lattice-export-note-label">笔记</span>
+          <span className="lattice-export-note-label">{copy.notes}</span>
           <p>{entry.note}</p>
         </div>
       ) : null}
@@ -253,6 +330,7 @@ function ExportMetadata({
   entryCount,
   annotationMode,
   generatedAt,
+  copy,
 }: {
   title: string;
   fileName: string;
@@ -260,6 +338,7 @@ function ExportMetadata({
   entryCount: number;
   annotationMode: MarkdownExportAnnotationMode;
   generatedAt: string;
+  copy: MarkdownExportCopy;
 }) {
   return (
     <header className="lattice-export-header">
@@ -267,25 +346,25 @@ function ExportMetadata({
       <h1>{title}</h1>
       <dl className="lattice-export-meta-grid">
         <div>
-          <dt>文件</dt>
+          <dt>{copy.file}</dt>
           <dd>{fileName}</dd>
         </div>
         {filePath ? (
           <div>
-            <dt>路径</dt>
+            <dt>{copy.path}</dt>
             <dd>{filePath}</dd>
           </div>
         ) : null}
         <div>
-          <dt>导出时间</dt>
+          <dt>{copy.generatedAt}</dt>
           <dd>{generatedAt}</dd>
         </div>
         <div>
-          <dt>标注模式</dt>
+          <dt>{copy.annotationMode}</dt>
           <dd>{annotationMode}</dd>
         </div>
         <div>
-          <dt>来源条目</dt>
+          <dt>{copy.sourceItems}</dt>
           <dd>{entryCount}</dd>
         </div>
       </dl>
@@ -293,44 +372,40 @@ function ExportMetadata({
   );
 }
 
-function StudyNoteSection({ entries }: { entries: ExportSourceEntry[] }) {
+function StudyNoteSection({ entries, copy, locale }: { entries: ExportSourceEntry[]; copy: MarkdownExportCopy; locale: Locale }) {
   const grouped = splitEntriesBySource(entries);
   return (
     <section className="lattice-export-study-note">
-      <h2>Study Note Digest</h2>
-      <p className="lattice-export-lead">
-        当前导出将文档正文与已收集的标注/证据整理为学习与科研笔记视图，便于后续复盘与引用。
-      </p>
+      <h2>{copy.studyNoteTitle}</h2>
+      <p className="lattice-export-lead">{copy.studyNoteLead}</p>
       <div className="lattice-export-study-grid">
         <div className="lattice-export-panel">
-          <h3>来源索引</h3>
+          <h3>{copy.sourceIndex}</h3>
           <ul className="lattice-export-source-list">
             {grouped.map((group) => (
               <li key={group.path}>
                 <strong>{group.label}</strong>
-                <span>{group.entries.length} 条</span>
+                <span>{copy.sourceItemCount(group.entries.length)}</span>
                 <code>{group.path}</code>
               </li>
             ))}
           </ul>
         </div>
         <div className="lattice-export-panel">
-          <h3>标注摘要</h3>
-          <div className="lattice-export-note-list">{renderEntryCards(entries)}</div>
+          <h3>{copy.annotationSummary}</h3>
+          <div className="lattice-export-note-list">{renderEntryCards(entries, copy, locale)}</div>
         </div>
       </div>
     </section>
   );
 }
 
-function AppendixSection({ entries }: { entries: ExportSourceEntry[] }) {
+function AppendixSection({ entries, copy, locale }: { entries: ExportSourceEntry[]; copy: MarkdownExportCopy; locale: Locale }) {
   return (
     <section className="lattice-export-appendix">
-      <h2>Annotation Appendix</h2>
-      <p className="lattice-export-lead">
-        正文保持纯净呈现，来源标注与证据引用按附录方式集中保留，适合科研归档与分享。
-      </p>
-      <div className="lattice-export-note-list">{renderEntryCards(entries)}</div>
+      <h2>{copy.appendixTitle}</h2>
+      <p className="lattice-export-lead">{copy.appendixLead}</p>
+      <div className="lattice-export-note-list">{renderEntryCards(entries, copy, locale)}</div>
     </section>
   );
 }
@@ -476,6 +551,8 @@ function ExportDocumentView({
   includeAnnotations,
   rehypePlugins,
   generatedAt,
+  copy,
+  locale,
 }: {
   title: string;
   fileName: string;
@@ -486,6 +563,8 @@ function ExportDocumentView({
   includeAnnotations: boolean;
   rehypePlugins: PluggableList;
   generatedAt: string;
+  copy: MarkdownExportCopy;
+  locale: Locale;
 }) {
   const showAppendix = includeAnnotations && annotationMode === "appendix" && entries.length > 0;
   const showStudyNote = includeAnnotations && annotationMode === "study-note" && entries.length > 0;
@@ -499,15 +578,16 @@ function ExportDocumentView({
         entryCount={entries.length}
         annotationMode={annotationMode}
         generatedAt={generatedAt}
+        copy={copy}
       />
 
-      {showStudyNote ? <StudyNoteSection entries={entries} /> : null}
+      {showStudyNote ? <StudyNoteSection entries={entries} copy={copy} locale={locale} /> : null}
 
       <section className="lattice-export-document">
         <MarkdownContent content={content} rehypePlugins={rehypePlugins} />
       </section>
 
-      {showAppendix ? <AppendixSection entries={entries} /> : null}
+      {showAppendix ? <AppendixSection entries={entries} copy={copy} locale={locale} /> : null}
     </main>
   );
 }
@@ -689,10 +769,12 @@ async function buildExportDocument(
   markdown: string,
   options: MarkdownExportOptions
 ): Promise<ExportDocumentData> {
+  const locale = getLocale();
+  const copy = getMarkdownExportCopy(locale);
   const title = options.title || normalizeFileStem(options.fileName);
-  const generatedAt = formatExportTime(Date.now());
+  const generatedAt = formatExportTime(Date.now(), locale);
   const annotationEntries = options.includeAnnotations
-    ? toExportEntries(options.annotations ?? [], options.evidenceRefs ?? [], options.filePath, options.fileName)
+    ? toExportEntries(options.annotations ?? [], options.evidenceRefs ?? [], options.filePath, options.fileName, locale)
     : [];
 
   const rehypePlugins = await getMarkdownRehypePlugins();
@@ -708,6 +790,8 @@ async function buildExportDocument(
       includeAnnotations={options.includeAnnotations}
       rehypePlugins={rehypePlugins}
       generatedAt={generatedAt}
+      copy={copy}
+      locale={locale}
     />
   );
   bodyHtml = await inlineLocalImages(bodyHtml, options.rootHandle, options.filePath);
@@ -718,12 +802,13 @@ async function buildExportDocument(
     css: `${getExportCss(options.visualMode)}\n${getKaTeXCss()}`,
     entryCount: annotationEntries.length,
     generatedAt,
+    locale,
   };
 }
 
 function createHtmlDocument(documentData: ExportDocumentData): string {
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+    <html lang="${documentData.locale}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />

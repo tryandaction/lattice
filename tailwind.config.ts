@@ -7,6 +7,18 @@ const config: Config = {
     "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/lib/**/*.{js,ts,jsx,tsx,mdx}",
+  ],
+  safelist: [
+    "z-[70]",
+    "z-[90]",
+    "z-[130]",
+    "z-[140]",
+    "z-[170]",
+    "z-[180]",
+    "z-[190]",
+    "z-[210]",
+    "z-[2147483647]",
   ],
   theme: {
     extend: {

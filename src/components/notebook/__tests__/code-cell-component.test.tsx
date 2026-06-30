@@ -61,7 +61,7 @@ describe("CodeCell component", () => {
   });
 
   it("passes notebook language to the shared CodeEditor", () => {
-    render(
+    const { container } = render(
       <CodeCell
         source="const value: number = 1;"
         language="typescript"
@@ -78,6 +78,8 @@ describe("CodeCell component", () => {
       syntaxDiagnostics: true,
       basicCompletion: true,
     }));
+    expect(container.firstElementChild?.className).toContain("space-y-1.5");
+    expect(container.firstElementChild?.className).not.toContain("space-y-2");
   });
 
   it("exposes active cell search and go-to-line commands", async () => {

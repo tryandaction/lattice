@@ -16,6 +16,7 @@ import {
   buildCodingQaRunnerApprovalRequest,
   buildCodingQaRunnerViewModel,
 } from "@/lib/ai/coding-qa-runner-view-model";
+import { setLocale } from "@/lib/i18n";
 import { useAgentSessionStore } from "@/stores/agent-session-store";
 import { AgentProtocolCenter } from "../agent-protocol-center";
 
@@ -37,6 +38,7 @@ vi.mock("sonner", () => ({
 describe("AgentProtocolCenter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setLocale("zh-CN");
     window.localStorage.clear();
     window.localStorage.setItem(CURRENT_VALIDATION_STORAGE_KEY, CURRENT_VALIDATION_RECORD_ID);
     Object.assign(navigator, {
@@ -78,6 +80,21 @@ describe("AgentProtocolCenter", () => {
     expect(screen.getByText("决策记录")).not.toBeNull();
     expect(screen.getByText("交接摘要")).not.toBeNull();
     expect(screen.getByText("运行快照")).not.toBeNull();
+  });
+
+  it("renders protocol controls in English when the locale changes", () => {
+    setLocale("en-US");
+
+    render(<AgentProtocolCenter />);
+
+    expect(screen.getByRole("heading", { name: "Agent Protocol Center" })).not.toBeNull();
+    expect(screen.getByRole("tab", { name: /Execution/ })).not.toBeNull();
+    expect(screen.getByRole("tab", { name: /Evidence/ })).not.toBeNull();
+    expect(screen.getByText("Task context")).not.toBeNull();
+    expect(screen.getByText("Stage progress")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Copy protocol" })).not.toBeNull();
+    expect(screen.getByPlaceholderText("For example: complete the Agent Protocol Center and product validation")).not.toBeNull();
+    expect(screen.queryByRole("heading", { name: "Agent 协议中心" })).toBeNull();
   });
 
   it("surfaces co-work agent sessions and focuses the selected trace", async () => {

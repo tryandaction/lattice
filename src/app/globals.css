@@ -74,6 +74,28 @@
   --workbench-selected: rgba(37, 99, 235, 0.12);
   --workbench-focus: rgba(37, 99, 235, 0.34);
   --workbench-shadow: rgba(15, 23, 42, 0.10);
+
+  --z-desktop-resize-handle: 90;
+  --z-chrome: 70;
+  --z-chrome-menu: 140;
+  --z-floating-panel: 170;
+  --z-pdf-floating: 130;
+  --z-dialog: 180;
+  --z-dialog-elevated: 190;
+  --z-hud: 210;
+
+  --quantum-glass-line: hsl(var(--border) / 0.72);
+  --quantum-glass-line-soft: hsl(var(--border) / 0.42);
+  --quantum-glass-line-strong: hsl(var(--border));
+  --quantum-glass-surface: hsl(var(--popover) / 0.96);
+  --quantum-glass-surface-muted: hsl(var(--muted) / 0.42);
+  --quantum-glass-surface-soft: hsl(var(--muted) / 0.24);
+  --quantum-glass-text: hsl(var(--foreground));
+  --quantum-glass-text-muted: hsl(var(--muted-foreground));
+  --quantum-glass-text-soft: hsl(var(--muted-foreground) / 0.72);
+  --quantum-glass-highlight: hsl(var(--primary) / 0.18);
+  --quantum-glass-highlight-strong: hsl(var(--primary) / 0.36);
+  --quantum-glass-shadow-line: hsl(var(--background) / 0.52);
 }
 
 .dark {
@@ -228,6 +250,22 @@
 
   .pdf-page-container {
     @apply flex-1 overflow-auto bg-muted/30 p-4;
+  }
+
+  .pdf-target-flash-fallback {
+    animation: pdf-target-flash-fallback 1.8s ease-out;
+  }
+
+  @keyframes pdf-target-flash-fallback {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 hsl(var(--primary) / 0);
+      background-color: hsl(var(--primary) / 0);
+    }
+    50% {
+      box-shadow: 0 0 0 3px hsl(var(--primary) / 0.2);
+      background-color: hsl(var(--primary) / 0.08);
+    }
   }
 
   /* Code Reader Styles */
@@ -452,6 +490,34 @@
 
 .prose-system-index pre {
   @apply bg-muted rounded-lg p-3 my-2 overflow-x-auto;
+}
+
+.prose-lattice .lattice-pdf-annotation-chip,
+.prose-system-index .lattice-pdf-annotation-chip,
+.annotation-md .lattice-pdf-annotation-chip {
+  --annotation-color: hsl(var(--primary));
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--annotation-color) 70%, hsl(var(--border)));
+  background: color-mix(in srgb, var(--annotation-color) 18%, transparent);
+  color: color-mix(in srgb, var(--annotation-color) 45%, hsl(var(--foreground)));
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.2;
+  padding: 0.18rem 0.45rem;
+  vertical-align: baseline;
+  user-select: text;
+}
+
+.dark .prose-lattice .lattice-pdf-annotation-chip,
+.dark .prose-system-index .lattice-pdf-annotation-chip,
+.dark .annotation-md .lattice-pdf-annotation-chip {
+  border-color: color-mix(in srgb, var(--annotation-color) 76%, hsl(var(--border)));
+  background: color-mix(in srgb, var(--annotation-color) 24%, transparent);
+  color: color-mix(in srgb, var(--annotation-color) 72%, hsl(var(--foreground)));
 }
 
 /* Table styles for prose-lattice */
@@ -1784,7 +1850,7 @@ math-field.quantum-keyboard-active {
 
 .quantum-position-label {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--quantum-glass-text-muted);
   font-weight: 500;
 }
 
@@ -1795,17 +1861,17 @@ math-field.quantum-keyboard-active {
   width: 18px;
   height: 18px;
   padding: 0;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--quantum-glass-surface-muted);
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--quantum-glass-text-muted);
   transition: all 0.2s ease;
 }
 
 .quantum-reset-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.9);
+  background: var(--quantum-glass-highlight);
+  color: var(--quantum-glass-text);
 }
 
 /* Hidden input to block IME - password type disables IME in most browsers */
@@ -1844,17 +1910,17 @@ math-field.quantum-keyboard-active {
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border-radius: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--quantum-glass-line);
   padding: 16px 20px;
   box-shadow: 
-    0 0 0 1px rgba(255, 255, 255, 0.05),
+    0 0 0 1px var(--quantum-glass-line-soft),
     0 25px 60px -15px rgba(0, 0, 0, 0.6),
     0 0 120px -30px rgba(99, 102, 241, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 1px 0 var(--quantum-glass-shadow-line),
     inset 0 -1px 0 rgba(0, 0, 0, 0.2);
   /* Subtle inner glow for bubble effect */
   background-image: 
-    radial-gradient(ellipse at top, rgba(255, 255, 255, 0.05) 0%, transparent 50%),
+    radial-gradient(ellipse at top, var(--quantum-glass-line-soft) 0%, transparent 50%),
     radial-gradient(ellipse at bottom, rgba(99, 102, 241, 0.05) 0%, transparent 50%);
 }
 
@@ -1863,7 +1929,7 @@ math-field.quantum-keyboard-active {
   text-align: center;
   font-size: 12px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--quantum-glass-text-muted);
   margin-bottom: 12px;
   letter-spacing: 0.5px;
 }
@@ -1879,16 +1945,16 @@ math-field.quantum-keyboard-active {
 .quantum-toggle-group {
   display: inline-flex;
   gap: 4px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--quantum-glass-surface-soft);
   padding: 3px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--quantum-glass-line-soft);
 }
 
 .quantum-toggle {
   border: none;
   background: transparent;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--quantum-glass-text-muted);
   font-size: 11px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -1897,7 +1963,7 @@ math-field.quantum-keyboard-active {
 }
 
 .quantum-toggle.active {
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--quantum-glass-text);
   background: rgba(99, 102, 241, 0.35);
   box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.5) inset;
 }
@@ -1906,7 +1972,7 @@ math-field.quantum-keyboard-active {
 .quantum-hint {
   text-align: center;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--quantum-glass-text-soft);
   margin-top: 12px;
 }
 
@@ -1915,7 +1981,7 @@ math-field.quantum-keyboard-active {
   margin-top: 10px;
   padding: 10px 12px;
   background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--quantum-glass-line-soft);
   border-radius: 10px;
   backdrop-filter: blur(4px);
 }
@@ -1925,7 +1991,7 @@ math-field.quantum-keyboard-active {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--quantum-glass-text-muted);
   margin-bottom: 6px;
 }
 
@@ -1938,15 +2004,15 @@ math-field.quantum-keyboard-active {
 
 .quantum-help-label {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--quantum-glass-text-muted);
 }
 
 .quantum-help-kbd {
   font-size: 10px;
   font-family: ui-monospace, monospace;
-  color: rgba(255, 255, 255, 0.85);
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--quantum-glass-text);
+  background: var(--quantum-glass-surface-muted);
+  border: 1px solid var(--quantum-glass-line);
   border-radius: 4px;
   padding: 1px 5px;
   white-space: nowrap;
@@ -1971,12 +2037,12 @@ math-field.quantum-keyboard-active {
   background: rgba(20, 20, 25, 0.98);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--quantum-glass-line);
   border-radius: 14px;
   box-shadow: 
     0 8px 32px rgba(0, 0, 0, 0.5),
     0 0 60px -10px rgba(99, 102, 241, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    inset 0 1px 0 var(--quantum-glass-shadow-line);
   min-width: 120px;
   max-width: 180px;
   overflow: hidden;
@@ -1986,7 +2052,7 @@ math-field.quantum-keyboard-active {
   padding: 10px 16px;
   cursor: pointer;
   transition: all 0.15s ease;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--quantum-glass-text);
   text-align: center;
   font-size: 18px;
 }
@@ -2002,7 +2068,7 @@ math-field.quantum-keyboard-active {
 
 /* Legacy styles - keep for compatibility */
 .hud-overlay {
-  @apply fixed inset-0 z-[9999];
+  @apply fixed inset-0 z-[var(--z-hud)];
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -2031,12 +2097,12 @@ math-field.quantum-keyboard-active {
   background: rgba(20, 20, 25, 0.98);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--quantum-glass-line);
   border-radius: 16px;
   box-shadow: 
     0 8px 32px rgba(0, 0, 0, 0.5),
     0 0 60px -10px rgba(99, 102, 241, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    inset 0 1px 0 var(--quantum-glass-shadow-line);
   min-width: 160px;
   max-width: 220px;
   overflow: hidden;
@@ -2047,7 +2113,7 @@ math-field.quantum-keyboard-active {
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--quantum-glass-line-soft);
   background: rgba(99, 102, 241, 0.1);
 }
 
@@ -2057,17 +2123,17 @@ math-field.quantum-keyboard-active {
   justify-content: center;
   width: 24px;
   height: 24px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--quantum-glass-surface-muted);
   border-radius: 6px;
   font-size: 12px;
   font-weight: 600;
-  color: white;
+  color: var(--quantum-glass-text);
 }
 
 .symbol-selector-title {
   flex: 1;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--quantum-glass-text-muted);
 }
 
 .symbol-selector-close {
@@ -2079,14 +2145,14 @@ math-field.quantum-keyboard-active {
   border-radius: 4px;
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--quantum-glass-text-soft);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .symbol-selector-close:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+  background: var(--quantum-glass-surface-muted);
+  color: var(--quantum-glass-text);
 }
 
 .symbol-selector-list {
@@ -2102,7 +2168,7 @@ math-field.quantum-keyboard-active {
   padding: 10px 14px;
   cursor: pointer;
   transition: all 0.15s ease;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--quantum-glass-text);
 }
 
 .symbol-selector-item:hover {
@@ -2111,7 +2177,7 @@ math-field.quantum-keyboard-active {
 
 .symbol-selector-item.highlighted {
   background: linear-gradient(135deg, rgba(99, 102, 241, 0.4), rgba(168, 85, 247, 0.4));
-  color: white;
+  color: var(--quantum-glass-text);
 }
 
 .symbol-selector-symbol {
@@ -2123,7 +2189,7 @@ math-field.quantum-keyboard-active {
   padding: 2px 6px;
   background: rgba(99, 102, 241, 0.3);
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--quantum-glass-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -2144,12 +2210,12 @@ math-field.quantum-keyboard-active {
 
 .symbol-selector-delete:hover {
   background: rgba(239, 68, 68, 0.4);
-  color: white;
+  color: var(--quantum-glass-text);
 }
 
 .symbol-selector-action {
   gap: 8px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--quantum-glass-text-muted);
   font-size: 13px;
 }
 
@@ -2163,17 +2229,17 @@ math-field.quantum-keyboard-active {
 
 .symbol-selector-add-form {
   padding: 10px 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--quantum-glass-line-soft);
   background: rgba(0, 0, 0, 0.2);
 }
 
 .symbol-selector-input {
   width: 100%;
   padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--quantum-glass-surface-muted);
+  border: 1px solid var(--quantum-glass-line);
   border-radius: 8px;
-  color: white;
+  color: var(--quantum-glass-text);
   font-size: 13px;
   outline: none;
   transition: all 0.15s ease;
@@ -2185,17 +2251,17 @@ math-field.quantum-keyboard-active {
 }
 
 .symbol-selector-input::placeholder {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--quantum-glass-text-soft);
 }
 
 .symbol-selector-preview {
   margin-top: 8px;
   padding: 8px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--quantum-glass-surface-soft);
   border-radius: 6px;
   text-align: center;
   font-size: 20px;
-  color: white;
+  color: var(--quantum-glass-text);
 }
 
 .symbol-selector-add-actions {
@@ -2234,27 +2300,30 @@ math-field.quantum-keyboard-active {
 }
 
 .symbol-selector-cancel {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.7);
+  background: var(--quantum-glass-surface-muted);
+  color: var(--quantum-glass-text-muted);
 }
 
 .symbol-selector-cancel:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--quantum-glass-highlight);
 }
 
 .symbol-selector-footer {
   display: flex;
   justify-content: space-between;
   padding: 8px 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--quantum-glass-line-soft);
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--quantum-glass-text-soft);
 }
 
 /* Quantum Keyboard 2.0 - calm, compact formula input surface */
 .quantum-hud-container {
-  width: min(760px, calc(100vw - 24px));
+  width: min(672px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  min-width: min(320px, calc(100vw - 16px));
   transform: none;
+  overflow: visible;
   transition:
     top 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
     left 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -2262,20 +2331,22 @@ math-field.quantum-keyboard-active {
 
 .quantum-bubble {
   filter: drop-shadow(0 20px 44px rgba(15, 23, 42, 0.22));
+  width: 100%;
 }
 
 .quantum-content {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  max-height: min(56vh, 360px);
+  box-sizing: border-box;
+  max-height: inherit;
   overflow: auto;
   border: 1px solid transparent;
   border-radius: 8px;
   background: hsl(var(--background) / 0.96);
   color: hsl(var(--foreground));
-  padding: 12px;
+  padding: 10px;
   box-shadow: 0 18px 60px rgba(15, 23, 42, 0.18);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
@@ -2346,26 +2417,16 @@ math-field.quantum-keyboard-active {
 }
 
 .quantum-title {
-  font-size: 0;
+  font-size: 14px;
   font-weight: 650;
   line-height: 1.2;
   color: hsl(var(--foreground));
 }
 
-.quantum-title::after {
-  content: "量子键盘";
-  font-size: 14px;
-}
-
 .quantum-subtitle {
   margin-top: 2px;
-  font-size: 0;
-  color: hsl(var(--muted-foreground));
-}
-
-.quantum-subtitle::after {
-  content: "自动适配当前编辑格式，物理键盘优先";
   font-size: 11px;
+  color: hsl(var(--muted-foreground));
 }
 
 .quantum-controls {
@@ -2396,6 +2457,32 @@ math-field.quantum-keyboard-active {
   color: hsl(var(--muted-foreground));
   font-size: 10px;
   font-weight: 600;
+}
+
+.quantum-status-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  background: hsl(var(--background) / 0.72);
+  color: hsl(var(--foreground));
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.quantum-status-action:hover:not(:disabled) {
+  border-color: hsl(var(--primary) / 0.45);
+  background: hsl(var(--primary) / 0.1);
+}
+
+.quantum-status-action:disabled {
+  cursor: default;
+  opacity: 0.38;
 }
 
 .quantum-live-preview {
@@ -2448,23 +2535,23 @@ math-field.quantum-keyboard-active {
 
 .quantum-quick-strip {
   display: grid;
-  grid-template-columns: repeat(10, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
 }
 
 .quantum-quick-button {
   display: grid;
-  grid-template-rows: minmax(26px, auto) auto;
+  grid-template-rows: minmax(22px, auto) auto;
   align-items: center;
   justify-items: center;
   min-width: 0;
-  min-height: 54px;
+  min-height: 46px;
   border: 1px solid hsl(var(--border));
   border-radius: 6px;
   background: hsl(var(--muted) / 0.24);
   color: hsl(var(--foreground));
   cursor: pointer;
-  padding: 5px 4px;
+  padding: 4px;
   transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
 }
 
@@ -2480,7 +2567,7 @@ math-field.quantum-keyboard-active {
 .quantum-quick-symbol {
   max-width: 100%;
   overflow: hidden;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
 }
 
@@ -2498,29 +2585,46 @@ math-field.quantum-keyboard-active {
 .quantum-mode-indicator {
   margin: 0;
   color: hsl(var(--muted-foreground));
-  font-size: 0;
+  font-size: 11px;
   letter-spacing: 0;
   text-align: left;
 }
 
-.quantum-mode-indicator::after {
-  content: "按物理键直接输入 · Shift+键打开变体";
-  font-size: 11px;
-}
-
 .shadow-keyboard {
-  gap: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  width: 100%;
+  overflow: hidden;
 }
 
-.shadow-keyboard > div {
-  gap: 5px !important;
+.shadow-keyboard-row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 4px;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.shadow-keyboard-row-1 {
+  padding-left: 20px;
+}
+
+.shadow-keyboard-row-2 {
+  padding-left: 36px;
+}
+
+.shadow-keyboard-row-3 {
+  padding-left: 58px;
 }
 
 .quantum-keycap {
   position: relative;
   display: flex;
-  width: 46px;
-  height: 46px;
+  width: clamp(32px, 5.6vw, 40px);
+  height: 38px;
   cursor: pointer;
   user-select: none;
   flex-direction: column;
@@ -2550,13 +2654,14 @@ math-field.quantum-keyboard-active {
 
 .quantum-keycap [data-testid="physical-label"] {
   color: hsl(var(--muted-foreground));
+  font-size: 8px;
 }
 
 .quantum-keycap [data-testid="math-symbol"] {
-  max-width: 34px;
+  max-width: 30px;
   overflow: hidden;
   color: hsl(var(--foreground));
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .quantum-keycap [data-testid="variant-indicator"] {
@@ -2566,11 +2671,6 @@ math-field.quantum-keyboard-active {
 .quantum-hint {
   margin-top: 0;
   color: hsl(var(--muted-foreground));
-  font-size: 0;
-}
-
-.quantum-hint::after {
-  content: "Tab/Shift+Tab 跳转公式占位 · Esc 关闭";
   font-size: 11px;
 }
 
@@ -2640,7 +2740,8 @@ math-field.quantum-keyboard-active {
 
 @media (max-width: 720px) {
   .quantum-content {
-    padding: 10px;
+    padding: 8px;
+    gap: 6px;
   }
 
   .quantum-header {
@@ -2654,17 +2755,654 @@ math-field.quantum-keyboard-active {
 
   .quantum-quick-strip {
     grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .quantum-status-row {
+    gap: 4px;
+    margin-bottom: 0;
+  }
+
+  .quantum-status-pill {
+    height: 18px;
+    padding: 0 6px;
+    font-size: 9px;
+  }
+
+  .quantum-status-action {
+    height: 18px;
+    padding: 0 6px;
+    font-size: 9px;
+  }
+
+  .quantum-live-preview {
+    min-height: 34px;
+    padding: 5px 7px;
+    gap: 6px;
+  }
+
+  .quantum-live-preview-label,
+  .quantum-mode-indicator::after,
+  .quantum-hint::after {
+    font-size: 10px;
+  }
+
+  .quantum-quick-button {
+    min-height: 38px;
+    padding: 3px;
+  }
+
+  .quantum-quick-symbol {
+    font-size: 11px;
+  }
+
+  .quantum-quick-label {
+    font-size: 9px;
   }
 
   .quantum-keycap {
-    width: 34px;
-    height: 40px;
+    width: clamp(25px, 8vw, 33px);
+    height: 32px;
   }
 
-  .shadow-keyboard > div {
-    margin-left: 0 !important;
-    justify-content: center;
+  .quantum-keycap [data-testid="physical-label"] {
+    font-size: 7px;
   }
+
+  .quantum-keycap [data-testid="math-symbol"] {
+    max-width: 27px;
+    font-size: 11px;
+  }
+
+  .shadow-keyboard-row,
+  .shadow-keyboard-row-1,
+  .shadow-keyboard-row-2,
+  .shadow-keyboard-row-3 {
+    padding-left: 0;
+  }
+}
+
+/* Quantum Keyboard 4.0 overrides: compact visible physical keyboard */
+.quantum-hud-container {
+  width: min(500px, calc(100vw - 16px)) !important;
+  max-width: calc(100vw - 16px) !important;
+  min-width: min(320px, calc(100vw - 16px)) !important;
+  transition:
+    top 160ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    left 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.quantum-bubble {
+  filter: drop-shadow(0 10px 24px rgba(15, 23, 42, 0.16)) !important;
+}
+
+.quantum-content {
+  gap: 6px !important;
+  overflow: visible !important;
+  padding: 6px !important;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.13) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+}
+
+.dark .quantum-content {
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.34) !important;
+}
+
+.quantum-drag-handle {
+  top: -22px !important;
+  height: 22px !important;
+}
+
+.quantum-position-label {
+  font-size: 10px !important;
+}
+
+.quantum-reset-btn {
+  width: 18px !important;
+  height: 18px !important;
+}
+
+.quantum-header,
+.quantum-title-group,
+.quantum-title,
+.quantum-subtitle,
+.quantum-controls,
+.quantum-status-row,
+.quantum-live-preview,
+.quantum-quick-strip,
+.quantum-mode-indicator,
+.shadow-keyboard,
+.quantum-hint {
+  display: none !important;
+}
+
+.quantum-ime-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  width: 100%;
+  min-width: 0;
+}
+
+.quantum-brand {
+  display: none;
+}
+
+.quantum-structure {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.quantum-shortcuts {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+}
+
+.quantum-status-action {
+  height: 22px !important;
+  padding: 0 6px !important;
+}
+
+.quantum-prefix {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid hsl(var(--border) / 0.72);
+  border-radius: 999px;
+  background: hsl(var(--muted) / 0.34);
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.quantum-prefix.is-active {
+  border-color: hsl(var(--primary) / 0.62);
+  background: hsl(var(--primary) / 0.14);
+  color: hsl(var(--primary));
+}
+
+.quantum-letter-board {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.quantum-letter-row {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.quantum-letter-key {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 78px;
+  min-width: 78px;
+  height: 58px;
+  padding: 9px 10px 8px;
+  border: 1px solid hsl(var(--border) / 0.82);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, hsl(var(--background) / 0.95), hsl(var(--muted) / 0.34));
+  color: hsl(var(--foreground));
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.quantum-letter-key:hover,
+.quantum-letter-key.is-prefixed {
+  border-color: hsl(var(--primary) / 0.58);
+  background:
+    linear-gradient(180deg, hsl(var(--primary) / 0.1), hsl(var(--background) / 0.88));
+  box-shadow: 0 2px 10px hsl(var(--primary) / 0.16);
+  transform: translateY(-1px);
+}
+
+.quantum-letter-key[data-layer="ctrl"] {
+  border-color: hsl(var(--primary) / 0.46);
+  background:
+    linear-gradient(180deg, hsl(var(--primary) / 0.13), hsl(var(--background) / 0.86));
+}
+
+.quantum-letter-key:active {
+  transform: translateY(0);
+}
+
+.quantum-letter-physical {
+  position: absolute;
+  right: 7px;
+  top: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+  color: hsl(var(--foreground) / 0.62);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.quantum-letter-action {
+  max-width: calc(100% - 10px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: hsl(var(--foreground));
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1.05;
+}
+
+.quantum-letter-candidates {
+  display: flex;
+  flex-wrap: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  gap: 5px;
+  overflow: hidden;
+  color: hsl(var(--muted-foreground));
+  font-size: 8px;
+  font-weight: 650;
+  line-height: 1.1;
+  margin-top: 6px;
+}
+
+.quantum-letter-candidates span {
+  flex: 0 1 auto;
+  max-width: 3.6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quantum-core-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+  width: 100%;
+}
+
+.quantum-key-tile {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 0 6px;
+  min-width: 0;
+  height: 42px;
+  padding: 5px 6px;
+  border: 1px solid hsl(var(--border) / 0.8);
+  border-radius: 7px;
+  background: hsl(var(--background) / 0.88);
+  color: hsl(var(--foreground));
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.quantum-key-tile:hover,
+.quantum-symbol-key:hover {
+  border-color: hsl(var(--primary) / 0.55);
+  background: hsl(var(--primary) / 0.07);
+  box-shadow: 0 2px 8px hsl(var(--primary) / 0.12);
+  transform: translateY(-1px);
+}
+
+.quantum-key-tile:active,
+.quantum-symbol-key:active {
+  transform: translateY(0);
+}
+
+.quantum-key-physical {
+  grid-row: 1 / span 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 24px;
+  padding: 0 4px;
+  border-radius: 5px;
+  background: hsl(var(--muted) / 0.75);
+  color: hsl(var(--foreground));
+  font-size: 11px;
+  font-weight: 760;
+  line-height: 1;
+}
+
+.quantum-key-action {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.15;
+}
+
+.quantum-key-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  line-height: 1.15;
+}
+
+.quantum-symbol-row {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 5px;
+  width: 100%;
+}
+
+.quantum-symbol-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid hsl(var(--border) / 0.75);
+  border-radius: 7px;
+  background: hsl(var(--background) / 0.74);
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.quantum-symbol-key span {
+  font-size: 10px;
+  font-weight: 720;
+}
+
+.quantum-symbol-key strong {
+  color: hsl(var(--foreground));
+  font-family: KaTeX_Main, "Times New Roman", serif;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.quantum-formula-library {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+}
+
+.quantum-formula-search {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid hsl(var(--border) / 0.68);
+  border-radius: 7px;
+  background: hsl(var(--muted) / 0.3);
+  color: hsl(var(--muted-foreground));
+}
+
+.quantum-formula-search input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-size: 11px;
+}
+
+.quantum-formula-search input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.quantum-recent-formulas {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  width: 100%;
+}
+
+.quantum-formula-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid hsl(var(--border) / 0.58);
+  border-radius: 7px;
+  background: hsl(var(--background) / 0.72);
+}
+
+.quantum-recent-formula {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid hsl(var(--border) / 0.68);
+  border-radius: 7px;
+  background: hsl(var(--muted) / 0.42);
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.quantum-recent-formula:hover {
+  border-color: hsl(var(--primary) / 0.55);
+  background: hsl(var(--primary) / 0.08);
+  box-shadow: 0 2px 8px hsl(var(--primary) / 0.12);
+  transform: translateY(-1px);
+}
+
+.quantum-formula-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.quantum-formula-action,
+.quantum-formula-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 1;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.quantum-formula-action:hover,
+.quantum-formula-copy:hover,
+.quantum-formula-action.is-active {
+  border-color: hsl(var(--primary) / 0.35);
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+}
+
+.quantum-formula-empty {
+  width: 100%;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.quantum-recent-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.quantum-recent-format {
+  flex: 0 0 auto;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1;
+}
+
+.quantum-footnote {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.quantum-help-panel {
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.quantum-help-grid {
+  display: grid;
+  grid-template-columns: minmax(96px, 1fr) auto;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+@media (max-width: 520px) {
+  .quantum-core-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .quantum-symbol-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .quantum-recent-formulas {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .quantum-shortcuts {
+    display: none;
+  }
+}
+
+.cm-quantum-math-editor {
+  display: inline-flex;
+  vertical-align: baseline;
+  max-width: min(100%, 720px);
+}
+
+.cm-quantum-math-editor-block {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.cm-quantum-math-field {
+  min-width: 64px;
+  max-width: 100%;
+  border: 1px solid hsl(var(--primary) / 0.35);
+  border-radius: 6px;
+  padding: 2px 4px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.1);
+}
+
+.cm-math-copy-menu {
+  position: fixed;
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  min-width: 184px;
+  overflow: hidden;
+  padding: 4px;
+  border: 1px solid hsl(var(--border) / 0.82);
+  border-radius: 8px;
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  box-shadow:
+    0 18px 42px hsl(var(--foreground) / 0.18),
+    0 0 0 1px hsl(var(--background) / 0.3);
+}
+
+.cm-math-copy-menu button {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  width: 100%;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 560;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cm-math-copy-menu button:hover,
+.cm-math-copy-menu button:focus-visible {
+  outline: 0;
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
 }
 
 
@@ -4014,6 +4752,89 @@ math-field.quantum-keyboard-active {
 
 .live-preview-editor .cm-searchMatch.cm-searchMatch-selected {
   background-color: hsl(var(--primary) / 0.4);
+}
+
+.live-preview-editor .cm-panel.cm-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--background) / 0.97);
+  color: hsl(var(--foreground));
+  padding: 8px 10px;
+  box-shadow: 0 8px 18px hsl(var(--foreground) / 0.06);
+}
+
+.live-preview-editor .cm-panel.cm-search input {
+  min-height: 34px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  padding: 0 10px;
+  font: inherit;
+  outline: none;
+}
+
+.live-preview-editor .cm-panel.cm-search input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.live-preview-editor .cm-panel.cm-search input:focus {
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.16);
+}
+
+.live-preview-editor .cm-panel.cm-search button {
+  min-height: 34px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  padding: 0 12px;
+  font: inherit;
+  line-height: 1;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.live-preview-editor .cm-panel.cm-search button:hover:not(:disabled) {
+  border-color: hsl(var(--primary) / 0.5);
+  background: hsl(var(--accent));
+}
+
+.live-preview-editor .cm-panel.cm-search button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.live-preview-editor .cm-panel.cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.live-preview-editor .cm-panel.cm-search input[type="checkbox"] {
+  min-height: 16px;
+  width: 16px;
+  height: 16px;
+  accent-color: hsl(var(--primary));
+}
+
+.live-preview-editor .cm-panel.cm-search [name="close"] {
+  margin-left: auto;
+  min-width: 34px;
+  padding: 0;
+  border-radius: 999px;
+  color: hsl(var(--muted-foreground));
+}
+
+.live-preview-editor .cm-panel.cm-search [name="close"]:hover {
+  color: hsl(var(--foreground));
 }
 
 /* Outline panel styles */

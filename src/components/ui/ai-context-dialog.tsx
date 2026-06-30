@@ -12,6 +12,7 @@ import { migrateLegacyAnnotation } from "@/lib/annotation-migration";
 import { deriveFileId } from "@/lib/annotation-storage";
 import { getFileExtension, isBinaryFile } from "@/lib/file-utils";
 import { cn } from "@/lib/utils";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 import type { AiContextItem } from "@/lib/ai/types";
 import type { AnnotationItem } from "@/types/universal-annotation";
 import { isFileTabState } from "@/types/layout";
@@ -186,7 +187,10 @@ export function AiContextDialog({ isOpen, onClose }: AiContextDialogProps) {
 
   return (
     <aside
-      className="fixed inset-y-0 right-0 z-[180] flex w-full max-w-[34rem] flex-col border-l border-border bg-background shadow-2xl sm:w-[min(34rem,calc(100vw-4rem))]"
+      className={cn(
+        "fixed inset-y-0 right-0 flex w-full max-w-[34rem] flex-col border-l border-border bg-background shadow-2xl sm:w-[min(34rem,calc(100vw-4rem))]",
+        UI_LAYER_CLASS.dialog,
+      )}
       role="dialog"
       aria-modal="false"
       aria-label={t("ai.context.title")}

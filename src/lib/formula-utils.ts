@@ -123,6 +123,19 @@ export function wrapLatexForMarkdown(latex: string, displayMode: boolean): strin
   return `$${trimmed}$`;
 }
 
+export function findFormulaFillPosition(text: string): number | null {
+  const candidates = ["{}", "{ }", "[]", "[ ]"];
+  const positions = candidates
+    .map((marker) => {
+      const index = text.indexOf(marker);
+      return index >= 0 ? index + 1 : null;
+    })
+    .filter((position): position is number => position !== null);
+
+  if (positions.length === 0) return null;
+  return Math.min(...positions);
+}
+
 export function formatFormulaForClipboard(
   latex: string,
   format: "latex" | "markdown",

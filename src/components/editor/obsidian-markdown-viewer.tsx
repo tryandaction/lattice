@@ -12,7 +12,7 @@
  * - Keyboard shortcuts (Ctrl+E to cycle modes, Ctrl+S to save)
  */
 
-import { useState, useCallback, useEffect, useRef, useMemo, startTransition, type MouseEvent as ReactMouseEvent } from "react";
+import { useState, useCallback, useDeferredValue, useEffect, useRef, useMemo, startTransition, type MouseEvent as ReactMouseEvent } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -51,7 +51,7 @@ import type { LivePreviewEditorRef } from "./codemirror/live-preview/live-previe
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { clearDecorationCache } from "./codemirror/live-preview/decoration-coordinator";
 import { emitFileSave, emitVaultChange } from "@/lib/plugins/runtime";
-import { navigateLink } from "@/lib/link-router/navigate-link";
+import { navigateLinkWithFeedback } from "@/lib/link-router/navigate-link-with-feedback";
 import { useLinkNavigationStore } from "@/stores/link-navigation-store";
 import { parseHeadings, buildOutlineTree } from "./codemirror/live-preview/markdown-parser";
 import type { CommandBarState, PaneId } from "@/types/layout";
@@ -83,6 +83,7 @@ import { findUnreferencedMarkdownAttachments } from "@/lib/markdown/attachment-c
 import { ignoreWorkspaceMarkdownUnlinkedMention, getWorkspaceMarkdownLinkIndex, upsertWorkspaceMarkdownFile } from "@/lib/markdown/workspace-link-index";
 import { convertMarkdownLinkToWikiInContent, linkUnlinkedMentionInContent, linkUnlinkedMentionsInContent, repairMarkdownLinkTargetInContent } from "@/lib/markdown/link-maintenance";
 import { normalizeWorkspacePath } from "@/lib/link-router/path-utils";
+import { findMarkdownHeadingLine, isPendingNavigationForFile } from "@/lib/markdown-navigation";
 import { useI18n } from "@/hooks/use-i18n";
 import { buildPersistedFileViewStateKey, loadPersistedFileViewState, savePersistedFileViewState } from "@/lib/file-view-state";
 import type {
@@ -133,30 +134,6 @@ function formatDuration(durationMs: number | null): string | null {
   if (durationMs === null) return null;
   if (durationMs < 1000) return `${durationMs} ms`;
   return `${(durationMs / 1000).toFixed(2)} s`;
-}
-
-function normalizeHeading(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^\p{L}\p{N}-]/gu, "");
-}
-
-function findHeadingLine(items: OutlineItem[], target: string): number | undefined {
-  const normalizedTarget = normalizeHeading(target);
-  const stack = [...items];
-  while (stack.length > 0) {
-    const current = stack.shift();
-    if (!current) continue;
-    if (normalizeHeading(current.text) === normalizedTarget) {
-      return current.line;
-    }
-    if (current.children?.length) {
-      stack.push(...current.children);
-    }
-  }
-  return undefined;
 }
 
 interface ObsidianMarkdownViewerProps {
@@ -271,8 +248,10 @@ export function ObsidianMarkdownViewer({
     returnFocusTo?: HTMLElement | null;
   } | null>(null);
   const [activeHeading, setActiveHeading] = useState<number | undefined>();
+  const deferredLocalContent = useDeferredValue(localContent);
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<LivePreviewEditorRef>(null);
+  const markdownToolsActionsRef = useRef<WorkbenchMenuAction[]>([]);
   const resolvedFileId = fileId || fileName;
   const prevFileIdRef = useRef(resolvedFileId);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
@@ -461,13 +440,6 @@ export function ObsidianMarkdownViewer({
     runMarkdownCommand("image.setWidth", { width: parsed });
   }, [promptText, runMarkdownCommand]);
 
-  const insertPromptedEmoji = useCallback(() => {
-    const emoji = promptText("Emoji or symbol", recentEmoji[0] ?? "\u{1F642}");
-    if (!emoji) return;
-    rememberEmoji(emoji);
-    runMarkdownCommand("insert.emoji", { text: emoji });
-  }, [promptText, recentEmoji, rememberEmoji, runMarkdownCommand]);
-
   const insertPromptedCodeBlock = useCallback(() => {
     const language = promptText("Code language", "typescript");
     if (language === null) return;
@@ -649,7 +621,9 @@ export function ObsidianMarkdownViewer({
   const handleContentChange = useCallback((newContent: string) => {
     setLocalContent(newContent);
     setIsDirty(true);
-    onChange(newContent);
+    startTransition(() => {
+      onChange(newContent);
+    });
   }, [onChange]);
 
   // Handle save
@@ -692,13 +666,13 @@ export function ObsidianMarkdownViewer({
 
   useEffect(() => {
     if (!filePath || !pendingNavigation) return;
-    if (pendingNavigation.filePath !== filePath) return;
+    if (!isPendingNavigationForFile(pendingNavigation.filePath, filePath, rootHandle?.name)) return;
     let line: number | undefined;
     if (pendingNavigation.target.type === "workspace_heading") {
       const headingOutline = outline.length > 0
         ? outline
         : buildOutlineTree(parseHeadings(localContent));
-      line = findHeadingLine(headingOutline, pendingNavigation.target.heading);
+      line = findMarkdownHeadingLine(headingOutline, pendingNavigation.target.heading);
     } else if (pendingNavigation.target.type === "code_line") {
       line = pendingNavigation.target.line;
     } else {
@@ -711,24 +685,30 @@ export function ObsidianMarkdownViewer({
       editorRef.current?.flashLine(line);
     }, 120);
     consumePendingNavigation(paneId, filePath);
-  }, [consumePendingNavigation, filePath, localContent, outline, paneId, pendingNavigation]);
+  }, [consumePendingNavigation, filePath, localContent, outline, paneId, pendingNavigation, rootHandle?.name]);
 
   const handleLinkNavigate = useCallback((target: string) => {
-    void navigateLink(target, {
+    void navigateLinkWithFeedback(target, {
       paneId,
       rootHandle,
       currentFilePath: filePath,
+    }).then((success) => {
+      if (success) {
+        onNavigateToFile?.(target);
+      }
     });
-    onNavigateToFile?.(target);
   }, [filePath, onNavigateToFile, paneId, rootHandle]);
 
   const handleSourceLinkNavigate = useCallback((targetFile: string, line: number) => {
-    void navigateLink(`${targetFile}#line=${line}`, {
+    void navigateLinkWithFeedback(`${targetFile}#line=${line}`, {
       paneId,
       rootHandle,
       currentFilePath: filePath,
+    }).then((success) => {
+      if (success) {
+        onNavigateToFile?.(targetFile);
+      }
     });
-    onNavigateToFile?.(targetFile);
   }, [filePath, onNavigateToFile, paneId, rootHandle]);
 
   const handleCreateMissingNote = useCallback(async (link: IndexedMarkdownLink) => {
@@ -935,6 +915,11 @@ export function ObsidianMarkdownViewer({
     runMarkdownCommand("insert.text", { text });
   }, [runMarkdownCommand]);
 
+  const openQuantumKeyboard = useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new CustomEvent("lattice-open-quantum-keyboard"));
+  }, []);
+
   const copyFormulaAsLatex = useCallback((context: MarkdownEditorContext) => {
     const latex = context.blockText
       .replace(/^\s*\$\$\s*/, "")
@@ -981,41 +966,46 @@ export function ObsidianMarkdownViewer({
         shortcut: "Ctrl+A",
         onSelect: () => runMarkdownCommand("selection.selectAll"),
       },
-      {
-        id: "format-bold",
-        label: "Format: Bold",
-        icon: <Bold className="h-4 w-4" />,
-        shortcut: "Ctrl+B",
-        separatorBefore: true,
-        onSelect: () => runMarkdownCommand("format.bold"),
-      },
-      {
-        id: "format-italic",
-        label: "Format: Italic",
-        icon: <Italic className="h-4 w-4" />,
-        shortcut: "Ctrl+I",
-        onSelect: () => runMarkdownCommand("format.italic"),
-      },
-      {
-        id: "format-link",
-        label: "Add link",
-        icon: <LinkIcon className="h-4 w-4" />,
-        shortcut: "Ctrl+K",
-        onSelect: () => runMarkdownCommand("format.link"),
-      },
-      {
-        id: "format-code",
-        label: "Format: Inline code",
-        icon: <Code2 className="h-4 w-4" />,
-        onSelect: () => runMarkdownCommand("format.code"),
-      },
-      {
-        id: "format-quote",
-        label: "Paragraph: Quote",
-        icon: <Quote className="h-4 w-4" />,
-        onSelect: () => runMarkdownCommand("format.quote"),
-      },
     ];
+
+    if (hasSelection) {
+      actions.push(
+        {
+          id: "format-bold",
+          label: "Bold",
+          icon: <Bold className="h-4 w-4" />,
+          shortcut: "Ctrl+B",
+          separatorBefore: true,
+          onSelect: () => runMarkdownCommand("format.bold"),
+        },
+        {
+          id: "format-italic",
+          label: "Italic",
+          icon: <Italic className="h-4 w-4" />,
+          shortcut: "Ctrl+I",
+          onSelect: () => runMarkdownCommand("format.italic"),
+        },
+        {
+          id: "format-link",
+          label: "Add link",
+          icon: <LinkIcon className="h-4 w-4" />,
+          shortcut: "Ctrl+K",
+          onSelect: () => runMarkdownCommand("format.link"),
+        },
+        {
+          id: "format-code",
+          label: "Inline code",
+          icon: <Code2 className="h-4 w-4" />,
+          onSelect: () => runMarkdownCommand("format.code"),
+        },
+        {
+          id: "format-quote",
+          label: "Quote selection",
+          icon: <Quote className="h-4 w-4" />,
+          onSelect: () => runMarkdownCommand("format.quote"),
+        },
+      );
+    }
 
     if (context.kind === "table") {
       actions.push(
@@ -1171,91 +1161,6 @@ export function ObsidianMarkdownViewer({
 
     actions.push(
       {
-        id: "insert-properties",
-        label: "Insert properties",
-        icon: <PanelTop className="h-4 w-4" />,
-        separatorBefore: true,
-        onSelect: insertProperties,
-      },
-      {
-        id: "convert-line-to-property",
-        label: "Convert line to property",
-        icon: <PanelTop className="h-4 w-4" />,
-        onSelect: () => runMarkdownCommand("properties.convertLine"),
-      },
-      {
-        id: "insert-table-generic",
-        label: "Insert table",
-        icon: <Table2 className="h-4 w-4" />,
-        onSelect: () => runMarkdownCommand("insert.table"),
-      },
-      {
-        id: "insert-callout",
-        label: "Insert callout",
-        icon: <Quote className="h-4 w-4" />,
-        onSelect: insertPromptedCallout,
-      },
-      {
-        id: "insert-task-list",
-        label: "Insert task list",
-        icon: <ListChecks className="h-4 w-4" />,
-        onSelect: () => runMarkdownCommand("insert.taskList"),
-      },
-      {
-        id: "insert-code-block",
-        label: "Insert code block",
-        icon: <FileCode2 className="h-4 w-4" />,
-        onSelect: insertPromptedCodeBlock,
-      },
-      {
-        id: "insert-math-block",
-        label: "Insert math block",
-        icon: <Braces className="h-4 w-4" />,
-        onSelect: () => runMarkdownCommand("insert.mathBlock"),
-      },
-      {
-        id: "insert-image",
-        label: "Insert image",
-        icon: <ImageIcon className="h-4 w-4" />,
-        onSelect: () => insertPromptedImage("image"),
-      },
-      {
-        id: "insert-wiki-link",
-        label: "Insert wiki link",
-        icon: <LinkIcon className="h-4 w-4" />,
-        onSelect: insertPromptedWikiLink,
-      },
-      {
-        id: "insert-heading-anchor-link",
-        label: "Insert heading anchor link",
-        icon: <Hash className="h-4 w-4" />,
-        onSelect: insertPromptedHeadingAnchorLink,
-      },
-      {
-        id: "insert-block-anchor-link",
-        label: "Insert block anchor link",
-        icon: <Pilcrow className="h-4 w-4" />,
-        onSelect: insertPromptedBlockAnchorLink,
-      },
-      {
-        id: "insert-embed",
-        label: "Insert embed",
-        icon: <ImageIcon className="h-4 w-4" />,
-        onSelect: insertPromptedEmbed,
-      },
-      {
-        id: "insert-gif",
-        label: "Insert GIF",
-        icon: <Sparkles className="h-4 w-4" />,
-        onSelect: () => insertPromptedImage("gif"),
-      },
-      {
-        id: "insert-emoji",
-        label: "Insert emoji / symbol",
-        icon: <Smile className="h-4 w-4" />,
-        onSelect: insertPromptedEmoji,
-      },
-      {
         id: "copy-block-markdown",
         label: "Copy current block as Markdown",
         separatorBefore: true,
@@ -1271,7 +1176,8 @@ export function ObsidianMarkdownViewer({
         label: "More Tools",
         icon: <Sparkles className="h-4 w-4" />,
         separatorBefore: true,
-        onSelect: () => setMarkdownToolsMenuState({ x: menu.x, y: menu.y }),
+        onSelect: () => {},
+        children: markdownToolsActionsRef.current,
       },
     );
 
@@ -1284,13 +1190,13 @@ export function ObsidianMarkdownViewer({
     copyText,
     insertPromptedCallout,
     insertPromptedCodeBlock,
-    insertPromptedEmoji,
     insertPromptedEmbed,
     insertPromptedBlockAnchorLink,
     insertPromptedHeadingAnchorLink,
     insertPromptedImage,
     insertPromptedWikiLink,
     insertProperties,
+    openQuantumKeyboard,
     pastePlainText,
     replacePromptedImagePath,
     runMarkdownCommand,
@@ -1301,22 +1207,33 @@ export function ObsidianMarkdownViewer({
   ]);
 
   const buildMarkdownToolsActions = useCallback((): WorkbenchMenuAction[] => {
-    const emojiCategories = [
+    const symbolGroups = [
       { label: "Recent", items: recentEmoji },
-      { label: "Writing", items: ["\u2705", "\u26A0\uFE0F", "\u{1F4A1}", "\u{1F4CC}"] },
-      { label: "Mood", items: ["\u{1F642}", "\u{1F914}", "\u{1F389}", "\u{1F525}"] },
+      { label: "Writing", items: ["\u2705", "\u26A0\uFE0F", "\u{1F4A1}", "\u{1F4CC}", "\u2B50", "\u2753"] },
+      { label: "Math", items: ["\u221E", "\u2248", "\u2260", "\u2264", "\u2265", "\u2211", "\u220F", "\u222B"] },
+      { label: "Greek", items: ["\u03B1", "\u03B2", "\u03B3", "\u03B4", "\u03BB", "\u03BC", "\u03C0", "\u03A9"] },
+      { label: "Arrows", items: ["\u2192", "\u2190", "\u21D2", "\u21D4", "\u2191", "\u2193", "\u21A6", "\u21CC"] },
+      { label: "Science", items: ["\u00B0", "\u00B1", "\u00D7", "\u00F7", "\u03BC", "\u212B", "\u210F", "\u2202"] },
+      { label: "Mood", items: ["\u{1F642}", "\u{1F914}", "\u{1F389}", "\u{1F525}", "\u{1F680}", "\u{1F9EA}"] },
     ];
-    const emojiActions: WorkbenchMenuAction[] = emojiCategories.flatMap((category) =>
-      Array.from(new Set(category.items)).slice(0, 4).map((emoji, index) => ({
-      id: `emoji-${category.label.toLowerCase()}-${index}`,
-      label: `${category.label}: ${emoji}`,
-      icon: <Smile className="h-4 w-4" />,
-      onSelect: () => {
-        rememberEmoji(emoji);
-        runMarkdownCommand("insert.emoji", { text: emoji });
-      },
-      })),
-    );
+
+    const symbolActions: WorkbenchMenuAction[] = symbolGroups
+      .filter((category) => category.items.length > 0)
+      .map((category) => ({
+        id: `symbols-${category.label.toLowerCase()}`,
+        label: category.label,
+        icon: <Smile className="h-4 w-4" />,
+        onSelect: () => {},
+        children: Array.from(new Set(category.items)).map((symbol, index) => ({
+          id: `symbol-${category.label.toLowerCase()}-${index}`,
+          label: symbol,
+          icon: <Smile className="h-4 w-4" />,
+          onSelect: () => {
+            rememberEmoji(symbol);
+            runMarkdownCommand("insert.emoji", { text: symbol });
+          },
+        })),
+      }));
 
     return [
       {
@@ -1326,157 +1243,173 @@ export function ObsidianMarkdownViewer({
         onSelect: startVoiceInput,
       },
       {
-        id: "insert-table",
-        label: "Insert table",
-        icon: <Table2 className="h-4 w-4" />,
+        id: "tools-blocks",
+        label: "Blocks",
+        icon: <Quote className="h-4 w-4" />,
         separatorBefore: true,
-        onSelect: () => runMarkdownCommand("insert.table"),
+        onSelect: () => {},
+        children: [
+          {
+            id: "insert-callout",
+            label: "Insert callout",
+            icon: <Quote className="h-4 w-4" />,
+            onSelect: insertPromptedCallout,
+          },
+          {
+            id: "edit-callout",
+            label: "Edit current callout",
+            icon: <Quote className="h-4 w-4" />,
+            onSelect: () => updatePromptedCallout(editorRef.current?.getMarkdownContext() ?? undefined),
+          },
+          {
+            id: "insert-task-list",
+            label: "Insert task list",
+            icon: <ListChecks className="h-4 w-4" />,
+            onSelect: () => runMarkdownCommand("insert.taskList"),
+          },
+          {
+            id: "insert-footnote",
+            label: "Insert footnote",
+            icon: <Hash className="h-4 w-4" />,
+            onSelect: () => runMarkdownCommand("insert.footnote"),
+          },
+          {
+            id: "insert-code-block",
+            label: "Insert code block",
+            icon: <FileCode2 className="h-4 w-4" />,
+            onSelect: insertPromptedCodeBlock,
+          },
+          {
+            id: "insert-math-block",
+            label: "Insert math block",
+            icon: <Braces className="h-4 w-4" />,
+            onSelect: () => runMarkdownCommand("insert.mathBlock"),
+          },
+        ],
       },
       {
-        id: "insert-properties",
-        label: "Insert properties",
-        icon: <PanelTop className="h-4 w-4" />,
-        onSelect: insertProperties,
+        id: "tools-tables-properties",
+        label: "Tables and properties",
+        icon: <Table2 className="h-4 w-4" />,
+        onSelect: () => {},
+        children: [
+          {
+            id: "insert-table",
+            label: "Insert table",
+            icon: <Table2 className="h-4 w-4" />,
+            onSelect: () => runMarkdownCommand("insert.table"),
+          },
+          {
+            id: "insert-properties",
+            label: "Insert properties",
+            icon: <PanelTop className="h-4 w-4" />,
+            onSelect: insertProperties,
+          },
+          {
+            id: "set-property",
+            label: "Set property",
+            icon: <Tags className="h-4 w-4" />,
+            onSelect: setPromptedProperty,
+          },
+          {
+            id: "copy-properties-yaml",
+            label: "Copy properties YAML",
+            icon: <Copy className="h-4 w-4" />,
+            onSelect: () => void copyPropertiesYaml(),
+          },
+          {
+            id: "convert-line-to-property",
+            label: "Convert line to property",
+            icon: <PanelTop className="h-4 w-4" />,
+            onSelect: () => runMarkdownCommand("properties.convertLine"),
+          },
+        ],
       },
       {
-        id: "set-property",
-        label: "Set property",
-        icon: <Tags className="h-4 w-4" />,
-        onSelect: setPromptedProperty,
-      },
-      {
-        id: "copy-properties-yaml",
-        label: "Copy properties YAML",
-        icon: <Copy className="h-4 w-4" />,
-        onSelect: () => void copyPropertiesYaml(),
-      },
-      {
-        id: "convert-line-to-property",
-        label: "Convert line to property",
-        icon: <PanelTop className="h-4 w-4" />,
-        onSelect: () => runMarkdownCommand("properties.convertLine"),
-      },
-      {
-        id: "insert-callout",
-        label: "Insert callout",
-        icon: <Quote className="h-4 w-4" />,
-        onSelect: insertPromptedCallout,
-      },
-      {
-        id: "edit-callout",
-        label: "Edit current callout",
-        icon: <Quote className="h-4 w-4" />,
-        onSelect: () => updatePromptedCallout(editorRef.current?.getMarkdownContext() ?? undefined),
-      },
-      {
-        id: "insert-task-list",
-        label: "Insert task list",
-        icon: <ListChecks className="h-4 w-4" />,
-        onSelect: () => runMarkdownCommand("insert.taskList"),
-      },
-      {
-        id: "insert-footnote",
-        label: "Insert footnote",
-        icon: <Hash className="h-4 w-4" />,
-        onSelect: () => runMarkdownCommand("insert.footnote"),
-      },
-      {
-        id: "insert-code-block",
-        label: "Insert code block",
-        icon: <FileCode2 className="h-4 w-4" />,
-        onSelect: insertPromptedCodeBlock,
-      },
-      {
-        id: "insert-math-block",
-        label: "Insert math block",
+        id: "open-quantum-keyboard",
+        label: "Quantum keyboard",
         icon: <Braces className="h-4 w-4" />,
-        onSelect: () => runMarkdownCommand("insert.mathBlock"),
+        onSelect: openQuantumKeyboard,
       },
       {
-        id: "insert-image",
-        label: "Insert image / attachment",
-        icon: <ImageIcon className="h-4 w-4" />,
-        onSelect: () => insertPromptedImage("image"),
-      },
-      {
-        id: "insert-wiki-link",
-        label: "Insert wiki link",
+        id: "tools-links",
+        label: "Links",
         icon: <LinkIcon className="h-4 w-4" />,
-        onSelect: insertPromptedWikiLink,
+        onSelect: () => {},
+        children: [
+          {
+            id: "insert-wiki-link",
+            label: "Insert wiki link",
+            icon: <LinkIcon className="h-4 w-4" />,
+            onSelect: insertPromptedWikiLink,
+          },
+          {
+            id: "insert-heading-anchor-link",
+            label: "Insert heading anchor link",
+            icon: <Hash className="h-4 w-4" />,
+            onSelect: insertPromptedHeadingAnchorLink,
+          },
+          {
+            id: "insert-block-anchor-link",
+            label: "Insert block anchor link",
+            icon: <Pilcrow className="h-4 w-4" />,
+            onSelect: insertPromptedBlockAnchorLink,
+          },
+        ],
       },
       {
-        id: "insert-heading-anchor-link",
-        label: "Insert heading anchor link",
-        icon: <Hash className="h-4 w-4" />,
-        onSelect: insertPromptedHeadingAnchorLink,
-      },
-      {
-        id: "insert-block-anchor-link",
-        label: "Insert block anchor link",
-        icon: <Pilcrow className="h-4 w-4" />,
-        onSelect: insertPromptedBlockAnchorLink,
-      },
-      {
-        id: "insert-embed",
-        label: "Insert embed",
+        id: "tools-media",
+        label: "Media",
         icon: <ImageIcon className="h-4 w-4" />,
-        onSelect: insertPromptedEmbed,
+        onSelect: () => {},
+        children: [
+          {
+            id: "insert-image",
+            label: "Insert image / attachment",
+            icon: <ImageIcon className="h-4 w-4" />,
+            onSelect: () => insertPromptedImage("image"),
+          },
+          {
+            id: "insert-embed",
+            label: "Insert embed",
+            icon: <ImageIcon className="h-4 w-4" />,
+            onSelect: insertPromptedEmbed,
+          },
+          {
+            id: "insert-gif",
+            label: "Insert GIF URL",
+            icon: <Sparkles className="h-4 w-4" />,
+            onSelect: () => insertPromptedImage("gif"),
+          },
+        ],
       },
       {
-        id: "insert-gif",
-        label: "Insert GIF URL",
-        icon: <Sparkles className="h-4 w-4" />,
-        onSelect: () => insertPromptedImage("gif"),
-      },
-      {
-        id: "insert-emoji-prompt",
-        label: "Insert emoji / symbol",
+        id: "tools-symbols",
+        label: "Symbols",
         icon: <Smile className="h-4 w-4" />,
         separatorBefore: true,
-        onSelect: insertPromptedEmoji,
-      },
-      ...emojiActions,
-      {
-        id: "format-bold",
-        label: "Format selection: Bold",
-        icon: <Bold className="h-4 w-4" />,
-        separatorBefore: true,
-        onSelect: () => runMarkdownCommand("format.bold"),
+        onSelect: () => {},
+        children: symbolActions,
       },
       {
-        id: "format-italic",
-        label: "Format selection: Italic",
-        icon: <Italic className="h-4 w-4" />,
-        onSelect: () => runMarkdownCommand("format.italic"),
-      },
-      {
-        id: "format-code",
-        label: "Format selection: Code",
-        icon: <Code2 className="h-4 w-4" />,
-        onSelect: () => runMarkdownCommand("format.code"),
-      },
-      {
-        id: "format-strike",
-        label: "Format selection: Strikethrough",
-        onSelect: () => runMarkdownCommand("format.strike"),
-      },
-      {
-        id: "format-link",
-        label: "Format selection: Link",
-        icon: <LinkIcon className="h-4 w-4" />,
-        onSelect: () => runMarkdownCommand("format.link"),
-      },
-      {
-        id: "copy-block-markdown",
-        label: "Copy current block as Markdown",
+        id: "tools-copy",
+        label: "Copy",
         icon: <Copy className="h-4 w-4" />,
-        separatorBefore: true,
-        onSelect: () => void copyCurrentBlockAsMarkdown(),
-      },
-      {
-        id: "copy-block-html",
-        label: "Copy current block as HTML",
-        onSelect: () => void copyCurrentBlockAsHtml(),
+        onSelect: () => {},
+        children: [
+          {
+            id: "copy-block-markdown",
+            label: "Copy current block as Markdown",
+            icon: <Copy className="h-4 w-4" />,
+            onSelect: () => void copyCurrentBlockAsMarkdown(),
+          },
+          {
+            id: "copy-block-html",
+            label: "Copy current block as HTML",
+            icon: <Copy className="h-4 w-4" />,
+            onSelect: () => void copyCurrentBlockAsHtml(),
+          },
+        ],
       },
     ];
   }, [
@@ -1485,7 +1418,6 @@ export function ObsidianMarkdownViewer({
     copyPropertiesYaml,
     insertPromptedCallout,
     insertPromptedCodeBlock,
-    insertPromptedEmoji,
     insertPromptedEmbed,
     insertPromptedBlockAnchorLink,
     insertPromptedHeadingAnchorLink,
@@ -1499,6 +1431,7 @@ export function ObsidianMarkdownViewer({
     startVoiceInput,
     updatePromptedCallout,
   ]);
+  markdownToolsActionsRef.current = buildMarkdownToolsActions();
 
   const handleMarkdownContextMenu = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement | null;
@@ -1738,14 +1671,19 @@ export function ObsidianMarkdownViewer({
     }
   }, []);
 
-  const readingModeContent = useMemo(() => prepareMarkdownForReading(localContent), [localContent]);
+  const readingModeContent = useMemo(() => prepareMarkdownForReading(deferredLocalContent), [deferredLocalContent]);
   const attachmentCleanupCandidates = useMemo(
-    () => findUnreferencedMarkdownAttachments({
-      root: workspaceFileTreeRoot,
-      index: getWorkspaceMarkdownLinkIndex().index,
-      workspaceRootName,
-    }),
-    [localContent, workspaceFileTreeRoot, workspaceRootName],
+    () => {
+      if (!showLinks) {
+        return [];
+      }
+      return findUnreferencedMarkdownAttachments({
+        root: workspaceFileTreeRoot,
+        index: getWorkspaceMarkdownLinkIndex().index,
+        workspaceRootName,
+      });
+    },
+    [deferredLocalContent, showLinks, workspaceFileTreeRoot, workspaceRootName],
   );
 
   const durationLabel = formatDuration(summary.durationMs);

@@ -43,6 +43,48 @@ npm run qa:gate
 
 Use `npm run release:prepare -- --dry-run` when checking release metadata without writing release files.
 
+## v2.3.1 Current Gate Snapshot
+
+Updated: 2026-06-28.
+
+Completed automated checks in this pass:
+
+- `npm audit --registry=https://registry.npmjs.org --audit-level=moderate`
+- `npm run typecheck`
+- `npm run lint`
+- `npm run test:docs`
+- `npm run test:run`
+- `npm run test:run -- src/config/__tests__/quantum-keymap.test.ts src/components/editor/codemirror/live-preview/__tests__/math-rendering-output.test.ts src/lib/__tests__/unified-input-handler.test.ts src/components/hud/__tests__/hud-logic.test.ts src/components/hud/__tests__/keycap.test.ts`
+- `npm run test:run -- src/__tests__/prepare-release-script.test.ts src/lib/__tests__/formula-composer.test.ts src/stores/__tests__/quantum-formula-library-store.test.ts src/config/__tests__/quantum-keymap.test.ts`
+- `npm run build`
+- `npm run tauri:build`
+- `npm run release:prepare -- --version 2.3.1 --artifacts-dir src-tauri/target/release`
+- `npm run test:desktop:pdf-smoke`
+
+Current 2026-06-28 patch focus:
+
+- Quantum Keyboard HUD now uses the 26-letter physical-keyboard model.
+- `Shift+number+letter` candidate selection is covered by keymap tests.
+- Markdown/CodeMirror Double-Tab startup no longer writes stray indentation.
+- MathLive structure insertion moves into the first placeholder.
+- Rendered formulas expose Markdown/LaTeX copy choices through the formula right-click menu.
+- Markdown frontmatter extraction uses the local simple parser instead of the old `gray-matter/js-yaml` dependency chain.
+- Dependency audit is clean; `esbuild` is overridden to `0.28.1` and the remaining `js-yaml` instances are `4.3.0` under tooling dependencies.
+- Desktop PDF smoke passed after hardening the smoke bridge to wait for newly created annotation overlays before opening their menus.
+- `docs/guides/quantum-keyboard.md` has been rewritten to match the shipped behavior.
+
+Current v2.3.1 desktop artifacts in `releases/v2.3.1/`:
+
+- `Lattice_2.3.1_x64_en-US.msi` SHA256 `54a5e122b4185b47cc3c347bc154af834edf23b36807f442bfa76512989ac31e`
+- `Lattice_2.3.1_x64-setup.exe` SHA256 `345f946336e2d9df26995731c85170b3bb7a8441530beee6c1d65a58efa0373a`
+- `lattice.exe` SHA256 `41613e1413d21f3a99680a196d7671bd0462dbdb529adb7e0ccc1d399e490a07`
+
+Desktop/Web sync status:
+
+- `next.config.ts` exports production web assets to `web-dist`.
+- `src-tauri/tauri.conf.json` keeps `build.beforeBuildCommand: "npm run build"` and `build.frontendDist: "../web-dist"`.
+- The v2.3.1 Tauri build completed after rebuilding the same static frontend, so desktop and web products are aligned for this release.
+
 ## Targeted Checks For Current High-Risk Areas
 
 Run these when changing PDF, code runner, workspace search, or Explorer behavior:

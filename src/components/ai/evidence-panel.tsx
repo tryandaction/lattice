@@ -25,6 +25,7 @@ import { PromptEditorDialog } from "@/components/prompt/prompt-editor-dialog";
 import { PromptRunSheet } from "@/components/prompt/prompt-run-sheet";
 import { buildEvidencePromptContextValues } from "@/lib/prompt/context-builders";
 import { executePromptTemplateForSurface } from "@/lib/prompt/surface-actions";
+import { useI18n } from "@/hooks/use-i18n";
 import { ReferenceBrowser } from "./reference-browser";
 
 export interface EvidencePanelProps {
@@ -50,6 +51,7 @@ export function EvidencePanel({
   onProposeTask,
   onClose,
 }: EvidencePanelProps) {
+  const { locale, t } = useI18n();
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
   const activePaneId = useWorkspaceStore((state) => state.layout.activePaneId);
   const activeTab = useWorkspaceStore((state) => state.getActiveTab());
@@ -102,11 +104,11 @@ export function EvidencePanel({
     });
 
     if (!success) {
-      toast.error("无法定位证据", {
+      toast.error(t("ai.evidence.toast.navigateFailed"), {
         description: locator,
       });
     }
-  }, [activePaneId, activeTab?.filePath, rootHandle]);
+  }, [activePaneId, activeTab?.filePath, rootHandle, t]);
 
   const activeContent = activeTab
     ? (() => {
@@ -153,24 +155,25 @@ export function EvidencePanel({
         content: activeContent ?? undefined,
         query: payload.renderedPrompt,
         explicitEvidenceRefs: promptRunState.refs,
+        locale,
       });
 
       toast.success(
         result.kind === "proposal"
-          ? "已生成计划"
+          ? t("prompt.run.toast.proposalCreated")
           : result.kind === "draft"
-            ? "已生成草稿"
-            : "已发送到 AI Chat",
+            ? t("prompt.run.toast.draftCreated")
+            : t("ai.evidence.toast.sentToChat"),
         { description: result.title },
       );
     } catch (error) {
-      toast.error("模板执行失败", {
+      toast.error(t("prompt.run.toast.failed"), {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
       setPromptRunState(null);
     }
-  }, [activeContent, activeTab?.fileName, activeTab?.filePath, promptRunState, settings.aiEnabled, settings.aiMaxTokens, settings.aiModel, settings.aiProvider, settings.aiSystemPrompt, settings.aiTemperature, workspaceKey, workspaceRootPath]);
+  }, [activeContent, activeTab?.fileName, activeTab?.filePath, locale, promptRunState, settings.aiAgentOmittedSummaryEnabled, settings.aiEnabled, settings.aiMaxTokens, settings.aiModel, settings.aiProvider, settings.aiSystemPrompt, settings.aiTemperature, t, workspaceKey, workspaceRootPath]);
 
   if (!message && messages.length === 0) {
     return null;
@@ -180,7 +183,7 @@ export function EvidencePanel({
     return (
       <div className="border-b border-border bg-background/95 px-3 py-3">
         <div className="rounded border border-border/60 bg-background/70 px-3 py-4 text-xs text-muted-foreground">
-          选择一条带证据的 assistant 回复后，可在这里统一浏览引用树、上下文和后续动作。
+          {t("ai.evidence.panel.empty")}
         </div>
       </div>
     );
@@ -217,7 +220,7 @@ export function EvidencePanel({
             className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30 disabled:opacity-50"
             disabled={groupDraftSaved || !onCreateDraft}
           >
-            {groupDraftSaved ? "已保存" : "草稿"}
+            {groupDraftSaved ? t("ai.evidence.panel.saved") : t("ai.evidence.panel.saveDraft")}
           </button>
           <button
             type="button"
@@ -229,7 +232,7 @@ export function EvidencePanel({
             }}
             className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30"
           >
-            模板
+            {t("ai.evidence.panel.useTemplate")}
           </button>
           <button
             type="button"
@@ -257,7 +260,7 @@ export function EvidencePanel({
             className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30 disabled:opacity-50"
             disabled={groupProposalBusy || groupProposalDone || !onProposeTask}
           >
-            {groupProposalDone ? "已生成" : groupProposalBusy ? "生成中..." : "计划"}
+            {groupProposalDone ? t("ai.evidence.panel.generated") : groupProposalBusy ? t("ai.evidence.panel.generating") : t("ai.evidence.panel.plan")}
           </button>
         </>
       );
@@ -283,7 +286,7 @@ export function EvidencePanel({
             className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30 disabled:opacity-50"
             disabled={draftSavedForLeaf || !onCreateDraft}
           >
-            {draftSavedForLeaf ? "已保存" : "保存草稿"}
+            {draftSavedForLeaf ? t("ai.evidence.panel.saved") : t("ai.evidence.panel.saveDraft")}
           </button>
           <button
             type="button"
@@ -295,7 +298,7 @@ export function EvidencePanel({
             }}
             className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30"
           >
-            模板
+            {t("ai.evidence.panel.useTemplate")}
           </button>
         </>
       );
@@ -357,12 +360,12 @@ export function EvidencePanel({
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-xs font-medium text-foreground">
             <ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" />
-            <span>Evidence Panel</span>
+            <span>{t("ai.evidence.panel.title")}</span>
             <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground">
-              {panelState.evidenceCount} 证据
+              {t("ai.evidence.panel.evidenceCount", { count: panelState.evidenceCount })}
             </span>
             <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground">
-              {panelState.contextCount} 上下文
+              {t("ai.evidence.panel.contextCount", { count: panelState.contextCount })}
             </span>
           </div>
           {message.model && (
@@ -370,7 +373,7 @@ export function EvidencePanel({
               <Bot className="h-3 w-3" />
               <span>{message.model.providerName}</span>
               {message.model.model && <span>· {message.model.model}</span>}
-              <span>· {message.model.source === "local" ? "本地模型" : "云模型"}</span>
+              <span>· {message.model.source === "local" ? t("ai.evidence.panel.localModel") : t("ai.evidence.panel.cloudModel")}</span>
             </div>
           )}
           <div className="mt-2 flex flex-wrap gap-2">
@@ -387,7 +390,7 @@ export function EvidencePanel({
               className="rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-foreground hover:bg-accent disabled:opacity-50"
               disabled={draftSaved || !onCreateDraft}
             >
-              {draftSaved ? "已保存草稿" : "保存为草稿"}
+              {draftSaved ? t("ai.evidence.panel.saved") : t("ai.evidence.panel.saveAsDraft")}
             </button>
             <button
               type="button"
@@ -400,7 +403,7 @@ export function EvidencePanel({
               className="rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-foreground hover:bg-accent"
               disabled={(message.evidenceRefs?.length ?? 0) === 0}
             >
-              使用模板
+              {t("ai.evidence.panel.useTemplate")}
             </button>
             <button
               type="button"
@@ -422,7 +425,7 @@ export function EvidencePanel({
               className="rounded border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-foreground hover:bg-accent disabled:opacity-50"
               disabled={proposalBusy || proposalDone || !onProposeTask}
             >
-              {proposalDone ? "已生成计划" : proposalBusy ? "生成中..." : "生成整理计划"}
+              {proposalDone ? t("prompt.run.toast.proposalCreated") : proposalBusy ? t("ai.evidence.panel.generating") : t("ai.evidence.panel.generatePlan")}
             </button>
           </div>
         </div>
@@ -439,7 +442,7 @@ export function EvidencePanel({
         {messages.length > 1 && (
           <div>
             <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-              Messages
+              {t("ai.evidence.panel.messages")}
             </div>
             <div className="space-y-1">
               {messages.map((candidate) => (
@@ -455,7 +458,7 @@ export function EvidencePanel({
                 >
                   <div className="truncate font-medium">{messageLabel(candidate)}</div>
                   <div className="mt-0.5 text-[10px] text-muted-foreground/80">
-                    {(candidate.evidenceRefs?.length ?? 0)} 证据 · {(candidate.promptContext?.nodes?.length ?? 0)} 上下文
+                    {t("ai.evidence.panel.evidenceCount", { count: candidate.evidenceRefs?.length ?? 0 })} · {t("ai.evidence.panel.contextCount", { count: candidate.promptContext?.nodes?.length ?? 0 })}
                   </div>
                 </button>
               ))}
@@ -466,12 +469,12 @@ export function EvidencePanel({
         {referenceNodes.length > 0 && (
           <div>
             <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-              Reference Tree
+              {t("ai.evidence.panel.referenceTree")}
             </div>
             {selectedLeaves.length > 0 && (
               <div className="mb-2 rounded border border-border/50 bg-background/70 px-2 py-2">
                 <div className="mb-2 text-[10px] text-muted-foreground">
-                  已选 {selectedLeaves.length} 条证据
+                  {t("ai.evidence.panel.selectedEvidence", { count: selectedLeaves.length })}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -490,19 +493,19 @@ export function EvidencePanel({
                     className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30 disabled:opacity-50"
                     disabled={(savedKeys["selection:multi"] ?? false) || !onCreateDraft}
                   >
-                    {(savedKeys["selection:multi"] ?? false) ? "已保存" : "保存选中草稿"}
+                    {(savedKeys["selection:multi"] ?? false) ? t("ai.evidence.panel.saved") : t("ai.evidence.panel.saveSelectedDraft")}
                   </button>
                   <button
                     type="button"
                     onClick={() => {
                       setPromptPickerState({
                         refs: selectedLeaves.map((leaf) => leaf.evidenceRef!).filter(Boolean),
-                        label: `已选 ${selectedLeaves.length} 条证据`,
+                        label: t("ai.evidence.panel.selectedEvidence", { count: selectedLeaves.length }),
                       });
                     }}
                     className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30"
                   >
-                    使用模板
+                    {t("ai.evidence.panel.useTemplate")}
                   </button>
                   <button
                     type="button"
@@ -531,23 +534,24 @@ export function EvidencePanel({
                     disabled={(proposalBusyKeys["selection:multi"] ?? false) || (proposalDoneKeys["selection:multi"] ?? false) || !onProposeTask}
                   >
                     {(proposalDoneKeys["selection:multi"] ?? false)
-                      ? "已生成计划"
+                      ? t("prompt.run.toast.proposalCreated")
                       : (proposalBusyKeys["selection:multi"] ?? false)
-                        ? "生成中..."
-                        : "生成选中计划"}
+                        ? t("ai.evidence.panel.generating")
+                        : t("ai.evidence.panel.generateSelectedPlan")}
                   </button>
                   <button
                     type="button"
                     onClick={() => setSelectedLeafLocators({})}
                     className="rounded border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent/30"
                   >
-                    清空选择
+                    {t("ai.evidence.panel.clearSelection")}
                   </button>
                 </div>
               </div>
             )}
             <ReferenceBrowser
               nodes={referenceNodes}
+              emptyLabel={t("ai.evidence.panel.noReferences")}
               expandedNodeIds={expandedPaths}
               onToggleNode={(nodeId) => setExpandedPaths((current) => ({
                 ...current,

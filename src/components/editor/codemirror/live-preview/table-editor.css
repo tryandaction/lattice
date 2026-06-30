@@ -240,24 +240,30 @@
 }
 
 .table-editor-perimeter-panel {
-  position: absolute;
-  min-width: 190px;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 16px));
   border: 1px solid var(--table-border);
-  border-radius: 12px;
-  background: hsl(var(--background) / 0.98);
-  box-shadow: var(--table-floating-shadow);
-  padding: 10px;
+  border-radius: 10px;
+  background: hsl(var(--popover) / 0.98);
+  color: hsl(var(--popover-foreground));
+  box-shadow: 0 14px 34px hsl(var(--foreground) / 0.16);
+  padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  z-index: 13;
+  gap: 8px;
+  z-index: var(--z-floating-panel);
   pointer-events: auto;
+  overscroll-behavior: contain;
 }
 
 .table-editor-panel-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   font-weight: 600;
   color: var(--table-muted-text);
+  padding: 2px 4px 4px;
 }
 
 .table-editor-panel-group {
@@ -273,18 +279,64 @@
   color: var(--table-muted-text);
 }
 
-.table-editor-panel-actions {
-  display: flex;
-  flex-wrap: wrap;
+.table-editor-command-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(96px, 1fr));
   gap: 6px;
 }
 
-.btn-icon--menu {
-  min-width: auto;
-  height: 28px;
+.table-editor-command {
+  display: flex;
+  min-width: 0;
+  height: 32px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid hsl(var(--border) / 0.72);
   border-radius: 8px;
-  padding: 0 10px;
+  background: hsl(var(--muted) / 0.34);
+  color: hsl(var(--popover-foreground));
+  cursor: pointer;
   font-size: 11px;
+  line-height: 1;
+  padding: 0 9px;
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease, transform 0.12s ease;
+}
+
+.table-editor-command:hover,
+.table-editor-command:focus-visible {
+  border-color: hsl(var(--primary) / 0.45);
+  background: hsl(var(--accent) / 0.65);
+  color: hsl(var(--foreground));
+  outline: none;
+}
+
+.table-editor-command:active {
+  transform: translateY(1px);
+}
+
+.table-editor-command--danger:hover,
+.table-editor-command--danger:focus-visible {
+  border-color: hsl(var(--destructive) / 0.55);
+  background: hsl(var(--destructive) / 0.12);
+  color: hsl(var(--destructive));
+}
+
+.table-editor-command-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--table-muted-text);
+}
+
+.table-editor-command:hover .table-editor-command-icon,
+.table-editor-command:focus-visible .table-editor-command-icon {
+  color: currentColor;
+}
+
+.table-editor-command-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .table-editor-source-preview {

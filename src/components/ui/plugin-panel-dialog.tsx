@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from "react";
-import { X, PanelLeft } from "lucide-react";
+import { Cable, X } from "lucide-react";
 import { useI18n } from "@/hooks/use-i18n";
 import { useSettingsStore } from "@/stores/settings-store";
 import { getRegisteredCommands, getRegisteredPanels, runPluginCommand, subscribePluginRegistry, getPanelProps, subscribePanelProps } from "@/lib/plugins/runtime";
 import type { PluginCommand, PluginPanel, PluginPanelSchema } from "@/lib/plugins/types";
 import { cn } from "@/lib/utils";
+import { UI_MODAL_OVERLAY_CLASS, UI_MODAL_OVERLAY_STYLE, UI_MODAL_PANEL_CLASS } from "@/lib/ui-layers";
 import { MarkdownRenderer } from "@/components/renderers/markdown-renderer";
 import { highlightMatch } from "@/components/ui/search-highlight";
 import { FormulaExtractorPanel } from "@/plugins/formula-extractor/panel";
@@ -18,6 +19,10 @@ export interface PluginPanelDialogProps {
 }
 
 const MAX_RECENT_PANELS = 5;
+
+function stopDialogPropagation(event: React.SyntheticEvent) {
+  event.stopPropagation();
+}
 
 type FormState = Record<string, Record<string, string>>;
 type PanelListItem = { title?: string; description?: string; meta?: unknown };
@@ -152,6 +157,7 @@ export function PluginPanelDialog({ isOpen, onClose }: PluginPanelDialogProps) {
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
   const [formState, setFormState] = useState<FormState>({});
   const [query, setQuery] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -315,15 +321,47 @@ export function PluginPanelDialog({ isOpen, onClose }: PluginPanelDialogProps) {
     return new Map(commands.map((command) => [command.id, command]));
   }, [commands]);
 
+  const runPanelAction = useCallback(async (panel: PluginPanel, actionId: string) => {
+    const command = commandsById.get(actionId);
+    if (!command) {
+      setActionError(`Command not found: ${actionId}`);
+      return;
+    }
+    setActionError(null);
+    try {
+      await runPluginCommand(actionId, {
+        panelId: panel.id,
+        formData: formState[panel.id] ?? {},
+      });
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    }
+  }, [commandsById, formState]);
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[180] flex items-start justify-center overflow-y-auto px-4 pb-4 pt-6 md:pt-20">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 flex w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]">
+    <div
+      className={cn(UI_MODAL_OVERLAY_CLASS, "flex items-start justify-center overflow-y-auto px-4 pb-4 pt-6 md:pt-20")}
+      style={UI_MODAL_OVERLAY_STYLE}
+    >
+      <div className="absolute inset-0" onClick={onClose} />
+      <div
+        className={cn(
+          "flex w-full max-w-6xl flex-col overflow-hidden rounded-xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]",
+          UI_MODAL_PANEL_CLASS,
+        )}
+        onPointerDown={stopDialogPropagation}
+        onMouseDown={stopDialogPropagation}
+        onClick={stopDialogPropagation}
+        onDoubleClick={stopDialogPropagation}
+        onContextMenu={stopDialogPropagation}
+        onWheel={stopDialogPropagation}
+        onDragStart={stopDialogPropagation}
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <div className="flex items-center gap-2">
-            <PanelLeft className="h-4 w-4 text-muted-foreground" />
+            <Cable className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-base font-semibold">{t("panels.title")}</h2>
           </div>
           <button
@@ -447,24 +485,19 @@ export function PluginPanelDialog({ isOpen, onClose }: PluginPanelDialogProps) {
 
                 {renderPanelSchema(activePanelWithLiveProps.schema, formState, setFormState, activePanelWithLiveProps.id)}
 
+                {actionError && (
+                  <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                    {actionError}
+                  </div>
+                )}
+
                 {activePanelWithLiveProps.actions && activePanelWithLiveProps.actions.length > 0 && (
                   <div className="flex items-center gap-2 pt-2 border-t border-border">
                     {activePanelWithLiveProps.actions.map((action) => (
                       <button
                         key={action.id}
                         type="button"
-                        onClick={() => {
-                          const command = commandsById.get(action.id);
-                          if (!command) {
-                            console.warn(`Command not found for action ${action.id}`);
-                            return;
-                          }
-                          const payload = {
-                            panelId: activePanelWithLiveProps.id,
-                            formData: formState[activePanelWithLiveProps.id] ?? {},
-                          };
-                          void runPluginCommand(action.id, payload);
-                        }}
+                        onClick={() => void runPanelAction(activePanelWithLiveProps, action.id)}
                         className="px-3 py-1.5 text-xs rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                       >
                         {action.title}

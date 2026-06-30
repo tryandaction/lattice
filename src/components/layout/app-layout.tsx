@@ -19,9 +19,10 @@ import { useWorkbenchSession } from "@/hooks/use-workbench-session";
 import { isTauriHost } from "@/lib/storage-adapter";
 import { setLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { UI_MODAL_OVERLAY_CLASS, UI_MODAL_OVERLAY_STYLE, UI_MODAL_PANEL_CLASS } from "@/lib/ui-layers";
 import { TOUCH_TARGET_MIN } from "@/lib/responsive";
 import { syncPlugins, updatePluginNetworkAllowlist } from "@/lib/plugins/runtime";
-import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Command, Bot, Search as SearchIcon, MessageSquareText, FolderTree, LayoutGrid } from "lucide-react";
+import { Settings, HelpCircle, Menu, PanelLeftClose, PanelLeft, Bot, Search as SearchIcon, MessageSquareText, FolderTree, Cable, SquareTerminal } from "lucide-react";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { PluginCommandDialog } from "@/components/ui/plugin-command-dialog";
 import { PluginPanelDialog } from "@/components/ui/plugin-panel-dialog";
@@ -49,7 +50,13 @@ import {
   DESKTOP_MAIN_PANEL_MIN,
   DESKTOP_PANEL_MAX,
   DESKTOP_PANEL_MIN,
+  getDesktopAiPanelIndex,
+  getDesktopAiResizeHandleIndex,
+  getDesktopPluginPanelIndex,
+  getDesktopPluginResizeHandleIndex,
   getDesktopSidebarMaxSize,
+  normalizePersistedDesktopAiPanelSize,
+  resolveDesktopWorkbenchResize,
 } from "@/components/layout/desktop-workbench-layout";
 
 const DESKTOP_SIDEBAR_DEFAULT = 20;
@@ -279,13 +286,13 @@ function AppLayoutContent() {
 
   useEffect(() => {
     if (!isInitialized || aiPanelSizeInitialized) return;
-    const initialSize =
-      typeof settings.aiPanelWidth === "number"
-        ? settings.aiPanelWidth
-        : DESKTOP_AI_PANEL_DEFAULT;
-    setDesktopAiPanelSize(clampDesktopAiPanelSize(initialSize));
+    const initialSize = normalizePersistedDesktopAiPanelSize(settings.aiPanelWidth);
+    setDesktopAiPanelSize(initialSize);
+    if (typeof settings.aiPanelWidth === "number" && settings.aiPanelWidth !== initialSize) {
+      void updateSetting("aiPanelWidth", initialSize);
+    }
     setAiPanelSizeInitialized(true);
-  }, [aiPanelSizeInitialized, isInitialized, settings.aiPanelWidth]);
+  }, [aiPanelSizeInitialized, isInitialized, settings.aiPanelWidth, updateSetting]);
 
   useEffect(() => {
     if (!isInitialized || panelOpenInitialized) return;
@@ -520,7 +527,7 @@ function AppLayoutContent() {
           style={(isMobile || isTablet) ? { minWidth: TOUCH_TARGET_MIN, minHeight: TOUCH_TARGET_MIN } : undefined}
           title={t("commands.open")}
         >
-          <Command className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
+          <SquareTerminal className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         </button>
         <button
           onClick={() => setShowPluginPanels(true)}
@@ -714,7 +721,7 @@ function AppLayoutContent() {
                 </div>
                 {SidebarContent}
               </ResizablePanel>
-              <ResizableHandle withHandle className="w-2 touch-none" index={0} />
+              <ResizableHandle withHandle className="touch-none" index={0} />
             </>
           )}
           <ResizablePanel
@@ -797,7 +804,7 @@ function AppLayoutContent() {
         onOpenRecentWorkspace={(path) => void openWorkspacePath(path)}
       />
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        <div className="flex w-14 shrink-0 flex-col items-center border-r border-border bg-card/90 px-1 py-2">
+        <div className="flex w-12 shrink-0 flex-col items-center border-r border-border bg-card/90 py-2">
           <div className="flex w-full flex-col items-center gap-2">
             <CollapsedRailButton
               icon={FolderTree}
@@ -841,13 +848,13 @@ function AppLayoutContent() {
 
           <div className="mt-auto flex w-full flex-col items-center gap-2 border-t border-border pt-2">
             <CollapsedRailButton
-              icon={Command}
+              icon={SquareTerminal}
               label={t("commands.open")}
               title={t("commands.open")}
               onClick={() => setShowCommands(true)}
             />
             <CollapsedRailButton
-              icon={LayoutGrid}
+              icon={Cable}
               label={t("panels.open")}
               title={t("panels.open")}
               active={showPluginPanels}
@@ -873,33 +880,25 @@ function AppLayoutContent() {
           className="flex-1 min-h-0"
           sizes={desktopWorkbenchLayout.sizes}
           onSizesChange={(sizes) => {
-            if (!sidebarCollapsed && sizes.length >= 1) {
-              setDesktopSidebarSize(
-                Math.min(
-                  getDesktopSidebarMaxSize(desktopWorkbenchLayout.rightPanels),
-                  Math.max(14, sizes[0]),
-                ),
-              );
+            const next = resolveDesktopWorkbenchResize({
+              sidebarCollapsed,
+              sizes,
+              rightPanels: desktopWorkbenchLayout.rightPanels,
+            });
+
+            if (typeof next.sidebarSize === "number") {
+              setDesktopSidebarSize(next.sidebarSize);
             }
 
-            const rightPanelStartIndex = sidebarCollapsed ? 1 : 2;
-            desktopWorkbenchLayout.rightPanels.forEach((panel, index) => {
-              const nextSize = sizes[rightPanelStartIndex + index];
-              if (typeof nextSize !== "number") {
-                return;
-              }
+            if (typeof next.pluginPanelSize === "number") {
+              setDesktopPanelSize(next.pluginPanelSize);
+              persistPanelSize(next.pluginPanelSize);
+            }
 
-              if (panel.kind === "plugin") {
-                const next = clampDesktopPluginPanelSize(nextSize);
-                setDesktopPanelSize(next);
-                persistPanelSize(next);
-                return;
-              }
-
-              const next = clampDesktopAiPanelSize(nextSize);
-              setDesktopAiPanelSize(next);
-              persistAiPanelSize(next);
-            });
+            if (typeof next.aiPanelSize === "number") {
+              setDesktopAiPanelSize(next.aiPanelSize);
+              persistAiPanelSize(next.aiPanelSize);
+            }
           }}
         >
           {!sidebarCollapsed && (
@@ -927,9 +926,9 @@ function AppLayoutContent() {
 
           {showPluginPanels && (
             <>
-              <ResizableHandle withHandle index={sidebarCollapsed ? 0 : 1} />
+              <ResizableHandle withHandle index={getDesktopPluginResizeHandleIndex(sidebarCollapsed)} />
               <ResizablePanel
-                index={sidebarCollapsed ? 1 : 2}
+                index={getDesktopPluginPanelIndex(sidebarCollapsed)}
                 defaultSize={desktopPanelSize}
                 minSize={DESKTOP_PANEL_MIN}
                 maxSize={DESKTOP_PANEL_MAX}
@@ -941,13 +940,13 @@ function AppLayoutContent() {
 
           {aiChatOpen && (
             <>
-              <ResizableHandle withHandle index={sidebarCollapsed ? (showPluginPanels ? 1 : 0) : (showPluginPanels ? 2 : 1)} />
+              <ResizableHandle withHandle index={getDesktopAiResizeHandleIndex(sidebarCollapsed, showPluginPanels)} />
               <ResizablePanel
-                index={sidebarCollapsed ? (showPluginPanels ? 2 : 1) : (showPluginPanels ? 3 : 2)}
+                index={getDesktopAiPanelIndex(sidebarCollapsed, showPluginPanels)}
                 defaultSize={desktopAiPanelSize}
                 minSize={DESKTOP_AI_PANEL_MIN}
                 maxSize={DESKTOP_AI_PANEL_MAX}
-                className="min-h-0 border-l border-border bg-background"
+                className="min-h-0 bg-background"
               >
                 <AiChatPanel onClose={() => closeAiPanel()} />
               </ResizablePanel>
@@ -1010,12 +1009,13 @@ function Dialogs({
       <ErrorBoundary onReset={() => setShowGuide(false)}>
         {showGuide && (
           <div
-            className="fixed inset-0 z-[120] flex items-center justify-center bg-background/80 p-3 backdrop-blur-sm"
+            className={cn(UI_MODAL_OVERLAY_CLASS, "flex items-center justify-center p-3")}
+            style={UI_MODAL_OVERLAY_STYLE}
             role="dialog"
             aria-modal="true"
             aria-label="User guide"
           >
-            <div className="h-[min(900px,92vh)] w-[min(1280px,96vw)] overflow-hidden rounded-lg border border-border bg-background shadow-2xl">
+            <div className={cn("h-[min(900px,92vh)] w-[min(1280px,96vw)] overflow-hidden rounded-lg", UI_MODAL_PANEL_CLASS)}>
               <LivePreviewGuide surface="dialog" onClose={() => setShowGuide(false)} />
             </div>
           </div>

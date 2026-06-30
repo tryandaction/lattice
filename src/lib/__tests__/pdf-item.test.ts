@@ -203,9 +203,126 @@ describe("pdf-item utils", () => {
     expect(markdown).toContain("Move this into the reading note.");
     expect(markdown).toContain("../../../papers/rydberg-review.pdf#page=2");
     expect(markdown).toContain("../../../papers/rydberg-review.pdf#annotation=ann-1");
-    expect(markdown).toContain("- Screenshot:");
+    expect(markdown).toContain("#### Screenshot");
     expect(markdown).toContain("![Area Screenshot ann-area Page 4](./_annotation_previews/ann-area.png)");
     expect(markdown).toContain("![Ink Screenshot ann-ink Page 4](./_annotation_previews/ann-ink.png)");
+  });
+
+  it("formats pdf annotation markdown as readable renderable sections", () => {
+    setLocale("en-US");
+    const markdown = buildPdfAnnotationsMarkdown({
+      fileName: "rydberg-review.pdf",
+      manifest: {
+        version: 4,
+        itemId: "papers-rydberg-review.pdf",
+        pdfPath: "papers/rydberg-review.pdf",
+        itemFolderPath: ".lattice/items/papers-rydberg-review.pdf",
+        annotationIndexPath: ".lattice/items/papers-rydberg-review.pdf/_annotations.md",
+        fileFingerprint: null,
+        versionFingerprint: null,
+        knownPdfPaths: ["papers/rydberg-review.pdf"],
+        createdAt: 1710000000000,
+        updatedAt: 1710000000000,
+      },
+      annotations: [
+        {
+          id: "ann-readable",
+          target: {
+            type: "pdf",
+            page: 3,
+            rects: [{ x1: 0.1, y1: 0.2, x2: 0.6, y2: 0.28 }],
+          },
+          style: {
+            color: "#ffeb3b",
+            type: "highlight",
+          },
+          content: "First selected line.\nSecond selected line.",
+          comment: [
+            "This comment keeps **Markdown** syntax.",
+            "",
+            "- compare with [notebook](../analysis.ipynb)",
+            "- preserve `inline code`",
+          ].join("\n"),
+          author: "user",
+          createdAt: 1710000000000,
+        },
+        {
+          id: "ann-area-readable",
+          target: {
+            type: "pdf",
+            page: 3,
+            rects: [{ x1: 0.2, y1: 0.4, x2: 0.7, y2: 0.72 }],
+          },
+          style: {
+            color: "#2ea8e5",
+            type: "area",
+          },
+          preview: {
+            type: "image",
+            dataUrl: "data:image/png;base64,ZmFrZS1wcmV2aWV3",
+            width: 320,
+            height: 180,
+          },
+          author: "user",
+          createdAt: 1710000001000,
+        },
+      ],
+      previewPathByAnnotationId: {
+        "ann-area-readable": "./_annotation_previews/ann-area-readable.png",
+      },
+    });
+
+    expect(markdown).toContain("#### Quote\n\n> First selected line.\n> Second selected line.");
+    expect(markdown).toContain("#### Comment\n\nThis comment keeps **Markdown** syntax.\n\n- compare with [notebook](../analysis.ipynb)\n- preserve `inline code`");
+    expect(markdown).not.toContain("- Quote: First selected line.");
+    expect(markdown).not.toContain("- Comment: This comment keeps");
+    expect(markdown).toContain("#### Screenshot\n\n![Area Screenshot ann-area-readable Page 3](./_annotation_previews/ann-area-readable.png)\n\n_Screenshot: page 3, 320x180px_");
+    expect(markdown).not.toContain("- Screenshot:\n  !");
+  });
+
+  it("exports pdf annotations with compact jump links and color metadata", () => {
+    setLocale("en-US");
+
+    const markdown = buildPdfAnnotationsMarkdown({
+      fileName: "paper.pdf",
+      manifest: {
+        version: 4,
+        itemId: "paper",
+        pdfPath: "docs/paper.pdf",
+        itemFolderPath: ".lattice/items/paper",
+        annotationIndexPath: ".lattice/items/paper/_annotations.md",
+        fileFingerprint: null,
+        versionFingerprint: null,
+        knownPdfPaths: ["docs/paper.pdf"],
+        createdAt: 1710000000000,
+        updatedAt: 1710000000000,
+      },
+      annotations: [
+        {
+          id: "ann-blue",
+          target: {
+            type: "pdf",
+            page: 2,
+            rects: [{ x1: 0.1, y1: 0.2, x2: 0.5, y2: 0.28 }],
+          },
+          style: {
+            color: "#2ea8e5",
+            type: "highlight",
+          },
+          content: "Matched color quote.",
+          comment: "A comment with **Markdown**.",
+          author: "user",
+          createdAt: 1710000000000,
+        },
+      ],
+    });
+
+    expect(markdown).toContain('<!-- lattice-pdf-annotation id="ann-blue" page="2" type="highlight" color="#2ea8e5" -->');
+    expect(markdown).toContain('<span class="lattice-pdf-annotation-chip" data-color="#2ea8e5" data-type="highlight">Highlight</span>');
+    expect(markdown).toContain('[Page 2](../../../docs/paper.pdf#page=2) | [Open annotation](../../../docs/paper.pdf#annotation=ann-blue)');
+    expect(markdown).not.toContain("- Page Link:");
+    expect(markdown).not.toContain("- Annotation Link:");
+    expect(markdown).toContain("#### Comment\n\nA comment with **Markdown**.");
   });
 
   it("localizes generated pdf annotation markdown labels", () => {

@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import { Download, Copy, Check, FileText, FileJson, File } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { UI_LAYER_CLASS } from '@/lib/ui-layers';
 import type { AnnotationFile } from '@/types/annotation';
 import {
   exportAnnotations,
@@ -97,7 +98,7 @@ export function AnnotationExportDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[180] flex items-start justify-center overflow-y-auto bg-black/50 px-4 pb-4 pt-6 md:pt-20"
+      className={cn("fixed inset-0 flex items-start justify-center overflow-y-auto bg-black/50 px-4 pb-4 pt-6 md:pt-20", UI_LAYER_CLASS.dialog)}
       onClick={onClose}
     >
       <div

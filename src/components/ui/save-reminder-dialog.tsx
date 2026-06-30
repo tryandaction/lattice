@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { AlertTriangle, Save, X, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { AlertTriangle, Save, Trash2, X } from "lucide-react";
+import { useI18n } from "@/hooks/use-i18n";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 import { cn } from "@/lib/utils";
 
 export interface SaveReminderDialogProps {
@@ -12,12 +15,6 @@ export interface SaveReminderDialogProps {
   onCancel: () => void;
 }
 
-/**
- * Save Reminder Dialog
- * 
- * Displays a modal dialog when user attempts to close a tab with unsaved changes.
- * Offers three options: Save, Don't Save, and Cancel.
- */
 export function SaveReminderDialog({
   isOpen,
   fileName,
@@ -25,7 +22,21 @@ export function SaveReminderDialog({
   onDontSave,
   onCancel,
 }: SaveReminderDialogProps) {
+  const { t } = useI18n();
   const [isSaving, setIsSaving] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const previousActiveElement = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const frame = window.requestAnimationFrame(() => dialogRef.current?.focus());
+    return () => {
+      window.cancelAnimationFrame(frame);
+      previousActiveElement?.focus();
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -35,97 +46,101 @@ export function SaveReminderDialog({
       await onSave();
     } catch (error) {
       console.error("Failed to save:", error);
-      // Keep dialog open on error
       setIsSaving(false);
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
       onCancel();
-    } else if (e.key === "Enter" && !isSaving) {
-      handleSave();
+      return;
+    }
+
+    if (event.key === "Enter" && !isSaving) {
+      event.preventDefault();
+      void handleSave();
     }
   };
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[180] flex items-start justify-center overflow-y-auto px-4 pb-4 pt-6 md:pt-24"
+      className={cn("fixed inset-0 flex items-center justify-center overflow-y-auto px-4 py-6", UI_LAYER_CLASS.dialog)}
       onKeyDown={handleKeyDown}
     >
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onCancel}
-      />
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onCancel} />
 
-      {/* Dialog */}
-      <div className="relative z-10 w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-xl max-h-[calc(100vh-2rem)] overflow-y-auto md:max-h-[calc(100vh-8rem)]">
-        {/* Header */}
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="save-reminder-title"
+        aria-describedby="save-reminder-description"
+        tabIndex={-1}
+        className="relative z-10 w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-xl outline-none max-h-[calc(100vh-2rem)] overflow-y-auto"
+      >
         <div className="flex items-start gap-4">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-yellow-500/10">
             <AlertTriangle className="h-5 w-5 text-yellow-500" />
           </div>
-          <div className="flex-1">
-            <h2 className="text-lg font-semibold text-foreground">
-              保存更改？
+          <div className="min-w-0 flex-1">
+            <h2 id="save-reminder-title" className="text-lg font-semibold text-foreground">
+              {t("saveReminder.title")}
             </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              文件 &ldquo;<span className="font-medium text-foreground">{fileName}</span>&rdquo; 有未保存的更改。
+            <p id="save-reminder-description" className="mt-1 text-sm text-muted-foreground">
+              {t("saveReminder.description", { fileName })}
             </p>
           </div>
         </div>
 
-        {/* Message */}
         <p className="mt-4 text-sm text-muted-foreground">
-          如果不保存，您的更改将会丢失。
+          {t("saveReminder.warning")}
         </p>
 
-        {/* Actions */}
-        <div className="mt-6 flex justify-end gap-2">
+        <div className="mt-6 flex flex-wrap justify-end gap-2">
           <button
+            type="button"
             onClick={onCancel}
             disabled={isSaving}
             className={cn(
               "inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium",
-              "border border-border bg-background text-foreground",
-              "hover:bg-muted transition-colors",
-              "disabled:opacity-50 disabled:cursor-not-allowed"
+              "border border-border bg-background text-foreground hover:bg-muted transition-colors",
+              "disabled:cursor-not-allowed disabled:opacity-50",
             )}
           >
             <X className="h-4 w-4" />
-            取消
+            {t("common.cancel")}
           </button>
 
           <button
+            type="button"
             onClick={onDontSave}
             disabled={isSaving}
             className={cn(
               "inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium",
-              "border border-destructive/50 bg-destructive/10 text-destructive",
-              "hover:bg-destructive/20 transition-colors",
-              "disabled:opacity-50 disabled:cursor-not-allowed"
+              "border border-destructive/50 bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors",
+              "disabled:cursor-not-allowed disabled:opacity-50",
             )}
           >
             <Trash2 className="h-4 w-4" />
-            不保存
+            {t("saveReminder.dontSave")}
           </button>
 
           <button
-            onClick={handleSave}
+            type="button"
+            onClick={() => void handleSave()}
             disabled={isSaving}
             className={cn(
-              "inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium",
-              "bg-primary text-primary-foreground",
-              "hover:bg-primary/90 transition-colors",
-              "disabled:opacity-50 disabled:cursor-not-allowed"
+              "inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground",
+              "hover:bg-primary/90 transition-colors disabled:cursor-not-allowed disabled:opacity-50",
             )}
           >
             <Save className="h-4 w-4" />
-            {isSaving ? "保存中..." : "保存"}
+            {isSaving ? t("tab.context.saving") : t("common.save")}
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

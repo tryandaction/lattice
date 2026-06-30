@@ -17,7 +17,22 @@ export interface IndexedMarkdownLink {
   range: MarkdownRange;
   parsedTarget: LinkTarget | null;
   resolvedPath?: string;
+  resolution: MarkdownLinkResolution;
   broken: boolean;
+}
+
+export type MarkdownLinkResolutionKind =
+  | "external"
+  | "system"
+  | "exact"
+  | "extensionless"
+  | "basename"
+  | "unresolved";
+
+export interface MarkdownLinkResolution {
+  kind: MarkdownLinkResolutionKind;
+  resolvedPath?: string;
+  repairCandidates: string[];
 }
 
 export interface MarkdownBacklink {
@@ -72,21 +87,67 @@ function findByBasename(knownFiles: Set<string>, path: string): string | undefin
   return Array.from(knownFiles).find((known) => stripMarkdownExtension(known).split("/").pop() === basename);
 }
 
-function resolveKnownWorkspacePath(target: LinkTarget | null, knownFiles: Set<string>): string | undefined {
-  if (!target || !("path" in target)) {
-    return undefined;
+function findRepairCandidatesByLabel(knownFiles: Set<string>, label?: string): string[] {
+  const trimmed = label?.trim();
+  if (!trimmed) {
+    return [];
   }
 
-  for (const candidate of buildWorkspaceCandidatePaths(target.path)) {
+  const normalizedLabel = stripMarkdownExtension(trimmed).split("/").pop()?.toLowerCase();
+  if (!normalizedLabel) {
+    return [];
+  }
+
+  return Array.from(knownFiles)
+    .filter((known) => stripMarkdownExtension(known).split("/").pop()?.toLowerCase() === normalizedLabel)
+    .sort();
+}
+
+function createResolution(
+  kind: MarkdownLinkResolutionKind,
+  resolvedPath?: string,
+  repairCandidates: string[] = [],
+): MarkdownLinkResolution {
+  return {
+    kind,
+    resolvedPath,
+    repairCandidates: Array.from(new Set(repairCandidates)).sort(),
+  };
+}
+
+function resolveKnownWorkspacePath(
+  target: LinkTarget | null,
+  knownFiles: Set<string>,
+  displayText?: string,
+): MarkdownLinkResolution {
+  if (target?.type === "external_url") {
+    return createResolution("external");
+  }
+  if (target?.type === "system_path") {
+    return createResolution("system");
+  }
+  if (!target || !("path" in target)) {
+    return createResolution("unresolved", undefined, findRepairCandidatesByLabel(knownFiles, displayText));
+  }
+
+  const candidates = buildWorkspaceCandidatePaths(target.path);
+  for (const [index, candidate] of candidates.entries()) {
     const normalized = normalizeNotePath(candidate);
     if (knownFiles.has(normalized)) {
-      return normalized;
+      return createResolution(index === 0 ? "exact" : "extensionless", normalized, index === 0 ? [] : [normalized]);
     }
     const extensionlessMatch = findByExtensionlessPath(knownFiles, normalized);
-    if (extensionlessMatch) return extensionlessMatch;
+    if (extensionlessMatch) {
+      return createResolution("extensionless", extensionlessMatch, [extensionlessMatch]);
+    }
   }
 
-  return findByBasename(knownFiles, target.path);
+  const basenameMatch = findByBasename(knownFiles, target.path);
+  if (basenameMatch) {
+    return createResolution("basename", basenameMatch, [basenameMatch]);
+  }
+
+  return createResolution("unresolved", undefined, findRepairCandidatesByLabel(knownFiles, displayText));
 }
 
 function isWorkspaceTarget(target: LinkTarget | null): boolean {
@@ -109,7 +170,8 @@ function toIndexedLink(
   knownFiles: Set<string>,
 ): IndexedMarkdownLink {
   const parsed = parseLinkTarget(markdownLink.target, { currentFilePath: sourceFile });
-  const resolvedPath = resolveKnownWorkspacePath(parsed.target, knownFiles);
+  const resolution = resolveKnownWorkspacePath(parsed.target, knownFiles, markdownLink.label);
+  const resolvedPath = resolution.resolvedPath;
   return {
     sourceFile,
     rawTarget: markdownLink.target,
@@ -118,6 +180,7 @@ function toIndexedLink(
     range: markdownLink.range,
     parsedTarget: parsed.target,
     resolvedPath,
+    resolution,
     broken: isBrokenLink(parsed.target, resolvedPath),
   };
 }

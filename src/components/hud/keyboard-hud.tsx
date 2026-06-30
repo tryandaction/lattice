@@ -2,34 +2,38 @@
 
 /**
  * Keyboard HUD Component
- * Quantum Keyboard - A floating bubble with smart positioning
+ * Quantum Keyboard - A floating bubble with stable positioning
  * 
- * Smart Positioning:
- * - Auto-detects cursor/math field position
- * - Positions keyboard to avoid blocking the input area
- * - Supports user drag to customize position
+ * Stable Positioning:
+ * - Opens at the top or bottom center so it does not cover the current pointer area
+ * - Stays where the user drags it until explicitly reset
  */
 
 import "katex/dist/katex.min.css";
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { motion, AnimatePresence, useDragControls, PanInfo } from 'framer-motion';
-import { ShadowKeyboard } from './shadow-keyboard';
 import { SymbolSelector } from './symbol-selector';
-import { useKaTeXRenderer } from './katex-renderer';
-import { useHUDStore, computeMode } from '../../stores/hud-store';
+import { useHUDStore } from '../../stores/hud-store';
 import { useQuantumCustomStore, getAllSymbolsForKey } from '../../stores/quantum-custom-store';
+import {
+  getEffectiveQuantumLayerMeanings,
+  useQuantumKeymapStore,
+} from '../../stores/quantum-keymap-store';
 import { getActiveMathField, getGlobalTiptapEditor, setActiveMathField } from './hud-provider';
 import type { QuantumInsertPayload } from './hud-provider';
 import {
   quantumKeymap,
-  getDisplaySymbol,
+  getCandidateLabel,
   getVariants,
   KEY_LABELS,
+  QWERTY_LAYOUT,
+  type QuantumLayerId,
 } from '../../config/quantum-keymap';
+import { resolveQuantumKeyboardInput } from './hud-logic';
 import { GripHorizontal, RotateCcw } from 'lucide-react';
 import { logger } from '@/lib/logger';
 import { getActiveInputTarget, getLastActiveInputTarget } from '@/lib/unified-input-handler';
-import { getFormulaTemplateForKey, getQuickFormulaTemplates, latexToVisualPreview } from '@/lib/formula-templates';
+import { useI18n } from '@/hooks/use-i18n';
 import type { MathfieldElement } from 'mathlive';
 
 export interface KeyboardHUDProps {
@@ -77,23 +81,30 @@ function findInputTargetRect(): DOMRect | null {
   return null;
 }
 
+function isQuantumMathEditorFocused(): boolean {
+  const active = document.activeElement as HTMLElement | null;
+  return Boolean(
+    active?.closest('math-field') ||
+    active?.closest('.cm-quantum-math-editor')
+  );
+}
+
 export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
-  const keycapRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const dragControls = useDragControls();
   const activeMathFieldRef = useRef<HTMLElement | null>(null);
   const isProcessingEnterRef = useRef(false);
   const [selectorAnchor, setSelectorAnchor] = useState({ x: 0, y: 0 });
-  const [showHelp, setShowHelp] = useState(false);
-  const [livePreviewLatex, setLivePreviewLatex] = useState('\\square');
-  const renderLatex = useKaTeXRenderer();
+  const [candidatePrefix, setCandidatePrefix] = useState<number | null>(null);
+  const [activeLayer, setActiveLayer] = useState<QuantumLayerId>('base');
+  const [lastActionLabel, setLastActionLabel] = useState('ready');
 
   // Store state
   const isOpen = useHUDStore((state) => state.isOpen);
   const activeSymbolKey = useHUDStore((state) => state.activeSymbolKey);
   const highlightedIndex = useHUDStore((state) => state.highlightedIndex);
-  const flashingKey = useHUDStore((state) => state.flashingKey);
   const isEditMode = useHUDStore((state) => state.isEditMode);
   const customOffset = useHUDStore((state) => state.customOffset);
   const isDragging = useHUDStore((state) => state.isDragging);
@@ -110,8 +121,10 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const setCustomOffset = useHUDStore((state) => state.setCustomOffset);
   const setIsDragging = useHUDStore((state) => state.setIsDragging);
   const updateCursorPosition = useHUDStore((state) => state.updateCursorPosition);
+  const updateHUDSize = useHUDStore((state) => state.updateHUDSize);
   const resetPosition = useHUDStore((state) => state.resetPosition);
   const computeOptimalPosition = useHUDStore((state) => state.computeOptimalPosition);
+  const keymapOverrides = useQuantumKeymapStore((state) => state.overrides);
 
   const dragOffset = useMemo(
     () => customOffset ?? { x: 0, y: 0 },
@@ -124,25 +137,24 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const hideDefaultSymbol = useQuantumCustomStore((state) => state.hideDefaultSymbol);
   const getCustomSymbols = useQuantumCustomStore((state) => state.getCustomSymbols);
   const getHiddenSymbols = useQuantumCustomStore((state) => state.getHiddenSymbols);
-
-  // Compute current mode and position
-  const mode = computeMode({ isOpen, activeSymbolKey });
-  const { side: optimalPosition, topPx, leftPx } = computeOptimalPosition();
-  const quickStructures = useMemo(
-    () => getQuickFormulaTemplates().map((item) => {
-      const preview = item.previewLatex;
+  // Compute current position
+  const { side: optimalPosition, topPx, leftPx, widthPx, heightPx, maxHeightPx } = computeOptimalPosition();
+  const safePosition = useMemo(() => {
+    if (typeof window === 'undefined') {
       return {
-        ...item,
-        preview,
-        html: renderLatex(preview),
+        topPx: topPx + dragOffset.y,
+        leftPx: leftPx + dragOffset.x,
       };
-    }),
-    [renderLatex]
-  );
-  const renderedLivePreview = useMemo(
-    () => renderLatex(latexToVisualPreview(livePreviewLatex)),
-    [livePreviewLatex, renderLatex]
-  );
+    }
+
+    const measuredHeight = Math.min(maxHeightPx, Math.max(40, containerRef.current?.offsetHeight ?? heightPx));
+    const clampedTop = Math.max(8, Math.min(topPx + dragOffset.y, window.innerHeight - measuredHeight - 8));
+    const clampedLeft = Math.max(8, Math.min(leftPx + dragOffset.x, window.innerWidth - widthPx - 8));
+    return {
+      topPx: clampedTop,
+      leftPx: clampedLeft,
+    };
+  }, [dragOffset.x, dragOffset.y, heightPx, leftPx, maxHeightPx, topPx, widthPx]);
 
   // ============================================================================
   // MathLive Integration (moved before useEffects that depend on it)
@@ -166,7 +178,12 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
     // 不要自动选择最后一个 math-field！
     // 这会导致输入跳转到错误的位置
     
-    return activeMathFieldRef.current;
+    if (activeMathFieldRef.current?.isConnected) {
+      return activeMathFieldRef.current;
+    }
+
+    activeMathFieldRef.current = null;
+    return null;
   }, []);
 
   // ============================================================================
@@ -217,7 +234,7 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
       const mathField = findCurrentMathField() as MathfieldWithCommands | null;
       const value = mathField?.getValue?.();
       if (value && value.trim()) {
-        setLivePreviewLatex(value);
+        setLastActionLabel('editing');
       }
     };
 
@@ -226,68 +243,72 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
     return () => window.clearInterval(interval);
   }, [isOpen, findCurrentMathField]);
 
-  // Update cursor position when HUD opens and periodically while open
+  // Capture the opening anchor once. The keyboard stays stable until moved by the user.
   useEffect(() => {
     if (!isOpen) return;
     
     const doUpdate = () => {
-      // Don't update position while dragging to prevent jarring changes
       if (isDragging) return;
       
       const rect = findInputTargetRect();
       updateCursorPosition(rect);
     };
     
-    // Initial update with slight delay to ensure DOM is ready
     const initialTimeout = setTimeout(doUpdate, 100);
-    
-    // Update on focus changes
-    const handleFocusIn = () => {
-      if (!isDragging) setTimeout(doUpdate, 50);
-    };
-    document.addEventListener('focusin', handleFocusIn);
-    
-    // Update on scroll/resize
-    const handleScrollResize = () => {
-      if (!isDragging) doUpdate();
-    };
-    window.addEventListener('scroll', handleScrollResize, { passive: true });
-    window.addEventListener('resize', handleScrollResize, { passive: true });
-    
-    // Update on DOM changes (new math fields)
-    const observer = new MutationObserver(() => {
-      if (!isDragging) setTimeout(doUpdate, 50);
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    
-    // Periodic update while open (fallback for edge cases)
-    const interval = setInterval(() => {
-      if (!isDragging) doUpdate();
-    }, 800);
     
     return () => {
       clearTimeout(initialTimeout);
-      document.removeEventListener('focusin', handleFocusIn);
-      window.removeEventListener('scroll', handleScrollResize);
-      window.removeEventListener('resize', handleScrollResize);
-      observer.disconnect();
-      clearInterval(interval);
     };
   }, [isOpen, isDragging, updateCursorPosition]);
+
+  useEffect(() => {
+    if (!isOpen || !containerRef.current || typeof ResizeObserver === 'undefined') return;
+
+    const updateSize = () => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      updateHUDSize({ width: rect.width, height: rect.height });
+    };
+
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(containerRef.current);
+    window.addEventListener('resize', updateSize, { passive: true });
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateSize);
+    };
+  }, [isOpen, updateHUDSize]);
 
   // ============================================================================
   // Drag Handling
   // ============================================================================
   
   const handleDragEnd = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
-    const newOffset = {
+    const rawOffset = {
       x: dragOffset.x + info.offset.x,
       // Y drag shifts the computed topPx — store it so the container inline style picks it up
       y: dragOffset.y + info.offset.y,
     };
+
+    const bubbleRect = containerRef.current?.getBoundingClientRect();
+    const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024;
+    const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
+    const bubbleWidth = bubbleRect?.width ?? widthPx;
+    const bubbleHeight = Math.min(bubbleRect?.height ?? 320, maxHeightPx);
+    const minX = 8 - leftPx;
+    const maxX = viewportWidth - bubbleWidth - 8 - leftPx;
+    const minY = 8 - topPx;
+    const maxY = viewportHeight - bubbleHeight - 8 - topPx;
+    const newOffset = {
+      x: Math.max(minX, Math.min(rawOffset.x, maxX)),
+      y: Math.max(minY, Math.min(rawOffset.y, maxY)),
+    };
+
     setCustomOffset(newOffset);
     setTimeout(() => setIsDragging(false), 100);
-  }, [dragOffset, setCustomOffset, setIsDragging]);
+  }, [dragOffset, leftPx, maxHeightPx, setCustomOffset, setIsDragging, topPx, widthPx]);
 
   const handleDragStart = useCallback(() => {
     setIsDragging(true);
@@ -327,52 +348,44 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
     );
   }, [activeSymbolKey, getCustomSymbols, getHiddenSymbols]);
 
-  const updateSelectorAnchor = useCallback((keyCode: string) => {
+  const updateSelectorAnchor = useCallback((_keyCode: string) => {
     if (!containerRef.current) {
       setSelectorAnchor({ x: 0, y: 0 });
       return;
     }
-    const keycapElement = keycapRefs.current.get(keyCode);
-    if (!keycapElement) {
-      setSelectorAnchor({ x: 200, y: -100 });
-      return;
-    }
-
     const containerRect = containerRef.current.getBoundingClientRect();
-    const keycapRect = keycapElement.getBoundingClientRect();
     setSelectorAnchor({
-      x: keycapRect.left + keycapRect.width / 2 - containerRect.left,
-      y: keycapRect.top - containerRect.top - 10,
+      x: Math.min(containerRect.width - 16, Math.max(16, containerRect.width / 2)),
+      y: -8,
     });
   }, []);
 
-  const handleKeySelect = useCallback((keyCode: string) => {
+  const insertCandidateForKey = useCallback((keyCode: string, oneBasedIndex = 1, layer: QuantumLayerId = 'base') => {
     const mapping = quantumKeymap[keyCode];
     if (!mapping) return;
 
-    const symbol = getDisplaySymbol(keyCode, false);
-    if (!symbol) return;
+    const result = resolveQuantumKeyboardInput({
+      keyCode,
+      shiftKey: layer === 'base',
+      ctrlKey: layer === 'ctrl',
+      candidatePrefix: oneBasedIndex,
+    }, keymapOverrides);
+    if (result.action !== 'insert' || !result.latex) return;
 
     flashKey(keyCode);
-    const template = getFormulaTemplateForKey(keyCode);
-    if (template) {
-      setLivePreviewLatex(template.previewLatex);
-      onInsertSymbol({
-        latex: template.latex,
-        mathLiveLatex: template.mathLiveLatex,
-        displayMode: template.displayMode,
-        previewLatex: template.previewLatex,
-      });
-      return;
-    }
-    setLivePreviewLatex(mapping.preview ?? symbol);
-    onInsertSymbol(symbol);
-  }, [flashKey, onInsertSymbol]);
+    setLastActionLabel(`${KEY_LABELS[keyCode] ?? keyCode} ${result.meaning?.label ?? result.latex}`);
+    setCandidatePrefix(null);
+    setActiveLayer('base');
+    onInsertSymbol({
+      latex: result.latex,
+      mathLiveLatex: result.meaning?.mathlive,
+      displayMode: Boolean(result.meaning?.displayMode ?? mapping.displayMode),
+    });
+  }, [flashKey, keymapOverrides, onInsertSymbol]);
 
-  const handleQuickInsert = useCallback((payload: QuantumInsertPayload) => {
-    setLivePreviewLatex(payload.previewLatex ?? payload.latex);
-    onInsertSymbol(payload);
-  }, [onInsertSymbol]);
+  const handleKeySelect = useCallback((keyCode: string) => {
+    insertCandidateForKey(keyCode, candidatePrefix ?? 1, activeLayer);
+  }, [activeLayer, candidatePrefix, insertCandidateForKey]);
 
   const handleShiftKeySelect = useCallback((keyCode: string) => {
     const mapping = quantumKeymap[keyCode];
@@ -384,11 +397,25 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const handleSymbolSelect = useCallback((symbol: string) => {
     if (activeSymbolKey) {
       flashKey(activeSymbolKey);
+      setLastActionLabel(`${KEY_LABELS[activeSymbolKey] ?? activeSymbolKey} ${symbol}`);
     }
-    setLivePreviewLatex(symbol);
     onInsertSymbol(symbol);
     closeSymbolSelector();
   }, [activeSymbolKey, flashKey, onInsertSymbol, closeSymbolSelector]);
+
+  const handleVisualKeyClick = useCallback((event: React.MouseEvent, keyCode: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    inputRef.current?.focus();
+    handleKeySelect(keyCode);
+  }, [handleKeySelect]);
+
+  const handleVisualVariantClick = useCallback((event: React.MouseEvent, keyCode: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    inputRef.current?.focus();
+    handleShiftKeySelect(keyCode);
+  }, [handleShiftKeySelect]);
 
   const handleAddSymbol = useCallback((symbol: string) => {
     if (activeSymbolKey) {
@@ -531,18 +558,33 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
     const keyCode = event.code;
     
-    // Let modifier-only keys pass through
-    if (['ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 
-         'MetaLeft', 'MetaRight', 'ShiftLeft', 'ShiftRight'].includes(keyCode)) {
+    if (keyCode === 'ControlLeft' || keyCode === 'ControlRight') {
+      event.preventDefault();
+      setActiveLayer('ctrl');
       return;
     }
 
-    // Let Ctrl/Cmd/Alt shortcuts pass through
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (keyCode === 'ShiftLeft' || keyCode === 'ShiftRight') {
+      event.preventDefault();
+      setActiveLayer('base');
+      return;
+    }
+
+    // Let non-quantum modifier-only keys pass through
+    if (['AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'].includes(keyCode)) {
+      return;
+    }
+
+    if (event.ctrlKey && !event.metaKey && !event.altKey) {
+      setActiveLayer('ctrl');
+    }
+
+    if (event.metaKey || event.altKey) return;
 
     // Escape handling
     if (keyCode === 'Escape') {
       event.preventDefault();
+      setCandidatePrefix(null);
       if (activeSymbolKey) {
         closeSymbolSelector();
       } else {
@@ -589,6 +631,16 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
       }
     }
 
+    const digitMatch = /^Digit([1-9])$/.exec(keyCode);
+    if (digitMatch && (event.shiftKey || event.ctrlKey)) {
+      event.preventDefault();
+      const nextPrefix = Number(digitMatch[1]);
+      setCandidatePrefix(nextPrefix);
+      setActiveLayer(event.ctrlKey ? 'ctrl' : 'base');
+      setLastActionLabel(`${event.ctrlKey ? 'Ctrl' : 'Shift'} choice ${nextPrefix}`);
+      return;
+    }
+
     // Tab moves through MathLive placeholders. It never switches output format.
     if (keyCode === 'Tab') {
       event.preventDefault();
@@ -605,21 +657,30 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
     // Quantum keymap keys
     if (keyCode && quantumKeymap[keyCode]) {
       event.preventDefault();
-      if (event.shiftKey) {
-        handleShiftKeySelect(keyCode);
-      } else {
-        handleKeySelect(keyCode);
-      }
+      handleKeySelect(keyCode);
       return;
     }
 
     // Forward other keys to MathLive
+    setCandidatePrefix(null);
+    if (!event.ctrlKey) {
+      setActiveLayer('base');
+    }
     forwardKeyToMathField(event);
   }, [
     activeSymbolKey, highlightedIndex, closeSymbolSelector, closeHUD,
     navigateSymbol, selectSymbol, handleSymbolSelect, handleKeySelect,
-    handleShiftKeySelect, getSymbolsForActiveKey, toggleEditMode, forwardKeyToMathField,
+    getSymbolsForActiveKey, toggleEditMode, forwardKeyToMathField,
+    activeLayer, candidatePrefix,
   ]);
+
+  const handleKeyUp = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Control' || !event.ctrlKey) {
+      if (!candidatePrefix) {
+        setActiveLayer('base');
+      }
+    }
+  }, [candidatePrefix]);
 
   // ============================================================================
   // Focus Management
@@ -627,7 +688,9 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
 
   useEffect(() => {
     if (isOpen && inputRef.current) {
-      setTimeout(() => inputRef.current?.focus(), 50);
+      setTimeout(() => {
+        if (!isQuantumMathEditorFocused()) inputRef.current?.focus();
+      }, 50);
     }
   }, [isOpen]);
 
@@ -678,7 +741,9 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
     if (isOpen && inputRef.current) {
       setTimeout(() => {
         if (isProcessingEnterRef.current) return;
-        if (isOpen && inputRef.current) inputRef.current.focus();
+        if (isOpen && inputRef.current && !isQuantumMathEditorFocused()) {
+          inputRef.current.focus();
+        }
       }, 10);
     }
   }, [isOpen]);
@@ -701,13 +766,19 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
         <div
           className="quantum-hud-container"
           data-position={optimalPosition}
-          style={{ top: `${topPx + dragOffset.y}px`, left: `${leftPx + dragOffset.x}px` }}
+          style={{
+            top: `${safePosition.topPx}px`,
+            left: `${safePosition.leftPx}px`,
+            width: `${widthPx}px`,
+            maxHeight: `${maxHeightPx}px`,
+          }}
         >
           <input
             ref={inputRef}
             type="password"
             className="quantum-ime-blocker"
             onKeyDown={handleKeyDown}
+            onKeyUp={handleKeyUp}
             onBlur={handleBlur}
             onInput={handleInput}
             onChange={handleInput}
@@ -716,7 +787,7 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
             autoCapitalize="off"
             spellCheck={false}
             tabIndex={0}
-            aria-label="量子键盘输入"
+            aria-label={t("quantum.inputAria")}
           />
 
           <motion.div
@@ -729,22 +800,25 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
             initial={{
-              y: optimalPosition === 'top' ? -150 : 150,
+              x: 0,
+              y: optimalPosition === 'top' ? -24 : 24,
               opacity: 0,
-              scale: 0.3,
-              borderRadius: '50%',
+              scale: 0.96,
+              borderRadius: '18px',
             }}
             animate={{
+              x: 0,
               y: 0,
               opacity: 1,
               scale: 1,
-              borderRadius: '20px',
+              borderRadius: '18px',
             }}
             exit={{
-              y: optimalPosition === 'top' ? -120 : 120,
+              x: 0,
+              y: optimalPosition === 'top' ? -18 : 18,
               opacity: 0,
-              scale: 0.5,
-              borderRadius: '40px',
+              scale: 0.98,
+              borderRadius: '20px',
               transition: { type: "spring", stiffness: 400, damping: 30, mass: 0.8 }
             }}
             transition={{ 
@@ -756,150 +830,80 @@ export function KeyboardHUD({ onInsertSymbol }: KeyboardHUDProps) {
             style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
             role="dialog"
             aria-modal="true"
-            aria-label="Quantum Keyboard"
+            aria-label={t("quantum.dialogAria")}
           >
             {/* Drag Handle */}
             <div className="quantum-drag-handle" onPointerDown={(e) => dragControls.start(e)}>
               <GripHorizontal className="w-4 h-4 opacity-50" />
               <span className="quantum-position-label">
-                {optimalPosition === 'top' ? '↑ 上方' : '↓ 下方'}
+                {optimalPosition === 'top'
+                  ? t("quantum.position.top")
+                  : t("quantum.position.bottom")}
               </span>
               {customOffset && (customOffset.x !== 0 || customOffset.y !== 0) && (
-                <button className="quantum-reset-btn" onClick={handleResetPosition} title="重置位置">
+                <button className="quantum-reset-btn" onClick={handleResetPosition} title={t("quantum.resetPosition")}>
                   <RotateCcw className="w-3 h-3" />
                 </button>
               )}
-              <button
-                className="quantum-reset-btn ml-auto"
-                onClick={(e) => { e.stopPropagation(); setShowHelp(v => !v); }}
-                title="快捷键帮助"
-                onPointerDown={(e) => e.stopPropagation()}
-              >
-                <span className="text-[11px] font-bold leading-none">?</span>
-              </button>
             </div>
 
             {/* Content */}
             <div className="quantum-content">
-              <div className="quantum-header">
-                <div className="quantum-title-group">
-                  <div className="quantum-title">量子键盘</div>
-                  <div className="quantum-subtitle">
-                    自动适配当前编辑格式，物理键盘优先
-                  </div>
-                </div>
-                <div className="quantum-controls">
-                  <div className="quantum-toggle-group" aria-label="公式范围">
-                    <button
-                      type="button"
-                      className="quantum-toggle"
-                      onClick={(event) => event.preventDefault()}
-                    >
-                      行内
-                    </button>
-                    <button
-                      type="button"
-                      className="quantum-toggle"
-                      onClick={(event) => event.preventDefault()}
-                    >
-                      块级
-                    </button>
-                  </div>
-                  <div className="quantum-toggle-group" aria-label="输出格式">
-                    <button
-                      type="button"
-                      className="quantum-toggle"
-                      onClick={(event) => event.preventDefault()}
-                    >
-                      MD
-                    </button>
-                    <button
-                      type="button"
-                      className="quantum-toggle"
-                      onClick={(event) => event.preventDefault()}
-                    >
-                      TeX
-                    </button>
-                  </div>
-                </div>
+              <div className="quantum-ime-bar" aria-label="Formula keyboard status" data-layer={activeLayer}>
+                <span className="quantum-structure" title={lastActionLabel}>
+                  Shift/Ctrl + number + letter
+                </span>
+                <span className={candidatePrefix ? "quantum-prefix is-active" : "quantum-prefix"}>
+                  {candidatePrefix ? `${activeLayer === 'ctrl' ? 'Ctrl' : 'Shift'}+${candidatePrefix}` : activeLayer === 'ctrl' ? "Ctrl" : "A-Z"}
+                </span>
               </div>
 
-              <div className="quantum-quick-strip" aria-label="常用公式结构">
-                <div className="quantum-status-row" aria-label="量子键盘状态">
-                  <span className="quantum-status-pill">Auto</span>
-                  <span className="quantum-status-pill">Live</span>
-                  <span className="quantum-status-pill">Keyboard</span>
-                </div>
-
-                <div className="quantum-live-preview" aria-live="polite">
-                  <div className="quantum-live-preview-label">实时公式</div>
+              <div className="quantum-letter-board" aria-label="Quantum letter keyboard">
+                {QWERTY_LAYOUT.map((row) => (
                   <div
-                    className="quantum-live-preview-formula"
-                    dangerouslySetInnerHTML={{ __html: renderedLivePreview }}
-                  />
-                </div>
-
-                {quickStructures.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className="quantum-quick-button"
-                    onClick={() => handleQuickInsert({
-                      latex: item.latex,
-                      mathLiveLatex: item.mathLiveLatex,
-                      displayMode: item.displayMode,
-                      previewLatex: item.preview,
-                    })}
-                    title={item.label}
+                    key={row.keys.join("-")}
+                    className="quantum-letter-row"
+                    style={{ paddingLeft: `${row.offset * 2.25}rem` }}
                   >
-                    <span
-                      className="quantum-quick-symbol"
-                      dangerouslySetInnerHTML={{ __html: item.html }}
-                    />
-                    <span className="quantum-quick-label">{item.label}</span>
-                  </button>
+                    {row.keys.map((keyCode) => {
+                      const mapping = quantumKeymap[keyCode];
+                      const keyLabel = KEY_LABELS[keyCode] ?? keyCode.replace(/^Key/, "");
+                      const candidates = getEffectiveQuantumLayerMeanings(
+                        keyCode,
+                        activeLayer,
+                        keymapOverrides,
+                      ).slice(0, 5);
+                      const activeChoice = candidatePrefix
+                        ? candidates[Math.max(0, Math.min(candidatePrefix - 1, candidates.length - 1))]?.label
+                        : candidates[0]?.label ?? mapping.label ?? getCandidateLabel(keyCode, 1);
+
+                      return (
+                        <button
+                          key={keyCode}
+                          type="button"
+                          data-testid="quantum-letter-key"
+                          data-keycode={keyCode}
+                          data-layer={activeLayer}
+                          className={candidatePrefix ? "quantum-letter-key is-prefixed" : "quantum-letter-key"}
+                          onClick={(event) => handleVisualKeyClick(event, keyCode)}
+                          onContextMenu={(event) => handleVisualVariantClick(event, keyCode)}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          title={`${keyLabel}: ${mapping.title ?? mapping.label ?? mapping.default}`}
+                          aria-label={`${keyLabel}: ${mapping.title ?? mapping.label ?? mapping.default}`}
+                        >
+                          <span className="quantum-letter-physical">{keyLabel}</span>
+                          <span className="quantum-letter-action">{activeChoice}</span>
+                          <span className="quantum-letter-candidates" aria-hidden="true">
+                            {candidates.map((meaning, index) => (
+                              <span key={`${keyCode}-${meaning.id}-${index}`}>{meaning.label}</span>
+                            ))}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 ))}
               </div>
-
-              <div className="quantum-mode-indicator">
-                {mode === 'symbol-selector' ? `${activeKeyLabel} 变体` : '按键插入 · Shift 打开变体'}
-              </div>
-
-              <ShadowKeyboard
-                isShiftHeld={false}
-                flashingKey={flashingKey}
-                onKeySelect={handleKeySelect}
-                onShiftKeySelect={handleShiftKeySelect}
-                keycapRefs={keycapRefs}
-                activeKey={activeSymbolKey}
-              />
-
-              <div className="quantum-hint">
-                {mode === 'symbol-selector'
-                  ? '方向键/空格选择 · Enter 确认 · Esc 返回'
-                  : 'Tab/Shift+Tab 跳转公式占位 · Shift+键看变体 · Esc 关闭'}
-              </div>
-
-              {showHelp && (
-                <div className="quantum-help-panel">
-                  <div className="quantum-help-title">低冲突编辑器快捷键</div>
-                  <div className="quantum-help-grid">
-                    <span className="quantum-help-label">行内公式</span><kbd className="quantum-help-kbd">Ctrl+Shift+M</kbd>
-                    <span className="quantum-help-label">块级公式</span><kbd className="quantum-help-kbd">Ctrl+Alt+M</kbd>
-                    <span className="quantum-help-label">打开量子键盘</span><kbd className="quantum-help-kbd">Tab Tab</kbd>
-                  </div>
-                  <div className="quantum-help-title" style={{ marginTop: '6px' }}>量子键盘</div>
-                  <div className="quantum-help-grid">
-                    <span className="quantum-help-label">分数 / 根号</span><kbd className="quantum-help-kbd">F/4 · 3</kbd>
-                    <span className="quantum-help-label">求和 / 积分 / 极限</span><kbd className="quantum-help-kbd">S/5 · I/6 · 7</kbd>
-                    <span className="quantum-help-label">矩阵 / 分段 / 向量</span><kbd className="quantum-help-kbd">M/X · B · V</kbd>
-                    <span className="quantum-help-label">下一占位</span><kbd className="quantum-help-kbd">Tab</kbd>
-                    <span className="quantum-help-label">上一占位</span><kbd className="quantum-help-kbd">Shift+Tab</kbd>
-                    <span className="quantum-help-label">符号变体</span><kbd className="quantum-help-kbd">Shift+键</kbd>
-                    <span className="quantum-help-label">关闭</span><kbd className="quantum-help-kbd">Esc</kbd>
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Symbol Selector */}

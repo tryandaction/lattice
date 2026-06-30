@@ -1,12 +1,12 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import {
   Bot,
   BookOpen,
-  Command,
   RefreshCcw,
   Settings,
+  SquareTerminal,
   X,
   Zap,
 } from "lucide-react";
@@ -16,6 +16,7 @@ import { useAiChatStore } from "@/stores/ai-chat-store";
 import { getRegisteredCommands, subscribePluginRegistry } from "@/lib/plugins/runtime";
 import type { PluginCommand } from "@/lib/plugins/types";
 import { cn } from "@/lib/utils";
+import { UI_MODAL_OVERLAY_CLASS, UI_MODAL_OVERLAY_STYLE, UI_MODAL_PANEL_CLASS } from "@/lib/ui-layers";
 import {
   listResearchAgentWorkflows,
   type ResearchAgentWorkflowId,
@@ -101,7 +102,7 @@ function getCategoryLabel(category: CommandCategory, language: string): string {
   const isZh = language !== "en-US";
   switch (category) {
     case "ai":
-      return isZh ? "AI" : "AI";
+      return "AI";
     case "system":
       return isZh ? "系统" : "System";
     case "docs":
@@ -210,7 +211,7 @@ function buildBuiltinCommands(input: {
       title: isZh
         ? (input.aiChatOpen ? "关闭 AI Chat 面板" : "打开 AI Chat 面板")
         : (input.aiChatOpen ? "Close AI Chat Panel" : "Open AI Chat Panel"),
-      description: isZh ? "切换右侧 AI 对话面板" : "Toggle the right-side AI chat panel.",
+      description: isZh ? "切换右侧 AI 对话面板。" : "Toggle the right-side AI chat panel.",
       source: "core",
       category: "ai",
       priority: 10,
@@ -222,9 +223,7 @@ function buildBuiltinCommands(input: {
     },
     ...listResearchAgentWorkflows().map((workflow, index): CommandItem => ({
       id: `core.research-agent.workflow.${workflow.id}`,
-      title: isZh
-        ? `Research Agent: ${workflow.title}`
-        : `Research Agent: ${workflow.title}`,
+      title: `Research Agent: ${workflow.title}`,
       description: workflow.description,
       source: "core",
       category: "ai",
@@ -246,7 +245,7 @@ function buildBuiltinCommands(input: {
     {
       id: "core.open-settings",
       title: isZh ? "打开设置" : "Open Settings",
-      description: isZh ? "进入应用设置面板" : "Open the application settings panel.",
+      description: isZh ? "进入应用设置面板。" : "Open the application settings panel.",
       source: "core",
       category: "system",
       priority: 12,
@@ -259,7 +258,7 @@ function buildBuiltinCommands(input: {
     {
       id: "core.open-plugin-panels",
       title: isZh ? "打开插件中心" : "Open Plugin Center",
-      description: isZh ? "打开右侧插件面板与工具中心" : "Open the right-side plugin panel center.",
+      description: isZh ? "打开插件面板与工具中心。" : "Open the plugin panel center.",
       source: "core",
       category: "system",
       priority: 14,
@@ -271,8 +270,8 @@ function buildBuiltinCommands(input: {
     },
     {
       id: "core.open-live-preview-guide",
-      title: isZh ? "打开使用指南" : "Open User Guide",
-      description: isZh ? "查看产品说明与桌面使用指南" : "Open the product user guide.",
+      title: isZh ? "打开用户指南" : "Open User Guide",
+      description: isZh ? "查看产品说明与桌面使用指南。" : "Open the product user guide.",
       source: "core",
       category: "docs",
       priority: 18,
@@ -283,6 +282,10 @@ function buildBuiltinCommands(input: {
       },
     },
   ];
+}
+
+function stopDialogPropagation(event: SyntheticEvent) {
+  event.stopPropagation();
 }
 
 export function PluginCommandDialog({
@@ -334,8 +337,8 @@ export function PluginCommandDialog({
           source: "plugin" as const,
           category: "plugin" as const,
           description: language === "en-US"
-            ? `Plugin command · ${command.id}`
-            : `插件命令 · ${command.id}`,
+            ? `Plugin command - ${command.id}`
+            : `\u63d2\u4ef6\u547d\u4ee4 - ${command.id}`,
           keywords: [command.id, command.shortcut ?? ""],
           priority: 80,
         }))
@@ -473,7 +476,11 @@ export function PluginCommandDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[180] flex items-start justify-center overflow-y-auto px-4 pb-4 pt-6 md:pt-20"
+      className={cn(
+        UI_MODAL_OVERLAY_CLASS,
+        "flex items-start justify-center overflow-y-auto px-4 pb-4 pt-6 md:pt-20",
+      )}
+      style={UI_MODAL_OVERLAY_STYLE}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           handleClose();
@@ -495,11 +502,23 @@ export function PluginCommandDialog({
         }
       }}
     >
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={handleClose} />
-      <div className="relative z-10 flex w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]">
+      <div className="absolute inset-0" onClick={handleClose} />
+      <div
+        className={cn(
+          "flex w-full max-w-3xl flex-col overflow-hidden rounded-xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]",
+          UI_MODAL_PANEL_CLASS,
+        )}
+        onPointerDown={stopDialogPropagation}
+        onMouseDown={stopDialogPropagation}
+        onClick={stopDialogPropagation}
+        onDoubleClick={stopDialogPropagation}
+        onContextMenu={stopDialogPropagation}
+        onWheel={stopDialogPropagation}
+        onDragStart={stopDialogPropagation}
+      >
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <div className="flex items-center gap-2">
-            <Command className="h-4 w-4 text-muted-foreground" />
+            <SquareTerminal className="h-4 w-4 text-muted-foreground" />
             <div>
               <h2 className="text-base font-semibold">{t("commands.title")}</h2>
               <p className="text-xs text-muted-foreground">{getCommandDialogDescription(language)}</p>

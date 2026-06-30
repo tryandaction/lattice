@@ -24,13 +24,13 @@ interface ReferenceBrowserProps {
 function iconForNode(node: ReferenceBrowserNode) {
   switch (node.kind) {
     case "selection":
-      return <TextSelect className="h-3.5 w-3.5 text-blue-500 shrink-0" />;
+      return <TextSelect className="h-3.5 w-3.5 shrink-0 text-blue-500" />;
     case "group":
-      return <Link2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />;
+      return <Link2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
     case "file":
-      return <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />;
+      return <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
     default:
-      return <Hash className="h-3.5 w-3.5 text-amber-500 shrink-0" />;
+      return <Hash className="h-3.5 w-3.5 shrink-0 text-amber-500" />;
   }
 }
 
@@ -97,7 +97,11 @@ function ReferenceBrowserNodeRow({
                 ) : null}
               </div>
               {isGroup ? (
-                isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                isExpanded ? (
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                )
               ) : null}
             </button>
             {renderNodeActions ? (
@@ -135,7 +139,7 @@ function ReferenceBrowserNodeRow({
 export function ReferenceBrowser({
   nodes,
   activeNodeId = null,
-  emptyLabel = "当前没有可浏览的引用项。",
+  emptyLabel = "No references to browse.",
   headerTitle,
   headerSubtitle,
   onActivateNode,
@@ -153,7 +157,7 @@ export function ReferenceBrowser({
         <div className="border-b border-border/50 px-1 pb-2">
           <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{headerTitle}</div>
           {headerSubtitle ? (
-            <div className="mt-1 text-xs text-foreground truncate">{headerSubtitle}</div>
+            <div className="mt-1 truncate text-xs text-foreground">{headerSubtitle}</div>
           ) : null}
         </div>
       ) : null}

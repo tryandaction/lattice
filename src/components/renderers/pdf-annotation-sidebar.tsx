@@ -1035,12 +1035,29 @@ function AnnotationCard({
     }
   }, [isMultiSelectMode, onSelect, onToggleMultiSelect]);
 
+  const syncTextareaHeight = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.max(120, textarea.scrollHeight)}px`;
+  }, []);
+
   useEffect(() => {
     if (isEditing && textareaRef.current) {
       textareaRef.current.focus();
       textareaRef.current.select();
+      syncTextareaHeight();
     }
-  }, [isEditing]);
+  }, [isEditing, syncTextareaHeight]);
+
+  useEffect(() => {
+    if (isEditing && !showPreview) {
+      syncTextareaHeight();
+    }
+  }, [editComment, isEditing, showPreview, syncTextareaHeight]);
 
   const getTypeIcon = () => {
     switch (annotation.style.type) {
@@ -1180,13 +1197,14 @@ function AnnotationCard({
               }}
             >
               <span 
+                data-testid={`pdf-annotation-quote-${annotation.id}`}
                 style={{ 
                   color: textStyle.textColor,
                   fontSize: `${Math.min(textStyle.fontSize || 14, 16)}px`,
                   fontWeight: textStyle.fontWeight || 'normal',
                   fontStyle: textStyle.fontStyle || 'normal',
                 }}
-                className="line-clamp-3"
+                className="whitespace-pre-wrap break-words"
               >
                 {quoteText}
               </span>
@@ -1201,7 +1219,9 @@ function AnnotationCard({
                 backgroundColor: `${annotation.style.color}30`,
               }}
             >
-              <span className="line-clamp-3">{getPreviewText()}</span>
+              <span data-testid={`pdf-annotation-quote-${annotation.id}`} className="whitespace-pre-wrap break-words">
+                {getPreviewText()}
+              </span>
             </div>
           )}
 
@@ -1215,7 +1235,7 @@ function AnnotationCard({
               <img
                 src={imagePreview.dataUrl}
                 alt={t("pdf.sidebar.previewImageAlt", { page })}
-                className="block max-h-40 min-h-20 w-full object-contain"
+                className="block min-h-20 w-full object-contain"
                 loading="lazy"
               />
             </div>
@@ -1247,7 +1267,7 @@ function AnnotationCard({
                   </div>
 
                   {showPreview ? (
-                    <div className="min-h-[48px] max-h-40 overflow-y-auto rounded border border-border bg-background px-2 py-1.5">
+                    <div className="min-h-[48px] overflow-x-auto rounded border border-border bg-background px-2 py-1.5">
                       {editComment.trim() ? (
                         <AnnotationMarkdownRenderer
                           content={editComment}
@@ -1262,10 +1282,11 @@ function AnnotationCard({
                   ) : (
                     <textarea
                       ref={textareaRef}
+                      data-testid={`pdf-annotation-comment-editor-${annotation.id}`}
                       value={editComment}
                       onChange={(e) => setEditComment(e.target.value)}
-                      className="w-full p-2 text-xs border border-border rounded bg-background resize-none focus:outline-none focus:ring-1 focus:ring-primary font-mono"
-                      rows={3}
+                      className="w-full min-h-[120px] p-2 text-xs leading-relaxed border border-border rounded bg-background resize-y overflow-hidden focus:outline-none focus:ring-1 focus:ring-primary font-mono"
+                      rows={6}
                       placeholder={t("pdf.sidebar.commentPlaceholder")}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -1312,7 +1333,7 @@ function AnnotationCard({
                   }}
                 >
                   <MessageSquare className="h-3 w-3 mt-0.5 flex-shrink-0 text-muted-foreground" />
-                  <div className="flex-1 min-w-0 max-h-24 overflow-y-auto">
+                  <div data-testid={`pdf-annotation-comment-${annotation.id}`} className="min-w-0 flex-1 overflow-x-auto">
                     <AnnotationMarkdownRenderer
                       content={annotation.comment}
                       paneId={paneId}

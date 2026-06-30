@@ -13,19 +13,10 @@ export function exportFormulaResultsAsLatex(formulas: ExtractedFormula[]): strin
   return formulas.map((formula) => formula.latex).filter(Boolean).join("\n\n");
 }
 
-export function exportFormulaResultsAsJson(formulas: ExtractedFormula[]): string {
-  return JSON.stringify(
-    formulas.map((formula) => ({
-      source: formula.source,
-      page: formula.page,
-      confidence: formula.confidence,
-      bbox: formula.bbox,
-      latex: formula.latex,
-      rawText: formula.rawText,
-      context: formula.context,
-      needsReview: formula.needsReview,
-    })),
-    null,
-    2,
-  );
+export function exportFormulaAsMarkdown(formula: ExtractedFormula): string {
+  return wrapLatexForMarkdown(formula.latex, formula.displayMode);
+}
+
+export function exportFormulaAsLatex(formula: ExtractedFormula): string {
+  return formula.latex;
 }

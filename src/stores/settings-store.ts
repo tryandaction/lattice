@@ -276,6 +276,9 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   assignIfDefined('recentWorkspaceKeys', rawStringArray(raw.recentWorkspaceKeys)?.slice(0, MAX_RECENT_WORKSPACES));
   assignIfDefined('workspaceDisplayPaths', stringRecord(raw.workspaceDisplayPaths));
   if (typeof raw.rememberWindowState === 'boolean') normalized.rememberWindowState = raw.rememberWindowState;
+  if (raw.pdfExternalLinkOpenMode === 'internal' || raw.pdfExternalLinkOpenMode === 'browser') {
+    normalized.pdfExternalLinkOpenMode = raw.pdfExternalLinkOpenMode;
+  }
   if (raw.activityView === 'files' || raw.activityView === 'annotations' || raw.activityView === 'search') {
     normalized.activityView = raw.activityView;
   }

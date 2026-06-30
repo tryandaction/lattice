@@ -812,6 +812,32 @@ function formatPdfAnnotationMarkdownLabel(
   );
 }
 
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function buildPdfAnnotationMetadataComment(annotation: AnnotationItem): string {
+  const page = annotation.target.type === "pdf" ? annotation.target.page : "";
+  return [
+    "<!-- lattice-pdf-annotation",
+    `id="${escapeHtmlAttribute(annotation.id)}"`,
+    `page="${escapeHtmlAttribute(String(page))}"`,
+    `type="${escapeHtmlAttribute(annotation.style.type)}"`,
+    `color="${escapeHtmlAttribute(annotation.style.color)}"`,
+    "-->",
+  ].join(" ");
+}
+
+function buildPdfAnnotationColorChip(annotation: AnnotationItem): string {
+  const color = escapeHtmlAttribute(annotation.style.color);
+  const type = escapeHtmlAttribute(annotation.style.type);
+  return `<span class="lattice-pdf-annotation-chip" data-color="${color}" data-type="${type}">${getAnnotationTypeLabel(annotation)}</span>`;
+}
+
 function getAnnotationTypeLabel(annotation: AnnotationItem): string {
   switch (annotation.style.type) {
     case "highlight":
@@ -849,7 +875,27 @@ function buildAnnotationPreviewMarkdown(
   const alt = `${getAnnotationTypeLabel(annotation)} ${labels.screenshot} ${annotation.id} ${translate("pdf.sidebar.page", { page })}`;
   const details = formatPdfAnnotationMarkdownLabel(labels.screenshotDetails, { page, width, height });
   const previewSource = previewPathByAnnotationId?.[annotation.id] ?? annotation.preview.dataUrl;
-  return `![${alt}](${previewSource})\n\n  _${details}_`;
+  return `![${alt}](${previewSource})\n\n_${details}_`;
+}
+
+function buildAnnotationQuoteMarkdown(annotation: AnnotationItem): string | null {
+  const canonicalText = getCanonicalPdfAnnotationText(annotation) ?? "";
+  const rawContent = typeof annotation.content === "string" ? annotation.content.trim() : "";
+  const quoteText = rawContent.includes("\n") ? rawContent : canonicalText;
+  const normalized = quoteText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  return normalized.map((line) => `> ${line}`).join("\n");
+}
+
+function buildAnnotationCommentMarkdown(annotation: AnnotationItem): string | null {
+  const comment = annotation.comment?.trim();
+  return comment ? comment : null;
 }
 
 export function buildPdfAnnotationsMarkdown(input: {
@@ -861,6 +907,7 @@ export function buildPdfAnnotationsMarkdown(input: {
 }): string {
   const locale = getLocale();
   const labels = getPdfAnnotationsMarkdownLabels();
+  const openAnnotationLabel = locale === "zh-CN" ? "打开批注" : "Open annotation";
   const currentFilePath = input.manifest.annotationIndexPath ?? getPdfItemAnnotationIndexPath(input.manifest.itemFolderPath);
   const relativePdfPath = buildRelativePdfLink(currentFilePath, input.manifest.pdfPath);
   const pdfAnnotations = input.annotations
@@ -913,20 +960,32 @@ export function buildPdfAnnotationsMarkdown(input: {
 
     const backlinks = input.backlinksByAnnotation?.[annotation.id] ?? [];
     lines.push(`### ${index + 1}. ${getAnnotationTypeLabel(annotation)}`);
-    lines.push(`- ${labels.pageLink}: [${translate("pdf.sidebar.page", { page: annotation.target.page })}](${relativePdfPath}#page=${annotation.target.page})`);
-    lines.push(`- ${labels.annotationLink}: [${annotation.id}](${relativePdfPath}#annotation=${annotation.id})`);
-    const quoteText = getCanonicalPdfAnnotationText(annotation);
-    if (quoteText) {
-      lines.push(`- ${labels.quote}: ${quoteText}`);
+    lines.push(buildPdfAnnotationMetadataComment(annotation));
+    lines.push(buildPdfAnnotationColorChip(annotation));
+    lines.push("");
+    lines.push(`[${translate("pdf.sidebar.page", { page: annotation.target.page })}](${relativePdfPath}#page=${annotation.target.page}) | [${openAnnotationLabel}](${relativePdfPath}#annotation=${annotation.id})`);
+    const quoteMarkdown = buildAnnotationQuoteMarkdown(annotation);
+    if (quoteMarkdown) {
+      lines.push("");
+      lines.push(`#### ${labels.quote}`);
+      lines.push("");
+      lines.push(quoteMarkdown);
     }
-    if (annotation.comment?.trim()) {
-      lines.push(`- ${labels.comment}: ${annotation.comment.trim()}`);
+    const commentMarkdown = buildAnnotationCommentMarkdown(annotation);
+    if (commentMarkdown) {
+      lines.push("");
+      lines.push(`#### ${labels.comment}`);
+      lines.push("");
+      lines.push(commentMarkdown);
     }
     const previewMarkdown = buildAnnotationPreviewMarkdown(annotation, input.previewPathByAnnotationId);
     if (previewMarkdown) {
-      lines.push(`- ${labels.screenshot}:`);
-      lines.push(`  ${previewMarkdown.replace(/\n/g, "\n  ")}`);
+      lines.push("");
+      lines.push(`#### ${labels.screenshot}`);
+      lines.push("");
+      lines.push(previewMarkdown);
     }
+    lines.push("");
     lines.push(`- ${labels.created}: ${new Date(annotation.createdAt).toLocaleString(locale)}`);
     if (backlinks.length > 0) {
       lines.push(`- ${labels.backlinks}: ${backlinks.length}`);

@@ -10,7 +10,7 @@
  */
 
 import { EditorView } from '@codemirror/view';
-import { normalizeFormulaInput, wrapLatexForMarkdown } from '@/lib/formula-utils';
+import { findFormulaFillPosition, normalizeFormulaInput, wrapLatexForMarkdown } from '@/lib/formula-utils';
 
 // ============================================================================
 // Types
@@ -23,10 +23,28 @@ export interface UnifiedInputTarget {
   element: HTMLElement;
   insertText: (text: string) => void;
   insertLatex: (latex: string) => void;
+  insertFormula?: (payload: FormulaInsertPayload) => FormulaInsertResult;
   insertMathLiveLatex?: (latex: string) => void;
   wrapSelection: (before: string, after: string) => void;
   getSelection: () => { from: number; to: number; text: string };
   focus: () => void;
+}
+
+export interface FormulaInsertPayload {
+  latex: string;
+  displayMode?: boolean;
+  format?: 'latex' | 'markdown';
+  mathLiveLatex?: string;
+}
+
+export interface FormulaInsertResult {
+  handled: boolean;
+  targetType: InputTargetType | null;
+  from?: number;
+  to?: number;
+  latex?: string;
+  markdown?: string;
+  displayMode?: boolean;
 }
 
 type CodeMirrorContentElement = HTMLElement & {
@@ -35,7 +53,7 @@ type CodeMirrorContentElement = HTMLElement & {
 
 type MathLiveElement = HTMLElement & {
   executeCommand?: (command: unknown) => void;
-  insert?: (value: string) => void;
+  insert?: (value: string, options?: Record<string, unknown>) => void;
   selection?: { ranges?: Array<[number, number]> };
   value?: string;
   focus?: () => void;
@@ -69,25 +87,79 @@ export function toMathLivePlaceholders(latex: string): string {
     .replace(/_\{\s+\}/g, "_{\\placeholder{}}");
 }
 
-function findFirstFillPosition(text: string): number | null {
-  const candidates = ["{}", "{ }", "[]", "[ ]"];
-  const positions = candidates
-    .map((marker) => {
-      const index = text.indexOf(marker);
-      return index >= 0 ? index + 1 : null;
-    })
-    .filter((position): position is number => position !== null);
-  if (positions.length === 0) return null;
-  return Math.min(...positions);
+function insertIntoMathLive(mathField: MathLiveElement, latex: string): void {
+  if (mathField.executeCommand) {
+    mathField.executeCommand(['insert', latex]);
+    mathField.executeCommand('moveToNextPlaceholder');
+    return;
+  }
+
+  if (mathField.insert) {
+    mathField.insert(latex, {
+      insertionMode: 'insertAfter',
+      selectionMode: 'after',
+    });
+  }
 }
 
 function insertTextIntoCodeMirror(view: EditorView, text: string): void {
   const { from, to } = view.state.selection.main;
-  const fillOffset = findFirstFillPosition(text);
+  const fillOffset = findFormulaFillPosition(text);
   view.dispatch({
     changes: { from, to, insert: text },
     selection: { anchor: from + (fillOffset ?? text.length) },
   });
+}
+
+function insertFormulaIntoCodeMirror(
+  view: EditorView,
+  payload: FormulaInsertPayload
+): FormulaInsertResult {
+  const { from, to } = view.state.selection.main;
+  const normalized = normalizeFormulaInput(payload.latex, { preferDisplay: payload.displayMode });
+  const displayMode = payload.displayMode ?? normalized.displayMode;
+  const format = payload.format ?? 'markdown';
+  const markdown = format === 'markdown'
+    ? wrapLatexForMarkdown(normalized.latex, displayMode)
+    : normalized.latex;
+
+  if (!markdown) {
+    return { handled: false, targetType: 'codemirror' };
+  }
+
+  const insertedFrom = from;
+  const insertedTo = from + markdown.length;
+  const fillOffset = findFormulaFillPosition(markdown);
+
+  view.dispatch({
+    changes: { from, to, insert: markdown },
+    selection: { anchor: from + (fillOffset ?? markdown.length) },
+  });
+
+  if (format === 'markdown') {
+    queueMicrotask(() => {
+      view.dom.dispatchEvent(new CustomEvent('quantum-formula-inserted', {
+        bubbles: true,
+        detail: {
+          from: insertedFrom,
+          to: insertedTo,
+          latex: normalized.latex,
+          markdown,
+          displayMode,
+        },
+      }));
+    });
+  }
+
+  return {
+    handled: true,
+    targetType: 'codemirror',
+    from: insertedFrom,
+    to: insertedTo,
+    latex: normalized.latex,
+    markdown,
+    displayMode,
+  };
 }
 
 /**
@@ -228,12 +300,13 @@ function createCodeMirrorTargetFromView(element: HTMLElement, view: EditorView):
       // For CodeMirror, wrap LaTeX in $ delimiters
       const { from, to } = view.state.selection.main;
       const wrappedLatex = `$${latex}$`;
-      const fillOffset = findFirstFillPosition(wrappedLatex);
+      const fillOffset = findFormulaFillPosition(wrappedLatex);
       view.dispatch({
         changes: { from, to, insert: wrappedLatex },
         selection: { anchor: from + (fillOffset ?? wrappedLatex.length) },
       });
     },
+    insertFormula: (payload: FormulaInsertPayload) => insertFormulaIntoCodeMirror(view, payload),
     wrapSelection: (before: string, after: string) => {
       const { from, to } = view.state.selection.main;
       const selectedText = view.state.sliceDoc(from, to);
@@ -276,12 +349,17 @@ function createMathLiveTarget(element: HTMLElement): UnifiedInputTarget {
     insertLatex: (latex: string) => {
       // For MathLive, insert LaTeX directly
       const mathLiveLatex = toMathLivePlaceholders(latex);
-      if (mathField.executeCommand) {
-        mathField.executeCommand(['insert', mathLiveLatex]);
-        mathField.executeCommand('moveToNextPlaceholder');
-      } else if (mathField.insert) {
-        mathField.insert(mathLiveLatex);
-      }
+      insertIntoMathLive(mathField, mathLiveLatex);
+    },
+    insertFormula: (payload: FormulaInsertPayload) => {
+      const normalized = normalizeFormulaInput(payload.latex, { preferDisplay: payload.displayMode });
+      insertIntoMathLive(mathField, payload.mathLiveLatex ?? toMathLivePlaceholders(normalized.latex));
+      return {
+        handled: true,
+        targetType: 'mathlive',
+        latex: normalized.latex,
+        displayMode: payload.displayMode ?? normalized.displayMode,
+      };
     },
     insertMathLiveLatex: (latex: string) => {
       if (mathField.executeCommand) {
@@ -324,19 +402,47 @@ function createTextareaTarget(element: HTMLTextAreaElement): UnifiedInputTarget 
       const start = element.selectionStart;
       const end = element.selectionEnd;
       const value = element.value;
+      const fillOffset = findFormulaFillPosition(text);
       element.value = value.slice(0, start) + text + value.slice(end);
-      element.selectionStart = element.selectionEnd = start + text.length;
+      element.selectionStart = element.selectionEnd = start + (fillOffset ?? text.length);
       element.dispatchEvent(new Event('input', { bubbles: true }));
     },
     insertLatex: (latex: string) => {
       // For textarea, wrap LaTeX in $ delimiters
       const wrappedLatex = `$${latex}$`;
+      const fillOffset = findFormulaFillPosition(wrappedLatex);
       const start = element.selectionStart;
       const end = element.selectionEnd;
       const value = element.value;
       element.value = value.slice(0, start) + wrappedLatex + value.slice(end);
-      element.selectionStart = element.selectionEnd = start + wrappedLatex.length;
+      element.selectionStart = element.selectionEnd = start + (fillOffset ?? wrappedLatex.length);
       element.dispatchEvent(new Event('input', { bubbles: true }));
+    },
+    insertFormula: (payload: FormulaInsertPayload) => {
+      const normalized = normalizeFormulaInput(payload.latex, { preferDisplay: payload.displayMode });
+      const displayMode = payload.displayMode ?? normalized.displayMode;
+      const format = payload.format ?? 'markdown';
+      const text = format === 'markdown'
+        ? wrapLatexForMarkdown(normalized.latex, displayMode)
+        : normalized.latex;
+      if (!text) return { handled: false, targetType: 'textarea' };
+
+      const start = element.selectionStart;
+      const end = element.selectionEnd;
+      const value = element.value;
+      const fillOffset = findFormulaFillPosition(text);
+      element.value = value.slice(0, start) + text + value.slice(end);
+      element.selectionStart = element.selectionEnd = start + (fillOffset ?? text.length);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+      return {
+        handled: true,
+        targetType: 'textarea',
+        from: start,
+        to: start + text.length,
+        latex: normalized.latex,
+        markdown: text,
+        displayMode,
+      };
     },
     wrapSelection: (before: string, after: string) => {
       const start = element.selectionStart;
@@ -387,6 +493,33 @@ function createContentEditableTarget(element: HTMLElement): UnifiedInputTarget {
       range.insertNode(document.createTextNode(wrappedLatex));
       range.collapse(false);
       element.dispatchEvent(new Event('input', { bubbles: true }));
+    },
+    insertFormula: (payload: FormulaInsertPayload) => {
+      const normalized = normalizeFormulaInput(payload.latex, { preferDisplay: payload.displayMode });
+      const displayMode = payload.displayMode ?? normalized.displayMode;
+      const format = payload.format ?? 'markdown';
+      const text = format === 'markdown'
+        ? wrapLatexForMarkdown(normalized.latex, displayMode)
+        : normalized.latex;
+      if (!text) return { handled: false, targetType: 'contenteditable' };
+
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) {
+        return { handled: false, targetType: 'contenteditable' };
+      }
+
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(text));
+      range.collapse(false);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+      return {
+        handled: true,
+        targetType: 'contenteditable',
+        latex: normalized.latex,
+        markdown: text,
+        displayMode,
+      };
     },
     wrapSelection: (before: string, after: string) => {
       const selection = window.getSelection();
@@ -514,31 +647,59 @@ export function insertLatexAtCursor(
   latex: string,
   options: { displayMode?: boolean; format?: 'latex' | 'markdown'; mathLiveLatex?: string } = {}
 ): boolean {
-  const target = getActiveInputTarget() || getLastActiveInputTarget();
-  if (!target) return false;
+  return insertFormulaAtCursor({ latex, ...options }).handled;
+}
 
-  const normalized = normalizeFormulaInput(latex, { preferDisplay: options.displayMode });
-  const displayMode = options.displayMode ?? normalized.displayMode;
+/**
+ * Insert a formula and return metadata about where it landed.
+ */
+export function insertFormulaAtCursor(payload: FormulaInsertPayload): FormulaInsertResult {
+  const target = getActiveInputTarget() || getLastActiveInputTarget();
+  if (!target) return { handled: false, targetType: null };
+
+  if (target.insertFormula) {
+    return target.insertFormula(payload);
+  }
 
   if (target.type === 'mathlive') {
-    if (options.mathLiveLatex && target.insertMathLiveLatex) {
-      target.insertMathLiveLatex(options.mathLiveLatex);
+    const normalized = normalizeFormulaInput(payload.latex, { preferDisplay: payload.displayMode });
+    if (payload.mathLiveLatex && target.insertMathLiveLatex) {
+      target.insertMathLiveLatex(payload.mathLiveLatex);
     } else {
       target.insertLatex(normalized.latex);
     }
-    return true;
+    return {
+      handled: true,
+      targetType: 'mathlive',
+      latex: normalized.latex,
+      displayMode: payload.displayMode ?? normalized.displayMode,
+    };
   }
 
-  const format = options.format ?? 'markdown';
+  const normalized = normalizeFormulaInput(payload.latex, { preferDisplay: payload.displayMode });
+  const displayMode = payload.displayMode ?? normalized.displayMode;
+  const format = payload.format ?? 'markdown';
   if (format === 'markdown') {
     const wrapped = wrapLatexForMarkdown(normalized.latex, displayMode);
-    if (!wrapped) return false;
+    if (!wrapped) return { handled: false, targetType: target.type };
     target.insertText(wrapped);
-    return true;
+    return {
+      handled: true,
+      targetType: target.type,
+      latex: normalized.latex,
+      markdown: wrapped,
+      displayMode,
+    };
   }
 
   target.insertText(normalized.latex);
-  return true;
+  return {
+    handled: true,
+    targetType: target.type,
+    latex: normalized.latex,
+    markdown: normalized.latex,
+    displayMode,
+  };
 }
 
 /**

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { ChevronDown, ChevronRight, FilePlus2, FolderOpen, NotebookPen, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, FilePlus2, FolderOpen, NotebookPen, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { useWorkspaceStore, type PaneId } from "@/stores/workspace-store";
@@ -82,6 +82,46 @@ function ActionIconButton({
   );
 }
 
+function getAncestorDirectoryPaths(path: string): string[] {
+  const parts = path.split("/").filter(Boolean);
+  const ancestors: string[] = [];
+  for (let index = 1; index <= parts.length; index += 1) {
+    ancestors.push(parts.slice(0, index).join("/"));
+  }
+  return ancestors;
+}
+
+function findTreeNodeByPath(node: TreeNode | null, targetPath: string): TreeNode | null {
+  if (!node) {
+    return null;
+  }
+
+  if (node.path === targetPath) {
+    return node;
+  }
+
+  if (node.kind === "directory") {
+    for (const child of node.children) {
+      const match = findTreeNodeByPath(child, targetPath);
+      if (match) {
+        return match;
+      }
+    }
+    return null;
+  }
+
+  if (node.children?.length) {
+    for (const child of node.children) {
+      const match = findTreeNodeByPath(child, targetPath);
+      if (match) {
+        return match;
+      }
+    }
+  }
+
+  return null;
+}
+
 export function PdfItemWorkspacePanel({
   rootHandle,
   documentId,
@@ -101,13 +141,12 @@ export function PdfItemWorkspacePanel({
   const openFileInPane = useWorkspaceStore((state) => state.openFileInPane);
   const toggleDirectory = useWorkspaceStore((state) => state.toggleDirectory);
   const setSelectedDirectoryPath = useWorkspaceStore((state) => state.setSelectedDirectoryPath);
-  const [manifest, setManifest] = useState<PdfItemManifest | null>(initialManifest);
   const [notes, setNotes] = useState<PdfItemNoteSummary[]>([]);
-  const [itemFolderExists, setItemFolderExists] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [copyMenuOpen, setCopyMenuOpen] = useState(false);
   const [summary, setSummary] = useState<PdfBibliographicSummary | null>(null);
   const [enrichment, setEnrichment] = useState<PdfBibliographicEnrichment | null>(null);
 
@@ -126,8 +165,6 @@ export function PdfItemWorkspacePanel({
       const resolvedManifest = initialManifest ?? nextManifest;
       const directoryHandle = await resolveDirectoryHandle(rootHandle, resolvedManifest.itemFolderPath);
       const nextNotes = directoryHandle ? await listPdfItemNotes(rootHandle, resolvedManifest) : [];
-      setManifest(resolvedManifest);
-      setItemFolderExists(Boolean(directoryHandle));
       setNotes(nextNotes);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
@@ -136,51 +173,24 @@ export function PdfItemWorkspacePanel({
     }
   }, [documentId, filePath, initialManifest, rootHandle]);
 
-  useEffect(() => {
-    setManifest(initialManifest);
-  }, [initialManifest]);
-
-  const findTreeNodeByPath = useCallback((node: TreeNode | null, targetPath: string): TreeNode | null => {
-    if (!node) {
-      return null;
-    }
-
-    if (node.path === targetPath) {
-      return node;
-    }
-
-    if (node.kind === "directory") {
-      for (const child of node.children) {
-        const match = findTreeNodeByPath(child, targetPath);
-        if (match) {
-          return match;
-        }
-      }
-      return null;
-    }
-
-    if (node.children?.length) {
-      for (const child of node.children) {
-        const match = findTreeNodeByPath(child, targetPath);
-        if (match) {
-          return match;
-        }
-      }
-    }
-
-    return null;
-  }, []);
-
   const revealPdfEntry = useCallback((expandChildren = false) => {
     useExplorerStore.getState().setSelection(filePath, "file");
-    setSelectedDirectoryPath(getParentPath(filePath));
+    const parentPath = getParentPath(filePath);
+    setSelectedDirectoryPath(parentPath || null);
 
     const latestFileTree = useWorkspaceStore.getState().fileTree;
+    for (const ancestorPath of getAncestorDirectoryPaths(parentPath)) {
+      const ancestorNode = findTreeNodeByPath(latestFileTree.root, ancestorPath);
+      if (ancestorNode?.kind === "directory" && !ancestorNode.isExpanded) {
+        toggleDirectory(ancestorPath);
+      }
+    }
+
     const pdfNode = findTreeNodeByPath(latestFileTree.root, filePath) as FileNode | null;
     if (expandChildren && pdfNode?.children?.length && !pdfNode.isExpanded) {
       toggleDirectory(filePath);
     }
-  }, [filePath, findTreeNodeByPath, setSelectedDirectoryPath, toggleDirectory]);
+  }, [filePath, setSelectedDirectoryPath, toggleDirectory]);
 
   useEffect(() => {
     if (!isExpanded) {
@@ -236,8 +246,6 @@ export function PdfItemWorkspacePanel({
     const currentManifest = await ensurePdfItemWorkspace(rootHandle, generateFileId(filePath), filePath, {
       documentId: documentId ?? initialManifest?.itemId ?? null,
     });
-    setManifest(currentManifest);
-    setItemFolderExists(true);
     await refreshDirectory({ silent: true });
     return currentManifest;
   }, [documentId, filePath, initialManifest?.itemId, refreshDirectory, rootHandle]);
@@ -306,11 +314,8 @@ export function PdfItemWorkspacePanel({
   }, [closeTabsByPath, deleteFile, loadItemState, revealPdfEntry, t]);
 
   const handleRevealFolder = useCallback(() => {
-    if (!manifest) {
-      return;
-    }
     revealPdfEntry(true);
-  }, [manifest, revealPdfEntry]);
+  }, [revealPdfEntry]);
 
   const handleOpenDoi = useCallback(async (doi: string) => {
     await openExternalUrl(`https://doi.org/${doi}`);
@@ -325,25 +330,42 @@ export function PdfItemWorkspacePanel({
       return;
     }
 
+    const title = enrichment?.title ?? summary.title;
+    const authors = enrichment?.authors ?? summary.authors;
+    const year = enrichment?.year ?? summary.year;
+    const doi = enrichment?.doi ?? summary.doi;
+    const arxivId = enrichment?.arxivId ?? summary.arxivId;
+    const subject = enrichment?.subject ?? summary.subject;
+    const metadataLines = [
+      `- Source PDF: [${fileName}](${filePath})`,
+      `- PDF path: \`${filePath}\``,
+      year ? `- Year: ${year}` : null,
+      authors.length > 0 ? `- Authors: ${authors.join(", ")}` : null,
+      summary.pageCount ? `- Pages: ${summary.pageCount}` : null,
+      `- Annotations: ${pdfAnnotations.length}`,
+      `- Related files: ${notes.length}`,
+      doi ? `- DOI: [${doi}](https://doi.org/${doi})` : null,
+      arxivId ? `- arXiv: [${arxivId}](https://arxiv.org/abs/${arxivId})` : null,
+      subject ? `- Subject: ${subject}` : null,
+      enrichment?.venue ? `- Venue: ${enrichment.venue}` : null,
+    ].filter(Boolean);
     const lines = [
-      enrichment?.title ?? summary.title,
-      (enrichment?.authors ?? summary.authors).length > 0 ? `Authors: ${(enrichment?.authors ?? summary.authors).join(", ")}` : null,
-      (enrichment?.year ?? summary.year) ? `Year: ${enrichment?.year ?? summary.year}` : null,
-      (enrichment?.doi ?? summary.doi) ? `DOI: ${enrichment?.doi ?? summary.doi}` : null,
-      (enrichment?.arxivId ?? summary.arxivId) ? `arXiv: ${enrichment?.arxivId ?? summary.arxivId}` : null,
-      (enrichment?.subject ?? summary.subject) ? `Subject: ${enrichment?.subject ?? summary.subject}` : null,
-      enrichment?.venue ? `Venue: ${enrichment.venue}` : null,
-      enrichment?.abstract ? `Abstract: ${enrichment.abstract}` : null,
+      `# ${title}`,
+      "",
+      ...metadataLines,
+      enrichment?.abstract ? ["", "## Abstract", "", enrichment.abstract].join("\n") : null,
     ].filter(Boolean).join("\n");
 
     await copyToClipboard(lines);
-  }, [enrichment, summary]);
+    setCopyMenuOpen(false);
+  }, [enrichment, fileName, filePath, notes.length, pdfAnnotations.length, summary]);
 
   const handleCopyCitation = useCallback(async () => {
     if (!summary) {
       return;
     }
     await copyToClipboard(buildSimpleCitation({ summary, enrichment }));
+    setCopyMenuOpen(false);
   }, [enrichment, summary]);
 
   const handleCopyBibtex = useCallback(async () => {
@@ -351,31 +373,40 @@ export function PdfItemWorkspacePanel({
       return;
     }
     await copyToClipboard(buildSimpleBibtex({ fileName, summary, enrichment }));
+    setCopyMenuOpen(false);
   }, [enrichment, fileName, summary]);
 
   const actionsDisabled = Boolean(busyAction);
 
   return (
-    <section className="shrink-0 border-b border-border bg-background/95 px-2.5 py-2">
-      <div className="flex items-start justify-between gap-2">
+    <section className="shrink-0 border-b border-border bg-background/95 px-2 py-1.5">
+      <div className="flex min-h-9 items-center justify-between gap-2">
         <button
           type="button"
           onClick={() => setIsExpanded((value) => !value)}
-          className="flex min-w-0 flex-1 items-start gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-accent/40"
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-accent/40"
         >
           {isExpanded ? (
-            <ChevronDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           ) : (
-            <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           )}
-          <div className="min-w-0">
-            <div className="truncate text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
               {t("pdf.workspace.title")}
             </div>
-            <div className="truncate text-[11px] text-foreground">{fileName}</div>
+            <div className="min-w-0 flex-1 truncate text-[11px] text-foreground">{fileName}</div>
+            <span className="shrink-0 rounded border border-border bg-muted/35 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {isAnnotationsLoading
+                ? t("workbench.annotations.loading")
+                : t("pdf.workspace.count.annotations", { count: pdfAnnotations.length })}
+            </span>
+            <span className="shrink-0 rounded border border-border bg-muted/35 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {t("pdf.workspace.count.notes", { count: notes.length })}
+            </span>
           </div>
         </button>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           <ActionIconButton
             title={t("pdf.workspace.action.newNote")}
             onClick={() => handleCreateNote("note")}
@@ -393,49 +424,47 @@ export function PdfItemWorkspacePanel({
           <ActionIconButton
             title={t("pdf.workspace.action.reveal")}
             onClick={handleRevealFolder}
-            disabled={actionsDisabled || (!manifest && !itemFolderExists)}
+            disabled={actionsDisabled}
           >
             <FolderOpen className="h-4 w-4" />
           </ActionIconButton>
+          {summary ? (
+            <div className="relative">
+              <ActionIconButton
+                title={t("pdf.workspace.meta.copy")}
+                onClick={() => setCopyMenuOpen((open) => !open)}
+                disabled={actionsDisabled}
+              >
+                <Copy className="h-4 w-4" />
+              </ActionIconButton>
+              {copyMenuOpen ? (
+                <div className="absolute right-0 top-9 z-20 min-w-36 rounded-md border border-border bg-popover p-1 text-xs text-popover-foreground shadow-lg">
+                  <button
+                    type="button"
+                    onClick={() => void handleCopySummary()}
+                    className="block w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                  >
+                    {t("pdf.workspace.meta.copy")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyCitation()}
+                    className="block w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                  >
+                    {t("pdf.workspace.meta.copyCitation")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyBibtex()}
+                    className="block w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                  >
+                    {t("pdf.workspace.meta.copyBibtex")}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
-      </div>
-
-      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-        <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5">
-          {isAnnotationsLoading
-            ? t("workbench.annotations.loading")
-            : t("pdf.workspace.count.annotations", { count: pdfAnnotations.length })}
-        </span>
-        <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5">
-          {t("pdf.workspace.count.notes", { count: notes.length })}
-        </span>
-        {summary ? (
-          <button
-            type="button"
-            onClick={() => void handleCopySummary()}
-            className="rounded border border-border bg-muted/40 px-1.5 py-0.5 transition-colors hover:bg-muted"
-          >
-            {t("pdf.workspace.meta.copy")}
-          </button>
-        ) : null}
-        {summary ? (
-          <button
-            type="button"
-            onClick={() => void handleCopyCitation()}
-            className="rounded border border-border bg-muted/40 px-1.5 py-0.5 transition-colors hover:bg-muted"
-          >
-            {t("pdf.workspace.meta.copyCitation")}
-          </button>
-        ) : null}
-        {summary ? (
-          <button
-            type="button"
-            onClick={() => void handleCopyBibtex()}
-            className="rounded border border-border bg-muted/40 px-1.5 py-0.5 transition-colors hover:bg-muted"
-          >
-            {t("pdf.workspace.meta.copyBibtex")}
-          </button>
-        ) : null}
       </div>
 
       {isExpanded ? (

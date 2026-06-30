@@ -1,3 +1,4 @@
+import type { Locale } from '@/types/settings';
 import type { PaneId } from '@/types/layout';
 import type {
   EvidenceAnchor,
@@ -56,7 +57,7 @@ export function summarizeSelectionPreview(text: string, maxLength = 96): string 
   if (normalized.length <= maxLength) {
     return normalized;
   }
-  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}...`;
 }
 
 function buildFallbackOffsets(content: string, selectedText: string): { start: number; end: number } | null {
@@ -213,9 +214,9 @@ function buildSourceLabel(
   switch (input.sourceKind) {
     case 'code':
       if (anchor?.lineStart !== undefined && anchor.lineEnd !== undefined) {
-        return `${input.fileName} · 第 ${joinRangeLabel('', anchor.lineStart, anchor.lineEnd)} 行`;
+        return `${input.fileName} · line ${joinRangeLabel('', anchor.lineStart, anchor.lineEnd)}`;
       }
-      return `${input.fileName} · 代码选区`;
+      return `${input.fileName} · code selection`;
     case 'notebook': {
       const parts = [input.fileName];
       if (typeof anchor?.cellIndex === 'number') {
@@ -228,14 +229,14 @@ function buildSourceLabel(
     }
     case 'pdf':
       if (anchor?.page !== undefined) {
-        return `${input.fileName} · 第 ${anchor.page} 页`;
+        return `${input.fileName} · page ${anchor.page}`;
       }
-      return `${input.fileName} · PDF 选区`;
+      return `${input.fileName} · PDF selection`;
     case 'html':
     case 'word':
-      return anchor?.blockLabel ? `${input.fileName} · ${anchor.blockLabel}` : `${input.fileName} · 选区`;
+      return anchor?.blockLabel ? `${input.fileName} · ${anchor.blockLabel}` : `${input.fileName} · selection`;
     default:
-      return input.filePath ? `${input.fileName} · 选区` : input.fileName;
+      return input.filePath ? `${input.fileName} · selection` : input.fileName;
   }
 }
 
@@ -251,11 +252,11 @@ function buildContextSummary(
   switch (input.sourceKind) {
     case 'code':
       if (anchor?.lineStart !== undefined && anchor.lineEnd !== undefined) {
-        return `代码选区 · 第 ${joinRangeLabel('', anchor.lineStart, anchor.lineEnd)} 行 · 上下文前后各 3 行`;
+        return `Code selection · lines ${joinRangeLabel('', anchor.lineStart, anchor.lineEnd)} · 3 lines of context on each side`;
       }
-      return '代码选区 · 自动截取附近上下文';
+      return 'Code selection · nearby context captured automatically';
     case 'notebook': {
-      const parts = ['Notebook 选区'];
+      const parts = ['Notebook selection'];
       if (typeof anchor?.cellIndex === 'number') {
         parts.push(`Cell ${anchor.cellIndex + 1}`);
       }
@@ -266,14 +267,14 @@ function buildContextSummary(
     }
     case 'pdf':
       return anchor?.page !== undefined
-        ? `PDF 选区 · 第 ${anchor.page} 页${anchor.rects?.length ? ' · 已捕获区域锚点' : ''}`
-        : 'PDF 选区';
+        ? `PDF selection · page ${anchor.page}${anchor.rects?.length ? ' · captured region anchors' : ''}`
+        : 'PDF selection';
     case 'html':
-      return anchor?.blockLabel ? `HTML 块级选区 · ${anchor.blockLabel}` : 'HTML 块级选区';
+      return anchor?.blockLabel ? `HTML block selection · ${anchor.blockLabel}` : 'HTML block selection';
     case 'word':
-      return anchor?.blockLabel ? `Word 块级选区 · ${anchor.blockLabel}` : 'Word 块级选区';
+      return anchor?.blockLabel ? `Word block selection · ${anchor.blockLabel}` : 'Word block selection';
     default:
-      return '选区上下文';
+      return 'Selection context';
   }
 }
 
@@ -366,7 +367,22 @@ export function createSelectionContext(input: CreateSelectionContextInput): Sele
   };
 }
 
-export function defaultPromptForSelectionMode(mode: SelectionAiMode, context: SelectionContext): string {
+export function defaultPromptForSelectionMode(
+  mode: SelectionAiMode,
+  context: SelectionContext,
+  locale: Locale = 'zh-CN',
+): string {
+  if (locale === 'en-US') {
+    switch (mode) {
+      case 'agent':
+        return `Analyze the selected content from "${context.sourceLabel}" as a research assistant. Output Conclusion / Evidence / Next Actions.`;
+      case 'plan':
+        return `Generate an executable organization plan from the selected content in "${context.sourceLabel}", including goals, target drafts, and writing suggestions.`;
+      default:
+        return `Answer quickly around the selected content from "${context.sourceLabel}" and identify the most important evidence.`;
+    }
+  }
+
   switch (mode) {
     case 'agent':
       return `请像研究助理一样深入分析这段来自“${context.sourceLabel}”的内容，输出 Conclusion / Evidence / Next Actions。`;

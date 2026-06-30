@@ -7,6 +7,7 @@ import { ProblemsPanel } from "@/components/runner/problems-panel";
 import { runnerHealthIssuesToExecutionProblems } from "@/lib/runner/problem-utils";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { cn } from "@/lib/utils";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 import type { ExecutionProblem, RunnerHealthAction } from "@/lib/runner/types";
 import { runnerManager } from "@/lib/runner/runner-manager";
 import { useI18n } from "@/hooks/use-i18n";
@@ -168,7 +169,7 @@ export function WorkspaceRunnerManager({
       </button>
 
       {isOpen ? (
-        <div className="fixed inset-0 z-[180] flex items-start justify-center overflow-y-auto bg-black/50 px-4 pb-4 pt-6 md:pt-20">
+        <div className={cn("fixed inset-0 flex items-start justify-center overflow-y-auto bg-black/50 px-4 pb-4 pt-6 md:pt-20", UI_LAYER_CLASS.dialog)}>
           <div className="absolute inset-0" onClick={() => setIsOpen(false)} />
           <div
             className="code-workbench-panel relative flex w-full max-w-4xl flex-col overflow-hidden rounded-xl shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]"

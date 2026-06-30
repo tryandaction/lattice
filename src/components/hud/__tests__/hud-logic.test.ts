@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 import {
   handleKeySelection,
+  resolveQuantumKeyboardInput,
   isMappedKey,
   getMappedKeyCodes,
   shouldCloseHUD,
@@ -209,6 +210,74 @@ describe('HUD Logic', () => {
     it('handles unmapped key', () => {
       const result = handleKeySelection('F1', false);
       expect(result.action).toBe('ignore');
+    });
+  });
+
+  describe('resolveQuantumKeyboardInput', () => {
+    it('uses Shift+number+letter to insert a first-layer candidate', () => {
+      expect(resolveQuantumKeyboardInput({
+        keyCode: 'KeyI',
+        shiftKey: true,
+        ctrlKey: false,
+        candidatePrefix: 2,
+      })).toMatchObject({
+        action: 'insert',
+        latex: '\\iint',
+        layer: 'base',
+        index: 2,
+      });
+
+      expect(resolveQuantumKeyboardInput({
+        keyCode: 'KeyI',
+        shiftKey: true,
+        ctrlKey: false,
+        candidatePrefix: 3,
+      })).toMatchObject({
+        action: 'insert',
+        latex: '\\iiint',
+        layer: 'base',
+        index: 3,
+      });
+    });
+
+    it('uses Ctrl+number+letter to insert a second-layer candidate', () => {
+      expect(resolveQuantumKeyboardInput({
+        keyCode: 'KeyI',
+        shiftKey: false,
+        ctrlKey: true,
+        candidatePrefix: 1,
+      })).toMatchObject({
+        action: 'insert',
+        latex: 'I',
+        layer: 'ctrl',
+        index: 1,
+      });
+
+      expect(resolveQuantumKeyboardInput({
+        keyCode: 'KeyI',
+        shiftKey: false,
+        ctrlKey: true,
+        candidatePrefix: 2,
+      })).toMatchObject({
+        action: 'insert',
+        latex: '\\mathbb{I}',
+        layer: 'ctrl',
+        index: 2,
+      });
+    });
+
+    it('clamps candidate prefixes to the available meanings in the active layer', () => {
+      expect(resolveQuantumKeyboardInput({
+        keyCode: 'KeyI',
+        shiftKey: false,
+        ctrlKey: true,
+        candidatePrefix: 99,
+      })).toMatchObject({
+        action: 'insert',
+        latex: 'I',
+        layer: 'ctrl',
+        index: 4,
+      });
     });
   });
 

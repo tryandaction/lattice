@@ -1,6 +1,29 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { EditorView } from '@codemirror/view';
-import { Ellipsis, Grip, Plus } from 'lucide-react';
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  Code2,
+  Copy,
+  Ellipsis,
+  Highlighter,
+  PanelBottom,
+  PanelLeft,
+  PanelRight,
+  PanelTop,
+  Pencil,
+  Plus,
+  Rows3,
+  Table2,
+  Trash2,
+} from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { positionAnchoredMenu, type RectLike } from '@/lib/menu-positioning';
 
 export type TableAlignment = 'left' | 'center' | 'right' | null;
 
@@ -26,6 +49,7 @@ interface TableStructureMenuState {
   col?: number;
   x: number;
   y: number;
+  anchorRect?: RectLike;
 }
 
 interface TableMutationResult {
@@ -36,6 +60,33 @@ interface TableMutationResult {
 interface TableOverlayMetrics {
   columnCenters: number[];
   rowCenters: number[];
+}
+
+interface TableCommand {
+  label: string;
+  icon: React.ReactNode;
+  onSelect: () => void;
+  danger?: boolean;
+}
+
+function TableCommandGrid({ commands }: { commands: TableCommand[] }) {
+  return (
+    <div className="table-editor-command-grid">
+      {commands.map((command) => (
+        <button
+          key={command.label}
+          className={`table-editor-command${command.danger ? ' table-editor-command--danger' : ''}`}
+          type="button"
+          onClick={command.onSelect}
+        >
+          <span className="table-editor-command-icon" aria-hidden="true">
+            {command.icon}
+          </span>
+          <span className="table-editor-command-label">{command.label}</span>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function isDirectTypingKey(event: React.KeyboardEvent): boolean {
@@ -180,6 +231,17 @@ function getCellPositionFromTarget(target: EventTarget | null): CellPosition | n
   }
 
   return { row, col };
+}
+
+function toRectLike(rect: DOMRect): RectLike {
+  return {
+    left: rect.left,
+    top: rect.top,
+    right: rect.right,
+    bottom: rect.bottom,
+    width: rect.width,
+    height: rect.height,
+  };
 }
 
 function toggleCellHighlightValue(value: string): string {
@@ -591,6 +653,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isMountedRef = useRef(true);
   const pendingCommitTimerRef = useRef<number | null>(null);
+  const metricsFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -599,6 +662,10 @@ export const TableEditor: React.FC<TableEditorProps> = ({
       if (pendingCommitTimerRef.current !== null) {
         window.clearTimeout(pendingCommitTimerRef.current);
         pendingCommitTimerRef.current = null;
+      }
+      if (metricsFrameRef.current !== null) {
+        window.cancelAnimationFrame(metricsFrameRef.current);
+        metricsFrameRef.current = null;
       }
     };
   }, []);
@@ -637,13 +704,28 @@ export const TableEditor: React.FC<TableEditorProps> = ({
         return { columnCenters, rowCenters };
       });
     };
+    const scheduleMetricsUpdate = () => {
+      if (metricsFrameRef.current !== null) {
+        return;
+      }
+      metricsFrameRef.current = window.requestAnimationFrame(() => {
+        metricsFrameRef.current = null;
+        updateMetrics();
+      });
+    };
 
     updateMetrics();
-    const observer = new ResizeObserver(updateMetrics);
+    const observer = new ResizeObserver(scheduleMetricsUpdate);
     observer.observe(table);
     Array.from(table.rows).forEach((row) => observer.observe(row));
 
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (metricsFrameRef.current !== null) {
+        window.cancelAnimationFrame(metricsFrameRef.current);
+        metricsFrameRef.current = null;
+      }
+    };
   }, [rows, alignments, editingCell]);
 
   const columnCount = useMemo(() => getColumnCount(rows, alignments), [rows, alignments]);
@@ -782,8 +864,11 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     setStructureMenu(null);
   }, []);
 
-  const openStructureMenu = useCallback((menu: TableStructureMenuState) => {
-    setStructureMenu(menu);
+  const openStructureMenu = useCallback((menu: TableStructureMenuState, trigger?: HTMLElement | null) => {
+    setStructureMenu({
+      ...menu,
+      anchorRect: trigger ? toRectLike(trigger.getBoundingClientRect()) : menu.anchorRect,
+    });
     focusWrapper();
   }, [focusWrapper]);
 
@@ -1024,6 +1109,78 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     closeStructureMenu();
   }, [alignments, applyTableState, closeStructureMenu, dataRowStart, rows, selectedCell]);
 
+  const tableCommands = useMemo<TableCommand[]>(() => [
+    { label: 'Add Column', icon: <PanelRight size={14} />, onSelect: () => handleInsertColumn(columnCount - 1, 'right') },
+    { label: 'Add Row', icon: <Rows3 size={14} />, onSelect: () => handleInsertRow(rows.length - 1, 'below') },
+    { label: 'Paste Cells', icon: <PanelBottom size={14} />, onSelect: () => void handlePasteMatrix() },
+    { label: 'Copy Markdown', icon: <Copy size={14} />, onSelect: handleCopyMarkdown },
+    { label: showSource ? 'Hide Source' : 'Show Source', icon: <Code2 size={14} />, onSelect: handleToggleSource },
+  ], [columnCount, handleCopyMarkdown, handleInsertColumn, handleInsertRow, handlePasteMatrix, handleToggleSource, rows.length, showSource]);
+
+  const selectedCellCommands = useMemo<TableCommand[]>(() => {
+    if (!selectedCell) return [];
+    return [
+      { label: 'Highlight', icon: <Highlighter size={14} />, onSelect: () => handleHighlightCell(selectedCell) },
+      { label: 'Edit', icon: <Pencil size={14} />, onSelect: () => startEditingCell(selectedCell) },
+    ];
+  }, [handleHighlightCell, selectedCell, startEditingCell]);
+
+  const rowCommands = useMemo<TableCommand[]>(() => {
+    if (structureMenu?.kind !== 'row' || typeof structureMenu.row !== 'number') return [];
+    const row = structureMenu.row;
+    return [
+      { label: 'Insert Above', icon: <PanelTop size={14} />, onSelect: () => handleInsertRow(row, 'above') },
+      { label: 'Insert Below', icon: <PanelBottom size={14} />, onSelect: () => handleInsertRow(row, 'below') },
+      { label: 'Duplicate Row', icon: <Copy size={14} />, onSelect: () => handleDuplicateRow(row) },
+      { label: 'Move Up', icon: <ArrowUp size={14} />, onSelect: () => handleMoveRow(row, -1) },
+      { label: 'Move Down', icon: <ArrowDown size={14} />, onSelect: () => handleMoveRow(row, 1) },
+      { label: 'Highlight Row', icon: <Highlighter size={14} />, onSelect: () => handleHighlightRow(row) },
+      { label: 'Delete Row', icon: <Trash2 size={14} />, onSelect: () => handleDeleteRow(row), danger: true },
+    ];
+  }, [handleDeleteRow, handleDuplicateRow, handleHighlightRow, handleInsertRow, handleMoveRow, structureMenu]);
+
+  const columnCommands = useMemo<TableCommand[]>(() => {
+    if (structureMenu?.kind !== 'column' || typeof structureMenu.col !== 'number') return [];
+    const col = structureMenu.col;
+    return [
+      { label: 'Insert Left', icon: <PanelLeft size={14} />, onSelect: () => handleInsertColumn(col, 'left') },
+      { label: 'Insert Right', icon: <PanelRight size={14} />, onSelect: () => handleInsertColumn(col, 'right') },
+      { label: 'Duplicate Column', icon: <Copy size={14} />, onSelect: () => handleDuplicateColumn(col) },
+      { label: 'Move Left', icon: <ArrowLeft size={14} />, onSelect: () => handleMoveColumn(col, -1) },
+      { label: 'Move Right', icon: <ArrowRight size={14} />, onSelect: () => handleMoveColumn(col, 1) },
+      { label: 'Highlight Column', icon: <Highlighter size={14} />, onSelect: () => handleHighlightColumn(col) },
+      { label: 'Delete Column', icon: <Trash2 size={14} />, onSelect: () => handleDeleteColumn(col), danger: true },
+    ];
+  }, [handleDeleteColumn, handleDuplicateColumn, handleHighlightColumn, handleInsertColumn, handleMoveColumn, structureMenu]);
+
+  const alignmentCommands = useMemo<TableCommand[]>(() => {
+    if (structureMenu?.kind !== 'column' || typeof structureMenu.col !== 'number') return [];
+    const col = structureMenu.col;
+    return [
+      { label: 'Left', icon: <AlignLeft size={14} />, onSelect: () => handleSetAlignment(col, 'left') },
+      { label: 'Center', icon: <AlignCenter size={14} />, onSelect: () => handleSetAlignment(col, 'center') },
+      { label: 'Right', icon: <AlignRight size={14} />, onSelect: () => handleSetAlignment(col, 'right') },
+      { label: 'Clear', icon: <Table2 size={14} />, onSelect: () => handleSetAlignment(col, null) },
+    ];
+  }, [handleSetAlignment, structureMenu]);
+
+  const structurePanelPosition = useMemo(() => {
+    if (!structureMenu?.anchorRect || typeof window === 'undefined') return null;
+    const placement = structureMenu.kind === 'row'
+      ? 'right-start'
+      : structureMenu.kind === 'column'
+        ? 'bottom-start'
+        : 'bottom-start';
+
+    return positionAnchoredMenu({
+      anchorRect: structureMenu.anchorRect,
+      menuSize: { width: structureMenu.kind === 'column' ? 260 : 230, height: 320 },
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      placement,
+      gap: 8,
+    });
+  }, [structureMenu]);
+
   return (
     <div
       ref={wrapperRef}
@@ -1057,7 +1214,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({
           style={{ left: `${center}px`, top: "-10px", transform: "translate(-50%, -100%)" }}
           aria-label={`Column ${colIndex + 1} actions`}
           onMouseDown={(event) => event.preventDefault()}
-          onClick={() => openStructureMenu({ kind: 'column', col: colIndex, x: center, y: 0 })}
+          onClick={(event) => openStructureMenu({ kind: 'column', col: colIndex, x: center, y: 0 }, event.currentTarget)}
         >
           <Ellipsis aria-hidden="true" size={14} />
         </button>
@@ -1073,7 +1230,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({
             style={{ left: "-10px", top: `${center}px`, transform: "translate(-100%, -50%)" }}
             aria-label={`Row ${rowIndex + 1} actions`}
             onMouseDown={(event) => event.preventDefault()}
-          onClick={() => openStructureMenu({ kind: 'row', row: rowIndex, x: 0, y: center })}
+          onClick={(event) => openStructureMenu({ kind: 'row', row: rowIndex, x: 0, y: center }, event.currentTarget)}
         >
             <Ellipsis aria-hidden="true" size={14} />
           </button>
@@ -1087,28 +1244,27 @@ export const TableEditor: React.FC<TableEditorProps> = ({
           style={{ left: "6px", top: "6px" }}
           aria-label="Table actions"
           onMouseDown={(event) => event.preventDefault()}
-          onClick={() => openStructureMenu({ kind: 'table', x: 6, y: 34 })}
+          onClick={(event) => openStructureMenu({ kind: 'table', x: 6, y: 34 }, event.currentTarget)}
         >
           <Plus aria-hidden="true" size={14} />
         </button>
       ) : null}
 
-      {structureMenu ? (
+      {structureMenu && structurePanelPosition && typeof document !== 'undefined' ? createPortal((
         <div
           className="table-editor-perimeter-panel"
           style={{
-            left: structureMenu.kind === 'row' ? structureMenu.x : structureMenu.x,
-            top: structureMenu.kind === 'row' ? structureMenu.y : structureMenu.y,
-            transform: structureMenu.kind === 'row'
-              ? 'translate(calc(-100% - 12px), -50%)'
-              : structureMenu.kind === 'column'
-                ? 'translate(-50%, calc(-100% - 12px))'
-                : 'none',
+            position: 'fixed',
+            left: `${structurePanelPosition.left}px`,
+            top: `${structurePanelPosition.top}px`,
+            transform: 'none',
+            maxHeight: `${structurePanelPosition.maxHeight}px`,
+            overflowY: 'auto',
           }}
           onMouseDown={(event) => event.preventDefault()}
         >
           <div className="table-editor-panel-meta">
-            <Grip aria-hidden="true" size={12} />
+            <Table2 aria-hidden="true" size={12} />
             {structureMenu.kind === 'row'
               ? `Row ${structureMenu.row! + 1}`
               : structureMenu.kind === 'column'
@@ -1120,21 +1276,12 @@ export const TableEditor: React.FC<TableEditorProps> = ({
             <>
               <div className="table-editor-panel-group">
                 <div className="table-editor-panel-label">Structure</div>
-                <div className="table-editor-panel-actions">
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleInsertColumn(columnCount - 1, 'right')}>Add Column</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleInsertRow(rows.length - 1, 'below')}>Add Row</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => void handlePasteMatrix()}>Paste Cells</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={handleCopyMarkdown}>Copy Markdown</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={handleToggleSource}>{showSource ? 'Hide Source' : 'Show Source'}</button>
-                </div>
+                <TableCommandGrid commands={tableCommands} />
               </div>
-              {selectedCell ? (
+              {selectedCellCommands.length > 0 ? (
                 <div className="table-editor-panel-group">
                   <div className="table-editor-panel-label">Cell</div>
-                  <div className="table-editor-panel-actions">
-                    <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleHighlightCell(selectedCell)}>Highlight</button>
-                    <button className="btn-icon btn-icon--menu" type="button" onClick={() => startEditingCell(selectedCell)}>Edit</button>
-                  </div>
+                  <TableCommandGrid commands={selectedCellCommands} />
                 </div>
               ) : null}
             </>
@@ -1144,15 +1291,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({
             <>
               <div className="table-editor-panel-group">
                 <div className="table-editor-panel-label">Row</div>
-                <div className="table-editor-panel-actions">
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleInsertRow(structureMenu.row!, 'above')}>Insert Above</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleInsertRow(structureMenu.row!, 'below')}>Insert Below</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleDuplicateRow(structureMenu.row!)}>Duplicate Row</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleMoveRow(structureMenu.row!, -1)}>Move Up</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleMoveRow(structureMenu.row!, 1)}>Move Down</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleDeleteRow(structureMenu.row!)}>Delete Row</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleHighlightRow(structureMenu.row!)}>Highlight Row</button>
-                </div>
+                <TableCommandGrid commands={rowCommands} />
               </div>
             </>
           ) : null}
@@ -1161,29 +1300,16 @@ export const TableEditor: React.FC<TableEditorProps> = ({
             <>
               <div className="table-editor-panel-group">
                 <div className="table-editor-panel-label">Column</div>
-                <div className="table-editor-panel-actions">
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleInsertColumn(structureMenu.col!, 'left')}>Insert Left</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleInsertColumn(structureMenu.col!, 'right')}>Insert Right</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleDuplicateColumn(structureMenu.col!)}>Duplicate Column</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleMoveColumn(structureMenu.col!, -1)}>Move Left</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleMoveColumn(structureMenu.col!, 1)}>Move Right</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleDeleteColumn(structureMenu.col!)}>Delete Column</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleHighlightColumn(structureMenu.col!)}>Highlight Column</button>
-                </div>
+                <TableCommandGrid commands={columnCommands} />
               </div>
               <div className="table-editor-panel-group">
                 <div className="table-editor-panel-label">Alignment</div>
-                <div className="table-editor-panel-actions">
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleSetAlignment(structureMenu.col!, 'left')}>Left</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleSetAlignment(structureMenu.col!, 'center')}>Center</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleSetAlignment(structureMenu.col!, 'right')}>Right</button>
-                  <button className="btn-icon btn-icon--menu" type="button" onClick={() => handleSetAlignment(structureMenu.col!, null)}>Clear</button>
-                </div>
+                <TableCommandGrid commands={alignmentCommands} />
               </div>
             </>
           ) : null}
         </div>
-      ) : null}
+      ), document.body) : null}
 
       <div className="table-editor-viewport">
         <table ref={tableRef} className="table-editor">

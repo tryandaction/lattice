@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as fc from 'fast-check';
-import { useHUDStore, computeMode, isStateConsistent } from '../hud-store';
+import { computeSafeHUDPosition, useHUDStore, computeMode, isStateConsistent } from '../hud-store';
 
 describe('HUD Store', () => {
   beforeEach(() => {
@@ -22,6 +22,7 @@ describe('HUD Store', () => {
       customOffset: null,
       isDragging: false,
       cursorPosition: null,
+      hudSize: { width: 500, height: 178 },
     });
   });
 
@@ -211,6 +212,52 @@ describe('HUD Store', () => {
       expect(result.side).toBe('top');
       expect(typeof result.topPx).toBe('number');
       expect(typeof result.leftPx).toBe('number');
+    });
+
+    it('computeSafeHUDPosition clamps the HUD inside small viewports', () => {
+      const result = computeSafeHUDPosition({
+        cursorPosition: {
+          top: 540,
+          bottom: 568,
+          left: 320,
+          right: 350,
+          centerX: 335,
+          centerY: 554,
+        },
+        hudSize: { width: 700, height: 360 },
+        viewport: { width: 360, height: 640 },
+        position: 'auto',
+      });
+
+      expect(result.leftPx).toBeGreaterThanOrEqual(12);
+      expect(result.topPx).toBeGreaterThanOrEqual(12);
+      expect(result.leftPx + result.widthPx).toBeLessThanOrEqual(348);
+      expect(result.topPx + result.heightPx).toBeLessThanOrEqual(628);
+    });
+
+    it('uses compact visible keyboard dimensions by default', () => {
+      const result = computeSafeHUDPosition({
+        cursorPosition: {
+          top: 220,
+          bottom: 244,
+          left: 300,
+          right: 304,
+          centerX: 302,
+          centerY: 232,
+        },
+        hudSize: { width: 500, height: 178 },
+        viewport: { width: 1280, height: 720 },
+        position: 'auto',
+      });
+
+      expect(result.widthPx).toBeLessThanOrEqual(500);
+      expect(result.heightPx).toBeLessThanOrEqual(220);
+      expect(result.side).toBe('top');
+    });
+
+    it('updateHUDSize stores measured dimensions', () => {
+      useHUDStore.getState().updateHUDSize({ width: 612, height: 284 });
+      expect(useHUDStore.getState().hudSize).toEqual({ width: 612, height: 284 });
     });
 
     it('closeHUD preserves position settings', () => {

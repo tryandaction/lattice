@@ -4,6 +4,7 @@ import type {
   PromptTemplate,
   RenderedPromptTemplate,
 } from "@/lib/prompt/types";
+import type { Locale } from "@/types/settings";
 
 const SLOT_PATTERN = /{{\s*([a-z_]+)\s*}}/g;
 
@@ -18,8 +19,9 @@ function renderTemplateString(template: string | undefined, values: PromptContex
 export function renderPromptTemplate(
   template: PromptTemplate,
   values: PromptContextValues,
+  locale: Locale = "en-US",
 ): RenderedPromptTemplate {
-  const resolution = resolvePromptContext(template, values);
+  const resolution = resolvePromptContext(template, values, locale);
 
   return {
     renderedSystemPrompt: renderTemplateString(template.systemPrompt, resolution.values),

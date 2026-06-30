@@ -1,529 +1,60 @@
-# Lattice v2.3.0 发布说明
+# Lattice v2.3.1 Release Notes
 
-发布日期：2026-03-21
+Release date: 2026-06-28
 
-最新 Web 预览部署：<https://47f3417d.lattice-apq.pages.dev>
+## Release Focus
 
-## 本次重点
+This build closes the current polish pass for the web and desktop products, with emphasis on formula input, Markdown/PDF interaction, release safety, and dependency hygiene.
 
-### 2026-06-18 AI / Coding Agent、Markdown 输入与桌面产物收口
+## Highlights
 
-- AI / Coding Agent 闭环已完成本轮产品化：
-  - `code-change-plan` workflow、`coding-change-review` contract、代码变更 proposal planned writes 已形成只读、证据优先、审批优先的 coding review 路线。
-  - Agent Protocol Center 已加入 Co-work Session Inbox，聚合本地 Agent sessions、pending approvals、handoff、blocked/running 状态与 workspace dirty risk。
-  - Approval-gated QA Runner 已能从当前文件、dirty tabs 和 Agent trace 推断验证目标，生成 allowed/suggested/rejected command plan。
-  - QA Runner 只创建 `runner.runCode` 审批请求和 Trace，不直接执行 shell、network、git 或 direct workspace write。
-  - 已完成 Trace -> protocol deep link、resolved QA approval -> Evidence import、Evidence -> source Agent Trace backlink 的双向审计链。
-- Markdown / 量子键盘文档收口：
-  - 保留 `docs/guides/quantum-keyboard.md` 作为最终产品说明。
-  - 移除未引用的阶段性长草稿，避免同一能力在 docs 下出现多套过时口径。
-- v2.3.0 桌面产物已在 2026-06-18 重新构建并同步到 `releases/v2.3.0/`：
-  - `Lattice_2.3.0_x64_en-US.msi` SHA256 `02910b717af4429b99e4818ff01d231e82d6ca00697eea5a1edaaf86e67a1a68`
-  - `Lattice_2.3.0_x64-setup.exe` SHA256 `2466165d25384d225d7482f76fd26705afd09d73b66d03fa7651ce8b9bf63b8f`
-  - `lattice.exe` SHA256 `d16796bd2b5af362970cd7b8e183842280c494793b0334bf2a5b26469bab18c4`
-- 本轮验证：
-  - `npm run typecheck -- --pretty false --incremental false`
-  - `npm run qa:agent-smoke -- --unit-only`
-  - `npm run test:docs`
-  - `npm run build`
-  - `npm run tauri:build`
-  - `npm run lint`
-  - `npm run test:run`
-  - `npm run release:prepare -- --skip-qa`
+- Quantum Keyboard now follows the physical-keyboard model: only the 26 QWERTY letter keys are shown in the HUD, while number keys keep normal keyboard behavior.
+- Candidate insertion supports `Shift+number+letter`; for example, `Shift+2+I` inserts the second candidate for `I`.
+- Double-Tab opening from Markdown/CodeMirror no longer writes an unwanted tab or blank indentation into the document.
+- MathLive structure insertion now uses placeholders and moves into the first slot after inserting brackets, fractions, matrices, and cases.
+- Rendered formulas now expose right-click actions for `Copy Markdown formula` and `Copy LaTeX formula`.
+- Markdown frontmatter extraction no longer depends on `gray-matter`; the app now uses a small local parser for the simple metadata shapes Lattice needs.
+- Dependency audit is clean after removing the old `gray-matter/js-yaml` chain and overriding `esbuild` to `0.28.1`.
 
-### 2026-03-28 桌面壳层与 AI 集成专题收口
+## Validation
 
-- Phase 1 blocker 已完成：
-  - 桌面 `plugin:dialog|open` 已按 Tauri dialog v2 契约改为 `options` payload，`打开工作区 / 打开文件夹 / 切换工作区` 的桌面目录选择主链路恢复可用
-  - 桌面 settings hydration 现在会先等待 Tauri invoke bridge，就绪后再读取持久化状态
-  - onboarding 不再因冷启动桥接时序误判成“首次使用”
-  - Windows 自定义标题栏的右上角控制区已与 drag / resize hit area 隔离，最小化 / 最大化 / 关闭恢复为稳定命中区
-- Phase 2 desktop IA 已收口：
-  - 顶栏收口为 `应用身份 / 工作区入口 / breadcrumb / 全局动作 / 窗口控制`
-  - 左侧活动栏只保留 `文件 / 搜索 / 批注 / AI Chat`
-  - 无工作区状态下，主阅读区欢迎页保留唯一明显主 CTA
-  - Explorer 空态不再重复 recent workspace 主入口，只保留辅助说明
-  - `FolderSelector` 已降级为设置管理组件，不再承担桌面壳层主入口职责
-- Phase 3 AI Chat 右侧专业集成已完成：
-  - 桌面 AI 主入口统一为左侧 Bot 和命令面板命令
-  - 桌面壳层中的 AI context root overlay 已移除
-  - AI Chat 保持为右侧 dock panel，与主阅读区和 plugin panel 处于同一 workbench 布局组
-  - 普通 chat 不再根据 free-form query 隐式触发 workspace search
-  - Chat Prompt Run 现在提供显式上下文开关，`current_file_content / pdf_annotations / workspace_summary` 默认关闭
-- Phase 4 验证与发布同步已完成：
-  - `lint / typecheck / test:docs / test:run / build / tauri:build / release:prepare -- --skip-qa` 已在本地顺序跑通
-  - 最新桌面产物已同步到 `releases/v2.3.0/`
-  - `checksums.txt / release-manifest.json / RELEASE_SUMMARY.md` 已更新为本轮最新产物元数据
+Completed on 2026-06-28:
 
-### 2026-03-26 阶段性收尾补充
+- `npm audit --registry=https://registry.npmjs.org --audit-level=moderate`: 0 vulnerabilities
+- `npm run typecheck`: passed
+- `npm run lint`: passed with 0 errors and 114 existing warnings
+- `npm run test:docs`: passed, 40 files checked
+- Focused regression tests for Markdown extraction, workspace indexing, Quantum Keyboard, formula copy, unified input, and HUD behavior: 36 tests passed
+- `npm run test:run`: 247 files passed, 1874 tests passed
+- `npm run build`: passed
+- `npm run tauri:build`: passed
+- `npm run release:prepare -- --version 2.3.1 --artifacts-dir src-tauri/target/release`: passed
+- `npm run test:desktop:pdf-smoke`: passed against the built desktop executable
 
-- 工作区与桌面状态恢复继续收口：
-  - workbench session 现已按 `workspaceRootPath` 独立持久化
-  - 关闭后重开时会继续恢复 pane / split / 标签页 / active pane / active tab / sidebar collapsed
-  - viewer 级阅读状态继续与 workbench session 分离，统一走 `file-view-state`
-- Notebook 顶部结构继续压回工作台：
-  - 独立顶部动作带已移除
-  - `Save / Verify / Run All / New Cell` 已统一进入 `Command Bar`
-  - Notebook 内只保留正文首块运行环境摘要与问题信息，不再形成第二条工作台 header
-- PDF 主路径继续加固：
-  - PDF view state 现在继续记录 `sidebarSize` 与最近选中的 annotation
-  - 反链 / deep link 跳回批注时会同步展开 sidebar 并选中目标
-  - `PdfItemWorkspacePanel` 已改为可折叠 section，减少左栏工具台堆叠
-- 主路径 i18n 继续清零：
-  - AI Chat / Workbench 的 badge、toast、审批动作、模型来源已改为统一 i18n key
-  - Markdown 导出对话框已移除组件内 `isZh ? ... : ...` 双分支
-  - PDF 批注侧栏的搜索/筛选/多选/空态等高频文案已统一进入 i18n
-- 旧代码清理：
-  - 删除未引用旧组件 `pdf-viewer-with-annotations.tsx`
-  - `layout-persistence.ts` 已改造成真正接线的 workbench session 持久化实现
+Note: the full Vitest run still emits jsdom's informational `Not implemented: navigation to another Document` line, but the suite exits successfully with no failed tests.
 
-### 2026-03-26 桌面状态统一与只读 Viewer 收口补充
+## Desktop Artifacts
 
-- 桌面端状态存储继续收口到 Tauri store：
-  - 前端 `storage-adapter` 现已真正接入 Rust store，而不再默认只写 `localStorage`
-  - `lattice-settings` 在桌面端首次读取时会自动从 `localStorage` 迁移到 Tauri store
-  - 启动恢复、默认文件夹、最近工作区会共用同一份桌面持久状态
-  - 最近工作区重开时会先检查路径是否仍然存在，失效路径会从历史中移除
-- Windows 自定义标题栏继续收口：
-  - `tauri.conf.json` 现在显式关闭窗口装饰
-  - `Command Bar` 保持为唯一标题栏
-  - 最小化 / 最大化 / 还原 / 关闭按钮已固定在最右侧，不再跟随动作区滚动
-- 只读 Viewer 顶部结构继续减噪：
-  - `Word / HTML / 图片 / 只读代码 / 只读 Jupyter` 已去掉重复顶部文件名栏
-  - Word 的 `Import as Note` 与 HTML 的 `Preview / Source` 已开始进入统一 `Command Bar`
-- 仓库清理：
-  - 删除未引用组件 `auto-hide-header.tsx`
-  - 删除未引用组件 `tab-context-menu.tsx`
+Artifacts are available in `releases/v2.3.1/`:
 
-### 2026-03-26 桌面壳层与视觉减噪收口
+- `Lattice_2.3.1_x64_en-US.msi` SHA256 `54a5e122b4185b47cc3c347bc154af834edf23b36807f442bfa76512989ac31e`
+- `Lattice_2.3.1_x64-setup.exe` SHA256 `345f946336e2d9df26995731c85170b3bb7a8441530beee6c1d65a58efa0373a`
+- `lattice.exe` SHA256 `41613e1413d21f3a99680a196d7671bd0462dbdb529adb7e0ccc1d399e490a07`
 
-- Windows 桌面端标题区继续收口：
-  - 原生标题栏与应用命令栏的双排问题已处理为单行桌面标题栏
-  - 窗口控制按钮已并入顶部标题栏
-- 桌面工作区恢复链路已补强：
-  - 最近工作区重开不再错误落入“仅桌面版可用”的误判分支
-  - 桌面启动时对最后一次工作区的自动恢复，现兼容 `__TAURI_INTERNALS__.invoke` 桥接
-- Viewer 顶部重复结构继续清理：
-  - Markdown 阅读态不再重复显示文件名标题条
-  - Code / Notebook / PDF 的本地顶部工具条继续缩减或移除
-  - PDF 工具动作转入 Command Bar 后，不再占用独立顶栏
-- 工作台视觉继续减噪：
-  - Explorer 头部去掉重复折叠按钮
-  - Activity Bar 底部仅保留高频入口，帮助与设置不再重复占位
-  - Pane / Tab / 空状态文案继续统一，减少中英文混杂
-- 仓库继续清理：
-  - 删除未引用旧组件 `pane-header.tsx`
-  - 文档中旧 `Open Local Folder` 表述已同步到当前产品文案
+## Desktop/Web Sync
 
-### 2026-03-24 本轮体验收口
+- `next build` successfully generated the production frontend.
+- `tauri:build` rebuilt the same frontend through Tauri's `beforeBuildCommand` and packaged the desktop app from that output.
+- `release:prepare` copied the latest desktop executable and installers into `releases/v2.3.1/` and regenerated manifest, checksums, and release summary.
+- The desktop PDF smoke script now waits for newly created annotation overlays before opening their menus, so the real WebView smoke covers the asynchronous annotation render path.
 
-- PDF 选区链路继续收口：
-  - 文本拖选现在会区分“浏览器原生选区阶段”和“Lattice transient overlay 阶段”
-  - 不再在拖选刚结束时立刻清空原生选区，减少蓝块闪烁、错位和复制手感断裂
-  - `Ctrl+C / Cmd+C` 现优先复制当前 PDF 原生选中文本，只有在没有原生选区时才回退到 transient selection
-  - PDF 选区去重逻辑已改为带 phase/token 的短生命周期会话，只抑制同一次回放，不误伤用户重新拖出的合法选区
-- PDF 左栏布局继续收紧：
-  - 条目工具头已改成一排图标按钮并补齐 tooltip / title
-  - 左栏保持可拖拽宽度
-  - 批注列表重新成为主空间，顶部工具区改为紧凑头部
-- Markdown 阅读体验继续向 Obsidian 靠拢：
-  - 普通文档标题、段落与列表密度继续缩小
-  - 系统索引页（例如 `_annotations.md`）再紧一档
-  - frontmatter 在阅读渲染中默认隐藏
-- 工作区恢复补齐：
-  - 兼容保留 `lastOpenedFolder` 读取，但桌面端现在以 `lastWorkspacePath` + 最近工作区历史作为主恢复链路
-  - 桌面端启动后会优先恢复最近工作区，不再每次都重新选目录
-  - 工作区路径恢复后，runner preference scope 也会跟随恢复
-- 新建 Markdown 命名继续收口：
-  - 新文件仍先以 `Untitled*.md` 创建
-  - 首次保存时若正文首个 H1 存在，会自动按标题重命名并同步 tab / Explorer / 路径
+## Manual Smoke Before External Publishing
 
-### 2026-03-24 PDF Item System v2 收口
+Before distributing outside the local development machine, run a real Windows desktop smoke pass:
 
-- PDF 已从“可加批注的阅读文件”升级为一等条目：
-- 首次打开 PDF 会自动建立工作区根目录 `.lattice/items/<fileId>/`
-  - 默认只保留 `manifest.json` 与用户创建的笔记 / Notebook；`_annotations.md` 只在出现第一条批注后惰性生成
-  - Explorer 不再暴露真实隐藏目录，而是把真实用户文件与惰性 `_annotations.md` 投影为 PDF 下的系统子条目
-- PDF 批注 sidecar 已改为稳定 `itemId` 存储：
-  - PDF rename / move / copy / delete 时，条目目录和批注 sidecar 会伴随迁移
-  - 不再继续依赖“当前路径派生 fileId”作为唯一绑定方式
-- `_annotations.md` 已改为自动去抖镜像，而不再只是手动导出：
-  - 生成相对路径深链
-  - 支持 `#page=` 与 `#annotation=` 定位
-  - 同步写入反链摘要
-- 批注反链主链路已接入：
-  - 工作区 Markdown 与 PDF item Markdown 会被扫描
-  - PDF 批注侧栏现可显示“哪些笔记引用了该批注”
-  - 可直接跳回来源笔记与行号
-- 内部链接路由继续统一化：
-  - 只读 Markdown、批注评论、Notebook 只读 Markdown、Notebook 编辑态 Markdown Cell 现都可直接在应用内跳 PDF / heading / line / cell / annotation
-  - 外部网页链接仍交由系统浏览器处理
-- Explorer 右键 PDF 现在支持：
-  - 新建笔记
-  - 新建 Notebook
-  - 在 Explorer 定位
-- 当前线上部署口径已统一为：
-  - `web-dist/` 是统一静态导出产物
-  - Cloudflare Pages (`lattice-apq.pages.dev`) 是当前主站
-  - GitHub Pages 保留为备用/镜像链路
-
-### 2026-03-21 知识组织与发布工程收口补充
-
-- 知识组织主线继续收口为统一产品模型：
-  - assistant 结果现在通过统一的 `AiResultViewModel` 展示，稳定对齐 `Conclusion / Evidence / Next Actions`
-  - `@引用` 补全与 Evidence 浏览共用 `ReferenceBrowser`，文件与片段不再分裂成两套 UI 逻辑
-  - Evidence Panel 移除重复的底部 `References` 平铺块，统一为消息切换器 + `Reference Tree` + 上下文分组
-  - Workbench 草稿新增 `templateId / originMessageId / originProposalId`，可区分独立草稿与 proposal-linked drafts
-- 发布工程闭环继续收口：
-  - 新增统一脚本 `scripts/prepare-release.mjs`
-  - `prepare-release` 会统一执行版本校验、产物收集、`checksums.txt`、`release-manifest.json`、`RELEASE_SUMMARY.md` 生成
-  - `release:prepare --dry-run` 现在也会显式产出元数据 payload，便于本地检查 release manifest
-  - `deploy.yml` 与 `release.yml` 已对齐到 `web-dist/`、`draft release` 与统一 summary 输出
-- 发布文档与检查清单已同步更新到新闭环：
-  - `docs/MANUAL_RELEASE_GUIDE.md`
-  - `docs/guides/github-deploy.md`
-  - `.github/DEPLOYMENT_CHECKLIST.md`
-  - `.github/RELEASE_TEMPLATE.md`
-
-### 2026-03-20 阶段性收敛补充
-
-- 桌面 Notebook / 代码运行链路继续收口：
-  - `KernelSelector` 现在会明确标出“桌面运行时 / 网页运行时”
-  - 桌面探测到本地 Python 后，会自动优先切到本地解释器
-  - `Pyodide` 在桌面端只再作为“应急回退”出现，不再伪装成默认主运行器
-  - 桌面 `python-local` 失败时不再无声掉回 Pyodide，而是显式报错
-  - 工作区运行器偏好会按 workspace 路径跨重启记住，Notebook / 代码文件 / Markdown 代码块共用同一套最近选择与默认解释器
-  - 外部命令与本地 Python 运行前会先给出环境诊断与修复提示
-- 代码渲染与运行体验继续向 IDE 靠拢：
-  - `CodeEditor` 现在支持基础 completion 与轻量 syntax diagnostics
-  - 代码文件底部改为 `Run / Problems` 双层 dock，而不是把问题和输出混在同一块
-  - Notebook code cell 也改成 `Problems / Output` 分层，并复用统一问题模型
-- Runner health 进入产品化：
-  - 新增 `Workspace Runner Manager`，统一服务 Notebook、代码文件与 Markdown 编辑主链路
-  - 新增 `/diagnostics/runner` 页面，按当前探测目标 fresh probe，而不再复用全局 snapshot
-  - 本地 Python 缺失、默认解释器失效、外部命令缺失会进入结构化 health issues；`ModuleNotFoundError` 进入 runtime problems，不再污染 health
-  - `Runner Diagnostics` 与 `Workspace Runner Manager` 现在都支持显式验证 Notebook 本地 Python session 启动链路
-- Notebook / Markdown 体验继续收口：
-  - `ipynb` Markdown Cell 已复用现有 Live Preview / Obsidian 级编辑内核，默认 `Live`，并支持切到 `Source`
-  - Notebook 现已改为真实的本地持久 Python session，运行前会先等待 runtime `ready`
-  - `.ipynb` 现保留 `raw` cell；非 Python Notebook 明确禁跑并给出说明
-  - editable Markdown 主链路中的 Live Preview code block 现在也支持 `Run`，并把完整反馈接到底部 `Run / Problems` dock
-  - 只读 Markdown renderer 的代码执行入口已关闭，避免保留半接通路径
-- 统一执行反馈已升级：
-  - 输出面板会明确标出 `本地解释器 / 浏览器回退 / 外部命令`
-  - 输出面板会附带运行器选择来源，例如 `当前入口选择 / 工作区默认 / 自动探测 / 回退`
-  - 连续 `stdout/stderr` 会分组展示
-  - 错误会区分错误名、错误值和 traceback
-  - markdown block / notebook cell / code file 的问题上下文现在都支持回跳定位
-  - 代码文件与 editable Markdown 的 execution dock 已支持折叠、垂直拖拽调高，并按 pane 记忆状态
-- PDF 默认打开体验已调整：
-  - PDF 首次打开默认 `适宽`
-  - 旧 PDF 查看器分支也同步改成默认自适应宽度填充
-  - 对应 PDF 单测和浏览器回归基线已同步切换
-- 本轮阶段性验证已完成：
-  - `npm run lint`
-  - `npm run typecheck`
-  - `npx vitest run src/lib/runner/__tests__/health.test.ts src/lib/runner/__tests__/problem-utils.test.ts src/components/notebook/__tests__/kernel-selector.test.tsx src/components/notebook/__tests__/output-area.test.tsx src/components/notebook/__tests__/markdown-cell.test.tsx src/components/notebook/__tests__/code-cell.test.ts src/components/notebook/__tests__/code-cell-python.test.tsx src/__tests__/use-notebook-executor.tauri.test.ts src/__tests__/use-notebook-executor.test.ts src/lib/runner/__tests__/preferences.test.ts src/components/editor/codemirror/__tests__/code-editor.test.tsx src/components/renderers/__tests__/code-editor-viewer.test.tsx`
-  - `npm run tauri:build`
-- 桌面打包链路额外收口：
-  - `@tauri-apps/cli` 已从漂移状态改为精确锁定 `2.9.5`
-  - `src-tauri/Cargo.toml` 的 release strip 策略调整为 `debuginfo`
-  - `tauri build` 中的 `__TAURI_BUNDLE_TYPE variable not found in binary` warning 已消失，bundler 现可正常 patch `msi / nsis` 类型
-
-### 当前阶段仍需继续收敛
-
-- 代码渲染与运行离 VS Code / IDE 级体验仍有明显差距：
-  - 代码编辑的 hover / 补全 / 诊断 / 调试器尚未接入
-  - 代码文件 / Notebook / editable Markdown 代码块虽然已统一到共享执行模型，但更完整的调试、任务面板和问题面板仍未到位
-  - 本地 Python 运行器已有基础环境诊断，但解释器切换、深入健康检查和修复自动化仍需继续补强
-
-### 2026-03-19 阶段收口补充
-
-- 新增 `PDF Split Regression` diagnostics 页面：`/diagnostics/pdf-regression`
-- 新增 `Image Annotation Handle Diagnostics`：`/diagnostics/image-annotation`
-- 新增 `Selection AI Regression`：`/diagnostics/selection-ai`
-- 新增浏览器级门禁命令：`npm run test:browser-regression`
-- 本轮浏览器回归已覆盖：
-  - PDF 双分屏布局与 pane 作用域缩放
-  - 图片真实 workspace handle 标注与强制重渲染
-  - Selection AI 的 Chat / Agent / Plan 差异化主链路
-- PDF 回归逻辑新增 `pdf-view-state` helper，统一处理 pane 作用域、viewState 持久化和相对滚动恢复
-- `ImageTldrawAdapter` 背景资源改为 `data:` URL，修复真实 workspace handle 标注时 Tldraw 不接受 `blob:` 协议的问题
-- 主路径已继续清理一轮无条件调试输出，重点覆盖 HUD、live preview、PPT、export adapter、Jupyter websocket 与 plugin runtime
-- 当前完整测试基线更新为 `92` 个测试文件、`962` 个测试全绿
-- 本轮已顺序验证：
-  - `npm run lint`
-  - `npm run typecheck`
-  - `npm run test:run`
-  - `npm run test:browser-regression`
-  - `npm run build`
-  - `npm run tauri:build`
-
-### 已知残余风险
-
-- 在 `/diagnostics/pdf-regression` 中，右侧 PDF 深页切文件切回后的可见页快照仍建议做一次人工复检。当前缩放标签和会话恢复链路已稳定，但深页可见页探针在 diagnostics 环境下仍存在边界抖动。
-
-### Selection AI Hub Phase 2
-
-- Selection AI Hub 现在不再只是基础弹层，而是明确区分：
-  - `快速问答`
-  - `深度分析`
-  - `计划生成`
-- Hub 会记住最近使用模式，并保存轻量 prompt 历史
-- 每种模式都新增：
-  - 独立说明
-  - 执行去向
-  - 3 个 starter templates
-  - 最近 prompt 历史
-  - 快捷键：`Alt+1/2/3` 切模式，`Ctrl/Cmd+Enter` 提交
-- Selection AI 结果现在会在 Chat / Workbench 中显示来源 badge，而不再混成普通聊天
-- `Agent` 结果会自动衔接 Evidence Panel
-- `Plan` 结果会直接高亮对应 proposal，并更快进入目标草稿链路
-
-### SelectionContext 精细化
-
-- 代码选区现在会保留真实 `lineStart/lineEnd`
-- Notebook 选区会同时记录 `cell id + cell index`
-- PDF 选区现在会带出 `page + rects + snippet` 锚点
-- HTML / Word 选区会抽取最近 block/heading 与邻近上下文
-- `SelectionContext -> EvidenceRef` 映射现在更统一，也更适合进入 Evidence / Workbench 主链路
-
-### PDF 分屏与阅读稳定性
-
-- 修复分屏后右侧 pane 内容被挤出屏幕、最右侧看不到的问题
-- 修复 PDF `Ctrl+滚轮` / 缩放快捷键在双 pane 下同时作用于两个 PDF 的问题
-- PDF 放大、缩小、适宽、适页时，现在会尽量保持当前阅读位置，不再无故跳回第一页
-- 只要窗口不关闭，切到别的文件再切回，PDF 的阅读进度和缩放状态会继续保留
-
-### 图片显示稳定性
-
-- 修复了“图片显示几秒后消失”的高优先级问题
-- Image Viewer 现在显式管理对象 URL 生命周期，避免资源被过早释放
-- Image Tldraw Adapter 现在会检查背景图片 asset 与 background shape 是否同时存在，并在异常时自动恢复
-- 新增 `/diagnostics/image-viewer` 诊断页，可持续观察图片心跳、当前 blob URL 与强制重渲染后的稳定性
-
-### 资源 URL 生命周期统一
-
-- 新增统一 `useObjectUrl` hook
-- 图片、HTML、PDF 等资源型渲染器开始复用同一套 object URL 生命周期管理
-- Markdown 本地图片解析已补 blob URL 缓存与销毁回收，降低隐藏资源泄漏和渲染异常风险
-
-### 批注 sidecar 隔离修复
-
-- `useAnnotationSystem` 现在优先使用完整工作区路径派生 `fileId`
-- 同名不同路径的 PDF / 图片文件，不会再共用同一份 annotation sidecar
-- 历史上按“文件名”生成的 sidecar 仍可被自动读取并规范化到新 `fileId`
-
-### 选区右键 AI Hub
-
-- Markdown、代码文件、Notebook、PDF 现在都支持“选中文本后右键”的统一 AI 菜单
-- 只读 Markdown、只读代码、只读 Jupyter、HTML、Word 预览也已并入同一套右键 AI 能力
-- 右键后可直接选择：
-  - `Chat`
-  - `Agent`
-  - `Plan`
-- 新增 Selection AI Hub，统一展示：
-  - 选中文本
-  - 来源文件/位置
-  - 本地上下文片段
-  - 当前模式下的补充问题输入框
-- `Chat` 模式会把当前选区作为显式上下文送进 AI Chat
-- `Agent` 模式会默认强调结构化分析输出：`Conclusion / Evidence / Next Actions`
-- `Plan` 模式会直接进入 Workbench proposal 流程，而不是先发送普通聊天
-
-### 桌面折叠侧边栏深化
-
-- 折叠态侧边栏现在不再以浮层方式覆盖主内容，而是作为真实窄栏参与桌面布局
-- 文件标签栏和阅读区现在会紧贴在窄栏右边，不再被遮住
-- 折叠宽度改为更稳定的“近似固定像素”策略，不同桌面尺寸下观感更一致
-- 折叠窄栏补上了统一快捷按钮、激活态和帮助入口
-
-### Markdown 导出产品化
-
-- Markdown 编辑器顶栏新增可发现的 `Export` 入口，不再依赖零散脚本或隐藏能力
-- 现在可直接从产品 UI 导出当前 Markdown 为 `.docx` 或 `.pdf`
-- 导出走统一渲染文档模型，尽量保留标题层级、列表、表格、代码块、引用块和公式
-- 导出支持三种标注策略：
-  - `clean`：纯正文导出
-  - `appendix`：正文纯净，标注和来源放到文末附录
-  - `study-note`：把正文与标注整理成更适合学习/科研复盘的导出稿
-- 支持“文档版式”与“当前渲染视图”两种视觉模式
-- 导出前提供实时预览与导出标题配置，用户可以先确认最终成品结构再落盘
-- 当前文件已有的侧车标注会在导出时带出，并保留来源定位信息（例如 PDF 页码、代码行、文本锚点）
-- `.pdf` 导出采用渲染快照链路，尽量贴近应用内实际阅读效果
-- `.docx` 导出采用结构化 HTML 导入链路，兼顾文档结构和交付稳定性
-
-### QA 基线更新
-
-- 本轮新增 Markdown 导出测试，覆盖附录预览、统一来源模型与 DOCX 包结构
-- 本轮补强了 `structured-response`、`mention-browser` 和 Markdown 表格键盘交互测试
-- 本轮新增 AI key storage 与 provider registry 测试，锁住 provider 配置链路回归
-- 本轮新增 Selection AI Hub / SelectionContext / ai-chat-panel 相关测试
-- 当前完整测试门禁更新为 `88` 个测试文件、`945` 个测试全绿
-- 本轮已顺序验证：
-  - `npm run lint`
-  - `npm run typecheck`
-  - `npm run test:run`
-  - `npm run build`
-  - `npm run tauri:build`
-
-### AI-Native 科研副驾 v1
-
-### AI Provider 配置升级
-
-- 修复了 Web 端 API key 刷新后恢复错误的问题，避免 provider 看似已配置但实际 key 已损坏
-- 修复了 AI 设置里的 URL 配置与 provider 实际读取源不一致的问题
-- Ollama 现在优先走 OpenAI 兼容接口，并在兼容接口不可用时自动回退到原生 `/api/chat`
-- AI 设置页新增统一的 Base URL 配置、连接测试与手输模型 ID
-- 连接测试会显示更具体的失败原因，便于判断是 API key、Base URL、网络还是 Ollama/CORS 问题
-- 新增常用 provider：
-  - DeepSeek
-  - Kimi (Moonshot)
-  - 智谱 AI
-  - Custom (OpenAI Compatible)
-
-- 统一 AI 入口到同一套 orchestrator，不再让 Chat、PDF、Notebook、选区动作各自维护独立 prompt 逻辑
-- 新增统一上下文图，覆盖文件、标题、PDF 批注、Notebook 单元、代码片段、工作区索引和当前选区
-- 科研型回答默认返回证据引用，支持文件路径、Markdown 标题、PDF 页码/批注、代码行和 Notebook 单元回链
-- AI 回写默认只生成结构化草稿，不直接覆盖正式内容
-- 新增“生成整理计划”能力，先展示 planned writes 和审批项，再进入后续执行
-- AI Workbench 现已支持自定义草稿写回目标路径
-- AI Workbench 现已支持将草稿追加写入现有 Markdown 笔记
-- 证据跳转后会对 Markdown 标题、代码行、Notebook 单元、PDF 页码/批注提供短时高亮反馈
-- AI Chat 的 `@引用` 现已使用真实工作区文件路径补全，而不是只依赖已打开标签页
-- `@引用` 支持 fragment 解析：Markdown 标题、代码行、Notebook 单元、PDF 页码/批注
-- 用户显式输入的 `@引用` 会直接注入 `explicitEvidenceRefs`，提升回答的可追溯性和证据优先级
-- 现在选中文件型 `@引用` 后，可以继续可视化选择 heading / line / cell / page / annotation，而不必手写全部 fragment
-- 现在 `@引用` 已支持真正的两段式浏览：先选文件，再自动进入片段选择
-- AI Workbench 现已持久化保存 `drafts` 与 `proposals`，刷新后仍可继续当前 AI 工作流
-- proposal 卡片现已支持展开查看 steps、required approvals、planned writes
-- proposal 现已支持批准 / 拒绝，并可一键生成计划草稿，形成更接近 Notion 的“计划-审阅-沉淀”闭环
-- proposal 的审批勾选状态和 write 选择状态也会随 Workbench 一起持久化，避免中断后丢失审阅进度
-- 当前 Workbench 已形成 `Chat -> Proposal -> Draft -> Workspace Writeback` 的连续主路径
-- approved proposal 现已支持按已选择的 planned writes 批量生成目标草稿集合
-- 这些目标草稿会预填 target path / write mode，并对已生成目标自动去重，进一步接近可执行工作流
-- 当前主工作流已进一步收敛为 `Chat -> Proposal -> Target Draft Set -> Workspace Writeback`
-- proposal 现已支持批量写回目标草稿，减少逐条手动批准写回的摩擦
-- Workbench 会显示目标草稿状态汇总，便于判断当前计划是否已经真正落地
-- assistant 回答现已支持结构化 `Conclusion / Evidence / Next Actions` 三段式结果视图
-- 当模型输出存在明确章节时，结果会以分区卡片呈现，而不再只是普通聊天长文本
-- 新增统一 Evidence 面板，证据与上下文来源不再分散在消息卡片里
-- Evidence 面板支持在多条 assistant 结果之间切换浏览，开始具备统一知识浏览入口的雏形
-- Evidence 面板现已支持按文件路径聚合的引用树，开始接近真正的知识浏览器
-- 当前 Evidence Panel 已同时具备消息切换、引用树浏览和上下文分组，开始形成独立知识浏览界面
-- Evidence Panel 现已支持直接发起“保存草稿 / 生成计划”，证据浏览与知识沉淀开始接入同一入口
-- Evidence Panel 现已支持文件分组级草稿/计划动作，以及节点级证据草稿动作
-- Evidence Panel 现已支持多证据选择后的合并草稿与合并计划动作
-- `@引用` 两段式浏览现在会明确提示当前处于“选文件”还是“选片段”阶段，并支持从片段层快速返回文件层
-- Evidence 摘要按钮现在支持展开 / 收起切换，Evidence Panel 在切换消息时会重置上一条消息的临时多选状态
-- 新增统一 Evidence 面板，证据与上下文来源不再散落在消息卡片里
-- assistant 消息现在以“摘要入口 + 面板浏览”的方式查看证据，更接近产品化的知识浏览体验
-- assistant 回答现已支持结构化 `Conclusion / Evidence / Next Actions` 三段式结果视图
-- 当模型输出带有明确章节时，结果会以分区卡片渲染，而不再只是连续聊天内容
-- 结构化回答解析现在兼容 `**Evidence:** ...`、`结论：结果稳定。` 这种同一行标题+内容格式，减少模型输出抖动对 UI 的影响
-
-### 桌面本地运行 v1
-
-- 桌面端默认优先使用本地运行器，而不是 Pyodide 主路径
-- Python 支持本地解释器发现：系统 Python、项目 `.venv`、激活的 `venv` / `conda`
-- Notebook 单元在桌面 `python-local` 路径下复用同一个本地 Python 会话
-- 代码文件、Notebook 单元、Markdown 代码块统一走同一套 runner 事件模型
-- 外部命令运行器支持 `.js/.mjs/.cjs`、`.jl`、`.R` 的最小可用执行链路
-
-### 科研输出与运行反馈
-
-- 统一展示 `stdout` / `stderr`
-- 错误输出保留结构化 traceback
-- Python 本地运行支持图片、HTML 表格、SVG 等常见科研输出
-- 支持停止、重跑和 Notebook kernel restart 的基础交互
-
-### 产品级 QA v1
-
-- 已补齐并验证以下门禁：
-  - `npm run lint`
-  - `npm run typecheck`
-  - `npm run test:run`
-  - `npm run build`
-  - `npm run tauri:build`
-- `lint` 当前保持 **0 error / 0 warnings**
-- 本轮重新顺序验证 `typecheck`、`test:run`、`build` 和 `tauri:build`，桌面与 Web 构建链路都已确认可用
-- 清理了预期失败路径的高噪音解析日志，QA 输出更干净、更适合做门禁记录
-- 新增 `mention-resolver` 测试覆盖，确认工作区 AI 引用链路可稳定解析
-- 新增 AI Workbench store / proposal 相关测试，并修正慢测试超时设置，完整测试现可稳定全绿
-- 本轮再次顺序确认 `lint`、`typecheck`、`test:run`、`build` 全部通过
-- 新增 fragment suggestion 测试覆盖，确认可视化片段候选生成稳定可用
-- 新增目标草稿生成测试覆盖，确认 proposal 批量转草稿逻辑稳定可用
-- 本轮再次顺序确认 `lint`、`typecheck`、`test:run`、`build` 全部通过，目标草稿集合链路已具备阶段性可交付状态
-- 本轮继续顺序确认 `lint`、`typecheck`、`test:run`、`build` 全部通过，批量写回链路已可稳定跑通
-- `use-notebook-executor` 集成测试已改为确定性 fake kernel，完整测试稳定性显著提升
-- 当前完整门禁为 `73` 个测试文件、`902` 个测试全绿
-- 当前完整门禁已更新为 `74` 个测试文件、`905` 个测试全绿
-- 本轮继续顺序确认 `lint`、`typecheck`、`test:run`、`build` 全部通过，引用树浏览能力已稳定可用
-- 当前完整门禁已更新为 `74` 个测试文件、`907` 个测试全绿
-- 当前完整门禁已更新为 `74` 个测试文件、`908` 个测试全绿
-- 当前完整门禁保持 `74` 个测试文件、`905` 个测试全绿
-- 新增 Evidence 面板 helper 测试，当前完整门禁为 `72` 个测试文件、`902` 个测试全绿
-- `use-notebook-executor` 集成测试已改为确定性 fake kernel，完整测试稳定性显著提升
-
-### 统一链接路由
-
-- 外部网页链接在桌面端会交给系统默认浏览器打开，不再覆盖应用页面
-- 工作区内部文件链接继续在应用内打开
-- 支持以下深链跳转：
-  - Markdown 标题：`#结论`
-  - PDF 页码：`papers/math.pdf#page=12`
-  - PDF 批注：`[[papers/math.pdf#ann-123]]`
-  - 代码行：`src/main.py#line=88`
-  - Notebook 单元格：`analysis.ipynb#cell=cell-42`
-
-### PDF 阅读与批注体验
-
-- 修复放大、缩小、适宽时视图自动跳回第一页的问题
-- 调整 PDF 文本选区颜色为更自然的淡蓝色
-- 保留原有 PDF 批注跳转、定位与高亮链路
-
-### 文件树与资源管理
-
-- 新建文件或文件夹后自动进入重命名
-- 支持文件树复制、剪切、粘贴
-- 支持拖放移动文件和文件夹
-- 目录重命名或移动后自动同步已打开标签页路径
-- 刷新文件树后保留目录展开状态
-- 通用新建文件逻辑改为唯一命名，避免同名覆盖
-
-### Markdown 表格编辑体验
-
-- 表格不再默认让首格处于激活/高亮状态
-- 不再显示行列外框句柄、上下滑块或外围操作面板
-- 双击单元格会直接进入源码编辑
-- 点击表格外部会提交并恢复渲染
-- 单元格输入框会自动增高，表格列宽按内容自适应
-
-## 发布产物
-
-以下文件已经通过构建验证：
-
-- `releases/v2.3.0/lattice.exe`
-- `releases/v2.3.0/Lattice_2.3.0_x64_en-US.msi`
-- `releases/v2.3.0/Lattice_2.3.0_x64-setup.exe`
-
-原始构建输出位于：
-
-- `src-tauri/target/release/lattice.exe`
-- `src-tauri/target/release/bundle/msi/Lattice_2.3.0_x64_en-US.msi`
-- `src-tauri/target/release/bundle/nsis/Lattice_2.3.0_x64-setup.exe`
-
-## 验证结果
-
-- `npm run lint` 通过
-- `npm run typecheck` 通过
-- `npm run test:run` 通过
-- `npm run build` 通过
-- `npm run tauri:build` 通过
-
-Tauri bundler 的 `__TAURI_BUNDLE_TYPE` 缺失 warning 已在本阶段修复，不再作为已知问题保留。
-
-## 升级建议
-
-- 若你通过 GitHub Releases 分发桌面版，请上传 `releases/v2.3.0/` 中的最新产物
-- 若你在团队内部分发，请优先使用 NSIS 安装包，MSI 保留给企业或受管环境
+- Install the NSIS setup package and launch Lattice.
+- Open a real workspace and verify recent workspace restore.
+- Open Markdown, PDF, and Notebook files.
+- Verify Quantum Keyboard Double-Tab open, formula insertion, and rendered formula right-click copy.
+- Create and jump to a PDF annotation.
+- Confirm close-with-unsaved Markdown still prompts correctly in the installed desktop app.

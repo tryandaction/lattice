@@ -1,15 +1,16 @@
 ﻿'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Settings, Palette, FolderOpen, Info, Keyboard, RotateCcw, Plug, Bot } from 'lucide-react';
+import { X, Settings, Palette, FolderOpen, Info, Keyboard, RotateCcw, Cable, Bot } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useSettingsStore } from '@/stores/settings-store';
 import { usePluginStore } from '@/stores/plugin-store';
 import { LanguageSelector } from './language-selector';
 import { ThemeSelector } from './theme-selector';
 import { FolderSelector } from './folder-selector';
+import { QuantumKeyboardEditor } from './quantum-keyboard-editor';
 import { isTauri } from '@/lib/storage-adapter';
-import { getAvailablePlugins, getRecommendedPlugins } from '@/lib/plugins/registry';
+import { getAvailablePlugins } from '@/lib/plugins/registry';
 import {
   getRegisteredCommands,
   subscribePluginRegistry,
@@ -20,9 +21,19 @@ import {
   clearPluginAuditLog,
 } from '@/lib/plugins/runtime';
 import { cn } from '@/lib/utils';
+import { UI_MODAL_OVERLAY_CLASS, UI_MODAL_OVERLAY_STYLE, UI_MODAL_PANEL_CLASS } from '@/lib/ui-layers';
 import type { TranslationKey } from '@/lib/i18n';
-import type { PluginCommand, PluginManifest, PluginPermission, PluginSettingField } from '@/lib/plugins/types';
+import type { PluginCommand, PluginManifest, PluginSettingField } from '@/lib/plugins/types';
 import type { PluginHealth, PluginAuditEvent } from '@/lib/plugins/runtime';
+import {
+  getPluginPermissionMeta,
+  type PluginPermissionRisk,
+} from '@/lib/plugins/permission-catalog';
+import {
+  buildPluginMarketplaceCatalog,
+  type PluginMarketplaceSource,
+} from '@/lib/plugins/marketplace';
+import { FORMULA_EXTRACTOR_PLUGIN_ID } from '@/lib/plugins/defaults';
 import packageJson from '../../../package.json';
 
 interface SettingsDialogProps {
@@ -36,7 +47,7 @@ const tabs: { id: SettingsTab; icon: typeof Settings; labelKey: 'settings.genera
   { id: 'general', icon: Settings, labelKey: 'settings.general' },
   { id: 'appearance', icon: Palette, labelKey: 'settings.appearance' },
   { id: 'files', icon: FolderOpen, labelKey: 'settings.files' },
-  { id: 'extensions', icon: Plug, labelKey: 'settings.extensions' },
+  { id: 'extensions', icon: Cable, labelKey: 'settings.extensions' },
   { id: 'ai', icon: Bot, labelKey: 'settings.ai' },
   { id: 'shortcuts', icon: Keyboard, labelKey: 'settings.shortcuts' },
   { id: 'about', icon: Info, labelKey: 'settings.about' },
@@ -44,84 +55,9 @@ const tabs: { id: SettingsTab; icon: typeof Settings; labelKey: 'settings.genera
 
 const APP_VERSION = packageJson.version;
 
-const PERMISSION_META: Record<PluginPermission, { titleKey: TranslationKey; descKey: TranslationKey }> = {
-  'read-current-document': {
-    titleKey: 'settings.plugins.permission.fileRead.title',
-    descKey: 'settings.plugins.permission.fileRead.desc',
-  },
-  'read-workspace-file': {
-    titleKey: 'settings.plugins.permission.fileRead.title',
-    descKey: 'settings.plugins.permission.fileRead.desc',
-  },
-  'clipboard-write': {
-    titleKey: 'settings.plugins.permission.storage.title',
-    descKey: 'settings.plugins.permission.storage.desc',
-  },
-  'export-file': {
-    titleKey: 'settings.plugins.permission.fileWrite.title',
-    descKey: 'settings.plugins.permission.fileWrite.desc',
-  },
-  'use-ocr': {
-    titleKey: 'settings.plugins.permission.fileRead.title',
-    descKey: 'settings.plugins.permission.fileRead.desc',
-  },
-  'use-ai': {
-    titleKey: 'settings.ai.title' as TranslationKey,
-    descKey: 'settings.ai.description' as TranslationKey,
-  },
-  'file:read': {
-    titleKey: 'settings.plugins.permission.fileRead.title',
-    descKey: 'settings.plugins.permission.fileRead.desc',
-  },
-  'file:write': {
-    titleKey: 'settings.plugins.permission.fileWrite.title',
-    descKey: 'settings.plugins.permission.fileWrite.desc',
-  },
-  'annotations:read': {
-    titleKey: 'settings.plugins.permission.annotationsRead.title',
-    descKey: 'settings.plugins.permission.annotationsRead.desc',
-  },
-  'annotations:write': {
-    titleKey: 'settings.plugins.permission.annotationsWrite.title',
-    descKey: 'settings.plugins.permission.annotationsWrite.desc',
-  },
-  network: {
-    titleKey: 'settings.plugins.permission.network.title',
-    descKey: 'settings.plugins.permission.network.desc',
-  },
-  'ui:commands': {
-    titleKey: 'settings.plugins.permission.uiCommands.title',
-    descKey: 'settings.plugins.permission.uiCommands.desc',
-  },
-  'ui:panels': {
-    titleKey: 'settings.plugins.permission.uiPanels.title',
-    descKey: 'settings.plugins.permission.uiPanels.desc',
-  },
-  'ui:sidebar': {
-    titleKey: 'settings.plugins.permission.uiSidebar.title' as TranslationKey,
-    descKey: 'settings.plugins.permission.uiSidebar.desc' as TranslationKey,
-  },
-  'ui:toolbar': {
-    titleKey: 'settings.plugins.permission.uiToolbar.title' as TranslationKey,
-    descKey: 'settings.plugins.permission.uiToolbar.desc' as TranslationKey,
-  },
-  'ui:statusbar': {
-    titleKey: 'settings.plugins.permission.uiStatusbar.title' as TranslationKey,
-    descKey: 'settings.plugins.permission.uiStatusbar.desc' as TranslationKey,
-  },
-  'editor:extensions': {
-    titleKey: 'settings.plugins.permission.editorExtensions.title' as TranslationKey,
-    descKey: 'settings.plugins.permission.editorExtensions.desc' as TranslationKey,
-  },
-  themes: {
-    titleKey: 'settings.plugins.permission.themes.title' as TranslationKey,
-    descKey: 'settings.plugins.permission.themes.desc' as TranslationKey,
-  },
-  storage: {
-    titleKey: 'settings.plugins.permission.storage.title',
-    descKey: 'settings.plugins.permission.storage.desc',
-  },
-};
+type PluginSourceFilter = 'all' | PluginMarketplaceSource;
+type PluginStatusFilter = 'all' | 'enabled' | 'disabled' | 'untrusted' | 'error';
+type PluginRiskFilter = 'all' | PluginPermissionRisk;
 
 const compareSemver = (left: string, right: string) => {
   const parse = (value: string) => {
@@ -173,6 +109,19 @@ const compareSemver = (left: string, right: string) => {
   return 0;
 };
 
+function getPluginRiskClass(risk: PluginPermissionRisk): string {
+  if (risk === 'high') return 'border-destructive/40 text-destructive bg-destructive/10';
+  if (risk === 'medium') return 'border-amber-400/40 text-amber-700 bg-amber-500/10 dark:text-amber-300';
+  if (risk === 'low') return 'border-emerald-500/30 text-emerald-700 bg-emerald-500/10 dark:text-emerald-300';
+  return 'border-border text-muted-foreground bg-muted/30';
+}
+
+function getPluginSourceLabelKey(source: PluginMarketplaceSource): TranslationKey {
+  if (source === 'override') return 'settings.plugins.source.override';
+  if (source === 'installed') return 'settings.plugins.source.installed';
+  return 'settings.plugins.source.builtIn';
+}
+
 export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
@@ -190,6 +139,9 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   const [trustDialogPlugin, setTrustDialogPlugin] = useState<PluginManifest | null>(null);
   const [networkInput, setNetworkInput] = useState('');
   const [pluginQuery, setPluginQuery] = useState('');
+  const [pluginSourceFilter, setPluginSourceFilter] = useState<PluginSourceFilter>('all');
+  const [pluginStatusFilter, setPluginStatusFilter] = useState<PluginStatusFilter>('all');
+  const [pluginRiskFilter, setPluginRiskFilter] = useState<PluginRiskFilter>('all');
   const [pluginHealthMap, setPluginHealthMap] = useState<Record<string, PluginHealth>>({});
   const [pluginAuditLog, setPluginAuditLog] = useState<PluginAuditEvent[]>([]);
   const supportsDirectoryInstall =
@@ -203,59 +155,44 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
       return [];
     }
   }, []);
-  const recommendedPlugins = useMemo(() => {
-    try {
-      return getRecommendedPlugins();
-    } catch (err) {
-      console.error('Failed to get recommended plugins:', err);
-      return [];
-    }
-  }, []);
-  const builtInById = useMemo(() => {
-    return new Map(builtInPlugins.map((plugin) => [plugin.id, plugin]));
-  }, [builtInPlugins]);
-  const installedPluginIds = useMemo(
-    () => new Set(installedPlugins.map((plugin) => plugin.manifest.id)),
-    [installedPlugins]
-  );
-  const installedMetaById = useMemo(() => {
-    return new Map(
-      installedPlugins.map((plugin) => [
-        plugin.manifest.id,
-        { installedAt: plugin.installedAt, updatedAt: plugin.updatedAt },
-      ])
-    );
-  }, [installedPlugins]);
-  const availablePlugins = useMemo(() => {
-    const combined = new Map<string, (typeof installedPlugins)[number]['manifest']>();
-    for (const plugin of builtInPlugins) {
-      combined.set(plugin.id, plugin);
-    }
-    for (const plugin of installedPlugins) {
-      combined.set(plugin.manifest.id, plugin.manifest);
-    }
-    return Array.from(combined.values());
-  }, [builtInPlugins, installedPlugins]);
+  const pluginCatalog = useMemo(() => buildPluginMarketplaceCatalog({
+    builtInPlugins,
+    installedPlugins,
+    enabledPluginIds: settings.enabledPlugins,
+    trustedPluginIds: settings.trustedPlugins,
+  }), [builtInPlugins, installedPlugins, settings.enabledPlugins, settings.trustedPlugins]);
 
   const normalizedPluginQuery = pluginQuery.trim().toLowerCase();
-  const filteredPlugins = useMemo(() => {
-    if (!normalizedPluginQuery) return availablePlugins;
-    return availablePlugins.filter((plugin) => {
-      const haystack = [plugin.name, plugin.id, plugin.description]
+  const filteredPluginEntries = useMemo(() => {
+    return pluginCatalog.filter((entry) => {
+      if (pluginSourceFilter !== 'all' && entry.source !== pluginSourceFilter) return false;
+      if (pluginRiskFilter !== 'all' && entry.risk !== pluginRiskFilter) return false;
+      const health = pluginHealthMap[entry.id];
+      const isActive = settings.pluginsEnabled && entry.enabled;
+      const status = !isActive ? 'inactive' : health?.status ?? 'active';
+      if (pluginStatusFilter === 'enabled' && !entry.enabled) return false;
+      if (pluginStatusFilter === 'disabled' && entry.enabled) return false;
+      if (pluginStatusFilter === 'untrusted' && entry.trusted) return false;
+      if (pluginStatusFilter === 'error' && status !== 'error') return false;
+      if (!normalizedPluginQuery) return true;
+      const haystack = [entry.name, entry.id, entry.description, entry.author, entry.category]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
       return haystack.includes(normalizedPluginQuery);
     });
-  }, [availablePlugins, normalizedPluginQuery]);
-  const filteredRecommendedPlugins = useMemo(() => {
-    const recommendedIds = new Set(recommendedPlugins.map((plugin) => plugin.id));
-    return filteredPlugins.filter((plugin) => recommendedIds.has(plugin.id));
-  }, [filteredPlugins, recommendedPlugins]);
-
+  }, [
+    normalizedPluginQuery,
+    pluginCatalog,
+    pluginHealthMap,
+    pluginRiskFilter,
+    pluginSourceFilter,
+    pluginStatusFilter,
+    settings.pluginsEnabled,
+  ]);
   const pluginNameById = useMemo(
-    () => new Map(availablePlugins.map((plugin) => [plugin.id, plugin.name])),
-    [availablePlugins]
+    () => new Map(pluginCatalog.map((plugin) => [plugin.id, plugin.name])),
+    [pluginCatalog]
   );
 
   const networkAllowlist = useMemo(
@@ -264,17 +201,23 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   );
 
   const updateCount = useMemo(() => {
-    let count = 0;
-    for (const plugin of availablePlugins) {
-      const builtIn = builtInById.get(plugin.id);
-      const isInstalled = installedPluginIds.has(plugin.id);
-      if (!builtIn || !isInstalled) continue;
-      if (compareSemver(builtIn.version, plugin.version) > 0) {
-        count += 1;
-      }
-    }
-    return count;
-  }, [availablePlugins, builtInById, installedPluginIds]);
+    return pluginCatalog.filter((entry) => (
+      entry.source === 'override' &&
+      entry.builtInVersion &&
+      compareSemver(entry.builtInVersion, entry.version) > 0
+    )).length;
+  }, [pluginCatalog]);
+
+  const aboutPluginStatus = useMemo(() => {
+    const formulaExtractor = pluginCatalog.find((entry) => entry.id === FORMULA_EXTRACTOR_PLUGIN_ID);
+    return {
+      marketplaceCount: pluginCatalog.length,
+      officialCount: pluginCatalog.filter((entry) => entry.official).length,
+      installedCount: pluginCatalog.filter((entry) => entry.source === 'installed' || entry.source === 'override').length,
+      highRiskCount: pluginCatalog.filter((entry) => entry.risk === 'high').length,
+      formulaExtractorReady: Boolean(settings.pluginsEnabled && formulaExtractor?.enabled && formulaExtractor.trusted),
+    };
+  }, [pluginCatalog, settings.pluginsEnabled]);
 
   const formatTimestamp = (value?: number) => {
     if (!value) return '';
@@ -374,8 +317,13 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[180] flex items-start justify-center bg-black/50 px-4 pb-4 pt-6 backdrop-blur-sm md:pt-20">
-      <div className="relative flex w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]">
+    <div
+      className={cn(UI_MODAL_OVERLAY_CLASS, "flex items-start justify-center px-4 pb-4 pt-6 md:pt-20")}
+      style={UI_MODAL_OVERLAY_STYLE}
+    >
+      <div
+        className={cn("flex w-full max-w-5xl flex-col overflow-hidden rounded-xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]", UI_MODAL_PANEL_CLASS)}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <h2 className="text-lg font-semibold">{t('settings.title')}</h2>
@@ -456,6 +404,31 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     </span>
                   </span>
                 </label>
+                <div className="rounded border border-border bg-background p-3">
+                  <div className="text-sm font-medium text-foreground">
+                    {t('settings.pdf.externalLinks')}
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    {t('settings.pdf.externalLinks.description')}
+                  </p>
+                  <div className="mt-3 inline-flex rounded-lg border border-border bg-muted/40 p-1">
+                    {(['internal', 'browser'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => updateSetting('pdfExternalLinkOpenMode', mode)}
+                        className={cn(
+                          'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                          settings.pdfExternalLinkOpenMode === mode
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        {t(mode === 'internal' ? 'settings.pdf.externalLinks.internal' : 'settings.pdf.externalLinks.browser')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -504,16 +477,6 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                   <div className="space-y-1">
                     <ShortcutItem label={t('settings.shortcuts.inlineMath')} shortcut="Ctrl+Shift+M" />
                     <ShortcutItem label={t('settings.shortcuts.blockMath')} shortcut="Ctrl+Alt+M" />
-                    <ShortcutItem label={t('settings.shortcuts.fraction')} shortcut="Ctrl+Shift+F" />
-                    <ShortcutItem label={t('settings.shortcuts.sqrt')} shortcut="Ctrl+Shift+R" />
-                    <ShortcutItem label={t('settings.shortcuts.integral')} shortcut="Ctrl+Shift+I" />
-                    <ShortcutItem label={t('settings.shortcuts.sum')} shortcut="Ctrl+Shift+U" />
-                    <ShortcutItem label={t('settings.shortcuts.limit')} shortcut="Ctrl+Shift+L" />
-                    <ShortcutItem label={t('settings.shortcuts.matrix')} shortcut="Ctrl+Shift+X" />
-                    <ShortcutItem label={t('settings.shortcuts.vector')} shortcut="Ctrl+Shift+V" />
-                    <ShortcutItem label={t('settings.shortcuts.partial')} shortcut="Ctrl+Alt+P" />
-                    <ShortcutItem label={t('settings.shortcuts.superscript')} shortcut="Ctrl+↑" />
-                    <ShortcutItem label={t('settings.shortcuts.subscript')} shortcut="Ctrl+↓" />
                   </div>
                 </div>
 
@@ -523,12 +486,23 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     {t('settings.shortcuts.section.quantum')}
                   </div>
                   <div className="space-y-1">
+                    <ShortcutItem label={t('settings.shortcuts.quantumOpen')} shortcut="Tab Tab" />
+                    <ShortcutItem label={t('settings.shortcuts.fraction')} shortcut="4 / F" />
+                    <ShortcutItem label={t('settings.shortcuts.sqrt')} shortcut="3 / R" />
+                    <ShortcutItem label={t('settings.shortcuts.sum')} shortcut="5 / S" />
+                    <ShortcutItem label={t('settings.shortcuts.integral')} shortcut="6 / I" />
+                    <ShortcutItem label={t('settings.shortcuts.limit')} shortcut="7 / L" />
+                    <ShortcutItem label={t('settings.shortcuts.matrix')} shortcut="M / X" />
+                    <ShortcutItem label={t('settings.shortcuts.vector')} shortcut="V" />
                     <ShortcutItem label={t('settings.shortcuts.quantumTab')} shortcut="Tab" />
+                    <ShortcutItem label={t('settings.shortcuts.quantumNested')} shortcut="Alt+键" />
                     <ShortcutItem label={t('settings.shortcuts.quantumShiftTab')} shortcut="Shift+Tab" />
                     <ShortcutItem label={t('settings.shortcuts.quantumVariant')} shortcut={t('settings.shortcuts.quantumVariantShortcut')} />
                     <ShortcutItem label={t('settings.shortcuts.quantumClose')} shortcut="Esc" />
                   </div>
                 </div>
+
+                <QuantumKeyboardEditor />
 
                 {/* Line operations */}
                 <div>
@@ -624,6 +598,44 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                   )}
                 </div>
 
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={pluginSourceFilter}
+                    onChange={(event) => setPluginSourceFilter(event.currentTarget.value as PluginSourceFilter)}
+                    className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground"
+                    aria-label={t('settings.plugins.filter.source')}
+                  >
+                    <option value="all">{t('settings.plugins.filter.source.all')}</option>
+                    <option value="built-in">{t('settings.plugins.source.builtIn')}</option>
+                    <option value="installed">{t('settings.plugins.source.installed')}</option>
+                    <option value="override">{t('settings.plugins.source.override')}</option>
+                  </select>
+                  <select
+                    value={pluginStatusFilter}
+                    onChange={(event) => setPluginStatusFilter(event.currentTarget.value as PluginStatusFilter)}
+                    className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground"
+                    aria-label={t('settings.plugins.filter.status')}
+                  >
+                    <option value="all">{t('settings.plugins.filter.status.all')}</option>
+                    <option value="enabled">{t('settings.plugins.filter.status.enabled')}</option>
+                    <option value="disabled">{t('settings.plugins.filter.status.disabled')}</option>
+                    <option value="untrusted">{t('settings.plugins.filter.status.untrusted')}</option>
+                    <option value="error">{t('settings.plugins.filter.status.error')}</option>
+                  </select>
+                  <select
+                    value={pluginRiskFilter}
+                    onChange={(event) => setPluginRiskFilter(event.currentTarget.value as PluginRiskFilter)}
+                    className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground"
+                    aria-label={t('settings.plugins.filter.risk')}
+                  >
+                    <option value="all">{t('settings.plugins.filter.risk.all')}</option>
+                    <option value="none">{t('settings.plugins.risk.none')}</option>
+                    <option value="low">{t('settings.plugins.risk.low')}</option>
+                    <option value="medium">{t('settings.plugins.risk.medium')}</option>
+                    <option value="high">{t('settings.plugins.risk.high')}</option>
+                  </select>
+                </div>
+
                 <div className="flex items-start justify-between gap-4 rounded-lg border border-border bg-muted/30 p-3">
                   <div>
                     <div className="text-sm font-medium">{t('settings.plugins.enable')}</div>
@@ -693,72 +705,24 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                 </div>
 
                 <div>
-                  {filteredRecommendedPlugins.length > 0 && (
-                    <div className="mb-4 space-y-2">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        Official recommended
-                      </div>
-                      {filteredRecommendedPlugins.map((plugin) => {
-                        const isEnabled = settings.enabledPlugins.includes(plugin.id);
-                        const isTrusted = settings.trustedPlugins.includes(plugin.id);
-                        const status = settings.pluginsEnabled && isEnabled ? 'Enabled' : 'Disabled';
-                        return (
-                          <div
-                            key={`recommended-${plugin.id}`}
-                            className="rounded-lg border border-primary/25 bg-primary/5 p-3"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
-                                  <span>{plugin.name}</span>
-                                  <span className="rounded-full border border-primary/30 px-2 py-0.5 text-[10px] uppercase tracking-wide text-primary">
-                                    Recommended
-                                  </span>
-                                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                                    {status}
-                                  </span>
-                                </div>
-                                {plugin.description && (
-                                  <div className="mt-1 text-xs text-muted-foreground">
-                                    {plugin.description}
-                                  </div>
-                                )}
-                                <div className="mt-1 text-xs text-muted-foreground">
-                                  v{plugin.version}{plugin.author ? ` · ${plugin.author}` : ''} · {plugin.id}
-                                  {!isTrusted ? ' · Trust required' : ''}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {availablePlugins.length === 0 ? (
+                  {pluginCatalog.length === 0 ? (
                     <div className="text-xs text-muted-foreground">{t('settings.plugins.none')}</div>
-                  ) : filteredPlugins.length === 0 ? (
+                  ) : filteredPluginEntries.length === 0 ? (
                     <div className="text-xs text-muted-foreground">{t('settings.plugins.search.empty')}</div>
                   ) : (
                     <div className="space-y-2">
-                      {filteredPlugins.map((plugin) => {
-                        const isEnabled = settings.enabledPlugins.includes(plugin.id);
-                        const isTrusted = settings.trustedPlugins.includes(plugin.id);
-                        const builtIn = builtInById.get(plugin.id);
-                        const isBuiltIn = Boolean(builtIn);
-                        const isInstalled = installedPluginIds.has(plugin.id);
-                        const meta = installedMetaById.get(plugin.id);
+                      {filteredPluginEntries.map((entry) => {
+                        const plugin = entry.manifest;
+                        const isEnabled = entry.enabled;
+                        const isTrusted = entry.trusted;
+                        const isBuiltIn = entry.source === 'built-in';
+                        const isInstalled = entry.installed;
                         const updateAvailable =
-                          isInstalled &&
-                          isBuiltIn &&
-                          builtIn?.version &&
-                          compareSemver(builtIn.version, plugin.version) > 0;
-                        const sourceLabelKey = isInstalled && isBuiltIn
-                          ? 'settings.plugins.source.override'
-                          : isInstalled
-                            ? 'settings.plugins.source.installed'
-                            : 'settings.plugins.source.builtIn';
-                        const health = pluginHealthMap[plugin.id];
+                          entry.source === 'override' &&
+                          entry.builtInVersion &&
+                          compareSemver(entry.builtInVersion, entry.version) > 0;
+                        const sourceLabelKey = getPluginSourceLabelKey(entry.source);
+                        const health = pluginHealthMap[entry.id];
                         const isActive = settings.pluginsEnabled && isEnabled;
                         const status = !isActive ? 'inactive' : health?.status ?? 'active';
                         const statusLabelKey =
@@ -772,33 +736,27 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                         const permissions = plugin.permissions ?? [];
                         return (
                           <div
-                            key={plugin.id}
-                            className={`flex items-start justify-between gap-3 rounded-lg border border-border p-3 transition-colors ${
+                            key={entry.id}
+                            className={`rounded-lg border p-3 transition-colors ${
                               settings.pluginsEnabled
-                                ? 'bg-background hover:bg-muted/40'
+                                ? isActive
+                                  ? 'border-primary/25 bg-primary/5'
+                                  : 'border-border bg-background hover:bg-muted/30'
                                 : 'bg-muted/30 text-muted-foreground'
                             }`}
                           >
-                            <div className="flex items-start gap-3 flex-1">
-                              <input
-                                id={checkboxId}
-                                type="checkbox"
-                                className="mt-1 h-4 w-4 rounded border-border text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                checked={isEnabled}
-                                disabled={!settings.pluginsEnabled || !isTrusted}
-                                onChange={(event) => {
-                                  const nextEnabled = event.target.checked
-                                    ? Array.from(new Set([...settings.enabledPlugins, plugin.id]))
-                                    : settings.enabledPlugins.filter((id) => id !== plugin.id);
-                                  updateSetting('enabledPlugins', nextEnabled);
-                                }}
-                              />
-                              <label htmlFor={checkboxId} className="flex-1 cursor-pointer">
-                                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                                  <span>{plugin.name}</span>
+                            <div className="flex items-start justify-between gap-3">
+                              <label htmlFor={checkboxId} className="min-w-0 flex-1 cursor-pointer">
+                                <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+                                  <span className="truncate">{plugin.name}</span>
+                                  {entry.recommended && (
+                                    <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                                      {t('settings.plugins.badge.official')}
+                                    </span>
+                                  )}
                                   <span
                                     className={cn(
-                                      "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide",
+                                      "rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
                                       status === 'error'
                                         ? "border-destructive/40 text-destructive"
                                         : status === 'active'
@@ -808,41 +766,64 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                                   >
                                     {t(statusLabelKey as TranslationKey)}
                                   </span>
-                                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                                    {t(sourceLabelKey as TranslationKey)}
+                                  <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide", getPluginRiskClass(entry.risk))}>
+                                    {t(`settings.plugins.risk.${entry.risk}` as TranslationKey)}
+                                  </span>
+                                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                    {entry.official && isTrusted ? t('settings.plugins.badge.trusted') : t(sourceLabelKey)}
                                   </span>
                                 </div>
                                 {plugin.description && (
-                                  <div className="text-xs text-muted-foreground mt-1">
+                                  <div className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
                                     {plugin.description}
                                   </div>
                                 )}
-                                <div className="text-xs text-muted-foreground mt-1">
-                                  v{plugin.version}
-                                  {plugin.author ? ` · ${plugin.author}` : ''}
+                                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                                  <span>v{plugin.version}{plugin.author ? ` · ${plugin.author}` : ''}</span>
+                                  <span>{plugin.id}</span>
                                 </div>
-                                {isInstalled && meta && (
+                                {entry.validation.warnings.length > 0 && (
+                                  <div className="mt-2 rounded-md border border-amber-400/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300">
+                                    {entry.validation.warnings.join(' · ')}
+                                  </div>
+                                )}
+                                {entry.validation.errors.length > 0 && (
+                                  <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+                                    {entry.validation.errors.join(' · ')}
+                                  </div>
+                                )}
+                                {permissions.length > 0 ? (
+                                  <div className="mt-2 flex flex-wrap gap-1.5">
+                                    {permissions.map((permission) => {
+                                      const meta = getPluginPermissionMeta(permission);
+                                      return (
+                                        <span
+                                          key={permission}
+                                          className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground"
+                                          title={permission}
+                                        >
+                                          {t(meta.titleKey)}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                ) : null}
+                                {isInstalled && (
                                   <div className="text-xs text-muted-foreground mt-1">
-                                    {t('settings.plugins.installedAt')}: {formatTimestamp(meta.installedAt)}
-                                    {meta.updatedAt
-                                      ? ` · ${t('settings.plugins.updatedAt')}: ${formatTimestamp(meta.updatedAt)}`
+                                    {t('settings.plugins.installedAt')}: {formatTimestamp(entry.installedAt)}
+                                    {entry.updatedAt
+                                      ? ` · ${t('settings.plugins.updatedAt')}: ${formatTimestamp(entry.updatedAt)}`
                                       : ''}
                                   </div>
                                 )}
                                 {updateAvailable && (
                                   <div className="text-xs text-amber-600 mt-1">
                                     {t('settings.plugins.update.available')}
-                                    {builtIn?.version
-                                      ? ` · ${t('settings.plugins.update.builtInVersion')}: v${builtIn.version}`
+                                    {entry.builtInVersion
+                                      ? ` · ${t('settings.plugins.update.builtInVersion')}: v${entry.builtInVersion}`
                                       : ''}
                                   </div>
                                 )}
-                                <div className="text-xs text-muted-foreground mt-1">
-                                  {t('settings.plugins.id')}: {plugin.id}
-                                </div>
-                                <div className="text-xs text-muted-foreground mt-1">
-                                  {t('settings.plugins.permissions')}: {permissions.length > 0 ? permissions.join(', ') : t('settings.plugins.permissions.none')}
-                                </div>
                                 {plugin.settings && plugin.settings.length > 0 && isEnabled && settings.pluginsEnabled && (
                                   <PluginSettingsFields pluginId={plugin.id} fields={plugin.settings} />
                                 )}
@@ -862,43 +843,60 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                                   </div>
                                 )}
                               </label>
-                            </div>
-                            <label htmlFor={trustId} className="flex items-center gap-2 text-xs text-muted-foreground">
                               <input
-                                id={trustId}
+                                id={checkboxId}
                                 type="checkbox"
-                                className="h-4 w-4 rounded border-border text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                checked={isTrusted}
+                                className="mt-1 h-4 w-4 rounded border-border text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                checked={isEnabled}
+                                disabled={!settings.pluginsEnabled || !isTrusted}
                                 onChange={(event) => {
-                                  if (event.target.checked) {
-                                    setTrustDialogPlugin(plugin);
-                                    return;
-                                  }
-                                  const nextTrusted = settings.trustedPlugins.filter((id) => id !== plugin.id);
-                                  const nextEnabled = settings.enabledPlugins.filter((id) => id !== plugin.id);
-                                  updateSettings({ trustedPlugins: nextTrusted, enabledPlugins: nextEnabled });
+                                  const nextEnabled = event.target.checked
+                                    ? Array.from(new Set([...settings.enabledPlugins, plugin.id]))
+                                    : settings.enabledPlugins.filter((id) => id !== plugin.id);
+                                  updateSetting('enabledPlugins', nextEnabled);
                                 }}
                               />
-                              {t('settings.plugins.trust')}
-                            </label>
-                            {isInstalled && (
-                              <button
-                                type="button"
-                                onClick={() => void removePlugin(plugin.id)}
-                                className="text-xs text-muted-foreground hover:text-destructive transition-colors"
-                              >
-                                {t('settings.plugins.uninstall')}
-                              </button>
-                            )}
-                            {updateAvailable && (
-                              <button
-                                type="button"
-                                onClick={() => void removePlugin(plugin.id)}
-                                className="text-xs text-amber-600 hover:text-amber-700 transition-colors"
-                              >
-                                {t('settings.plugins.update.useBuiltIn')}
-                              </button>
-                            )}
+                            </div>
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              {!isBuiltIn && (
+                                <label htmlFor={trustId} className="inline-flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
+                                  <input
+                                    id={trustId}
+                                    type="checkbox"
+                                    className="h-4 w-4 rounded border-border text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                    checked={isTrusted}
+                                    onChange={(event) => {
+                                      if (event.target.checked) {
+                                        setTrustDialogPlugin(plugin);
+                                        return;
+                                      }
+                                      const nextTrusted = settings.trustedPlugins.filter((id) => id !== plugin.id);
+                                      const nextEnabled = settings.enabledPlugins.filter((id) => id !== plugin.id);
+                                      updateSettings({ trustedPlugins: nextTrusted, enabledPlugins: nextEnabled });
+                                    }}
+                                  />
+                                  {t('settings.plugins.trust')}
+                                </label>
+                              )}
+                              {isInstalled && (
+                                <button
+                                  type="button"
+                                  onClick={() => void removePlugin(plugin.id)}
+                                  className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
+                                >
+                                  {t('settings.plugins.uninstall')}
+                                </button>
+                              )}
+                              {updateAvailable && (
+                                <button
+                                  type="button"
+                                  onClick={() => void removePlugin(plugin.id)}
+                                  className="rounded-md border border-amber-500/30 px-2 py-1 text-xs text-amber-600 transition-colors hover:bg-amber-500/10"
+                                >
+                                  {t('settings.plugins.update.useBuiltIn')}
+                                </button>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
@@ -1226,31 +1224,69 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     {t('settings.version')}: {APP_VERSION}
                   </div>
                 </div>
-                <div className="rounded-lg border border-border bg-muted/30 p-4">
-                  <div className="text-sm font-medium text-muted-foreground mb-3">
-                    {t('settings.about.status')}
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="rounded-lg border border-border bg-muted/30 p-4">
+                    <div className="text-sm font-medium text-muted-foreground mb-3">
+                      {t('settings.about.status')}
+                    </div>
+                    <div className="grid gap-2 text-xs text-muted-foreground xl:grid-cols-2">
+                      <StatusItem
+                        label={t('settings.about.platform')}
+                        value={isTauri() ? t('settings.about.platform.desktop') : t('settings.about.platform.web')}
+                      />
+                      <StatusItem
+                        label={t('settings.about.ai')}
+                        value={settings.aiEnabled ? t('common.enabled') : t('common.disabled')}
+                      />
+                      <StatusItem
+                        label={t('settings.about.plugins.enabled')}
+                        value={settings.pluginsEnabled ? t('common.enabled') : t('common.disabled')}
+                      />
+                      <StatusItem
+                        label={t('settings.about.plugins.trusted')}
+                        value={String(settings.trustedPlugins.length)}
+                      />
+                      <StatusItem
+                        label={t('settings.about.plugins.active')}
+                        value={String(settings.enabledPlugins.length)}
+                      />
+                      <StatusItem
+                        label={t('settings.about.plugins.audit')}
+                        value={pluginAuditLog.length > 0 ? String(pluginAuditLog.length) : t('settings.about.status.ready')}
+                      />
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                    <StatusItem
-                      label={t('settings.about.platform')}
-                      value={isTauri() ? t('settings.about.platform.desktop') : t('settings.about.platform.web')}
-                    />
-                    <StatusItem
-                      label={t('settings.about.ai')}
-                      value={settings.aiEnabled ? t('common.enabled') : t('common.disabled')}
-                    />
-                    <StatusItem
-                      label={t('settings.about.plugins.enabled')}
-                      value={settings.pluginsEnabled ? t('common.enabled') : t('common.disabled')}
-                    />
-                    <StatusItem
-                      label={t('settings.about.plugins.trusted')}
-                      value={String(settings.trustedPlugins.length)}
-                    />
-                    <StatusItem
-                      label={t('settings.about.plugins.active')}
-                      value={String(settings.enabledPlugins.length)}
-                    />
+
+                  <div className="rounded-lg border border-border bg-muted/30 p-4">
+                    <div className="text-sm font-medium text-muted-foreground mb-3">
+                      {t('settings.about.capabilities')}
+                    </div>
+                    <div className="grid gap-2 text-xs text-muted-foreground xl:grid-cols-2">
+                      <StatusItem
+                        label={t('settings.about.plugins.marketplace')}
+                        value={String(aboutPluginStatus.marketplaceCount)}
+                      />
+                      <StatusItem
+                        label={t('settings.about.plugins.official')}
+                        value={String(aboutPluginStatus.officialCount)}
+                      />
+                      <StatusItem
+                        label={t('settings.about.plugins.installed')}
+                        value={String(aboutPluginStatus.installedCount)}
+                      />
+                      <StatusItem
+                        label={t('settings.about.plugins.highRisk')}
+                        value={String(aboutPluginStatus.highRiskCount)}
+                      />
+                      <StatusItem
+                        label={t('settings.about.formulaExtractor')}
+                        value={aboutPluginStatus.formulaExtractorReady ? t('settings.about.status.ready') : t('common.disabled')}
+                      />
+                      <StatusItem
+                        label={t('settings.about.plugins.networkRules')}
+                        value={networkAllowlist.length > 0 ? String(networkAllowlist.length) : t('settings.plugins.networkAllowlist.empty')}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1293,9 +1329,9 @@ function ShortcutItem({ label, shortcut }: { label: string; shortcut: string }) 
 
 function StatusItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-muted-foreground/80">{label}</span>
-      <span className="text-foreground">{value}</span>
+    <div className="flex min-w-0 items-start justify-between gap-3 rounded-md bg-background/45 px-3 py-2">
+      <span className="min-w-0 break-words text-muted-foreground/80">{label}</span>
+      <span className="min-w-0 max-w-[55%] break-words text-right font-medium text-foreground">{value}</span>
     </div>
   );
 }
@@ -1345,9 +1381,12 @@ function PluginTrustDialog({
   const permissions = Array.from(new Set(plugin.permissions ?? []));
 
   return (
-    <div className="fixed inset-0 z-[190] flex items-start justify-center bg-black/60 px-4 pb-4 pt-6 md:pt-24">
+    <div
+      className={cn(UI_MODAL_OVERLAY_CLASS, "flex items-start justify-center px-4 pb-4 pt-6 md:pt-24")}
+      style={UI_MODAL_OVERLAY_STYLE}
+    >
       <div
-        className="w-full max-w-lg rounded-xl border border-border bg-background p-6 shadow-2xl max-h-[calc(100vh-2rem)] overflow-y-auto md:max-h-[calc(100vh-8rem)]"
+        className={cn("w-full max-w-lg rounded-xl p-6 max-h-[calc(100vh-2rem)] overflow-y-auto md:max-h-[calc(100vh-8rem)]", UI_MODAL_PANEL_CLASS)}
         role="dialog"
         aria-modal="true"
       >
@@ -1382,9 +1421,9 @@ function PluginTrustDialog({
           ) : (
             <div className="space-y-2">
               {permissions.map((permission) => {
-                const meta = PERMISSION_META[permission];
-                const title = meta ? t(meta.titleKey) : permission;
-                const description = meta ? t(meta.descKey) : permission;
+                const meta = getPluginPermissionMeta(permission);
+                const title = t(meta.titleKey);
+                const description = t(meta.descKey);
                 return (
                   <div
                     key={permission}

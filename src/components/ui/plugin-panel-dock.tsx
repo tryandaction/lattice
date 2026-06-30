@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from "react";
-import { X, PanelLeft } from "lucide-react";
+import { Cable, X } from "lucide-react";
 import { useI18n } from "@/hooks/use-i18n";
 import { useSettingsStore } from "@/stores/settings-store";
 import {
@@ -158,6 +158,7 @@ export function PluginPanelDock({ onClose }: PluginPanelDockProps) {
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
   const [formState, setFormState] = useState<FormState>({});
   const [query, setQuery] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -308,11 +309,28 @@ export function PluginPanelDock({ onClose }: PluginPanelDockProps) {
     return new Map(commands.map((command) => [command.id, command]));
   }, [commands]);
 
+  const runPanelAction = useCallback(async (panel: PluginPanel, actionId: string) => {
+    const command = commandsById.get(actionId);
+    if (!command) {
+      setActionError(`Command not found: ${actionId}`);
+      return;
+    }
+    setActionError(null);
+    try {
+      await runPluginCommand(actionId, {
+        panelId: panel.id,
+        formData: formState[panel.id] ?? {},
+      });
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    }
+  }, [commandsById, formState]);
+
   return (
-    <div className="flex h-full flex-col border-l border-border bg-background">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+    <div className="flex h-full flex-col bg-background">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
-          <PanelLeft className="h-4 w-4 text-muted-foreground" />
+          <Cable className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold">{t("panels.title")}</h2>
         </div>
         <button
@@ -324,8 +342,8 @@ export function PluginPanelDock({ onClose }: PluginPanelDockProps) {
         </button>
       </div>
 
-      <div className="flex flex-1 min-h-0">
-        <div className="w-40 border-r border-border p-2 space-y-1 overflow-y-auto">
+      <div className="flex min-h-0 flex-1">
+        <div className="w-48 shrink-0 space-y-1 overflow-y-auto border-r border-border p-2">
           <div className="px-2 pb-2">
             <input
               type="text"
@@ -355,7 +373,7 @@ export function PluginPanelDock({ onClose }: PluginPanelDockProps) {
                 }
               }}
               className={cn(
-                "w-full rounded-md border border-border bg-background px-2 py-1 text-xs",
+                "w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs",
                 "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               )}
             />
@@ -380,7 +398,7 @@ export function PluginPanelDock({ onClose }: PluginPanelDockProps) {
                   key={`recent-${panel.id}`}
                   onClick={() => setActivePanelId(panel.id)}
                   className={cn(
-                    "w-full text-left px-3 py-2 rounded-lg text-xs transition-colors",
+                    "w-full text-left rounded-lg px-3 py-2 text-xs transition-colors",
                     activePanelId === panel.id
                       ? "bg-primary/10 text-primary"
                       : "hover:bg-muted text-muted-foreground hover:text-foreground"
@@ -406,7 +424,7 @@ export function PluginPanelDock({ onClose }: PluginPanelDockProps) {
                   key={panel.id}
                   onClick={() => setActivePanelId(panel.id)}
                   className={cn(
-                    "w-full text-left px-3 py-2 rounded-lg text-xs transition-colors",
+                    "w-full text-left rounded-lg px-3 py-2 text-xs transition-colors",
                     activePanelId === panel.id
                       ? "bg-primary/10 text-primary"
                       : "hover:bg-muted text-muted-foreground hover:text-foreground"
@@ -422,7 +440,7 @@ export function PluginPanelDock({ onClose }: PluginPanelDockProps) {
           )}
         </div>
 
-        <div className="flex-1 p-4 overflow-y-auto">
+        <div className="min-w-0 flex-1 overflow-y-auto p-4">
           {activePanelWithLiveProps && (
             <div className="space-y-4">
               <div>
@@ -436,24 +454,19 @@ export function PluginPanelDock({ onClose }: PluginPanelDockProps) {
 
               {renderPanelSchema(activePanelWithLiveProps.schema, formState, setFormState, activePanelWithLiveProps.id)}
 
+              {actionError && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  {actionError}
+                </div>
+              )}
+
               {activePanelWithLiveProps.actions && activePanelWithLiveProps.actions.length > 0 && (
                 <div className="flex items-center gap-2 pt-2 border-t border-border">
                   {activePanelWithLiveProps.actions.map((action) => (
                     <button
                       key={action.id}
                       type="button"
-                      onClick={() => {
-                        const command = commandsById.get(action.id);
-                        if (!command) {
-                          console.warn(`Command not found for action ${action.id}`);
-                          return;
-                        }
-                        const payload = {
-                          panelId: activePanelWithLiveProps.id,
-                          formData: formState[activePanelWithLiveProps.id] ?? {},
-                        };
-                        void runPluginCommand(action.id, payload);
-                      }}
+                      onClick={() => void runPanelAction(activePanelWithLiveProps, action.id)}
                       className="px-3 py-1.5 text-xs rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                     >
                       {action.title}

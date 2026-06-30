@@ -67,8 +67,8 @@ export function ShadowKeyboard({
       {QWERTY_LAYOUT.map((row, rowIndex) => (
         <div
           key={rowIndex}
-          className="flex gap-1"
-          style={{ marginLeft: `${row.offset * 3}rem` }}
+          className={`shadow-keyboard-row shadow-keyboard-row-${rowIndex}`}
+          data-row={rowIndex}
         >
           {row.keys.map((keyCode) => {
             const mapping = quantumKeymap[keyCode];

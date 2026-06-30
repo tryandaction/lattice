@@ -5,6 +5,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { exportFile } from "../export-adapter";
 
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  save: vi.fn(),
+}));
+
 const originalCreateElement = document.createElement.bind(document);
 type SavePickerTestWindow = Omit<Window, "showSaveFilePicker"> & {
   showSaveFilePicker?: ReturnType<typeof vi.fn>;
@@ -22,6 +26,10 @@ describe("export adapter", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.resetModules();
+    vi.doUnmock("../storage-adapter");
+    vi.doUnmock("@/lib/storage-adapter");
+    vi.doUnmock("@/lib/desktop-openers");
     delete testWindow().showSaveFilePicker;
   });
 
@@ -116,5 +124,51 @@ describe("export adapter", () => {
       defaultFileName: "figure.png",
       filters: [{ name: "PNG image", extensions: ["png"], mimeType: "image/png" }],
     })).resolves.toEqual({ success: false, cancelled: true });
+  });
+
+  it("uses the Tauri save dialog and desktop byte writer on desktop", async () => {
+    vi.resetModules();
+    const save = vi.fn(async () => "C:/exports/paper.docx");
+    const invokeTauriCommand = vi.fn(async () => undefined);
+    vi.doMock("@tauri-apps/plugin-dialog", () => ({ save }));
+    vi.doMock("../storage-adapter", () => ({
+      isTauri: () => true,
+      invokeTauriCommand,
+    }));
+
+    const { exportFile: desktopExportFile } = await import("../export-adapter");
+    const result = await desktopExportFile(new Uint8Array([1, 2, 3]), {
+      defaultFileName: "paper.docx",
+      filters: [{ name: "Word Document", extensions: ["docx"] }],
+    });
+
+    expect(result).toEqual({ success: true, filePath: "C:/exports/paper.docx" });
+    expect(save).toHaveBeenCalledWith({
+      defaultPath: "paper.docx",
+      filters: [{ name: "Word Document", extensions: ["docx"] }],
+    });
+    expect(invokeTauriCommand).toHaveBeenCalledWith("desktop_write_file_bytes", {
+      path: "C:/exports/paper.docx",
+      data: [1, 2, 3],
+    });
+  });
+
+  it("returns cancelled when the Tauri save dialog is cancelled", async () => {
+    vi.resetModules();
+    const save = vi.fn(async () => null);
+    const invokeTauriCommand = vi.fn();
+    vi.doMock("@tauri-apps/plugin-dialog", () => ({ save }));
+    vi.doMock("../storage-adapter", () => ({
+      isTauri: () => true,
+      invokeTauriCommand,
+    }));
+
+    const { exportFile: desktopExportFile } = await import("../export-adapter");
+
+    await expect(desktopExportFile(new Uint8Array([1]), {
+      defaultFileName: "paper.pdf",
+      filters: [{ name: "PDF Document", extensions: [".pdf"] }],
+    })).resolves.toEqual({ success: false, cancelled: true });
+    expect(invokeTauriCommand).not.toHaveBeenCalled();
   });
 });

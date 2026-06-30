@@ -3,7 +3,7 @@ export type LinkTarget =
   | { type: "workspace_file"; path: string }
   | { type: "workspace_heading"; path: string; heading: string }
   | { type: "pdf_page"; path: string; page: number }
-  | { type: "pdf_annotation"; path: string; annotationId: string }
+  | { type: "pdf_annotation"; path: string; annotationId: string; page?: number }
   | { type: "code_line"; path: string; line: number }
   | { type: "notebook_cell"; path: string; cellId: string }
   | { type: "system_path"; path: string };

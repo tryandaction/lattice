@@ -34,6 +34,10 @@ function indexedLink(content: string, rawTarget: string, input: Partial<IndexedM
       end: { line: 0, col: start + rawTarget.length, offset: start + rawTarget.length },
     },
     parsedTarget: null,
+    resolution: {
+      kind: "unresolved",
+      repairCandidates: [],
+    },
     broken: true,
     ...input,
   };
@@ -56,6 +60,11 @@ function indexedFullLink(
       end: { line: 0, col: start + linkSource.length, offset: start + linkSource.length },
     },
     parsedTarget: null,
+    resolution: {
+      kind: "exact",
+      resolvedPath: rawTarget,
+      repairCandidates: [],
+    },
     broken: false,
     ...input,
   };

@@ -194,6 +194,27 @@ async function clickAnnotationCenter(page, annotationId) {
   return point;
 }
 
+async function waitForAnnotationOverlay(page, annotationId) {
+  await page.waitForFunction((id) => {
+    const escapedId = typeof CSS !== "undefined" && typeof CSS.escape === "function"
+      ? CSS.escape(id)
+      : id.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+    const selectors = [
+      `.pdf-stored-annotation-overlay-${escapedId} [data-pdf-stored-annotation-segment="true"]`,
+      `.text-overlay-${escapedId} [data-pdf-text-annotation-content="true"]`,
+      `.ink-overlay-${escapedId} [data-pdf-ink-annotation-bounds-hit-area="true"]`,
+      `.ink-overlay-${escapedId} [data-pdf-ink-annotation-segment="true"]`,
+      `.ink-overlay-${escapedId} [data-pdf-ink-annotation-content="true"]`,
+    ];
+    return selectors.some((selector) => (
+      Array.from(document.querySelectorAll(selector)).some((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      })
+    ));
+  }, annotationId, { timeout: ASSERT_TIMEOUT_MS });
+}
+
 async function inspectPoint(page, x, y) {
   return page.evaluate(({ clientX, clientY }) => {
     const element = document.elementFromPoint(clientX, clientY);
@@ -292,6 +313,7 @@ async function closeStoredMenu(page, annotationId) {
 }
 
 async function assertStoredMenu(page, annotationId, xRatio, yRatio, expectedText = "") {
+  await waitForAnnotationOverlay(page, annotationId);
   const clickedOverlay = await clickAnnotationCenter(page, annotationId);
   const clickInspection = clickedOverlay
     ? await inspectPoint(page, clickedOverlay.x, clickedOverlay.y)
@@ -346,6 +368,15 @@ async function main() {
 
   let browser;
   let page;
+  const diagnosticAnnotationIds = [
+    "ann-real-highlight",
+    "ann-real-underline",
+    "ann-real-area",
+    "ann-real-pin",
+    "ann-real-text",
+    "ann-real-ink",
+  ];
+
   try {
     await waitForHttpOk(`http://127.0.0.1:${cdpPort}/json/version`, ASSERT_TIMEOUT_MS);
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
@@ -498,6 +529,7 @@ async function main() {
     if (!programmatic || programmatic.ok !== true || !programmatic.annotationId) {
       throw new Error(`Desktop PDF programmatic text-markup creation failed: ${JSON.stringify(programmatic)}`);
     }
+    diagnosticAnnotationIds.push(programmatic.annotationId);
     if (!programmatic.text.includes(REAL_PDF_SELECTION_TARGET) || programmatic.rectCount < 1) {
       throw new Error(`Desktop PDF programmatic text-markup drifted: ${JSON.stringify(programmatic)}`);
     }
@@ -519,12 +551,7 @@ async function main() {
     if (page) {
       await page.screenshot({ path: path.join(OUTPUT_DIR, "desktop-pdf-smoke-failure.png"), fullPage: true }).catch(() => {});
       const overlayDiagnostics = await collectAnnotationOverlayDiagnostics(page, [
-        "ann-real-highlight",
-        "ann-real-underline",
-        "ann-real-area",
-        "ann-real-pin",
-        "ann-real-text",
-        "ann-real-ink",
+        ...new Set(diagnosticAnnotationIds),
       ]).catch((diagnosticError) => ({
         error: diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError),
       }));

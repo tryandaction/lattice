@@ -153,7 +153,7 @@ export const CodeCell = memo(function CodeCell({
   }, [onFocus]);
 
   return (
-    <div className="space-y-2" onKeyDown={handleKeyDown}>
+    <div className="space-y-1.5" onKeyDown={handleKeyDown}>
       <div className="flex items-center justify-between">
         <div className="code-workbench-soft-text font-mono text-xs">
           [{executionCount ?? " "}]:

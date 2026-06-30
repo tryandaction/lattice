@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useRef, useMemo } from "react";
+import { startTransition, useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { useDndMonitor } from "@dnd-kit/core";
 import { Copy, FileText, MoreHorizontal, PanelTopClose, Save, SplitSquareHorizontal, SplitSquareVertical, X } from "lucide-react";
 import { toast } from "sonner";
@@ -505,16 +505,18 @@ export function PaneWrapper({
       setContent({ kind: "text", text: newContent });
 
       const originalContent = originalContentRef.current ?? newContent;
-      useContentCacheStore.getState().setContent(tabId, newContent, originalContent);
+      startTransition(() => {
+        useContentCacheStore.getState().setContent(tabId, newContent, originalContent);
 
-      // Mark dirty when differs, clear when equals
-      const isDirty = newContent !== originalContent;
-      const { layout } = useWorkspaceStore.getState();
-      const pane = findPane(layout.root, paneId);
-      const currentIndex = pane?.tabs.findIndex((tab) => tab.id === tabId) ?? -1;
-      if (currentIndex >= 0) {
-        setTabDirty(paneId, currentIndex, isDirty);
-      }
+        // Mark dirty when differs, clear when equals
+        const isDirty = newContent !== originalContent;
+        const { layout } = useWorkspaceStore.getState();
+        const pane = findPane(layout.root, paneId);
+        const currentIndex = pane?.tabs.findIndex((tab) => tab.id === tabId) ?? -1;
+        if (currentIndex >= 0) {
+          setTabDirty(paneId, currentIndex, isDirty);
+        }
+      });
     };
   }, [paneId, setTabDirty]);
 
@@ -628,12 +630,11 @@ export function PaneWrapper({
   return (
     <div
       className={cn(
-        "group/pane flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-sm border transition-all duration-150",
+        "group/pane flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--workbench-panel)] transition-shadow duration-150",
         "bg-[var(--workbench-panel)]",
-        isActive
-          ? "border-blue-500/50 ring-2 ring-[var(--workbench-focus)]"
-          : "border-border"
+        isActive && "shadow-[inset_0_2px_0_0_var(--workbench-focus)]"
       )}
+      data-testid={`pane-wrapper-${paneId}`}
       onMouseDownCapture={handlePaneClick}
       onClick={handlePaneClick}
     >

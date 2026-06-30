@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, FileText, Image as ImageIcon, MessageSquareText } from "lucide-react";
+import { FileText, Highlighter, Image as ImageIcon, MessageSquareText, Search, Underline } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useI18n } from "@/hooks/use-i18n";
 import { generateFileId, loadAnnotationsFromDisk } from "@/lib/universal-annotation-storage";
@@ -9,8 +9,11 @@ import { detectFileType } from "@/lib/universal-annotation-storage";
 import { loadPdfItemManifest } from "@/lib/pdf-item";
 import { navigateLink } from "@/lib/link-router/navigate-link";
 import { isDirectoryNode, isFileNode, type FileNode, type TreeNode } from "@/types/file-system";
-import type { AnnotationItem } from "@/types/universal-annotation";
+import { getCanonicalPdfAnnotationText, type AnnotationItem } from "@/types/universal-annotation";
 import { useSettingsStore } from "@/stores/settings-store";
+import { resolveHighlightColor } from "@/lib/annotation-colors";
+import { cn } from "@/lib/utils";
+import type { TranslationKey } from "@/lib/i18n";
 
 interface AnnotationFileGroup {
   path: string;
@@ -21,6 +24,20 @@ interface AnnotationFileGroup {
 
 type AnnotationScope = "all" | "current";
 type AnnotationSort = "latest" | "count" | "name";
+
+const ANNOTATION_TYPE_LABEL_KEYS: Record<AnnotationItem["style"]["type"], TranslationKey> = {
+  highlight: "workbench.annotations.type.highlight",
+  underline: "workbench.annotations.type.underline",
+  area: "workbench.annotations.type.area",
+  ink: "workbench.annotations.type.ink",
+  text: "workbench.annotations.type.text",
+};
+
+const ANNOTATION_SORT_LABEL_KEYS: Record<AnnotationSort, TranslationKey> = {
+  latest: "workbench.annotations.sort.latest",
+  count: "workbench.annotations.sort.count",
+  name: "workbench.annotations.sort.name",
+};
 
 function collectWorkspaceFiles(node: TreeNode | null): FileNode[] {
   if (!node) return [];
@@ -50,6 +67,48 @@ function buildAnnotationTargetPath(group: AnnotationFileGroup, annotation: Annot
   return group.path;
 }
 
+function getAnnotationDisplayText(annotation: AnnotationItem): string {
+  return getCanonicalPdfAnnotationText(annotation) ?? annotation.content?.trim() ?? annotation.comment?.trim() ?? annotation.id;
+}
+
+function getAnnotationLocationKey(annotation: AnnotationItem): TranslationKey {
+  if (annotation.target.type === "image") {
+    return "workbench.annotations.location.area";
+  }
+  return "workbench.annotations.location.anchor";
+}
+
+function getAnnotationSearchText(group: AnnotationFileGroup, annotation: AnnotationItem): string {
+  const location = annotation.target.type === "pdf"
+    ? `page ${annotation.target.page}`
+    : annotation.target.type === "code_line"
+      ? `line ${annotation.target.line}`
+      : annotation.target.type;
+  return [
+    group.fileName,
+    group.path,
+    annotation.id,
+    annotation.style.type,
+    annotation.style.color,
+    getAnnotationDisplayText(annotation),
+    annotation.comment,
+    annotation.tags?.join(" "),
+    location,
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function filterGroupAnnotations(group: AnnotationFileGroup, query: string): AnnotationFileGroup | null {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return group;
+  }
+
+  const annotations = group.annotations.filter((annotation) => (
+    getAnnotationSearchText(group, annotation).includes(normalizedQuery)
+  ));
+  return annotations.length > 0 ? { ...group, annotations } : null;
+}
+
 export function AnnotationsActivityPanel() {
   const { t } = useI18n();
   const fileTree = useWorkspaceStore((state) => state.fileTree);
@@ -64,6 +123,7 @@ export function AnnotationsActivityPanel() {
   const [groups, setGroups] = useState<AnnotationFileGroup[]>([]);
   const [scope, setScope] = useState<AnnotationScope>(annotationsPanelScope);
   const [sortBy, setSortBy] = useState<AnnotationSort>(annotationsPanelSort);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     setScope(annotationsPanelScope);
@@ -145,7 +205,12 @@ export function AnnotationsActivityPanel() {
       ? groups.filter((group) => group.path === activeTab.filePath)
       : groups;
 
-    const next = [...filtered];
+    const searchFiltered = filtered.flatMap((group) => {
+      const match = filterGroupAnnotations(group, query);
+      return match ? [match] : [];
+    });
+
+    const next = [...searchFiltered];
     next.sort((left, right) => {
       if (sortBy === "name") {
         return left.fileName.localeCompare(right.fileName);
@@ -158,7 +223,7 @@ export function AnnotationsActivityPanel() {
       return rightLatest - leftLatest || left.fileName.localeCompare(right.fileName);
     });
     return next;
-  }, [activeTab?.filePath, groups, scope, sortBy]);
+  }, [activeTab?.filePath, groups, query, scope, sortBy]);
 
   const visibleAnnotationCount = useMemo(
     () => visibleGroups.reduce((sum, group) => sum + group.annotations.length, 0),
@@ -187,135 +252,179 @@ export function AnnotationsActivityPanel() {
     });
   };
 
+  const hasQuery = query.trim().length > 0;
+
   return (
-    <div className="flex h-full flex-col">
-      <div className="border-b border-border px-3 py-2">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-          {t("workbench.annotations.panelTitle")}
+    <div className="flex h-full flex-col bg-background">
+      <div className="border-b border-border/70 px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <MessageSquareText className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                {t("workbench.annotations.panelTitle")}
+              </div>
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                {isLoading
+                  ? t("workbench.annotations.loading")
+                  : t("workbench.annotations.matchCount", { count: visibleAnnotationCount })}
+              </div>
+            </div>
+          </div>
+          <div className="rounded-md bg-muted px-2 py-1 text-sm font-semibold text-foreground">
+            {isLoading ? "..." : visibleAnnotationCount}
+          </div>
+        </div>
+
+        <label className="mt-3 flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-2 text-sm focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/10">
+          <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("workbench.annotations.searchPlaceholder")}
+            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+          />
+        </label>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="flex items-center rounded-md bg-muted p-0.5">
+            {(["all", "current"] as const).map((nextScope) => (
+              <button
+                key={nextScope}
+                type="button"
+                onClick={() => setScope(nextScope)}
+                className={cn(
+                  "rounded px-2.5 py-1 text-xs transition-colors",
+                  scope === nextScope
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {t(nextScope === "all" ? "workbench.annotations.scope.all" : "workbench.annotations.scope.current")}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center rounded-md bg-muted p-0.5">
+            {(["latest", "count", "name"] as const).map((nextSort) => (
+              <button
+                key={nextSort}
+                type="button"
+                onClick={() => setSortBy(nextSort)}
+                className={cn(
+                  "rounded px-2.5 py-1 text-xs transition-colors",
+                  sortBy === nextSort
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {t(ANNOTATION_SORT_LABEL_KEYS[nextSort])}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-3">
-        <div className="rounded-lg border border-border bg-background px-3 py-4">
-          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-            <MessageSquareText className="h-4 w-4 text-muted-foreground" />
-            <span>{t("workbench.annotations.panelTitle")}</span>
-          </div>
-
-          <div className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-2">
-            <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-              {t("workbench.annotations.count")}
-            </div>
-            <div className="mt-1 text-lg font-semibold text-foreground">
-              {isLoading ? "..." : visibleAnnotationCount}
-            </div>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <div className="flex items-center rounded-md border border-border bg-background p-0.5">
-              <button
-                type="button"
-                onClick={() => setScope("all")}
-                className={`rounded px-2 py-1 text-[11px] transition-colors ${scope === "all" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-              >
-                {t("workbench.annotations.scope.all")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setScope("current")}
-                className={`rounded px-2 py-1 text-[11px] transition-colors ${scope === "current" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-              >
-                {t("workbench.annotations.scope.current")}
-              </button>
-            </div>
-
-            <div className="flex items-center rounded-md border border-border bg-background p-0.5">
-              <button
-                type="button"
-                onClick={() => setSortBy("latest")}
-                className={`rounded px-2 py-1 text-[11px] transition-colors ${sortBy === "latest" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-              >
-                {t("workbench.annotations.sort.latest")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setSortBy("count")}
-                className={`rounded px-2 py-1 text-[11px] transition-colors ${sortBy === "count" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-              >
-                {t("workbench.annotations.sort.count")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setSortBy("name")}
-                className={`rounded px-2 py-1 text-[11px] transition-colors ${sortBy === "name" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-              >
-                {t("workbench.annotations.sort.name")}
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-3 rounded-md border border-border bg-muted/20 px-3 py-2">
-            <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-              {t("workbench.annotations.recent")}
-            </div>
-            {isLoading ? (
-              <div className="mt-2 text-sm text-muted-foreground">{t("workbench.annotations.loading")}</div>
-            ) : visibleGroups.length > 0 ? (
-              <div className="mt-2 space-y-3">
-                {visibleGroups.map((group) => (
-                  <div key={group.path} className="rounded-md border border-border bg-background">
-                    <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                          {group.extension === "pdf" ? <FileText className="h-4 w-4 text-muted-foreground" /> : <ImageIcon className="h-4 w-4 text-muted-foreground" />}
-                          <span className="truncate">{group.fileName}</span>
-                        </div>
-                        <div className="mt-1 truncate text-xs text-muted-foreground">{group.path}</div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <span className="rounded border border-border bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground">
-                          {group.annotations.length}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => void handleOpenFile(group)}
-                          className="shrink-0 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                        >
-                          {t("workbench.search.openFile")}
-                        </button>
-                      </div>
+      <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+        {isLoading ? (
+          <div className="text-sm text-muted-foreground">{t("workbench.annotations.loading")}</div>
+        ) : visibleGroups.length > 0 ? (
+          <div className="space-y-5">
+            {visibleGroups.map((group) => (
+              <section key={group.path} className="space-y-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                      {group.extension === "pdf" ? (
+                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <ImageIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="truncate">{group.fileName}</span>
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                        {group.annotations.length}
+                      </span>
                     </div>
-
-                    <div className="px-2 py-2">
-                      {group.annotations.slice(0, 4).map((annotation) => (
-                        <button
-                          key={annotation.id}
-                          type="button"
-                          onClick={() => void handleOpenAnnotation(group, annotation)}
-                          className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent"
-                        >
-                          <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          <div className="min-w-0 flex-1">
-                            <div className="text-xs text-muted-foreground">
-                              {new Date(annotation.createdAt).toLocaleString()}
-                            </div>
-                            <div className="mt-1 text-sm text-foreground/85">
-                              {(annotation.comment || annotation.content || annotation.id).slice(0, 140)}
-                            </div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
+                    <div className="mt-0.5 truncate text-xs text-muted-foreground">{group.path}</div>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="mt-2 text-sm text-muted-foreground">
-                {scope === "current" ? t("workbench.annotations.empty") : t("workbench.annotations.emptyWorkspace")}
-              </div>
-            )}
+                  <button
+                    type="button"
+                    onClick={() => void handleOpenFile(group)}
+                    className="shrink-0 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  >
+                    {t("workbench.search.openFile")}
+                  </button>
+                </div>
+
+                <div className="divide-y divide-border/60 overflow-hidden rounded-md border border-border/70 bg-background">
+                  {group.annotations.map((annotation) => {
+                    const color = resolveHighlightColor(annotation.style.color);
+                    const text = getAnnotationDisplayText(annotation);
+                    const locationKey = getAnnotationLocationKey(annotation);
+                    const typeIcon = annotation.style.type === "underline"
+                      ? <Underline className="h-3.5 w-3.5" />
+                      : <Highlighter className="h-3.5 w-3.5" />;
+                    return (
+                      <button
+                        key={annotation.id}
+                        type="button"
+                        onClick={() => void handleOpenAnnotation(group, annotation)}
+                        className="group flex w-full gap-3 px-3 py-3 text-left transition-colors hover:bg-accent/70 focus-visible:bg-accent focus-visible:outline-none"
+                      >
+                        <span
+                          className="mt-1 h-auto w-1.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: color }}
+                          aria-hidden="true"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-muted-foreground">
+                            <span className="inline-flex items-center gap-1" style={{ color }}>
+                              {typeIcon}
+                              {t(ANNOTATION_TYPE_LABEL_KEYS[annotation.style.type])}
+                            </span>
+                            <span>
+                              {annotation.target.type === "pdf"
+                                ? t("workbench.annotations.location.page", { page: annotation.target.page })
+                                : annotation.target.type === "code_line"
+                                  ? t("workbench.annotations.location.line", { line: annotation.target.line })
+                                  : t(locationKey)}
+                            </span>
+                            <span>{new Date(annotation.createdAt).toLocaleString()}</span>
+                          </span>
+                          <span className="mt-1.5 block whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
+                            {text}
+                          </span>
+                          {annotation.comment ? (
+                            <span className="mt-2 block rounded-md bg-muted/50 px-2 py-1.5 text-xs leading-5 text-muted-foreground">
+                              {annotation.comment}
+                            </span>
+                          ) : null}
+                          {annotation.tags && annotation.tags.length > 0 ? (
+                            <span className="mt-2 flex flex-wrap gap-1">
+                              {annotation.tags.map((tag) => (
+                                <span key={tag} className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                  {tag}
+                                </span>
+                              ))}
+                            </span>
+                          ) : null}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
-        </div>
+        ) : (
+          <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+            {hasQuery
+              ? t("workbench.annotations.emptySearch")
+              : scope === "current"
+                ? t("workbench.annotations.empty")
+                : t("workbench.annotations.emptyWorkspace")}
+          </div>
+        )}
       </div>
     </div>
   );

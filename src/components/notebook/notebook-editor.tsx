@@ -35,7 +35,11 @@ import { useI18n } from "@/hooks/use-i18n";
 import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
 import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
 import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
-import type { CodeEditorLanguage } from "@/components/editor/codemirror/code-editor";
+import {
+  resolveNotebookCodeEditorLanguage,
+  resolveNotebookKernelLabel,
+  resolveNotebookLanguage,
+} from "@/lib/notebook-utils";
 
 interface NotebookEditorProps {
   content: string;
@@ -92,31 +96,6 @@ function SaveIndicator({
       )}
     </div>
   );
-}
-
-function resolveNotebookLanguage(metadata: ReturnType<typeof useNotebookEditor>["state"]["metadata"]): string {
-  return metadata.language_info?.name?.trim()
-    || metadata.kernelspec?.language?.trim()
-    || "python";
-}
-
-function resolveNotebookKernelLabel(metadata: ReturnType<typeof useNotebookEditor>["state"]["metadata"]): string | null {
-  return metadata.kernelspec?.display_name?.trim()
-    || metadata.kernelspec?.name?.trim()
-    || null;
-}
-
-function resolveNotebookCodeEditorLanguage(language: string): CodeEditorLanguage {
-  const normalized = language.trim().toLowerCase();
-  if (normalized === "python" || normalized === "py") return "python";
-  if (normalized === "javascript" || normalized === "js" || normalized === "node") return "javascript";
-  if (normalized === "typescript" || normalized === "ts") return "typescript";
-  if (normalized === "c") return "c";
-  if (normalized === "cpp" || normalized === "c++" || normalized === "cc" || normalized === "cxx") return "cpp";
-  if (normalized === "json") return "json";
-  if (normalized === "html") return "html";
-  if (normalized === "markdown" || normalized === "md") return "markdown";
-  return "plaintext";
 }
 
 function isKernelOption(value: unknown): value is KernelOption {
@@ -863,7 +842,7 @@ export function NotebookEditor({ content, fileName, onContentChange, onSave, pan
         ) : null}
       </div>
 
-      <div className="mx-auto max-w-4xl space-y-6 p-6">
+      <div className="mx-auto max-w-4xl space-y-3 px-4 py-4 md:px-6">
         {state.cells.map((cell, index) => (
           <div
             key={cell.id}

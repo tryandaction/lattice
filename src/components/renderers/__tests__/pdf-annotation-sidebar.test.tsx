@@ -156,4 +156,97 @@ describe('PdfAnnotationSidebar', () => {
       tagFilter: 'all',
     });
   });
+
+  it('renders long quote and comment content without internal height clamps', () => {
+    render(
+      <PdfAnnotationSidebar
+        annotations={[
+          {
+            id: 'ann-long',
+            target: {
+              type: 'pdf',
+              page: 2,
+              rects: [{ x1: 0.1, y1: 0.1, x2: 0.8, y2: 0.35 }],
+              textQuote: {
+                exact: 'Long selected quote line one.\nLong selected quote line two.\nLong selected quote line three.',
+                prefix: '',
+                suffix: '',
+                source: 'pdfjs-text-model',
+                confidence: 'exact',
+              },
+            },
+            style: { type: 'highlight', color: '#FFD400' },
+            content: 'Long selected quote line one.\nLong selected quote line two.\nLong selected quote line three.',
+            comment: '| Symbol | Meaning | Notes |\n| --- | --- | --- |\n| T1 | relaxation | long table comment |',
+            author: 'user',
+            createdAt: 1,
+          },
+        ]}
+        selectedId={null}
+        onSelect={() => undefined}
+        onDelete={() => undefined}
+      />,
+    );
+
+    const quote = screen.getByTestId('pdf-annotation-quote-ann-long');
+    expect(quote.className).toContain('whitespace-pre-wrap');
+    expect(quote.className).not.toContain('line-clamp');
+
+    const comment = screen.getByTestId('pdf-annotation-comment-ann-long');
+    expect(comment.className).toContain('overflow-x-auto');
+    expect(comment.className).not.toContain('max-h');
+    expect(comment.className).not.toContain('overflow-y-auto');
+    expect(screen.getByText('relaxation')).toBeTruthy();
+  });
+
+  it('keeps long comments unconstrained after entering edit mode', () => {
+    render(
+      <PdfAnnotationSidebar
+        annotations={[
+          {
+            id: 'ann-edit-long',
+            target: {
+              type: 'pdf',
+              page: 3,
+              rects: [{ x1: 0.1, y1: 0.1, x2: 0.8, y2: 0.35 }],
+              textQuote: {
+                exact: 'Editable quote',
+                prefix: '',
+                suffix: '',
+                source: 'pdfjs-text-model',
+                confidence: 'exact',
+              },
+            },
+            style: { type: 'highlight', color: '#D85BEA' },
+            content: 'Editable quote',
+            comment: [
+              '现在计算末态与理想末态的重叠。',
+              '',
+              '$$ \\psi(T)\\rangle = U_0(T)\\psi_0\\rangle + \\epsilon U_1(T)\\psi_0\\rangle $$',
+              '',
+              '| 符号 | 中文名称 | 物理本质 |',
+              '| --- | --- | --- |',
+              '| T | 演化时间 | 门操作时间 |',
+            ].join('\n'),
+            author: 'user',
+            createdAt: 1,
+          },
+        ]}
+        selectedId={null}
+        onSelect={() => undefined}
+        onDelete={() => undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('pdf-annotation-comment-ann-edit-long'));
+
+    const editor = screen.getByTestId('pdf-annotation-comment-editor-ann-edit-long') as HTMLTextAreaElement;
+    expect(editor.rows).toBe(6);
+    expect(editor.className).toContain('min-h-[120px]');
+    expect(editor.className).toContain('resize-y');
+    expect(editor.className).toContain('overflow-hidden');
+    expect(editor.className).not.toContain('resize-none');
+    expect(editor.className).not.toContain('max-h');
+    expect(editor.value).toContain('| 符号 | 中文名称 | 物理本质 |');
+  });
 });

@@ -119,4 +119,62 @@ describe("buildMarkdownLinkIndex", () => {
     );
     expect(getMarkdownBacklinks(index, "other/Target.md")).toHaveLength(1);
   });
+
+  it("records link health resolution strategies and repair candidates", () => {
+    const index = buildMarkdownLinkIndex([
+      {
+        path: "notes/source.md",
+        content: [
+          "[Exact](../refs/exact.md)",
+          "[Extensionless](../refs/guide)",
+          "[Basename](Target)",
+          "[Relative extensionless](Old Target)",
+          "[Missing exact](../refs/missing.md)",
+          "[Old Target](missing.md)",
+          "[Web](https://example.com)",
+        ].join("\n"),
+      },
+      { path: "refs/exact.md", content: "# Exact" },
+      { path: "refs/guide.md", content: "# Guide" },
+      { path: "archive/Target.md", content: "# Target" },
+      { path: "notes/Old Target.md", content: "# Renamed" },
+    ]);
+
+    const byLabel = new Map(
+      getMarkdownOutgoingLinks(index, "notes/source.md").map((link) => [link.displayText, link]),
+    );
+
+    expect(byLabel.get("Exact")?.resolution).toMatchObject({
+      kind: "exact",
+      resolvedPath: "refs/exact.md",
+      repairCandidates: [],
+    });
+    expect(byLabel.get("Extensionless")?.resolution).toMatchObject({
+      kind: "extensionless",
+      resolvedPath: "refs/guide.md",
+      repairCandidates: ["refs/guide.md"],
+    });
+    expect(byLabel.get("Basename")?.resolution).toMatchObject({
+      kind: "basename",
+      resolvedPath: "archive/Target.md",
+      repairCandidates: ["archive/Target.md"],
+    });
+    expect(byLabel.get("Relative extensionless")?.resolution).toMatchObject({
+      kind: "extensionless",
+      resolvedPath: "notes/Old Target.md",
+      repairCandidates: ["notes/Old Target.md"],
+    });
+    expect(byLabel.get("Missing exact")?.resolution).toMatchObject({
+      kind: "unresolved",
+      repairCandidates: [],
+    });
+    expect(byLabel.get("Old Target")?.resolution).toMatchObject({
+      kind: "unresolved",
+      repairCandidates: ["notes/Old Target.md"],
+    });
+    expect(byLabel.get("Web")?.resolution).toMatchObject({
+      kind: "external",
+      repairCandidates: [],
+    });
+  });
 });

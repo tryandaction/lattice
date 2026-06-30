@@ -11,6 +11,9 @@ import type {
 } from "@/lib/prompt/types";
 import { useI18n } from "@/hooks/use-i18n";
 import { usePromptTemplateStore } from "@/stores/prompt-template-store";
+import { localizePromptTemplate } from "@/lib/prompt/builtin-templates";
+import { cn } from "@/lib/utils";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 
 const CATEGORY_OPTIONS: PromptCategory[] = [
   "reading",
@@ -51,21 +54,25 @@ export function PromptEditorDialog({
   seedUserPrompt,
   onClose,
 }: PromptEditorDialogProps) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const upsertTemplate = usePromptTemplateStore((state) => state.upsertTemplate);
+  const localizedTemplate = useMemo(
+    () => (template ? localizePromptTemplate(template, locale) : null),
+    [locale, template],
+  );
   const isEditing = Boolean(template && !template.builtin);
-  const [title, setTitle] = useState(() => template?.title ?? "");
-  const [description, setDescription] = useState(() => template?.description ?? "");
-  const [category, setCategory] = useState<PromptCategory>(() => template?.category ?? "reading");
-  const [systemPrompt, setSystemPrompt] = useState(() => template?.systemPrompt ?? "");
-  const [userPrompt, setUserPrompt] = useState(() => template?.userPrompt ?? seedUserPrompt ?? "");
-  const [surfaces, setSurfaces] = useState<PromptSurface[]>(() => template?.surfaces ?? [surface]);
-  const [outputMode, setOutputMode] = useState<PromptOutputMode>(() => template?.outputMode ?? "chat");
-  const [requiredContext, setRequiredContext] = useState<PromptContextSlot[]>(() => template?.requiredContext ?? []);
-  const [optionalContext, setOptionalContext] = useState<PromptContextSlot[]>(() => template?.optionalContext ?? []);
-  const [preferredProvider, setPreferredProvider] = useState(() => template?.preferredProvider ?? "");
-  const [preferredModel, setPreferredModel] = useState(() => template?.preferredModel ?? "");
-  const [pinned, setPinned] = useState(() => Boolean(template?.pinned));
+  const [title, setTitle] = useState(() => localizedTemplate?.title ?? "");
+  const [description, setDescription] = useState(() => localizedTemplate?.description ?? "");
+  const [category, setCategory] = useState<PromptCategory>(() => localizedTemplate?.category ?? "reading");
+  const [systemPrompt, setSystemPrompt] = useState(() => localizedTemplate?.systemPrompt ?? "");
+  const [userPrompt, setUserPrompt] = useState(() => localizedTemplate?.userPrompt ?? seedUserPrompt ?? "");
+  const [surfaces, setSurfaces] = useState<PromptSurface[]>(() => localizedTemplate?.surfaces ?? [surface]);
+  const [outputMode, setOutputMode] = useState<PromptOutputMode>(() => localizedTemplate?.outputMode ?? "chat");
+  const [requiredContext, setRequiredContext] = useState<PromptContextSlot[]>(() => localizedTemplate?.requiredContext ?? []);
+  const [optionalContext, setOptionalContext] = useState<PromptContextSlot[]>(() => localizedTemplate?.optionalContext ?? []);
+  const [preferredProvider, setPreferredProvider] = useState(() => localizedTemplate?.preferredProvider ?? "");
+  const [preferredModel, setPreferredModel] = useState(() => localizedTemplate?.preferredModel ?? "");
+  const [pinned, setPinned] = useState(() => Boolean(localizedTemplate?.pinned));
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const dialogTitle = useMemo(() => {
@@ -135,7 +142,10 @@ export function PromptEditorDialog({
 
   return (
     <aside
-      className="fixed inset-y-0 right-0 z-[190] flex w-full max-w-[32rem] flex-col border-l border-border bg-background shadow-2xl sm:w-[min(32rem,calc(100vw-4rem))]"
+      className={cn(
+        "fixed inset-y-0 right-0 flex w-full max-w-[32rem] flex-col border-l border-border bg-background shadow-2xl sm:w-[min(32rem,calc(100vw-4rem))]",
+        UI_LAYER_CLASS.dialogElevated,
+      )}
       role="dialog"
       aria-modal="false"
       aria-label={t("prompt.editor.title")}

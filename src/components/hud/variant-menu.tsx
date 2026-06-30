@@ -8,6 +8,7 @@
 import { useMemo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useKaTeXRenderer } from './katex-renderer';
+import { useI18n } from '@/hooks/use-i18n';
 
 export interface VariantMenuProps {
   /** Key code this menu is for */
@@ -34,6 +35,7 @@ export function VariantMenu({
   onSelect,
   isVisible,
 }: VariantMenuProps) {
+  const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
   const renderLatex = useKaTeXRenderer();
 
@@ -108,9 +110,9 @@ export function VariantMenu({
 
           {/* Footer hint */}
           <div className="px-3 py-1.5 border-t border-white/10 text-white/40 text-[10px] flex justify-between">
-            <span>↑↓/空格</span>
-            <span>Enter 选择</span>
-            <span>Esc 关闭</span>
+            <span>{t("quantum.hint.arrowsSpaceShort")}</span>
+            <span>{t("quantum.hint.enterSelect")}</span>
+            <span>{t("quantum.hint.escClose")}</span>
           </div>
         </motion.div>
       )}

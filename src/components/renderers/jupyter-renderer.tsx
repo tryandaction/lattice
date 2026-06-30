@@ -15,6 +15,12 @@ import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
 import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
 import { OutputArea } from "@/components/notebook/output-area";
 import { jupyterOutputsToExecutionOutputs } from "@/lib/runner/output-utils";
+import {
+  normalizeSource,
+  resolveNotebookCodeEditorLanguage,
+  resolveNotebookLanguage,
+  type JupyterMetadata,
+} from "@/lib/notebook-utils";
 
 interface JupyterRendererProps {
   content: string;
@@ -43,20 +49,78 @@ interface JupyterCell {
   source: string | string[];
   outputs?: JupyterOutput[];
   execution_count?: number | null;
+  invalidReason?: string;
 }
 
 interface JupyterNotebook {
   cells: JupyterCell[];
-  metadata: Record<string, unknown>;
+  metadata: JupyterMetadata;
   nbformat: number;
   nbformat_minor: number;
 }
 
-/**
- * Normalize source to string (can be string or string[])
- */
-function normalizeSource(source: string | string[]): string {
-  return Array.isArray(source) ? source.join("") : source;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function normalizeNotebookCellSource(source: unknown): { source: string; invalidReason?: string } {
+  if (typeof source === "string") {
+    return { source };
+  }
+  if (Array.isArray(source) && source.every((item) => typeof item === "string")) {
+    return { source: normalizeSource(source) };
+  }
+  return {
+    source: "",
+    invalidReason: "viewer.jupyter.invalidCell",
+  };
+}
+
+function parseJupyterNotebook(content: string): { notebook: JupyterNotebook | null; error: string | null } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return { notebook: null, error: "invalid-json" };
+  }
+
+  if (!isRecord(parsed) || !Array.isArray(parsed.cells)) {
+    return { notebook: null, error: "invalid-notebook" };
+  }
+
+  return {
+    notebook: {
+      cells: parsed.cells.map((rawCell, index): JupyterCell => {
+        if (!isRecord(rawCell)) {
+          return {
+            id: `invalid-cell-${index}`,
+            cell_type: "raw",
+            source: "",
+            invalidReason: "viewer.jupyter.invalidCell",
+          };
+        }
+
+        const normalizedSource = normalizeNotebookCellSource(rawCell.source);
+        const cellType = rawCell.cell_type === "markdown" || rawCell.cell_type === "code" || rawCell.cell_type === "raw"
+          ? rawCell.cell_type
+          : "raw";
+        return {
+          id: typeof rawCell.id === "string" ? rawCell.id : undefined,
+          cell_type: normalizedSource.invalidReason ? "raw" : cellType,
+          source: normalizedSource.source,
+          outputs: Array.isArray(rawCell.outputs) ? rawCell.outputs as JupyterOutput[] : undefined,
+          execution_count: typeof rawCell.execution_count === "number" || rawCell.execution_count === null
+            ? rawCell.execution_count
+            : undefined,
+          invalidReason: normalizedSource.invalidReason,
+        };
+      }),
+      metadata: isRecord(parsed.metadata) ? parsed.metadata as JupyterMetadata : {},
+      nbformat: typeof parsed.nbformat === "number" ? parsed.nbformat : 4,
+      nbformat_minor: typeof parsed.nbformat_minor === "number" ? parsed.nbformat_minor : 0,
+    },
+    error: null,
+  };
 }
 
 /**
@@ -68,14 +132,26 @@ function NotebookCell({
   paneId,
   filePath,
   rootHandle,
+  language,
+  invalidCellLabel,
 }: {
   cell: JupyterCell;
   index: number;
   paneId?: PaneId;
   filePath?: string;
   rootHandle?: FileSystemDirectoryHandle | null;
+  language: string;
+  invalidCellLabel: string;
 }) {
   const source = normalizeSource(cell.source);
+
+  if (cell.invalidReason) {
+    return (
+      <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        {invalidCellLabel}
+      </div>
+    );
+  }
 
   if (cell.cell_type === "markdown") {
     return (
@@ -101,7 +177,7 @@ function NotebookCell({
           </span>
           <div className="flex-1">
             <SyntaxHighlighter
-              language="python"
+              language={language}
               style={oneDark}
               customStyle={{
                 margin: 0,
@@ -153,13 +229,17 @@ export function JupyterRenderer({ content, fileName, paneId, filePath, rootHandl
     mode: SelectionAiMode;
     returnFocusTo?: HTMLElement | null;
   } | null>(null);
-  const notebook = useMemo(() => {
-    try {
-      return JSON.parse(content) as JupyterNotebook;
-    } catch {
-      return null;
+  const parsedNotebook = useMemo(() => parseJupyterNotebook(content), [content]);
+  const notebook = parsedNotebook.notebook;
+  const notebookLanguage = useMemo(() => {
+    if (!notebook) {
+      return "python";
     }
-  }, [content]);
+    return resolveNotebookCodeEditorLanguage(
+      resolveNotebookLanguage(notebook.metadata),
+      notebook.metadata.language_info?.codemirror_mode,
+    );
+  }, [notebook]);
 
   const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
     containerRef,
@@ -201,7 +281,7 @@ export function JupyterRenderer({ content, fileName, paneId, filePath, rootHandl
   }
 
   return (
-    <div ref={containerRef} className="mx-auto max-w-4xl p-8">
+    <div ref={containerRef} data-testid="jupyter-renderer-root" className="mx-auto max-w-4xl px-4 py-4 md:px-6">
       <SelectionContextMenu
         state={selectionMenuState}
         onClose={closeSelectionMenu}
@@ -213,7 +293,7 @@ export function JupyterRenderer({ content, fileName, paneId, filePath, rootHandl
         returnFocusTo={selectionHubState?.returnFocusTo}
         onClose={() => setSelectionHubState(null)}
       />
-      <div className="mb-5 rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+      <div className="mb-4 rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
         {t("viewer.jupyter.meta", {
           count: notebook.cells.length,
           version: `${notebook.nbformat}.${notebook.nbformat_minor}`,
@@ -221,7 +301,7 @@ export function JupyterRenderer({ content, fileName, paneId, filePath, rootHandl
       </div>
 
       {/* Cells */}
-      <div className="space-y-6">
+      <div data-testid="jupyter-cell-list" className="space-y-3">
         {notebook.cells.map((cell, index) => (
           <div
             key={cell.id ?? index}
@@ -234,6 +314,8 @@ export function JupyterRenderer({ content, fileName, paneId, filePath, rootHandl
               paneId={paneId}
               filePath={filePath}
               rootHandle={rootHandle}
+              language={notebookLanguage}
+              invalidCellLabel={t("viewer.jupyter.invalidCell")}
             />
           </div>
         ))}

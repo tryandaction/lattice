@@ -24,7 +24,7 @@ export interface FormulaTemplate {
 export const FORMULA_TEMPLATES: Record<FormulaTemplateId, FormulaTemplate> = {
   superscript: {
     id: 'superscript',
-    label: '上标',
+    label: 'Superscript',
     latex: '^{ }',
     mathLiveLatex: '^{\\placeholder{}}',
     previewLatex: 'x^{\\square}',
@@ -32,7 +32,7 @@ export const FORMULA_TEMPLATES: Record<FormulaTemplateId, FormulaTemplate> = {
   },
   subscript: {
     id: 'subscript',
-    label: '下标',
+    label: 'Subscript',
     latex: '_{ }',
     mathLiveLatex: '_{\\placeholder{}}',
     previewLatex: 'x_{\\square}',
@@ -40,7 +40,7 @@ export const FORMULA_TEMPLATES: Record<FormulaTemplateId, FormulaTemplate> = {
   },
   sqrt: {
     id: 'sqrt',
-    label: '根号',
+    label: 'Root',
     latex: '\\sqrt{}',
     mathLiveLatex: '\\sqrt{\\placeholder{}}',
     previewLatex: '\\sqrt{\\square}',
@@ -48,7 +48,7 @@ export const FORMULA_TEMPLATES: Record<FormulaTemplateId, FormulaTemplate> = {
   },
   'nth-root': {
     id: 'nth-root',
-    label: 'n次根',
+    label: 'Nth root',
     latex: '\\sqrt[]{}',
     mathLiveLatex: '\\sqrt[\\placeholder{}]{\\placeholder{}}',
     previewLatex: '\\sqrt[\\square]{\\square}',
@@ -56,7 +56,7 @@ export const FORMULA_TEMPLATES: Record<FormulaTemplateId, FormulaTemplate> = {
   },
   fraction: {
     id: 'fraction',
-    label: '分数',
+    label: 'Fraction',
     latex: '\\frac{}{}',
     mathLiveLatex: '\\frac{\\placeholder{}}{\\placeholder{}}',
     previewLatex: '\\frac{\\square}{\\square}',
@@ -64,7 +64,7 @@ export const FORMULA_TEMPLATES: Record<FormulaTemplateId, FormulaTemplate> = {
   },
   sum: {
     id: 'sum',
-    label: '求和',
+    label: 'Sum',
     latex: '\\sum_{}^{}',
     mathLiveLatex: '\\sum_{\\placeholder{}}^{\\placeholder{}}',
     previewLatex: '\\sum_{\\square}^{\\square}',
@@ -73,7 +73,7 @@ export const FORMULA_TEMPLATES: Record<FormulaTemplateId, FormulaTemplate> = {
   },
   integral: {
     id: 'integral',
-    label: '积分',
+    label: 'Integral',
     latex: '\\int_{}^{}',
     mathLiveLatex: '\\int_{\\placeholder{}}^{\\placeholder{}}',
     previewLatex: '\\int_{\\square}^{\\square}',
@@ -82,7 +82,7 @@ export const FORMULA_TEMPLATES: Record<FormulaTemplateId, FormulaTemplate> = {
   },
   limit: {
     id: 'limit',
-    label: '极限',
+    label: 'Limit',
     latex: '\\lim_{}',
     mathLiveLatex: '\\lim_{\\placeholder{}}',
     previewLatex: '\\lim_{\\square}',
@@ -91,7 +91,7 @@ export const FORMULA_TEMPLATES: Record<FormulaTemplateId, FormulaTemplate> = {
   },
   'matrix-2x2': {
     id: 'matrix-2x2',
-    label: '矩阵',
+    label: 'Matrix',
     latex: '\\begin{pmatrix}{}&{}\\\\{}&{}\\end{pmatrix}',
     mathLiveLatex: '\\begin{pmatrix}\\placeholder{}&\\placeholder{}\\\\\\placeholder{}&\\placeholder{}\\end{pmatrix}',
     previewLatex: '\\begin{pmatrix}\\square&\\square\\\\\\square&\\square\\end{pmatrix}',
@@ -100,16 +100,16 @@ export const FORMULA_TEMPLATES: Record<FormulaTemplateId, FormulaTemplate> = {
   },
   'cases-2': {
     id: 'cases-2',
-    label: '分段',
+    label: 'Cases',
     latex: '\\begin{cases}{}&{}\\\\{}&{}\\end{cases}',
     mathLiveLatex: '\\begin{cases}\\placeholder{}&\\placeholder{}\\\\\\placeholder{}&\\placeholder{}\\end{cases}',
     previewLatex: '\\begin{cases}\\square&\\square\\\\\\square&\\square\\end{cases}',
     displayMode: true,
-    keywords: ['cases', 'piecewise', '分段函数', '分段'],
+    keywords: ['cases', 'piecewise', 'piecewise function', '分段', '分段函数'],
   },
   vector: {
     id: 'vector',
-    label: '向量',
+    label: 'Vector',
     latex: '\\vec{}',
     mathLiveLatex: '\\vec{\\placeholder{}}',
     previewLatex: '\\vec{\\square}',
@@ -139,8 +139,10 @@ export const FORMULA_TEMPLATE_KEYMAP: Partial<Record<string, FormulaTemplateId>>
   Digit6: 'integral',
   Digit7: 'limit',
   KeyF: 'fraction',
+  KeyR: 'sqrt',
   KeyS: 'sum',
   KeyI: 'integral',
+  KeyL: 'limit',
   KeyM: 'matrix-2x2',
   KeyX: 'matrix-2x2',
   KeyB: 'cases-2',

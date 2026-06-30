@@ -52,6 +52,8 @@ describe('formula templates', () => {
   it('maps high-frequency physical keys to structural templates', () => {
     expect(getFormulaTemplateForKey('Digit4')?.id).toBe('fraction');
     expect(getFormulaTemplateForKey('KeyF')?.id).toBe('fraction');
+    expect(getFormulaTemplateForKey('KeyR')?.id).toBe('sqrt');
+    expect(getFormulaTemplateForKey('KeyL')?.id).toBe('limit');
     expect(getFormulaTemplateForKey('KeyM')?.id).toBe('matrix-2x2');
     expect(getFormulaTemplateForKey('KeyX')?.id).toBe('matrix-2x2');
     expect(getFormulaTemplateForKey('KeyB')?.id).toBe('cases-2');

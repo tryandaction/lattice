@@ -3,7 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Play, X } from "lucide-react";
 import { useI18n } from "@/hooks/use-i18n";
+import { localizePromptTemplate } from "@/lib/prompt/builtin-templates";
 import { renderPromptTemplate } from "@/lib/prompt/render";
+import { cn } from "@/lib/utils";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 import type {
   PromptContextSlot,
   PromptContextValues,
@@ -51,10 +54,14 @@ export function PromptRunSheet({
   onContextControlChange,
   onConfirm,
 }: PromptRunSheetProps) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
+  const localizedTemplate = useMemo(
+    () => (template ? localizePromptTemplate(template, locale) : null),
+    [locale, template],
+  );
   const rendered = useMemo(
-    () => (template ? renderPromptTemplate(template, contextValues) : null),
-    [contextValues, template],
+    () => (localizedTemplate ? renderPromptTemplate(localizedTemplate, contextValues, locale) : null),
+    [contextValues, locale, localizedTemplate],
   );
   const initialPrompt = useMemo(() => {
     if (!rendered) {
@@ -66,8 +73,8 @@ export function PromptRunSheet({
       return rendered.renderedPrompt;
     }
 
-    return `${rendered.renderedPrompt}\n\n# Additional Instruction\n${append}`;
-  }, [initialPromptAppend, rendered]);
+    return `${rendered.renderedPrompt}\n\n# ${t("prompt.run.additionalInstruction")}\n${append}`;
+  }, [initialPromptAppend, rendered, t]);
   const [editablePrompt, setEditablePrompt] = useState(() => initialPrompt);
   const [editableSystemPrompt, setEditableSystemPrompt] = useState(() => rendered?.renderedSystemPrompt ?? "");
 
@@ -79,7 +86,7 @@ export function PromptRunSheet({
     setEditableSystemPrompt(rendered?.renderedSystemPrompt ?? "");
   }, [rendered?.renderedSystemPrompt]);
 
-  if (!isOpen || !template || !rendered) {
+  if (!isOpen || !localizedTemplate || !rendered) {
     return null;
   }
 
@@ -87,7 +94,10 @@ export function PromptRunSheet({
 
   return (
     <aside
-      className="fixed inset-y-0 right-0 z-[190] flex w-full max-w-[42rem] flex-col border-l border-border bg-background shadow-2xl sm:w-[min(42rem,calc(100vw-4rem))]"
+      className={cn(
+        "fixed inset-y-0 right-0 flex w-full max-w-[42rem] flex-col border-l border-border bg-background shadow-2xl sm:w-[min(42rem,calc(100vw-4rem))]",
+        UI_LAYER_CLASS.dialogElevated,
+      )}
       role="dialog"
       aria-modal="false"
       aria-label={t("prompt.run.title")}
@@ -99,15 +109,16 @@ export function PromptRunSheet({
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
               {t("prompt.run.title")}
             </div>
-            <h2 className="mt-1 text-lg font-semibold text-foreground">{template.title}</h2>
+            <h2 className="mt-1 text-lg font-semibold text-foreground">{localizedTemplate.title}</h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              {t(`prompt.surface.${surface}`)} · {t(`prompt.output.${template.outputMode}`)}
+              {t(`prompt.surface.${surface}`)} / {t(`prompt.output.${localizedTemplate.outputMode}`)}
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            aria-label={t("common.close")}
           >
             <X className="h-4 w-4" />
           </button>
@@ -169,7 +180,7 @@ export function PromptRunSheet({
             <textarea
               value={editableSystemPrompt}
               onChange={(event) => setEditableSystemPrompt(event.target.value)}
-              className="min-h-[120px] w-full rounded-xl border border-border bg-background px-3 py-3 text-sm"
+              className="min-h-[120px] w-full rounded-xl border border-border bg-background px-3 py-3 text-sm text-foreground"
               placeholder={t("prompt.run.systemPromptPlaceholder")}
             />
           </section>
@@ -179,15 +190,21 @@ export function PromptRunSheet({
             <textarea
               value={editablePrompt}
               onChange={(event) => setEditablePrompt(event.target.value)}
-              className="min-h-[260px] w-full rounded-xl border border-border bg-background px-3 py-3 text-sm"
+              className="min-h-[260px] w-full rounded-xl border border-border bg-background px-3 py-3 text-sm text-foreground"
             />
           </section>
         </div>
 
         <div className="flex items-center justify-between border-t border-border px-6 py-4">
-        <div className="text-xs text-muted-foreground">
-            {t("prompt.run.readyState", { state: isContextUpdating ? t("prompt.run.contextUpdatingShort") : canRun ? t("prompt.run.ready") : t("prompt.run.blocked") })}
-        </div>
+          <div className="text-xs text-muted-foreground">
+            {t("prompt.run.readyState", {
+              state: isContextUpdating
+                ? t("prompt.run.contextUpdatingShort")
+                : canRun
+                  ? t("prompt.run.ready")
+                  : t("prompt.run.blocked"),
+            })}
+          </div>
           <div className="flex items-center gap-2">
             <button
               type="button"

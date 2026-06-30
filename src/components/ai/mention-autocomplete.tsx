@@ -21,9 +21,11 @@ import {
   getMentionSelectionStage,
 } from "@/lib/ai/mention-browser";
 import { cn } from "@/lib/utils";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useAnnotationStore } from "@/stores/annotation-store";
 import { buildReferenceBrowserNodesFromMentionSuggestions } from "@/lib/ai/reference-browser";
+import { Portal } from "@/components/ui/portal";
 import { ReferenceBrowser } from "./reference-browser";
 
 interface MentionItem {
@@ -205,12 +207,15 @@ export function MentionAutocomplete({
   );
 
   return (
+    <Portal>
     <div
       className={cn(
-        "absolute z-50 w-72 rounded-lg border border-border bg-popover shadow-lg",
+        "fixed w-72 rounded-lg border border-border bg-popover shadow-lg",
+        UI_LAYER_CLASS.dialogElevated,
         className
       )}
       style={{ bottom: position.top, left: position.left }}
+      data-testid="mention-autocomplete"
     >
       <div ref={listRef} className="max-h-72 overflow-auto py-1 px-2">
         {stage === 'fragments' ? (
@@ -240,5 +245,6 @@ export function MentionAutocomplete({
         />
       </div>
     </div>
+    </Portal>
   );
 }

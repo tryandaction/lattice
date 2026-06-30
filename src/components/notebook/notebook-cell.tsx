@@ -300,7 +300,7 @@ export const NotebookCellComponent = memo(function NotebookCellComponent({
       {/* Cell toolbar */}
       <div
         className={cn(
-          "flex items-center gap-2 mb-2 transition-opacity",
+          "mb-1.5 flex items-center gap-2 transition-opacity",
           showControls || isActive ? "opacity-100" : "opacity-0"
         )}
       >

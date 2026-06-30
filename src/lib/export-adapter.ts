@@ -5,7 +5,8 @@
  * Web (download) and Desktop (Tauri save dialog) environments.
  */
 
-import { getTauriInvoke, isTauri } from './storage-adapter';
+import { save } from '@tauri-apps/plugin-dialog';
+import { invokeTauriCommand, isTauri } from './storage-adapter';
 
 export interface ExportOptions {
   defaultFileName: string;
@@ -156,15 +157,6 @@ class TauriExportAdapter implements ExportAdapter {
     }
 
     try {
-      const invoke = getTauriInvoke();
-      if (!invoke) {
-        return {
-          success: false,
-          error: 'Desktop export bridge is unavailable',
-        };
-      }
-
-      // Convert Blob to Uint8Array if needed
       let data: Uint8Array;
       if (content instanceof Blob) {
         const buffer = await content.arrayBuffer();
@@ -173,26 +165,21 @@ class TauriExportAdapter implements ExportAdapter {
         data = content;
       }
 
-      // Show native save dialog
-      const filePath = await invoke<string | null>(
-        'plugin:dialog|save',
-        {
-          defaultPath: options.defaultFileName,
-          filters: options.filters?.map(f => ({
-            name: f.name,
-            extensions: f.extensions,
-          })),
-        }
-      );
+      const filePath = await save({
+        defaultPath: options.defaultFileName,
+        filters: options.filters?.map(f => ({
+          name: f.name,
+          extensions: f.extensions.map((extension) => extension.replace(/^\./, '')),
+        })),
+      });
 
       if (!filePath) {
         return { success: false, cancelled: true };
       }
 
-      // Write file using Tauri fs
-      await invoke('plugin:fs|write_file', {
+      await invokeTauriCommand('desktop_write_file_bytes', {
         path: filePath,
-        contents: Array.from(data),
+        data: Array.from(data),
       });
 
       return {
@@ -211,15 +198,8 @@ class TauriExportAdapter implements ExportAdapter {
 
   async showInFolder(filePath: string): Promise<void> {
     try {
-      const invoke = getTauriInvoke();
-      if (!invoke) {
-        return;
-      }
-
-      await invoke('plugin:shell|open', {
-        path: filePath,
-        with: 'explorer', // Windows
-      });
+      const { revealDesktopPath } = await import('@/lib/desktop-openers');
+      await revealDesktopPath(filePath);
     } catch (error) {
       console.error('[Export] Failed to show in folder:', error);
     }

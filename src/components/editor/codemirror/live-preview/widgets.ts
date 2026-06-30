@@ -72,6 +72,75 @@ function getLivePreviewKaTeXOptions(displayMode: boolean) {
   return getKaTeXOptions(displayMode, { output: 'html' });
 }
 
+type MathCopyMenuItem = {
+  label: string;
+  onSelect: () => void | Promise<void>;
+};
+
+function closeMathCopyMenus() {
+  document.querySelectorAll('.cm-math-copy-menu').forEach((menu) => menu.remove());
+}
+
+function showMathCopyMenu(event: MouseEvent, items: MathCopyMenuItem[]) {
+  closeMathCopyMenus();
+
+  const menu = document.createElement('div');
+  menu.className = 'cm-math-copy-menu';
+  menu.setAttribute('role', 'menu');
+  menu.tabIndex = -1;
+
+  const cleanupListeners: Array<() => void> = [];
+  const cleanup = () => {
+    cleanupListeners.splice(0).forEach((cleanupListener) => cleanupListener());
+    menu.remove();
+  };
+
+  for (const item of items) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('role', 'menuitem');
+    button.textContent = item.label;
+    button.addEventListener('click', () => {
+      void Promise.resolve(item.onSelect()).finally(cleanup);
+    });
+    menu.appendChild(button);
+  }
+
+  document.body.appendChild(menu);
+
+  const rect = menu.getBoundingClientRect();
+  const maxLeft = Math.max(8, window.innerWidth - rect.width - 8);
+  const maxTop = Math.max(8, window.innerHeight - rect.height - 8);
+  menu.style.left = `${Math.min(Math.max(8, event.clientX), maxLeft)}px`;
+  menu.style.top = `${Math.min(Math.max(8, event.clientY), maxTop)}px`;
+
+  const onPointerDown = (pointerEvent: PointerEvent) => {
+    if (!menu.contains(pointerEvent.target as Node)) {
+      cleanup();
+    }
+  };
+  const onKeyDown = (keyboardEvent: KeyboardEvent) => {
+    if (keyboardEvent.key === 'Escape') {
+      keyboardEvent.preventDefault();
+      cleanup();
+    }
+  };
+
+  setTimeout(() => {
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('scroll', cleanup, true);
+    window.addEventListener('resize', cleanup, true);
+    cleanupListeners.push(
+      () => document.removeEventListener('pointerdown', onPointerDown, true),
+      () => document.removeEventListener('keydown', onKeyDown, true),
+      () => window.removeEventListener('scroll', cleanup, true),
+      () => window.removeEventListener('resize', cleanup, true),
+    );
+    menu.focus();
+  }, 0);
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -1857,7 +1926,7 @@ export class HorizontalRuleWidget extends WidgetType {
  * 交互:
  * - 单击: 定位光标到公式开始位置（显示源码）
  * - 双击: 选择整个公式（便于编辑）
- * - 右键: 复制LaTeX源码到剪贴板
+ * - 右键: 打开复制菜单，可复制 Markdown 或 LaTeX
  */
 export class MathWidget extends WidgetType {
   constructor(
@@ -1888,7 +1957,7 @@ export class MathWidget extends WidgetType {
     container.dataset.from = String(this.from);
     container.dataset.to = String(this.to);
     container.dataset.latex = this.latex; // 存储LaTeX用于复制功能
-    container.title = `${this.isBlock ? 'Block' : 'Inline'} formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX`;
+    container.title = `${this.isBlock ? 'Block' : 'Inline'} formula: Click to edit, Right-click for copy options`;
     if (this.isBlock) {
       applyBlockContext(container, this.context);
     }
@@ -1912,39 +1981,44 @@ export class MathWidget extends WidgetType {
       enterMathSourceMode(view, this.from, this.to);
     });
 
-    // 右键: 复制LaTeX源码
-    container.addEventListener('contextmenu', async (event) => {
+    // 右键: 复制 Markdown / LaTeX 源码
+    container.addEventListener('contextmenu', (event) => {
       const e = event as MouseEvent;
       e.preventDefault();
       e.stopPropagation();
 
-      const copyAsLatex = e.shiftKey || e.altKey;
       const markdownSource =
         wrapLatexForMarkdown(this.latex, this.isBlock) ||
         (this.isBlock ? `$$${this.latex}$$` : `$${this.latex}$`);
-      const latexSource = copyAsLatex ? this.latex : markdownSource;
+      const originalTitle = container.title;
+      const copySource = async (source: string, successTitle: string) => {
+        try {
+          await navigator.clipboard.writeText(source);
+          container.title = successTitle;
+          container.style.backgroundColor = 'rgba(34, 197, 94, 0.1)';
+          setTimeout(() => {
+            container.title = originalTitle;
+            container.style.backgroundColor = '';
+          }, 1200);
+        } catch (err) {
+          console.error('Failed to copy formula:', err);
+          container.title = 'Copy failed';
+          setTimeout(() => {
+            container.title = originalTitle;
+          }, 1200);
+        }
+      };
 
-      try {
-        await navigator.clipboard.writeText(latexSource);
-
-        // 视觉反馈
-        const originalTitle = container.title;
-        container.title = copyAsLatex
-          ? '✓ LaTeX copied to clipboard!'
-          : '✓ Markdown formula copied!';
-        container.style.backgroundColor = 'rgba(34, 197, 94, 0.1)'; // 绿色提示
-
-        setTimeout(() => {
-          container.title = originalTitle;
-          container.style.backgroundColor = '';
-        }, 1500);
-      } catch (err) {
-        console.error('Failed to copy LaTeX:', err);
-        container.title = '✗ Failed to copy';
-        setTimeout(() => {
-          container.title = `${this.isBlock ? 'Block' : 'Inline'} formula: Click to edit, Right-click to copy Markdown, Shift+Right-click to copy LaTeX`;
-        }, 1500);
-      }
+      showMathCopyMenu(e, [
+        {
+          label: 'Copy Markdown formula',
+          onSelect: () => copySource(markdownSource, 'Markdown formula copied'),
+        },
+        {
+          label: 'Copy LaTeX formula',
+          onSelect: () => copySource(this.latex, 'LaTeX formula copied'),
+        },
+      ]);
     });
 
     // 渲染公式

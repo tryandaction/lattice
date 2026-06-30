@@ -31,13 +31,37 @@ const researchAgentMocks = vi.hoisted(() => ({
   runResearchAgentForChat: vi.fn(),
 }));
 
+const orchestratorMocks = vi.hoisted(() => ({
+  runChat: vi.fn(),
+}));
+
+const pdfContextMocks = vi.hoisted(() => ({
+  loadPdfJsDocument: vi.fn(),
+  getPdfPageSearchText: vi.fn(),
+}));
+
 vi.mock('@/lib/storage-adapter', () => ({
   getStorageAdapter: () => storage,
   isTauriHost: () => false,
 }));
 
+vi.mock('@/lib/ai/orchestrator', () => ({
+  aiOrchestrator: {
+    runChat: orchestratorMocks.runChat,
+  },
+}));
+
 vi.mock('@/lib/ai/research-agent-chat-runner', () => ({
   runResearchAgentForChat: researchAgentMocks.runResearchAgentForChat,
+}));
+
+vi.mock('@/lib/pdf-js-document-loader', () => ({
+  loadPdfJsDocument: pdfContextMocks.loadPdfJsDocument,
+  pdfJsWorkerUrl: 'mock-worker',
+}));
+
+vi.mock('@/lib/pdf-page-text-cache', () => ({
+  getPdfPageSearchText: pdfContextMocks.getPdfPageSearchText,
 }));
 
 vi.mock('@/hooks/use-i18n', () => ({
@@ -142,13 +166,15 @@ vi.mock('@/components/prompt/prompt-picker', () => ({
     onSelectTemplate: (template: typeof promptTemplate) => void;
   }) => (
     isOpen ? (
-      <button
-        type="button"
-        data-testid="prompt-picker-select-template"
-        onClick={() => onSelectTemplate(promptTemplate)}
-      >
-        select-template
-      </button>
+      <aside data-testid="prompt-picker-dock">
+        <button
+          type="button"
+          data-testid="prompt-picker-select-template"
+          onClick={() => onSelectTemplate(promptTemplate)}
+        >
+          select-template
+        </button>
+      </aside>
     ) : null
   ),
 }));
@@ -157,11 +183,14 @@ vi.mock('@/components/prompt/prompt-editor-dialog', () => ({
   PromptEditorDialog: () => null,
 }));
 
-import { AiChatPanel } from '../ai-chat-panel';
+import { AiChatPanel, readFileForAiContext } from '../ai-chat-panel';
 import { useAiChatStore } from '@/stores/ai-chat-store';
 import { useAiWorkbenchStore } from '@/stores/ai-workbench-store';
 import { useAgentSessionStore } from '@/stores/agent-session-store';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useWorkspaceStore } from '@/stores/workspace-store';
+import { useContentCacheStore } from '@/stores/content-cache-store';
+import { useAnnotationStore } from '@/stores/annotation-store';
 import { DEFAULT_SETTINGS } from '@/types/settings';
 import type { ChatMessage } from '@/stores/ai-chat-store';
 
@@ -195,6 +224,39 @@ describe('AiChatPanel selection-origin flows', () => {
       sessions: [],
       activeSessionId: null,
     });
+    useContentCacheStore.setState({
+      cache: new Map(),
+      switchingLock: false,
+      currentSwitchId: null,
+    });
+    useAnnotationStore.setState({
+      annotations: new Map(),
+      activeFileId: null,
+      isLoading: false,
+      error: null,
+      pendingSave: false,
+      backup: new Map(),
+      rootHandle: null,
+    });
+    orchestratorMocks.runChat.mockResolvedValue({
+      text: 'Context-aware answer',
+      evidenceRefs: [],
+      context: {
+        nodes: [],
+        prompt: '',
+        evidenceRefs: [],
+        truncated: false,
+      },
+      model: {
+        providerId: 'openai',
+        providerName: 'OpenAI',
+        model: 'gpt-test',
+        source: 'cloud',
+      },
+      followUpActions: [],
+    });
+    pdfContextMocks.loadPdfJsDocument.mockReset();
+    pdfContextMocks.getPdfPageSearchText.mockReset();
   });
 
   it('shows selection-origin badges and auto-focuses evidence for selection agent results', async () => {
@@ -258,6 +320,148 @@ describe('AiChatPanel selection-origin flows', () => {
     await waitFor(() => {
       expect(screen.getByTestId('evidence-panel').textContent).toContain('msg-assistant');
     });
+  });
+
+  it('keeps the message stream scrollable inside a constrained right panel', () => {
+    useAiChatStore.setState({
+      conversations: [
+        {
+          id: 'conv-scroll',
+          title: 'Long Chat',
+          createdAt: Date.now(),
+          messages: Array.from({ length: 24 }, (_, index) => ({
+            id: `msg-${index}`,
+            role: index % 2 === 0 ? 'user' : 'assistant',
+            content: `Message ${index + 1}`,
+            timestamp: Date.now() + index,
+          })),
+        },
+      ],
+      activeConversationId: 'conv-scroll',
+      isOpen: true,
+    });
+
+    const { container } = render(
+      <div className="h-[360px] w-[320px]">
+        <AiChatPanel />
+      </div>,
+    );
+
+    const panel = screen.getByTestId('ai-chat-panel');
+    const frame = screen.getByTestId('ai-chat-message-frame');
+    const scrollRegion = screen.getByTestId('ai-chat-message-scroll');
+
+    expect(panel.className).toContain('overflow-hidden');
+    expect(frame.className).toContain('min-h-0');
+    expect(frame.className).toContain('flex-col');
+    expect(scrollRegion.className).toContain('h-full');
+    expect(scrollRegion.className).toContain('min-h-0');
+    expect(scrollRegion.className).toContain('overflow-y-auto');
+    expect(scrollRegion.parentElement).toBe(frame);
+  });
+
+  it('does not force-scroll long chat history when the reader is away from the bottom', () => {
+    useAiChatStore.setState({
+      conversations: [
+        {
+          id: 'conv-scroll-memory',
+          title: 'Long Chat',
+          createdAt: Date.now(),
+          messages: Array.from({ length: 20 }, (_, index) => ({
+            id: `msg-history-${index}`,
+            role: index % 2 === 0 ? 'user' : 'assistant',
+            content: `History message ${index + 1}`,
+            timestamp: Date.now() + index,
+          })),
+        },
+      ],
+      activeConversationId: 'conv-scroll-memory',
+      isOpen: true,
+    });
+
+    const { rerender } = render(<AiChatPanel />);
+    const scrollRegion = screen.getByTestId('ai-chat-message-scroll') as HTMLDivElement;
+    Object.defineProperties(scrollRegion, {
+      scrollHeight: { configurable: true, value: 2400 },
+      clientHeight: { configurable: true, value: 400 },
+    });
+
+    scrollRegion.scrollTop = 320;
+    fireEvent.scroll(scrollRegion);
+
+    useAiChatStore.setState((state) => ({
+      conversations: state.conversations.map((conversation) =>
+        conversation.id === 'conv-scroll-memory'
+          ? {
+              ...conversation,
+              messages: [
+                ...conversation.messages,
+                {
+                  id: 'msg-new-while-reading',
+                  role: 'assistant',
+                  content: 'New streamed chunk while the reader is reviewing history',
+                  timestamp: Date.now() + 100,
+                },
+              ],
+            }
+          : conversation,
+      ),
+    }));
+    rerender(<AiChatPanel />);
+
+    expect(scrollRegion.scrollTop).toBe(320);
+  });
+
+  it('keeps following new chat messages when the reader is already near the bottom', () => {
+    useAiChatStore.setState({
+      conversations: [
+        {
+          id: 'conv-scroll-follow',
+          title: 'Long Chat',
+          createdAt: Date.now(),
+          messages: Array.from({ length: 20 }, (_, index) => ({
+            id: `msg-follow-${index}`,
+            role: index % 2 === 0 ? 'user' : 'assistant',
+            content: `Message ${index + 1}`,
+            timestamp: Date.now() + index,
+          })),
+        },
+      ],
+      activeConversationId: 'conv-scroll-follow',
+      isOpen: true,
+    });
+
+    const { rerender } = render(<AiChatPanel />);
+    const scrollRegion = screen.getByTestId('ai-chat-message-scroll') as HTMLDivElement;
+    Object.defineProperties(scrollRegion, {
+      scrollHeight: { configurable: true, value: 2400 },
+      clientHeight: { configurable: true, value: 400 },
+    });
+
+    scrollRegion.scrollTop = 1980;
+    fireEvent.scroll(scrollRegion);
+
+    useAiChatStore.setState((state) => ({
+      conversations: state.conversations.map((conversation) =>
+        conversation.id === 'conv-scroll-follow'
+          ? {
+              ...conversation,
+              messages: [
+                ...conversation.messages,
+                {
+                  id: 'msg-new-at-bottom',
+                  role: 'assistant',
+                  content: 'New streamed chunk at bottom',
+                  timestamp: Date.now() + 100,
+                },
+              ],
+            }
+          : conversation,
+      ),
+    }));
+    rerender(<AiChatPanel />);
+
+    expect(scrollRegion.scrollTop).toBe(2400);
   });
 
   it('highlights selection-origin plans inside the workbench', async () => {
@@ -453,6 +657,18 @@ describe('AiChatPanel selection-origin flows', () => {
     await waitFor(() => {
       expect((screen.getByPlaceholderText('Ask') as HTMLTextAreaElement).value).toBe('Explain this');
     });
+  });
+
+  it('mounts prompt docks outside the clipped AI chat panel shell', async () => {
+    render(<AiChatPanel />);
+
+    fireEvent.click(screen.getByText('prompt.chat.open'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('prompt-picker-dock')).not.toBeNull();
+    });
+
+    expect(screen.getByTestId('ai-chat-panel').contains(screen.getByTestId('prompt-picker-dock'))).toBe(false);
   });
 
   it('updates the active AI model from the compact model switcher', async () => {
@@ -841,6 +1057,280 @@ describe('AiChatPanel selection-origin flows', () => {
     expect(screen.getByTestId('ai-chat-submit').getAttribute('title')).toBe('Run Research Agent');
     expect(screen.getByTestId('ai-chat-agent-effort-medium')).not.toBeNull();
     expect(screen.getByTestId('ai-chat-agent-advanced-toggle').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('sends the current file content and PDF annotations in regular Chat mode', async () => {
+    const fileId = 'papers-alpha.pdf';
+    const activeTab = {
+      id: 'tab-current-pdf',
+      kind: 'file' as const,
+      fileName: 'alpha.pdf',
+      filePath: 'papers/alpha.pdf',
+      isDirty: false,
+      scrollPosition: 0,
+      fileHandle: {
+        getFile: vi.fn(),
+      } as unknown as FileSystemFileHandle,
+    };
+
+    useWorkspaceStore.setState({
+      rootHandle: null,
+      layout: {
+        activePaneId: 'pane-ai-context',
+        root: {
+          type: 'pane',
+          id: 'pane-ai-context',
+          tabs: [activeTab],
+          activeTabIndex: 0,
+        },
+      },
+    });
+    useContentCacheStore.getState().setContent(
+      activeTab.id,
+      'Cached current PDF text extracted from the renderer.',
+      'Cached current PDF text extracted from the renderer.',
+    );
+    useAnnotationStore.setState({
+      annotations: new Map([
+        [fileId, [
+          {
+            id: 'ann-1',
+            fileId,
+            page: 2,
+            position: {
+              boundingRect: { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2, width: 100, height: 100 },
+              rects: [],
+            },
+            content: { text: 'Important highlighted evidence' },
+            comment: 'Use this note as evidence.',
+            color: 'yellow',
+            timestamp: 1,
+            type: 'text',
+          },
+        ]],
+      ]),
+    });
+
+    render(<AiChatPanel />);
+
+    fireEvent.change(screen.getByPlaceholderText('Ask'), {
+      target: { value: 'Summarize the current PDF.' },
+    });
+    fireEvent.click(screen.getByTestId('ai-chat-submit'));
+
+    await waitFor(() => {
+      expect(orchestratorMocks.runChat).toHaveBeenCalledWith(expect.objectContaining({
+        prompt: 'Summarize the current PDF.',
+        filePath: 'papers/alpha.pdf',
+        content: 'Cached current PDF text extracted from the renderer.',
+        annotations: [expect.objectContaining({
+          id: 'ann-1',
+          comment: 'Use this note as evidence.',
+          content: 'Important highlighted evidence',
+          target: expect.objectContaining({
+            type: 'pdf',
+            page: 2,
+          }),
+          style: expect.objectContaining({
+            color: 'yellow',
+            type: 'highlight',
+          }),
+        })],
+      }));
+    });
+  });
+
+  it('falls back to PDF text extraction when the renderer cache is empty', async () => {
+    const destroy = vi.fn();
+    pdfContextMocks.loadPdfJsDocument.mockResolvedValue({
+      numPages: 2,
+      destroy,
+    });
+    pdfContextMocks.getPdfPageSearchText.mockImplementation(async (_document, pageNumber: number) =>
+      pageNumber === 1 ? 'Extracted PDF introduction and result evidence.' : 'Extracted PDF methods evidence.',
+    );
+
+    const activeTab = {
+      id: 'tab-empty-cache-pdf',
+      kind: 'file' as const,
+      fileName: 'empty-cache.pdf',
+      filePath: 'papers/empty-cache.pdf',
+      isDirty: false,
+      scrollPosition: 0,
+      fileHandle: {
+        getFile: vi.fn().mockResolvedValue(new File([new Uint8Array([37, 80, 68, 70])], 'empty-cache.pdf', {
+          type: 'application/pdf',
+        })),
+      } as unknown as FileSystemFileHandle,
+    };
+
+    useWorkspaceStore.setState({
+      rootHandle: null,
+      layout: {
+        activePaneId: 'pane-empty-cache-pdf',
+        root: {
+          type: 'pane',
+          id: 'pane-empty-cache-pdf',
+          tabs: [activeTab],
+          activeTabIndex: 0,
+        },
+      },
+    });
+    useContentCacheStore.getState().setContent(activeTab.id, '', '');
+
+    render(<AiChatPanel />);
+
+    fireEvent.change(screen.getByPlaceholderText('Ask'), {
+      target: { value: 'Summarize this PDF.' },
+    });
+    fireEvent.click(screen.getByTestId('ai-chat-submit'));
+
+    await waitFor(() => {
+      expect(orchestratorMocks.runChat).toHaveBeenCalledWith(expect.objectContaining({
+        filePath: 'papers/empty-cache.pdf',
+        content: expect.stringContaining('Extracted PDF introduction and result evidence.'),
+      }));
+    });
+    expect(pdfContextMocks.loadPdfJsDocument).toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalled();
+  });
+
+  it('keeps prepared current-file context on regular Chat provider errors', async () => {
+    orchestratorMocks.runChat.mockRejectedValueOnce(new Error('Provider unavailable'));
+    const activeTab = {
+      id: 'tab-current-md',
+      kind: 'file' as const,
+      fileName: 'note.md',
+      filePath: 'notes/note.md',
+      isDirty: false,
+      scrollPosition: 0,
+      fileHandle: {
+        getFile: vi.fn(),
+      } as unknown as FileSystemFileHandle,
+    };
+
+    useWorkspaceStore.setState({
+      rootHandle: null,
+      layout: {
+        activePaneId: 'pane-ai-error-context',
+        root: {
+          type: 'pane',
+          id: 'pane-ai-error-context',
+          tabs: [activeTab],
+          activeTabIndex: 0,
+        },
+      },
+    });
+    useContentCacheStore.getState().setContent(
+      activeTab.id,
+      '# Current Note\n\nEvidence that should stay visible after an AI error.',
+      '# Current Note\n\nEvidence that should stay visible after an AI error.',
+    );
+
+    render(<AiChatPanel />);
+
+    fireEvent.change(screen.getByPlaceholderText('Ask'), {
+      target: { value: 'Use the current note.' },
+    });
+    fireEvent.click(screen.getByTestId('ai-chat-submit'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Error: Provider unavailable/)).not.toBeNull();
+    });
+
+    const activeConversation = useAiChatStore.getState().getActiveConversation();
+    const assistant = activeConversation?.messages.find((message) =>
+      message.role === 'assistant' && message.content.includes('Provider unavailable'),
+    );
+
+    expect(assistant?.promptContext?.nodes.some((node) =>
+      node.label === 'Current file: notes/note.md' &&
+      node.content.includes('Evidence that should stay visible after an AI error'),
+    )).toBe(true);
+    expect(assistant?.evidenceRefs?.some((ref) => ref.locator === 'notes/note.md')).toBe(true);
+  });
+
+  it('keeps prepared current-file context on Research Agent failures', async () => {
+    researchAgentMocks.runResearchAgentForChat.mockRejectedValueOnce(new Error('Agent unavailable'));
+    const activeTab = {
+      id: 'tab-agent-current-md',
+      kind: 'file' as const,
+      fileName: 'agent-note.md',
+      filePath: 'notes/agent-note.md',
+      isDirty: false,
+      scrollPosition: 0,
+      fileHandle: {
+        getFile: vi.fn(),
+      } as unknown as FileSystemFileHandle,
+    };
+
+    useWorkspaceStore.setState({
+      rootHandle: null,
+      layout: {
+        activePaneId: 'pane-ai-agent-error-context',
+        root: {
+          type: 'pane',
+          id: 'pane-ai-agent-error-context',
+          tabs: [activeTab],
+          activeTabIndex: 0,
+        },
+      },
+    });
+    useContentCacheStore.getState().setContent(
+      activeTab.id,
+      '# Agent Current Note\n\nEvidence that should stay visible after an agent error.',
+      '# Agent Current Note\n\nEvidence that should stay visible after an agent error.',
+    );
+
+    render(<AiChatPanel />);
+
+    fireEvent.change(screen.getByPlaceholderText('Ask'), {
+      target: { value: 'Use the current note as an agent.' },
+    });
+    fireEvent.click(screen.getByTestId('ai-chat-mode-agent'));
+    fireEvent.click(screen.getByTestId('ai-chat-submit'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Error: Agent unavailable/)).not.toBeNull();
+    });
+
+    const activeConversation = useAiChatStore.getState().getActiveConversation();
+    const assistant = activeConversation?.messages.find((message) =>
+      message.role === 'assistant' && message.content.includes('Agent unavailable'),
+    );
+
+    expect(assistant?.promptContext?.nodes.some((node) =>
+      node.label === 'Current file: notes/agent-note.md' &&
+      node.content.includes('Evidence that should stay visible after an agent error'),
+    )).toBe(true);
+    expect(assistant?.evidenceRefs?.some((ref) => ref.locator === 'notes/agent-note.md')).toBe(true);
+  });
+
+  it('extracts readable text from PDF files for AI context when no cached renderer text exists', async () => {
+    const destroy = vi.fn();
+    pdfContextMocks.loadPdfJsDocument.mockResolvedValue({
+      numPages: 3,
+      destroy,
+    });
+    pdfContextMocks.getPdfPageSearchText.mockImplementation(async (_document, pageNumber: number) =>
+      pageNumber === 2 ? 'Second page evidence text' : `Page ${pageNumber} text`,
+    );
+
+    const file = new File([new Uint8Array([37, 80, 68, 70])], 'paper.pdf', {
+      type: 'application/pdf',
+    });
+
+    const context = await readFileForAiContext(file, 'papers/paper.pdf');
+
+    expect(pdfContextMocks.loadPdfJsDocument).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.any(ArrayBuffer),
+      label: 'ai-context:papers/paper.pdf',
+    }));
+    expect(pdfContextMocks.getPdfPageSearchText).toHaveBeenCalledTimes(3);
+    expect(context).toContain('PDF text extracted from papers/paper.pdf');
+    expect(context).toContain('--- Page 2 ---');
+    expect(context).toContain('Second page evidence text');
+    expect(destroy).toHaveBeenCalled();
   });
 
   it('does not show Workbench follow-up buttons for answer-only Agent results', async () => {

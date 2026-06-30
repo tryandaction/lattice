@@ -47,7 +47,9 @@ export function usePluginShortcuts() {
         if (cmd.shortcut && matchesShortcut(e, cmd.shortcut)) {
           e.preventDefault();
           e.stopPropagation();
-          cmd.run();
+          void Promise.resolve(cmd.run()).catch((error) => {
+            console.error(`Plugin shortcut command failed: ${cmd.id}`, error);
+          });
           return;
         }
       }
