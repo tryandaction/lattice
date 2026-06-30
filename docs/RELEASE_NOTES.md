@@ -8,6 +8,9 @@ This build closes the current polish pass for the web and desktop products, with
 
 ## Highlights
 
+- PDF item workspaces now support folders and arbitrary file types instead of limiting companion entries to Markdown and notebooks.
+- Dragging a file or folder onto a PDF in Explorer moves it into that PDF's item workspace and immediately refreshes the PDF's virtual child tree.
+- PDF item routing now recovers annotations and companion files across PDF moves, renames, copies, and alternate workspace roots through manifest and fingerprint lookup.
 - Quantum Keyboard now follows the physical-keyboard model: only the 26 QWERTY letter keys are shown in the HUD, while number keys keep normal keyboard behavior.
 - Candidate insertion supports `Shift+number+letter`; for example, `Shift+2+I` inserts the second candidate for `I`.
 - Double-Tab opening from Markdown/CodeMirror no longer writes an unwanted tab or blank indentation into the document.
@@ -22,13 +25,15 @@ Completed on 2026-06-28:
 
 - `npm audit --registry=https://registry.npmjs.org --audit-level=moderate`: 0 vulnerabilities
 - `npm run typecheck`: passed
-- `npm run lint`: passed with 0 errors and 114 existing warnings
+- PDF item drag/drop focused regression tests: `src/lib/__tests__/pdf-item.test.ts`, `src/components/renderers/__tests__/pdf-item-workspace-panel.test.tsx`, `src/components/explorer/__tests__/tree-view.test.tsx`, and `src/components/main-area/__tests__/universal-file-viewer.test.tsx` passed, 37 tests total
+- `npm run lint`: passed with 0 errors and 120 existing warnings
 - `npm run test:docs`: passed, 40 files checked
 - Focused regression tests for Markdown extraction, workspace indexing, Quantum Keyboard, formula copy, unified input, and HUD behavior: 36 tests passed
 - `npm run test:run`: 247 files passed, 1874 tests passed
 - `npm run build`: passed
 - `npm run tauri:build`: passed
 - `npm run release:prepare -- --version 2.3.1 --artifacts-dir src-tauri/target/release`: passed
+- PDF copy routing smoke: copied the Jandura/Pupillo 2022 Rydberg gates PDF into `atom/Theoretical Research/taiyi/essay/`; source and copy hashes match, and the PDF item manifest now records both the original and copied paths.
 - `npm run test:desktop:pdf-smoke`: passed against the built desktop executable
 
 Note: the full Vitest run still emits jsdom's informational `Not implemented: navigation to another Document` line, but the suite exits successfully with no failed tests.
@@ -37,9 +42,9 @@ Note: the full Vitest run still emits jsdom's informational `Not implemented: na
 
 Artifacts are available in `releases/v2.3.1/`:
 
-- `Lattice_2.3.1_x64_en-US.msi` SHA256 `54a5e122b4185b47cc3c347bc154af834edf23b36807f442bfa76512989ac31e`
-- `Lattice_2.3.1_x64-setup.exe` SHA256 `345f946336e2d9df26995731c85170b3bb7a8441530beee6c1d65a58efa0373a`
-- `lattice.exe` SHA256 `41613e1413d21f3a99680a196d7671bd0462dbdb529adb7e0ccc1d399e490a07`
+- `Lattice_2.3.1_x64_en-US.msi` SHA256 `f81d4693de133e01bd709364b900ea29cb73368835a7a6da5a81ae47fcce60e3`
+- `Lattice_2.3.1_x64-setup.exe` SHA256 `5c6e29dce80adf6549a548306986be0f960968117a68ae772af41a61b15340d1`
+- `lattice.exe` SHA256 `e89cfab49fca9c6cbfdf3c3397ca3193c72a16a7bf568fc104e86c9401b4ddd8`
 
 ## Desktop/Web Sync
 

@@ -42,6 +42,7 @@ import {
 import {
   copyPdfItemWorkspace,
   deletePdfItemWorkspace,
+  ensurePdfItemWorkspace,
   getDefaultPdfItemFolderPath,
   invalidatePdfItemManifestIndex,
   listPdfItemNotes,
@@ -64,6 +65,7 @@ import {
 } from "@/lib/markdown/workspace-link-index";
 import { resolveWorkspaceIdentity } from "@/lib/workspace-identity";
 import { withTimeout } from "@/lib/async-task-guard";
+import { buildFileFingerprint } from "@/lib/file-identity";
 
 /**
  * Return type for the useFileSystem hook
@@ -86,6 +88,7 @@ interface UseFileSystemReturn {
   renameFile: (path: string, newName: string) => Promise<EntryOperationResult>;
   copyEntry: (sourcePath: string, targetDirectoryPath: string) => Promise<EntryOperationResult>;
   moveEntry: (sourcePath: string, targetDirectoryPath: string) => Promise<EntryOperationResult>;
+  moveEntryIntoPdfItemWorkspace: (sourcePath: string, pdfPath: string) => Promise<EntryOperationResult>;
   hydratePdfVirtualChildren: (pdfPath: string, options?: { force?: boolean; expand?: boolean }) => Promise<void>;
   refreshDirectory: (options?: { silent?: boolean }) => Promise<void>;
 
@@ -253,7 +256,9 @@ function isPdfPath(path: string): boolean {
   return getExtension(path) === "pdf";
 }
 
-function buildPdfVirtualChildNode(summary: Awaited<ReturnType<typeof listPdfItemNotes>>[number], parentPdfPath: string): FileNode | null {
+type PdfItemSummary = Awaited<ReturnType<typeof listPdfItemNotes>>[number];
+
+function buildPdfVirtualFileNode(summary: PdfItemSummary, parentPdfPath: string): FileNode | null {
   if (!summary.handle) {
     return null;
   }
@@ -282,6 +287,41 @@ function buildPdfVirtualChildNode(summary: Awaited<ReturnType<typeof listPdfItem
         ? "Notebook"
         : "Markdown",
   };
+}
+
+function buildPdfVirtualChildNodes(summaries: PdfItemSummary[], parentPdfPath: string): TreeNode[] {
+  const roots: TreeNode[] = [];
+  const directoriesByPath = new Map<string, DirectoryNode>();
+
+  for (const summary of summaries) {
+    const parentPath = getParentPath(summary.path);
+    const targetChildren = directoriesByPath.get(parentPath)?.children ?? roots;
+
+    if (summary.type === "directory") {
+      if (!summary.directoryHandle) {
+        continue;
+      }
+
+      const directoryNode: DirectoryNode = {
+        name: summary.fileName,
+        kind: "directory",
+        handle: summary.directoryHandle,
+        children: [],
+        path: summary.path,
+        isExpanded: false,
+      };
+      directoriesByPath.set(summary.path, directoryNode);
+      targetChildren.push(directoryNode);
+      continue;
+    }
+
+    const fileNode = buildPdfVirtualFileNode(summary, parentPdfPath);
+    if (fileNode) {
+      targetChildren.push(fileNode);
+    }
+  }
+
+  return roots;
 }
 
 function buildFallbackPdfAnnotationChild(
@@ -455,10 +495,8 @@ async function loadPdfVirtualChildren(
     notesListFailed = true;
     return [];
   });
-  const children = notes
-    .map((summary) => buildPdfVirtualChildNode(summary, pdfPath))
-    .filter((child): child is FileNode => child !== null);
-  if (children.some((child) => child.entryRole === "pdf-annotations")) {
+  const children = buildPdfVirtualChildNodes(notes, pdfPath);
+  if (children.some((child) => child.kind === "file" && child.entryRole === "pdf-annotations")) {
     return { manifest, children };
   }
   if (notesListFailed || usedFallbackManifest || manifest.annotationIndexPath) {
@@ -939,9 +977,7 @@ export function useFileSystem(): UseFileSystemReturn {
             return;
           }
           const notes = await listPdfItemNotes(latticeRootHandle, manifest);
-          const refreshedChildren = notes
-            .map((summary) => buildPdfVirtualChildNode(summary, pdfPath))
-            .filter((child): child is FileNode => child !== null);
+          const refreshedChildren = buildPdfVirtualChildNodes(notes, pdfPath);
           patchWorkspaceFileTree(pdfPath, (file) => ({
             ...file,
             canExpandVirtualChildren: true,
@@ -1436,19 +1472,20 @@ export function useFileSystem(): UseFileSystemReturn {
     return result;
   }, [rootHandle, refreshDirectory]);
 
-  const moveEntry = useCallback(async (
+  const moveEntryFromRoot = useCallback(async (
+    operationRootHandle: FileSystemDirectoryHandle | null,
     sourcePath: string,
-    targetDirectoryPath: string
+    targetDirectoryPath: string,
   ): Promise<EntryOperationResult> => {
-    if (!rootHandle) {
+    if (!operationRootHandle) {
       return {
         success: false,
         error: "No directory is open.",
       };
     }
 
-    const resolvedEntry = await resolveEntry(rootHandle, sourcePath);
-    const targetDirectory = await resolveDirectoryHandle(rootHandle, targetDirectoryPath);
+    const resolvedEntry = await resolveEntry(operationRootHandle, sourcePath);
+    const targetDirectory = await resolveDirectoryHandle(operationRootHandle, targetDirectoryPath);
     if (!resolvedEntry || !targetDirectory) {
       return {
         success: false,
@@ -1504,7 +1541,7 @@ export function useFileSystem(): UseFileSystemReturn {
         let wroteReferenceUpdates = false;
         if (markdownUpdateLinksOnRename) {
           wroteReferenceUpdates = await confirmAndWriteMarkdownRenameLinkUpdates(
-            rootHandle,
+            operationRootHandle,
             sourcePath,
             fullPath,
             (count) => t("settings.markdown.updateLinksOnRename.confirm", { count }),
@@ -1518,7 +1555,63 @@ export function useFileSystem(): UseFileSystemReturn {
     }
 
     return result;
-  }, [markdownUpdateLinksOnRename, rootHandle, refreshDirectory, t]);
+  }, [markdownUpdateLinksOnRename, refreshDirectory, t]);
+
+  const moveEntry = useCallback(async (
+    sourcePath: string,
+    targetDirectoryPath: string
+  ): Promise<EntryOperationResult> => {
+    return moveEntryFromRoot(rootHandle, sourcePath, targetDirectoryPath);
+  }, [moveEntryFromRoot, rootHandle]);
+
+  const moveEntryIntoPdfItemWorkspace = useCallback(async (
+    sourcePath: string,
+    pdfPath: string,
+  ): Promise<EntryOperationResult> => {
+    const latticeRootHandle = getLatticeRootHandle();
+    if (!latticeRootHandle) {
+      return {
+        success: false,
+        error: "No directory is open.",
+      };
+    }
+
+    if (!isPdfPath(pdfPath)) {
+      return {
+        success: false,
+        error: "Target is not a PDF file.",
+      };
+    }
+
+    if (sourcePath === pdfPath) {
+      return {
+        success: false,
+        error: "Cannot move a PDF into its own item workspace.",
+      };
+    }
+
+    const pdfEntry = await resolveEntry(latticeRootHandle, pdfPath);
+    const fingerprint = pdfEntry?.kind === "file"
+      ? await buildFileFingerprint(pdfEntry.handle as FileSystemFileHandle)
+      : null;
+    const manifest = await ensurePdfItemWorkspace(latticeRootHandle, generateFileId(pdfPath), pdfPath, {
+      fileFingerprint: fingerprint?.fingerprint ?? null,
+      versionFingerprint: fingerprint?.versionFingerprint ?? null,
+    });
+    if (sourcePath === manifest.itemFolderPath || manifest.itemFolderPath.startsWith(`${sourcePath}/`)) {
+      return {
+        success: false,
+        error: "Cannot move a folder into its own PDF item workspace.",
+      };
+    }
+
+    const result = await moveEntryFromRoot(latticeRootHandle, sourcePath, manifest.itemFolderPath);
+    if (result.success) {
+      await hydratePdfVirtualChildren(pdfPath, { force: true, expand: true });
+    }
+
+    return result;
+  }, [hydratePdfVirtualChildren, moveEntryFromRoot]);
 
   return {
     isSupported,
@@ -1535,6 +1628,7 @@ export function useFileSystem(): UseFileSystemReturn {
     renameFile,
     copyEntry,
     moveEntry,
+    moveEntryIntoPdfItemWorkspace,
     hydratePdfVirtualChildren,
     refreshDirectory,
     fileTree,

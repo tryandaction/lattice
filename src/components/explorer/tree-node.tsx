@@ -26,12 +26,12 @@ import { cn } from "@/lib/utils";
 import { FileCompareDialog, type FileCompareDialogInput } from "./file-compare-dialog";
 import { FileContextMenu, DeleteConfirmDialog, type FileContextMenuAction } from "./file-context-menu";
 import type { EntryKind } from "@/lib/file-operations";
-import { getParentPath } from "@/lib/file-operations";
 import {
   createPdfItemNote,
   ensurePdfItemWorkspace,
 } from "@/lib/pdf-item";
 import { generateFileId } from "@/lib/universal-annotation-storage";
+import { buildFileFingerprint } from "@/lib/file-identity";
 import { useI18n } from "@/hooks/use-i18n";
 import { copyToClipboard } from "@/lib/clipboard";
 import { getDesktopHandlePath } from "@/lib/desktop-file-system";
@@ -224,8 +224,17 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   const closeTabsByPath = useWorkspaceStore((state) => state.closeTabsByPath);
   const updateTabPath = useWorkspaceStore((state) => state.updateTabPath);
   const updateTabFile = useWorkspaceStore((state) => state.updateTabFile);
+  const updateTabPathPrefix = useWorkspaceStore((state) => state.updateTabPathPrefix);
+  const setSelectedDirectoryPath = useWorkspaceStore((state) => state.setSelectedDirectoryPath);
   const layout = useWorkspaceStore((state) => state.layout);
-  const { deleteFile, renameFile, refreshDirectory, rootHandle, hydratePdfVirtualChildren } = useFileSystem();
+  const {
+    deleteFile,
+    renameFile,
+    refreshDirectory,
+    rootHandle,
+    hydratePdfVirtualChildren,
+    moveEntryIntoPdfItemWorkspace,
+  } = useFileSystem();
   const selectedPath = useExplorerStore((state) => state.selectedPath);
   const renamingPath = useExplorerStore((state) => state.renamingPath);
   const clipboard = useExplorerStore((state) => state.clipboard);
@@ -251,6 +260,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   const hasChildren = Boolean(node.children?.length || node.canExpandVirtualChildren);
   const childNodes = node.children ?? [];
   const ChevronIcon = node.virtualChildrenState === "loading" ? Loader2 : node.isExpanded ? ChevronDown : ChevronRight;
+  const canAcceptPdfItemDrop = node.extension === "pdf" && !node.isVirtual;
 
   const { openCount, isActiveFile } = useMemo(() => {
     const paneIds = getAllPaneIds(layout.root);
@@ -321,7 +331,11 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
       return null;
     }
 
-    const manifest = await ensurePdfItemWorkspace(rootHandle, generateFileId(node.path), node.path);
+    const fingerprint = await buildFileFingerprint(node.handle);
+    const manifest = await ensurePdfItemWorkspace(rootHandle, generateFileId(node.path), node.path, {
+      fileFingerprint: fingerprint.fingerprint,
+      versionFingerprint: fingerprint.versionFingerprint,
+    });
     await refreshDirectory({ silent: true });
     const latestTree = useWorkspaceStore.getState().fileTree;
     const latestNode = (function findPdfEntry(current: TreeNode | null): FileNode | null {
@@ -366,6 +380,30 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
     await hydratePdfVirtualChildren(node.path, { force: true, expand: true });
     openFileInPane(layout.activePaneId, created.handle, created.path);
   }, [ensurePdfWorkspace, hydratePdfVirtualChildren, layout.activePaneId, openFileInPane, refreshDirectory, rootHandle, node.path]);
+
+  const handleDropIntoPdfItemWorkspace = useCallback(async (dragged: DragPayload) => {
+    const result = await moveEntryIntoPdfItemWorkspace(dragged.path, node.path);
+    if (!result.success || !result.path) {
+      console.error("Failed to move entry into PDF item workspace:", result.error);
+      return;
+    }
+
+    if (dragged.kind === "file") {
+      if (result.handle?.kind === "file") {
+        useWorkspaceStore.getState().updateTabFile(dragged.path, result.path, result.handle as FileSystemFileHandle);
+      } else {
+        useWorkspaceStore.getState().updateTabPath(dragged.path, result.path);
+      }
+    } else {
+      updateTabPathPrefix(dragged.path, result.path);
+    }
+
+    syncExplorerSelectionAfterPathChange(dragged.path, result.path, dragged.kind);
+    setSelection(result.path, dragged.kind);
+    if (dragged.kind === "directory") {
+      setSelectedDirectoryPath(result.path);
+    }
+  }, [moveEntryIntoPdfItemWorkspace, node.path, setSelectedDirectoryPath, setSelection, updateTabPathPrefix]);
 
   const handleOpenToSide = useCallback(() => {
     const sidePaneId = getSidePaneId(layout.root, layout.activePaneId);
@@ -625,10 +663,43 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
       ) : (
         <div
           data-explorer-node="true"
+          onDragOver={(event) => {
+            if (!canAcceptPdfItemDrop) {
+              return;
+            }
+
+            const dragged = parseDraggedEntry(event);
+            if (!dragged || dragged.path === node.path || hasPathPrefix(node.path, dragged.path)) {
+              return;
+            }
+
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+            setDragOverPath(node.path);
+          }}
+          onDragLeave={() => {
+            if (dragOverPath === node.path) {
+              setDragOverPath(null);
+            }
+          }}
+          onDrop={(event) => {
+            if (!canAcceptPdfItemDrop) {
+              return;
+            }
+
+            event.preventDefault();
+            const dragged = parseDraggedEntry(event);
+            setDragOverPath(null);
+            if (!dragged || dragged.path === node.path || hasPathPrefix(node.path, dragged.path)) {
+              return;
+            }
+
+            void handleDropIntoPdfItemWorkspace(dragged);
+          }}
           className={cn(
             "flex w-full items-center gap-2 px-2 py-1 text-left text-sm transition-colors",
             (isSelected || isActiveFile) && "bg-accent",
-            dragOverPath === node.path && "ring-1 ring-primary/50",
+            dragOverPath === node.path && "bg-primary/10 ring-1 ring-primary/50",
             isCutItem && "opacity-55"
           )}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}

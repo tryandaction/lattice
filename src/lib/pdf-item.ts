@@ -20,7 +20,6 @@ import {
   generateFileId,
   loadAnnotationsFromDisk,
   resolveAnnotationFileCandidates,
-  saveAnnotationsToDisk,
 } from "@/lib/universal-annotation-storage";
 import { removeAnnotationDocumentAliases } from "@/lib/annotation-registry";
 import type { AnnotationBacklink } from "@/lib/annotation-backlinks";
@@ -28,7 +27,7 @@ import {
   mergePdfAnnotationDraftsSection,
   removeResolvedPdfAnnotationMarkdownDrafts,
 } from "@/lib/pdf-annotation-markdown-drafts";
-import { getCanonicalPdfAnnotationText, type AnnotationItem, type UniversalAnnotationFile } from "@/types/universal-annotation";
+import { getCanonicalPdfAnnotationText, type AnnotationItem } from "@/types/universal-annotation";
 import type { ResolvedPdfDocumentBinding } from "@/lib/pdf-document-binding";
 import { getLocale, t as translate } from "@/lib/i18n";
 
@@ -43,6 +42,7 @@ const PDF_ANNOTATION_PREVIEW_DIR_NAME = "_annotation_previews";
 export interface PdfItemManifestIndex {
   byDocumentId: Map<string, PdfItemManifest>;
   byKnownPdfPath: Map<string, PdfItemManifest>;
+  byFileFingerprint: Map<string, PdfItemManifest>;
   byCurrentItemFolder: Map<string, PdfItemManifest>;
 }
 
@@ -75,8 +75,10 @@ export interface PdfItemManifest {
 export interface PdfItemNoteSummary {
   path: string;
   fileName: string;
-  type: "note" | "notebook" | "annotation-note";
+  type: "note" | "notebook" | "annotation-note" | "directory" | "file";
   handle?: FileSystemFileHandle;
+  directoryHandle?: FileSystemDirectoryHandle;
+  depth?: number;
 }
 
 function isLegacyPdfItemManifest(value: unknown): value is LegacyPdfItemManifest {
@@ -523,10 +525,14 @@ async function collectCurrentPdfItemManifests(
 function buildPdfItemManifestIndex(manifests: PdfItemManifest[]): PdfItemManifestIndex {
   const byDocumentId = new Map<string, PdfItemManifest>();
   const byKnownPdfPath = new Map<string, PdfItemManifest>();
+  const byFileFingerprint = new Map<string, PdfItemManifest>();
   const byCurrentItemFolder = new Map<string, PdfItemManifest>();
 
   manifests.forEach((manifest) => {
     byDocumentId.set(manifest.itemId, manifest);
+    if (manifest.fileFingerprint) {
+      byFileFingerprint.set(manifest.fileFingerprint, manifest);
+    }
     byCurrentItemFolder.set(normalizeWorkspacePath(manifest.itemFolderPath), manifest);
     manifest.knownPdfPaths.forEach((path) => {
       byKnownPdfPath.set(normalizeWorkspacePath(path), manifest);
@@ -537,6 +543,7 @@ function buildPdfItemManifestIndex(manifests: PdfItemManifest[]): PdfItemManifes
   return {
     byDocumentId,
     byKnownPdfPath,
+    byFileFingerprint,
     byCurrentItemFolder,
   };
 }
@@ -590,6 +597,31 @@ async function hasLegacyPdfItemWorkspace(
   }
 
   return Boolean(await resolveDirectoryHandle(rootHandle, getLegacyPdfItemFolderPath(pdfPath)));
+}
+
+async function fileExistsAtWorkspacePath(
+  rootHandle: FileSystemDirectoryHandle,
+  filePath: string,
+): Promise<boolean> {
+  return Boolean(await getFileHandleForPath(rootHandle, filePath));
+}
+
+async function anyKnownPdfPathExists(
+  rootHandle: FileSystemDirectoryHandle,
+  knownPdfPaths: string[],
+  currentPdfPath: string,
+): Promise<boolean> {
+  const current = normalizeWorkspacePath(currentPdfPath);
+  for (const path of knownPdfPaths) {
+    const normalized = normalizeWorkspacePath(path);
+    if (normalized === current) {
+      continue;
+    }
+    if (await fileExistsAtWorkspacePath(rootHandle, normalized)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function buildRelativePdfLink(currentFilePath: string, pdfPath: string): string {
@@ -1064,6 +1096,23 @@ export async function loadPdfItemManifest(
     });
   }
 
+  const fingerprintMatch = options?.fileFingerprint
+    ? manifestIndex.byFileFingerprint.get(options.fileFingerprint) ?? null
+    : null;
+  if (fingerprintMatch) {
+    return normalizePdfItemManifest({
+      ...fingerprintMatch,
+      pdfPath: normalizedPdfPath,
+      itemFolderPath: fingerprintMatch.itemFolderPath,
+      annotationIndexPath: fingerprintMatch.annotationIndexPath,
+      fileFingerprint: options?.fileFingerprint ?? fingerprintMatch.fileFingerprint,
+      versionFingerprint: options?.versionFingerprint ?? fingerprintMatch.versionFingerprint,
+      knownPdfPaths: [...fingerprintMatch.knownPdfPaths, ...knownPdfPaths],
+      createdAt: fingerprintMatch.createdAt,
+      updatedAt: fingerprintMatch.updatedAt,
+    });
+  }
+
   const knownPathMatch = knownPdfPaths
     .map((path) => manifestIndex.byKnownPdfPath.get(path))
     .find((manifest): manifest is PdfItemManifest => Boolean(manifest))
@@ -1230,7 +1279,14 @@ export async function ensurePdfItemWorkspace(
 ): Promise<PdfItemManifest> {
   const normalizedPdfPath = normalizeWorkspacePath(pdfPath);
   const loadedManifest = await loadPdfItemManifest(rootHandle, fileId, normalizedPdfPath, options);
-  const targetFolderPath = getDefaultPdfItemFolderPath(normalizedPdfPath);
+  const shouldShareExistingWorkspace = await anyKnownPdfPathExists(
+    rootHandle,
+    loadedManifest.knownPdfPaths,
+    normalizedPdfPath,
+  );
+  const targetFolderPath = shouldShareExistingWorkspace
+    ? loadedManifest.itemFolderPath
+    : getDefaultPdfItemFolderPath(normalizedPdfPath);
   const nextManifest = normalizePdfItemManifest({
     itemId: loadedManifest.itemId,
     pdfPath: normalizedPdfPath,
@@ -1427,66 +1483,62 @@ export async function listPdfItemNotes(
   }
 
   const notes: PdfItemNoteSummary[] = [];
-  for await (const entry of dirHandle.values()) {
-    if (entry.kind !== "file") {
-      continue;
+
+  async function walk(currentDir: FileSystemDirectoryHandle, currentPath: string, depth: number): Promise<void> {
+    const entries: Array<FileSystemDirectoryHandle | FileSystemFileHandle> = [];
+    for await (const entry of currentDir.values()) {
+      entries.push(entry as FileSystemDirectoryHandle | FileSystemFileHandle);
     }
 
-    const fileName = entry.name;
-    const lowerName = fileName.toLowerCase();
-    if (!lowerName.endsWith(".md") && !lowerName.endsWith(".ipynb")) {
-      continue;
-    }
+    entries.sort((left, right) => {
+      const leftWeight = left.kind === "directory"
+        ? 0
+        : left.name === DEFAULT_ANNOTATIONS_NOTE_NAME
+          ? 2
+          : 1;
+      const rightWeight = right.kind === "directory"
+        ? 0
+        : right.name === DEFAULT_ANNOTATIONS_NOTE_NAME
+          ? 2
+          : 1;
+      return leftWeight - rightWeight || left.name.localeCompare(right.name);
+    });
 
-    const path = joinPath(manifest.itemFolderPath, fileName);
-    if (fileName === LEGACY_OVERVIEW_NOTE_NAME) {
-      continue;
-    }
+    for (const entry of entries) {
+      const fileName = entry.name;
+      if (fileName === PDF_ITEM_MANIFEST_NAME || fileName === LEGACY_OVERVIEW_NOTE_NAME) {
+        continue;
+      }
 
-    if (fileName === DEFAULT_ANNOTATIONS_NOTE_NAME) {
-      notes.push({ path, fileName, type: "annotation-note", handle: entry as FileSystemFileHandle });
-      continue;
-    }
+      const path = joinPath(currentPath, fileName);
+      if (entry.kind === "directory") {
+        const directoryHandle = entry as FileSystemDirectoryHandle;
+        notes.push({ path, fileName, type: "directory", directoryHandle, depth });
+        await walk(directoryHandle, path, depth + 1);
+        continue;
+      }
 
-    if (lowerName.endsWith(".ipynb")) {
-      notes.push({ path, fileName, type: "notebook", handle: entry as FileSystemFileHandle });
-      continue;
+      const fileHandle = entry as FileSystemFileHandle;
+      const lowerName = fileName.toLowerCase();
+      if (fileName === DEFAULT_ANNOTATIONS_NOTE_NAME) {
+        notes.push({ path, fileName, type: "annotation-note", handle: fileHandle, depth });
+        continue;
+      }
+      if (lowerName.endsWith(".ipynb")) {
+        notes.push({ path, fileName, type: "notebook", handle: fileHandle, depth });
+        continue;
+      }
+      if (lowerName.endsWith(".md")) {
+        notes.push({ path, fileName, type: "note", handle: fileHandle, depth });
+        continue;
+      }
+      notes.push({ path, fileName, type: "file", handle: fileHandle, depth });
     }
-
-    notes.push({ path, fileName, type: "note", handle: entry as FileSystemFileHandle });
   }
 
-  return notes.sort((left, right) => {
-    const weight = (note: PdfItemNoteSummary) => {
-      switch (note.type) {
-        case "note":
-          return 0;
-        case "notebook":
-          return 1;
-        case "annotation-note":
-          return 2;
-        default:
-          return 9;
-      }
-    };
-    return weight(left) - weight(right) || left.fileName.localeCompare(right.fileName);
-  });
-}
+  await walk(dirHandle, manifest.itemFolderPath, 0);
 
-async function cloneAnnotationFileWithNewId(
-  sourceItemId: string,
-  targetItemId: string,
-  rootHandle: FileSystemDirectoryHandle,
-): Promise<UniversalAnnotationFile> {
-  const sourceAnnotationFile = await loadAnnotationsFromDisk(sourceItemId, rootHandle, "pdf");
-  const clonedAnnotationFile: UniversalAnnotationFile = {
-    ...sourceAnnotationFile,
-    documentId: targetItemId,
-    fileId: targetItemId,
-    lastModified: Date.now(),
-  };
-  await saveAnnotationsToDisk(clonedAnnotationFile, rootHandle);
-  return clonedAnnotationFile;
+  return notes;
 }
 
 export async function movePdfItemWorkspace(
@@ -1548,34 +1600,18 @@ export async function copyPdfItemWorkspace(
     return null;
   }
 
-  const targetItemId = generateFileId(targetPath);
-  const targetFolderPath = getDefaultPdfItemFolderPath(targetPath);
-  const targetDir = await ensureNestedDirectory(rootHandle, targetFolderPath);
-  await copyDirectoryRecursively(sourceDir, targetDir);
-
-  const clonedAnnotationFile = await cloneAnnotationFileWithNewId(sourceManifest.itemId, targetItemId, rootHandle);
-  let nextManifest = normalizePdfItemManifest({
-    itemId: targetItemId,
-    pdfPath: targetPath,
-    itemFolderPath: targetFolderPath,
-    annotationIndexPath: clonedAnnotationFile.annotations.some((annotation) => annotation.target.type === "pdf")
-      ? getPdfItemAnnotationIndexPath(targetFolderPath)
-      : null,
-    fileFingerprint: sourceManifest.fileFingerprint,
-    versionFingerprint: sourceManifest.versionFingerprint,
-    knownPdfPaths: [targetPath],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+  const persistedManifest = await savePdfItemManifest(rootHandle, {
+    ...sourceManifest,
+    pdfPath: sourceManifest.pdfPath,
+    itemFolderPath: sourceManifest.itemFolderPath,
+    knownPdfPaths: [...sourceManifest.knownPdfPaths, targetPath],
   });
-  nextManifest = await savePdfItemManifest(rootHandle, nextManifest);
-  await syncPdfManagedFiles(rootHandle, nextManifest);
-  const annotationsResult = await syncPdfAnnotationsMarkdown(
-    rootHandle,
-    nextManifest,
-    getPdfFileName(targetPath),
-    clonedAnnotationFile.annotations,
-  );
-  return annotationsResult.manifest;
+
+  return normalizePdfItemManifest({
+    ...persistedManifest,
+    pdfPath: targetPath,
+    knownPdfPaths: persistedManifest.knownPdfPaths,
+  });
 }
 
 export async function deletePdfItemWorkspace(

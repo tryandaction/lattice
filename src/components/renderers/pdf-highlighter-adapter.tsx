@@ -5434,10 +5434,10 @@ export function PDFHighlighterAdapter({
         setPdfItemError(null);
         const manifest = await withTimeout(
           effectiveBinding
-            ? loadPdfItemManifestForBinding(rootHandle, effectiveBinding)
-            : loadPdfItemManifest(rootHandle, manifestSeedId, filePath),
+            ? ensurePdfItemWorkspaceForBinding(rootHandle, effectiveBinding)
+            : ensurePdfItemWorkspace(rootHandle, manifestSeedId, filePath),
           20000,
-          "PDF item manifest load",
+          "PDF item manifest ensure",
         );
         if (cancelled || !manifestRunGuard.isCurrent(runId)) {
           return;
@@ -12065,6 +12065,8 @@ export function PDFHighlighterAdapter({
                 <PdfItemWorkspacePanel
                   rootHandle={rootHandle}
                   documentId={effectiveBinding?.documentId ?? pdfItemManifest?.itemId ?? null}
+                  fileFingerprint={effectiveBinding?.fileIdentity.fileFingerprint ?? pdfItemManifest?.fileFingerprint ?? null}
+                  versionFingerprint={effectiveBinding?.fileIdentity.versionFingerprint ?? pdfItemManifest?.versionFingerprint ?? null}
                   fileName={fileName}
                   filePath={filePath}
                   paneId={paneId}

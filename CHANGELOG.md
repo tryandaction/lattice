@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- PDF item workspaces now accept folders and arbitrary file types, not only Markdown notes and notebooks.
+- Explorer drag-and-drop can move files or folders directly onto a PDF to attach them to that PDF's item workspace.
+- PDF item workspace routing now uses manifest/fingerprint recovery so moved, renamed, or copied PDFs can reopen their annotations and related files from any workspace root.
 - Quantum Keyboard now follows the physical-keyboard model: the HUD shows only the 26 QWERTY letter keys, while number keys keep their native keyboard behavior.
 - Letter candidates now support `Shift+number+letter` one-based selection, e.g. `Shift+2+I` inserts the second `I` candidate.
 - Bracket and structure entry is more direct: `B` prioritizes parentheses, brackets, braces, cases, and beta.

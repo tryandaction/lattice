@@ -4,6 +4,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { PdfItemNoteSummary } from "@/lib/pdf-item";
 import { PdfItemWorkspacePanel } from "../pdf-item-workspace-panel";
 
 const mocks = vi.hoisted(() => {
@@ -42,6 +43,10 @@ const mocks = vi.hoisted(() => {
     setSelectedDirectoryPath: vi.fn(),
     setExplorerSelection: vi.fn(),
     copyToClipboard: vi.fn(async (_text: string) => true),
+    resolveEntry: vi.fn<() => Promise<{ kind: "file"; handle: FileSystemFileHandle } | null>>(async () => null),
+    resolveDirectoryHandle: vi.fn<() => Promise<FileSystemDirectoryHandle | null>>(async () => null),
+    listPdfItemNotes: vi.fn<() => Promise<PdfItemNoteSummary[]>>(async () => []),
+    loadPdfItemManifest: vi.fn(),
     fileTreeRoot,
   };
 });
@@ -55,6 +60,10 @@ const {
   setSelectedDirectoryPath,
   setExplorerSelection,
   copyToClipboard,
+  resolveEntry,
+  resolveDirectoryHandle,
+  listPdfItemNotes,
+  loadPdfItemManifest,
   fileTreeRoot,
 } = mocks;
 
@@ -97,8 +106,8 @@ vi.mock("@/lib/plugins/runtime", () => ({
 
 vi.mock("@/lib/file-operations", () => ({
   getParentPath: (path: string) => path.split("/").slice(0, -1).join("/"),
-  resolveEntry: vi.fn(),
-  resolveDirectoryHandle: vi.fn(async () => null),
+  resolveEntry: mocks.resolveEntry,
+  resolveDirectoryHandle: mocks.resolveDirectoryHandle,
 }));
 
 vi.mock("@/lib/pdf-item", () => ({
@@ -107,11 +116,8 @@ vi.mock("@/lib/pdf-item", () => ({
     itemId: "item-1",
     itemFolderPath: ".lattice/items/item-1",
   })),
-  listPdfItemNotes: vi.fn(async () => []),
-  loadPdfItemManifest: vi.fn(async () => ({
-    itemId: "item-1",
-    itemFolderPath: ".lattice/items/item-1",
-  })),
+  listPdfItemNotes: mocks.listPdfItemNotes,
+  loadPdfItemManifest: mocks.loadPdfItemManifest,
 }));
 
 vi.mock("@/lib/universal-annotation-storage", () => ({
@@ -181,6 +187,20 @@ describe("PdfItemWorkspacePanel", () => {
     setSelectedDirectoryPath.mockClear();
     setExplorerSelection.mockClear();
     copyToClipboard.mockClear();
+    resolveEntry.mockReset();
+    resolveDirectoryHandle.mockReset();
+    resolveDirectoryHandle.mockResolvedValue(null);
+    listPdfItemNotes.mockReset();
+    listPdfItemNotes.mockResolvedValue([]);
+    loadPdfItemManifest.mockReset();
+    loadPdfItemManifest.mockResolvedValue({
+      itemId: "item-1",
+      itemFolderPath: ".lattice/items/item-1",
+      pdfPath: "workspace/paper.pdf",
+      knownPdfPaths: ["workspace/paper.pdf"],
+      fileFingerprint: null,
+      versionFingerprint: null,
+    });
   });
 
   it("keeps bibliography copy actions collapsed behind one compact icon menu", async () => {
@@ -281,5 +301,113 @@ describe("PdfItemWorkspacePanel", () => {
     expect(copied).toContain("- Pages: 12");
     expect(copied).toContain("- Annotations: 1");
     expect(copied).toContain("- DOI: [10.1234/example](https://doi.org/10.1234/example)");
+  });
+
+  it("shows arbitrary pdf item files and opens files without treating folders as files", async () => {
+    resolveDirectoryHandle.mockResolvedValue({ name: "item-1" } as FileSystemDirectoryHandle);
+    listPdfItemNotes.mockResolvedValue([
+      {
+        type: "directory",
+        fileName: "assets",
+        path: ".lattice/items/item-1/assets",
+        depth: 0,
+      },
+      {
+        type: "file",
+        fileName: "plot.png",
+        path: ".lattice/items/item-1/assets/plot.png",
+        depth: 1,
+      },
+      {
+        type: "file",
+        fileName: "data.csv",
+        path: ".lattice/items/item-1/data.csv",
+        depth: 0,
+      },
+    ]);
+    resolveEntry.mockResolvedValue({
+      kind: "file",
+      handle: { name: "data.csv" } as FileSystemFileHandle,
+    });
+    splitPane.mockReturnValue("pane-side");
+
+    render(
+      <PdfItemWorkspacePanel
+        rootHandle={{ name: "workspace" } as FileSystemDirectoryHandle}
+        fileName="paper.pdf"
+        filePath="workspace/paper.pdf"
+        paneId="pane-main"
+        annotations={[]}
+        pdfDocument={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("PDF Item"));
+
+    await waitFor(() => {
+      expect(screen.getByText("assets")).toBeTruthy();
+      expect(screen.getByText("plot.png")).toBeTruthy();
+      expect(screen.getByText("data.csv")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("assets"));
+    expect(setSelectedDirectoryPath).toHaveBeenCalledWith(".lattice/items/item-1/assets");
+    expect(resolveEntry).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText("data.csv"));
+    await waitFor(() => {
+      expect(openFileInPane).toHaveBeenCalledWith("pane-side", { name: "data.csv" }, ".lattice/items/item-1/data.csv");
+    });
+  });
+
+  it("shows original routing paths for copied PDFs and resolves by fingerprint", async () => {
+    resolveDirectoryHandle.mockResolvedValue({ name: "item-1" } as FileSystemDirectoryHandle);
+    loadPdfItemManifest.mockResolvedValue({
+      itemId: "item-1",
+      itemFolderPath: ".lattice/items/original-paper",
+      pdfPath: "workspace/copied/paper.pdf",
+      knownPdfPaths: [
+        "workspace/original/paper.pdf",
+        "workspace/copied/paper.pdf",
+      ],
+      fileFingerprint: "same-content",
+      versionFingerprint: "copy-version",
+    });
+
+    render(
+      <PdfItemWorkspacePanel
+        rootHandle={{ name: "workspace" } as FileSystemDirectoryHandle}
+        documentId={null}
+        fileFingerprint="same-content"
+        versionFingerprint="copy-version"
+        fileName="paper.pdf"
+        filePath="workspace/copied/paper.pdf"
+        paneId="pane-main"
+        annotations={[]}
+        pdfDocument={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("PDF Item"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Current PDF:/)).toBeTruthy();
+      expect(screen.getByText(/Original PDF:/)).toBeTruthy();
+      expect(screen.getByText(/Item workspace:/)).toBeTruthy();
+    });
+
+    expect(screen.getByText(/workspace\/copied\/paper\.pdf/)).toBeTruthy();
+    expect(screen.getByText(/workspace\/original\/paper\.pdf/)).toBeTruthy();
+    expect(screen.getByText(/\.lattice\/items\/original-paper/)).toBeTruthy();
+    expect(loadPdfItemManifest).toHaveBeenCalledWith(
+      { name: "workspace" },
+      "workspace-copied-paper-pdf",
+      "workspace/copied/paper.pdf",
+      {
+        documentId: null,
+        fileFingerprint: "same-content",
+        versionFingerprint: "copy-version",
+      },
+    );
   });
 });

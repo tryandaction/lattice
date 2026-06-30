@@ -11,12 +11,24 @@ let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 const originalConsoleError = console.error;
 const copyEntry = vi.fn();
 const moveEntry = vi.fn();
+const moveEntryIntoPdfItemWorkspace = vi.fn();
 const hydratePdfVirtualChildren = vi.fn();
-const setSelectedDirectoryPath = vi.fn();
-const updateTabPath = vi.fn();
-const updateTabPathPrefix = vi.fn();
-const openFileInPane = vi.fn();
-const splitPane = vi.fn();
+const workspaceMocks = vi.hoisted(() => ({
+  setSelectedDirectoryPath: vi.fn(),
+  updateTabPath: vi.fn(),
+  updateTabFile: vi.fn(),
+  updateTabPathPrefix: vi.fn(),
+  openFileInPane: vi.fn(),
+  splitPane: vi.fn(),
+}));
+const {
+  setSelectedDirectoryPath,
+  updateTabPath,
+  updateTabFile,
+  updateTabPathPrefix,
+  openFileInPane,
+  splitPane,
+} = workspaceMocks;
 const toastMocks = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
@@ -61,10 +73,20 @@ function createTextFileHandle(name: string, text: string): FileSystemFileHandle 
   } as unknown as FileSystemFileHandle;
 }
 
+function createDataTransfer(data: Map<string, string>) {
+  return {
+    effectAllowed: "move",
+    dropEffect: "none",
+    setData: vi.fn((key: string, value: string) => data.set(key, value)),
+    getData: vi.fn((key: string) => data.get(key) ?? ""),
+  };
+}
+
 vi.mock("@/hooks/use-file-system", () => ({
   useFileSystem: () => ({
     copyEntry,
     moveEntry,
+    moveEntryIntoPdfItemWorkspace,
     hydratePdfVirtualChildren,
     deleteFile: vi.fn(),
     renameFile: vi.fn(),
@@ -76,23 +98,33 @@ vi.mock("@/hooks/use-file-system", () => ({
   }),
 }));
 
-vi.mock("@/stores/workspace-store", () => ({
-  useWorkspaceStore: (selector: (state: {
-    setSelectedDirectoryPath: typeof setSelectedDirectoryPath;
-    updateTabPath: typeof updateTabPath;
-    updateTabPathPrefix: typeof updateTabPathPrefix;
-    openFileInPane: typeof openFileInPane;
-    splitPane: typeof splitPane;
+vi.mock("@/stores/workspace-store", () => {
+  type WorkspaceStateMock = {
+    setSelectedDirectoryPath: typeof workspaceMocks.setSelectedDirectoryPath;
+    updateTabPath: typeof workspaceMocks.updateTabPath;
+    updateTabFile: typeof workspaceMocks.updateTabFile;
+    updateTabPathPrefix: typeof workspaceMocks.updateTabPathPrefix;
+    openFileInPane: typeof workspaceMocks.openFileInPane;
+    splitPane: typeof workspaceMocks.splitPane;
+    fileTree: {
+      root: null;
+    };
     layout: {
       activePaneId: string;
       root: any;
     };
-  }) => unknown) => selector({
-    setSelectedDirectoryPath,
-    updateTabPath,
-    updateTabPathPrefix,
-    openFileInPane,
-    splitPane,
+  };
+
+  const workspaceState: WorkspaceStateMock = {
+    setSelectedDirectoryPath: workspaceMocks.setSelectedDirectoryPath,
+    updateTabPath: workspaceMocks.updateTabPath,
+    updateTabFile: workspaceMocks.updateTabFile,
+    updateTabPathPrefix: workspaceMocks.updateTabPathPrefix,
+    openFileInPane: workspaceMocks.openFileInPane,
+    splitPane: workspaceMocks.splitPane,
+    fileTree: {
+      root: null,
+    },
     layout: {
       activePaneId: "pane-1",
       root: {
@@ -102,8 +134,12 @@ vi.mock("@/stores/workspace-store", () => ({
         activeTabIndex: -1,
       },
     },
-  }),
-}));
+  };
+  const useWorkspaceStoreMock = ((selector: (state: typeof workspaceState) => unknown) => selector(workspaceState)) as
+    ((selector: (state: typeof workspaceState) => unknown) => unknown) & { getState: () => typeof workspaceState };
+  useWorkspaceStoreMock.getState = () => workspaceState;
+  return { useWorkspaceStore: useWorkspaceStoreMock };
+});
 
 describe("TreeView rename keyboard handling", () => {
   beforeAll(() => {
@@ -123,9 +159,11 @@ describe("TreeView rename keyboard handling", () => {
   beforeEach(() => {
     copyEntry.mockReset();
     moveEntry.mockReset();
+    moveEntryIntoPdfItemWorkspace.mockReset();
     hydratePdfVirtualChildren.mockReset();
     setSelectedDirectoryPath.mockReset();
     updateTabPath.mockReset();
+    updateTabFile.mockReset();
     updateTabPathPrefix.mockReset();
     openFileInPane.mockReset();
     splitPane.mockReset();
@@ -349,6 +387,156 @@ describe("TreeView rename keyboard handling", () => {
     await vi.waitFor(() => {
       expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith("src/file.py");
     });
+  });
+
+  it("moves a dragged file into a PDF item workspace when dropped on a PDF", async () => {
+    moveEntryIntoPdfItemWorkspace.mockResolvedValue({
+      success: true,
+      path: ".lattice/items/workspace-paper.pdf/notes.md",
+      handle: { kind: "file", name: "notes.md" },
+      kind: "file",
+    });
+
+    render(
+      <TreeView
+        root={{
+          name: "workspace",
+          kind: "directory",
+          path: "workspace",
+          isExpanded: true,
+          children: [
+            {
+              name: "notes.md",
+              kind: "file",
+              handle: { name: "notes.md" } as FileSystemFileHandle,
+              extension: "md",
+              path: "workspace/notes.md",
+            },
+            {
+              name: "paper.pdf",
+              kind: "file",
+              handle: { name: "paper.pdf" } as FileSystemFileHandle,
+              extension: "pdf",
+              path: "workspace/paper.pdf",
+              canExpandVirtualChildren: true,
+            },
+          ],
+          handle: {} as FileSystemDirectoryHandle,
+        }}
+      />
+    );
+
+    const source = screen.getByText("notes.md").closest("button");
+    const target = screen.getByText("paper.pdf").closest("div[data-explorer-node='true']");
+    expect(source).toBeTruthy();
+    expect(target).toBeTruthy();
+
+    const data = new Map<string, string>();
+    const dataTransfer = createDataTransfer(data);
+    fireEvent.dragStart(source!, { dataTransfer });
+    fireEvent.dragOver(target!, { dataTransfer });
+    fireEvent.drop(target!, { dataTransfer });
+
+    await vi.waitFor(() => {
+      expect(moveEntryIntoPdfItemWorkspace).toHaveBeenCalledWith("workspace/notes.md", "workspace/paper.pdf");
+    });
+    expect(updateTabFile).toHaveBeenCalledWith(
+      "workspace/notes.md",
+      ".lattice/items/workspace-paper.pdf/notes.md",
+      { kind: "file", name: "notes.md" },
+    );
+    expect(updateTabPath).not.toHaveBeenCalled();
+    expect(updateTabPathPrefix).not.toHaveBeenCalled();
+  });
+
+  it("moves a dragged folder into a PDF item workspace when dropped on a PDF", async () => {
+    moveEntryIntoPdfItemWorkspace.mockResolvedValue({
+      success: true,
+      path: ".lattice/items/workspace-paper.pdf/assets",
+      handle: { kind: "directory", name: "assets" },
+      kind: "directory",
+    });
+
+    render(
+      <TreeView
+        root={{
+          name: "workspace",
+          kind: "directory",
+          path: "workspace",
+          isExpanded: true,
+          children: [
+            {
+              name: "assets",
+              kind: "directory",
+              handle: { name: "assets" } as FileSystemDirectoryHandle,
+              path: "workspace/assets",
+              isExpanded: false,
+              children: [],
+            },
+            {
+              name: "paper.pdf",
+              kind: "file",
+              handle: { name: "paper.pdf" } as FileSystemFileHandle,
+              extension: "pdf",
+              path: "workspace/paper.pdf",
+              canExpandVirtualChildren: true,
+            },
+          ],
+          handle: {} as FileSystemDirectoryHandle,
+        }}
+      />
+    );
+
+    const source = screen.getByText("assets").closest("button");
+    const target = screen.getByText("paper.pdf").closest("div[data-explorer-node='true']");
+    expect(source).toBeTruthy();
+    expect(target).toBeTruthy();
+
+    const data = new Map<string, string>();
+    const dataTransfer = createDataTransfer(data);
+    fireEvent.dragStart(source!, { dataTransfer });
+    fireEvent.drop(target!, { dataTransfer });
+
+    await vi.waitFor(() => {
+      expect(moveEntryIntoPdfItemWorkspace).toHaveBeenCalledWith("workspace/assets", "workspace/paper.pdf");
+    });
+    expect(updateTabPathPrefix).toHaveBeenCalledWith("workspace/assets", ".lattice/items/workspace-paper.pdf/assets");
+    expect(setSelectedDirectoryPath).toHaveBeenCalledWith(".lattice/items/workspace-paper.pdf/assets");
+  });
+
+  it("does not move a PDF when it is dropped onto itself", () => {
+    render(
+      <TreeView
+        root={{
+          name: "workspace",
+          kind: "directory",
+          path: "workspace",
+          isExpanded: true,
+          children: [
+            {
+              name: "paper.pdf",
+              kind: "file",
+              handle: { name: "paper.pdf" } as FileSystemFileHandle,
+              extension: "pdf",
+              path: "workspace/paper.pdf",
+              canExpandVirtualChildren: true,
+            },
+          ],
+          handle: {} as FileSystemDirectoryHandle,
+        }}
+      />
+    );
+
+    const target = screen.getByText("paper.pdf");
+    const dropTarget = target.closest("div[data-explorer-node='true']");
+    expect(dropTarget).toBeTruthy();
+
+    const data = new Map<string, string>();
+    const dataTransfer = createDataTransfer(data);
+    fireEvent.dragStart(target, { dataTransfer });
+    fireEvent.drop(dropTarget!, { dataTransfer });
+
+    expect(moveEntryIntoPdfItemWorkspace).not.toHaveBeenCalled();
   });
 
   it("opens a real line diff when comparing with the selected file", async () => {

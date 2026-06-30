@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { AnnotationItem } from "@/types/universal-annotation";
 import {
   buildPdfAnnotationsMarkdown,
+  copyPdfItemWorkspace,
+  ensurePdfItemWorkspace,
   getPdfItemManifestIndex,
   getDefaultPdfItemFolderPath,
   invalidatePdfItemManifestIndex,
+  listPdfItemNotes,
   loadPdfItemManifest,
   removeResolvedPdfItemAnnotationMarkdownDrafts,
   syncPdfAnnotationsMarkdown,
@@ -71,8 +74,13 @@ class TestDirectoryHandle {
     }
   }
 
-  async getDirectoryHandle(name: string) {
+  async getDirectoryHandle(name: string, options?: { create?: boolean }) {
     const dir = this.directories.get(name);
+    if (!dir && options?.create) {
+      const created = new TestDirectoryHandle(name);
+      this.directories.set(name, created);
+      return created;
+    }
     if (!dir) {
       throw new DOMException("Directory not found", "NotFoundError");
     }
@@ -90,6 +98,13 @@ class TestDirectoryHandle {
       return created;
     }
     throw new DOMException("File not found", "NotFoundError");
+  }
+
+  async removeEntry(name: string) {
+    if (this.files.delete(name) || this.directories.delete(name)) {
+      return;
+    }
+    throw new DOMException("Entry not found", "NotFoundError");
   }
 }
 
@@ -444,6 +459,141 @@ describe("pdf-item utils", () => {
 
     expect(firstIndex).toBe(secondIndex);
     expect(firstIndex.byDocumentId.get("doc-a")?.pdfPath).toBe("papers/a.pdf");
+  });
+
+  it("recursively lists folders and arbitrary files in a pdf item workspace", async () => {
+    const root = new TestDirectoryHandle("workspace");
+    const lattice = root.addDirectory(new TestDirectoryHandle(".lattice"));
+    const items = lattice.addDirectory(new TestDirectoryHandle("items"));
+    const itemDir = items.addDirectory(new TestDirectoryHandle("paper"));
+    itemDir.addFile(new TestFileHandle("data.csv", "x,y\n1,2"));
+    itemDir.addFile(new TestFileHandle("analysis.py", "print(1)"));
+    itemDir.addFile(new TestFileHandle("_annotations.md", "# annotations"));
+    const assets = itemDir.addDirectory(new TestDirectoryHandle("assets"));
+    assets.addFile(new TestFileHandle("plot.png", "png"));
+
+    const entries = await listPdfItemNotes(root as unknown as FileSystemDirectoryHandle, {
+      version: 4,
+      itemId: "paper",
+      pdfPath: "docs/paper.pdf",
+      itemFolderPath: ".lattice/items/paper",
+      annotationIndexPath: ".lattice/items/paper/_annotations.md",
+      fileFingerprint: null,
+      versionFingerprint: null,
+      knownPdfPaths: ["docs/paper.pdf"],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+
+    expect(entries.map((entry) => [entry.type, entry.path])).toEqual([
+      ["directory", ".lattice/items/paper/assets"],
+      ["file", ".lattice/items/paper/assets/plot.png"],
+      ["file", ".lattice/items/paper/analysis.py"],
+      ["file", ".lattice/items/paper/data.csv"],
+      ["annotation-note", ".lattice/items/paper/_annotations.md"],
+    ]);
+  });
+
+  it("finds an existing pdf item workspace by fingerprint after an external rename", async () => {
+    const root = new TestDirectoryHandle("workspace");
+    const lattice = root.addDirectory(new TestDirectoryHandle(".lattice"));
+    const items = lattice.addDirectory(new TestDirectoryHandle("items"));
+    const itemDir = items.addDirectory(new TestDirectoryHandle("papers-old.pdf"));
+    itemDir.addFile(new TestFileHandle("manifest.json", JSON.stringify({
+      version: 4,
+      itemId: "stable-doc-id",
+      pdfPath: "papers/old.pdf",
+      itemFolderPath: ".lattice/items/papers-old.pdf",
+      annotationIndexPath: ".lattice/items/papers-old.pdf/_annotations.md",
+      fileFingerprint: "same-content",
+      versionFingerprint: "old-version",
+      knownPdfPaths: ["papers/old.pdf"],
+      createdAt: 1,
+      updatedAt: 1,
+    })));
+
+    const manifest = await loadPdfItemManifest(
+      root as unknown as FileSystemDirectoryHandle,
+      "papers-renamed.pdf",
+      "papers/renamed.pdf",
+      {
+        fileFingerprint: "same-content",
+        versionFingerprint: "new-version",
+      },
+    );
+
+    expect(manifest.itemId).toBe("stable-doc-id");
+    expect(manifest.itemFolderPath).toBe(".lattice/items/papers-old.pdf");
+    expect(manifest.knownPdfPaths).toContain("papers/renamed.pdf");
+  });
+
+  it("does not duplicate the item workspace when copying a pdf", async () => {
+    const root = new TestDirectoryHandle("workspace");
+    const lattice = root.addDirectory(new TestDirectoryHandle(".lattice"));
+    const items = lattice.addDirectory(new TestDirectoryHandle("items"));
+    const itemDir = items.addDirectory(new TestDirectoryHandle("papers-source.pdf"));
+    itemDir.addFile(new TestFileHandle("manifest.json", JSON.stringify({
+      version: 4,
+      itemId: "stable-doc-id",
+      pdfPath: "papers/source.pdf",
+      itemFolderPath: ".lattice/items/papers-source.pdf",
+      annotationIndexPath: ".lattice/items/papers-source.pdf/_annotations.md",
+      fileFingerprint: "same-content",
+      versionFingerprint: "source-version",
+      knownPdfPaths: ["papers/source.pdf"],
+      createdAt: 1,
+      updatedAt: 1,
+    })));
+    itemDir.addFile(new TestFileHandle("notes.md", "# Notes"));
+
+    const manifest = await copyPdfItemWorkspace(
+      root as unknown as FileSystemDirectoryHandle,
+      "papers/source.pdf",
+      "copies/source.pdf",
+    );
+
+    expect(manifest?.itemId).toBe("stable-doc-id");
+    expect(manifest?.itemFolderPath).toBe(".lattice/items/papers-source.pdf");
+    expect(manifest?.knownPdfPaths).toContain("copies/source.pdf");
+    await expect(items.getDirectoryHandle("copies-source.pdf")).rejects.toBeInstanceOf(DOMException);
+    await expect(lattice.getDirectoryHandle("annotations")).rejects.toBeInstanceOf(DOMException);
+  });
+
+  it("keeps the same item id and moves the workspace when an external rename is repaired", async () => {
+    const root = new TestDirectoryHandle("workspace");
+    const lattice = root.addDirectory(new TestDirectoryHandle(".lattice"));
+    const items = lattice.addDirectory(new TestDirectoryHandle("items"));
+    const itemDir = items.addDirectory(new TestDirectoryHandle("papers-old.pdf"));
+    itemDir.addFile(new TestFileHandle("manifest.json", JSON.stringify({
+      version: 4,
+      itemId: "stable-doc-id",
+      pdfPath: "papers/old.pdf",
+      itemFolderPath: ".lattice/items/papers-old.pdf",
+      annotationIndexPath: ".lattice/items/papers-old.pdf/_annotations.md",
+      fileFingerprint: "same-content",
+      versionFingerprint: "old-version",
+      knownPdfPaths: ["papers/old.pdf"],
+      createdAt: 1,
+      updatedAt: 1,
+    })));
+    itemDir.addFile(new TestFileHandle("notes.md", "# Notes"));
+
+    const repaired = await ensurePdfItemWorkspace(
+      root as unknown as FileSystemDirectoryHandle,
+      "papers-renamed.pdf",
+      "papers/renamed.pdf",
+      {
+        documentId: null,
+        fileFingerprint: "same-content",
+        versionFingerprint: "new-version",
+      },
+    );
+
+    expect(repaired.itemId).toBe("stable-doc-id");
+    expect(repaired.itemFolderPath).toBe(".lattice/items/papers-renamed.pdf");
+    await expect(items.getDirectoryHandle("papers-old.pdf")).rejects.toBeInstanceOf(DOMException);
+    const repairedDir = await items.getDirectoryHandle("papers-renamed.pdf");
+    await expect(repairedDir.getFileHandle("notes.md")).resolves.toBeTruthy();
   });
 
   it("skips rewriting unchanged annotation markdown and preview files", async () => {
