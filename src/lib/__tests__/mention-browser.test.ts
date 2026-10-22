@@ -16,6 +16,10 @@ describe('getActiveMentionQuery', () => {
     'retains folder path editing before ordinary task text begins: %s', text => {
       expect(getActiveMentionQuery(text, text.length)).toBe(text.slice(1));
     });
+  it.each(['@folder:a/b中的文章都阅读', '@folder:a中的文章都阅读'])(
+    'uses path-relative offsets when the final folder name is short: %s', text => {
+      expect(getActiveMentionQuery(text, text.length)).toBeNull();
+    });
 });
 
 describe('createMentionSelectionResult', () => {
