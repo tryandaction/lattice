@@ -338,6 +338,25 @@ async function send(text: string) {
 }
 
 describe('real ChatComposer attachment send integration', () => {
+  it('submits a complete encoded folder mention with adjoining Chinese text on the first Enter', async () => {
+    const pdf = await PDFDocument.create();
+    pdf.addPage().drawText('SCREENSHOT_ENTER_SUBMIT: This synthetic document must be actually read after the first Enter.', { x: 30, y: 750, size: 10 });
+    await page.evaluate(bytes => (window as unknown as BrowserFixture).fixture.openScreenshotWorkspace(bytes, 'agent'), Array.from(await pdf.save()));
+    const input = page.getByTestId('ai-chat-input');
+    await input.fill('@folder:Theoretical%20Research/taiyi/essay/06_fast_long_range_and_native_gates中文章都阅读并讲述文章内容，对话内回复');
+    await input.press('Enter');
+    await page.waitForFunction(() => (window as unknown as BrowserFixture).fixture.snapshot().calls.length > 0, null, { timeout: 5000 });
+    await page.waitForFunction(() => !(window as unknown as BrowserFixture).fixture.snapshot().busy);
+    const state = await snapshot();
+    expect(state.conversation?.messages.at(-1)?.error).toBeUndefined();
+    expect(state.calls.filter(call => call.stage === 'document-batch').map(call => call.text).join('\n')).toContain('SCREENSHOT_ENTER_SUBMIT');
+    expect(state.sessions.find(session => session.documentResearch?.directory)?.documentResearch?.directory?.phase).toBe('ready');
+    expect(state.fileReads.rootEnumerations ?? 0).toBe(0);
+    expect(state.fileReads['active.md'] ?? 0).toBe(0);
+    expect(externalRequests).toEqual([]);
+    expect(browserErrors).toEqual([]);
+  });
+
   it.each([
     { mode: 'chat', prefix: '' }, { mode: 'agent', prefix: '' },
     { mode: 'chat', prefix: '@' }, { mode: 'agent', prefix: '@' },

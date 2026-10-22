@@ -3,7 +3,20 @@ import {
   createMentionBacktrackResult,
   createMentionSelectionResult,
   getMentionSelectionStage,
+  getActiveMentionQuery,
 } from '../ai/mention-browser';
+
+describe('getActiveMentionQuery', () => {
+  it.each(['中文章都阅读并讲述文章内容，对话内回复', '中的文章都阅读', '里的论文都总结', '下的文档逐篇分析', '内的文件全部读取'])(
+    'ends a complete folder mention before an adjoining task: %s', suffix => {
+      const text = '@folder:Theoretical%20Research/taiyi/essay/06_fast_long_range_and_native_gates' + suffix;
+      expect(getActiveMentionQuery(text, text.length)).toBeNull();
+    });
+  it.each(['@folder:Theoretical%20Research/', '@folder:papers/中文资料', '@folder:papers/%E4%B8%AD%E6%96%87%E7%AB%A0'])(
+    'retains folder path editing before ordinary task text begins: %s', text => {
+      expect(getActiveMentionQuery(text, text.length)).toBe(text.slice(1));
+    });
+});
 
 describe('createMentionSelectionResult', () => {
   it('detects file vs fragment browsing stage', () => {
