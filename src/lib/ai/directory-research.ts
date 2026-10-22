@@ -257,7 +257,7 @@ export async function runDirectoryResearch(input: RunDirectoryResearchInput): Pr
     if (pendingUnits) break;
   }
   // Reobserve after reading: additions/removals invalidate any false all-files-complete claim.
-  if (state.manifest?.complete && Date.now() < deadline) {
+  if (state.manifest?.complete && Date.now() < deadline && (!state.cloud || cloudFileOpened)) {
     state.phase = 'discovering';
     await publish(); await discover(true);
   }
