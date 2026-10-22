@@ -216,6 +216,41 @@ describe('resumable cloud directory research', () => {
     expect(new Set(result.directory.files.map(file => file.snapshot!.cloudIdentity!.itemId)).size).toBe(2);
   });
 
+  it('deduplicates identical selected roots instead of presenting duplicate virtual paths', async () => {
+    const fixture = makeCloudProvider(); fixture.items.splice(3);
+    const selection = { libraryId, itemId: rootId, kind: 'folder' as const };
+    const adapter = await createCloudDirectoryResearchAdapter({ provider: fixture.provider, selections: [selection, selection] });
+    expect(adapter.selections).toHaveLength(1);
+    expect(adapter.cloud.selections).toHaveLength(1);
+    const result = await runDirectoryResearch({ ...adapter, task: 'read', query: 'read', generate: deterministicGenerate(), onCheckpoint: async () => {} });
+    expect(result.complete).toBe(true); expect(result.directory.files).toHaveLength(2);
+  });
+
+  it('rejects overlapping selected folder roots when the same cloud item would be exposed twice', async () => {
+    const fixture = makeCloudProvider(); fixture.items.splice(2);
+    const childId = 'selected-child-folder';
+    fixture.items.push({ ...fixture.items[0], id: childId, canonicalName: 'Child', metadata: { parentItemId: rootId } });
+    fixture.items[1].metadata = { parentItemId: childId, sizeBytes: 128 };
+    const adapter = await createCloudDirectoryResearchAdapter({ provider: fixture.provider, selections: [
+      { libraryId, itemId: rootId, kind: 'folder' }, { libraryId, itemId: childId, kind: 'folder' },
+    ] });
+    await expect(runDirectoryResearch({ ...adapter, task: 'read', query: 'read', generate: deterministicGenerate(), onCheckpoint: async () => {} }))
+      .rejects.toThrow(/overlap|重叠/u);
+  });
+
+  it('allocates globally unique aliases when a duplicate-name suffix matches another real filename', async () => {
+    const fixture = makeCloudProvider(); fixture.items.splice(4);
+    fixture.items[1].canonicalName = fixture.items[2].canonicalName = 'same.md';
+    fixture.items[3].canonicalName = 'same--synthetic-paper-000.md';
+    const adapter = await createCloudDirectoryResearchAdapter({ provider: fixture.provider, selections: [{ libraryId, itemId: rootId, kind: 'folder' }] });
+    const folder = await adapter.rootHandle.getDirectoryHandle('Shared research');
+    const names = []; for await (const handle of folder.values()) names.push(handle.name);
+    expect(new Set(names).size).toBe(3);
+    const result = await runDirectoryResearch({ ...adapter, task: 'read', query: 'read', generate: deterministicGenerate(), onCheckpoint: async () => {} });
+    expect(result.complete).toBe(true); expect(result.directory.files).toHaveLength(3);
+    expect(new Set(result.directory.files.map(file => file.snapshot?.cloudIdentity?.itemId)).size).toBe(3);
+  });
+
   it('reads 101 cloud files in shared-budget batches and retains the provider and item-version scope across resume', async () => {
     const fixture = makeCloudProvider();
     const selection = { libraryId, itemId: rootId, kind: 'folder' as const };

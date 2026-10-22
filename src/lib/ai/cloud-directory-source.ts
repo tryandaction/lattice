@@ -39,6 +39,7 @@ function readablePathName(item: Item) {
   return name + (extension[item.kind] ?? '');
 }
 function disambiguatedNames(items: readonly Item[]): Map<string, string> {
+  if (new Set(items.map(item => item.id)).size !== items.length) throw new Error('云目录包含重复资源身份，已停止读取。');
   const groups = new Map<string, Item[]>();
   for (const item of items) {
     const pathName = readablePathName(item);
@@ -46,13 +47,18 @@ function disambiguatedNames(items: readonly Item[]): Map<string, string> {
     const group = groups.get(pathName) ?? [];
     group.push(item); groups.set(pathName, group);
   }
-  const names = new Map<string, string>();
-  for (const [name, group] of groups) {
+  const names = new Map<string, string>(), reserved = new Set(groups.keys()), used = new Set<string>();
+  for (const [name, group] of [...groups].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) {
     if (group.length === 1) { names.set(group[0].id, name); continue; }
     const extensionIndex = name.lastIndexOf('.');
     const stem = extensionIndex > 0 ? name.slice(0, extensionIndex) : name;
     const extension = extensionIndex > 0 ? name.slice(extensionIndex) : '';
-    for (const item of group) names.set(item.id, `${stem}--${encodeURIComponent(item.id)}${extension}`);
+    for (const item of [...group].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) {
+      const base = `${stem}--${encodeURIComponent(item.id)}`;
+      let candidate = base + extension, suffix = 1;
+      while (reserved.has(candidate) || used.has(candidate)) candidate = `${base}--${suffix++}${extension}`;
+      names.set(item.id, candidate); used.add(candidate);
+    }
   }
   return names;
 }
@@ -81,10 +87,17 @@ export async function createCloudDirectoryResearchAdapter(input: {
   if (checkpoint && (checkpoint.version !== 1 || checkpoint.providerScope !== providerScope || !Array.isArray(checkpoint.selections))) {
     throw new Error('云目录检查点所属的账号或权限范围已变化，请重新选择目录。');
   }
-  const requested = input.selections ?? checkpoint?.selections.map(({ libraryId, itemId, kind }) => ({ libraryId, itemId, kind })) ?? [];
-  if (!requested.length || requested.some(selection => !selection.libraryId || !selection.itemId || !['folder', 'file'].includes(selection.kind))) {
+  const rawSelections = input.selections ?? checkpoint?.selections.map(({ libraryId, itemId, kind }) => ({ libraryId, itemId, kind })) ?? [];
+  if (!rawSelections.length || rawSelections.some(selection => !selection.libraryId || !selection.itemId || !['folder', 'file'].includes(selection.kind))) {
     throw new Error('请先选择要读取的云端文件夹或文件。');
   }
+  const unique = new Map<string, CloudAgentSourceSelection>();
+  for (const selection of rawSelections) {
+    const key = JSON.stringify([selection.libraryId, selection.itemId]), old = unique.get(key);
+    if (old && old.kind !== selection.kind) throw new Error('云来源选择的资源类型冲突，未开始读取。');
+    if (!old) unique.set(key, selection);
+  }
+  const requested = [...unique.values()];
   if (new Set(requested.map(selection => selection.libraryId)).size !== 1) throw new Error('一次云目录阅读必须属于同一个共享库。');
   if (checkpoint && (checkpoint.selections.length !== requested.length
     || checkpoint.selections.some((saved, index) => !sameSelection(saved, requested[index])))) {
@@ -110,12 +123,22 @@ export async function createCloudDirectoryResearchAdapter(input: {
   const rootNames = disambiguatedNames(rootItems);
   for (const selection of persistedSelections) selection.path = rootNames.get(selection.itemId)!;
   const fileResources = new WeakMap<File, CloudLibraryResource>();
+  const selectedRoots = new Set(requested.map(selection => JSON.stringify([selection.libraryId, selection.itemId])));
+  const observedParents = new Map<string, string>();
   const listChildren = async (libraryId: string, folderId: string, signal?: AbortSignal) => {
     check(signal);
     const items = await input.provider.list(libraryId, folderId, signal);
     check(signal);
     if (items.some(item => item.libraryId !== libraryId || parentId(item) !== folderId || item.status !== 'active')) {
       throw new Error('云库返回了不属于授权目录的条目，已停止读取。');
+    }
+    if (new Set(items.map(item => item.id)).size !== items.length) throw new Error('云目录包含重复资源身份，已停止读取。');
+    for (const item of items) {
+      const key = JSON.stringify([libraryId, item.id]);
+      if (selectedRoots.has(key) && item.id !== folderId) throw new Error('Selected cloud folders overlap（所选云目录重叠）；请选择最上层目录后重试。');
+      const parent = observedParents.get(key);
+      if (parent !== undefined && parent !== folderId) throw new Error('Cloud item has overlapping parent paths; directory reading stopped.');
+      observedParents.set(key, folderId);
     }
     return items;
   };

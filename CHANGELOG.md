@@ -5,6 +5,15 @@ All notable changes to Lattice will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.5] - 2026-10-22
+
+### Fixed
+- Whole-folder reading in shared libraries uses the same durable, per-file reading pipeline as local folders. Cloud scope, membership and exact item revisions remain bound to the saved task; changing the active document does not replace the original directory on continuation.
+- Cloud folder discovery uses listing metadata rather than downloading every document. Source-version changes invalidate earlier completed notes before they can be reused, including changes with an unchanged displayed date and size.
+- Screenshot-matched folder requests with spaces and adjoining Chinese instructions are exercised through both Chat and Agent: exact directory targeting avoids unrelated workspace scans, and multi-page PDFs are read beyond the first two pages.
+
+Release validation and delivery are tracked separately; synthetic reader tests do not establish real-model answer quality.
+
 ## [3.1.4] - 2026-10-22
 
 ### Fixed
