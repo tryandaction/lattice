@@ -8,6 +8,7 @@
 
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
+import { KATEX_MACROS } from '../katex-config';
 import {
   convertCharToLatex,
   convertTextToLatex,
@@ -234,10 +235,88 @@ describe('Formula Converter', () => {
     });
     
     it('should return success false for invalid LaTeX', () => {
-      // Use a definitely invalid command
       const result = renderLatexSafe('\\begin{invalid}', false);
-      // KaTeX with throwOnError: false might still render something
+      expect(result.success).toBe(false);
       expect(typeof result.html).toBe('string');
+    });
+
+    it('rejects the structurally invalid matrix returned by local OCR', () => {
+      const result = renderLatexSafe(String.raw`\binom{a}{c}\begin{array}{\ b}{d}`, true);
+      expect(result.success).toBe(false);
+      const source = document.createElement('div');
+      source.innerHTML = result.html;
+      expect(source.querySelector('.formula-error')).not.toBeNull();
+      expect(source.textContent).toContain(String.raw`\binom{a}{c}\begin{array}{\ b}{d}`);
+    });
+
+    it.each([
+      String.raw`\includegraphics{https://example.invalid/image.png}`,
+      String.raw`\url{https://example.invalid}`,
+      String.raw`\href{https://example.invalid}{x}`,
+      String.raw`\htmlClass{external}{x}`,
+      String.raw`\htmlId{external}{x}`,
+      String.raw`\htmlStyle{background:url(https://example.invalid/image.png)}{x}`,
+      String.raw`\htmlData{external=true}{x}`,
+      String.raw`\html@mathml{<img src="https://example.invalid/image.png">}{x}`,
+    ])('rejects resource and HTML extensions instead of emitting active markup (case %#)', (latex) => {
+      const result = renderLatexSafe(latex, true);
+      expect(result.success).toBe(false);
+      const source = document.createElement('div');
+      source.innerHTML = result.html;
+      expect(source.querySelector('img, a, script, [style], #external, .external')).toBeNull();
+      expect(source.textContent).toContain(latex);
+    });
+
+    it('does not let a global definition change macros in subsequent formulas', () => {
+      const snapshot = { ...KATEX_MACROS };
+      try {
+        expect(renderLatexSafe(String.raw`\gdef\latticeSandboxMacro{x}\latticeSandboxMacro`, false).success).toBe(true);
+        expect(renderLatexSafe(String.raw`\latticeSandboxMacro`, false).success).toBe(false);
+        expect(KATEX_MACROS).toEqual(snapshot);
+      } finally {
+        for (const key of Object.keys(KATEX_MACROS)) delete KATEX_MACROS[key];
+        Object.assign(KATEX_MACROS, snapshot);
+      }
+    });
+
+    it('bounds source length and macro expansion without throwing', () => {
+      expect(renderLatexSafe('x'.repeat(20001), false).success).toBe(false);
+      expect(renderLatexSafe(String.raw`\def\loop{\loop}\loop`, false).success).toBe(false);
+      expect(renderLatexSafe('   ', false).success).toBe(false);
+    });
+
+    it('caps user-supplied dimensions in rendered markup', () => {
+      const result = renderLatexSafe(String.raw`\rule{500em}{500em}`, false);
+      expect(result.success).toBe(true);
+      const source = document.createElement('div');
+      source.innerHTML = result.html;
+      for (const element of source.querySelectorAll('[style]')) {
+        expect(element.getAttribute('style')).not.toContain('500em');
+      }
+      expect(source.querySelector('mspace')?.getAttribute('width')).toBe('20em');
+      expect(source.querySelector('mspace')?.getAttribute('height')).toBe('20em');
+    });
+
+    it('safely escapes malformed source in the error fallback', () => {
+      const latex = '<img src="https://example.invalid/image.png" onerror="alert(1)">\\frac{';
+      const result = renderLatexSafe(latex, true);
+      expect(result.success).toBe(false);
+      const source = document.createElement('div');
+      source.innerHTML = result.html;
+      expect(source.querySelector('img, script')).toBeNull();
+      expect(source.textContent).toBe(`$$${latex}$$`);
+    });
+
+    it('keeps valid roots, matrices and aligned rows renderable without claiming recognition accuracy', () => {
+      for (const latex of [
+        String.raw`\sqrt{x^2+y^2}`,
+        String.raw`\begin{pmatrix}a&b\\c&d\end{pmatrix}`,
+        String.raw`\begin{aligned}x+y&=2\\x-y&=0\end{aligned}`,
+      ]) {
+        const result = renderLatexSafe(latex, true);
+        expect(result.success).toBe(true);
+        expect(result.html).toContain('<math');
+      }
     });
   });
   

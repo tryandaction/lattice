@@ -6,8 +6,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildRenderedPdfPageTextModel,
   clearPdfPageTextCache,
+  getPdfPageTextModel,
+  getPdfPageTextContent,
   resolvePdfPageTextOffset,
 } from "../pdf-page-text-cache";
+import type { PDFDocumentProxy } from "pdfjs-dist";
+import { resolvePdfEvidenceSnippetTarget } from "../pdf-evidence-navigation";
 
 function createMockRect(left: number, top: number, width: number, height: number): DOMRect {
   return {
@@ -24,10 +28,104 @@ function createMockRect(left: number, top: number, width: number, height: number
 }
 
 describe("pdf-page-text-cache", () => {
+  it('maps native range boundaries in inter-span whitespace to adjacent indexed glyphs', () => {
+    const page = document.createElement('div'); page.dataset.pageNumber = '1';
+    page.getBoundingClientRect = () => createMockRect(0, 0, 640, 960);
+    const layer = document.createElement('div'); layer.className = 'textLayer'; page.appendChild(layer);
+    const before = document.createElement('span'); before.textContent = 'E = mc2';
+    before.getBoundingClientRect = () => createMockRect(80, 180, 70, 20);
+    const after = document.createElement('span'); after.textContent = '(1)';
+    after.getBoundingClientRect = () => createMockRect(540, 180, 25, 20);
+    const space = document.createTextNode(' ');
+    layer.append(before, space, after); document.body.appendChild(page);
+    const model = buildRenderedPdfPageTextModel(page)!;
+    const formula = model.segments.find(segment => segment.text === 'E = mc2')!;
+    const label = model.segments.find(segment => segment.text === '(1)')!;
+    expect(resolvePdfPageTextOffset({ model, container: space, offset: 0, affinity: 'end' })).toBe(formula.pageTextEnd);
+    expect(resolvePdfPageTextOffset({ model, container: space, offset: 1, affinity: 'start' })).toBe(label.pageTextStart);
+    const outside = document.createTextNode(' '); document.body.appendChild(outside);
+    expect(resolvePdfPageTextOffset({ model, container: outside, offset: 0, affinity: 'end' })).toBeNull();
+    const unknown = document.createTextNode('unindexed control'); layer.insertBefore(unknown, space);
+    expect(resolvePdfPageTextOffset({ model, container: unknown, offset: 0, affinity: 'end' })).toBeNull();
+    expect(resolvePdfPageTextOffset({ model, container: space, offset: 0, affinity: 'end' })).toBeNull();
+  });
+  it('shares pending text extraction between the visible layer and a quote navigation', async () => {
+    let release!: (value: { items: never[]; styles: {}; lang: null }) => void;
+    const content = { items: [] as never[], styles: {}, lang: null };
+    const page = { getViewport: () => ({ width: 600, height: 800, transform: [1,0,0,1,0,0] }),
+      getTextContent: vi.fn(() => new Promise<typeof content>(resolve => { release = resolve; })) };
+    const documentProxy = { getPage: vi.fn(async () => page) } as unknown as PDFDocumentProxy;
+    const visual = getPdfPageTextContent(documentProxy, 1, page);
+    const quote = getPdfPageTextModel(documentProxy, 1);
+    await vi.waitFor(() => expect(page.getTextContent).toHaveBeenCalledTimes(1));
+    release(content);
+    const [text, model] = await Promise.all([visual, quote]);
+    expect(text).toBe(model.textContent);
+    expect(await getPdfPageTextContent(documentProxy, 1, page)).toBe(content);
+    expect(page.getTextContent).toHaveBeenCalledTimes(1);
+  });
+
   afterEach(() => {
     document.body.innerHTML = "";
     clearPdfPageTextCache();
     vi.restoreAllMocks();
+  });
+
+  it("deduplicates concurrent page extraction and clears the async document cache", async () => {
+    let resolveTextContent!: (value: { items: never[]; styles: {}; lang: null }) => void;
+    const getTextContent = vi.fn(() => new Promise<{ items: never[]; styles: {}; lang: null }>((resolve) => {
+      resolveTextContent = resolve;
+    }));
+    const getPage = vi.fn(async () => ({
+      getViewport: () => ({ width: 600, height: 800, transform: [1, 0, 0, 1, 0, 0] }),
+      getTextContent,
+    }));
+    const documentProxy = { getPage } as unknown as PDFDocumentProxy;
+
+    const first = getPdfPageTextModel(documentProxy, 1);
+    const second = getPdfPageTextModel(documentProxy, 1);
+    await vi.waitFor(() => expect(getTextContent).toHaveBeenCalledTimes(1));
+    resolveTextContent({ items: [], styles: {}, lang: null });
+
+    const [firstModel, secondModel] = await Promise.all([first, second]);
+    expect(firstModel).toBe(secondModel);
+    expect(getPage).toHaveBeenCalledTimes(1);
+
+    clearPdfPageTextCache();
+    const third = getPdfPageTextModel(documentProxy, 1);
+    await vi.waitFor(() => expect(getTextContent).toHaveBeenCalledTimes(2));
+    resolveTextContent({ items: [], styles: {}, lang: null });
+    await third;
+    expect(getPage).toHaveBeenCalledTimes(2);
+  });
+
+  it("evicts the least recently used resolved page models from a bounded document cache", async () => {
+    const getPage = vi.fn(async (pageNumber: number) => ({
+      getViewport: () => ({ width: 600, height: 800, transform: [1, 0, 0, 1, 0, 0] }),
+      getTextContent: async () => ({
+        items: [{
+          str: `Page ${pageNumber}`,
+          dir: "ltr",
+          width: 80,
+          height: 12,
+          transform: [1, 0, 0, 1, 0, 0],
+          fontName: "sans",
+          hasEOL: false,
+        }],
+        styles: {},
+        lang: null,
+      }),
+    }));
+    const documentProxy = { getPage } as unknown as PDFDocumentProxy;
+
+    await getPdfPageTextModel(documentProxy, 1);
+    for (let pageNumber = 2; pageNumber <= 25; pageNumber += 1) {
+      await getPdfPageTextModel(documentProxy, pageNumber);
+    }
+    await getPdfPageTextModel(documentProxy, 25);
+    await getPdfPageTextModel(documentProxy, 1);
+
+    expect(getPage).toHaveBeenCalledTimes(26);
   });
 
   it("rebuilds rendered text rects when zoom changes without text changes", () => {
@@ -76,6 +174,52 @@ describe("pdf-page-text-cache", () => {
     });
   });
 
+  it("resolves an AI evidence snippet to normalized PDF page rectangles", () => {
+    const pageElement = document.createElement("div");
+    pageElement.dataset.pageNumber = "3";
+    Object.defineProperty(pageElement, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createMockRect(0, 0, 640, 960),
+    });
+
+    const textLayer = document.createElement("div");
+    textLayer.className = "textLayer";
+    const span = document.createElement("span");
+    span.textContent = "The experiment demonstrates coherent tunneling in the device.";
+    Object.defineProperty(span, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createMockRect(80, 120, 320, 24),
+    });
+    textLayer.appendChild(span);
+    pageElement.appendChild(textLayer);
+    document.body.appendChild(pageElement);
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [createMockRect(180, 120, 120, 24)],
+    });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createMockRect(180, 120, 120, 24),
+    });
+
+    const model = buildRenderedPdfPageTextModel(pageElement);
+    expect(model).toBeTruthy();
+    if (!model) throw new Error("Missing rendered PDF text model");
+
+    const target = resolvePdfEvidenceSnippetTarget(model, "coherent tunneling");
+
+    expect(target?.page).toBe(3);
+    expect(target?.rects[0]).toMatchObject({
+      left: expect.any(Number),
+      top: expect.any(Number),
+      width: expect.any(Number),
+      height: expect.any(Number),
+    });
+    expect(target?.rects[0]?.left).toBeGreaterThanOrEqual(0);
+    expect(target?.rects[0]?.top).toBeGreaterThanOrEqual(0);
+    expect((target?.rects[0]?.left ?? 0) + (target?.rects[0]?.width ?? 0)).toBeLessThanOrEqual(1);
+  });
+
   it("uses the rendered text-node range rect before a widened parent span rect", () => {
     const pageElement = document.createElement("div");
     pageElement.dataset.pageNumber = "1";
@@ -109,6 +253,39 @@ describe("pdf-page-text-cache", () => {
       width: 170,
       height: 24,
     });
+  });
+
+  it("keeps the rendered text-node range when PDF.js scaleX makes it wider than its parent span", () => {
+    const pageElement = document.createElement("div");
+    pageElement.dataset.pageNumber = "9";
+    Object.defineProperty(pageElement, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createMockRect(840, 0, 1675, 2168),
+    });
+
+    const textLayer = document.createElement("div");
+    textLayer.className = "textLayer";
+    const span = document.createElement("span");
+    span.textContent = "our scheme there is a counterpropagating drive with the";
+    Object.defineProperty(span, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createMockRect(995.82, 660.99, 245.03, 28.73),
+    });
+    textLayer.appendChild(span);
+    pageElement.appendChild(textLayer);
+    document.body.appendChild(pageElement);
+
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: vi.fn(() => createMockRect(995.82, 655.66, 713.82, 38.67)),
+    });
+
+    const model = buildRenderedPdfPageTextModel(pageElement);
+
+    expect(model?.itemRects[0]?.left).toBeCloseTo(155.82);
+    expect(model?.itemRects[0]?.top).toBeCloseTo(655.66);
+    expect(model?.itemRects[0]?.width).toBeCloseTo(713.82);
+    expect(model?.itemRects[0]?.height).toBeCloseTo(38.67);
   });
 
   it("resolves offsets within nested inline formatting without falling back to the whole text layer", () => {

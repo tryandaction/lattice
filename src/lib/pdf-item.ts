@@ -29,7 +29,14 @@ import {
 } from "@/lib/pdf-annotation-markdown-drafts";
 import { getCanonicalPdfAnnotationText, type AnnotationItem } from "@/types/universal-annotation";
 import type { ResolvedPdfDocumentBinding } from "@/lib/pdf-document-binding";
+import { isIndependentStoredPdf, registerPdfItemLocationForRoot, removePdfItemLocation, resolvePdfItemLocationCandidates, resolvePdfItemLocationRoot, resolvePdfLocationFileHandle } from "@/lib/pdf-item-location-registry";
 import { getLocale, t as translate } from "@/lib/i18n";
+import {
+  applyPdfItemReconciliation,
+  planPdfItemReconciliation,
+  type PdfItemAbsorbAction,
+  type PdfItemReconciliationContext,
+} from "@/lib/pdf-item-reconciliation";
 
 const PDF_ITEM_MANIFEST_VERSION = 4;
 const PDF_ITEM_MANIFEST_NAME = "manifest.json";
@@ -198,6 +205,32 @@ function normalizePdfItemManifest(input: {
     createdAt,
     updatedAt: input.updatedAt ?? createdAt,
   };
+}
+
+function buildRootAwarePdfPathAliases(
+  rootHandle: FileSystemDirectoryHandle,
+  paths: Array<string | null | undefined>,
+): string[] {
+  const rootName = normalizeWorkspacePath(rootHandle.name);
+  const aliases = new Set<string>();
+
+  paths.forEach((path) => {
+    if (!path) {
+      return;
+    }
+    const normalizedPath = normalizeWorkspacePath(path);
+    if (!normalizedPath) {
+      return;
+    }
+    aliases.add(normalizedPath);
+    if (rootName && normalizedPath.startsWith(`${rootName}/`)) {
+      aliases.add(normalizedPath.slice(rootName.length + 1));
+    } else if (rootName && !normalizedPath.startsWith(".lattice/")) {
+      aliases.add(`${rootName}/${normalizedPath}`);
+    }
+  });
+
+  return Array.from(aliases);
 }
 
 function createDefaultPdfItemManifest(fileId: string, pdfPath: string): PdfItemManifest {
@@ -420,6 +453,43 @@ async function copyDirectoryRecursively(
   }
 }
 
+async function mergeDirectoryWithoutOverwrite(
+  sourceDir: FileSystemDirectoryHandle,
+  targetDir: FileSystemDirectoryHandle,
+): Promise<number> {
+  let merged = 0;
+
+  for await (const entry of sourceDir.values()) {
+    if (entry.kind === "file") {
+      const fileHandle = entry as FileSystemFileHandle;
+      const existing = await getExistingFileHandle(targetDir, fileHandle.name);
+      if (existing) {
+        continue; // never overwrite user files during reconciliation
+      }
+      const file = await fileHandle.getFile();
+      const targetFileHandle = await targetDir.getFileHandle(fileHandle.name, { create: true });
+      const writable = await targetFileHandle.createWritable();
+      await writable.write(file);
+      await writable.close();
+      merged += 1;
+      continue;
+    }
+
+    let nestedTarget: FileSystemDirectoryHandle;
+    try {
+      nestedTarget = await targetDir.getDirectoryHandle(entry.name);
+    } catch {
+      nestedTarget = await targetDir.getDirectoryHandle(entry.name, { create: true });
+    }
+    merged += await mergeDirectoryWithoutOverwrite(
+      entry as FileSystemDirectoryHandle,
+      nestedTarget,
+    );
+  }
+
+  return merged;
+}
+
 async function collectWorkspacePdfPaths(
   handle: FileSystemDirectoryHandle,
   parentPath = "",
@@ -522,7 +592,10 @@ async function collectCurrentPdfItemManifests(
   return manifests;
 }
 
-function buildPdfItemManifestIndex(manifests: PdfItemManifest[]): PdfItemManifestIndex {
+function buildPdfItemManifestIndex(
+  rootHandle: FileSystemDirectoryHandle,
+  manifests: PdfItemManifest[],
+): PdfItemManifestIndex {
   const byDocumentId = new Map<string, PdfItemManifest>();
   const byKnownPdfPath = new Map<string, PdfItemManifest>();
   const byFileFingerprint = new Map<string, PdfItemManifest>();
@@ -534,10 +607,12 @@ function buildPdfItemManifestIndex(manifests: PdfItemManifest[]): PdfItemManifes
       byFileFingerprint.set(manifest.fileFingerprint, manifest);
     }
     byCurrentItemFolder.set(normalizeWorkspacePath(manifest.itemFolderPath), manifest);
-    manifest.knownPdfPaths.forEach((path) => {
-      byKnownPdfPath.set(normalizeWorkspacePath(path), manifest);
+    buildRootAwarePdfPathAliases(rootHandle, [
+      manifest.pdfPath,
+      ...manifest.knownPdfPaths,
+    ]).forEach((path) => {
+      byKnownPdfPath.set(path, manifest);
     });
-    byKnownPdfPath.set(normalizeWorkspacePath(manifest.pdfPath), manifest);
   });
 
   return {
@@ -568,7 +643,7 @@ export async function getPdfItemManifestIndex(
 
   const nextPromise = collectCurrentPdfItemManifests(rootHandle)
     .then((manifests) => {
-      const index = buildPdfItemManifestIndex(manifests);
+      const index = buildPdfItemManifestIndex(rootHandle, manifests);
       pdfItemManifestIndexCache.set(rootHandle, index);
       pdfItemManifestIndexPromiseCache.delete(rootHandle);
       return index;
@@ -597,31 +672,6 @@ async function hasLegacyPdfItemWorkspace(
   }
 
   return Boolean(await resolveDirectoryHandle(rootHandle, getLegacyPdfItemFolderPath(pdfPath)));
-}
-
-async function fileExistsAtWorkspacePath(
-  rootHandle: FileSystemDirectoryHandle,
-  filePath: string,
-): Promise<boolean> {
-  return Boolean(await getFileHandleForPath(rootHandle, filePath));
-}
-
-async function anyKnownPdfPathExists(
-  rootHandle: FileSystemDirectoryHandle,
-  knownPdfPaths: string[],
-  currentPdfPath: string,
-): Promise<boolean> {
-  const current = normalizeWorkspacePath(currentPdfPath);
-  for (const path of knownPdfPaths) {
-    const normalized = normalizeWorkspacePath(path);
-    if (normalized === current) {
-      continue;
-    }
-    if (await fileExistsAtWorkspacePath(rootHandle, normalized)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function buildRelativePdfLink(currentFilePath: string, pdfPath: string): string {
@@ -907,7 +957,12 @@ function buildAnnotationPreviewMarkdown(
   const alt = `${getAnnotationTypeLabel(annotation)} ${labels.screenshot} ${annotation.id} ${translate("pdf.sidebar.page", { page })}`;
   const details = formatPdfAnnotationMarkdownLabel(labels.screenshotDetails, { page, width, height });
   const previewSource = previewPathByAnnotationId?.[annotation.id] ?? annotation.preview.dataUrl;
-  return `![${alt}](${previewSource})\n\n_${details}_`;
+  const color = escapeHtmlAttribute(annotation.style.color);
+  return [
+    `<img class="lattice-pdf-annotation-preview" data-color="${color}" src="${escapeHtmlAttribute(previewSource)}" alt="${escapeHtmlAttribute(alt)}" width="${width}" height="${height}" />`,
+    "",
+    `_${details}_`,
+  ].join("\n");
 }
 
 function buildAnnotationQuoteMarkdown(annotation: AnnotationItem): string | null {
@@ -922,7 +977,9 @@ function buildAnnotationQuoteMarkdown(annotation: AnnotationItem): string | null
     return null;
   }
 
-  return normalized.map((line) => `> ${line}`).join("\n");
+  const color = escapeHtmlAttribute(annotation.style.color);
+  const content = normalized.map((line) => escapeHtmlAttribute(line)).join("<br />");
+  return `<blockquote class="lattice-pdf-annotation-quote" data-color="${color}">${content}</blockquote>`;
 }
 
 function buildAnnotationCommentMarkdown(annotation: AnnotationItem): string | null {
@@ -1047,10 +1104,10 @@ export async function loadPdfItemManifest(
   const normalizedPdfPath = normalizeWorkspacePath(pdfPath);
   const targetFolderPath = getDefaultPdfItemFolderPath(normalizedPdfPath);
   const documentId = options?.documentId ?? fileId;
-  const knownPdfPaths = Array.from(new Set([
+  const knownPdfPaths = buildRootAwarePdfPathAliases(rootHandle, [
     normalizedPdfPath,
-    ...(options?.knownPdfPaths ?? []).map((path) => normalizeWorkspacePath(path)),
-  ]));
+    ...(options?.knownPdfPaths ?? []),
+  ]);
 
   const hiddenManifest = await loadManifestFromItemFolder(rootHandle, targetFolderPath, normalizedPdfPath);
   if (hiddenManifest) {
@@ -1096,9 +1153,22 @@ export async function loadPdfItemManifest(
     });
   }
 
-  const fingerprintMatch = options?.fileFingerprint
-    ? manifestIndex.byFileFingerprint.get(options.fileFingerprint) ?? null
-    : null;
+  let fingerprintMatch: PdfItemManifest | null = null;
+  if (options?.fileFingerprint) {
+    const candidates = [...manifestIndex.byCurrentItemFolder.values()].filter(candidate => candidate.fileFingerprint === options.fileFingerprint);
+    const independentDocuments = new Set<string>();
+    for (const candidate of candidates) {
+      if (await isIndependentStoredPdf(rootHandle, candidate.pdfPath, rootHandle, normalizedPdfPath)) independentDocuments.add(candidate.itemId);
+    }
+    for (const candidate of candidates) {
+      // A stale alias with a missing old filename cannot override an existing,
+      // independently stored PDF belonging to the same document identity.
+      if (!independentDocuments.has(candidate.itemId)) {
+        fingerprintMatch = candidate;
+        break;
+      }
+    }
+  }
   if (fingerprintMatch) {
     return normalizePdfItemManifest({
       ...fingerprintMatch,
@@ -1256,6 +1326,11 @@ export async function savePdfItemManifest(
   const dirHandle = await ensureNestedDirectory(rootHandle, normalizedManifest.itemFolderPath);
   await writeTextFile(dirHandle, PDF_ITEM_MANIFEST_NAME, JSON.stringify(normalizedManifest, null, 2));
   invalidatePdfItemManifestIndex(rootHandle);
+  try {
+    await registerPdfItemLocationForRoot(rootHandle, normalizedManifest);
+  } catch (error) {
+    console.warn("Failed to register PDF item location:", error);
+  }
   return normalizedManifest;
 }
 
@@ -1279,13 +1354,10 @@ export async function ensurePdfItemWorkspace(
 ): Promise<PdfItemManifest> {
   const normalizedPdfPath = normalizeWorkspacePath(pdfPath);
   const loadedManifest = await loadPdfItemManifest(rootHandle, fileId, normalizedPdfPath, options);
-  const shouldShareExistingWorkspace = await anyKnownPdfPathExists(
-    rootHandle,
-    loadedManifest.knownPdfPaths,
-    normalizedPdfPath,
-  );
-  const targetFolderPath = shouldShareExistingWorkspace
-    ? loadedManifest.itemFolderPath
+  const sourceFolderPath = normalizeWorkspacePath(loadedManifest.itemFolderPath);
+  const sourceDir = await resolveDirectoryHandle(rootHandle, sourceFolderPath);
+  const targetFolderPath = sourceDir
+    ? sourceFolderPath
     : getDefaultPdfItemFolderPath(normalizedPdfPath);
   const nextManifest = normalizePdfItemManifest({
     itemId: loadedManifest.itemId,
@@ -1299,9 +1371,7 @@ export async function ensurePdfItemWorkspace(
     updatedAt: loadedManifest.updatedAt,
   });
 
-  const sourceFolderPath = normalizeWorkspacePath(loadedManifest.itemFolderPath);
   if (sourceFolderPath !== targetFolderPath) {
-    const sourceDir = await resolveDirectoryHandle(rootHandle, sourceFolderPath);
     if (sourceDir) {
       const targetDir = await ensureNestedDirectory(rootHandle, targetFolderPath);
       await copyDirectoryRecursively(sourceDir, targetDir);
@@ -1322,7 +1392,7 @@ export async function ensurePdfItemWorkspaceForBinding(
   rootHandle: FileSystemDirectoryHandle,
   binding: Pick<ResolvedPdfDocumentBinding, "documentId" | "fileIdentity">,
 ): Promise<PdfItemManifest> {
-  return ensurePdfItemWorkspace(
+  let manifest = await ensurePdfItemWorkspace(
     rootHandle,
     binding.fileIdentity.primaryFileId,
     binding.fileIdentity.relativePathFromRoot,
@@ -1333,6 +1403,76 @@ export async function ensurePdfItemWorkspaceForBinding(
       versionFingerprint: binding.fileIdentity.versionFingerprint,
     },
   );
+  // Legacy items were keyed by workspace-relative PDF paths. The same physical
+  // PDF can therefore have several child folders after opening a parent/child
+  // workspace. Compare actual file handles, or retain an already established
+  // document id after its old filename disappears. A fingerprint alone is not
+  // enough to combine children of independent copies.
+  if (binding.fileIdentity.fileFingerprint) {
+    const pdf = await resolvePdfLocationFileHandle(rootHandle, binding.fileIdentity.relativePathFromRoot);
+    if (pdf) {
+      const candidates = await resolvePdfItemLocationCandidates({ documentId: binding.documentId, fileFingerprint: binding.fileIdentity.fileFingerprint });
+      const sources: Array<{ root: FileSystemDirectoryHandle; manifest: PdfItemManifest }> = [];
+      const local = await getPdfItemManifestIndex(rootHandle);
+      for (const entry of local.byCurrentItemFolder.values()) sources.push({ root: rootHandle, manifest: entry });
+      for (const location of candidates) {
+        const root = await resolvePdfItemLocationRoot(location);
+        if (!root) continue;
+        const previous = await loadManifestFromItemFolder(root, location.itemFolderPath, location.pdfPath);
+        if (previous) sources.push({ root, manifest: previous });
+      }
+      const target = await ensurePdfItemFolder(rootHandle, manifest);
+      const visited = new Set<FileSystemDirectoryHandle>();
+      for (const source of sources) {
+        if (source.manifest.fileFingerprint !== binding.fileIdentity.fileFingerprint) continue;
+        const sourcePdf = await resolvePdfLocationFileHandle(source.root, source.manifest.pdfPath);
+        const samePdf = sourcePdf === pdf || Boolean(sourcePdf && pdf.isSameEntry && await pdf.isSameEntry(sourcePdf))
+          || (!sourcePdf && source.manifest.itemId === binding.documentId);
+        if (!samePdf) continue;
+        const directory = await resolveDirectoryHandle(source.root, source.manifest.itemFolderPath);
+        if (!directory || directory === target || visited.has(directory) || (directory.isSameEntry && await directory.isSameEntry(target))) continue;
+        visited.add(directory);
+        await recoverPdfChildFiles(directory, target);
+      }
+    }
+  }
+  if (manifest.itemId !== binding.documentId) {
+    manifest = await savePdfItemManifest(rootHandle, { ...manifest, itemId: binding.documentId });
+  }
+  return manifest;
+}
+
+async function fileContentHash(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** Copy-only recovery. Conflicting content remains visible without replacing either original. */
+async function recoverPdfChildFiles(source: FileSystemDirectoryHandle, target: FileSystemDirectoryHandle): Promise<void> {
+  for await (const entry of source.values()) {
+    if (entry.name === PDF_ITEM_MANIFEST_NAME) continue;
+    if (entry.kind === 'directory') {
+      const destination = await target.getDirectoryHandle(entry.name, { create: true });
+      await recoverPdfChildFiles(entry as FileSystemDirectoryHandle, destination);
+      continue;
+    }
+    const sourceFile = await (entry as FileSystemFileHandle).getFile();
+    let destinationName = entry.name;
+    const existing = await getExistingFileHandle(target, destinationName);
+    if (existing) {
+      const existingFile = await existing.getFile();
+      const hash = await fileContentHash(sourceFile);
+      if (sourceFile.size === existingFile.size && hash === await fileContentHash(existingFile)) continue;
+      const dot = destinationName.lastIndexOf('.');
+      destinationName = dot > 0 ? `${destinationName.slice(0, dot)}.recovered-${hash.slice(0, 12)}${destinationName.slice(dot)}`
+        : `${destinationName}.recovered-${hash.slice(0, 12)}`;
+      if (await getExistingFileHandle(target, destinationName)) continue;
+    }
+    const destination = await target.getFileHandle(destinationName, { create: true });
+    const writable = await destination.createWritable();
+    try { await writable.write(sourceFile); await writable.close(); }
+    catch (error) { await writable.abort?.(); throw error; }
+  }
 }
 
 export async function migrateLegacyPdfItemWorkspaces(
@@ -1390,7 +1530,7 @@ export async function syncPdfAnnotationsMarkdown(
   backlinksByAnnotation?: Record<string, AnnotationBacklink[]>,
 ): Promise<{ handle: FileSystemFileHandle | null; path: string | null; manifest: PdfItemManifest }> {
   const pdfAnnotations = annotations.filter((annotation) => annotation.target.type === "pdf");
-  const annotationPath = manifest.annotationIndexPath ?? getPdfItemAnnotationIndexPath(manifest.itemFolderPath);
+  const annotationPath = getPdfItemAnnotationIndexPath(manifest.itemFolderPath);
   const hasPdfAnnotations = pdfAnnotations.length > 0;
   const existingMarkdown = await readTextFileIfExists(rootHandle, annotationPath);
 
@@ -1427,10 +1567,7 @@ export async function syncPdfAnnotationsMarkdown(
         }
         await writeBinaryFile(previewDirHandle, previewFileName, previewBytes);
       }
-      previewPathByAnnotationId[annotation.id] = buildRelativeWorkspacePath(
-        annotationPath,
-        joinPath(previewDirPath, previewFileName),
-      );
+      previewPathByAnnotationId[annotation.id] = `./${PDF_ANNOTATION_PREVIEW_DIR_NAME}/${previewFileName}`;
     }
 
     for await (const entry of previewDirHandle.values()) {
@@ -1554,12 +1691,7 @@ export async function movePdfItemWorkspace(
     return null;
   }
 
-  const targetFolderPath = getDefaultPdfItemFolderPath(targetPath);
-  if (normalizeWorkspacePath(sourceManifest.itemFolderPath) !== targetFolderPath) {
-    const targetDir = await ensureNestedDirectory(rootHandle, targetFolderPath);
-    await copyDirectoryRecursively(sourceDir, targetDir);
-    await removeDirectoryIfExists(rootHandle, sourceManifest.itemFolderPath);
-  }
+  const targetFolderPath = normalizeWorkspacePath(sourceManifest.itemFolderPath);
 
   let nextManifest = normalizePdfItemManifest({
     itemId: sourceManifest.itemId,
@@ -1621,6 +1753,38 @@ export async function deletePdfItemWorkspace(
   const normalizedPdfPath = normalizeWorkspacePath(pdfPath);
   const fallbackFileId = generateFileId(normalizedPdfPath);
   const manifest = await loadPdfItemManifest(rootHandle, fallbackFileId, normalizedPdfPath);
+
+  // A copied PDF may intentionally share the stable Item workspace with the
+  // original and be listed in `knownPdfPaths`. Deleting one alias must only
+  // remove that path from the manifest; the notes/annotations remain attached
+  // while another physical PDF still exists.
+  const remainingAliases: string[] = [];
+  for (const candidate of manifest.knownPdfPaths) {
+    if (candidate === normalizedPdfPath) continue;
+    if (await getFileHandleForPath(rootHandle, candidate)) {
+      remainingAliases.push(candidate);
+    }
+  }
+  if (remainingAliases.length > 0) {
+    const nextPdfPath = remainingAliases[0];
+    const nextManifest = normalizePdfItemManifest({
+      ...manifest,
+      pdfPath: nextPdfPath,
+      knownPdfPaths: remainingAliases,
+      annotationIndexPath: manifest.annotationIndexPath
+        ? getPdfItemAnnotationIndexPath(manifest.itemFolderPath)
+        : null,
+      updatedAt: Date.now(),
+    });
+    await savePdfItemManifest(rootHandle, nextManifest);
+    await syncPdfManagedFiles(rootHandle, nextManifest);
+    await registerPdfItemLocationForRoot(rootHandle, nextManifest);
+    const annotationFile = await loadAnnotationsFromDisk(nextManifest.itemId, rootHandle, "pdf");
+    await syncPdfAnnotationsMarkdown(rootHandle, nextManifest, getPdfFileName(nextPdfPath), annotationFile.annotations);
+    invalidatePdfItemManifestIndex(rootHandle);
+    return;
+  }
+
   await removeDirectoryIfExists(rootHandle, manifest.itemFolderPath);
   await deleteAnnotationsFromDisk(manifest.itemId, rootHandle);
   if (manifest.itemId !== fallbackFileId) {
@@ -1630,5 +1794,58 @@ export async function deletePdfItemWorkspace(
   await removeFileIfExists(rootHandle, getLegacyPdfItemManifestPath(fallbackFileId));
   await removeDirectoryIfExists(rootHandle, getLegacyHiddenPdfItemFolderPath(normalizedPdfPath));
   await removeDirectoryIfExists(rootHandle, getLegacyPdfItemFolderPath(normalizedPdfPath));
+  await removePdfItemLocation(manifest.itemId);
   invalidatePdfItemManifestIndex(rootHandle);
+}
+
+export function buildPdfItemReconciliationContext(
+  rootHandle: FileSystemDirectoryHandle,
+): PdfItemReconciliationContext {
+  return {
+    async loadManifest(itemFolderPath) {
+      return loadManifestFromItemFolder(rootHandle, itemFolderPath, itemFolderPath);
+    },
+    async saveManifest(manifest) {
+      await savePdfItemManifest(rootHandle, manifest);
+    },
+    async mergeFolder(sourceFolderPath, targetFolderPath) {
+      const sourceDir = await resolveDirectoryHandle(rootHandle, sourceFolderPath);
+      if (!sourceDir) {
+        return 0;
+      }
+      const targetDir = await ensureNestedDirectory(rootHandle, targetFolderPath);
+      return mergeDirectoryWithoutOverwrite(sourceDir, targetDir);
+    },
+    async removeFolder(folderPath) {
+      await removeDirectoryIfExists(rootHandle, folderPath);
+    },
+  };
+}
+
+/**
+ * Reconciles orphaned ("dead") and duplicate PDF items after external
+ * moves/renames. Safe by default: with `dryRun` unset (or true) it only
+ * computes the plan; pass `dryRun: false` to apply it. Applying merges each
+ * absorbed item's sub-files into the survivor without overwriting, removes the
+ * absorbed item folder, and updates the survivor manifest to point at the live
+ * PDF path.
+ */
+export async function reconcilePdfItemWorkspaces(
+  rootHandle: FileSystemDirectoryHandle,
+  options?: { dryRun?: boolean },
+): Promise<{ plan: PdfItemAbsorbAction[]; applied: number }> {
+  const manifests = await collectCurrentPdfItemManifests(rootHandle);
+  const livePdfPaths = await collectWorkspacePdfPaths(rootHandle);
+  const plan = planPdfItemReconciliation(manifests, livePdfPaths);
+
+  if (options?.dryRun !== false) {
+    return { plan, applied: 0 };
+  }
+
+  const applied = await applyPdfItemReconciliation(
+    plan,
+    buildPdfItemReconciliationContext(rootHandle),
+  );
+  invalidatePdfItemManifestIndex(rootHandle);
+  return { plan, applied };
 }

@@ -3,7 +3,7 @@
  *
  * Automatically restores the last opened folder when the app starts.
  * In web mode, persists the FileSystemDirectoryHandle in IndexedDB
- * and re-requests permission on next launch.
+ * and restores only already-granted access on next launch.
  * In Tauri mode, uses Tauri's filesystem APIs.
  */
 
@@ -14,11 +14,16 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 import { applyWorkspaceHandleToStores } from '@/hooks/use-file-system';
 import { createDesktopDirectoryHandle } from '@/lib/desktop-file-system';
-import { resolveDesktopStartupWorkspace } from '@/lib/desktop-folder';
+import {
+  isExistingDesktopDirectory,
+  resolveDesktopStartupWorkspace,
+  type DesktopStartupWorkspaceResolution,
+} from '@/lib/desktop-folder';
 import { logger } from '@/lib/logger';
 import { isTauri } from '@/lib/storage-adapter';
 import type { AppSettings } from '@/types/settings';
 import { loadWorkspaceHandleRegistration } from '@/lib/workspace-identity';
+import { registerDesktopWindowCloseHandler } from '@/lib/desktop-window';
 
 const DB_NAME = 'lattice-handles';
 const STORE_NAME = 'directory-handles';
@@ -140,12 +145,16 @@ function hasOtherActiveDesktopWindowSessions(sessionId: string, now = Date.now()
 // ============================================================================
 
 export function resolveAutoOpenWorkspacePath(
-  settings: Pick<AppSettings, 'lastOpenedFolder' | 'defaultFolder'> & Partial<Pick<AppSettings, 'lastWorkspacePath' | 'lastWorkspaceKey' | 'workspaceDisplayPaths'>>
+  settings: Pick<AppSettings, 'lastOpenedFolder' | 'defaultFolder'> & Partial<Pick<AppSettings, 'lastWorkspacePath' | 'lastWorkspaceKey' | 'workspaceDisplayPaths' | 'recentWorkspacePaths'>>
 ): string | null {
   if (settings.lastWorkspaceKey && settings.workspaceDisplayPaths?.[settings.lastWorkspaceKey]) {
     return settings.workspaceDisplayPaths[settings.lastWorkspaceKey];
   }
-  return settings.lastWorkspacePath ?? settings.lastOpenedFolder ?? settings.defaultFolder ?? null;
+  return settings.lastWorkspacePath
+    ?? settings.lastOpenedFolder
+    ?? settings.recentWorkspacePaths?.[0]
+    ?? settings.defaultFolder
+    ?? null;
 }
 
 export function useAutoOpenFolder() {
@@ -194,8 +203,25 @@ export function useAutoOpenFolder() {
           return;
         }
 
-        const startupWorkspace = await resolveDesktopStartupWorkspace();
-        await loadSettings();
+        // Settings are already loaded before this hook runs. Prefer the known
+        // workspace path so startup does not wait for a filesystem-wide resolver.
+        const currentSettings = useSettingsStore.getState().settings;
+        const configuredPath = resolveAutoOpenWorkspacePath(currentSettings);
+        let startupWorkspace: DesktopStartupWorkspaceResolution | null = configuredPath
+          ? { path: configuredPath, source: 'last_workspace_path' as const }
+          : null;
+        if (startupWorkspace) {
+          try {
+            if (!await isExistingDesktopDirectory(startupWorkspace.path)) {
+              startupWorkspace = await resolveDesktopStartupWorkspace();
+            }
+          } catch {
+            startupWorkspace = await resolveDesktopStartupWorkspace();
+          }
+        } else {
+          // No persisted candidate means a first launch; do not scan the filesystem.
+          return;
+        }
         if (!startupWorkspace?.path) {
           return;
         }
@@ -228,18 +254,9 @@ export function useAutoOpenFolder() {
         return;
       }
 
-      // Need to request permission (requires user gesture)
-      // We can't auto-request without user interaction, but we can try
-      const requested = await savedHandle.requestPermission({ mode: 'readwrite' });
-      if (requested === 'granted') {
-        await restoreWorkspaceFromHandle(
-          savedHandle,
-          resolveAutoOpenWorkspacePath(settings) ?? registeredWorkspace?.displayPath ?? savedHandle.name,
-          registeredWorkspace?.workspaceKey ?? settings.lastWorkspaceKey ?? null,
-        );
-      } else {
-        logger.debug('[AutoOpen] Permission denied for saved folder');
-      }
+      // The recent-workspace button requests permission from a user gesture.
+      // Startup has no activation and must not consume or trigger that prompt.
+      logger.debug('[AutoOpen] Saved folder requires a user click to restore access');
     } catch (err) {
       logger.warn('[AutoOpen] Failed to restore folder handle:', err);
     }
@@ -260,9 +277,13 @@ export function useAutoOpenFolder() {
     const heartbeatId = window.setInterval(() => {
       touchDesktopWindowSession(sessionId);
     }, DESKTOP_WINDOW_HEARTBEAT_MS);
+    const unregisterCloseHandler = registerDesktopWindowCloseHandler(() => {
+      removeDesktopWindowSession(sessionId);
+    });
 
     return () => {
       window.clearInterval(heartbeatId);
+      unregisterCloseHandler();
       removeDesktopWindowSession(sessionId);
     };
   }, []);

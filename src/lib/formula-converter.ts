@@ -5,6 +5,7 @@ import {
   convertMathmlToLatex,
 } from './markdown-converter';
 import { renderLatex } from './katex-renderer';
+import { renderStrictFormula } from './strict-formula-renderer';
 
 export {
   convertCharToLatex,
@@ -73,7 +74,15 @@ export function renderLatexSafe(
   latex: string,
   displayMode: boolean
 ): { success: boolean; html: string } {
-  const html = renderLatex(latex, displayMode);
-  const success = !html.includes('formula-error');
-  return { success, html };
+  const html = renderStrictFormula(latex, displayMode);
+  if (html !== null) return { success: true, html };
+
+  const escapedSource = latex
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+  const delimiter = displayMode ? '$$' : '$';
+  return { success: false, html: `<span class="formula-error">${delimiter}${escapedSource}${delimiter}</span>` };
 }

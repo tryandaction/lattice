@@ -5,9 +5,28 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 import { WorkbenchContextMenu } from "../workbench-context-menu";
 
 describe("WorkbenchContextMenu", () => {
+  it("portals the menu above workbench chrome and resize handles", () => {
+    const { container } = render(
+      <div data-testid="sidebar-host">
+        <WorkbenchContextMenu
+          x={24}
+          y={32}
+          actions={[{ id: "refresh", label: "Refresh", onSelect: vi.fn() }]}
+          onClose={vi.fn()}
+        />
+      </div>,
+    );
+
+    const menu = screen.getByRole("menu");
+    expect(container.contains(menu)).toBe(false);
+    expect(document.body.contains(menu)).toBe(true);
+    expect(menu.className).toContain(UI_LAYER_CLASS.chromeMenu);
+  });
+
   it("keeps long menus inside the viewport and preserves action execution", () => {
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 360 });
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 420 });

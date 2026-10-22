@@ -1,0 +1,53 @@
+name = "lattice-cloud-library-operations"
+main = "src/index.mjs"
+compatibility_date = "2026-10-19"
+workers_dev = false
+preview_urls = false
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[durable_objects.bindings]]
+name = "OPERATIONS"
+class_name = "LibraryOperations"
+
+[[durable_objects.bindings]]
+name = "NOTIFICATIONS"
+class_name = "NotificationDelivery"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LibraryOperations"]
+
+[[migrations]]
+tag = "v2-notification-delivery"
+new_sqlite_classes = ["NotificationDelivery"]
+
+[vars]
+# Deployment requires operator-owned target and identity inputs.
+# API_URL = "https://approved-api.example"
+# LIBRARY_ID = "approved-library-id"
+# SUPABASE_URL = "https://approved-project.supabase.co"
+# SUPABASE_PUBLIC_KEY = "publishable-key"
+# OPERATOR_USER_ID = "dedicated-operator-account-id"
+# EXPECTED_VENDOR_PROVIDERS = "supabase,cloudflare"
+# Reauthorization is opt-in against existing state; legacy/current baseline is 0.
+# OPERATOR_REAUTHORIZATION_VERSION = "1"
+# NOTIFICATION_URL = "https://approved-idempotent-receiver.example/events"
+CLEANUP_ENABLED = "false"
+# CLEANUP_LIBRARY_ID must also match LIBRARY_ID before cleanup is enabled.
+
+# Install OPERATOR_REFRESH_TOKEN and NOTIFICATION_TOKEN through wrangler secret.
+# Explicit reauthorization also needs OPERATOR_REAUTHORIZATION_REFRESH_TOKEN secret.
+# Increase its version exactly once per new authorization; retain the accepted version.
+# Refresh token rotation is persisted only in server-side Durable Object storage.
+# The receiver acknowledges accepted=true,eventId,receiptId and deduplicates by id.
+# Supplier billing requires a separate service binding; values are never guessed.
+# [[services]]
+# binding = "VENDOR_USAGE"
+# service = "approved-vendor-usage-adapter"
+# Internal delivery requires an explicitly approved channel adapter with durable
+# Idempotency-Key support and accepted/eventId/receiptId acknowledgements.
+# [[services]]
+# binding = "NOTIFICATION_CHANNEL"
+# service = "approved-notification-channel"

@@ -1,0 +1,36 @@
+.selector {
+  display: flex;
+  flex: 1 1 15rem;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.sourceField,
+.modelField {
+  flex: 1 1 6rem;
+  min-width: 0;
+}
+
+.sourceField {
+  max-width: 11rem;
+}
+
+.modelField {
+  max-width: 12rem;
+}
+
+/* Query the composer surface, not the browser viewport: desktop sidebars can
+   be narrow inside a wide window. Keep the controls on one readable row. */
+@container (max-width: 420px) {
+  .selector {
+    flex: 1 0 100%;
+    order: -1;
+  }
+
+  .sourceField,
+  .modelField {
+    max-width: none;
+  }
+}

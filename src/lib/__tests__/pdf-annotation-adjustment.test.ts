@@ -50,6 +50,29 @@ function createModel(): PdfPageTextModel {
 }
 
 describe("pdf-annotation-adjustment", () => {
+  it("keeps shortened multi-line geometry on repeated pointer offsets", () => {
+    const lines = ["First long line", "short"];
+    const model: PdfPageTextModel = {
+      ...createModel(), normalizedText: lines.join(" "),
+      segments: lines.map((text, index) => ({ itemIndex: index, text, normalizedText: text,
+        hasEOL: index === 0, pageTextStart: index === 0 ? 0 : lines[0].length + 1,
+        pageTextEnd: index === 0 ? text.length : lines[0].length + 1 + text.length })),
+      itemRects: [{ itemIndex: 0, left: 80, top: 120, width: 300, height: 20 },
+        { itemIndex: 1, left: 80, top: 150, width: 60, height: 20 }],
+    };
+    const target: PdfTarget = { type: "pdf", page: 1,
+      rects: [{ x1: 80/640, y1: 120/960, x2: 380/640, y2: 140/960 },
+        { x1: 80/640, y1: 150/960, x2: 140/640, y2: 170/960 }],
+      textQuote: { exact: model.normalizedText, prefix: "", suffix: "", source: "pdfjs-text-model", confidence: "exact" },
+    };
+    const shortened = adjustPdfAnnotationAnchor({ model, target, nextEndOffset: model.normalizedText.length - 1 })!;
+    expect(shortened.textQuote.exact).toBe("First long line shor");
+    expect(shortened.rects.at(-1)!.x2).toBeLessThan(target.rects.at(-1)!.x2);
+    const repeated = adjustPdfAnnotationAnchor({ model, target, currentAnchor: shortened, nextEndOffset: shortened.endOffset });
+    expect(repeated?.rects).toEqual(shortened.rects);
+    expect(repeated?.textQuote.exact).toBe(shortened.textQuote.exact);
+  });
+
   it("prefers persisted character offsets over stale rectangles when restoring an anchor", () => {
     const model = createModel();
     const startCharIndex = model.normalizedText.indexOf("which we");

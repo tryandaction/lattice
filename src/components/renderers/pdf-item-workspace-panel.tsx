@@ -30,6 +30,7 @@ import {
 } from "@/lib/pdf-bibliography-enrichment";
 import { openExternalUrl } from "@/lib/link-router/open-external";
 import { copyToClipboard } from "@/lib/clipboard";
+import type { CloudPdfWorkspace } from "@/lib/shared-library/cloud-pdf";
 
 interface PdfItemWorkspacePanelProps {
   rootHandle: FileSystemDirectoryHandle;
@@ -43,14 +44,15 @@ interface PdfItemWorkspacePanelProps {
   isAnnotationsLoading?: boolean;
   manifest?: PdfItemManifest | null;
   pdfDocument?: PDFDocumentProxy | null;
+  cloudSource?: CloudPdfWorkspace;
 }
 
 function noteLabel(type: PdfItemNoteSummary["type"], t: ReturnType<typeof useI18n>["t"]) {
   switch (type) {
     case "directory":
-      return "Folder";
+      return t("pdf.workspace.note.folder");
     case "file":
-      return "File";
+      return t("pdf.workspace.note.file");
     case "annotation-note":
       return t("pdf.workspace.note.annotation");
     case "notebook":
@@ -132,7 +134,16 @@ function findTreeNodeByPath(node: TreeNode | null, targetPath: string): TreeNode
   return null;
 }
 
-export function PdfItemWorkspacePanel({
+export function PdfItemWorkspacePanel(props: PdfItemWorkspacePanelProps) {
+  return props.cloudSource ? <PdfItemWorkspacePanelView {...props} /> : <LocalPdfItemWorkspacePanel {...props} />;
+}
+
+function LocalPdfItemWorkspacePanel(props: PdfItemWorkspacePanelProps) {
+  const fileSystem = useFileSystem();
+  return <PdfItemWorkspacePanelView {...props} fileSystem={fileSystem} />;
+}
+
+function PdfItemWorkspacePanelView({
   rootHandle,
   documentId,
   fileFingerprint = null,
@@ -144,16 +155,28 @@ export function PdfItemWorkspacePanel({
   isAnnotationsLoading = false,
   manifest: initialManifest = null,
   pdfDocument = null,
-}: PdfItemWorkspacePanelProps) {
+  cloudSource,
+  fileSystem,
+}: PdfItemWorkspacePanelProps & { fileSystem?: ReturnType<typeof useFileSystem> }) {
   const { t } = useI18n();
-  const { deleteFile, refreshDirectory } = useFileSystem();
+  const deleteFile = fileSystem?.deleteFile;
+  const hydratePdfVirtualChildren = fileSystem?.hydratePdfVirtualChildren;
   const activePaneId = useWorkspaceStore((state) => state.layout.activePaneId);
   const closeTabsByPath = useWorkspaceStore((state) => state.closeTabsByPath);
   const splitPane = useWorkspaceStore((state) => state.splitPane);
   const openFileInPane = useWorkspaceStore((state) => state.openFileInPane);
   const toggleDirectory = useWorkspaceStore((state) => state.toggleDirectory);
   const setSelectedDirectoryPath = useWorkspaceStore((state) => state.setSelectedDirectoryPath);
-  const [entries, setEntries] = useState<PdfItemNoteSummary[]>([]);
+  const [localEntries, setEntries] = useState<PdfItemNoteSummary[]>([]);
+  const entries = useMemo<PdfItemNoteSummary[]>(() => {
+    if (!cloudSource) return localEntries;
+    const byId = new Map(cloudSource.children.map(child => [child.id, child]));
+    return cloudSource.children.map(child => {
+      let depth = 0; let parent = child.parentId; const seen = new Set([child.id]);
+      while (parent && byId.has(parent) && !seen.has(parent)) { seen.add(parent); depth++; parent = byId.get(parent)?.parentId; }
+      return { path: child.id, fileName: child.name, depth, type: child.kind === "folder" ? "directory" : child.kind === "notebook" ? "notebook" : child.kind === "markdown" ? "note" : "file" };
+    });
+  }, [cloudSource, localEntries]);
   const [isLoading, setIsLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -176,6 +199,12 @@ export function PdfItemWorkspacePanel({
     if (!entry.path) {
       return false;
     }
+    if (cloudSource) {
+      const byId = new Map(cloudSource.children.map(child => [child.id, child]));
+      let parent = byId.get(entry.path)?.parentId; const seen = new Set<string>();
+      while (parent && byId.has(parent) && !seen.has(parent)) { seen.add(parent); if (!expandedEntryPaths.has(parent)) return false; parent = byId.get(parent)?.parentId; }
+      return true;
+    }
     let parentPath = getParentPath(entry.path);
     while (parentPath && parentPath !== currentManifest?.itemFolderPath) {
       if (!expandedEntryPaths.has(parentPath)) {
@@ -184,9 +213,10 @@ export function PdfItemWorkspacePanel({
       parentPath = getParentPath(parentPath);
     }
     return true;
-  }), [currentManifest?.itemFolderPath, entries, expandedEntryPaths]);
+  }), [cloudSource, currentManifest?.itemFolderPath, entries, expandedEntryPaths]);
 
   const loadItemState = useCallback(async () => {
+    if (cloudSource) { setIsLoading(false); return; }
     setIsLoading(true);
     setError(null);
     try {
@@ -205,9 +235,10 @@ export function PdfItemWorkspacePanel({
     } finally {
       setIsLoading(false);
     }
-  }, [documentId, fileFingerprint, filePath, initialManifest, rootHandle, versionFingerprint]);
+  }, [cloudSource, documentId, fileFingerprint, filePath, initialManifest, rootHandle, versionFingerprint]);
 
   const revealPdfEntry = useCallback((expandChildren = false) => {
+    if (cloudSource) { cloudSource.onRevealChildren(); return; }
     useExplorerStore.getState().setSelection(filePath, "file");
     const parentPath = getParentPath(filePath);
     setSelectedDirectoryPath(parentPath || null);
@@ -224,7 +255,7 @@ export function PdfItemWorkspacePanel({
     if (expandChildren && pdfNode?.children?.length && !pdfNode.isExpanded) {
       toggleDirectory(filePath);
     }
-  }, [filePath, setSelectedDirectoryPath, toggleDirectory]);
+  }, [cloudSource, filePath, setSelectedDirectoryPath, toggleDirectory]);
 
   useEffect(() => {
     if (!isExpanded) {
@@ -283,9 +314,9 @@ export function PdfItemWorkspacePanel({
       versionFingerprint: versionFingerprint ?? initialManifest?.versionFingerprint ?? null,
     });
     setCurrentManifest(currentManifest);
-    await refreshDirectory({ silent: true });
+    await hydratePdfVirtualChildren?.(filePath, { force: true, expand: true });
     return currentManifest;
-  }, [documentId, fileFingerprint, filePath, initialManifest?.fileFingerprint, initialManifest?.itemId, initialManifest?.versionFingerprint, refreshDirectory, rootHandle, versionFingerprint]);
+  }, [documentId, fileFingerprint, filePath, hydratePdfVirtualChildren, initialManifest?.fileFingerprint, initialManifest?.itemId, initialManifest?.versionFingerprint, rootHandle, versionFingerprint]);
 
   const runAction = useCallback(async (actionId: string, task: (resolvedManifest: PdfItemManifest) => Promise<void>) => {
     setBusyAction(actionId);
@@ -303,21 +334,28 @@ export function PdfItemWorkspacePanel({
   }, [ensureWorkspace, loadItemState, revealPdfEntry]);
 
   const handleCreateNote = useCallback((type: "note" | "notebook") => {
+    if (cloudSource) {
+      if (!cloudSource.canCreate) return;
+      const targetPaneId = activePaneId === paneId ? (splitPane(paneId, "horizontal") ?? activePaneId) : activePaneId;
+      setBusyAction(`create-${type}`); setError(null);
+      void cloudSource.onCreateChild(type, targetPaneId).catch(error => setError(String(error))).finally(() => setBusyAction(null));
+      return;
+    }
     const baseName = type === "note" ? "Untitled" : "Lab Notebook";
     void runAction(type === "note" ? "create-note" : "create-notebook", async (resolvedManifest) => {
       const result = await createPdfItemNote(rootHandle, resolvedManifest, type, baseName);
       emitVaultChange(result.path);
-      await refreshDirectory({ silent: true });
+      await hydratePdfVirtualChildren?.(filePath, { force: true, expand: true });
       openHandleNearPdf(result.handle, result.path);
     });
-  }, [openHandleNearPdf, refreshDirectory, rootHandle, runAction]);
+  }, [activePaneId, cloudSource, filePath, hydratePdfVirtualChildren, openHandleNearPdf, paneId, rootHandle, runAction, splitPane]);
 
   const handleOpenEntry = useCallback(async (entry: PdfItemNoteSummary) => {
     setBusyAction(`open:${entry.path}`);
     setError(null);
     try {
       if (entry.type === "directory") {
-        setSelectedDirectoryPath(entry.path);
+        if (!cloudSource) setSelectedDirectoryPath(entry.path);
         setExpandedEntryPaths((current) => {
           const next = new Set(current);
           if (next.has(entry.path)) {
@@ -329,6 +367,7 @@ export function PdfItemWorkspacePanel({
         });
         return;
       }
+      if (cloudSource) { const targetPaneId = activePaneId === paneId ? (splitPane(paneId, "horizontal") ?? activePaneId) : activePaneId; await cloudSource.onOpenChild(entry.path, targetPaneId); return; }
       const resolvedEntry = await resolveEntry(rootHandle, entry.path);
       if (!resolvedEntry || resolvedEntry.kind !== "file") {
         throw new Error(t("pdf.workspace.error.open", { path: entry.path }));
@@ -339,7 +378,7 @@ export function PdfItemWorkspacePanel({
     } finally {
       setBusyAction(null);
     }
-  }, [openHandleNearPdf, rootHandle, setSelectedDirectoryPath, t]);
+  }, [activePaneId, cloudSource, openHandleNearPdf, paneId, rootHandle, setSelectedDirectoryPath, splitPane, t]);
 
   const handleDeleteNote = useCallback(async (note: PdfItemNoteSummary) => {
     if (note.type === "annotation-note" || note.type === "directory") {
@@ -349,7 +388,9 @@ export function PdfItemWorkspacePanel({
     setBusyAction(`delete:${note.path}`);
     setError(null);
     try {
+      if (cloudSource) { await cloudSource.onDeleteChild?.(note.path); return; }
       closeTabsByPath(note.path);
+      if (!deleteFile) return;
       const result = await deleteFile(note.path);
       if (!result.success) {
         throw new Error(result.error || t("common.error"));
@@ -361,7 +402,7 @@ export function PdfItemWorkspacePanel({
     } finally {
       setBusyAction(null);
     }
-  }, [closeTabsByPath, deleteFile, loadItemState, revealPdfEntry, t]);
+  }, [cloudSource, closeTabsByPath, deleteFile, loadItemState, revealPdfEntry, t]);
 
   const handleRevealFolder = useCallback(() => {
     revealPdfEntry(true);
@@ -387,28 +428,28 @@ export function PdfItemWorkspacePanel({
     const arxivId = enrichment?.arxivId ?? summary.arxivId;
     const subject = enrichment?.subject ?? summary.subject;
     const metadataLines = [
-      `- Source PDF: [${fileName}](${filePath})`,
-      `- PDF path: \`${filePath}\``,
-      year ? `- Year: ${year}` : null,
-      authors.length > 0 ? `- Authors: ${authors.join(", ")}` : null,
-      summary.pageCount ? `- Pages: ${summary.pageCount}` : null,
-      `- Annotations: ${pdfAnnotations.length}`,
-      `- Related files: ${entries.length}`,
+      `- ${t("pdf.workspace.summary.source")}: [${fileName}](${filePath})`,
+      `- ${t("pdf.workspace.summary.path")}: \`${filePath}\``,
+      year ? `- ${t("pdf.workspace.meta.year")}: ${year}` : null,
+      authors.length > 0 ? `- ${t("pdf.workspace.meta.authors")}: ${authors.join(", ")}` : null,
+      summary.pageCount ? `- ${t("pdf.workspace.meta.pages")}: ${summary.pageCount}` : null,
+      `- ${t("pdf.workspace.summary.annotations")}: ${pdfAnnotations.length}`,
+      `- ${t("pdf.workspace.summary.files")}: ${entries.length}`,
       doi ? `- DOI: [${doi}](https://doi.org/${doi})` : null,
       arxivId ? `- arXiv: [${arxivId}](https://arxiv.org/abs/${arxivId})` : null,
-      subject ? `- Subject: ${subject}` : null,
-      enrichment?.venue ? `- Venue: ${enrichment.venue}` : null,
+      subject ? `- ${t("pdf.workspace.meta.subject")}: ${subject}` : null,
+      enrichment?.venue ? `- ${t("pdf.workspace.summary.venue")}: ${enrichment.venue}` : null,
     ].filter(Boolean);
     const lines = [
       `# ${title}`,
       "",
       ...metadataLines,
-      enrichment?.abstract ? ["", "## Abstract", "", enrichment.abstract].join("\n") : null,
+      enrichment?.abstract ? ["", `## ${t("pdf.workspace.summary.abstract")}`, "", enrichment.abstract].join("\n") : null,
     ].filter(Boolean).join("\n");
 
     await copyToClipboard(lines);
     setCopyMenuOpen(false);
-  }, [enrichment, entries.length, fileName, filePath, pdfAnnotations.length, summary]);
+  }, [enrichment, entries.length, fileName, filePath, pdfAnnotations.length, summary, t]);
 
   const handleCopyCitation = useCallback(async () => {
     if (!summary) {
@@ -460,14 +501,14 @@ export function PdfItemWorkspacePanel({
           <ActionIconButton
             title={t("pdf.workspace.action.newNote")}
             onClick={() => handleCreateNote("note")}
-            disabled={actionsDisabled}
+            disabled={actionsDisabled || Boolean(cloudSource && !cloudSource.canCreate)}
           >
             <FilePlus2 className="h-4 w-4" />
           </ActionIconButton>
           <ActionIconButton
             title={t("pdf.workspace.action.newNotebook")}
             onClick={() => handleCreateNote("notebook")}
-            disabled={actionsDisabled}
+            disabled={actionsDisabled || Boolean(cloudSource && !cloudSource.canCreate)}
           >
             <NotebookPen className="h-4 w-4" />
           </ActionIconButton>
@@ -522,15 +563,15 @@ export function PdfItemWorkspacePanel({
           {currentManifest ? (
             <div className="mt-1.5 rounded-md border border-border bg-muted/15 px-2 py-1.5 text-[10px] leading-5 text-muted-foreground">
               <div className="truncate">
-                <span className="font-medium text-foreground">Current PDF:</span> {filePath}
+                <span className="font-medium text-foreground">{t("pdf.workspace.path.current")}</span> {filePath}
               </div>
               {originalPdfPath ? (
                 <div className="truncate">
-                  <span className="font-medium text-foreground">Original PDF:</span> {originalPdfPath}
+                  <span className="font-medium text-foreground">{t("pdf.workspace.path.related")}</span> {originalPdfPath}
                 </div>
               ) : null}
               <div className="truncate">
-                <span className="font-medium text-foreground">Item workspace:</span> {currentManifest.itemFolderPath}
+                <span className="font-medium text-foreground">{t("pdf.workspace.path.workspace")}</span> {currentManifest.itemFolderPath}
               </div>
             </div>
           ) : null}
@@ -584,11 +625,11 @@ export function PdfItemWorkspacePanel({
             </div>
           ) : null}
 
-          {isLoading ? (
+          {isLoading && !cloudSource ? (
             <div className="mt-1 text-[10px] text-muted-foreground">{t("pdf.workspace.loading")}</div>
           ) : null}
 
-          {!isLoading && visibleEntries.length > 0 ? (
+          {(!isLoading || cloudSource) && visibleEntries.length > 0 ? (
             <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
               {visibleEntries.map((note) => {
                 const isDirectoryExpanded = note.type === "directory" && expandedEntryPaths.has(note.path);
@@ -611,7 +652,7 @@ export function PdfItemWorkspacePanel({
                     ) : null}
                     <span>{entryDisplayName(note)}</span>
                   </button>
-                  {note.type !== "annotation-note" && note.type !== "directory" ? (
+                  {note.type !== "annotation-note" && note.type !== "directory" && (!cloudSource || cloudSource.onDeleteChild) ? (
                     <button
                       type="button"
                       onClick={() => void handleDeleteNote(note)}

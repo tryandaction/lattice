@@ -95,6 +95,7 @@ import { useAgentSessionStore } from '@/stores/agent-session-store';
 import { useAgentMemoryStore } from '@/stores/agent-memory-store';
 import { useAiWorkbenchStore } from '@/stores/ai-workbench-store';
 import { useWorkspaceStore } from '@/stores/workspace-store';
+import { useScheduledTaskStore } from '@/stores/scheduled-task-store';
 import type { AiTaskProposal } from '../ai/types';
 
 function createProposal(overrides: Partial<AiTaskProposal> = {}): AiTaskProposal {
@@ -170,6 +171,7 @@ describe('agent-tool-broker', () => {
     useWorkspaceStore.setState({
       workspaceIdentity: null,
     });
+    useScheduledTaskStore.getState().resetForTests();
   });
 
   it('exposes stable tool descriptors for policy, trace, and planner surfaces', () => {
@@ -506,6 +508,24 @@ describe('agent-tool-broker', () => {
     });
   });
 
+  it('reports approved memory writes as failed when persistence rejects the save', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    storage.set.mockRejectedValue(new Error('Synthetic memory save failure'));
+    const sessionId = createAgentToolSession({ profile: 'research', task: 'Remember preference' });
+    try {
+      const result = await executeAgentTool({ name: 'memory.write', args: { memory: {
+        id: 'unsaved-memory', scope: 'user', title: 'Preference', content: 'Synthetic test preference.', source: { label: 'User request' },
+      } } }, { sessionId, approvedByUser: true });
+      expect(result.status).toBe('failed');
+      expect(result.error).toContain('Memory persistence');
+      expect(result.resultPreview).toBeUndefined();
+    } finally {
+      storage.set.mockReset();
+      await useAgentMemoryStore.getState().loadMemories();
+      consoleError.mockRestore();
+    }
+  });
+
   it('requires approval before adding proposals and denies runner by default for chat sessions', async () => {
     const researchSessionId = createAgentToolSession({
       profile: 'research',
@@ -581,6 +601,20 @@ describe('agent-tool-broker', () => {
         errorToolName: 'runner.runCode',
       }),
     });
+  });
+
+  it('reports unavailable scheduling before asking for an impossible execution approval', async () => {
+    const sessionId = createAgentToolSession({ profile: 'automation', task: 'Schedule digest' });
+    const args = { title: 'Daily digest', prompt: 'Summarize today', schedule: { kind: 'interval' as const, everyMs: 60_000 }, maxRetries: 1 };
+    const blocked = await executeAgentTool({ name: 'schedule_task', args }, { sessionId });
+
+    expect(blocked.status).toBe('failed');
+    expect(blocked.error).toContain('unavailable in this version');
+    expect(useScheduledTaskStore.getState().tasks).toEqual([]);
+    expect(blocked.approvalRequestId).toBeUndefined();
+    expect(useAgentSessionStore.getState().getSession(sessionId)?.trace.map((event) => event.kind)).toEqual(
+      expect.arrayContaining(['tool_requested', 'tool_result']),
+    );
   });
 
   it('keeps runner execution blocked until approval, then records success or failure in trace', async () => {

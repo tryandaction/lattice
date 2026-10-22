@@ -17,6 +17,7 @@ import type {
 } from './agent-memory';
 import type {
   AppendAgentTraceInput,
+  AgentCodeExecutionReceipt,
 } from './agent-session';
 import type {
   AiDraftArtifact,
@@ -36,8 +37,29 @@ import { useAgentSessionStore } from '@/stores/agent-session-store';
 import { useAgentMemoryStore } from '@/stores/agent-memory-store';
 import { useAiWorkbenchStore } from '@/stores/ai-workbench-store';
 import { useWorkspaceStore } from '@/stores/workspace-store';
+import { useScheduledTaskStore } from '@/stores/scheduled-task-store';
+import type { ScheduledTaskSchedule } from '@/lib/ai/scheduled-tasks';
+import type { LatticeSourcePdfToolName, LatticeSourcePdfToolResult } from './lattice-skills/source-pdf-tool-runtime';
+import { LATTICE_HARNESS_TOOLS, validateLatticeHarnessArgs } from './harness/lattice-tool-definitions';
+import type { AgentSourceSelection } from './source-index';
+export type { LatticeSourcePdfToolName } from './lattice-skills/source-pdf-tool-runtime';
+export type LatticeApiToolName = typeof LATTICE_HARNESS_TOOLS[number]['name'];
+export interface LatticeApiToolDefinition { name: string; description: string; parameters: unknown }
+/** The API agent delegates to the same authorized runtime as Harness. */
+export interface LatticeApiToolRuntime {
+  execute(name: string, args: unknown, signal?: AbortSignal): Promise<unknown>;
+  tools?: readonly LatticeApiToolDefinition[];
+  sourceSelections?: readonly AgentSourceSelection[];
+  /** Actual request-local read scope, separate from the question's priority sources. */
+  authorizedSourceSelections?: readonly AgentSourceSelection[];
+  requireSourceDiscovery?: boolean;
+}
+export function isLatticeApiToolName(name: string): name is LatticeApiToolName {
+  return LATTICE_HARNESS_TOOLS.some(tool => tool.name === name);
+}
 
 export type AgentToolName =
+  | LatticeApiToolName
   | 'workspace.search'
   | 'workspace.readIndexedContext'
   | 'lattice.resolvePathIdentity'
@@ -45,7 +67,9 @@ export type AgentToolName =
   | 'workbench.createDraft'
   | 'workbench.createProposal'
   | 'runner.runCode'
-  | 'memory.write';
+  | 'memory.write'
+  | 'schedule_task';
+export interface LatticeSourcePdfExecutionRuntime { execute(name: string, args: unknown, signal?: AbortSignal): Promise<LatticeSourcePdfToolResult> }
 
 export interface WorkspaceSearchToolArgs {
   query: string;
@@ -79,6 +103,24 @@ export interface RunCodeToolArgs {
   code: string;
 }
 
+// Canonical, lossless signature: approval reuse never relies on a truncated preview.
+export function buildRunCodeRequestSignature(args: RunCodeToolArgs): string {
+  return `runner.runCode:${JSON.stringify({ language: args.language, code: args.code })}`;
+}
+
+const MAX_RUNNER_RECEIPT_CHARACTERS = 32000;
+
+function buildRunCodeExecutionReceipt(
+  request: Extract<AgentToolRequest, { name: 'runner.runCode' }>,
+  sessionId: string,
+  approvalRequestId: string,
+  status: AgentCodeExecutionReceipt['status'],
+  output: string,
+): AgentCodeExecutionReceipt {
+  return { sessionId, approvalRequestId, requestSignature: buildRunCodeRequestSignature(request.args), status,
+    output: output.slice(0, MAX_RUNNER_RECEIPT_CHARACTERS), outputLength: output.length, truncated: output.length > MAX_RUNNER_RECEIPT_CHARACTERS };
+}
+
 export interface WriteMemoryToolArgs {
   memory: CreateAgentMemoryEntryInput;
   reason?: string;
@@ -93,7 +135,15 @@ export interface WriteMemoryToolArgs {
   };
 }
 
+export interface ScheduleTaskToolArgs {
+  title: string;
+  prompt?: string;
+  schedule: ScheduledTaskSchedule;
+  maxRetries?: number;
+}
+
 export type AgentToolRequest =
+  | { [T in LatticeApiToolName]: { name: T; args: Record<string, unknown> } }[LatticeApiToolName]
   | { name: 'workspace.search'; args: WorkspaceSearchToolArgs }
   | { name: 'workspace.readIndexedContext'; args: ReadIndexedContextToolArgs }
   | { name: 'lattice.resolvePathIdentity'; args: ResolveLatticePathIdentityToolArgs }
@@ -101,9 +151,14 @@ export type AgentToolRequest =
   | { name: 'workbench.createDraft'; args: CreateDraftToolArgs }
   | { name: 'workbench.createProposal'; args: CreateProposalToolArgs }
   | { name: 'runner.runCode'; args: RunCodeToolArgs }
-  | { name: 'memory.write'; args: WriteMemoryToolArgs };
+  | { name: 'memory.write'; args: WriteMemoryToolArgs }
+  | { name: 'schedule_task'; args: ScheduleTaskToolArgs };
 
-export type AgentToolResultByName = {
+export type AgentToolResultByName = Record<Exclude<LatticeApiToolName, LatticeSourcePdfToolName>, unknown> & {
+  'lattice.sources.list': LatticeSourcePdfToolResult;
+  'lattice.sources.search': LatticeSourcePdfToolResult;
+  'lattice.sources.read': LatticeSourcePdfToolResult;
+  'lattice.pdf.proposeChild': LatticeSourcePdfToolResult;
   'workspace.search': FileIndex[];
   'workspace.readIndexedContext': string;
   'lattice.resolvePathIdentity': LatticePathIdentity;
@@ -112,6 +167,7 @@ export type AgentToolResultByName = {
   'workbench.createProposal': { proposalId: string };
   'runner.runCode': { output: string };
   'memory.write': { memoryId: string; memory: AgentMemoryEntry };
+  'schedule_task': { taskId: string };
 };
 
 export type AgentToolExecutionStatus =
@@ -121,7 +177,13 @@ export type AgentToolExecutionStatus =
   | 'failed';
 
 export interface AgentToolExecutionOptions {
+  /** The research loop owns the terminal decision after its bounded source recovery. */
+  deferSourceReadFailure?: boolean;
+  apiToolRuntime?: LatticeApiToolRuntime;
+  latticeSourcePdfRuntime?: LatticeSourcePdfExecutionRuntime;
+  signal?: AbortSignal;
   sessionId: string;
+  planStepId?: string;
   approvedByUser?: boolean;
   approvalNote?: string;
   approvalRequestId?: string;
@@ -157,6 +219,18 @@ export interface AgentToolDescriptor {
 }
 
 export const AGENT_TOOL_DESCRIPTORS: Record<AgentToolName, AgentToolDescriptor> = {
+  ...Object.fromEntries(LATTICE_HARNESS_TOOLS.map(tool => [tool.name, {
+    name: tool.name,
+    // These tools only prepare a draft. Actual persistence remains in Workbench.
+    capability: tool.name.includes('.propose') ? 'prepare_pdf_child' : tool.name === 'lattice.sources.search' ? 'search_workspace' : 'read_workspace',
+    label: tool.name, description: tool.description,
+    argsSummary: JSON.stringify(tool.parameters),
+    resultSummary: tool.name.includes('.propose') ? 'Concrete draft pending Workbench user review; no file was applied.' : 'Actual runtime result with bounded evidence and coverage where available.',
+  }])) as Record<LatticeApiToolName, AgentToolDescriptor>,
+  'lattice.sources.list': { name: 'lattice.sources.list', capability: 'read_workspace', label: '列出授权来源', description: 'List selected source metadata; previews are not evidence.', argsSummary: '{cursor?,limit?}', resultSummary: 'Bounded authorized source entries and next cursor.' },
+  'lattice.sources.search': { name: 'lattice.sources.search', capability: 'search_workspace', label: '搜索实际来源', description: 'Search actual extracted units in the selected scope.', argsSummary: '{query,cursor?,maxFiles?,maxChars?,maxUnits?}', resultSummary: 'Read chunks, revisions, coverage and locators.' },
+  'lattice.sources.read': { name: 'lattice.sources.read', capability: 'read_workspace', label: '读取实际来源', description: 'Read revision-checked source units within the selected scope.', argsSummary: '{path,expectedVersion?,units?,offsets?,maxChars?,maxUnits?}', resultSummary: 'Actual chunks, revisions and remaining coverage.' },
+  'lattice.pdf.proposeChild': { name: 'lattice.pdf.proposeChild', capability: 'prepare_pdf_child', label: '准备 PDF 子文件审查', description: 'Prepare a concrete PDF child proposal; never approve or write files.', argsSummary: '{parentPath,parentItemId?,fileName,content,mode}', resultSummary: 'Manifest-bound child draft waiting for Workbench review.' },
   'workspace.search': {
     name: 'workspace.search',
     capability: 'search_workspace',
@@ -220,6 +294,14 @@ export const AGENT_TOOL_DESCRIPTORS: Record<AgentToolName, AgentToolDescriptor> 
     description: 'Persist an approved scoped Agent Memory entry.',
     argsSummary: '{ memory, reason?: string }',
     resultSummary: 'Saved memory id, scope, title, and source fingerprint.',
+  },
+  'schedule_task': {
+    name: 'schedule_task',
+    capability: 'schedule_task',
+    label: 'Schedule task',
+    description: 'Create a local scheduled task after explicit automation approval.',
+    argsSummary: '{ title: string, prompt?: string, schedule: once|interval, maxRetries?: number }',
+    resultSummary: 'Created scheduled task id and next run state.',
   },
 };
 
@@ -311,6 +393,26 @@ export function buildAgentToolResultPreview<TName extends AgentToolName>(
   toolName: TName,
   result: AgentToolResultByName[TName],
 ): AgentToolResultPreview {
+  if (isLatticeApiToolName(toolName)) {
+    const value = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+    const entries = Array.isArray(value.entries) ? value.entries : [];
+    const chunks = Array.isArray(value.chunks) ? value.chunks : Array.isArray(value.reads)
+      ? value.reads.flatMap(read => read && typeof read === 'object' && Array.isArray(read.chunks) ? read.chunks : []) : [];
+    const evidenceCount = chunks.filter(chunk => chunk && typeof chunk === 'object' && typeof chunk.text === 'string' && chunk.text.trim()).length;
+    const status = typeof value.status === 'string' ? value.status : value.complete === false ? 'partial' : 'completed';
+    const preview = fallbackResultPreview(result);
+    return { preview, metadata: {
+      ...buildResultEnvelopeMetadata({ toolName, preview, status: value.complete === false ? 'partial' : 'completed',
+        summary: toolName.includes('.propose') ? 'Concrete Workbench draft prepared; user review and persistence remain pending.' : preview }),
+      resultStatus: status,
+      resultSize: resultSize(result), resultItemCount: entries.length || chunks.length,
+      evidenceCount, complete: typeof value.complete === 'boolean' ? value.complete : null,
+      nextCursor: typeof value.nextCursor === 'number' ? value.nextCursor : null,
+      scannedChars: typeof value.scannedChars === 'number' ? value.scannedChars : null,
+      pendingUnitCount: Array.isArray(value.pendingUnits) ? value.pendingUnits.length : null,
+      pendingUnitsPreview: Array.isArray(value.pendingUnits) ? JSON.stringify(value.pendingUnits.slice(0, 30)) : null,
+    } };
+  }
   switch (toolName) {
     case 'workspace.search': {
       const files = result as FileIndex[];
@@ -471,6 +573,22 @@ export function buildAgentToolResultPreview<TName extends AgentToolName>(
         },
       };
     }
+    case 'schedule_task': {
+      const task = result as { taskId: string };
+      const preview = `Scheduled task created: ${task.taskId}.`;
+      return {
+        preview,
+        metadata: {
+          ...buildResultEnvelopeMetadata({
+            toolName: 'schedule_task',
+            preview,
+            summary: 'Scheduled task created after approval.',
+            artifacts: task.taskId,
+          }),
+          artifactId: task.taskId,
+        },
+      };
+    }
     default:
       return {
         preview: fallbackResultPreview(result),
@@ -495,6 +613,11 @@ async function executeToolBody(
   request: AgentToolRequest,
   options: AgentToolExecutionOptions,
 ): Promise<AgentToolResultByName[AgentToolName]> {
+  if (isLatticeApiToolName(request.name)) {
+    const runtime = options.apiToolRuntime ?? options.latticeSourcePdfRuntime;
+    if (!runtime) throw new Error('当前请求没有绑定授权 Lattice runtime，工具未执行。');
+    return runtime.execute(request.name, validateLatticeHarnessArgs(request.name, request.args), options.signal);
+  }
   switch (request.name) {
     case 'workspace.search':
       return searchIndex(request.args.query, request.args.limit ?? 10);
@@ -525,11 +648,19 @@ async function executeToolBody(
       return (options.runCode ?? runCodeWithWorkspaceRunner)(request.args);
     case 'memory.write': {
       const memoryId = useAgentMemoryStore.getState().addMemory(request.args.memory);
+      await useAgentMemoryStore.getState().loadMemories();
+      if (!useAgentMemoryStore.getState().loaded || useAgentMemoryStore.getState().persistenceError) {
+        throw new Error('Memory persistence failed; the preference remains only in this session and was not confirmed saved.');
+      }
       const memory = useAgentMemoryStore.getState().getMemory(memoryId);
       if (!memory) {
         throw new Error(`Memory write failed: ${memoryId}`);
       }
       return { memoryId, memory };
+    }
+    case 'schedule_task': {
+      const task = useScheduledTaskStore.getState().createTask(request.args);
+      return { taskId: task.id };
     }
   }
 }
@@ -619,6 +750,14 @@ export async function executeAgentTool<TName extends AgentToolName>(
     };
   }
 
+  if (request.name === 'schedule_task' && !useScheduledTaskStore.getState().executorAvailable) {
+    const error = 'Scheduled AI execution is unavailable in this version.';
+    // The caller owns the run's terminal transition; an unavailable tool is an
+    // observation that must remain recordable by the surrounding plan loop.
+    appendTrace(session.id, { id: traceId(session.id, request.name, 'unavailable'), kind: 'tool_result', message: error, tool, decision, metadata: { resultStatus: 'failed', resultSummary: error } });
+    return { status: 'failed', sessionId: session.id, toolName: request.name, decision, error };
+  }
+
   if (decision.requiresApproval && !options.approvedByUser) {
     const approvalRequestId = traceId(session.id, request.name, 'approval');
     appendTrace(session.id, {
@@ -637,6 +776,7 @@ export async function executeAgentTool<TName extends AgentToolName>(
     });
     useAgentSessionStore.getState().addPendingApproval(session.id, {
       id: approvalRequestId,
+      planStepId: options.planStepId,
       capability,
       toolName: request.name,
       toolLabel: descriptor.label,
@@ -682,6 +822,9 @@ export async function executeAgentTool<TName extends AgentToolName>(
         status: 'completed',
         approvalNote: options.approvalNote,
         resultPreview: preview.preview,
+        ...(request.name === 'runner.runCode' ? {
+          executionReceipt: buildRunCodeExecutionReceipt(request as Extract<AgentToolRequest, { name: 'runner.runCode' }>, session.id, options.approvalRequestId, 'completed', (result as { output: string }).output),
+        } : {}),
       });
     }
     appendTrace(session.id, {
@@ -786,16 +929,21 @@ export async function executeAgentTool<TName extends AgentToolName>(
         status: 'failed',
         approvalNote: options.approvalNote,
         error: message,
+        ...(request.name === 'runner.runCode' ? {
+          executionReceipt: buildRunCodeExecutionReceipt(request as Extract<AgentToolRequest, { name: 'runner.runCode' }>, session.id, options.approvalRequestId, 'failed', message),
+        } : {}),
       });
     }
+    const sourceFailureObservation = options.deferSourceReadFailure
+      && ['lattice.sources.read', 'lattice.sources.search', 'lattice.sources.active'].includes(request.name);
     appendTrace(session.id, {
       id: traceId(session.id, request.name, 'failed'),
-      kind: 'error',
+      kind: sourceFailureObservation ? 'tool_result' : 'error',
       message: `${label} failed: ${message}`,
       error: message,
       tool,
       decision,
-      metadata: agentErrorMetadata(diagnostic),
+      metadata: { ...agentErrorMetadata(diagnostic), resultStatus: 'failed' },
     });
     return {
       status: 'failed',

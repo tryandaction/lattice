@@ -10,7 +10,11 @@ PDF item workspaces must behave like durable document companions rather than pat
 - Keep path-derived file ids only as storage aliases and migration candidates.
 - When a PDF with an existing fingerprint opens at a new path:
   - If the previous PDF path still exists, treat the new PDF as a copy and reuse the original item workspace without duplicating files.
-  - If the previous PDF path no longer exists, treat the new path as a move or rename and migrate the item workspace path.
+  - If the previous PDF path no longer exists, treat the new path as a move or rename, keep the stable item workspace folder, and append the new path to `knownPdfPaths`.
+- Never relocate an existing `.lattice/items/<itemFolder>/` merely because the PDF path changed. The item folder is stable companion storage, not a projection of the current PDF path.
+- When the Explorer is scoped to a nested folder, recover the full path relative to the ancestor `.lattice` root before resolving a manifest. Reading and creating subfiles must use that ancestor root.
+- Persist a global PDF item location catalog keyed by stable `documentId` and unique content fingerprint. The catalog records the workspace key, desktop root path, PDF path, and item folder path so a PDF moved to an independent workspace can continue mounting its original subfiles.
+- If one fingerprint maps to multiple document ids, do not guess. Leave the location unresolved until a stable document id or an explicit user choice disambiguates it.
 - Recursively list item workspace entries, including folders and arbitrary file extensions.
 - Treat the PDF Explorer row as a drop target. Dragging a file or folder onto a PDF moves that entry into the PDF's item workspace, refreshes the tree, and expands the PDF's virtual children.
 - Rewrite managed Markdown and notebook PDF links recursively where possible.
@@ -25,4 +29,6 @@ PDF item workspaces must behave like durable document companions rather than pat
 
 ## Runtime Boundary
 
-Lattice cannot mutate `.lattice` while the desktop app is not running because the current Tauri layer has no background watcher or OS service. The recovery happens deterministically on the next open: content fingerprint lookup repairs manifests, sidecars, and generated links.
+Lattice cannot mutate `.lattice` while the desktop app is not running because the current Tauri layer has no background watcher or OS service. Recovery happens on the next open: content fingerprint lookup and the PDF item location catalog reconnect the PDF to its stable item workspace without moving or deleting companion data.
+
+On Desktop, a catalogued absolute root can be reopened directly when it still exists. On Web, the browser may revoke a previously registered directory handle; Lattice must then mark PDF virtual children as `unavailable`, show a reauthorization hint, and allow retry. It must not represent an inaccessible workspace as an empty, successfully loaded item.

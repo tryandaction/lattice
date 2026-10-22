@@ -3,12 +3,14 @@ import type { AnnotationItem } from "@/types/universal-annotation";
 import {
   buildPdfAnnotationsMarkdown,
   copyPdfItemWorkspace,
+  deletePdfItemWorkspace,
   ensurePdfItemWorkspace,
   getPdfItemManifestIndex,
   getDefaultPdfItemFolderPath,
   invalidatePdfItemManifestIndex,
   listPdfItemNotes,
   loadPdfItemManifest,
+  movePdfItemWorkspace,
   removeResolvedPdfItemAnnotationMarkdownDrafts,
   syncPdfAnnotationsMarkdown,
   syncPdfManagedFiles,
@@ -219,8 +221,11 @@ describe("pdf-item utils", () => {
     expect(markdown).toContain("../../../papers/rydberg-review.pdf#page=2");
     expect(markdown).toContain("../../../papers/rydberg-review.pdf#annotation=ann-1");
     expect(markdown).toContain("#### Screenshot");
-    expect(markdown).toContain("![Area Screenshot ann-area Page 4](./_annotation_previews/ann-area.png)");
-    expect(markdown).toContain("![Ink Screenshot ann-ink Page 4](./_annotation_previews/ann-ink.png)");
+    expect(markdown).toContain('class="lattice-pdf-annotation-preview"');
+    expect(markdown).toContain('data-color="#2ea8e5"');
+    expect(markdown).toContain('data-color="#ff5252"');
+    expect(markdown).toContain('src="./_annotation_previews/ann-area.png"');
+    expect(markdown).toContain('src="./_annotation_previews/ann-ink.png"');
   });
 
   it("formats pdf annotation markdown as readable renderable sections", () => {
@@ -287,11 +292,11 @@ describe("pdf-item utils", () => {
       },
     });
 
-    expect(markdown).toContain("#### Quote\n\n> First selected line.\n> Second selected line.");
+    expect(markdown).toContain('#### Quote\n\n<blockquote class="lattice-pdf-annotation-quote" data-color="#ffeb3b">First selected line.<br />Second selected line.</blockquote>');
     expect(markdown).toContain("#### Comment\n\nThis comment keeps **Markdown** syntax.\n\n- compare with [notebook](../analysis.ipynb)\n- preserve `inline code`");
     expect(markdown).not.toContain("- Quote: First selected line.");
     expect(markdown).not.toContain("- Comment: This comment keeps");
-    expect(markdown).toContain("#### Screenshot\n\n![Area Screenshot ann-area-readable Page 3](./_annotation_previews/ann-area-readable.png)\n\n_Screenshot: page 3, 320x180px_");
+    expect(markdown).toContain('#### Screenshot\n\n<img class="lattice-pdf-annotation-preview" data-color="#2ea8e5" src="./_annotation_previews/ann-area-readable.png" alt="Area Screenshot ann-area-readable Page 3" width="320" height="180" />\n\n_Screenshot: page 3, 320x180px_');
     expect(markdown).not.toContain("- Screenshot:\n  !");
   });
 
@@ -559,7 +564,76 @@ describe("pdf-item utils", () => {
     await expect(lattice.getDirectoryHandle("annotations")).rejects.toBeInstanceOf(DOMException);
   });
 
-  it("keeps the same item id and moves the workspace when an external rename is repaired", async () => {
+  it("keeps shared PDF item notes when deleting one copied alias", async () => {
+    const root = new TestDirectoryHandle("workspace");
+    const papers = root.addDirectory(new TestDirectoryHandle("papers"));
+    papers.addFile(new TestFileHandle("source.pdf", "%PDF-source"));
+    const copies = root.addDirectory(new TestDirectoryHandle("copies"));
+    copies.addFile(new TestFileHandle("source.pdf", "%PDF-copy"));
+    const lattice = root.addDirectory(new TestDirectoryHandle(".lattice"));
+    const items = lattice.addDirectory(new TestDirectoryHandle("items"));
+    const itemDir = items.addDirectory(new TestDirectoryHandle("stable-item"));
+    itemDir.addFile(new TestFileHandle("manifest.json", JSON.stringify({
+      version: 4,
+      itemId: "stable-doc-id",
+      pdfPath: "papers/source.pdf",
+      itemFolderPath: ".lattice/items/stable-item",
+      annotationIndexPath: null,
+      fileFingerprint: "same-content",
+      versionFingerprint: "same-version",
+      knownPdfPaths: ["papers/source.pdf", "copies/source.pdf"],
+      createdAt: 1,
+      updatedAt: 1,
+    })));
+    itemDir.addFile(new TestFileHandle("notes.md", "# Keep me"));
+
+    await deletePdfItemWorkspace(root as unknown as FileSystemDirectoryHandle, "copies/source.pdf");
+
+    const stableDir = await items.getDirectoryHandle("stable-item");
+    await expect(stableDir.getFileHandle("notes.md")).resolves.toBeTruthy();
+    const next = await loadPdfItemManifest(root as unknown as FileSystemDirectoryHandle, "source.pdf", "papers/source.pdf");
+    expect(next.itemId).toBe("stable-doc-id");
+    expect(next.knownPdfPaths).toContain("papers/source.pdf");
+    expect(next.knownPdfPaths).not.toContain("copies/source.pdf");
+  });
+
+  it("routes copied pdfs to an existing workspace when the manifest path includes the opened root name", async () => {
+    const root = new TestDirectoryHandle("atom");
+    const lattice = root.addDirectory(new TestDirectoryHandle(".lattice"));
+    const items = lattice.addDirectory(new TestDirectoryHandle("items"));
+    const itemDir = items.addDirectory(new TestDirectoryHandle("atom-Categorized_Papers-paper.pdf"));
+    itemDir.addFile(new TestFileHandle("manifest.json", JSON.stringify({
+      version: 4,
+      itemId: "stable-doc-id",
+      pdfPath: "atom/Theoretical Research/taiyi/essay/paper.pdf",
+      itemFolderPath: ".lattice/items/atom-Categorized_Papers-paper.pdf",
+      annotationIndexPath: ".lattice/items/atom-Categorized_Papers-paper.pdf/_annotations.md",
+      fileFingerprint: "same-content",
+      versionFingerprint: "source-version",
+      knownPdfPaths: [
+        "atom/Theoretical Research/taiyi/essay/paper.pdf",
+        "atom/Categorized Papers/Rydberg_Gates_Control/paper.pdf",
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    })));
+    itemDir.addFile(new TestFileHandle("notes.md", "# Notes"));
+
+    const manifest = await loadPdfItemManifest(
+      root as unknown as FileSystemDirectoryHandle,
+      "Theoretical_Research-taiyi-essay-paper.pdf",
+      "Theoretical Research/taiyi/essay/paper.pdf",
+    );
+    const entries = await listPdfItemNotes(root as unknown as FileSystemDirectoryHandle, manifest);
+
+    expect(manifest.itemId).toBe("stable-doc-id");
+    expect(manifest.itemFolderPath).toBe(".lattice/items/atom-Categorized_Papers-paper.pdf");
+    expect(manifest.knownPdfPaths).toContain("Theoretical Research/taiyi/essay/paper.pdf");
+    expect(manifest.knownPdfPaths).toContain("atom/Theoretical Research/taiyi/essay/paper.pdf");
+    expect(entries.map((entry) => entry.path)).toContain(".lattice/items/atom-Categorized_Papers-paper.pdf/notes.md");
+  });
+
+  it("keeps the same item id and stable item folder when an external rename is repaired", async () => {
     const root = new TestDirectoryHandle("workspace");
     const lattice = root.addDirectory(new TestDirectoryHandle(".lattice"));
     const items = lattice.addDirectory(new TestDirectoryHandle("items"));
@@ -590,10 +664,42 @@ describe("pdf-item utils", () => {
     );
 
     expect(repaired.itemId).toBe("stable-doc-id");
-    expect(repaired.itemFolderPath).toBe(".lattice/items/papers-renamed.pdf");
-    await expect(items.getDirectoryHandle("papers-old.pdf")).rejects.toBeInstanceOf(DOMException);
-    const repairedDir = await items.getDirectoryHandle("papers-renamed.pdf");
-    await expect(repairedDir.getFileHandle("notes.md")).resolves.toBeTruthy();
+    expect(repaired.itemFolderPath).toBe(".lattice/items/papers-old.pdf");
+    const stableDir = await items.getDirectoryHandle("papers-old.pdf");
+    await expect(stableDir.getFileHandle("notes.md")).resolves.toBeTruthy();
+    await expect(items.getDirectoryHandle("papers-renamed.pdf")).rejects.toBeInstanceOf(DOMException);
+  });
+
+  it("keeps the stable item folder when a pdf is moved through Lattice", async () => {
+    const root = new TestDirectoryHandle("workspace");
+    const lattice = root.addDirectory(new TestDirectoryHandle(".lattice"));
+    const items = lattice.addDirectory(new TestDirectoryHandle("items"));
+    const itemDir = items.addDirectory(new TestDirectoryHandle("stable-item"));
+    itemDir.addFile(new TestFileHandle("manifest.json", JSON.stringify({
+      version: 4,
+      itemId: "stable-doc-id",
+      pdfPath: "workspace/papers/paper.pdf",
+      itemFolderPath: ".lattice/items/stable-item",
+      annotationIndexPath: null,
+      fileFingerprint: "same-content",
+      versionFingerprint: "same-version",
+      knownPdfPaths: ["workspace/papers/paper.pdf"],
+      createdAt: 1,
+      updatedAt: 1,
+    })));
+    itemDir.addFile(new TestFileHandle("notes.md", "# Notes"));
+
+    const moved = await movePdfItemWorkspace(
+      root as unknown as FileSystemDirectoryHandle,
+      "workspace/papers/paper.pdf",
+      "workspace/archive/paper.pdf",
+    );
+
+    expect(moved?.itemId).toBe("stable-doc-id");
+    expect(moved?.itemFolderPath).toBe(".lattice/items/stable-item");
+    expect(moved?.knownPdfPaths).toContain("workspace/archive/paper.pdf");
+    const stableDir = await items.getDirectoryHandle("stable-item");
+    await expect(stableDir.getFileHandle("notes.md")).resolves.toBeTruthy();
   });
 
   it("skips rewriting unchanged annotation markdown and preview files", async () => {
@@ -656,6 +762,55 @@ describe("pdf-item utils", () => {
 
     expect(previewFile.writeCount).toBe(0);
     expect(markdownFile.writeCount).toBe(0);
+  });
+
+  it("repairs a stale annotation index path and keeps preview links local to the current item folder", async () => {
+    setLocale("en-US");
+
+    const root = new TestDirectoryHandle("workspace");
+    const lattice = root.addDirectory(new TestDirectoryHandle(".lattice"));
+    const items = lattice.addDirectory(new TestDirectoryHandle("items"));
+    const itemDir = items.addDirectory(new TestDirectoryHandle("paper-current"));
+    itemDir.addFile(new TestFileHandle("_annotations.md", ""));
+    const annotation: AnnotationItem = {
+      id: "ann-area-current",
+      target: {
+        type: "pdf",
+        page: 2,
+        rects: [{ x1: 0.1, y1: 0.2, x2: 0.5, y2: 0.6 }],
+      },
+      style: { color: "#2ea8e5", type: "area" },
+      preview: {
+        type: "image",
+        dataUrl: "data:image/png;base64,cHJldmlldw==",
+        width: 320,
+        height: 180,
+      },
+      author: "user",
+      createdAt: 1710000006000,
+    };
+
+    const result = await syncPdfAnnotationsMarkdown(
+      root as unknown as FileSystemDirectoryHandle,
+      {
+        version: 4,
+        itemId: "paper",
+        pdfPath: "docs/paper.pdf",
+        itemFolderPath: ".lattice/items/paper-current",
+        annotationIndexPath: ".lattice/items/paper-old/_annotations.md",
+        fileFingerprint: null,
+        versionFingerprint: null,
+        knownPdfPaths: ["docs/paper.pdf"],
+        createdAt: 1710000000000,
+        updatedAt: 1710000000000,
+      },
+      "paper.pdf",
+      [annotation],
+    );
+
+    expect(result.path).toBe(".lattice/items/paper-current/_annotations.md");
+    const markdown = await (await itemDir.getFileHandle("_annotations.md")).getFile();
+    expect(await markdown.text()).toContain('src="./_annotation_previews/ann-area-current.png"');
   });
 
   it("does not create annotation sidecar files for untouched PDFs", async () => {

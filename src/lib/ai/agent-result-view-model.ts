@@ -143,6 +143,7 @@ function buildAgentRunSection(message: ChatMessage): AgentResultSectionViewModel
       ? `Memory suggestions: ${agentResult.memorySummary.pendingSuggestionCount} pending${agentResult.memorySummary.pendingSuggestionTitles?.length ? ` (${agentResult.memorySummary.pendingSuggestionTitles.join(', ')})` : ''}.`
       : null,
     ...(agentResult.warnings ?? []).map((warning) => `Warning: ${warning}`),
+    ...(message.evidenceRefs ?? []).slice(0, 8).map((ref) => `[${ref.label || ref.locator}](${ref.locator})`),
   ].filter((line): line is string => Boolean(line));
 
   if (metadataLines.length === 0) {
@@ -163,11 +164,17 @@ export function buildAgentResultSections(message: ChatMessage): AgentResultSecti
     return null;
   }
 
+  // Markdown thematic breaks belong to the answer. Only an application footer
+  // explicitly tied to this session may be separated from a legacy message.
+  const footer = [...message.content.matchAll(/\r?\n[ \t]*---[ \t]*\r?\n(?:[ \t]*\r?\n)*Agent session: ([^\r\n]+)(?=\r?\n|$)/g)]
+    .find(match => match[1].trim() === agentResult.sessionId);
+  const answerBody = footer ? message.content.slice(0, footer.index).trimEnd() : message.content;
+
   const sections: AgentResultSectionViewModel[] = [
     {
       kind: 'conclusion',
       title: 'Answer',
-      content: message.content.split(/\n---\n/)[0]?.trim() || message.content,
+      content: answerBody,
       synthetic: true,
     },
   ];

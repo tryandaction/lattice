@@ -6,10 +6,12 @@
  */
 
 import { DEFAULT_ENABLED_PLUGIN_IDS } from "@/lib/plugins/defaults";
+import type { AppearanceSettings } from "@/lib/appearance/types";
+import { DEFAULT_APPEARANCE_SETTINGS } from "@/lib/appearance/types";
 
 export type Locale = 'zh-CN' | 'en-US';
 export type ThemeMode = 'light' | 'dark' | 'system';
-export type ActivityView = 'files' | 'annotations' | 'search';
+export type ActivityView = 'files' | 'annotations' | 'search' | 'vscode';
 export type WorkbenchPanelScope = 'all' | 'current';
 export type AnnotationPanelSort = 'latest' | 'count' | 'name';
 export type SearchPanelMode = 'name_and_content' | 'file_name_only';
@@ -27,13 +29,14 @@ export interface WindowState {
 export interface ExecutionDockLayout {
   size: number;
   open: boolean;
-  activeTab?: "run" | "problems";
+  activeTab?: "run" | "problems" | "references";
 }
 
 export interface AppSettings {
   // General
   language: Locale;
   theme: ThemeMode;
+  appearance: AppearanceSettings;
   
   // Files
   defaultFolder: string | null;
@@ -48,6 +51,7 @@ export interface AppSettings {
   pdfExternalLinkOpenMode: PdfExternalLinkOpenMode;
 
   // Workbench
+  workbenchSurface: 'local' | 'cloud';
   activityView: ActivityView;
   sidePanelWidth: number;
   sidePanelCollapsed: boolean;
@@ -84,13 +88,17 @@ export interface AppSettings {
   aiMaxTokens: number;
   aiStreamingEnabled: boolean;
   aiSystemPrompt: string;
+  aiChatSystemPrompt: string | null;
+  aiAgentSystemPrompt: string | null;
   aiPanelOpen: boolean;
   aiPanelWidth: number;
+  vscodeCompatEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   language: 'zh-CN',
   theme: 'system',
+  appearance: DEFAULT_APPEARANCE_SETTINGS,
   defaultFolder: null,
   lastOpenedFolder: null,
   lastWorkspacePath: null,
@@ -101,6 +109,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   rememberWindowState: true,
   markdownUpdateLinksOnRename: false,
   pdfExternalLinkOpenMode: 'internal',
+  workbenchSurface: 'local',
   activityView: 'files',
   sidePanelWidth: 22,
   sidePanelCollapsed: false,
@@ -129,8 +138,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   aiMaxTokens: 4096,
   aiStreamingEnabled: true,
   aiSystemPrompt: 'You are a helpful research assistant in Lattice, a scientific workbench. Be concise and precise.',
+  aiChatSystemPrompt: null,
+  aiAgentSystemPrompt: null,
   aiPanelOpen: false,
   aiPanelWidth: 28,
+  vscodeCompatEnabled: false,
 };
 
 export const SETTINGS_STORAGE_KEY = 'lattice-settings';

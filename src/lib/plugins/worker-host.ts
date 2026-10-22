@@ -56,6 +56,10 @@ function postMessageSafe(message) {
   self.postMessage(message);
 }
 
+function finishOperation(message,error) {
+  postMessageSafe({type:'operationResult',requestId:message.requestId,ok:!error,error:error?.message||String(error||'')});
+}
+
 function postAudit(event) {
   postMessageSafe({ type: 'audit', event });
 }
@@ -262,8 +266,10 @@ self.onmessage = async (event) => {
       pluginModule = await import(url);
       URL.revokeObjectURL(url);
       postMessageSafe({ type: 'loaded' });
+      finishOperation(message);
     } catch (error) {
       postMessageSafe({ type: 'error', error: error?.message || String(error) });
+      finishOperation(message,error);
     }
     return;
   }
@@ -271,6 +277,7 @@ self.onmessage = async (event) => {
   if (message.type === 'activate') {
     if (!pluginModule?.activate) {
       postMessageSafe({ type: 'error', error: 'Plugin missing activate()' });
+      finishOperation(message,new Error('Plugin missing activate()'));
       return;
     }
     try {
@@ -280,8 +287,10 @@ self.onmessage = async (event) => {
       await pluginModule.activate(ctx);
       active = true;
       postMessageSafe({ type: 'activated' });
+      finishOperation(message);
     } catch (error) {
       postMessageSafe({ type: 'error', error: error?.message || String(error) });
+      finishOperation(message,error);
     }
     return;
   }
@@ -289,16 +298,19 @@ self.onmessage = async (event) => {
   if (message.type === 'deactivate') {
     if (!pluginModule?.deactivate) {
       postMessageSafe({ type: 'deactivated' });
+      finishOperation(message);
       return;
     }
     try {
       await pluginModule.deactivate();
     } catch (error) {
       postMessageSafe({ type: 'error', error: error?.message || String(error) });
+      finishOperation(message,error);
       return;
     }
     active = false;
     postMessageSafe({ type: 'deactivated' });
+    finishOperation(message);
     return;
   }
 
@@ -307,6 +319,7 @@ self.onmessage = async (event) => {
     const runner = commandRegistry.get(commandId);
     if (!runner) {
       postMessageSafe({ type: 'error', error: 'Command not found' });
+      finishOperation(message,new Error('Command not found'));
       return;
     }
     try {
@@ -314,8 +327,10 @@ self.onmessage = async (event) => {
       if (result && typeof result.then === 'function') {
         await result;
       }
+      finishOperation(message);
     } catch (error) {
       postMessageSafe({ type: 'error', error: error?.message || String(error) });
+      finishOperation(message,error);
     }
   }
 
@@ -400,6 +415,17 @@ export class PluginWorkerHost {
   private readonly options: PluginWorkerHostOptions;
   private unsubscribeActiveFile: (() => void) | null = null;
   private lastActiveFile: string | null = null;
+  private operationId=0;
+  private operations=new Map<string,{resolve:()=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
+
+  private requestOperation(type:string,payload:Record<string,unknown>={},timeoutMs=30000):Promise<void> {
+    const worker=this.worker;if(!worker)return Promise.reject(new Error('Plugin worker is not running'));
+    const requestId=String(++this.operationId);
+    return new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{this.operations.delete(requestId);reject(new Error(`Plugin ${type} timed out`));},timeoutMs);
+      this.operations.set(requestId,{resolve,reject,timer});worker.postMessage({type,requestId,...payload});
+    });
+  }
 
   constructor(options: PluginWorkerHostOptions) {
     this.options = options;
@@ -411,11 +437,16 @@ export class PluginWorkerHost {
     const worker = new Worker(url);
     URL.revokeObjectURL(url);
     this.worker = worker;
-    this.startActiveFileListener();
 
     worker.onmessage = async (event: MessageEvent) => {
       const message = event.data;
       if (!message || typeof message !== 'object') return;
+      if(message.type==='operationResult') {
+        const pending=this.operations.get(message.requestId);if(!pending)return;
+        clearTimeout(pending.timer);this.operations.delete(message.requestId);
+        if(message.ok)pending.resolve();else pending.reject(new Error(message.error||'Plugin worker operation failed'));
+        return;
+      }
 
       if (message.type === 'registerCommand') {
         this.options.onRegisterCommand(message.command);
@@ -455,23 +486,24 @@ export class PluginWorkerHost {
       }
     };
 
-    worker.postMessage({
-      type: 'load',
-      code: this.options.mainCode,
-    });
-
-    worker.postMessage({
-      type: 'activate',
+    worker.onerror=(event)=>{
+      const error=new Error(event.message||'Plugin worker failed');
+      this.options.onError(error);for(const pending of this.operations.values()){clearTimeout(pending.timer);pending.reject(error);}this.operations.clear();
+    };
+    try {
+      await this.requestOperation('load',{code:this.options.mainCode});
+      await this.requestOperation('activate',{
       pluginId: this.options.pluginId,
       platform: this.options.platform,
       permissions: this.options.permissions,
       networkAllowlist: this.options.networkAllowlist,
     });
+      this.startActiveFileListener();
+    } catch(error){await this.stop();throw error;}
   }
 
   async runCommand(commandId: string, payload?: unknown): Promise<void> {
-    if (!this.worker) return;
-    this.worker.postMessage({ type: 'runCommand', commandId, payload });
+    await this.requestOperation('runCommand',{commandId,payload});
   }
 
   updateNetworkAllowlist(allowlist: string[]): void {
@@ -491,13 +523,15 @@ export class PluginWorkerHost {
 
   async stop(): Promise<void> {
     if (!this.worker) return;
-    this.worker.postMessage({ type: 'deactivate' });
+    const worker=this.worker;
+    try {await this.requestOperation('deactivate',{},1500);} catch(error){this.options.onError(error);}
     if (this.unsubscribeActiveFile) {
       this.unsubscribeActiveFile();
       this.unsubscribeActiveFile = null;
     }
-    this.worker.terminate();
+    worker.terminate();
     this.worker = null;
+    for(const pending of this.operations.values()){clearTimeout(pending.timer);pending.reject(new Error('Plugin stopped'));}this.operations.clear();
   }
 
   private startActiveFileListener(): void {

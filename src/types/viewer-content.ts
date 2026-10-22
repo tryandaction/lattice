@@ -6,6 +6,8 @@ export interface TextViewerContent {
 export interface BufferViewerContent {
   kind: "buffer";
   data: ArrayBuffer;
+  /** Revision of the File snapshot that produced these bytes, never a later stat. */
+  sourceRevision?: string;
 }
 
 export interface DesktopUrlViewerContent {

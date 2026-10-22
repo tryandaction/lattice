@@ -12,6 +12,7 @@ import {
   type LatticeOperationContract,
 } from './lattice-skills/operation-contract';
 import type { AgentToolCapability } from './agent-policy';
+import { isDocumentFollowup, isFocusedDocumentRequest, isTargetedDocumentRequest, isWholeDocumentRequest } from './request-intent';
 
 export type ResearchAgentWorkflowId =
   | 'markdown-research'
@@ -34,6 +35,7 @@ export type NoteNotebookPolicy = 'none' | 'experiments' | 'data-extraction';
 export type NoteApprovalMode = 'draft-first' | 'ask-before-write' | 'auto-draft-only';
 
 export interface NoteTakingSkillConfig {
+  annotationLimit?: number;
   language: NoteTakingLanguage;
   noteStyle: NoteTakingStyle;
   template: string;
@@ -472,6 +474,7 @@ export interface InferResearchAgentWorkflowInput {
   filePath?: string;
   content?: string;
   selection?: string;
+  hasDocumentContext?: boolean;
 }
 
 const CODE_FILE_PATTERN = /\.(?:[cm]?[jt]sx?|tsx?|py|rs|go|java|kt|kts|cs|cpp|cc|cxx|c|h|hpp|swift|rb|php|vue|svelte|astro|css|scss|sass|less|json|ya?ml|toml|ini|sh|ps1|mjs|cjs)$/i;
@@ -482,15 +485,28 @@ function containsAny(text: string, patterns: RegExp[]): boolean {
 
 export function inferResearchAgentWorkflow(input: InferResearchAgentWorkflowInput): ResearchAgentWorkflowId {
   const filePath = input.filePath?.toLowerCase() ?? '';
-  const text = [
-    input.task,
-    input.query,
-    input.selection,
-    input.content?.slice(0, 2000),
-    filePath,
-  ].filter(Boolean).join('\n').toLowerCase();
+  const request = [input.task, input.query].filter(Boolean).join('\n').toLowerCase();
+  // Route the user's requested action, not incidental words in the paper.
+  if (filePath.endsWith('.pdf') && /\b(?:highlight|underline|annotat\w*)\b|高亮|批注|标注|下划线/u.test(request)) {
+    return 'pdf-annotation';
+  }
+  // Material is evidence, not an instruction. Words such as Python, experiment,
+  // or structure in a source must never override the user's requested action.
+  const text = request;
+  const hasDocumentContext = input.hasDocumentContext ?? /\.(?:pdf|md|mdx|markdown)$/i.test(filePath);
+  const documentReading = !isFocusedDocumentRequest(text) && !isTargetedDocumentRequest(text) && (
+    isWholeDocumentRequest(text)
+    || isDocumentFollowup(input.query ?? input.task ?? '', { hasDocumentContext })
+    || (/(?:本文|这篇|该文|论文|文档|\bpaper\b|\bdocument\b|\barticle\b|\bpdf\b)/iu.test(text)
+      && /(?:原理|机制|详细|深入|解释|讲解|分析|总结|梳理|概括|explain|analy[sz]e|summari[sz]e|review|mechanism|detail)/iu.test(text))
+  );
+  const wantsDraft = /\b(?:reading note|note draft|draft note)\b|阅读笔记|读书笔记|笔记草稿|要点笔记/u.test(text)
+    || /(?:写|起草|撰写|生成|制作).*(?:草稿|笔记|报告)|\b(?:write|draft|create)\b.*\b(?:draft|note|report|essay)\b/u.test(text);
+  if (wantsDraft) return 'reading-note';
 
   const hasCodingIntent = containsAny(text, [
+    /\b(?:write|generate|implement|modify)\b.*\bcode\b/,
+    /(?:编写|写|生成|实现|修改).*代码/,
     /\bcode review\b/,
     /\breview code\b/,
     /\bchange plan\b/,
@@ -502,11 +518,6 @@ export function inferResearchAgentWorkflow(input: InferResearchAgentWorkflowInpu
     /\btypecheck\b/,
     /\bunit test\b/,
     /\btest plan\b/,
-    /\btsx?\b/,
-    /\bjsx?\b/,
-    /\bpython\b/,
-    /\brust\b/,
-    /\btypescript\b/,
     /代码审查/,
     /代码评审/,
     /代码变更/,
@@ -521,29 +532,24 @@ export function inferResearchAgentWorkflow(input: InferResearchAgentWorkflowInpu
 
   if (
     !filePath.endsWith('.ipynb') &&
-    (CODE_FILE_PATTERN.test(filePath) || hasCodingIntent)
+    hasCodingIntent
   ) {
     return 'code-change-plan';
   }
 
   if (
-    filePath.endsWith('.ipynb') ||
     containsAny(text, [
       /\bnotebook\b/,
       /\bcell\b/,
-      /\boutput\b/,
-      /\bexperiment\b/,
+      /\b(?:run|design)\s+(?:an?\s+)?experiment\b/,
+      /\b(?:analy[sz]e|process)\b.*\bdata\b/,
       /\bplot\b/,
       /笔记本/,
       /代码单元/,
       /单元格/,
-      /输出/,
-      /实验输出/,
-      /实验结果/,
-      /实验数据/,
+      /(?:分析|处理|统计).*数据/,
       /运行实验/,
       /结果图/,
-      /图表/,
       /绘图/,
     ])
   ) {
@@ -566,6 +572,8 @@ export function inferResearchAgentWorkflow(input: InferResearchAgentWorkflowInpu
   ])) {
     return 'literature-matrix';
   }
+
+  if (documentReading) return 'paper-reading';
 
   if (containsAny(text, [
     /\borganize\b/,
@@ -618,6 +626,8 @@ export function inferResearchAgentWorkflow(input: InferResearchAgentWorkflowInpu
     return 'reading-note';
   }
 
+  if (CODE_FILE_PATTERN.test(filePath)) return 'code-change-plan';
+  if (filePath.endsWith('.ipynb')) return 'notebook-analysis';
   return 'markdown-research';
 }
 

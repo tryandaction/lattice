@@ -1,0 +1,4 @@
+{
+  "find": "\t\t\tconst basename = path.basename(dep);\n\t\t\tconst fullPath = path.join(cwd, dep);\n\n\t\t\tawait stripAuthenticodeSignature(fullPath);",
+  "replace": "\t\t\tconst basename = path.basename(dep);\n\t\t\tconst fullPath = path.join(cwd, dep);\n\t\t\tconst file = await fs.promises.open(fullPath, 'r');\n\t\t\tconst signature = Buffer.alloc(2);\n\t\t\ttry {\n\t\t\t\tawait file.read(signature, 0, signature.length, 0);\n\t\t\t} finally {\n\t\t\t\tawait file.close();\n\t\t\t}\n\t\t\tif (signature[0] !== 0x4d || signature[1] !== 0x5a) {\n\t\t\t\treturn;\n\t\t\t}\n\n\t\t\tawait stripAuthenticodeSignature(fullPath);"
+}

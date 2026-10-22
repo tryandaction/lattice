@@ -1,5 +1,8 @@
 "use client";
 
+import { useI18n } from "@/hooks/use-i18n";
+import type { TranslationKey } from "@/lib/i18n";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Type } from "lucide-react";
 import type { AnnotationColor } from "../../types/annotation";
@@ -25,40 +28,40 @@ interface ColorPickerProps {
 // ============================================================================
 
 const COLOR_OPTIONS = [
-  { value: 'transparent', label: '无背景', isTransparent: true },
-  { value: 'yellow', label: '黄色', bg: 'bg-yellow-400', hover: 'hover:bg-yellow-500' },
-  { value: 'red', label: '红色', bg: 'bg-red-500', hover: 'hover:bg-red-600' },
-  { value: 'green', label: '绿色', bg: 'bg-green-500', hover: 'hover:bg-green-600' },
-  { value: 'blue', label: '蓝色', bg: 'bg-blue-500', hover: 'hover:bg-blue-600' },
-  { value: '#9C27B0', label: '紫色', hex: '#9C27B0' },
-  { value: '#FF4081', label: '洋红色', hex: '#FF4081' },
-  { value: '#FF9800', label: '橙色', hex: '#FF9800' },
-  { value: '#9E9E9E', label: '灰色', hex: '#9E9E9E' },
+  { value: 'transparent', label: 'annotation.picker.color.transparent', isTransparent: true },
+  { value: 'yellow', label: 'annotation.picker.color.yellow', bg: 'bg-yellow-400', hover: 'hover:bg-yellow-500' },
+  { value: 'red', label: 'annotation.picker.color.red', bg: 'bg-red-500', hover: 'hover:bg-red-600' },
+  { value: 'green', label: 'annotation.picker.color.green', bg: 'bg-green-500', hover: 'hover:bg-green-600' },
+  { value: 'blue', label: 'annotation.picker.color.blue', bg: 'bg-blue-500', hover: 'hover:bg-blue-600' },
+  { value: '#9C27B0', label: 'annotation.picker.color.purple', hex: '#9C27B0' },
+  { value: '#FF4081', label: 'annotation.picker.color.magenta', hex: '#FF4081' },
+  { value: '#FF9800', label: 'annotation.picker.color.orange', hex: '#FF9800' },
+  { value: '#9E9E9E', label: 'annotation.picker.color.gray', hex: '#9E9E9E' },
 ] as const;
 
 const isAnnotationColor = (value: string): value is AnnotationColor =>
   (ANNOTATION_COLORS as readonly string[]).includes(value);
 
-const COLOR_CONFIG: Record<AnnotationColor, { bg: string; hover: string; label: string }> = {
+const COLOR_CONFIG: Record<AnnotationColor, { bg: string; hover: string; label: TranslationKey }> = {
   yellow: {
     bg: 'bg-yellow-400',
     hover: 'hover:bg-yellow-500',
-    label: '黄色',
+    label: 'annotation.picker.color.yellow',
   },
   red: {
     bg: 'bg-red-500',
     hover: 'hover:bg-red-600',
-    label: '红色',
+    label: 'annotation.picker.color.red',
   },
   green: {
     bg: 'bg-green-500',
     hover: 'hover:bg-green-600',
-    label: '绿色',
+    label: 'annotation.picker.color.green',
   },
   blue: {
     bg: 'bg-blue-500',
     hover: 'hover:bg-blue-600',
-    label: '蓝色',
+    label: 'annotation.picker.color.blue',
   },
 };
 
@@ -79,6 +82,7 @@ export function AnnotationColorPicker({
   onTextNoteRequest,
   onClose,
 }: ColorPickerProps) {
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const [showExtended, setShowExtended] = useState(false);
 
@@ -132,11 +136,11 @@ export function AnnotationColorPicker({
         transform: 'translate(-50%, -100%) translateY(-8px)',
       }}
       role="toolbar"
-      aria-label="选择颜色"
+      aria-label={t("annotation.picker.title")}
     >
       {/* Header */}
       <div className="px-3 py-1.5 border-b border-border">
-        <span className="text-xs text-muted-foreground">选择颜色</span>
+        <span className="text-xs text-muted-foreground">{t("annotation.picker.title")}</span>
       </div>
       
       {/* Color options */}
@@ -150,8 +154,8 @@ export function AnnotationColorPicker({
                 key={color}
                 onClick={() => handleColorClick(color)}
                 className={`h-7 w-7 rounded-full ${config.bg} ${config.hover} transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1`}
-                title={config.label}
-                aria-label={config.label}
+                title={t(config.label)}
+                aria-label={t(config.label)}
               />
             );
           })}
@@ -163,7 +167,7 @@ export function AnnotationColorPicker({
             onClick={() => setShowExtended(true)}
             className="w-full text-xs text-muted-foreground hover:text-foreground py-1"
           >
-            更多颜色...
+            {t("annotation.picker.more")}
           </button>
         )}
         
@@ -181,8 +185,8 @@ export function AnnotationColorPicker({
                       : ''
                   }`}
                   style={!('isTransparent' in color) && 'hex' in color ? { backgroundColor: color.hex } : undefined}
-                  title={color.label}
-                  aria-label={color.label}
+                  title={t(color.label)}
+                  aria-label={t(color.label)}
                 />
               ))}
             </div>
@@ -198,7 +202,7 @@ export function AnnotationColorPicker({
             className="flex items-center gap-2 w-full px-2 py-1 rounded text-xs hover:bg-muted"
           >
             <Type className="h-3.5 w-3.5" />
-            <span>添加文字批注</span>
+            <span>{t("annotation.picker.textNote")}</span>
           </button>
         </div>
       )}
@@ -209,7 +213,7 @@ export function AnnotationColorPicker({
           onClick={onClose}
           className="w-full text-xs text-muted-foreground hover:text-foreground py-0.5"
         >
-          返回
+          {t("annotation.picker.back")}
         </button>
       </div>
     </div>

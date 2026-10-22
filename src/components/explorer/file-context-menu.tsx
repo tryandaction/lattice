@@ -1,7 +1,9 @@
 "use client";
 
 import { useRef, useEffect, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { Trash2, Pencil, FilePlus, FolderPlus, Copy, Scissors, ClipboardPaste } from "lucide-react";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/hooks/use-i18n";
 
@@ -28,6 +30,8 @@ interface FileContextMenuProps {
   canPaste?: boolean;
   isDirectory?: boolean;
   actions?: FileContextMenuAction[];
+  canRename?: boolean;
+  canDelete?: boolean;
 }
 
 /**
@@ -48,6 +52,8 @@ export function FileContextMenu({
   canPaste = false,
   isDirectory,
   actions = [],
+  canRename = true,
+  canDelete = true,
 }: FileContextMenuProps) {
   const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -105,11 +111,15 @@ export function FileContextMenu({
     };
   }, [onClose]);
 
-  return (
+  const menu = (
     <div
       ref={menuRef}
-      className="fixed z-50 min-w-[160px] rounded-md border border-border bg-popover p-1 shadow-md"
+      className={cn(
+        "fixed min-w-[160px] rounded-md border border-border bg-popover p-1 shadow-md",
+        UI_LAYER_CLASS.chromeMenu
+      )}
       style={{ left: x, top: y }}
+      role="menu"
     >
       {isDirectory && onNewFile && (
         <button
@@ -232,28 +242,34 @@ export function FileContextMenu({
         <div className="my-1 h-px bg-border" />
       )}
       <button
+        disabled={!canRename}
         onClick={() => {
+          if (!canRename) return;
           onRename();
           onClose();
         }}
         className={cn(
           "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
           "hover:bg-accent transition-colors",
-          "focus:outline-none focus:bg-accent"
+          "focus:outline-none focus:bg-accent",
+          !canRename && "cursor-not-allowed opacity-50"
         )}
       >
         <Pencil className="h-4 w-4" />
         <span>{t("explorer.context.rename")}</span>
       </button>
       <button
+        disabled={!canDelete}
         onClick={() => {
+          if (!canDelete) return;
           onDelete();
           onClose();
         }}
         className={cn(
           "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
           "hover:bg-destructive/10 hover:text-destructive transition-colors",
-          "focus:outline-none focus:bg-destructive/10 focus:text-destructive"
+          "focus:outline-none focus:bg-destructive/10 focus:text-destructive",
+          !canDelete && "cursor-not-allowed opacity-50"
         )}
       >
         <Trash2 className="h-4 w-4" />
@@ -261,6 +277,12 @@ export function FileContextMenu({
       </button>
     </div>
   );
+
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(menu, document.body);
 }
 
 interface DeleteConfirmDialogProps {
@@ -289,8 +311,12 @@ export function DeleteConfirmDialog({ fileName, itemType = "file", onConfirm, on
     return () => document.removeEventListener("keydown", handleEscape);
   }, [onCancel]);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+  const dialog = (
+    <div
+      className={cn("fixed inset-0 flex items-center justify-center bg-black/50", UI_LAYER_CLASS.dialog)}
+      role="dialog"
+      aria-modal="true"
+    >
       <div
         ref={dialogRef}
         className="w-full max-w-sm rounded-lg border border-border bg-background p-4 shadow-lg"
@@ -318,4 +344,10 @@ export function DeleteConfirmDialog({ fileName, itemType = "file", onConfirm, on
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(dialog, document.body);
 }

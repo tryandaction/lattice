@@ -7,6 +7,14 @@ use pdfium_auto::bind_bundled;
 use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "windows")]
+use windows::{
+    core::HSTRING,
+    Graphics::Imaging::BitmapDecoder,
+    Media::Ocr::OcrEngine,
+    Storage::{FileAccessMode, StorageFile},
+};
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PdfNativeTextChar {
@@ -64,7 +72,8 @@ pub struct PdfOcrPageOptions {
     pub psm: Option<u8>,
 }
 
-static PDF_PAGE_LAYOUT_CACHE: OnceLock<Mutex<HashMap<String, PdfNativePageTextLayout>>> = OnceLock::new();
+static PDF_PAGE_LAYOUT_CACHE: OnceLock<Mutex<HashMap<String, PdfNativePageTextLayout>>> =
+    OnceLock::new();
 
 fn get_pdfium() -> Result<Pdfium, String> {
     bind_bundled().map_err(|error| error.to_string())
@@ -111,140 +120,15 @@ fn utf16_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
-fn utf16_offset_for_byte(text: &str, byte_index: usize) -> usize {
-    let safe_index = byte_index.min(text.len());
-    text[..safe_index].encode_utf16().count()
-}
-
-fn byte_offset_for_utf16_offset(text: &str, target_utf16_offset: usize) -> usize {
-    if target_utf16_offset == 0 {
-        return 0;
-    }
-
-    let mut utf16_offset = 0usize;
-    for (byte_index, character) in text.char_indices() {
-        if utf16_offset >= target_utf16_offset {
-            return byte_index;
-        }
-        utf16_offset += character.len_utf16();
-        if utf16_offset >= target_utf16_offset {
-            return byte_index + character.len_utf8();
-        }
-    }
-
-    text.len()
-}
-
-fn clamp_to_char_boundary(text: &str, mut byte_index: usize) -> usize {
-    byte_index = byte_index.min(text.len());
-    while byte_index > 0 && !text.is_char_boundary(byte_index) {
-        byte_index -= 1;
-    }
-    byte_index
-}
-
-fn find_closest_glyph_match(
-    page_text: &str,
-    search_text: &str,
-    search_byte_start: usize,
-    expected_byte_start: usize,
-) -> Option<usize> {
-    if search_text.is_empty() {
-        return None;
-    }
-
-    const LOCAL_SEARCH_WINDOW_BYTES: usize = 512;
-    let window_start = clamp_to_char_boundary(page_text, search_byte_start);
-    let raw_window_end = page_text
-        .len()
-        .min(expected_byte_start.saturating_add(LOCAL_SEARCH_WINDOW_BYTES))
-        .max(window_start.saturating_add(search_text.len()));
-    let window_end = clamp_to_char_boundary(page_text, raw_window_end);
-    if window_end <= window_start {
-        return None;
-    }
-
-    let mut best_match: Option<(usize, usize)> = None;
-    let mut relative_start = 0usize;
-    let window = &page_text[window_start..window_end];
-    while let Some(relative_index) = window[relative_start..].find(search_text) {
-        let byte_index = window_start + relative_start + relative_index;
-        let distance = byte_index.abs_diff(expected_byte_start);
-        if best_match
-            .map(|(best_distance, best_index)| {
-                distance < best_distance || (distance == best_distance && byte_index < best_index)
-            })
-            .unwrap_or(true)
-        {
-            best_match = Some((distance, byte_index));
-        }
-        relative_start += relative_index + search_text.len().max(1);
-        if relative_start >= window.len() {
-            break;
-        }
-    }
-
-    best_match.map(|(_distance, byte_index)| byte_index)
-}
-
-fn resolve_glyph_utf16_offset(
-    page_text: &str,
+fn append_pdfium_glyph(
+    page_text: &mut String,
+    next_utf16_offset: &mut usize,
     glyph_text: &str,
-    search_byte_start: &mut usize,
-    fallback_utf16_offset: &mut usize,
 ) -> (usize, usize) {
-    if glyph_text.is_empty() {
-        return (*fallback_utf16_offset, *fallback_utf16_offset);
-    }
-
-    let safe_search_start = clamp_to_char_boundary(page_text, *search_byte_start);
-    let expected_byte_start = byte_offset_for_utf16_offset(page_text, *fallback_utf16_offset);
-    let search_variants = glyph_search_variants(glyph_text);
-    for search_text in search_variants {
-        if let Some(byte_index) = find_closest_glyph_match(
-            page_text,
-            &search_text,
-            safe_search_start,
-            expected_byte_start,
-        ) {
-            let byte_end_index = byte_index + search_text.len();
-            let utf16_index = utf16_offset_for_byte(page_text, byte_index);
-            let utf16_end_index = utf16_offset_for_byte(page_text, byte_end_index);
-            *search_byte_start = byte_end_index;
-            *fallback_utf16_offset = utf16_end_index;
-            return (utf16_index, utf16_end_index);
-        }
-    }
-
-    let utf16_index = *fallback_utf16_offset;
-    *fallback_utf16_offset += utf16_len(&expand_pdf_ligatures(glyph_text));
-    *search_byte_start = byte_offset_for_utf16_offset(page_text, *fallback_utf16_offset);
-    (utf16_index, *fallback_utf16_offset)
-}
-
-fn glyph_search_variants(glyph_text: &str) -> Vec<String> {
-    let expanded = expand_pdf_ligatures(glyph_text);
-    if expanded == glyph_text {
-        vec![glyph_text.to_string()]
-    } else {
-        vec![glyph_text.to_string(), expanded]
-    }
-}
-
-fn expand_pdf_ligatures(text: &str) -> String {
-    text.chars()
-        .flat_map(|character| match character {
-            '\u{00A0}' => " ".chars().collect::<Vec<_>>(),
-            '\u{FB00}' => "ff".chars().collect::<Vec<_>>(),
-            '\u{FB01}' => "fi".chars().collect::<Vec<_>>(),
-            '\u{FB02}' => "fl".chars().collect::<Vec<_>>(),
-            '\u{FB03}' => "ffi".chars().collect::<Vec<_>>(),
-            '\u{FB04}' => "ffl".chars().collect::<Vec<_>>(),
-            '\u{FB05}' => "ft".chars().collect::<Vec<_>>(),
-            '\u{FB06}' => "st".chars().collect::<Vec<_>>(),
-            _ => vec![character],
-        })
-        .collect()
+    let start = *next_utf16_offset;
+    page_text.push_str(glyph_text);
+    *next_utf16_offset += utf16_len(glyph_text);
+    (start, *next_utf16_offset)
 }
 
 fn parse_optional_usize(value: Option<&str>) -> Option<usize> {
@@ -270,6 +154,8 @@ fn parse_tesseract_tsv(
     let mut text_parts = Vec::new();
     let mut confidence_sum = 0.0f32;
     let mut confidence_count = 0usize;
+    let mut previous_line_key: Option<(usize, usize, usize)> = None;
+    let mut global_line_index = 0usize;
 
     for line in tsv.lines().skip(1) {
         let columns = line.split('\t').collect::<Vec<_>>();
@@ -285,13 +171,39 @@ fn parse_tesseract_tsv(
         let Some(confidence) = parse_tesseract_confidence(columns.get(10).copied()) else {
             continue;
         };
-        let left = columns.get(6).and_then(|value| value.parse::<f32>().ok()).unwrap_or(0.0) / render_scale;
-        let top = columns.get(7).and_then(|value| value.parse::<f32>().ok()).unwrap_or(0.0) / render_scale;
-        let width = columns.get(8).and_then(|value| value.parse::<f32>().ok()).unwrap_or(0.0) / render_scale;
-        let height = columns.get(9).and_then(|value| value.parse::<f32>().ok()).unwrap_or(0.0) / render_scale;
+        let left = columns
+            .get(6)
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(0.0)
+            / render_scale;
+        let top = columns
+            .get(7)
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(0.0)
+            / render_scale;
+        let width = columns
+            .get(8)
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(0.0)
+            / render_scale;
+        let height = columns
+            .get(9)
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(0.0)
+            / render_scale;
         if width <= 0.0 || height <= 0.0 {
             continue;
         }
+
+        let line_key = (
+            parse_optional_usize(columns.get(2).copied()).unwrap_or(0),
+            parse_optional_usize(columns.get(3).copied()).unwrap_or(0),
+            parse_optional_usize(columns.get(4).copied()).unwrap_or(0),
+        );
+        if previous_line_key.is_some() && previous_line_key != Some(line_key) {
+            global_line_index += 1;
+        }
+        previous_line_key = Some(line_key);
 
         confidence_sum += confidence;
         confidence_count += 1;
@@ -303,7 +215,7 @@ fn parse_tesseract_tsv(
             width,
             height,
             confidence,
-            line_index: parse_optional_usize(columns.get(4).copied()),
+            line_index: Some(global_line_index),
             word_index: parse_optional_usize(columns.get(5).copied()),
         });
     }
@@ -323,9 +235,108 @@ fn parse_tesseract_tsv(
     }
 }
 
-#[tauri::command]
-pub async fn desktop_extract_pdf_page_text_layout(
-    path: String,
+#[cfg(target_os = "windows")]
+fn windows_ocr_max_image_dimension() -> Option<u32> {
+    OcrEngine::MaxImageDimension().ok()
+}
+
+#[cfg(target_os = "windows")]
+fn try_windows_ocr_page(
+    image_path: &std::path::Path,
+    page_number: usize,
+    page_width: f32,
+    page_height: f32,
+    render_scale: f32,
+) -> Result<Option<PdfOcrPageTextLayout>, String> {
+    let engine = match OcrEngine::TryCreateFromUserProfileLanguages() {
+        Ok(engine) => engine,
+        Err(_) => return Ok(None),
+    };
+    let path = HSTRING::from(image_path.to_string_lossy().as_ref());
+    let file = StorageFile::GetFileFromPathAsync(&path)
+        .and_then(|operation| operation.join())
+        .map_err(|error| format!("Windows OCR could not open the rendered PDF page: {error}"))?;
+    let stream = file
+        .OpenAsync(FileAccessMode::Read)
+        .and_then(|operation| operation.join())
+        .map_err(|error| format!("Windows OCR could not read the rendered PDF page: {error}"))?;
+    let decoder = BitmapDecoder::CreateAsync(&stream)
+        .and_then(|operation| operation.join())
+        .map_err(|error| format!("Windows OCR could not decode the rendered PDF page: {error}"))?;
+    let bitmap = decoder
+        .GetSoftwareBitmapAsync()
+        .and_then(|operation| operation.join())
+        .map_err(|error| format!("Windows OCR could not create a software bitmap: {error}"))?;
+    let result = engine
+        .RecognizeAsync(&bitmap)
+        .and_then(|operation| operation.join())
+        .map_err(|error| format!("Windows OCR recognition failed: {error}"))?;
+    let lines = result
+        .Lines()
+        .map_err(|error| format!("Windows OCR did not return readable lines: {error}"))?;
+
+    let mut words = Vec::new();
+    let mut text_parts = Vec::new();
+    let line_count = lines
+        .Size()
+        .map_err(|error| format!("Windows OCR line collection failed: {error}"))?;
+    for line_index in 0..line_count {
+        let line = lines
+            .GetAt(line_index)
+            .map_err(|error| format!("Windows OCR line access failed: {error}"))?;
+        let line_words = line
+            .Words()
+            .map_err(|error| format!("Windows OCR word collection failed: {error}"))?;
+        let word_count = line_words
+            .Size()
+            .map_err(|error| format!("Windows OCR word count failed: {error}"))?;
+        for word_index in 0..word_count {
+            let word = line_words
+                .GetAt(word_index)
+                .map_err(|error| format!("Windows OCR word access failed: {error}"))?;
+            let text = word
+                .Text()
+                .map_err(|error| format!("Windows OCR word text failed: {error}"))?
+                .to_string_lossy()
+                .trim()
+                .to_string();
+            if text.is_empty() {
+                continue;
+            }
+            let rect = word
+                .BoundingRect()
+                .map_err(|error| format!("Windows OCR word geometry failed: {error}"))?;
+            if rect.Width <= 0.0 || rect.Height <= 0.0 {
+                continue;
+            }
+
+            text_parts.push(text.clone());
+            words.push(PdfOcrWord {
+                text,
+                left: rect.X / render_scale,
+                top: rect.Y / render_scale,
+                width: rect.Width / render_scale,
+                height: rect.Height / render_scale,
+                confidence: 0.9,
+                line_index: Some(line_index as usize),
+                word_index: Some(word_index as usize),
+            });
+        }
+    }
+
+    Ok(Some(PdfOcrPageTextLayout {
+        source: "ocr".to_string(),
+        page_number,
+        width: page_width,
+        height: page_height,
+        text: text_parts.join(" "),
+        confidence: if words.is_empty() { 0.0 } else { 0.9 },
+        words,
+    }))
+}
+
+fn extract_pdf_page_text_layout(
+    path: &str,
     page_number: usize,
 ) -> Result<PdfNativePageTextLayout, String> {
     if page_number < 1 {
@@ -352,12 +363,27 @@ pub async fn desktop_extract_pdf_page_text_layout(
         .get((page_number - 1) as u16)
         .map_err(|error| error.to_string())?;
 
+    let layout = build_pdf_native_page_text_layout(&page, page_number)?;
+
+    pdf_page_layout_cache()
+        .lock()
+        .map_err(|error| error.to_string())?
+        .insert(cache_key, layout.clone());
+
+    Ok(layout)
+}
+
+fn build_pdf_native_page_text_layout(
+    page: &PdfPage<'_>,
+    page_number: usize,
+) -> Result<PdfNativePageTextLayout, String> {
     let page_width = pdf_points_value(page.width());
     let page_height = pdf_points_value(page.height());
     let text_page = page.text().map_err(|error| error.to_string())?;
-    let text = text_page.all();
-    let mut search_byte_start = 0usize;
-    let mut fallback_utf16_offset = 0usize;
+    // Pdfium's bounded `all()` text and indexed character stream are not guaranteed to
+    // have identical lengths or ordering. Build text and geometry offsets from one stream.
+    let mut text = String::new();
+    let mut text_utf16_offset = 0usize;
     let chars = text_page
         .chars()
         .iter()
@@ -366,12 +392,8 @@ pub async fn desktop_extract_pdf_page_text_layout(
             if glyph_text.is_empty() {
                 return None;
             }
-            let (char_index, char_end_index) = resolve_glyph_utf16_offset(
-                &text,
-                &glyph_text,
-                &mut search_byte_start,
-                &mut fallback_utf16_offset,
-            );
+            let (char_index, char_end_index) =
+                append_pdfium_glyph(&mut text, &mut text_utf16_offset, &glyph_text);
 
             let bounds = character
                 .tight_bounds()
@@ -395,21 +417,22 @@ pub async fn desktop_extract_pdf_page_text_layout(
         })
         .collect::<Vec<_>>();
 
-    let layout = PdfNativePageTextLayout {
+    Ok(PdfNativePageTextLayout {
         source: "pdfium".to_string(),
         page_number,
         width: page_width,
         height: page_height,
         text,
         chars,
-    };
+    })
+}
 
-    pdf_page_layout_cache()
-        .lock()
-        .map_err(|error| error.to_string())?
-        .insert(cache_key, layout.clone());
-
-    Ok(layout)
+#[tauri::command]
+pub async fn desktop_extract_pdf_page_text_layout(
+    path: String,
+    page_number: usize,
+) -> Result<PdfNativePageTextLayout, String> {
+    extract_pdf_page_text_layout(&path, page_number)
 }
 
 #[tauri::command]
@@ -444,7 +467,14 @@ pub async fn desktop_ocr_pdf_page_text_layout(
             .map_err(|error| error.to_string())?;
         let page_width = pdf_points_value(page.width());
         let page_height = pdf_points_value(page.height());
-        let render_scale = dpi as f32 / 72.0;
+        let mut render_scale = dpi as f32 / 72.0;
+        #[cfg(target_os = "windows")]
+        if let Some(max_dimension) = windows_ocr_max_image_dimension() {
+            let longest_side = page_width.max(page_height) * render_scale;
+            if longest_side > max_dimension as f32 {
+                render_scale *= max_dimension as f32 / longest_side;
+            }
+        }
         let target_width = (page_width * render_scale).round().max(1.0) as i32;
         let render_config = PdfRenderConfig::new()
             .set_target_width(target_width)
@@ -460,6 +490,22 @@ pub async fn desktop_ocr_pdf_page_text_layout(
             .as_image()
             .save(&temp_path)
             .map_err(|error| error.to_string())?;
+
+        #[cfg(target_os = "windows")]
+        match try_windows_ocr_page(
+            &temp_path,
+            page_number,
+            page_width,
+            page_height,
+            render_scale,
+        ) {
+            Ok(Some(layout)) => {
+                let _ = std::fs::remove_file(&temp_path);
+                return Ok(layout);
+            }
+            Ok(None) => {}
+            Err(error) => eprintln!("[PDF OCR] Windows OCR fallback failed: {error}"),
+        }
 
         let mut command = Command::new(tesseract);
         configure_hidden_command(&mut command);
@@ -506,79 +552,195 @@ fn uuid_like_suffix() -> String {
 mod tests {
     use super::*;
 
-    fn resolve_sequence_offsets(page_text: &str, glyphs: &[&str]) -> Vec<usize> {
-        resolve_sequence_offset_ranges(page_text, glyphs)
-            .into_iter()
-            .map(|(start, _end)| start)
-            .collect()
+    fn collect_pdf_paths(root: &std::path::Path, paths: &mut Vec<PathBuf>) {
+        let entries = std::fs::read_dir(root).unwrap_or_else(|error| {
+            panic!(
+                "could not read corpus directory {}: {error}",
+                root.display()
+            )
+        });
+        for entry in entries {
+            let entry = entry.expect("corpus directory entry should be readable");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_pdf_paths(&path, paths);
+            } else if path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
+            {
+                paths.push(path);
+            }
+        }
     }
 
-    fn resolve_sequence_offset_ranges(page_text: &str, glyphs: &[&str]) -> Vec<(usize, usize)> {
-        let mut search_byte_start = 0usize;
-        let mut fallback_utf16_offset = 0usize;
-        glyphs
+    fn assert_layout_coordinate_text_invariants(
+        path: &std::path::Path,
+        page_number: usize,
+        layout: &PdfNativePageTextLayout,
+    ) {
+        let text_utf16 = layout.text.encode_utf16().collect::<Vec<_>>();
+        assert!(
+            !layout.text.trim().is_empty(),
+            "PDFium returned empty text for {} page {page_number}",
+            path.display()
+        );
+        assert!(
+            !layout.chars.is_empty(),
+            "PDFium returned no positioned characters for {} page {page_number}",
+            path.display()
+        );
+        for character in &layout.chars {
+            assert!(character.char_index < character.char_end_index);
+            assert!(character.char_end_index <= text_utf16.len());
+            assert_eq!(
+                &text_utf16[character.char_index..character.char_end_index],
+                character.text.encode_utf16().collect::<Vec<_>>().as_slice(),
+                "coordinate/text drift in {} page {page_number} at UTF-16 offset {} for {:?}",
+                path.display(),
+                character.char_index,
+                character.text
+            );
+            assert!(
+                [
+                    character.x1,
+                    character.y1,
+                    character.x2,
+                    character.y2,
+                    character.font_size
+                ]
+                .into_iter()
+                .all(f32::is_finite),
+                "non-finite character geometry in {} page {page_number}",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn builds_text_offsets_from_the_same_pdfium_character_stream() {
+        let mut text = String::new();
+        let mut next_utf16_offset = 0usize;
+        let ranges = ["b", "o", "d", "y", " ", "ﬁ", "😀", "3"]
             .iter()
-            .map(|glyph| {
-                resolve_glyph_utf16_offset(
-                    page_text,
-                    glyph,
-                    &mut search_byte_start,
-                    &mut fallback_utf16_offset,
-                )
-            })
-            .collect()
-    }
+            .map(|glyph| append_pdfium_glyph(&mut text, &mut next_utf16_offset, glyph))
+            .collect::<Vec<_>>();
 
-    #[test]
-    fn maps_glyphs_to_offsets_in_pdfium_all_text_with_inserted_spaces() {
-        let page_text = "fast, high-fidelity excitation";
-        let offsets = resolve_sequence_offsets(page_text, &["f", "a", "s", "t", ",", "h"]);
-
-        assert_eq!(offsets, vec![0, 1, 2, 3, 4, 6]);
-    }
-
-    #[test]
-    fn keeps_offsets_aligned_after_superscript_citations() {
-        let page_text = "ground state¹⁰. This creates high-fidelity excitation";
-        let offsets = resolve_sequence_offsets(
-            page_text,
-            &[
-                "g", "r", "o", "u", "n", "d", "s", "t", "a", "t", "e", "¹", "⁰", ".", "T",
-                "h",
-            ],
+        assert_eq!(text, "body ﬁ😀3");
+        assert_eq!(
+            ranges,
+            vec![
+                (0, 1),
+                (1, 2),
+                (2, 3),
+                (3, 4),
+                (4, 5),
+                (5, 6),
+                (6, 8),
+                (8, 9),
+            ]
         );
-
-        assert_eq!(offsets, vec![0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17]);
+        assert_eq!(next_utf16_offset, text.encode_utf16().count());
     }
 
     #[test]
-    fn reports_utf16_offsets_for_non_bmp_text() {
-        let page_text = "A😀B high";
-        let offsets = resolve_sequence_offsets(page_text, &["A", "😀", "B", "h"]);
-
-        assert_eq!(offsets, vec![0, 1, 3, 5]);
+    #[ignore = "requires LATTICE_PDF_LAYOUT_FIXTURE"]
+    fn extracts_real_pdf_layout_without_coordinate_text_drift() {
+        let path = std::env::var("LATTICE_PDF_LAYOUT_FIXTURE")
+            .expect("LATTICE_PDF_LAYOUT_FIXTURE must point to a real PDF");
+        let page_number = std::env::var("LATTICE_PDF_LAYOUT_PAGE")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(1);
+        let target = std::env::var("LATTICE_PDF_LAYOUT_TARGET").unwrap_or_default();
+        let layout = extract_pdf_page_text_layout(&path, page_number)
+            .expect("real PDF page layout should be extractable");
+        if !target.is_empty() {
+            assert!(
+                layout.text.contains(&target),
+                "page text did not contain target {target:?}"
+            );
+        }
+        assert_layout_coordinate_text_invariants(std::path::Path::new(&path), page_number, &layout);
     }
 
     #[test]
-    fn maps_ligature_glyphs_to_expanded_page_text_ranges() {
-        let page_text = "high-fidelity excitation";
-        let ranges = resolve_sequence_offset_ranges(page_text, &["h", "i", "g", "h", "-", "ﬁ", "d"]);
-
-        assert_eq!(ranges, vec![(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 7), (7, 8)]);
-    }
-
-    #[test]
-    fn keeps_offsets_near_expected_position_after_unmatched_math_glyphs() {
-        let page_text = "field stability required to hold Stark below field stability";
-        let offsets = resolve_sequence_offsets(
-            page_text,
-            &[
-                "f", "i", "e", "l", "d", "?", "?", "S", "t", "a", "r", "k", "f", "i", "e", "l", "d",
-            ],
+    #[ignore = "requires LATTICE_PDF_CORPUS_ROOT"]
+    fn audits_pdfium_corpus_coordinate_text_invariants() {
+        let root = PathBuf::from(
+            std::env::var("LATTICE_PDF_CORPUS_ROOT")
+                .expect("LATTICE_PDF_CORPUS_ROOT must point to a PDF corpus"),
         );
+        let expected_failure = std::env::var("LATTICE_PDF_CORPUS_EXPECTED_FAILURE")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        let mut paths = Vec::new();
+        collect_pdf_paths(&root, &mut paths);
+        paths.sort();
+        assert!(!paths.is_empty(), "PDF corpus should contain files");
 
-        assert_eq!(offsets[7], page_text.find("Stark").unwrap());
-        assert_eq!(offsets[12], page_text.rfind("field").unwrap());
+        let pdfium = get_pdfium().expect("bundled PDFium should load");
+        let mut files_loaded = 0usize;
+        let mut pages_checked = 0usize;
+        let mut characters_checked = 0usize;
+        let mut observed_expected_failure = false;
+
+        for path in &paths {
+            let document = match pdfium.load_pdf_from_file(path, None) {
+                Ok(document) => document,
+                Err(error) => {
+                    let path_text = path.to_string_lossy();
+                    if expected_failure
+                        .as_ref()
+                        .is_some_and(|expected| path_text.ends_with(expected))
+                    {
+                        observed_expected_failure = true;
+                        eprintln!("expected corpus load failure: {} ({error})", path.display());
+                        continue;
+                    }
+                    panic!(
+                        "unexpected PDFium load failure for {}: {error}",
+                        path.display()
+                    );
+                }
+            };
+            files_loaded += 1;
+            let pages = document.pages();
+            assert!(!pages.is_empty(), "PDF has no pages: {}", path.display());
+            for page_index in pages.as_range() {
+                let page_number = page_index as usize + 1;
+                let page = pages.get(page_index).unwrap_or_else(|error| {
+                    panic!(
+                        "could not load {} page {page_number}: {error}",
+                        path.display()
+                    )
+                });
+                let layout =
+                    build_pdf_native_page_text_layout(&page, page_number).unwrap_or_else(|error| {
+                        panic!(
+                            "could not extract {} page {page_number}: {error}",
+                            path.display()
+                        )
+                    });
+                assert_layout_coordinate_text_invariants(path, page_number, &layout);
+                pages_checked += 1;
+                characters_checked += layout.chars.len();
+            }
+        }
+
+        if expected_failure.is_some() {
+            assert!(
+                observed_expected_failure,
+                "configured expected failure was not observed"
+            );
+        }
+        eprintln!(
+            "PDFIUM_CORPUS_SUMMARY files_discovered={} files_loaded={} pages_checked={} positioned_chars={}",
+            paths.len(),
+            files_loaded,
+            pages_checked,
+            characters_checked
+        );
     }
 
     #[test]
@@ -591,5 +753,14 @@ mod tests {
         assert_eq!(layout.words[0].left, 20.0);
         assert_eq!(layout.words[0].confidence, 0.95);
         assert!((layout.confidence - 0.92).abs() < 0.001);
+    }
+
+    #[test]
+    fn assigns_stable_global_line_indexes_across_tesseract_blocks() {
+        let tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n5\t1\t1\t1\t1\t1\t40\t60\t100\t20\t95\tFirst\n5\t1\t2\t1\t1\t1\t40\t160\t100\t20\t91\tSecond\n";
+        let layout = parse_tesseract_tsv(tsv, 1, 600.0, 800.0, 2.0);
+
+        assert_eq!(layout.words[0].line_index, Some(0));
+        assert_eq!(layout.words[1].line_index, Some(1));
     }
 }

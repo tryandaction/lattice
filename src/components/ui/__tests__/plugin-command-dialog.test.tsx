@@ -5,6 +5,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PluginCommandDialog } from "../plugin-command-dialog";
+import { useVSCodeExtensionHostStore } from "@/stores/vscode-extension-host-store";
 
 const hoisted = vi.hoisted(() => ({
   toggleOpen: vi.fn(),
@@ -63,6 +64,21 @@ describe("PluginCommandDialog", () => {
     aiChatState.isOpen = false;
     aiChatState.selectedResearchWorkflowId = "markdown-research";
     localStorage.clear();
+    useVSCodeExtensionHostStore.setState({
+      snapshot: {
+        status: "idle",
+        runtime: "none",
+        commandCount: 0,
+        activeExtensionCount: 0,
+        commands: [],
+        views: [],
+        extensions: [],
+        lastError: null,
+      },
+      manifestCommands: [],
+      hostExtensionCount: 0,
+      lastSignature: null,
+    });
   });
 
   it("exposes an AI Chat command that toggles the right-side panel", async () => {
@@ -153,5 +169,34 @@ describe("PluginCommandDialog", () => {
     await waitFor(() => {
       expect(screen.getAllByText("Open AI Chat Panel")).toHaveLength(1);
     });
+  });
+
+  it("includes VS Code host commands in the palette", async () => {
+    const runCommand = vi.fn();
+    useVSCodeExtensionHostStore.setState({
+      snapshot: {
+        status: "ready",
+        runtime: "node",
+        commandCount: 1,
+        activeExtensionCount: 1,
+        commands: [{ id: "publisher.demo.hello", title: "Hello Demo", extensionId: "publisher.demo", source: "host" }],
+        views: [],
+        lastError: null,
+      },
+      hostExtensionCount: 1,
+      lastSignature: "sig",
+      runCommand,
+    } as never);
+
+    render(<PluginCommandDialog isOpen onClose={() => {}} />);
+
+    const commandRow = await screen.findByText("Hello Demo");
+    expect(screen.getByText("VS Code extension command - publisher.demo")).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.click(commandRow.closest("[data-command-id]") as HTMLElement);
+    });
+
+    expect(runCommand).toHaveBeenCalledWith("publisher.demo.hello");
   });
 });

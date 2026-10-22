@@ -82,6 +82,22 @@ export async function loadWorkspaceHandleRegistration(
   return records.find((record) => record.workspaceKey === workspaceKey) ?? null;
 }
 
+export async function findWorkspaceHandleRegistration(
+  handle: FileSystemDirectoryHandle,
+): Promise<RegisteredWorkspaceHandle | null> {
+  const records = await listWorkspaceHandleRecords();
+  for (const record of records) {
+    try {
+      if (await handle.isSameEntry(record.handle)) {
+        return record;
+      }
+    } catch {
+      // Ignore stale or revoked handles.
+    }
+  }
+  return null;
+}
+
 export async function resolveWorkspaceIdentity(
   handle: FileSystemDirectoryHandle,
   options: {

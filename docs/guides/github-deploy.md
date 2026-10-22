@@ -4,7 +4,7 @@
 
 Lattice 现在有三条可并行维护的发布路径：
 
-- **Cloudflare Pages**：当前线上主站，发布 `web-dist/` 到 `lattice-apq.pages.dev`
+- **Cloudflare Pages**：当前线上主站，发布 `web-dist/` 到 `lattice-apq-7xj.pages.dev`
 - **GitHub Pages**：备用/镜像静态站点链路，同样发布 `web-dist/`
 - **Desktop Release**：发布 `releases/vX.Y.Z/` 中的桌面产物与元数据
 
@@ -17,7 +17,7 @@ Lattice 现在有三条可并行维护的发布路径：
 
 ### Cloudflare Pages（当前主站）
 
-当前 Pages 项目名：`lattice`
+当前 Pages 项目名：`lattice-apq`，生产分支 `main`。根目录标准文件 `wrangler.json` 配置 Pages 项目和输出目录；`wrangler.deployment.json` 单独记录 Cloudflare 账号、项目与生产分支（Pages 配置不支持 `account_id` 字段）。发布脚本仅在 Wrangler 子进程覆盖过期的账号环境变量，并验证两份配置的项目名一致，避免误发到其他账号。历史 `lattice-apq.pages.dev` 不在当前授权账号中，不能把它当作现行发布目标。
 
 本地发布：
 
@@ -30,8 +30,14 @@ npm run deploy:web
 验收项：
 
 - `web-dist/index.html` 存在
-- Pages 项目 URL 为 `https://lattice-apq.pages.dev/`
+- Pages 项目 URL 为 `https://lattice-apq-7xj.pages.dev/`
+- `/build-info.json` 的版本、构建时间和首页 SHA-256 与本轮产物一致
+- `/library` 与 `/library/<id>/item/<id>` 能进入同一工作台，不返回 404
 - diagnostics 与 guide 相关静态路由能正常访问
+
+只检查目标与产物、不发布：`node scripts/deploy-cloudflare-pages.mjs --dry-run`。发布前仍需通过项目门禁；脚本检查主页与共享库导出入口后核验 Wrangler 身份，再部署至已配置项目。不要上传含管理密钥的文件，公开云库连接必须在构建前提供。
+
+本机通过忽略的 `.env.production.local` 提供 `NEXT_PUBLIC_LATTICE_CLOUD_SERVICE`；GitHub workflow 从仓库变量 `LATTICE_CLOUD_SERVICE` 读取同一公开 JSON，认证令牌使用 `CLOUDFLARE_API_TOKEN` secret。未设置仓库变量时，CI 构建不会包含托管云库连接，不能作为正式云库版本发布。
 
 ### GitHub Pages（备用/镜像）
 

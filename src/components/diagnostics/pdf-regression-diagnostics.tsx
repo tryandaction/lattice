@@ -1,13 +1,22 @@
 "use client";
 
+import { AiChatPanel } from "@/components/ai/ai-chat-panel";
+import { useAiChatStore } from "@/stores/ai-chat-store";
+import { useLinkNavigationStore } from "@/stores/link-navigation-store";
+import { buildCitationContracts } from "@/lib/ai/citation-contract";
+import type { EvidenceRef } from "@/lib/ai/types";
+
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { UniversalFileViewer } from "@/components/main-area/universal-file-viewer";
+import { PaneWrapper } from "@/components/main-area/pane-wrapper";
+import { DndContext } from "@dnd-kit/core";
+import { AgentAnnotationDiagnosticsBridge } from "./agent-annotation-diagnostics-bridge";
 import { PDFHighlighterAdapter } from "@/components/renderers/pdf-highlighter-adapter";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { resolveAppRoute } from "@/lib/app-route";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import { createEmptyPane } from "@/lib/layout-utils";
+import { createEmptyPane, findPane } from "@/lib/layout-utils";
 import {
   createSamplePdfBuffer,
   ensureSubdirectory,
@@ -18,7 +27,10 @@ import { useContentCacheStore } from "@/stores/content-cache-store";
 import { buildPersistedFileViewStateKey, deletePersistedFileViewState } from "@/lib/file-view-state";
 import { createUniversalAnnotationFile, generateFileId, saveAnnotationsToDisk } from "@/lib/universal-annotation-storage";
 import { loadPdfJsDocument } from "@/lib/pdf-js-document-loader";
+import { getPdfPageTextModel, type PdfPageTextModel } from "@/lib/pdf-page-text-cache";
+import { buildCanonicalPdfTextMarkupTargetFromExact } from "@/lib/pdf-annotation-text-repair";
 import { readDesktopFileBytesRaw } from "@/lib/desktop-preview";
+import { createDesktopFileHandle } from "@/lib/desktop-file-system";
 import { isTauriHost } from "@/lib/storage-adapter";
 
 interface PdfFixture {
@@ -34,6 +46,7 @@ interface DiagnosticsWorkspace {
   left: PdfFixture;
   rightA: PdfFixture;
   rightB: PdfFixture;
+  evidenceNote?: { filePath: string; content: string; quote: string };
 }
 
 function createTextQuote(exact: string) {
@@ -80,7 +93,7 @@ async function seedPdfAnnotation(
   rootHandle: FileSystemDirectoryHandle,
   fileId: string,
   page: number,
-  options?: { interactionSet?: boolean },
+  options?: { interactionSet?: boolean; textModel?: PdfPageTextModel },
 ) {
   const annotationFile = createUniversalAnnotationFile(fileId, "pdf");
   const createdAt = Date.now();
@@ -199,6 +212,19 @@ async function seedPdfAnnotation(
     );
   }
 
+  if (options?.textModel) {
+    const model = options.textModel;
+    annotationFile.annotations = annotationFile.annotations.map((annotation) => {
+      if (annotation.style.type !== "highlight" && annotation.style.type !== "underline") return annotation;
+      const exact = annotation.id === `ann-${fileId}`
+        ? "For small dc electric fields"
+        : annotation.content ?? "";
+      const target = buildCanonicalPdfTextMarkupTargetFromExact({ model, exact, page });
+      if (!target) throw new Error(`Diagnostic quote not found on page ${page}: ${exact}`);
+      return { ...annotation, target, content: target.textQuote?.exact ?? exact };
+    });
+  }
+
   await saveAnnotationsToDisk(annotationFile, rootHandle);
 }
 
@@ -230,6 +256,7 @@ export function PdfRegressionDiagnostics() {
   const stableStateMode = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("stableState");
   const resetViewStateMode = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("resetViewState");
   const realPdfMode = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("realPdf");
+  const interactionSetMode = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("interactionSet");
   const realPdfUrl = typeof window !== "undefined"
     ? new URLSearchParams(window.location.search).get("realPdfUrl") || "/__lattice-diagnostics/saffman-real.pdf"
     : "/__lattice-diagnostics/saffman-real.pdf";
@@ -243,7 +270,23 @@ export function PdfRegressionDiagnostics() {
     ? new URLSearchParams(window.location.search).get("realPdfPage") || "7"
     : "7"));
   const [workspace, setWorkspace] = useState<DiagnosticsWorkspace | null>(null);
+  const agentAnnotationMode = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("agentAnnotation") === "1";
+  const agentDocumentPages = typeof window !== 'undefined' ? Math.max(1, Math.min(60, Number(new URLSearchParams(window.location.search).get('documentPages')) || 3)) : 3;
+  const agentWorkspaceName = typeof window !== "undefined"
+    ? (new URLSearchParams(window.location.search).get("agentWorkspace") ?? "lattice-agent-annotation-regression").replace(/[^a-z0-9-]/gi, "").slice(0, 80)
+    : "lattice-agent-annotation-regression";
+  const aiEvidenceMode = agentAnnotationMode || (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("aiEvidence"));
+  const inlineEvidenceMode = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("inlineEvidence") === "1";
+  const targetedEvidenceMode = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("targetedEvidence") === "1";
+  const crossFileEvidenceMode = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("crossFileEvidence") === "1";
+  const [targetedEvidence, setTargetedEvidence] = useState<{ contextPages: number; passages: { page?: number; quote: string; filePath: string }[] } | null>(null);
+  const targetedActivePath = useWorkspaceStore((state) => {
+    const pane = findPane(state.layout.root, "pdf-left-pane");
+    return pane?.tabs[pane.activeTabIndex]?.filePath ?? "";
+  });
+  const targetedNavigationDebug = useLinkNavigationStore((state) => JSON.stringify({ pending: state.pendingByPane["pdf-left-pane"], outcomes: state.outcomesByRequestId }));
   const [error, setError] = useState<string | null>(null);
+  const [setupStage, setSetupStage] = useState("initializing");
   const [rightVariant, setRightVariant] = useState<"a" | "b">("a");
   const [compactLayout, setCompactLayout] = useState(false);
   const [preloadedLeftDocument, setPreloadedLeftDocument] = useState<PDFDocumentProxy | null>(null);
@@ -257,11 +300,98 @@ export function PdfRegressionDiagnostics() {
   }, [rightVariant, workspace]);
 
   useEffect(() => {
+    if (!aiEvidenceMode || !workspace || agentAnnotationMode) return;
+    if (targetedEvidenceMode) {
+      let disposed = false;
+      const seedTargetedAnswer = async () => {
+        const document = await loadPdfJsDocument({ data: workspace.left.content.slice(0), label: "Targeted citation evidence", timeoutMs: 45000 });
+        try {
+          const pageCount = Math.min(9, document.numPages);
+          if (pageCount < 3) throw new Error("Targeted citation diagnostics require at least three PDF pages");
+          const models = await Promise.all(Array.from({ length: pageCount }, (_, index) => getPdfPageTextModel(document, index + 1)));
+          // Context deliberately supplies only a page and its extracted text. The
+          // answer must bind its own short quote; pre-filled snippets mask failures.
+          const evidenceRefs: EvidenceRef[] = models.map((model) => ({
+            kind: "pdf_page", label: workspace.left.fileName,
+            locator: `${workspace.left.filePath}#page=${model.pageNumber}`,
+            anchor: { page: model.pageNumber }, preview: model.normalizedText,
+          }));
+          const passageInputs: { page?: number; quote: string; filePath: string; evidenceIndex: number }[] = [1, pageCount - 2].map((index, passageIndex) => {
+            const model = models[index];
+            const preferred = passageIndex === 0
+              ? "Rydberg states are extremely sensitive to small low-frequency fields."
+              : "The right column explains the readout calibration sequence and preserves order.";
+            const quote = model.normalizedText.includes(preferred) ? preferred
+              : model.segments.find((segment) => segment.normalizedText.length >= 45)?.normalizedText.slice(0, 120).trim()
+                ?? model.normalizedText.slice(0, 100).trim();
+            if (!quote || !model.normalizedText.includes(quote)) throw new Error(`Missing real quote on PDF page ${model.pageNumber}`);
+            return { page: model.pageNumber, quote, filePath: workspace.left.filePath, evidenceIndex: index };
+          });
+          if (crossFileEvidenceMode && workspace.evidenceNote) {
+            const rightDocument = await loadPdfJsDocument({ data: workspace.rightA.content.slice(0), label: "Second targeted evidence PDF", timeoutMs: 45000 });
+            try {
+              for (let page = 1; page <= rightDocument.numPages; page += 1) {
+                const model = await getPdfPageTextModel(rightDocument, page);
+                evidenceRefs.push({ kind: "pdf_page", label: workspace.rightA.fileName, locator: `${workspace.rightA.filePath}#page=${page}`, anchor: { page }, preview: model.normalizedText });
+                if (page === 2) {
+                  const quote = "Possible interactions in the absence of applied fields are compared below.";
+                  if (!model.normalizedText.includes(quote)) throw new Error("Missing second PDF quote");
+                  passageInputs.push({ page, quote, filePath: workspace.rightA.filePath, evidenceIndex: evidenceRefs.length - 1 });
+                }
+              }
+            } finally { await rightDocument.destroy(); }
+            evidenceRefs.push({ kind: "file", label: "evidence-note.md", locator: workspace.evidenceNote.filePath, preview: workspace.evidenceNote.content });
+            passageInputs.push({ quote: workspace.evidenceNote.quote, filePath: workspace.evidenceNote.filePath, evidenceIndex: evidenceRefs.length - 1 });
+          }
+          const citations = buildCitationContracts(evidenceRefs);
+          const passages = passageInputs.map((passage) => ({ ...passage, citation: citations[passage.evidenceIndex] }));
+          if (disposed) return;
+          useAiChatStore.setState({
+            isOpen: true, composerMode: "chat", activeConversationId: "pdf-targeted-evidence-regression",
+            conversations: [{ id: "pdf-targeted-evidence-regression", title: "Targeted PDF evidence", createdAt: 1, messages: [{
+              id: "pdf-targeted-evidence-answer", role: "assistant", timestamp: 1,
+              content: passages.map(({ quote, citation }, index) => `${["Field sensitivity", "Readout calibration", "Applied field comparison", "Research note"][index]}: ${quote} [Source ${index + 1}](citation:${citation.stableId}?quote=${encodeURIComponent(quote)})`).join("\n\n"),
+              evidenceRefs,
+            }] }],
+          });
+          setTargetedEvidence({ contextPages: evidenceRefs.length, passages: passages.map(({ page, quote, filePath }) => ({ page, quote, filePath })) });
+        } finally {
+          await document.destroy();
+        }
+      };
+      void seedTargetedAnswer().catch((err) => { if (!disposed) setError(err instanceof Error ? err.message : String(err)); });
+      return () => { disposed = true; };
+    }
+    const passages = [
+      { page: 1, snippet: "Rydberg states are extremely sensitive", label: "Field sensitivity" },
+      { page: 1, snippet: "The right column explains the readout calibration sequence", label: "Readout calibration" },
+      { page: 2, snippet: "Left regression fixture - Page 2", label: "Second page" },
+      { page: 3, snippet: "Left regression fixture - Page 3", label: "Third page" },
+    ];
+    const evidenceRefs: EvidenceRef[] = inlineEvidenceMode ? passages.map(({ page, snippet }) => ({
+      kind: "pdf_page", label: workspace.left.fileName,
+      locator: `${workspace.left.filePath}#page=${page}`, anchor: { page, snippet },
+    })) : [{ kind: "pdf_page", label: workspace.left.fileName, locator: workspace.left.filePath, anchor: { page: 1, snippet: "Rydberg states are extremely sensitive" } }];
+    const citations = buildCitationContracts(evidenceRefs);
+    useAiChatStore.setState({
+      isOpen: true, composerMode: "chat", activeConversationId: "pdf-evidence-regression",
+      conversations: [{ id: "pdf-evidence-regression", title: "PDF source navigation", createdAt: 1, messages: [{
+        id: "pdf-evidence-answer", role: "assistant", timestamp: 1,
+        content: inlineEvidenceMode
+          ? passages.map((passage, index) => `${passage.label}: ${passage.snippet}. [Source ${index + 1}](citation:${citations[index].stableId})`).join("\n\n")
+          : "Rydberg states are extremely sensitive. Open the source below to inspect the exact passage.",
+        evidenceRefs,
+      }] }],
+    });
+  }, [agentAnnotationMode, aiEvidenceMode, crossFileEvidenceMode, inlineEvidenceMode, targetedEvidenceMode, workspace]);
+
+  useEffect(() => {
     let disposed = false;
 
     const setup = async () => {
       try {
-        const rootHandle = await getDiagnosticsWorkspaceHandle();
+        setSetupStage("opening workspace");
+        const rootHandle = await getDiagnosticsWorkspaceHandle(agentAnnotationMode ? agentWorkspaceName : undefined);
         const pdfDirectory = await ensureSubdirectory(rootHandle, "pdf");
         const sessionId = stableStateMode ? "pdf-regression-stable" : `pdf-regression-${Date.now()}`;
         const workspaceRootPath = `${rootHandle.name}/${sessionId}`;
@@ -272,27 +402,63 @@ export function PdfRegressionDiagnostics() {
         const rightAFileId = generateFileId(rightAFilePath);
         const rightBFileId = generateFileId(rightBFilePath);
 
-        const [leftBuffer, rightABuffer, rightBBuffer] = await Promise.all([
-          realPdfMode
+        setSetupStage("creating PDF files");
+        const createLeft = async () => {
+          if (agentAnnotationMode && stableStateMode) {
+            try {
+              const saved = await (await (await pdfDirectory.getFileHandle(realPdfMode ? realPdfFileName : 'left-fixture.pdf')).getFile()).arrayBuffer();
+              // Strict-mode setup can observe a just-created file before its first write closes.
+              if (saved.byteLength > 0) return saved;
+            }
+            catch (error) { if (!(error instanceof DOMException) || error.name !== 'NotFoundError') throw error; }
+          }
+          return realPdfMode
             ? loadDiagnosticsPdfBuffer({ url: realPdfUrl, desktopPath: realPdfDesktopPath })
-            : createSamplePdfBuffer("Left regression fixture", 1),
+            : createSamplePdfBuffer("Left regression fixture", agentAnnotationMode ? agentDocumentPages : targetedEvidenceMode ? 9 : inlineEvidenceMode ? 3 : 1);
+        };
+        const [leftBuffer, rightABuffer, rightBBuffer] = await Promise.all([
+          createLeft(),
           createSamplePdfBuffer("Right regression fixture A", 2),
           createSamplePdfBuffer("Right regression fixture B", 2),
         ]);
 
+        setSetupStage("writing PDF files");
+        if (disposed) return;
         const [leftHandle, rightAHandle, rightBHandle] = await Promise.all([
           writeArrayBufferFile(pdfDirectory, realPdfMode ? realPdfFileName : "left-fixture.pdf", leftBuffer.slice(0)),
           writeArrayBufferFile(pdfDirectory, "right-fixture-a.pdf", rightABuffer.slice(0)),
           writeArrayBufferFile(pdfDirectory, "right-fixture-b.pdf", rightBBuffer.slice(0)),
         ]);
+        const nativeLeftHandle = realPdfMode && realPdfDesktopPath && isTauriHost()
+          ? createDesktopFileHandle(realPdfDesktopPath)
+          : leftHandle;
+        const evidenceNote = (targetedEvidenceMode || agentAnnotationMode) && crossFileEvidenceMode ? {
+          filePath: "pdf/evidence-note.md",
+          quote: "The measured field stability is 10 mV/cm after calibration.",
+          content: "# Independent research note\n\n## Background\n\nThis paragraph gives background only.\n\n## Measured result\n\nThe measured field stability is 10 mV/cm after calibration.\n\n## Limitations\n\nFurther measurements are required for long term drift.\n",
+        } : undefined;
+        if (evidenceNote) await writeArrayBufferFile(pdfDirectory, "evidence-note.md", new TextEncoder().encode(evidenceNote.content).buffer);
 
-        await Promise.all([
-          seedPdfAnnotation(rootHandle, leftFileId, realPdfMode ? realPdfSeedPage : 1, {
-            interactionSet: realPdfMode,
-          }),
-          seedPdfAnnotation(rootHandle, rightAFileId, 1),
-          seedPdfAnnotation(rootHandle, rightBFileId, 2),
-        ]);
+        // Real-paper diagnostics must not paint hard-coded fixture rectangles
+        // over unrelated text. Seed text markup using the same exact-quote
+        // geometry as normal creation; synthetic fixtures keep their test layout.
+        setSetupStage("seeding annotations");
+        const seedDocument = realPdfMode && !targetedEvidenceMode && !agentAnnotationMode
+          ? await loadPdfJsDocument({ data: leftBuffer.slice(0), label: "Real PDF diagnostic annotation anchors", timeoutMs: 45000 })
+          : null;
+        try {
+          const textModel = seedDocument ? await getPdfPageTextModel(seedDocument, realPdfSeedPage) : undefined;
+          if (!targetedEvidenceMode && !agentAnnotationMode) await Promise.all([
+            seedPdfAnnotation(rootHandle, leftFileId, realPdfMode ? realPdfSeedPage : 1, {
+              interactionSet: realPdfMode || interactionSetMode,
+              textModel,
+            }),
+            seedPdfAnnotation(rootHandle, rightAFileId, 1),
+            seedPdfAnnotation(rootHandle, rightBFileId, 2),
+          ]);
+        } finally {
+          await seedDocument?.destroy();
+        }
 
         if (disposed) {
           return;
@@ -319,6 +485,7 @@ export function PdfRegressionDiagnostics() {
           }),
         ];
 
+        setSetupStage("resetting saved view");
         if (!stableStateMode || resetViewStateMode) {
           await Promise.all(persistedKeys.map((key) => deletePersistedFileViewState(key)));
         }
@@ -326,21 +493,24 @@ export function PdfRegressionDiagnostics() {
 
         useWorkspaceStore.setState({
           rootHandle,
+          ...(targetedEvidenceMode || agentAnnotationMode ? { workspaceRootHandle: rootHandle } : {}),
           workspaceRootPath,
           layout: {
             root: createEmptyPane("pdf-left-pane"),
             activePaneId: "pdf-left-pane",
           },
         });
+        if (targetedEvidenceMode || agentAnnotationMode) useWorkspaceStore.getState().openFileInPane("pdf-left-pane", nativeLeftHandle, leftFilePath);
 
         setWorkspace({
           rootHandle,
+          evidenceNote,
           left: {
             fileId: leftFileId,
             fileName: realPdfMode ? realPdfFileName : "left-fixture.pdf",
             filePath: leftFilePath,
             content: leftBuffer,
-            fileHandle: leftHandle,
+            fileHandle: nativeLeftHandle,
           },
           rightA: {
             fileId: rightAFileId,
@@ -369,7 +539,7 @@ export function PdfRegressionDiagnostics() {
     return () => {
       disposed = true;
     };
-  }, [realPdfDesktopPath, realPdfFileName, realPdfMode, realPdfSeedPage, realPdfUrl, resetViewStateMode, stableStateMode]);
+  }, [agentAnnotationMode, agentDocumentPages, agentWorkspaceName, crossFileEvidenceMode, inlineEvidenceMode, interactionSetMode, realPdfDesktopPath, realPdfFileName, realPdfMode, realPdfSeedPage, realPdfUrl, resetViewStateMode, stableStateMode, targetedEvidenceMode]);
 
   useEffect(() => {
     if (!directHighlighterMode || !workspace || !rightFixture) {
@@ -455,11 +625,15 @@ export function PdfRegressionDiagnostics() {
   }
 
   if (!workspace || !rightFixture) {
-    return <div className="p-6 text-sm text-muted-foreground">Preparing PDF regression fixtures...</div>;
+    return <div className="p-6 text-sm text-muted-foreground">Preparing PDF regression fixtures: {setupStage}...</div>;
   }
 
   return (
     <div className="flex h-screen w-screen flex-col bg-background text-foreground" data-testid="pdf-regression-ready">
+      {targetedEvidence && <output hidden data-testid="pdf-targeted-evidence-fixture">{JSON.stringify(targetedEvidence)}</output>}
+      {targetedEvidenceMode && <output hidden data-testid="pdf-targeted-active-file">{targetedActivePath}</output>}
+      {targetedEvidenceMode && <output hidden data-testid="pdf-targeted-navigation">{targetedNavigationDebug}</output>}
+      {agentAnnotationMode && <AgentAnnotationDiagnosticsBridge />}
       <header className="flex items-center gap-3 border-b border-border px-4 py-3">
         <div>
           <h1 className="text-sm font-medium">PDF Split Regression</h1>
@@ -469,6 +643,10 @@ export function PdfRegressionDiagnostics() {
         </div>
 
         <div className="ml-auto flex items-center gap-2 text-xs">
+          {agentAnnotationMode && <>
+            <button data-testid="agent-annotation-open-other-file" onClick={() => useWorkspaceStore.getState().openFileInPane("pdf-left-pane", workspace.rightA.fileHandle, workspace.rightA.filePath)}>Open other PDF</button>
+            <button data-testid="agent-annotation-open-source-file" onClick={() => useWorkspaceStore.getState().openFileInPane("pdf-left-pane", workspace.left.fileHandle, workspace.left.filePath)}>Reopen source PDF</button>
+          </>}
           <button
             type="button"
             data-testid="activate-left-pane"
@@ -528,9 +706,13 @@ export function PdfRegressionDiagnostics() {
         </div>
       </header>
 
-      <main className={`grid min-h-0 flex-1 gap-3 overflow-hidden p-3 ${singlePaneMode ? "grid-cols-1" : compactLayout ? "grid-cols-[1fr_0.9fr]" : "grid-cols-[1fr_1fr]"}`}>
+      <main className={`grid min-h-0 flex-1 gap-3 overflow-hidden p-3 ${aiEvidenceMode ? "grid-cols-[minmax(0,1fr)_minmax(320px,400px)]" : singlePaneMode ? "grid-cols-1" : compactLayout ? "grid-cols-[1fr_0.9fr]" : "grid-cols-[1fr_1fr]"}`}>
         <section className="min-h-0 overflow-hidden rounded-xl border border-border" data-testid="pdf-left-shell">
-          {directHighlighterMode && !preloadedLeftDocument ? (
+          {targetedEvidenceMode || agentAnnotationMode ? (
+            <DndContext>
+              <PaneWrapper paneId="pdf-left-pane" isActive onActivate={() => {}} onSplitRight={() => {}} onSplitDown={() => {}} onClose={() => {}} />
+            </DndContext>
+          ) : directHighlighterMode && !preloadedLeftDocument ? (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
               Preparing direct PDF highlighter...
             </div>
@@ -561,7 +743,7 @@ export function PdfRegressionDiagnostics() {
           )}
         </section>
 
-        {!singlePaneMode ? (
+        {aiEvidenceMode ? <AiChatPanel loadPersistedState={false} /> : !singlePaneMode ? (
           <section className="min-h-0 overflow-hidden rounded-xl border border-border" data-testid="pdf-right-shell">
             {directHighlighterMode && !preloadedRightDocument ? (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">

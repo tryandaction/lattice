@@ -40,12 +40,14 @@ import {
   RotateCw,
   ExternalLink,
   Globe,
+  Library,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { cn } from "@/lib/utils";
 import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 import { useI18n } from "@/hooks/use-i18n";
+import { toast } from "sonner";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 import {
   closeDesktopWindow,
@@ -64,6 +66,9 @@ interface CommandBarProps {
   onOpenWorkspace: () => void;
   recentWorkspaces?: string[];
   onOpenRecentWorkspace?: (path: string) => void;
+  onOpenSharedLibrary?: () => void;
+  onReturnLocalWorkspace?: () => void;
+  sharedLibraryActive?: boolean;
 }
 
 function extractWorkspaceRootName(rootHandleName: string | null | undefined, workspaceRootPath: string | null | undefined): string | null {
@@ -324,6 +329,9 @@ export function CommandBar({
   onOpenWorkspace,
   recentWorkspaces = [],
   onOpenRecentWorkspace,
+  onOpenSharedLibrary,
+  onReturnLocalWorkspace,
+  sharedLibraryActive = false,
 }: CommandBarProps) {
   const { t } = useI18n();
   const activePaneId = useWorkspaceStore((state) => state.layout.activePaneId);
@@ -346,8 +354,8 @@ export function CommandBar({
   const overflowRef = useRef<HTMLDivElement | null>(null);
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const isWindowsDesktop = isWindowsDesktopHost();
-  const workspaceLabel = rootHandle?.name ?? t("shell.workspace.none");
-  const workspaceDescription = workspaceRootPath ?? t("shell.workspace.none");
+  const workspaceLabel = sharedLibraryActive ? t("workbench.activity.library") : rootHandle?.name ?? t("shell.workspace.none");
+  const workspaceDescription = sharedLibraryActive ? t("workbench.activity.library") : workspaceRootPath ?? t("shell.workspace.none");
   const workspaceHistory = useMemo(() => {
     const normalizedCurrent = (workspaceRootPath ?? "").replace(/\\/g, "/");
     return recentWorkspaces.filter((path, index, all) => {
@@ -362,6 +370,7 @@ export function CommandBar({
     }).slice(0, 8);
   }, [recentWorkspaces, workspaceRootPath]);
   const breadcrumbs = (() => {
+    if (activeTab?.kind === "cloud-file") return [{ label: activeTab.fileName }];
     if (scopedRegisteredState?.breadcrumbs?.length) {
       return normalizeBreadcrumbs(scopedRegisteredState.breadcrumbs, rootHandle?.name, workspaceRootPath);
     }
@@ -503,8 +512,8 @@ export function CommandBar({
 
   const handleCloseClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     stopDesktopControlPropagation(event);
-    void closeDesktopWindow();
-  }, [stopDesktopControlPropagation]);
+    void closeDesktopWindow().catch(() => toast.error(t("shell.window.closeSaveFailed")));
+  }, [stopDesktopControlPropagation, t]);
 
   return (
     <div
@@ -595,6 +604,17 @@ export function CommandBar({
                   )}
                 </div>
                 <div className="my-2 h-px bg-border" />
+                {onOpenSharedLibrary && <button
+                  type="button"
+                  onClick={() => { onOpenSharedLibrary(); setWorkspaceMenuOpen(false); }}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent"
+                  aria-current={sharedLibraryActive ? "true" : undefined}
+                ><Library className="h-4 w-4" /><span>{t("workbench.activity.library")}</span></button>}
+                {sharedLibraryActive && onReturnLocalWorkspace && <button
+                  type="button"
+                  onClick={() => { onReturnLocalWorkspace(); setWorkspaceMenuOpen(false); }}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent"
+                ><FolderOpen className="h-4 w-4" /><span>{t("workbench.workspace.local")}</span></button>}
                 <button
                   type="button"
                   onClick={() => {

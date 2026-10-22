@@ -1,0 +1,22 @@
+{
+  "name": "lattice-workbench-bridge",
+  "displayName": "Lattice Workbench Bridge",
+  "description": "Secure local bridge between Lattice Explorer and the native VS Code Workbench.",
+  "publisher": "lattice",
+  "version": "1.0.1",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "main": "./extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "activationEvents": [
+    "*"
+  ]
+}

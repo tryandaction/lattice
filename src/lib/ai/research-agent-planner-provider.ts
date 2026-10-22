@@ -1,4 +1,6 @@
 import { routeModel } from './model-router';
+import { outputTokenBudget } from './output-budget';
+import { withRequestImages } from './request-images';
 import type {
   AiModelInfo,
   AiMessage,
@@ -14,13 +16,18 @@ import type {
 
 export interface ResearchAgentPlannerGenerateAdapter {
   generatePlan: ResearchAgentPlannerGenerate;
+  generateAnswer: ResearchAgentPlannerGenerate;
   generateOmittedSummary: ResearchAgentOmittedModelSummaryGenerate;
   modelInfo: AiModelInfo;
   policy: ModelRouterPolicy;
+  answerTimeoutMs?: number;
+  maxOutputTokens?: number;
 }
 
 export interface CreateResearchAgentPlannerGenerateOptions {
   taskType?: AiTaskType;
+  onProgress?: import('./types').AiGenerateOptions['onProgress'];
+  images?: import('./types').AiContentPart[];
 }
 
 function buildOmittedSummaryMessages(input: ResearchAgentOmittedModelSummaryGenerateInput): AiMessage[] {
@@ -64,23 +71,41 @@ export function createResearchAgentPlannerGenerate(
   return {
     modelInfo: selection.modelInfo,
     policy: selection.policy,
+    answerTimeoutMs: selection.provider.requestTimeouts?.totalMs,
+    maxOutputTokens: selection.provider.getMaxOutputTokens?.(selection.modelInfo.model),
     generatePlan: async (messages, generateOptions) => {
-      const result = await selection.provider.generate(messages, {
+      const result = await selection.provider.generate(withRequestImages(messages, options.images), {
         model: generateOptions.model ?? settings.model ?? undefined,
         temperature: generateOptions.temperature ?? Math.min(settings.temperature, 0.2),
-        maxTokens: generateOptions.maxTokens ?? Math.min(settings.maxTokens, 1200),
+        maxTokens: generateOptions.maxTokens ?? outputTokenBudget(settings.maxTokens, 'planning'),
         systemPrompt: generateOptions.systemPrompt,
         signal: generateOptions.signal,
+        onProgress: generateOptions.onProgress ?? options.onProgress,
+        onResponseDiagnostics: generateOptions.onResponseDiagnostics,
       });
 
-      return { text: result.text };
+      return result;
+    },
+    generateAnswer: async (messages, generateOptions) => {
+      const result = await selection.provider.generate(withRequestImages(messages, options.images), {
+        model: generateOptions.model ?? settings.model ?? undefined,
+        temperature: generateOptions.temperature ?? Math.min(settings.temperature, 0.2),
+        maxTokens: generateOptions.maxTokens ?? outputTokenBudget(settings.maxTokens, 'detailed'),
+        systemPrompt: generateOptions.systemPrompt,
+        signal: generateOptions.signal,
+        onProgress: generateOptions.onProgress ?? options.onProgress,
+        onResponseDiagnostics: generateOptions.onResponseDiagnostics,
+      });
+
+      return result;
     },
     generateOmittedSummary: async (summaryInput) => {
       const result = await selection.provider.generate(buildOmittedSummaryMessages(summaryInput), {
         model: settings.model ?? undefined,
         temperature: Math.min(settings.temperature, 0.15),
-        maxTokens: Math.min(settings.maxTokens, 700),
+        maxTokens: outputTokenBudget(settings.maxTokens, 'context-summary'),
         signal: summaryInput.signal,
+        onProgress: options.onProgress,
       });
 
       return result.text;

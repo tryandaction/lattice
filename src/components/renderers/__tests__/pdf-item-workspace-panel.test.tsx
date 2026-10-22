@@ -2,8 +2,9 @@
  * @vitest-environment jsdom
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setLocale } from "@/lib/i18n";
 import type { PdfItemNoteSummary } from "@/lib/pdf-item";
 import { PdfItemWorkspacePanel } from "../pdf-item-workspace-panel";
 
@@ -35,7 +36,10 @@ const mocks = vi.hoisted(() => {
   };
 
   return {
+    fileSystemReads: vi.fn(),
     refreshDirectory: vi.fn(async () => undefined),
+    hydratePdfVirtualChildren: vi.fn(async () => undefined),
+    createPdfItemNote: vi.fn(),
     closeTabsByPath: vi.fn(),
     splitPane: vi.fn(),
     openFileInPane: vi.fn(),
@@ -56,6 +60,8 @@ const mocks = vi.hoisted(() => {
 
 const {
   refreshDirectory,
+  hydratePdfVirtualChildren,
+  createPdfItemNote,
   closeTabsByPath,
   splitPane,
   openFileInPane,
@@ -71,10 +77,11 @@ const {
 } = mocks;
 
 vi.mock("@/hooks/use-file-system", () => ({
-  useFileSystem: () => ({
+  useFileSystem: () => { mocks.fileSystemReads(); return ({
     deleteFile: vi.fn(),
     refreshDirectory: mocks.refreshDirectory,
-  }),
+    hydratePdfVirtualChildren: mocks.hydratePdfVirtualChildren,
+  }); },
 }));
 
 vi.mock("@/stores/workspace-store", () => {
@@ -114,7 +121,7 @@ vi.mock("@/lib/file-operations", () => ({
 }));
 
 vi.mock("@/lib/pdf-item", () => ({
-  createPdfItemNote: vi.fn(),
+  createPdfItemNote: mocks.createPdfItemNote,
   ensurePdfItemWorkspace: vi.fn(async () => ({
     itemId: "item-1",
     itemFolderPath: ".lattice/items/item-1",
@@ -158,31 +165,18 @@ vi.mock("@/lib/clipboard", () => ({
   copyToClipboard: (text: string) => mocks.copyToClipboard(text),
 }));
 
-vi.mock("@/hooks/use-i18n", () => ({
-  useI18n: () => ({
-    t: (key: string, values?: Record<string, unknown>) => {
-      if (key === "pdf.workspace.count.annotations") return `${values?.count} annotations`;
-      if (key === "pdf.workspace.count.notes") return `${values?.count} related files`;
-      const labels: Record<string, string> = {
-        "pdf.workspace.title": "PDF Item",
-        "pdf.workspace.action.newNote": "New note",
-        "pdf.workspace.action.newNotebook": "New Notebook",
-        "pdf.workspace.action.reveal": "Reveal in Explorer",
-        "pdf.workspace.meta.copy": "Copy summary",
-        "pdf.workspace.meta.copyCitation": "Copy citation",
-        "pdf.workspace.meta.copyBibtex": "Copy BibTeX",
-        "pdf.workspace.meta.authors": "Authors",
-        "pdf.workspace.meta.year": "Year",
-        "pdf.workspace.meta.pages": "Pages",
-      };
-      return labels[key] ?? key;
-    },
-  }),
-}));
+beforeEach(() => setLocale("en-US"));
+afterEach(() => { cleanup(); setLocale("zh-CN"); });
 
 describe("PdfItemWorkspacePanel", () => {
   beforeEach(() => {
     refreshDirectory.mockClear();
+    hydratePdfVirtualChildren.mockClear();
+    createPdfItemNote.mockReset();
+    createPdfItemNote.mockResolvedValue({
+      handle: { kind: "file", name: "Untitled.md" },
+      path: ".lattice/items/item-1/Untitled.md",
+    });
     closeTabsByPath.mockClear();
     splitPane.mockClear();
     openFileInPane.mockClear();
@@ -204,6 +198,42 @@ describe("PdfItemWorkspacePanel", () => {
       fileFingerprint: null,
       versionFingerprint: null,
     });
+  });
+
+  it("hydrates only the current PDF subtree after creating a note", async () => {
+    render(
+      <PdfItemWorkspacePanel
+        rootHandle={{ name: "workspace" } as FileSystemDirectoryHandle}
+        fileName="paper.pdf"
+        filePath="workspace/paper.pdf"
+        paneId="pane-main"
+        annotations={[]}
+        manifest={{
+          itemId: "item-1",
+          itemFolderPath: ".lattice/items/item-1",
+          pdfPath: "workspace/paper.pdf",
+          knownPdfPaths: ["workspace/paper.pdf"],
+          version: 4,
+          annotationIndexPath: ".lattice/items/item-1/annotations/index.json",
+          createdAt: 1,
+          updatedAt: 1,
+          fileFingerprint: null,
+          versionFingerprint: null,
+        }}
+        pdfDocument={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle("New note"));
+
+    await waitFor(() => {
+      expect(createPdfItemNote).toHaveBeenCalled();
+      expect(hydratePdfVirtualChildren).toHaveBeenCalledWith(
+        "workspace/paper.pdf",
+        { force: true, expand: true },
+      );
+    });
+    expect(refreshDirectory).not.toHaveBeenCalled();
   });
 
   it("keeps bibliography copy actions collapsed behind one compact icon menu", async () => {
@@ -369,7 +399,7 @@ describe("PdfItemWorkspacePanel", () => {
     });
   });
 
-  it("shows original routing paths for copied PDFs and resolves by fingerprint", async () => {
+  it("switches PDF path labels in place and preserves the actual paths and identity", async () => {
     resolveDirectoryHandle.mockResolvedValue({ name: "item-1" } as FileSystemDirectoryHandle);
     loadPdfItemManifest.mockResolvedValue({
       itemId: "item-1",
@@ -401,9 +431,15 @@ describe("PdfItemWorkspacePanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Current PDF:/)).toBeTruthy();
-      expect(screen.getByText(/Original PDF:/)).toBeTruthy();
-      expect(screen.getByText(/Item workspace:/)).toBeTruthy();
+      expect(screen.getByText(/Related PDF:/)).toBeTruthy();
+      expect(screen.getByText(/Research files:/)).toBeTruthy();
     });
+
+    act(() => setLocale("zh-CN"));
+    expect(screen.getByText("当前 PDF：")).toBeTruthy();
+    expect(screen.getByText("关联 PDF：")).toBeTruthy();
+    expect(screen.getByText("研究文件目录：")).toBeTruthy();
+    expect(screen.queryByText(/Current PDF:|Original PDF:|Item workspace:/)).toBeNull();
 
     expect(screen.getByText(/workspace\/copied\/paper\.pdf/)).toBeTruthy();
     expect(screen.getByText(/workspace\/original\/paper\.pdf/)).toBeTruthy();
@@ -418,5 +454,29 @@ describe("PdfItemWorkspacePanel", () => {
         versionFingerprint: "copy-version",
       },
     );
+  });
+});
+
+describe("shared PDF research files", () => {
+  it("lists, opens, creates and removes cloud children without calling local filesystem hooks", async () => {
+    vi.clearAllMocks(); mocks.splitPane.mockReturnValue("pane-child");
+    const cloudSource = { children: [{ id: "child-1", parentId: "pdf", name: "analysis.md", kind: "markdown" as const }], canCreate: true, onOpenChild: vi.fn(async () => {}), onCreateChild: vi.fn(async () => {}), onDeleteChild: vi.fn(async () => {}), onRevealChildren: vi.fn() };
+    render(<PdfItemWorkspacePanel rootHandle={{} as FileSystemDirectoryHandle} fileName="paper.pdf" filePath="cloud://pdf" paneId="pane-main" annotations={[]} cloudSource={cloudSource} />);
+    expect(screen.getByText("1 related files")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /PDF Item/ }));
+    fireEvent.click(screen.getByRole("button", { name: "analysis.md" }));
+    await waitFor(() => expect(cloudSource.onOpenChild).toHaveBeenCalledWith("child-1", "pane-child"));
+    fireEvent.click(screen.getByRole("button", { name: "New note" }));
+    await waitFor(() => expect(cloudSource.onCreateChild).toHaveBeenCalledWith("note", "pane-child"));
+    fireEvent.click(screen.getByRole("button", { name: "Reveal in Explorer" }));
+    expect(cloudSource.onRevealChildren).toHaveBeenCalledOnce();
+    expect(mocks.fileSystemReads).not.toHaveBeenCalled();
+    expect(mocks.loadPdfItemManifest).not.toHaveBeenCalled();
+    expect(mocks.resolveEntry).not.toHaveBeenCalled();
+  });
+  it("uses cloud permissions for new research note actions", () => {
+    render(<PdfItemWorkspacePanel rootHandle={{} as FileSystemDirectoryHandle} fileName="paper.pdf" filePath="cloud://pdf" paneId="pane-main" annotations={[]} cloudSource={{ children: [], canCreate: false, onOpenChild: vi.fn(), onCreateChild: vi.fn(), onRevealChildren: vi.fn() }} />);
+    expect((screen.getByRole("button", { name: "New note" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "New Notebook" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

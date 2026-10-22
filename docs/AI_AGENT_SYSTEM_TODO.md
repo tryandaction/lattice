@@ -1,6 +1,6 @@
 # AI Agent System Todo
 
-Last updated: 2026-06-09
+Last updated: 2026-08-17
 
 This is the implementation master checklist for Lattice AI Agent work. It turns `AI_AGENT_WORKBENCH_PLAN.md` into executable product tasks and prevents one-off, piecemeal development.
 
@@ -18,6 +18,21 @@ P0-P5 are the sequential Research Agent product track and match the roadmap in `
 
 P6 is a horizontal Lattice Product Skills Adaptation Backlog from the user-provided Lattice adaptation prompt. It is intentionally kept in this TODO because it contains concrete implementation packages, but it is not the current sequential phase unless explicitly scheduled. P6 items should be pulled into the active phase when they support it. Example: P6.4 workflow preset registry supports P4 workflow productization; PDF-scoped P6.1/P6.2 remain for the separate PDF window.
 
+## AI Workspace Phase 2 (UI-only)
+
+Status: complete for the current UI and performance-closeout slice (2026-08-17). This is not Research Agent P2 and is not a new P6 capability package.
+
+- Focus the default AI Workspace viewport on the current conversation, compact status, and composer.
+- Render answer-first teaching sections only when present; expose citations as compact deduplicated entry points.
+- Use root-aware evidence navigation and a 38% desktop PDF Companion (32% minimum); anchored PDF evidence may render as a temporary source highlight and requires explicit user confirmation before existing annotation persistence is invoked.
+- Keep Evidence, Trace, Memory, Workbench, raw paths, tool output, and planned writes behind explicit review interactions.
+- Keep pending approvals visible and route them to Trace without expanding ordinary audit content.
+- Preserve all existing Draft, Proposal, Approval, Tool Broker, and permission behavior. Do not add shell, network, MCP, direct-write, autonomous coding, automatic git, or new permissions.
+- Use a 38% desktop AI dock default, 32% minimum, and 52% maximum; migrate the legacy 28% default and reset Review state when starting a new chat.
+- Bound clean binary content to three recent documents, PDF page text to 24 models per document, and reference previews to 16 nearby pages; do not scan the PDF tail automatically.
+- Cap each PDF canvas at 6 MP and release cold canvas/text/annotation/page resources. Defer annotation search and skip off-screen annotation card layout/paint.
+- Carry Evidence page/snippet/rect anchors through the existing workspace navigation store so citations can jump and flash in PDF without enabling a new write or execution path.
+
 ## Scope
 
 In scope for this thread:
@@ -26,7 +41,7 @@ In scope for this thread:
 - Research Agent orchestration over markdown, notes, notebooks, workspace index, runner output, memory, evidence, drafts, and proposals.
 - Planner, context pack, Tool Broker, Trace, Memory, Workbench, and provider integration.
 - Product benchmarking against professional agent systems where it affects Lattice implementation.
-- Current active work: P5 production hardening is in closeout, and selected P6 current-thread Lattice Product Skills slices are now scheduled where they directly improve the Research Agent main path. P6 remains horizontal; PDF-scoped P6.1/P6.2 stay assigned to the separate PDF window.
+- Sequential status: P4 is complete for the current productization slice; P5 production hardening is the active closeout track. P6 remains horizontal, and only explicitly scheduled current-thread slices support P5; PDF-scoped P6.1/P6.2 stay assigned to the separate PDF window.
 
 Out of scope for this thread:
 
@@ -525,7 +540,7 @@ Verification:
 
 Status:
 
-- Current active sequential phase.
+- Completed for the current productization slice; P5 is the active sequential phase.
 - P6.4 workflow preset registry and P6.3 note-taking config provide supporting infrastructure for this phase.
 - First productization slice completed: AI Chat / product Research Agent surfaces now infer a concrete workflow when the user leaves workflow on Auto. Auto maps notebook cues to Notebook Analysis, comparison/matrix cues to Literature Matrix, organization/linking cues to Knowledge Organization, teaching/explanation cues to Teaching Explain, reading-note cues to Reading Note, and defaults to Markdown Research.
 - Inferred workflows use the same planner hints, context budget profile, memory scopes, and trace labels as explicit workflows. `agentResult.workflowInferred` lets structured Chat results label the workflow as automatic without adding another selector.

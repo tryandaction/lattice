@@ -58,6 +58,8 @@ interface PdfTextRectMergeOptions {
   targetSegmentHeightRatio?: number;
   minSegmentHeightRatio?: number;
   maxSegmentHeightRatio?: number;
+  minimumSegmentHeight?: number;
+  lineGapHeightMultiplier?: number;
 }
 
 function normalizePdfOverlayRect(rect: PdfTextOverlayRect): NormalizedPdfTextRect | null {
@@ -184,6 +186,21 @@ function isSameTextRow(
   if (strictRows) {
     const unionHeight = Math.max(row.bottom, rect.bottom) - Math.min(row.top, rect.top);
     const centerTolerance = Math.max(rowTolerance, minHeight * PDF_TEXT_MARKUP_STRICT_ROW_CENTER_RATIO);
+    const rowLeft = Math.min(...row.rects.map((candidate) => candidate.left));
+    const rowRight = Math.max(...row.rects.map((candidate) => candidate.right));
+    const horizontalGap = Math.max(0, rowLeft - rect.right, rect.left - rowRight);
+    const verticalGap = Math.max(0, -verticalOverlap);
+    const sizeRatio = minHeight / maxHeight;
+    const isInlineScriptFragment =
+      sizeRatio <= 0.72 &&
+      verticalGap <= Math.max(rowTolerance, minHeight * 0.25) &&
+      centerDistance <= Math.max(rowTolerance, maxHeight * 0.72) &&
+      unionHeight <= maxHeight * 1.5 &&
+      horizontalGap <= Math.max(rowTolerance, maxHeight * 0.95);
+
+    if (isInlineScriptFragment) {
+      return true;
+    }
 
     return verticalOverlap >= minHeight * PDF_TEXT_MARKUP_STRICT_ROW_OVERLAP_RATIO &&
       centerDistance <= centerTolerance &&
@@ -248,7 +265,12 @@ function buildRowSegment(
 ): PdfMergedTextOverlaySegment {
   const left = Math.min(...rects.map((rect) => rect.left));
   const right = Math.max(...rects.map((rect) => rect.right));
-  const medianHeight = Math.max(Number.EPSILON, median(rects.map((rect) => rect.height)));
+  const orderedHeights = rects.map((rect) => rect.height).sort((leftHeight, rightHeight) => leftHeight - rightHeight);
+  const medianHeight = Math.max(Number.EPSILON, median(orderedHeights));
+  const hasInlineScriptSizedFragments = orderedHeights[0] <= medianHeight * 0.72;
+  const referenceHeight = hasInlineScriptSizedFragments
+    ? orderedHeights[Math.floor((orderedHeights.length - 1) * 0.75)] ?? medianHeight
+    : medianHeight;
   const medianCenterY = median(rects.map((rect) => rect.centerY));
   const rawTop = Math.min(...rects.map((rect) => rect.top));
   const rawBottom = Math.max(...rects.map((rect) => rect.bottom));
@@ -256,17 +278,17 @@ function buildRowSegment(
   const targetRatio = options?.targetSegmentHeightRatio ?? PDF_TEXT_RECT_TARGET_SEGMENT_HEIGHT_RATIO;
   const minRatio = options?.minSegmentHeightRatio ?? PDF_TEXT_RECT_MIN_SEGMENT_HEIGHT_RATIO;
   const maxRatio = options?.maxSegmentHeightRatio ?? PDF_TEXT_RECT_MAX_SEGMENT_HEIGHT_RATIO;
-  const targetHeight = medianHeight * targetRatio;
+  const targetHeight = referenceHeight * targetRatio;
   const normalizedHeight = Math.min(
     Math.max(
       targetHeight,
-      medianHeight * minRatio,
+      referenceHeight * minRatio,
     ),
-    Math.min(rawHeight, medianHeight * maxRatio),
+    Math.min(rawHeight, referenceHeight * maxRatio),
   );
   const top = Math.max(0, medianCenterY - normalizedHeight / 2);
   const bottom = top + normalizedHeight;
-  const baselineHeight = Math.min(bottom - top, medianHeight);
+  const baselineHeight = Math.min(bottom - top, referenceHeight);
 
   return {
     left,
@@ -313,6 +335,48 @@ function enforceStrictSegmentRowGaps(segments: PdfMergedTextOverlaySegment[]): P
       height: nextHeight,
       baselineTop: nextTop + nextHeight - baselineHeight,
       baselineHeight,
+    };
+  });
+}
+
+function restoreReadableTextMarkupSegmentHeights(
+  segments: PdfMergedTextOverlaySegment[],
+  minimumHeight: number,
+  lineGapHeightMultiplier: number,
+): PdfMergedTextOverlaySegment[] {
+  if (segments.length === 0 || minimumHeight <= 0) {
+    return segments;
+  }
+
+  const centers = segments.map((segment) => segment.top + (segment.height / 2));
+  return segments.map((segment, index) => {
+    const center = centers[index];
+    const nearestRowGap = centers.reduce((nearest, candidateCenter, candidateIndex) => {
+      if (candidateIndex === index) {
+        return nearest;
+      }
+      const distance = Math.abs(candidateCenter - center);
+      if (distance <= Number.EPSILON) {
+        return nearest;
+      }
+      return Math.min(nearest, distance);
+    }, Number.POSITIVE_INFINITY);
+    const inferredHeight = Number.isFinite(nearestRowGap) && nearestRowGap <= minimumHeight * 2.8
+      ? nearestRowGap * lineGapHeightMultiplier
+      : 0;
+    const desiredHeight = Math.max(segment.height, minimumHeight, inferredHeight);
+    const maxNonOverlappingHeight = Number.isFinite(nearestRowGap)
+      ? Math.max(segment.height, nearestRowGap * (1 - PDF_TEXT_MARKUP_STRICT_ROW_GAP_RATIO))
+      : desiredHeight;
+    const height = Math.min(desiredHeight, maxNonOverlappingHeight);
+    const top = Math.max(0, center - (height / 2));
+
+    return {
+      ...segment,
+      top,
+      height,
+      baselineTop: top,
+      baselineHeight: height,
     };
   });
 }
@@ -383,7 +447,14 @@ export function mergePdfTextOverlayRects(
     }
   }
 
-  return options?.strictRows ? enforceStrictSegmentRowGaps(merged) : merged;
+  const heightRestored = options?.minimumSegmentHeight
+    ? restoreReadableTextMarkupSegmentHeights(
+        merged,
+        options.minimumSegmentHeight,
+        options.lineGapHeightMultiplier ?? 0.78,
+      )
+    : merged;
+  return options?.strictRows ? enforceStrictSegmentRowGaps(heightRestored) : heightRestored;
 }
 
 export function mergePdfTargetRectsForTextMarkup(rects: BoundingBox[]): BoundingBox[] {
@@ -435,9 +506,11 @@ export function mergePageRelativePdfTextMarkupRects(rects: BoundingBox[]): PdfMe
       pageWidth: 100,
       allowWideSameColumnGaps: false,
       strictRows: true,
-      targetSegmentHeightRatio: 0.46,
-      minSegmentHeightRatio: 0.34,
-      maxSegmentHeightRatio: 0.52,
+      targetSegmentHeightRatio: 0.86,
+      minSegmentHeightRatio: 0.72,
+      maxSegmentHeightRatio: 0.98,
+      minimumSegmentHeight: 0.9,
+      lineGapHeightMultiplier: 0.78,
     },
   );
 }

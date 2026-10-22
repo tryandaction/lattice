@@ -25,7 +25,7 @@ import {
   rejectAgentToolRequest,
   type AgentToolExecutionOptions,
 } from "@/lib/ai/agent-tool-broker";
-import { reconcileResearchAgentPendingApprovals } from "@/lib/ai/research-agent";
+import { canRetryResearchAgentSynthesis, reconcileResearchAgentPendingApprovals } from "@/lib/ai/research-agent";
 import { runCodeWithWorkspaceRunner } from "@/lib/ai/agent-runner-tool";
 import {
   buildAgentSessionDebugBundle,
@@ -1645,12 +1645,39 @@ function PendingApprovalCard({
   );
 }
 
+function canResumeApprovedExecution(session: AgentSession): boolean {
+  if (canRetryResearchAgentSynthesis(session)) return true;
+  return Boolean(session.executionContinuation) && session.status === 'running' &&
+    session.pendingApprovals.some((approval) => approval.planStepId && approval.status === 'completed') &&
+    session.pendingApprovals.every((approval) => approval.status === 'completed');
+}
+
+function queueApprovedExecutionContinuation(session: AgentSession, automatic: boolean): void {
+  if (!canResumeApprovedExecution(session)) return;
+  const chat = useAiChatStore.getState();
+  if (chat.isGenerating || (chat.composerDraft?.continuation?.approvalResume && chat.composerDraft.continuation.sourceSessionId === session.id)) return;
+  const ownsSession = (conversation: (typeof chat.conversations)[number]) => conversation.messages.some((message) => message.agentResult?.sessionId === session.id);
+  const current = chat.conversations.find((conversation) => conversation.id === chat.activeConversationId);
+  if (automatic && (!current || !ownsSession(current))) return;
+  if (!automatic && (!current || !ownsSession(current))) {
+    const original = chat.conversations.find(ownsSession);
+    if (original) chat.setActiveConversation(original.id);
+    else chat.newConversation();
+  }
+  chat.setOpen(true);
+  chat.setComposerDraft({ text: session.task, mode: 'agent', submit: true,
+    continuation: { sourceSessionId: session.id, approvalResume: true } });
+}
+
 export function AgentTracePanel({
   runCode = runCodeWithWorkspaceRunner,
+  loadPersisted = true,
 }: {
   runCode?: AgentToolExecutionOptions["runCode"];
+  loadPersisted?: boolean;
 } = {}) {
   const { t } = useI18n();
+  const chatIsGenerating = useAiChatStore((state) => state.isGenerating);
   const sessions = useAgentSessionStore((state) => state.sessions);
   const activeSessionId = useAgentSessionStore((state) => state.activeSessionId);
   const focusTarget = useAgentSessionStore((state) => state.focusTarget);
@@ -1665,8 +1692,10 @@ export function AgentTracePanel({
   const [focusedTraceSection, setFocusedTraceSection] = useState<"approvals" | null>(null);
 
   useEffect(() => {
-    void loadSessions();
-  }, [loadSessions]);
+    if (loadPersisted) {
+      void loadSessions();
+    }
+  }, [loadPersisted, loadSessions]);
 
   useEffect(() => {
     if (sessions.length > 0) {
@@ -1723,11 +1752,14 @@ export function AgentTracePanel({
         toast.error(t("chat.agentTrace.approveFailed"), {
           description: result.error,
         });
-      } else if (result.status === "completed" && activeSession && isResearchAgentSession(activeSession)) {
-        reconcileResearchAgentPendingApprovals({
-          sessionId: activeSession.id,
+      } else if (result.status === "completed") {
+        const approvedSession = useAgentSessionStore.getState().getSession(result.sessionId);
+        if (!approvedSession || !isResearchAgentSession(approvedSession)) return;
+        const reconciliation = reconcileResearchAgentPendingApprovals({
+          sessionId: approvedSession.id,
           now: Date.now(),
         });
+        queueApprovedExecutionContinuation(reconciliation.session, true);
       }
     } catch (error) {
       toast.error(t("chat.agentTrace.approveFailed"), {
@@ -1790,6 +1822,30 @@ export function AgentTracePanel({
       </button>
       {expanded && activeSession && (
         <div id="agent-trace-panel-body" className="max-h-72 space-y-3 overflow-y-auto border-t border-border/60 px-3 py-3">
+          {pendingApprovalItems.length > 0 && (
+            <div
+              data-testid="agent-trace-pending-approvals"
+              data-focused={focusedTraceSection === "approvals" ? "true" : undefined}
+              className={cn(
+                "space-y-1.5 rounded p-1",
+                focusedTraceSection === "approvals" && "border border-amber-500/40 bg-amber-500/5",
+              )}
+            >
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                {t("chat.agentTrace.pendingApprovalTitle")}
+              </div>
+              {pendingApprovalItems.map((approval) => (
+                <PendingApprovalCard
+                  key={approval.id}
+                  approval={approval}
+                  busy={busyApprovalId === approval.id}
+                  onApprove={(item) => void handleApprove(item)}
+                  onReject={handleReject}
+                />
+              ))}
+            </div>
+          )}
+
           <div className="space-y-1">
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
               {t("chat.agentTrace.recentRuns")}
@@ -1875,35 +1931,18 @@ export function AgentTracePanel({
           )}
           {lineageView && <AgentLineagePanel lineage={lineageView} onSelectSession={setActiveSession} />}
 
-          {pendingApprovalItems.length > 0 && (
-            <div
-              data-testid="agent-trace-pending-approvals"
-              data-focused={focusedTraceSection === "approvals" ? "true" : undefined}
-              className={cn(
-                "space-y-1.5 rounded p-1",
-                focusedTraceSection === "approvals" && "border border-amber-500/40 bg-amber-500/5",
-              )}
-            >
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                {t("chat.agentTrace.pendingApprovalTitle")}
-              </div>
-              {pendingApprovalItems.map((approval) => (
-                <PendingApprovalCard
-                  key={approval.id}
-                  approval={approval}
-                  busy={busyApprovalId === approval.id}
-                  onApprove={(item) => void handleApprove(item)}
-                  onReject={handleReject}
-                />
-              ))}
-            </div>
-          )}
-
           {processedApprovalItems.length > 0 && (
             <div className="space-y-1.5">
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
                 {t("chat.agentTrace.approvalResultsTitle")}
               </div>
+              {canResumeApprovedExecution(activeSession) && (
+                <button type="button" title={t("chat.agentTrace.resume")} disabled={chatIsGenerating || Boolean(busyApprovalId)}
+                  onClick={() => queueApprovedExecutionContinuation(activeSession, false)}
+                  className="rounded border border-border/70 px-2 py-1 text-xs text-primary hover:bg-accent disabled:opacity-50">
+                  {t("chat.agentTrace.resume")}
+                </button>
+              )}
               {processedApprovalItems.map((approval) => (
                 <PendingApprovalCard
                   key={approval.id}
@@ -1926,8 +1965,8 @@ export function AgentTracePanel({
               {t("chat.agentTrace.timeline")}
             </div>
             {activeSession.trace.length > 0 ? (
-              activeSession.trace.map((event) => (
-                <AgentTraceEventRow key={event.id} event={event} />
+              activeSession.trace.map((event, index) => (
+                <AgentTraceEventRow key={`${event.id}:${event.timestamp}:${index}`} event={event} />
               ))
             ) : (
               <div className="rounded border border-border/50 bg-background/60 px-2 py-3 text-center text-[11px] text-muted-foreground">

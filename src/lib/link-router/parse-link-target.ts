@@ -23,56 +23,73 @@ function isPdfWorkspacePath(path: string): boolean {
   return /\.pdf$/i.test(path);
 }
 
-function parseFragmentTarget(path: string, fragment: string): LinkTarget {
+function positiveInteger(value: string | null): number | undefined {
+  if (!value || !/^\d+$/.test(value)) return undefined;
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 ? number : undefined;
+}
+
+function parseFragmentTarget(path: string, fragment: string): LinkTarget | null {
   const params = new URLSearchParams(fragment);
   const page = params.get("page");
   const line = params.get("line");
   const cellId = params.get("cell");
+  const snippet = params.get("text") ?? params.get("quote");
   const annotationId = params.get("annotation") ?? params.get("ann");
 
   if (fragment.startsWith("ann-")) {
-    return { type: "pdf_annotation", path, annotationId: fragment };
+    return { type: "pdf_annotation", path, annotationId: safeDecodeLinkTarget(fragment) };
   }
 
   if (annotationId?.trim()) {
-    const pageNumber = page ? Number.parseInt(page, 10) : Number.NaN;
-    return Number.isFinite(pageNumber) && pageNumber > 0
+    const pageNumber = positiveInteger(page);
+    return pageNumber !== undefined
       ? { type: "pdf_annotation", path, annotationId, page: pageNumber }
       : { type: "pdf_annotation", path, annotationId };
   }
 
-  if (page) {
-    const pageNumber = Number.parseInt(page, 10);
-    if (Number.isFinite(pageNumber) && pageNumber > 0) {
-      return { type: "pdf_page", path, page: pageNumber };
-    }
+  if (page !== null) {
+    const pageNumber = positiveInteger(page);
+    if (pageNumber === undefined) return null;
+    return { type: "pdf_page", path, page: pageNumber, ...(snippet?.trim() ? { snippet: snippet.trim() } : {}) };
   }
 
-  if (line) {
-    const lineNumber = Number.parseInt(line, 10);
-    if (Number.isFinite(lineNumber) && lineNumber > 0) {
-      return { type: "code_line", path, line: lineNumber };
+  if (line !== null) {
+    const range = line.match(/^(\d+)-(\d+)$/);
+    const lineNumber = positiveInteger(range ? range[1] : line);
+    if (range) {
+      const end = positiveInteger(range[2]);
+      if (lineNumber === undefined || end === undefined || end < lineNumber) return null;
     }
+    return lineNumber === undefined ? null : { type: "code_line", path, line: lineNumber };
   }
 
   if (cellId) {
     return { type: "notebook_cell", path, cellId };
   }
 
-  if (isPdfWorkspacePath(path)) {
-    return { type: "pdf_annotation", path, annotationId: fragment };
+  if (snippet?.trim()) {
+    return { type: "workspace_text", path, snippet: snippet.trim() };
   }
 
-  return { type: "workspace_heading", path, heading: fragment };
+  if (isPdfWorkspacePath(path)) {
+    return { type: "pdf_annotation", path, annotationId: safeDecodeLinkTarget(fragment) };
+  }
+
+  return { type: "workspace_heading", path, heading: safeDecodeLinkTarget(fragment) };
 }
 
-function resolveWorkspacePath(pathPart: string, currentFilePath?: string): string {
+function resolveWorkspacePath(pathPart: string, currentFilePath?: string, pathMode: "relative" | "workspace" = "relative"): string {
   if (!pathPart) {
     return currentFilePath ? normalizeWorkspacePath(currentFilePath) : "";
   }
 
   if (pathPart.startsWith("/")) {
     return normalizeWorkspacePath(pathPart.slice(1));
+  }
+
+  if (pathMode === "workspace") {
+    return normalizeWorkspacePath(pathPart);
   }
 
   if (currentFilePath) {
@@ -86,20 +103,23 @@ export function parseLinkTarget(
   rawTarget: string,
   options: ParseLinkTargetOptions = {}
 ): ParsedLinkTarget {
-  const normalized = unwrapWikiLinkTarget(safeDecodeLinkTarget(rawTarget.trim()));
+  // Split syntax before decoding values. Decoding the whole link corrupts
+  // encoded delimiters in file names, URLs, and quoted scientific text.
+  const normalized = unwrapWikiLinkTarget(rawTarget.trim());
   if (!normalized) {
     return { raw: rawTarget, normalized, target: null };
   }
 
-  if (isLikelySystemPath(normalized)) {
+  const systemPath = isLikelySystemPath(normalized);
+  if (systemPath && options.pathMode !== "workspace") {
     return {
       raw: rawTarget,
       normalized,
-      target: { type: "system_path", path: toSystemPath(normalized) },
+      target: { type: "system_path", path: normalized.startsWith("file://") ? toSystemPath(normalized) : safeDecodeLinkTarget(normalized) },
     };
   }
 
-  if (isExternalUrl(normalized)) {
+  if (!systemPath && isExternalUrl(normalized)) {
     return {
       raw: rawTarget,
       normalized,
@@ -110,7 +130,9 @@ export function parseLinkTarget(
   const hashIndex = normalized.indexOf("#");
   const pathPart = hashIndex >= 0 ? normalized.slice(0, hashIndex) : normalized;
   const fragment = hashIndex >= 0 ? normalized.slice(hashIndex + 1) : "";
-  const resolvedPath = resolveWorkspacePath(pathPart, options.currentFilePath);
+  const resolvedPath = systemPath
+    ? normalizeWorkspacePath(pathPart.startsWith("file://") ? toSystemPath(pathPart) : safeDecodeLinkTarget(pathPart))
+    : resolveWorkspacePath(safeDecodeLinkTarget(pathPart), options.currentFilePath, options.pathMode);
 
   if (!fragment) {
     return {

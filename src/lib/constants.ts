@@ -8,6 +8,7 @@ import {
   BookOpen,
   type LucideIcon,
 } from "lucide-react";
+import { CODE_EXTENSIONS, IMAGE_EXTENSIONS } from "@/lib/file-utils";
 
 /**
  * Allowed file extensions for STEM research files
@@ -20,12 +21,13 @@ export const ALLOWED_EXTENSIONS = new Set([
   "doc",
   "docx",
   "md",
+  "mdx",
+  "markdown",
   "txt",
   "py",
   "ipynb",
-  "png",
-  "jpg",
-  "jpeg",
+  ...Object.keys(CODE_EXTENSIONS),
+  ...Object.keys(IMAGE_EXTENSIONS),
 ]);
 
 /**
@@ -51,6 +53,8 @@ export const IGNORED_DIRECTORIES = new Set([
  * Returns appropriate Lucide icon for each file type
  */
 export const FILE_ICONS: Record<string, LucideIcon> = {
+  ...Object.fromEntries(Object.keys(CODE_EXTENSIONS).map((extension) => [extension, Code])),
+
   // Documents
   pdf: FileText,
   doc: FileText,

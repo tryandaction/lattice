@@ -8,6 +8,30 @@ function normalizeText(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value.join("") : value;
 }
 
+function stripAnsi(value: string): string {
+  return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+function hasSemanticText(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+  return /[\p{L}\p{N}]/u.test(stripAnsi(value).trim());
+}
+
+function isGenericNotebookErrorShell(output: JupyterOutput): boolean {
+  if (output.output_type !== "error") {
+    return false;
+  }
+
+  const errorName = stripAnsi(output.ename ?? "").trim();
+  const errorValue = stripAnsi(output.evalue ?? "").trim();
+  const traceback = (output.traceback ?? []).map((line) => stripAnsi(line).trim()).filter(Boolean);
+  const genericName = !errorName || errorName === "Error" || errorName === "ExecutionError";
+
+  return genericName && !hasSemanticText(errorValue) && !traceback.some(hasSemanticText);
+}
+
 export function runnerEventToExecutionOutputs(event: RunnerEvent): ExecutionOutput[] {
   switch (event.type) {
     case "stdout":
@@ -81,13 +105,19 @@ export function jupyterOutputToExecutionOutputs(output: JupyterOutput): Executio
   }
 
   if (output.output_type === "error") {
+    if (isGenericNotebookErrorShell(output)) {
+      return [];
+    }
+    const traceback = output.traceback
+      ?.map((line) => stripAnsi(line).trimEnd())
+      .filter((line) => line.trim().length > 0);
     return [
       {
         type: "error",
         content: `${output.ename ?? "Error"}: ${output.evalue ?? ""}`.trim(),
         errorName: output.ename,
         errorValue: output.evalue,
-        traceback: output.traceback,
+        traceback,
       },
     ];
   }

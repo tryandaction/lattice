@@ -7,7 +7,9 @@ import type {
   AiRuntimeSettings,
   ModelRouterPolicy,
 } from './types';
-import { getConfiguredProviders, getDefaultProvider, getProvider } from './providers';
+import { getConfiguredProviders, getDefaultProvider, getProfileProvider, getProvider } from './providers';
+import { useAiProviderProfileStore } from '@/stores/ai-provider-profile-store';
+import { getProfileDefaultModel } from '@/lib/ai/provider-profiles';
 
 const DEFAULT_POLICY: Record<AiTaskType, Omit<ModelRouterPolicy, 'taskType'>> = {
   chat: {
@@ -125,9 +127,28 @@ export function routeModel(
   }
 
   const policy = getModelRouterPolicy(taskType, settings);
-  const provider = chooseProvider(policy, settings);
+  const requestedProfileId = settings.profileId ?? useAiProviderProfileStore.getState().activeProfileId;
+  const requestedProfile = requestedProfileId
+    ? useAiProviderProfileStore.getState().profiles.find((profile) => profile.id === requestedProfileId) ?? null
+    : null;
+  const profiled = requestedProfileId ? getProfileProvider(requestedProfileId) : null;
+  if (requestedProfile && !requestedProfile.enabled) {
+    throw new Error(`AI connection "${requestedProfile.name}" is disabled.`);
+  }
+  if (requestedProfile && !profiled?.isConfigured()) {
+    throw new Error(`AI connection "${requestedProfile.name}" is not configured. Check its credentials.`);
+  }
+  const provider = requestedProfile
+    ? profiled
+    : chooseProvider(policy, settings);
   if (!provider) {
     throw new Error('No AI provider configured');
+  }
+
+  const activeProfile = profiled?.isConfigured() ? requestedProfile : null;
+  const selectedModel = activeProfile ? getProfileDefaultModel(activeProfile) : settings.model;
+  if (!selectedModel) {
+    throw new Error('No AI model configured. Select a model in Settings > AI.');
   }
 
   return {
@@ -136,7 +157,7 @@ export function routeModel(
     modelInfo: {
       providerId: provider.id,
       providerName: provider.name,
-      model: settings.model,
+      model: selectedModel,
       source: providerSource(provider.id),
     },
   };

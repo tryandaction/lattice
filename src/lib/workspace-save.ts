@@ -2,11 +2,28 @@ import { fastSaveFile } from "@/lib/fast-save";
 import { emitVaultChange, emitVaultRename } from "@/lib/plugins/runtime";
 import { generateUniqueName, resolveEntry, renameFile as renameFileUtil } from "@/lib/file-operations";
 import { getFileExtension } from "@/lib/file-utils";
-import type { FileTabState } from "@/types/layout";
+import type { CloudFileTabState, FileTabState } from "@/types/layout";
+import { saveCloudFileTab } from "@/lib/shared-library/workbench-source";
 import { useExplorerStore } from "@/stores/explorer-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useContentCacheStore } from "@/stores/content-cache-store";
+import type { LayoutNode } from "@/types/layout";
+
+/** Complete the exact saved snapshot; later keystrokes and moved tabs remain dirty. */
+export function acknowledgeWorkspaceTabSave(tabId: string, savedContent: string): void {
+  useContentCacheStore.getState().markAsSaved(tabId, savedContent);
+  const dirty = useContentCacheStore.getState().hasUnsavedChanges(tabId);
+  const workspace = useWorkspaceStore.getState();
+  const visit = (node: LayoutNode) => {
+    if (node.type === "split") { node.children.forEach(visit); return; }
+    const index = node.tabs.findIndex(tab => tab.id === tabId);
+    if (index >= 0) workspace.setTabDirty(node.id, index, dirty);
+  };
+  visit(workspace.layout.root);
+}
 
 export const UNTITLED_MARKDOWN_PATTERN = /^Untitled(?:-\d+)?\.md$/i;
+const cloudSaveTails = new Map<string, Promise<unknown>>();
 
 export function extractMarkdownTitle(content: string): string | null {
   const normalized = content.startsWith("---\n")
@@ -22,11 +39,32 @@ export function extractMarkdownTitle(content: string): string | null {
 }
 
 export async function saveWorkspaceTabContent(input: {
-  tab: FileTabState;
+  tab: FileTabState | CloudFileTabState;
   content: string;
   rootHandle: FileSystemDirectoryHandle | null;
   refreshDirectory?: (options?: { silent?: boolean }) => Promise<void>;
-}): Promise<FileTabState> {
+}): Promise<FileTabState | CloudFileTabState> {
+  if (input.tab.kind === "cloud-file") {
+    const tab = input.tab;
+    const previous = cloudSaveTails.get(tab.cloud.resourceId);
+    const operation = (previous ?? Promise.resolve()).catch(() => {}).then(async () => {
+      let current = tab;
+      const visit = (node: LayoutNode) => {
+        if (node.type === "split") node.children.forEach(visit);
+        else {
+          const match = node.tabs.find(candidate => candidate.id === tab.id);
+          if (match?.kind === "cloud-file") current = match;
+        }
+      };
+      visit(useWorkspaceStore.getState().layout.root);
+      const saved = await saveCloudFileTab(current, input.content);
+      useWorkspaceStore.getState().updateCloudTab(saved.id, { cloud: saved.cloud, fileName: saved.fileName });
+      return saved;
+    });
+    cloudSaveTails.set(tab.cloud.resourceId, operation);
+    try { return await operation; }
+    finally { if (cloudSaveTails.get(tab.cloud.resourceId) === operation) cloudSaveTails.delete(tab.cloud.resourceId); }
+  }
   await fastSaveFile(input.tab.fileHandle, input.content);
 
   let persistedTab = input.tab;

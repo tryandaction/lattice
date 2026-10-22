@@ -32,6 +32,7 @@ interface CachedContent {
 interface ContentCacheState {
   // Map of tabId -> cached content
   cache: Map<string, CachedContent>;
+  editorStates: Map<string, EditorState>;
 
   // Switch lock to prevent race conditions
   switchingLock: boolean;
@@ -59,8 +60,21 @@ interface ContentCacheState {
   isSwitchLocked: () => boolean;
 }
 
+const MAX_CLEAN_BINARY_CACHE_ENTRIES = 3;
+
+function evictColdCleanBinaryContent(cache: Map<string, CachedContent>): void {
+  const binaryKeys = Array.from(cache.entries())
+    .filter(([, entry]) => entry.content instanceof ArrayBuffer && !entry.isDirty)
+    .map(([key]) => key);
+  while (binaryKeys.length > MAX_CLEAN_BINARY_CACHE_ENTRIES) {
+    const oldestKey = binaryKeys.shift();
+    if (oldestKey) cache.delete(oldestKey);
+  }
+}
+
 export const useContentCacheStore = create<ContentCacheState>((set, get) => ({
   cache: new Map(),
+  editorStates: new Map(),
   switchingLock: false,
   currentSwitchId: null,
 
@@ -73,13 +87,16 @@ export const useContentCacheStore = create<ContentCacheState>((set, get) => ({
       // Binary content (ArrayBuffer) is not editable, so never dirty
       const isDirty = content instanceof ArrayBuffer ? false : content !== original;
 
+      // Refresh insertion order so the map itself is the binary-content LRU.
+      newCache.delete(tabId);
       newCache.set(tabId, {
         content,
         originalContent: original,
         isDirty,
         lastModified: Date.now(),
-        editorState: existing?.editorState,
+        editorState: existing?.editorState ?? state.editorStates.get(tabId),
       });
+      evictColdCleanBinaryContent(newCache);
 
       return { cache: newCache };
     });
@@ -103,7 +120,7 @@ export const useContentCacheStore = create<ContentCacheState>((set, get) => ({
         newCache.set(tabId, {
           ...existing,
           originalContent: newOriginalContent,
-          isDirty: false,
+          isDirty: typeof existing.content === "string" && existing.content !== newOriginalContent,
         });
       }
 
@@ -131,13 +148,15 @@ export const useContentCacheStore = create<ContentCacheState>((set, get) => ({
   removeFromCache: (tabId) => {
     set((state) => {
       const newCache = new Map(state.cache);
+      const editorStates = new Map(state.editorStates);
       newCache.delete(tabId);
-      return { cache: newCache };
+      editorStates.delete(tabId);
+      return { cache: newCache, editorStates };
     });
   },
 
   clearCache: () => {
-    set({ cache: new Map() });
+    set({ cache: new Map(), editorStates: new Map() });
   },
 
   getUnsavedTabs: () => {
@@ -155,30 +174,27 @@ export const useContentCacheStore = create<ContentCacheState>((set, get) => ({
   saveEditorState: (tabId, editorState) => {
     set((state) => {
       const newCache = new Map(state.cache);
+      const editorStates = new Map(state.editorStates);
       const existing = newCache.get(tabId);
+      editorStates.set(tabId, editorState);
 
       if (existing) {
         newCache.set(tabId, {
           ...existing,
           editorState,
         });
-      } else {
-        // Create a placeholder entry for editor state
-        newCache.set(tabId, {
-          content: '',
-          originalContent: '',
-          isDirty: false,
-          lastModified: Date.now(),
-          editorState,
-        });
       }
 
-      return { cache: newCache };
+      // View state does not imply cached file content. In particular, PDF readers
+      // preserve their position without keeping bytes; a text placeholder would
+      // be mistaken for real file content the next time the tab is activated.
+
+      return { cache: newCache, editorStates };
     });
   },
 
   getEditorState: (tabId) => {
-    return get().cache.get(tabId)?.editorState;
+    return get().editorStates.get(tabId) ?? get().cache.get(tabId)?.editorState;
   },
 
   // Switch lock management to prevent race conditions

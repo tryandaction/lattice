@@ -8,8 +8,49 @@ import { create } from 'zustand';
 import type { AppSettings, ExecutionDockLayout, Locale, ThemeMode } from '@/types/settings';
 import { DEFAULT_SETTINGS, SETTINGS_STORAGE_KEY } from '@/types/settings';
 import { getStorageAdapter } from '@/lib/storage-adapter';
+import { DEFAULT_APPEARANCE_SETTINGS, MAX_CUSTOM_THEMES, type AppearanceSettings, type ThemePackage } from '@/lib/appearance/types';
+import { isBuiltinTheme } from '@/lib/appearance/registry';
+import { validateThemePackage } from '@/lib/appearance/validation';
+import { writeAppearanceCache } from '@/lib/appearance/bootstrap';
+import { setLocale } from '@/lib/i18n';
 
 const MAX_RECENT_WORKSPACES = 12;
+let settingsWriteQueue = Promise.resolve();
+let hydrationTask: Promise<void> | null = null;
+let persistedSettings: Partial<AppSettings> | null = null;
+let settingsRevision = 0;
+const settingRevisions = new Map<keyof AppSettings, number>();
+
+function persistSettings(snapshot: AppSettings, updates: Partial<AppSettings> = snapshot): Promise<void> {
+  settingsWriteQueue = settingsWriteQueue.catch(() => undefined).then(async () => {
+    const storage = getStorageAdapter();
+    // Keep fields and theme formats from newer builds until the user explicitly edits them.
+    const saved = { ...snapshot, ...persistedSettings, ...updates };
+    await (storage.setStrict ? storage.setStrict(SETTINGS_STORAGE_KEY, saved) : storage.set(SETTINGS_STORAGE_KEY, saved));
+    persistedSettings = saved;
+    writeAppearanceCache(normalizeAppearance(saved.appearance), saved.theme);
+  });
+  return settingsWriteQueue;
+}
+
+function normalizeAppearance(raw: unknown): AppearanceSettings {
+  if (!raw || typeof raw !== 'object') return DEFAULT_APPEARANCE_SETTINGS;
+  const candidate = raw as Partial<AppearanceSettings>;
+  if (candidate.schemaVersion !== 1) return structuredClone(DEFAULT_APPEARANCE_SETTINGS);
+  const customThemes = Array.isArray(candidate.customThemes)
+    ? candidate.customThemes
+      .map((theme) => validateThemePackage(theme, { customOnly: true }))
+      .filter((result): result is { ok: true; theme: ThemePackage } => result.ok)
+      .map((result) => result.theme)
+      .filter((theme, index, themes) => themes.findIndex((item) => item.id === theme.id) === index)
+      .slice(0, MAX_CUSTOM_THEMES)
+    : [];
+  const activeThemeId = typeof candidate.activeThemeId === 'string' &&
+    (isBuiltinTheme(candidate.activeThemeId) || customThemes.some((theme) => theme.id === candidate.activeThemeId))
+    ? candidate.activeThemeId
+    : DEFAULT_APPEARANCE_SETTINGS.activeThemeId;
+  return { ...DEFAULT_APPEARANCE_SETTINGS, activeThemeId, customThemes };
+}
 
 function normalizeWorkspacePath(path: string): string {
   return path.trim().replace(/\\/g, '/').replace(/\/+$/, '');
@@ -24,12 +65,16 @@ interface SettingsState {
 
 interface SettingsActions {
   loadSettings: () => Promise<void>;
-  updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => Promise<void>;
-  updateSettings: (updates: Partial<AppSettings>) => Promise<void>;
+  updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => Promise<boolean>;
+  updateSettings: (updates: Partial<AppSettings>) => Promise<boolean>;
   resetSettings: () => Promise<void>;
   completeOnboarding: () => Promise<void>;
   setLanguage: (language: Locale) => Promise<void>;
   setTheme: (theme: ThemeMode) => Promise<void>;
+  setAppearanceTheme: (themeId: string) => Promise<void>;
+  saveCustomTheme: (theme: ThemePackage) => Promise<void>;
+  deleteCustomTheme: (themeId: string) => Promise<void>;
+  resetAppearance: () => Promise<void>;
   setDefaultFolder: (folder: string | null) => Promise<void>;
   rememberWorkspace: (input: { workspaceKey: string; displayPath: string }) => Promise<void>;
   removeRecentWorkspacePath: (path: string) => Promise<void>;
@@ -43,80 +88,71 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   isInitialized: false,
   error: null,
 
-  loadSettings: async () => {
-    try {
-      set({ isLoading: true, error: null });
+  loadSettings: () => {
+    if (hydrationTask) return hydrationTask;
+    if (get().isInitialized) return Promise.resolve();
+    set({ isLoading: true, error: null });
+    hydrationTask = (async () => { try {
       const storage = getStorageAdapter();
-      const saved = await storage.get<AppSettings>(SETTINGS_STORAGE_KEY);
-      
-      if (saved) {
-        // Merge with defaults to handle new settings
-        const normalized = normalizeSettings(saved);
-        const merged = { ...DEFAULT_SETTINGS, ...normalized };
-        set({
-          settings: merged,
-          isLoading: false,
-          isInitialized: true,
-        });
-        await storage.set(SETTINGS_STORAGE_KEY, merged);
-      } else {
-        // Detect system language for first launch
-        const systemLang = detectSystemLanguage();
-        const initialSettings = { ...DEFAULT_SETTINGS, language: systemLang };
-        await storage.set(SETTINGS_STORAGE_KEY, initialSettings);
-        set({ 
-          settings: initialSettings,
-          isLoading: false,
-          isInitialized: true,
-        });
-      }
+      const saved = await (storage.getStrict ? storage.getStrict<AppSettings>(SETTINGS_STORAGE_KEY) : storage.get<AppSettings>(SETTINGS_STORAGE_KEY));
+      const resolved: AppSettings = {
+        ...DEFAULT_SETTINGS,
+        ...(saved ? normalizeSettings(saved) : { language: detectSystemLanguage() }),
+        appearance: normalizeAppearance(saved?.appearance),
+      };
+      persistedSettings = { ...resolved, ...saved };
+      set({ settings: resolved, isLoading: false, isInitialized: true });
+      writeAppearanceCache(resolved.appearance, resolved.theme);
     } catch (error) {
-      console.error('Failed to load settings:', error);
       set({ 
         error: error instanceof Error ? error.message : 'Failed to load settings',
         isLoading: false,
-        isInitialized: true,
+        isInitialized: false,
       });
-    }
+    } finally { hydrationTask = null; } })();
+    return hydrationTask;
   },
 
   updateSetting: async (key, value) => {
-    try {
-      const { settings } = get();
-      const newSettings = { ...settings, [key]: value };
-      set({ settings: newSettings });
-      
-      const storage = getStorageAdapter();
-      await storage.set(SETTINGS_STORAGE_KEY, newSettings);
-    } catch (error) {
-      console.error(`Failed to update setting ${key}:`, error);
-      set({ error: error instanceof Error ? error.message : 'Failed to update setting' });
-    }
+    return get().updateSettings({ [key]: value } as Partial<AppSettings>);
   },
 
   updateSettings: async (updates) => {
+    if (hydrationTask || !get().isInitialized) {
+      await get().loadSettings();
+      if (!get().isInitialized) return false;
+    }
+    const previous = get().settings;
+    const newSettings = { ...previous, ...updates };
+    const revision = ++settingsRevision;
+    const changedKeys = Object.keys(updates) as Array<keyof AppSettings>;
+    for (const key of changedKeys) settingRevisions.set(key, revision);
+    set({ settings: newSettings, error: null });
     try {
-      const { settings } = get();
-      const newSettings = { ...settings, ...updates };
-      set({ settings: newSettings });
-      
-      const storage = getStorageAdapter();
-      await storage.set(SETTINGS_STORAGE_KEY, newSettings);
+      await persistSettings(newSettings, updates);
+      if (revision === settingsRevision) set({ error: null });
+      return true;
     } catch (error) {
-      console.error('Failed to update settings:', error);
-      set({ error: error instanceof Error ? error.message : 'Failed to update settings' });
+      const current = get().settings;
+      const durable = persistedSettings ? {
+        ...DEFAULT_SETTINGS,
+        ...normalizeSettings(persistedSettings),
+        appearance: normalizeAppearance(persistedSettings.appearance),
+      } : previous;
+      const restored = { ...current };
+      let ownsCurrentValue = false;
+      for (const key of changedKeys) {
+        if (settingRevisions.get(key) !== revision) continue;
+        restored[key] = durable[key] as never;
+        ownsCurrentValue = true;
+      }
+      if (ownsCurrentValue) set({ settings: restored, error: error instanceof Error ? error.message : 'Failed to update settings' });
+      return false;
     }
   },
 
   resetSettings: async () => {
-    try {
-      set({ settings: DEFAULT_SETTINGS });
-      const storage = getStorageAdapter();
-      await storage.set(SETTINGS_STORAGE_KEY, DEFAULT_SETTINGS);
-    } catch (error) {
-      console.error('Failed to reset settings:', error);
-      set({ error: error instanceof Error ? error.message : 'Failed to reset settings' });
-    }
+    await get().updateSettings(structuredClone(DEFAULT_SETTINGS));
   },
 
   completeOnboarding: async () => {
@@ -129,6 +165,40 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   setTheme: async (theme) => {
     await get().updateSetting('theme', theme);
+  },
+
+  setAppearanceTheme: async (themeId) => {
+    await ensureSettingsLoaded();
+    const { settings } = get();
+    const appearance = normalizeAppearance({ ...settings.appearance, activeThemeId: themeId });
+    if (!await get().updateSetting('appearance', appearance)) throw new Error(get().error ?? 'Appearance save failed');
+  },
+
+  saveCustomTheme: async (theme) => {
+    const result = validateThemePackage(theme, { customOnly: true });
+    if (!result.ok) throw new Error(result.error);
+    await ensureSettingsLoaded();
+    const { settings } = get();
+    if (settings.appearance.customThemes.length >= MAX_CUSTOM_THEMES && !settings.appearance.customThemes.some((item) => item.id === theme.id)) throw new Error('最多保存 20 套自定义皮肤，请先删除一套再保存。');
+    const customThemes = [
+      ...settings.appearance.customThemes.filter((item) => item.id !== theme.id),
+      result.theme,
+    ];
+    if (!await get().updateSetting('appearance', { ...settings.appearance, activeThemeId: theme.id, customThemes })) throw new Error(get().error ?? 'Appearance save failed');
+  },
+
+  deleteCustomTheme: async (themeId) => {
+    if (isBuiltinTheme(themeId)) return;
+    await ensureSettingsLoaded();
+    const { settings } = get();
+    const customThemes = settings.appearance.customThemes.filter((theme) => theme.id !== themeId);
+    const activeThemeId = settings.appearance.activeThemeId === themeId ? DEFAULT_APPEARANCE_SETTINGS.activeThemeId : settings.appearance.activeThemeId;
+    if (!await get().updateSetting('appearance', { ...settings.appearance, activeThemeId, customThemes })) throw new Error(get().error ?? 'Appearance delete failed');
+  },
+
+  resetAppearance: async () => {
+    await ensureSettingsLoaded();
+    if (!await get().updateSettings({ appearance: { ...get().settings.appearance, activeThemeId: 'lattice' }, theme: 'system' })) throw new Error(get().error ?? 'Appearance reset failed');
   },
 
   setDefaultFolder: async (folder) => {
@@ -203,6 +273,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     });
   },
 }));
+
+async function ensureSettingsLoaded(): Promise<void> {
+  if (hydrationTask || !useSettingsStore.getState().isInitialized) await useSettingsStore.getState().loadSettings();
+  if (!useSettingsStore.getState().isInitialized) throw new Error(useSettingsStore.getState().error ?? 'Settings are not loaded');
+}
+
+// Settings are the durable locale source; every surface observes the same optimistic change or rollback.
+useSettingsStore.subscribe((state, previous) => {
+  if (state.isInitialized && (state.settings.language !== previous.settings.language || !previous.isInitialized)) setLocale(state.settings.language);
+});
 
 /**
  * Detect system language and return appropriate locale
@@ -279,7 +359,8 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   if (raw.pdfExternalLinkOpenMode === 'internal' || raw.pdfExternalLinkOpenMode === 'browser') {
     normalized.pdfExternalLinkOpenMode = raw.pdfExternalLinkOpenMode;
   }
-  if (raw.activityView === 'files' || raw.activityView === 'annotations' || raw.activityView === 'search') {
+  if (raw.workbenchSurface === 'local' || raw.workbenchSurface === 'cloud') normalized.workbenchSurface = raw.workbenchSurface;
+  if (raw.activityView === 'files' || raw.activityView === 'annotations' || raw.activityView === 'search' || raw.activityView === 'vscode') {
     normalized.activityView = raw.activityView;
   }
   if (typeof raw.sidePanelWidth === 'number') normalized.sidePanelWidth = raw.sidePanelWidth;
@@ -316,7 +397,10 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   if (typeof raw.aiMaxTokens === 'number') normalized.aiMaxTokens = raw.aiMaxTokens;
   if (typeof raw.aiStreamingEnabled === 'boolean') normalized.aiStreamingEnabled = raw.aiStreamingEnabled;
   if (typeof raw.aiSystemPrompt === 'string') normalized.aiSystemPrompt = raw.aiSystemPrompt;
+  assignIfDefined('aiChatSystemPrompt', stringOrNull(raw.aiChatSystemPrompt));
+  assignIfDefined('aiAgentSystemPrompt', stringOrNull(raw.aiAgentSystemPrompt));
   if (typeof raw.aiPanelOpen === 'boolean') normalized.aiPanelOpen = raw.aiPanelOpen;
   if (typeof raw.aiPanelWidth === 'number') normalized.aiPanelWidth = raw.aiPanelWidth;
+  if (typeof raw.vscodeCompatEnabled === 'boolean') normalized.vscodeCompatEnabled = raw.vscodeCompatEnabled;
   return normalized;
 }

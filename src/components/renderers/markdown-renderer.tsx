@@ -1,5 +1,7 @@
 "use client";
 
+import { linkifyBareCitationTokens } from '@/lib/ai/citation-markdown';
+
 import "katex/dist/katex.min.css";
 import {
   cloneElement,
@@ -9,19 +11,20 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useContext,
   type ComponentPropsWithoutRef,
   type CSSProperties,
   type JSX,
   type ReactElement,
   type ReactNode,
 } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeRaw from "rehype-raw";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
-import type { Components } from "react-markdown";
+import type { Components, ExtraProps } from "react-markdown";
 import type { PluggableList } from "unified";
 import { Check, Copy, Loader2, Play } from "lucide-react";
 import { KATEX_MACROS } from "@/lib/katex-config";
@@ -36,8 +39,12 @@ import { useExecutionRunner } from "@/hooks/use-execution-runner";
 import { OutputArea } from "@/components/notebook/output-area";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { AppMarkdownLink } from "./app-markdown-link";
+import { classifyStrictAiLink, type CitationContract } from "@/lib/ai/citation-contract";
+import { rehypeCitationMarkers } from "@/lib/ai/citation-markers";
 import { prepareMarkdownForReading } from "@/lib/markdown-reading";
 import { convertWikiLinksToMarkdown } from "@/lib/markdown-links";
+import { decoratePdfAnnotationMarkdown } from "@/lib/pdf-annotation-markdown-rendering";
+import { AssetSourceContext } from '@/lib/asset-source-context';
 
 interface MarkdownRendererProps {
   content: string;
@@ -48,10 +55,15 @@ interface MarkdownRendererProps {
   rootHandle?: FileSystemDirectoryHandle | null;
   variant?: "document" | "system-index";
   enableCodeExecution?: boolean;
+  linkPolicy?: "workspace" | "strict-ai";
+  citationContracts?: CitationContract[];
+  onCitationNavigate?: (ref: CitationContract["evidenceRef"]) => void;
+  /** Host-owned image URLs only; this does not relax link protocol handling. */
+  isImageUrlAllowed?: (url: string) => boolean;
 }
 
 type MarkdownProps<T extends keyof JSX.IntrinsicElements> = ComponentPropsWithoutRef<T> & {
-  node?: unknown;
+  node?: ExtraProps["node"];
 };
 
 type MarkdownCodeProps = MarkdownProps<"code"> & { inline?: boolean };
@@ -190,6 +202,7 @@ function ResolvedMarkdownImage({
   filePath,
   rootHandle,
   className,
+  style,
   node: _node,
   ...props
 }: MarkdownProps<"img"> & {
@@ -197,28 +210,34 @@ function ResolvedMarkdownImage({
   filePath?: string;
   rootHandle?: FileSystemDirectoryHandle | null;
 }) {
+  const assetSource = useContext(AssetSourceContext);
   const imageRef = useRef<HTMLImageElement>(null);
   const directSrc = typeof src === "string" ? src : undefined;
   const isLocalImage = Boolean(
     directSrc &&
     !/^(https?:|data:|blob:)/i.test(directSrc) &&
-    rootHandle &&
-    filePath,
+    (assetSource || rootHandle && filePath),
   );
-  const localImageKey = isLocalImage ? `${filePath}:${directSrc}` : "";
+  const localImageKey = isLocalImage ? `${assetSource?.identity ?? filePath}:${directSrc}` : "";
+  const isAnnotationPreview = className?.split(/\s+/).includes("lattice-pdf-annotation-preview") ?? false;
+  const dataProps = props as { "data-color"?: unknown };
+  const annotationColor = typeof dataProps["data-color"] === "string" ? dataProps["data-color"] : undefined;
+  const resolvedStyle = annotationColor
+    ? ({ ...style, "--annotation-color": annotationColor } as CSSProperties)
+    : style;
   const [resolvedState, setResolvedState] = useState<{ key: string; src?: string }>({
     key: "",
     src: undefined,
   });
   const [visibleLocalImageKey, setVisibleLocalImageKey] = useState("");
-  const shouldResolveLocalImage = !isLocalImage || visibleLocalImageKey === localImageKey;
+  const shouldResolveLocalImage = !isLocalImage || isAnnotationPreview || visibleLocalImageKey === localImageKey;
   const resolvedSrc = isLocalImage
     ? (resolvedState.key === localImageKey ? resolvedState.src : undefined)
     : directSrc;
   const imageAlt = parseObsidianImageAlt(alt);
 
   useEffect(() => {
-    if (!isLocalImage) {
+    if (!isLocalImage || isAnnotationPreview) {
       return;
     }
     if (visibleLocalImageKey === localImageKey) {
@@ -242,10 +261,10 @@ function ResolvedMarkdownImage({
     });
     observer.observe(imageElement);
     return () => observer.disconnect();
-  }, [isLocalImage, localImageKey, visibleLocalImageKey]);
+  }, [isAnnotationPreview, isLocalImage, localImageKey, visibleLocalImageKey]);
 
   useEffect(() => {
-    if (!isLocalImage || !shouldResolveLocalImage || !directSrc || !rootHandle || !filePath) {
+    if (!isLocalImage || !shouldResolveLocalImage || !directSrc || !assetSource && (!rootHandle || !filePath)) {
       return;
     }
 
@@ -254,16 +273,15 @@ function ResolvedMarkdownImage({
 
     const resolveLocalImage = async () => {
       try {
-        const resolvedPath = resolveMarkdownImagePath(filePath, directSrc);
-        const fileHandle = await resolveMarkdownFileHandleFromRoot(rootHandle, resolvedPath);
-        const file = await fileHandle.getFile();
+        const file = assetSource ? await assetSource.resolveAsset(directSrc) : await (await resolveMarkdownFileHandleFromRoot(rootHandle!, resolveMarkdownImagePath(filePath!, directSrc))).getFile();
+        if (cancelled || !file) return;
         objectUrl = URL.createObjectURL(file);
         if (!cancelled) {
           setResolvedState({ key: localImageKey, src: objectUrl });
         }
       } catch {
         if (!cancelled) {
-          setResolvedState({ key: localImageKey, src: directSrc });
+          setResolvedState({ key: localImageKey, src: assetSource ? 'about:blank' : directSrc });
         }
       }
     };
@@ -275,7 +293,7 @@ function ResolvedMarkdownImage({
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [directSrc, filePath, isLocalImage, localImageKey, rootHandle, shouldResolveLocalImage]);
+  }, [directSrc, filePath, isLocalImage, localImageKey, rootHandle, shouldResolveLocalImage, assetSource]);
 
   return (
     // eslint-disable-next-line @next/next/no-img-element
@@ -286,6 +304,7 @@ function ResolvedMarkdownImage({
       width={imageAlt.width}
       height={imageAlt.height}
       className={className}
+      style={resolvedStyle}
       loading="lazy"
       {...props}
     />
@@ -595,13 +614,27 @@ const components: Components = {
   },
   
   // Blockquotes
-  blockquote({ children, ...props }: MarkdownProps<"blockquote">) {
+  blockquote({ children, className, style, ...props }: MarkdownProps<"blockquote">) {
+    const dataProps = props as { "data-color"?: unknown };
+    const color = typeof dataProps["data-color"] === "string" ? dataProps["data-color"] : undefined;
+    if (className?.split(/\s+/).includes("lattice-pdf-annotation-quote")) {
+      const nextStyle = color
+        ? ({ ...style, "--annotation-color": color } as CSSProperties)
+        : style;
+      return (
+        <blockquote className={className} style={nextStyle} {...props}>
+          {children}
+        </blockquote>
+      );
+    }
+
     const callout = parseCallout(children);
     if (callout) {
       return (
         <blockquote
           className={`markdown-callout markdown-callout-${callout.type} my-4 rounded border-l-4 px-4 py-3 not-italic text-foreground ${CALLOUT_STYLES[callout.type] ?? CALLOUT_STYLES.note}`}
           data-callout={callout.type}
+          style={style}
           {...props}
         >
           <div className="mb-1 text-sm font-semibold uppercase tracking-wide">
@@ -617,6 +650,7 @@ const components: Components = {
     return (
       <blockquote 
         className="border-l-4 border-primary/40 pl-4 my-4 italic text-muted-foreground bg-muted/30 py-2 pr-4 rounded-r"
+        style={style}
         {...props}
       >
         {children}
@@ -744,6 +778,8 @@ const katexOptions = {
   trust: true,
 };
 
+const EMPTY_CITATION_CONTRACTS: CitationContract[] = [];
+
 /**
  * High-quality Markdown renderer with:
  * - GitHub Flavored Markdown (tables, strikethrough, etc.)
@@ -763,6 +799,10 @@ export function MarkdownRenderer({
   rootHandle = null,
   variant = "document",
   enableCodeExecution = false,
+  linkPolicy = "workspace",
+  citationContracts = EMPTY_CITATION_CONTRACTS,
+  onCitationNavigate,
+  isImageUrlAllowed,
 }: MarkdownRendererProps) {
   // Content should already be normalized to Markdown by upstream (universal-file-viewer)
   // If HTML is still present, it will be handled by rehypeRaw plugin safely
@@ -804,18 +844,32 @@ export function MarkdownRenderer({
 
   const rehypePlugins = useMemo<PluggableList>(() => {
     const plugins: PluggableList = [rehypeRaw];
+    if (linkPolicy === "strict-ai") plugins.push([rehypeCitationMarkers, { contracts: citationContracts }]);
     if (rehypeKatex) {
       plugins.push([rehypeKatex, katexOptions]);
     }
     return plugins;
-  }, [rehypeKatex]);
+  }, [rehypeKatex, linkPolicy, citationContracts]);
 
   const renderedContent = useMemo(() => {
-    return convertWikiLinksToMarkdown(prepareMarkdownForReading(content));
-  }, [content]);
+    const markdown = convertWikiLinksToMarkdown(prepareMarkdownForReading(decoratePdfAnnotationMarkdown(content)));
+    return linkPolicy === 'strict-ai' ? linkifyBareCitationTokens(markdown) : markdown;
+  }, [content, linkPolicy]);
 
-  let blockIndex = 0;
-  const markdownComponents: Components = {
+  const transformUrl = useCallback<UrlTransform>((url, key, node) => {
+    if (key === "src" && node.tagName === "img" && url.startsWith("blob:") && isImageUrlAllowed?.(url)) return url;
+    if (linkPolicy === "strict-ai" && key === "href" && node.tagName === "a") {
+      // The strict link component validates this private protocol and renders
+      // unresolved citations as non-interactive, explicitly labelled text.
+      if (/^citation:/i.test(url)) return url;
+      const classification = classifyStrictAiLink(url, citationContracts);
+      if (classification.kind === "citation" || classification.kind === "workspace_file") return url;
+    }
+    return defaultUrlTransform(url);
+  }, [citationContracts, linkPolicy, isImageUrlAllowed]);
+
+  const markdownComponents = useMemo<Components>(() => {
+    return {
     ...components,
     ...(variant === "system-index"
       ? {
@@ -880,6 +934,9 @@ export function MarkdownRenderer({
           paneId={paneId}
           rootHandle={rootHandle}
           currentFilePath={filePath}
+          linkPolicy={linkPolicy}
+          citationContracts={citationContracts}
+          onCitationNavigate={onCitationNavigate}
           className="text-primary underline underline-offset-2 hover:text-primary/80"
           {...props}
         >
@@ -899,7 +956,7 @@ export function MarkdownRenderer({
         />
       );
     },
-    code({ inline, className, children, style: _style, node: _node, ...props }: MarkdownCodeProps) {
+    code({ inline, className, children, style: _style, node, ...props }: MarkdownCodeProps) {
       const match = /language-([^\s]+)/.exec(className || "");
       const language = match ? match[1].toLowerCase() : "";
       const rawCodeString = String(children);
@@ -907,8 +964,7 @@ export function MarkdownRenderer({
       const isBlock = isMarkdownCodeBlock(inline, rawCodeString);
 
       if (isBlock && language) {
-        const currentIndex = blockIndex;
-        blockIndex += 1;
+        const currentIndex = node?.position?.start.offset ?? 0;
         return (
           <RunnableCodeBlock
             language={language}
@@ -939,7 +995,8 @@ export function MarkdownRenderer({
         </code>
       );
     },
-  };
+    };
+  }, [citationContracts, enableCodeExecution, fileName, filePath, linkPolicy, onCitationNavigate, paneId, rootHandle, variant]);
   
   return (
     <div
@@ -961,6 +1018,7 @@ export function MarkdownRenderer({
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={rehypePlugins}
         components={markdownComponents}
+        urlTransform={transformUrl}
       >
         {renderedContent}
       </ReactMarkdown>

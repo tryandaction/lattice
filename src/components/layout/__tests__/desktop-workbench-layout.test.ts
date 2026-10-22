@@ -4,6 +4,7 @@ import {
   DESKTOP_AI_PANEL_DEFAULT,
   DESKTOP_AI_PANEL_MIN,
   DESKTOP_AI_PANEL_MAX,
+  DESKTOP_MAIN_PANEL_MIN,
   DESKTOP_PANEL_MIN,
   getDesktopAiPanelIndex,
   getDesktopAiResizeHandleIndex,
@@ -13,6 +14,13 @@ import {
 } from "../desktop-workbench-layout";
 
 describe("desktop-workbench-layout", () => {
+  it.each([0, 1, 5, 13])('preserves an explicitly narrow %s percent file sidebar', width => {
+    const layout = buildDesktopWorkbenchLayout({ sidebarCollapsed: false, requestedSidebarSize: width, showPluginPanels: false, requestedPluginPanelSize: 22, showAiPanel: true, requestedAiPanelSize: 28 });
+    expect(layout.sidebarSize).toBe(width);
+    expect(layout.sizes.reduce((sum, value) => sum + value, 0)).toBeCloseTo(100);
+    expect(resolveDesktopWorkbenchResize({ sidebarCollapsed: false, sizes: layout.sizes, rightPanels: layout.rightPanels }).sidebarSize).toBe(width);
+  });
+
   it("places AI as the rightmost dock panel after plugin panels", () => {
     const layout = buildDesktopWorkbenchLayout({
       sidebarCollapsed: false,
@@ -34,7 +42,10 @@ describe("desktop-workbench-layout", () => {
       { kind: "ai", size: 28, minSize: DESKTOP_AI_PANEL_MIN, maxSize: 42 },
     ]);
 
-    expect(maxSidebar).toBe(42);
+    expect(maxSidebar).toBe(Math.min(
+      42,
+      100 - DESKTOP_MAIN_PANEL_MIN - DESKTOP_PANEL_MIN - DESKTOP_AI_PANEL_MIN,
+    ));
   });
 
   it("maps a visible AI dock resize back to the AI panel setting", () => {
@@ -55,6 +66,34 @@ describe("desktop-workbench-layout", () => {
       sidebarSize: 20,
       aiPanelSize: 36,
     });
+  });
+
+  it("preserves a resized AI dock width when the controlled layout rebuilds", () => {
+    const initialLayout = buildDesktopWorkbenchLayout({
+      sidebarCollapsed: false,
+      requestedSidebarSize: 20,
+      showPluginPanels: false,
+      requestedPluginPanelSize: 22,
+      showAiPanel: true,
+      requestedAiPanelSize: DESKTOP_AI_PANEL_MAX,
+    });
+    const resized = resolveDesktopWorkbenchResize({
+      sidebarCollapsed: false,
+      sizes: [20, 48, 32],
+      rightPanels: initialLayout.rightPanels,
+    });
+
+    const rebuiltLayout = buildDesktopWorkbenchLayout({
+      sidebarCollapsed: false,
+      requestedSidebarSize: resized.sidebarSize ?? 20,
+      showPluginPanels: false,
+      requestedPluginPanelSize: 22,
+      showAiPanel: true,
+      requestedAiPanelSize: resized.aiPanelSize ?? DESKTOP_AI_PANEL_DEFAULT,
+    });
+
+    expect(resized.aiPanelSize).toBe(32);
+    expect(rebuiltLayout.sizes).toEqual([20, 48, 32]);
   });
 
   it("resolves stable AI dock panel and handle indexes for every desktop shell shape", () => {
@@ -110,7 +149,7 @@ describe("desktop-workbench-layout", () => {
 
     expect(resolveDesktopWorkbenchResize({
       sidebarCollapsed: true,
-      sizes: [90, 10],
+      sizes: [96, 4],
       rightPanels: layout.rightPanels,
     })).toEqual({
       aiPanelSize: DESKTOP_AI_PANEL_MIN,
@@ -129,11 +168,32 @@ describe("desktop-workbench-layout", () => {
 
     expect(layout.sizes).toEqual([100 - DESKTOP_AI_PANEL_MAX, DESKTOP_AI_PANEL_MAX]);
     expect(DESKTOP_AI_PANEL_MAX).toBeGreaterThan(DESKTOP_AI_PANEL_DEFAULT);
-    expect(DESKTOP_AI_PANEL_MAX).toBeLessThanOrEqual(42);
+    expect(DESKTOP_AI_PANEL_MAX).toBe(52);
+    expect(DESKTOP_AI_PANEL_DEFAULT).toBe(38);
+    expect(DESKTOP_AI_PANEL_MIN).toBeLessThanOrEqual(8);
+  });
+
+  it("preserves a deliberately compact AI dock instead of forcing it back to a third of the window", () => {
+    const layout = buildDesktopWorkbenchLayout({
+      sidebarCollapsed: true,
+      requestedSidebarSize: 20,
+      showPluginPanels: false,
+      requestedPluginPanelSize: 22,
+      showAiPanel: true,
+      requestedAiPanelSize: 8,
+    });
+
+    expect(layout.sizes).toEqual([92, 8]);
+    expect(resolveDesktopWorkbenchResize({
+      sidebarCollapsed: true,
+      sizes: [92, 8],
+      rightPanels: layout.rightPanels,
+    })).toEqual({ aiPanelSize: 8 });
   });
 
   it("resets oversized persisted AI dock widths from older builds", () => {
     expect(normalizePersistedDesktopAiPanelSize(70)).toBe(DESKTOP_AI_PANEL_DEFAULT);
+    expect(normalizePersistedDesktopAiPanelSize(28)).toBe(DESKTOP_AI_PANEL_DEFAULT);
     expect(normalizePersistedDesktopAiPanelSize(36)).toBe(36);
     expect(normalizePersistedDesktopAiPanelSize(8)).toBe(DESKTOP_AI_PANEL_MIN);
     expect(normalizePersistedDesktopAiPanelSize(undefined)).toBe(DESKTOP_AI_PANEL_DEFAULT);

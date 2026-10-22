@@ -11,6 +11,14 @@ import {
 } from '../ai/research-agent-workflows';
 
 describe('research-agent-workflows', () => {
+  it.each([
+    'BB1是什么？请依据这篇论文解释，区分原文内容和一般背景。回答最后给一个明确下一步建议：可以根据已经找到的原文继续解释复合脉冲为什么能补偿幅度误差。',
+    '依据这篇论文解释BB1',
+    'Explain BB1 in this paper',
+    '这篇论文的载波频率和脉冲时长分别是多少？',
+  ])('does not infer whole-paper reading from a specific concept or parameter question: %s', task => {
+    expect(inferResearchAgentWorkflow({ task, filePath: 'paper.pdf', hasDocumentContext: true })).not.toBe('paper-reading');
+  });
   it('lists non-PDF workflows by default and keeps PDF-scoped workflows opt-in', () => {
     const visible = listResearchAgentWorkflows();
     const all = listResearchAgentWorkflows({ includePdfScoped: true });
@@ -119,25 +127,26 @@ describe('research-agent-workflows', () => {
     expect(hints).toContain('Hint: List QA commands only as approval-gated command plans with allowed, suggested, and rejected/deferred sections.');
   });
 
-  it('builds a Lattice execution profile without exposing PDF writes by default', () => {
+  it('exposes PDF child workspaces only through approval-gated Agent skills', () => {
     const workflow = getResearchAgentWorkflow('paper-reading');
     const profile = buildResearchAgentWorkflowExecutionProfile(workflow);
     const hints = buildResearchAgentWorkflowPlannerHints(workflow);
 
     expect(profile.workflowId).toBe('paper-reading');
-    expect(profile.currentThreadSkills.map((skill) => skill.id)).toEqual(['path-identity', 'pdf-annotation']);
+    expect(profile.currentThreadSkills.map((skill) => skill.id)).toEqual(['path-identity', 'pdf-item-workspace', 'pdf-annotation']);
     expect(profile.readOnlySkills.map((skill) => skill.id)).toEqual(['path-identity']);
-    expect(profile.approvalGatedSkills.map((skill) => skill.id)).toEqual(['pdf-annotation']);
-    expect(profile.workspaceWriteSkills.map((skill) => skill.id)).toEqual(['pdf-annotation']);
+    expect(profile.approvalGatedSkills.map((skill) => skill.id)).toEqual(['pdf-item-workspace', 'pdf-annotation']);
+    expect(profile.workspaceWriteSkills.map((skill) => skill.id)).toEqual(['pdf-item-workspace', 'pdf-annotation']);
     expect(profile.requiredCapabilities).toEqual([
       'lattice_read_identity',
       'search_workspace',
       'read_workspace',
       'resolve_evidence',
+      'lattice_create_pdf_item',
       'propose_write',
       'lattice_write_pdf_annotation',
     ]);
-    expect(profile.reservedPdfSkills.map((skill) => skill.id)).toEqual(['pdf-item-workspace']);
+    expect(profile.reservedPdfSkills.map((skill) => skill.id)).toEqual([]);
     expect(profile.operationContracts.map((contract) => contract.id)).toEqual([
       'path-identity',
       'pdf-item-workspace',
@@ -166,7 +175,25 @@ describe('research-agent-workflows', () => {
     expect(getResearchAgentWorkflow('notebook-from-paper').contextProfile.contextBudgetProfileId).toBe('notebook');
   });
 
-  it('infers workflow presets from task, file, selection, and content cues', () => {
+  it('routes the requested action independently of incidental source keywords', () => {
+    const content = 'Python experiment output comparison matrix code review structure';
+    expect(inferResearchAgentWorkflow({ task: '详细解释本文的原理', filePath: 'paper.pdf', content })).toBe('paper-reading');
+    expect(inferResearchAgentWorkflow({ task: '通读全文，专业详细讲解', filePath: 'paper.pdf', content })).toBe('paper-reading');
+    expect(inferResearchAgentWorkflow({ task: '总结这份笔记', filePath: 'notes.md', content })).toBe('markdown-research');
+    expect(inferResearchAgentWorkflow({ task: '讲解这个概念', selection: 'Python code', content })).toBe('teaching-explain');
+    expect(inferResearchAgentWorkflow({ task: '帮我写一份研究报告草稿', filePath: 'notes.md' })).toBe('reading-note');
+    expect(inferResearchAgentWorkflow({ task: '分析实验数据并绘图', filePath: 'data.csv' })).toBe('notebook-analysis');
+    expect(inferResearchAgentWorkflow({ task: '解释本文的实验结果', filePath: 'paper.pdf' })).toBe('paper-reading');
+    expect(inferResearchAgentWorkflow({ task: '为本文生成阅读笔记草稿', filePath: 'paper.pdf' })).toBe('reading-note');
+    expect(inferResearchAgentWorkflow({ task: '高亮论文中的关键结论', filePath: 'paper.pdf' })).toBe('pdf-annotation');
+    expect(inferResearchAgentWorkflow({ task: 'Fix the bug in this function', filePath: 'example.py' })).toBe('code-change-plan');
+    expect(inferResearchAgentWorkflow({ task: '帮我写一段 Python 代码' })).toBe('code-change-plan');
+    expect(inferResearchAgentWorkflow({ task: 'Write JavaScript code to parse this format' })).toBe('code-change-plan');
+    expect(inferResearchAgentWorkflow({ task: 'Write a report about these findings', filePath: 'experiment.ipynb' })).toBe('reading-note');
+    expect(inferResearchAgentWorkflow({ task: 'Explain quantum entanglement with examples', filePath: 'experiment.ipynb' })).toBe('teaching-explain');
+  });
+
+  it('infers workflow presets from the task and relevant file type', () => {
     expect(inferResearchAgentWorkflow({
       filePath: 'analysis/run.ipynb',
       task: 'Explain this output cell',

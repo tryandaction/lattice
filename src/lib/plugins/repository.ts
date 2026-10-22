@@ -3,6 +3,8 @@ import { validatePluginManifest } from './manifest';
 
 const OPFS_ROOT = 'lattice-plugins';
 const INDEX_KEY = 'lattice-plugins:index';
+const COMMIT_FILE = 'commit.json';
+const PENDING_FILE = 'pending.json';
 
 export interface StoredPlugin {
   manifest: PluginManifest;
@@ -163,6 +165,30 @@ async function resolveDirectoryForResource(
   return { dir: current, name: parts[parts.length - 1] };
 }
 
+async function snapshotResourceTree(dir: FileSystemDirectoryHandle): Promise<Record<string, Uint8Array>> {
+  const snapshot: Record<string, Uint8Array> = {};
+  const walk = async (current: FileSystemDirectoryHandle, prefix: string) => {
+    for await (const entry of current.values()) {
+      if (entry.kind === 'file') {
+        const file = await entry.getFile();
+        snapshot[`${prefix}/${entry.name}`] = new Uint8Array(await file.arrayBuffer());
+      } else if (entry.kind === 'directory' && (prefix === '' || prefix === 'ui' || prefix === 'assets')) {
+        await walk(await current.getDirectoryHandle(entry.name), prefix ? `${prefix}/${entry.name}` : entry.name);
+      }
+    }
+  };
+  for (const prefix of ['ui', 'assets']) {
+    try { await walk(await dir.getDirectoryHandle(prefix), prefix); } catch { /* absent */ }
+  }
+  return snapshot;
+}
+
+async function restoreResourceTree(dir: FileSystemDirectoryHandle, snapshot: Record<string, Uint8Array>): Promise<void> {
+  await removeDirectoryIfExists(dir, 'ui');
+  await removeDirectoryIfExists(dir, 'assets');
+  for (const [path, bytes] of Object.entries(snapshot)) await writeBinaryFile(dir, path, bytes);
+}
+
 async function writeBinaryFile(
   dir: FileSystemDirectoryHandle,
   path: string,
@@ -261,6 +287,9 @@ export async function loadStoredPlugin(pluginId: string): Promise<StoredPlugin |
     }
 
     const pluginDir = await opfsRoot.getDirectoryHandle(pluginId, { create: false });
+    const pendingRaw = await readTextFile(pluginDir, PENDING_FILE);
+    if (pendingRaw) return null;
+    const commitRaw = await readTextFile(pluginDir, COMMIT_FILE);
     const manifestRaw = await readTextFile(pluginDir, 'manifest.json');
     const main = await readTextFile(pluginDir, 'main.js');
     const metaRaw = await readTextFile(pluginDir, 'meta.json');
@@ -268,6 +297,22 @@ export async function loadStoredPlugin(pluginId: string): Promise<StoredPlugin |
 
     const validation = validatePluginManifest(JSON.parse(manifestRaw));
     if (!validation.valid || !validation.manifest) return null;
+    if (commitRaw) {
+      try {
+        const commit = JSON.parse(commitRaw) as { id?: string; version?: string };
+        if (commit.id !== validation.manifest.id || commit.version !== validation.manifest.version) return null;
+      } catch {
+        return null;
+      }
+    } else {
+      // Packages written before commit markers are accepted only after their
+      // core files validate, then upgraded in place for future crash safety.
+      await writeTextFile(pluginDir, COMMIT_FILE, JSON.stringify({
+        id: validation.manifest.id,
+        version: validation.manifest.version,
+        updatedAt: parseMeta(metaRaw)?.updatedAt ?? Date.now(),
+      }));
+    }
     return { manifest: validation.manifest, main, meta: parseMeta(metaRaw) ?? undefined };
   } catch (error) {
     console.warn('[plugins] Failed to load plugin from OPFS, falling back', error);
@@ -296,18 +341,47 @@ export async function storePluginPackage(
   const opfsRoot = await getOpfsRoot();
   if (!opfsRoot) {
     if (typeof window === 'undefined') return;
-    localStorage.setItem(getLocalKey(pluginId, 'manifest'), JSON.stringify(manifest));
-    localStorage.setItem(getLocalKey(pluginId, 'main'), main);
-    localStorage.setItem(getLocalKey(pluginId, 'meta'), JSON.stringify(nextMeta));
-    localStorage.setItem(getLocalKey(pluginId, 'resources'), JSON.stringify(normalizedResources));
-    const next = loadLocalIndex();
-    next.push(pluginId);
-    saveLocalIndex(next);
+    const keys = ['manifest', 'main', 'meta', 'resources'].map((name) => getLocalKey(pluginId, name));
+    const values = [
+      JSON.stringify(manifest),
+      main,
+      JSON.stringify(nextMeta),
+      JSON.stringify(normalizedResources),
+    ];
+    const previous = new Map(keys.map((key) => [key, localStorage.getItem(key)]));
+    const previousIndex = loadLocalIndex();
+    const stagePrefix = `lattice-plugin-stage:${pluginId}:${Date.now()}:${Math.random().toString(36).slice(2)}:`;
+    const stagedKeys = keys.map((key) => `${stagePrefix}${key.slice(key.lastIndexOf(':') + 1)}`);
+    try {
+      stagedKeys.forEach((key, index) => localStorage.setItem(key, values[index]));
+      keys.forEach((key, index) => localStorage.setItem(key, localStorage.getItem(stagedKeys[index]) ?? values[index]));
+      saveLocalIndex([...previousIndex, pluginId]);
+      stagedKeys.forEach((key) => localStorage.removeItem(key));
+    } catch (error) {
+      for (const key of keys) {
+        const value = previous.get(key);
+        if (value === null) localStorage.removeItem(key);
+        else if (value !== undefined) localStorage.setItem(key, value);
+      }
+      try { saveLocalIndex(previousIndex); } catch { /* preserve original storage error */ }
+      stagedKeys.forEach((key) => { try { localStorage.removeItem(key); } catch { /* best effort */ } });
+      throw error;
+    }
     return;
   }
 
+  const pluginDir = await opfsRoot.getDirectoryHandle(pluginId, { create: true });
+  const previousPending = await readTextFile(pluginDir, PENDING_FILE);
+  const previousCommit = await readTextFile(pluginDir, COMMIT_FILE);
+  const previousManifest = await readTextFile(pluginDir, 'manifest.json');
+  const previousMain = await readTextFile(pluginDir, 'main.js');
+  const previousMeta = await readTextFile(pluginDir, 'meta.json');
+  const previousResources = await snapshotResourceTree(pluginDir);
   try {
-    const pluginDir = await opfsRoot.getDirectoryHandle(pluginId, { create: true });
+    await writeTextFile(pluginDir, PENDING_FILE, JSON.stringify({ id: pluginId, version: manifest.version, startedAt: Date.now() }));
+    // The commit marker is written last. Removing the previous marker first
+    // makes an interrupted replacement unreadable instead of mixed-version.
+    try { await pluginDir.removeEntry(COMMIT_FILE); } catch { /* absent */ }
     await writeTextFile(pluginDir, 'manifest.json', JSON.stringify(manifest, null, 2));
     await writeTextFile(pluginDir, 'main.js', main);
     await writeTextFile(pluginDir, 'meta.json', JSON.stringify(nextMeta, null, 2));
@@ -317,16 +391,32 @@ export async function storePluginPackage(
       const bytes = decodeBase64ToBytes(data);
       await writeBinaryFile(pluginDir, path, bytes);
     }
+    await writeTextFile(pluginDir, COMMIT_FILE, JSON.stringify({ id: pluginId, version: manifest.version, updatedAt: nextMeta.updatedAt }));
+    await pluginDir.removeEntry(PENDING_FILE);
   } catch (error) {
-    console.warn('[plugins] Failed to write OPFS plugin, falling back', error);
-    if (typeof window === 'undefined') return;
-    localStorage.setItem(getLocalKey(pluginId, 'manifest'), JSON.stringify(manifest));
-    localStorage.setItem(getLocalKey(pluginId, 'main'), main);
-    localStorage.setItem(getLocalKey(pluginId, 'meta'), JSON.stringify(nextMeta));
-    localStorage.setItem(getLocalKey(pluginId, 'resources'), JSON.stringify(normalizedResources));
-    const next = loadLocalIndex();
-    next.push(pluginId);
-    saveLocalIndex(next);
+    console.warn('[plugins] Failed to write OPFS plugin; incomplete package removed', error);
+    let restored = false;
+    try {
+      if (previousManifest && previousMain && previousCommit) {
+        await writeTextFile(pluginDir, 'manifest.json', previousManifest);
+        await writeTextFile(pluginDir, 'main.js', previousMain);
+        if (previousMeta) await writeTextFile(pluginDir, 'meta.json', previousMeta);
+        await restoreResourceTree(pluginDir, previousResources);
+        await writeTextFile(pluginDir, COMMIT_FILE, previousCommit);
+        await pluginDir.removeEntry(PENDING_FILE);
+        restored = true;
+      } else {
+        await removeDirectory(opfsRoot, pluginId);
+      }
+    } catch {
+      // The commit marker remains absent if restoration cannot complete, so
+      // readers reject the package instead of loading mixed versions.
+      try { await pluginDir.removeEntry(COMMIT_FILE); } catch { /* best effort */ }
+    }
+    if (!restored && previousPending) {
+      try { await writeTextFile(pluginDir, PENDING_FILE, previousPending); } catch { /* best effort */ }
+    }
+    throw error;
   }
 }
 
@@ -348,6 +438,8 @@ export async function loadStoredPluginResource(
       if (!data) return null;
       return { bytes: decodeBase64ToBytes(data), mimeType };
     }
+    const stored = await loadStoredPlugin(pluginId);
+    if (!stored) return null;
     const pluginDir = await opfsRoot.getDirectoryHandle(pluginId, { create: false });
     const bytes = await readBinaryFile(pluginDir, normalized);
     if (!bytes) return null;

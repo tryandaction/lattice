@@ -81,6 +81,23 @@ describe('mention-resolver', () => {
     expect(resolveWorkspaceFilePath('paper.md')).toBe('notes/paper.md');
   });
 
+  it.each(['notes/a@b#c?.md', 'notes/literal%40.md', 'notes/100% notes.md'])('round-trips reserved characters once: %s', async path => {
+    const readFile = vi.fn(async () => '# Accuracy 100%\nVerified synthetic content');
+    const suggestions = await getMentionFragmentSuggestions(path, { readFile });
+    const mentions = parseMentions(suggestions[0].value);
+    expect(mentions[0].path).toBe(path);
+    expect(mentions[0].fragment).toBe('Accuracy 100%');
+    readFile.mockClear();
+    const [resolved] = await resolveMentions(mentions, { readFile });
+    expect(readFile).toHaveBeenCalledWith(path);
+    expect(resolved.resolved).toContain('Verified synthetic content');
+  });
+
+  it('does not throw when an incomplete escape is typed or pick a basename inside another filename', () => {
+    expect(parseMentions('@notes/%E0%A4%A.md')).toEqual([]);
+    expect(resolveWorkspaceFilePath('aper.md')).toBe('aper.md');
+  });
+
   it('builds heading fragment suggestions for markdown files', async () => {
     const suggestions = await getMentionFragmentSuggestions('notes/paper.md', {
       readFile: async () => '# Intro\n## Method\n### Details\n## Results',

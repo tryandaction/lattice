@@ -6,6 +6,7 @@ import {
   getOrBuildWorkspaceSummary,
 } from '../ai/workspace-summary-cache';
 import type { FileIndex, WorkspaceIndex } from '../ai/workspace-indexer';
+import { clearWorkspaceIndex, getWorkspaceIndex } from '../ai/workspace-indexer';
 
 function file(path: string, overrides: Partial<FileIndex> = {}): FileIndex {
   return {
@@ -30,6 +31,7 @@ function index(version: number, files: FileIndex[]): WorkspaceIndex {
 describe('workspace-summary-cache', () => {
   beforeEach(() => {
     clearWorkspaceSummaryCache();
+    clearWorkspaceIndex();
   });
 
   it('builds and reuses a summary for the same workspace index version', () => {
@@ -72,5 +74,14 @@ describe('workspace-summary-cache', () => {
     expect(second).not.toBe(first);
     expect(second.indexVersion).toBe(2);
     expect(second.sourcePaths).toEqual(['new.md']);
+  });
+
+  it('clears the active index snapshot when a workspace changes', () => {
+    const before = getWorkspaceIndex();
+    clearWorkspaceIndex();
+    const after = getWorkspaceIndex();
+
+    expect(after.files.size).toBe(0);
+    expect(after.version).toBeGreaterThan(before.version);
   });
 });

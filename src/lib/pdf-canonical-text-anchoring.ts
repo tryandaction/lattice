@@ -66,6 +66,109 @@ export interface PdfCanonicalTextAnchor {
   rects: BoundingBox[];
 }
 
+export interface PdfVisualColumnScope {
+  boundaryX: number;
+  side: "left" | "right";
+}
+
+function isVisualColumnTextChar(char: PdfCanonicalChar): boolean {
+  return char.width > 0 && char.height > 0 && !/^\s$/u.test(char.text);
+}
+
+/**
+ * Finds the physical gutter of a two-column text layer in the vertical band
+ * touched by a selection. The rendered text model can assign a shared block
+ * or column index to a heading that visually belongs to the other column, so
+ * the blank horizontal band is a stronger boundary than metadata alone.
+ */
+export function resolvePdfVisualColumnScope(input: {
+  chars: PdfCanonicalChar[];
+  viewportWidth: number;
+  verticalRange?: { top: number; bottom: number };
+  startX: number;
+  endX: number;
+}): PdfVisualColumnScope | null {
+  if (input.viewportWidth <= 0) {
+    return null;
+  }
+
+  const allChars = input.chars.filter(isVisualColumnTextChar);
+  if (allChars.length < 16) {
+    return null;
+  }
+  const verticalTop = input.verticalRange
+    ? Math.min(input.verticalRange.top, input.verticalRange.bottom)
+    : Number.NEGATIVE_INFINITY;
+  const verticalBottom = input.verticalRange
+    ? Math.max(input.verticalRange.top, input.verticalRange.bottom)
+    : Number.POSITIVE_INFINITY;
+  const scopedChars = allChars.filter((char) => (
+    char.centerY >= verticalTop - Math.max(2, char.height * 0.8) &&
+    char.centerY <= verticalBottom + Math.max(2, char.height * 0.8)
+  ));
+  if (scopedChars.length < 12) {
+    return null;
+  }
+
+  const centers = [...new Set(scopedChars.map((char) => Math.round(char.centerX * 100) / 100))]
+    .sort((left, right) => left - right);
+  if (centers.length < 4) {
+    return null;
+  }
+  const medianWidth = [...scopedChars.map((char) => char.width)].sort((left, right) => left - right)[Math.floor(scopedChars.length / 2)] ?? 0;
+  const minimumGap = Math.max(12, medianWidth * 2.5, input.viewportWidth * 0.015);
+  const candidateGaps = centers.slice(1).map((right, index) => ({
+    left: centers[index],
+    right,
+    gap: right - centers[index],
+  })).filter((candidate) => (
+    candidate.gap >= minimumGap &&
+    candidate.left > input.viewportWidth * 0.18 &&
+    candidate.right < input.viewportWidth * 0.82
+  ));
+  if (candidateGaps.length === 0) {
+    return null;
+  }
+
+  const bestGap = candidateGaps.reduce((best, candidate) => candidate.gap > best.gap ? candidate : best);
+  const boundaryX = (bestGap.left + bestGap.right) / 2;
+  const leftChars = scopedChars.filter((char) => char.centerX < boundaryX);
+  const rightChars = scopedChars.filter((char) => char.centerX > boundaryX);
+  if (leftChars.length < 6 || rightChars.length < 6) {
+    return null;
+  }
+
+  const medianHeight = [...scopedChars.map((char) => char.height)].sort((left, right) => left - right)[Math.floor(scopedChars.length / 2)] ?? 0;
+  const rangeHeight = Number.isFinite(verticalTop) && Number.isFinite(verticalBottom) ? verticalBottom - verticalTop : Number.POSITIVE_INFINITY;
+  const alignedRowCenters = leftChars.flatMap((leftChar) => rightChars
+    .filter((rightChar) => {
+      const minHeight = Math.max(1, Math.min(leftChar.height, rightChar.height));
+      const verticalOverlap = Math.min(leftChar.bottom, rightChar.bottom) - Math.max(leftChar.top, rightChar.top);
+      const centerDistance = Math.abs(leftChar.centerY - rightChar.centerY);
+      return verticalOverlap >= minHeight * 0.35 || centerDistance <= minHeight * 0.65;
+    })
+    .map((rightChar) => (leftChar.centerY + rightChar.centerY) / 2))
+    .sort((left, right) => left - right);
+  const rowClusterTolerance = Math.max(2.5, medianHeight * 0.6);
+  const alignedVisualRows = alignedRowCenters.reduce<number[]>((rows, centerY) => {
+    if (rows.length === 0 || centerY - rows[rows.length - 1] > rowClusterTolerance) {
+      rows.push(centerY);
+    }
+    return rows;
+  }, []);
+  if (alignedVisualRows.length < (rangeHeight <= medianHeight * 2.2 ? 1 : 2)) {
+    return null;
+  }
+
+  const startSide = input.startX < boundaryX ? "left" : "right";
+  const endSide = input.endX < boundaryX ? "left" : "right";
+  if (startSide !== endSide) {
+    return null;
+  }
+
+  return { boundaryX, side: startSide };
+}
+
 export type PdfCanonicalTextAnchorResolveReason =
   | "empty-exact"
   | "exact-not-found-in-pdf-text-model"
@@ -86,6 +189,29 @@ export type PdfCanonicalTextAnchorResolveResult =
       reason: PdfCanonicalTextAnchorResolveReason;
       candidateCount: number;
       candidates?: Array<{ startOffset: number; endOffset: number; rects: BoundingBox[] }>;
+    };
+
+export type PdfCanonicalTextAnchorRecoveryReason =
+  | "stored-offsets-and-geometry"
+  | "stored-offsets"
+  | "exact-context"
+  | "exact-geometry"
+  | "exact-quote"
+  | "context-recovery"
+  | "geometry-recovery";
+
+export type PdfCanonicalTextAnchorRecoveryResult =
+  | ({
+      ok: true;
+      reason: PdfCanonicalTextAnchorRecoveryReason;
+      confidence: number;
+      source: PdfTextQuote["source"];
+    } & PdfCanonicalTextAnchor)
+  | {
+      ok: false;
+      reason: "unresolved";
+      confidence: 0;
+      source: PdfTextQuote["source"];
     };
 
 function normalizeText(text: string | null | undefined): string {
@@ -269,14 +395,28 @@ function shouldInsertReadableSpaceBetweenAdjacentChars(input: {
 }
 
 function getReadableLineTolerance(left: PdfCanonicalChar, right: PdfCanonicalChar): number {
-  return Math.max(2.5, Math.min(left.height, right.height) * 0.6);
+  return Math.max(2.5, Math.min(left.height, right.height) * 0.72);
 }
 
 function areReadableCharsGeometricallyOnSameLine(left: PdfCanonicalChar, right: PdfCanonicalChar): boolean {
   const minHeight = Math.max(1, Math.min(left.height, right.height));
+  const maxHeight = Math.max(1, Math.max(left.height, right.height));
   const verticalOverlap = Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top);
   const centerDistance = Math.abs(left.centerY - right.centerY);
   if (verticalOverlap >= minHeight * 0.52 && centerDistance <= minHeight * 0.58) {
+    return true;
+  }
+
+  const verticalGap = Math.max(0, -verticalOverlap);
+  const horizontalGap = Math.max(0, left.left - right.right, right.left - left.right);
+  const unionHeight = Math.max(left.bottom, right.bottom) - Math.min(left.top, right.top);
+  const isInlineScriptPair =
+    minHeight / maxHeight <= 0.72 &&
+    verticalGap <= Math.max(2.5, minHeight * 0.25) &&
+    centerDistance <= maxHeight * 0.72 &&
+    unionHeight <= maxHeight * 1.5 &&
+    horizontalGap <= maxHeight * 0.95;
+  if (isInlineScriptPair) {
     return true;
   }
 
@@ -699,6 +839,7 @@ function choosePreferredLayoutClass(chars: PdfCanonicalChar[]): PdfPageTextLayou
 function filterCharsByLayoutPriority(input: {
   chars: PdfCanonicalChar[];
   preferredLayoutClass?: PdfPageTextLayoutClass;
+  preferredLineIndex?: number;
   preferredBlockIndex?: number;
   preferredColumnIndex?: number;
   fallbackRange?: { startOffset: number; endOffset: number };
@@ -719,6 +860,13 @@ function filterCharsByLayoutPriority(input: {
   const sameLayout = input.chars.filter((char) => char.layoutClass === preferredLayoutClass);
   if (sameLayout.length === 0) {
     return input.chars;
+  }
+
+  if (typeof input.preferredLineIndex === "number") {
+    const sameLine = sameLayout.filter((char) => char.lineIndex === input.preferredLineIndex);
+    if (sameLine.length > 0) {
+      return sameLine;
+    }
   }
 
   if (typeof input.preferredColumnIndex === "number") {
@@ -751,6 +899,7 @@ export function resolvePdfPointerBoundary(input: {
   side: "start" | "end";
   currentAnchor?: { startOffset: number; endOffset: number } | null;
   preferredLayoutClass?: PdfPageTextLayoutClass;
+  preferredLineIndex?: number;
   preferredBlockIndex?: number;
   preferredColumnIndex?: number;
 }): PdfCanonicalPointerBoundaryResult | null {
@@ -764,6 +913,7 @@ export function resolvePdfPointerBoundary(input: {
   const scopedChars = filterCharsByLayoutPriority({
     chars,
     preferredLayoutClass: input.preferredLayoutClass,
+    preferredLineIndex: input.preferredLineIndex,
     preferredBlockIndex: input.preferredBlockIndex,
     preferredColumnIndex: input.preferredColumnIndex,
     fallbackRange: input.currentAnchor
@@ -859,9 +1009,23 @@ export function trimPdfOffsetsToText(
 
 function pdfCanonicalCharsToRect(model: PdfPageTextModel, chars: PdfCanonicalChar[]): BoundingBox {
   const left = Math.min(...chars.map((char) => char.left));
-  const top = Math.min(...chars.map((char) => char.top));
   const right = Math.max(...chars.map((char) => char.right));
-  const bottom = Math.max(...chars.map((char) => char.bottom));
+  const orderedHeights = chars.map((char) => char.height).sort((leftHeight, rightHeight) => leftHeight - rightHeight);
+  const medianHeight = orderedHeights[Math.floor(orderedHeights.length / 2)] ?? 1;
+  const hasInlineScriptChars = orderedHeights[0] <= medianHeight * 0.72;
+  const referenceHeight = Math.max(
+    1,
+    hasInlineScriptChars
+      ? orderedHeights[Math.floor((orderedHeights.length - 1) * 0.75)] ?? medianHeight
+      : medianHeight,
+  );
+  const bodyChars = chars.filter((char) => char.height >= referenceHeight * 0.82);
+  const referenceChars = bodyChars.length > 0 ? bodyChars : chars;
+  // PDF fonts may expose math glyphs with a shifted baseline even when they
+  // render on the same visual row. Anchor the row to the upper body band so
+  // underline/highlight geometry cannot intrude into the following line.
+  const top = Math.max(0, Math.min(...referenceChars.map((char) => char.top)));
+  const bottom = Math.min(model.viewportHeight, top + referenceHeight);
   return {
     x1: left / model.viewportWidth,
     y1: top / model.viewportHeight,
@@ -1063,16 +1227,21 @@ export function buildPdfTextAnchorFromOffsets(input: {
   endOffset: number;
   source?: PdfTextQuote["source"];
   fallbackRects?: BoundingBox[];
+  /** Keep the validated source range; readable reconstruction may change punctuation. */
+  preserveExact?: boolean;
 }): PdfCanonicalTextAnchor | null {
   const clampedStart = clampOffset(input.startOffset, input.model.normalizedText.length);
   const clampedEnd = clampOffset(input.endOffset, input.model.normalizedText.length);
-  const trimmed = trimPdfOffsetsToText(input.model.normalizedText, clampedStart, clampedEnd);
+  const trimmed = input.preserveExact
+    ? (clampedEnd > clampedStart ? { startOffset: clampedStart, endOffset: clampedEnd } : null)
+    : trimPdfOffsetsToText(input.model.normalizedText, clampedStart, clampedEnd);
   if (!trimmed) {
     return null;
   }
 
-  const exact = buildPdfReadableTextForOffsets(input.model, trimmed.startOffset, trimmed.endOffset)
-    ?? input.model.normalizedText.slice(trimmed.startOffset, trimmed.endOffset);
+  const sourceText = input.model.normalizedText.slice(trimmed.startOffset, trimmed.endOffset);
+  const exact = input.preserveExact ? sourceText
+    : buildPdfReadableTextForOffsets(input.model, trimmed.startOffset, trimmed.endOffset) ?? sourceText;
   if (!normalizeText(exact)) {
     return null;
   }
@@ -1205,5 +1374,229 @@ export function resolveCanonicalPdfTextAnchorFromExact(input: {
     anchor,
     candidateCount: usableCandidates.length,
     ambiguityScore: candidate.score?.overlapRatio,
+  };
+}
+
+function arePdfAnchorRectsEquivalent(left: BoundingBox[], right: BoundingBox[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((rect, index) => {
+    const candidate = right[index];
+    return Boolean(
+      candidate &&
+      Math.abs(rect.x1 - candidate.x1) <= 0.0005 &&
+      Math.abs(rect.y1 - candidate.y1) <= 0.0005 &&
+      Math.abs(rect.x2 - candidate.x2) <= 0.0005 &&
+      Math.abs(rect.y2 - candidate.y2) <= 0.0005
+    );
+  });
+}
+
+function resolvePdfOffsetsBetweenContext(input: {
+  model: PdfPageTextModel;
+  exact?: string | null;
+  prefix?: string | null;
+  suffix?: string | null;
+  preferredRects?: BoundingBox[];
+}): { startOffset: number; endOffset: number } | null {
+  const prefix = compactText(input.prefix ?? "");
+  const suffix = compactText(input.suffix ?? "");
+  if (!prefix || !suffix) {
+    return null;
+  }
+
+  const page = buildWhitespaceCompactIndex(input.model.normalizedText);
+  const expectedLength = compactText(input.exact ?? "").length;
+  const candidates: Array<{
+    startOffset: number;
+    endOffset: number;
+    rects: BoundingBox[];
+    score: { overlapRatio: number; overlapArea: number; centerDistance: number };
+  }> = [];
+  let prefixIndex = page.compact.indexOf(prefix);
+  while (prefixIndex >= 0) {
+    const gapCompactStart = prefixIndex + prefix.length;
+    const suffixIndex = page.compact.indexOf(suffix, gapCompactStart);
+    if (suffixIndex >= gapCompactStart) {
+      const rawStart = (page.offsets[gapCompactStart - 1] ?? -1) + 1;
+      const rawEnd = page.offsets[suffixIndex] ?? -1;
+      const trimmed = rawStart >= 0 && rawEnd > rawStart
+        ? trimPdfOffsetsToText(input.model.normalizedText, rawStart, rawEnd)
+        : null;
+      if (trimmed) {
+        const recoveredLength = compactText(
+          input.model.normalizedText.slice(trimmed.startOffset, trimmed.endOffset),
+        ).length;
+        const lengthLooksPlausible = expectedLength === 0 || (
+          recoveredLength >= Math.max(1, Math.floor(expectedLength * 0.55)) &&
+          recoveredLength <= Math.ceil(expectedLength * 1.8) + 8
+        );
+        if (lengthLooksPlausible) {
+          const rects = buildPdfRectsForOffsets(input.model, trimmed.startOffset, trimmed.endOffset);
+          candidates.push({
+            ...trimmed,
+            rects,
+            score: scorePdfQuoteCandidateByRects({
+              candidateRects: rects,
+              preferredRects: (input.preferredRects ?? []).filter(isUsablePdfPreferredRect),
+            }),
+          });
+        }
+      }
+    }
+    prefixIndex = page.compact.indexOf(prefix, prefixIndex + 1);
+  }
+
+  candidates.sort((left, right) => (
+    right.score.overlapRatio - left.score.overlapRatio ||
+    right.score.overlapArea - left.score.overlapArea ||
+    left.score.centerDistance - right.score.centerDistance ||
+    left.startOffset - right.startOffset
+  ));
+  const best = candidates[0];
+  return best ? { startOffset: best.startOffset, endOffset: best.endOffset } : null;
+}
+
+function resolvePdfOffsetsFromStoredGeometry(input: {
+  model: PdfPageTextModel;
+  rects?: BoundingBox[];
+}): { startOffset: number; endOffset: number } | null {
+  const preferredRects = (input.rects ?? []).filter(isUsablePdfPreferredRect);
+  if (preferredRects.length === 0) {
+    return null;
+  }
+
+  const chars = buildPdfCanonicalChars(input.model).filter((char) => {
+    const charRect = {
+      x1: char.left / input.model.viewportWidth,
+      y1: char.top / input.model.viewportHeight,
+      x2: char.right / input.model.viewportWidth,
+      y2: char.bottom / input.model.viewportHeight,
+    };
+    const horizontalTolerance = Math.max(0.002, (char.width / input.model.viewportWidth) * 0.2);
+    const verticalTolerance = Math.max(0.003, (char.height / input.model.viewportHeight) * 0.35);
+    return preferredRects.some((rect) => (
+      charRect.x2 >= rect.x1 - horizontalTolerance &&
+      charRect.x1 <= rect.x2 + horizontalTolerance &&
+      charRect.y2 >= rect.y1 - verticalTolerance &&
+      charRect.y1 <= rect.y2 + verticalTolerance
+    ));
+  });
+  if (chars.length === 0) {
+    return null;
+  }
+
+  return trimPdfOffsetsToText(
+    input.model.normalizedText,
+    Math.min(...chars.map((char) => char.normalizedStart)),
+    Math.max(...chars.map((char) => char.normalizedEnd)),
+  );
+}
+
+function buildPdfAnchorRecoverySuccess(input: {
+  anchor: PdfCanonicalTextAnchor;
+  reason: PdfCanonicalTextAnchorRecoveryReason;
+  confidence: number;
+  rects?: BoundingBox[];
+}): PdfCanonicalTextAnchorRecoveryResult {
+  return {
+    ok: true,
+    ...input.anchor,
+    rects: input.rects ?? input.anchor.rects,
+    source: input.anchor.textQuote.source,
+    confidence: input.confidence,
+    reason: input.reason,
+  };
+}
+
+export function recoverCanonicalPdfTextAnchor(input: {
+  model: PdfPageTextModel;
+  exact?: string | null;
+  prefix?: string | null;
+  suffix?: string | null;
+  startOffset?: number | null;
+  endOffset?: number | null;
+  rects?: BoundingBox[];
+  source?: PdfTextQuote["source"];
+}): PdfCanonicalTextAnchorRecoveryResult {
+  const source = input.source ?? "pdfjs-text-model";
+  const exactCompact = compactText(normalizePdfReadableText(input.exact ?? ""));
+  const hasStoredOffsets = Number.isInteger(input.startOffset) && Number.isInteger(input.endOffset);
+  const storedAnchor = hasStoredOffsets
+    ? buildPdfTextAnchorFromOffsets({
+        model: input.model,
+        startOffset: input.startOffset as number,
+        endOffset: input.endOffset as number,
+        source,
+      })
+    : null;
+  if (storedAnchor && exactCompact === compactText(storedAnchor.textQuote.exact)) {
+    const storedRects = (input.rects ?? []).filter(isUsablePdfPreferredRect);
+    const preservesStoredGeometry = storedRects.length > 0 &&
+      arePdfAnchorRectsEquivalent(storedRects, storedAnchor.rects);
+    return buildPdfAnchorRecoverySuccess({
+      anchor: storedAnchor,
+      reason: preservesStoredGeometry ? "stored-offsets-and-geometry" : "stored-offsets",
+      confidence: preservesStoredGeometry ? 1 : 0.99,
+      rects: preservesStoredGeometry ? input.rects : undefined,
+    });
+  }
+
+  const exactResult = resolveCanonicalPdfTextAnchorFromExact({
+    model: input.model,
+    exact: input.exact,
+    prefix: input.prefix,
+    suffix: input.suffix,
+    preferredRects: input.rects,
+    source,
+  });
+  if (exactResult.ok) {
+    const hasContext = Boolean(compactText(input.prefix ?? "") || compactText(input.suffix ?? ""));
+    const hasGeometry = (input.rects ?? []).some(isUsablePdfPreferredRect);
+    return buildPdfAnchorRecoverySuccess({
+      anchor: exactResult.anchor,
+      reason: hasContext ? "exact-context" : hasGeometry ? "exact-geometry" : "exact-quote",
+      confidence: hasContext ? 0.99 : hasGeometry ? 0.97 : 0.95,
+    });
+  }
+
+  const contextOffsets = resolvePdfOffsetsBetweenContext(input);
+  const contextAnchor = contextOffsets
+    ? buildPdfTextAnchorFromOffsets({
+        model: input.model,
+        ...contextOffsets,
+        source,
+      })
+    : null;
+  if (contextAnchor) {
+    return buildPdfAnchorRecoverySuccess({
+      anchor: contextAnchor,
+      reason: "context-recovery",
+      confidence: 0.88,
+    });
+  }
+
+  const geometryOffsets = resolvePdfOffsetsFromStoredGeometry(input);
+  const geometryAnchor = geometryOffsets
+    ? buildPdfTextAnchorFromOffsets({
+        model: input.model,
+        ...geometryOffsets,
+        source,
+      })
+    : null;
+  if (geometryAnchor) {
+    return buildPdfAnchorRecoverySuccess({
+      anchor: geometryAnchor,
+      reason: "geometry-recovery",
+      confidence: 0.72,
+    });
+  }
+
+  return {
+    ok: false,
+    reason: "unresolved",
+    confidence: 0,
+    source,
   };
 }

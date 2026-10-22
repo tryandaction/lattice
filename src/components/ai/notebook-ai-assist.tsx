@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 import { Loader2, Wand2, AlertCircle, BarChart3 } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings-store";
 import { aiOrchestrator } from "@/lib/ai/orchestrator";
-import type { AiRuntimeSettings } from "@/lib/ai/types";
+import { toRuntimeSettings } from "./ai-chat-context";
 import {
   createAgentToolSession,
   executeAgentTool,
@@ -47,16 +47,7 @@ export function NotebookAiAssist({ cellSource, cellOutput, cellError, onInsertCo
     setShowResult(true);
     setResult("");
 
-    const runtimeSettings: AiRuntimeSettings = {
-      aiEnabled: settings.aiEnabled,
-      providerId: (settings.aiProvider as AiRuntimeSettings["providerId"]) ?? null,
-      model: settings.aiModel,
-      temperature: settings.aiTemperature,
-      maxTokens: settings.aiMaxTokens,
-      systemPrompt: settings.aiSystemPrompt,
-      preferLocal: settings.aiProvider === "ollama",
-      agentOmittedSummaryEnabled: settings.aiAgentOmittedSummaryEnabled,
-    };
+    const runtimeSettings = toRuntimeSettings(settings, "agent");
 
     let researchAction: "answer_question" | "explain_code" | "interpret_output";
     let userPrompt = "";

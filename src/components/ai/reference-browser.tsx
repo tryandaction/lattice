@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { ChevronDown, ChevronRight, FileText, Hash, Link2, TextSelect } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, Folder, Hash, Link2, TextSelect } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ReferenceBrowserNode } from "@/lib/ai/reference-browser";
 
@@ -25,6 +25,8 @@ function iconForNode(node: ReferenceBrowserNode) {
   switch (node.kind) {
     case "selection":
       return <TextSelect className="h-3.5 w-3.5 shrink-0 text-blue-500" />;
+    case "folder":
+      return <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
     case "group":
       return <Link2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
     case "file":
@@ -52,7 +54,7 @@ function ReferenceBrowserNodeRow({
   index: number;
 }) {
   const isGroup = node.kind === "group" && node.children && node.children.length > 0;
-  const isExpanded = isGroup ? (expandedNodeIds?.[node.id] ?? true) : false;
+  const isExpanded = isGroup ? (expandedNodeIds?.[node.id] ?? false) : false;
   const isSelected = selectedLeafIds?.[node.locator ?? node.id] ?? false;
 
   return (
@@ -85,16 +87,11 @@ function ReferenceBrowserNodeRow({
                   onActivateNode?.(node);
                 }
               }}
+              title={node.description ?? node.preview ?? node.label}
               className="flex w-full items-center justify-between gap-2 text-left"
             >
               <div className="min-w-0">
                 <div className="truncate text-[11px] font-medium text-foreground">{node.label}</div>
-                {node.description ? (
-                  <div className="truncate text-[10px] text-muted-foreground">{node.description}</div>
-                ) : null}
-                {node.preview ? (
-                  <div className="mt-0.5 line-clamp-2 text-[10px] text-muted-foreground/80">{node.preview}</div>
-                ) : null}
               </div>
               {isGroup ? (
                 isExpanded ? (

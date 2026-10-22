@@ -94,8 +94,8 @@ releases/           本地发布产物与元数据事实来源
 ## 发布与部署
 
 - `web-dist/` 是统一的静态导出产物
-- 线上站点当前发布到 Cloudflare Pages：<https://lattice-apq.pages.dev/>
-- 最新预览部署：<https://47f3417d.lattice-apq.pages.dev>
+- 线上站点当前发布到 Cloudflare Pages：<https://lattice-apq-7xj.pages.dev/>
+- 使用 `npm run deploy:web` 更新；Pages 构建配置位于 `wrangler.json`，目标账号及项目位于 `wrangler.deployment.json`，`/build-info.json` 可核对线上版本
 - GitHub Pages workflow 仍保留为备用/镜像发布链路
 - 桌面发布使用 `releases/vX.Y.Z/` 作为本地事实来源
 - GitHub Actions 只创建 draft release，不自动 publish

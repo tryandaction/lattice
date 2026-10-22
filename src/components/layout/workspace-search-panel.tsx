@@ -11,6 +11,7 @@ import {
   extractSearchableTextForFile,
   isLineNavigableSearchExtension,
   isSearchableTextExtension,
+  shouldExcludeFromWorkspaceSearch,
 } from "@/lib/searchable-text";
 
 interface SearchMatch {
@@ -180,13 +181,14 @@ export function WorkspaceSearchPanel() {
   const sortBy: SearchSort = searchPanelSort;
   const files = useMemo(() => collectFiles(fileTree.root), [fileTree.root]);
   const searchTargetFiles = useMemo(() => {
+    const visibleFiles = files.filter((file) => !shouldExcludeFromWorkspaceSearch(file.path));
     if (scope !== "current") {
-      return files;
+      return visibleFiles;
     }
     if (!activeFilePath) {
       return [];
     }
-    return files.filter((file) => file.path === activeFilePath);
+    return visibleFiles.filter((file) => file.path === activeFilePath);
   }, [activeFilePath, files, scope]);
   const hasScopeTarget = scope !== "current" || Boolean(activeFilePath);
 

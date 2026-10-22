@@ -1,0 +1,257 @@
+// @vitest-environment node
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createProtocolServer, PROFILE_A, PROFILE_B, TEST_PASSWORD } from "../../../../workers/shared-library-api/test-support/protocol-server";
+import { CloudLibraryWorkspaceController, type CloudWorkspaceSnapshot } from "../cloud-workspace";
+import { ApiTransport } from "../api-transport";
+import { CloudAuthSession, SupabaseAuthRepository } from "../supabase-auth";
+import type { AuthSession } from "../auth";
+import type { CloudPersistence } from "../cloud-persistence";
+import { CloudPersistenceConflict } from "../cloud-persistence";
+import type { SharedLibraryItemContent } from "../content-store";
+import type { CloudLibraryConnection } from "../connection";
+import { defaultSha256Hex } from "../blob-store";
+import { createCloudSourceProvider } from "../source-provider";
+
+function durableFixture(): CloudPersistence<CloudWorkspaceSnapshot> & { failNext: () => void } {
+  let snapshot: CloudWorkspaceSnapshot | null = null; const content = new Map<string, SharedLibraryItemContent>(); let fail = false;
+  return { load: async () => structuredClone(snapshot), content: async key => structuredClone(content.get(key) ?? null), failNext: () => { fail = true; }, async commit(next, entries = [], expectedRevision) { if (fail) { fail = false; throw new Error("fixture disk full"); } if (expectedRevision !== undefined && (snapshot?.revision ?? 0) !== expectedRevision) throw new CloudPersistenceConflict(); snapshot = structuredClone(next); for (const entry of entries) if (entry.content) content.set(entry.key, structuredClone(entry.content)); else content.delete(entry.key); } };
+}
+
+describe("cloud library two-profile real HTTP + PostgreSQL RLS", () => {
+  let server: Awaited<ReturnType<typeof createProtocolServer>>;
+  let connection: CloudLibraryConnection;
+  beforeAll(async () => { server = await createProtocolServer(); connection = { id: "isolated", name: "HTTP Lab", apiUrl: server.apiUrl, supabaseUrl: server.authUrl, publicKey: "sb_publishable_fixture", maxFileBytes: 20 * 1024 * 1024 }; }, 120000);
+  afterAll(async () => { await server?.close(); });
+
+  async function profile(email: string, device: string, persistence = durableFixture(), online = () => true) {
+    let session: AuthSession | null = null;
+    const store = { getSession: async () => session, saveSession: async (value: AuthSession) => { session = value; }, clearSession: async () => { session = null; } };
+    const auth = new CloudAuthSession(store, new SupabaseAuthRepository(connection), device);
+    await auth.signIn(email, TEST_PASSWORD);
+    const controller = new CloudLibraryWorkspaceController(connection, session!.userId, persistence, new ApiTransport({ baseUrl: connection.apiUrl, getAccessToken: () => auth.accessToken() }), online);
+    await controller.initialize(); return { controller, auth, store, persistence };
+  }
+
+  it("imports nested unknown bytes, joins by hashed invitation, checks editor/viewer/revocation, and restores offline queue with visible conflicts", async () => {
+    const A = await profile("a@cloud.test", "device-a"); let bOnline = true;
+    const B = await profile("b@cloud.test", "device-b", durableFixture(), () => bOnline);
+    expect(A.controller.userId).toBe(PROFILE_A); expect(B.controller.userId).toBe(PROFILE_B);
+    const library = await A.controller.createLibrary("课题 小组");
+    const folder = await A.controller.createItem({ libraryId: library.id, name: "数据 文件夹", kind: "folder" });
+    const unknown = new Uint8Array([0, 255, 17, 23, 0, 219]).buffer;
+    const item = await A.controller.createItem({ libraryId: library.id, name: "未知.abcxyz", kind: "data", parentItemId: folder.id }, { kind: "binary", data: unknown, mimeType: "application/x-lattice-fixture", updatedAt: new Date().toISOString() });
+    const note = await A.controller.createItem({ libraryId: library.id, name: "讨论.md", kind: "markdown", parentItemId: folder.id }, { kind: "text", text: "# 原始内容\n量子研究", mimeType: "text/markdown", updatedAt: new Date().toISOString() });
+    await A.controller.sync();
+    expect({ failures: A.controller.getSnapshot().outbox.filter(o => o.error).map(o => ({ kind: o.kind, state: o.state, error: o.error })), diagnostics: server.diagnostics }).toEqual({ failures: [], diagnostics: [] });
+    expect(A.controller.getStatus()).toMatchObject({ status: "synced", pending: 0 });
+    const invitation = await A.controller.invite(library.id, "b@cloud.test", "editor");
+    const invitationRow = (await server.db.query<{ token: string }>("select token from public.invitations where id=$1", [invitation.id])).rows[0];
+    expect(invitationRow.token).not.toBe(invitation.token); expect(invitationRow.token).toHaveLength(64);
+    expect((await B.controller.acceptInvite(invitation.token)).libraryId).toBe(library.id);
+    expect((await B.controller.acceptInvite(invitation.token)).libraryId).toBe(library.id);
+    await B.controller.refreshLibraries(); await B.controller.refreshLibrary(library.id);
+    const downloaded = await B.controller.readContent(library.id, item.id);
+    expect(downloaded?.kind).toBe("binary");
+    expect(await defaultSha256Hex((downloaded as { data: ArrayBuffer }).data)).toBe(await defaultSha256Hex(unknown));
+    expect(await B.controller.listChildren(library.id, folder.id)).toHaveLength(2);
+    const hits = await B.controller.searchClient.search({ libraryId: library.id, q: "量子研究" });
+    expect(hits.results.some(r => r.itemId === note.id)).toBe(true);
+    const noteVersion = A.controller.getSnapshot().items.find(entry => entry.id === note.id)?.currentVersionId;
+    const annotation = await A.controller.createAnnotation(library.id, { itemId: note.id, versionId: noteVersion!, kind: "text", target: { locatorType: "code-line", locator: { line: 1 } }, style: {}, body: { text: "owner note" } });
+    await A.controller.sync();
+    const directAnnotationPatch = await fetch(`${server.authUrl}/rest/v1/annotations?id=eq.${annotation.id}`, { method: "PATCH", headers: { authorization: `Bearer ${await B.auth.accessToken()}`, "content-type": "application/json", prefer: "return=representation" }, body: JSON.stringify({ body: { text: "viewer bypass" }, revision: 999 }) });
+    expect(directAnnotationPatch.status).toBe(200);
+    expect(await directAnnotationPatch.json()).toEqual([]);
+    expect((await server.db.query<{ body: { text?: string }; revision: number }>("select body,revision from public.annotations where id=$1", [annotation.id])).rows[0]).toMatchObject({ body: { text: "owner note" }, revision: 1 });
+
+    bOnline = false;
+    await B.controller.save(library.id, note.id, { kind: "text", text: "B离线内容", mimeType: "text/markdown", updatedAt: new Date().toISOString() });
+    const pending = B.controller.getSnapshot().outbox.length;
+    expect(pending).toBe(1);
+    B.controller.dispose();
+    const reopened = new CloudLibraryWorkspaceController(connection, PROFILE_B, B.persistence, new ApiTransport({ baseUrl: connection.apiUrl, getAccessToken: () => B.auth.accessToken() }), () => bOnline);
+    await reopened.initialize(); expect(reopened.getSnapshot().outbox).toHaveLength(1);
+    bOnline = true; await reopened.sync(); expect(reopened.getStatus().pending).toBe(0);
+    await A.controller.refreshLibrary(library.id);
+    expect(await A.controller.readContent(library.id, note.id)).toMatchObject({ text: "B离线内容" });
+
+    await reopened.refreshLibrary(library.id); bOnline = false;
+    await reopened.save(library.id, note.id, { kind: "text", text: "B冲突本地", mimeType: "text/markdown", updatedAt: new Date().toISOString() });
+    await A.controller.save(library.id, note.id, { kind: "text", text: "A最新远端", mimeType: "text/markdown", updatedAt: new Date().toISOString() });
+    await A.controller.sync(); bOnline = true; await reopened.sync();
+    expect(reopened.getStatus().status).toBe("conflicted");
+    const conflict = reopened.getSnapshot().outbox[0]; expect(conflict.remoteVersionId).toBeTruthy();
+    expect(await reopened.readContent(library.id, note.id)).toMatchObject({ text: "B冲突本地" });
+    await reopened.resolveConflict(conflict.id, "copy"); await reopened.sync();
+    expect(reopened.getStatus().pending).toBe(0);
+    await A.controller.refreshLibrary(library.id); expect(A.controller.getSnapshot().items.some(i => i.canonicalName.startsWith("讨论.md.conflict-"))).toBe(true);
+
+    await A.controller.changeMember(library.id, PROFILE_B, "viewer");
+    const token = await B.auth.accessToken();
+    const forbidden = await fetch(`${server.apiUrl}/v1/libraries/${library.id}/items`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ id: crypto.randomUUID(), title: "denied", canonicalName: "denied", kind: "data" }) });
+    expect(forbidden.status).toBe(403);
+    const deniedUpload = await fetch(`${server.apiUrl}/v1/libraries/${library.id}/uploads`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ fileName: "denied", mimeType: "application/octet-stream", sizeBytes: 1 }) });
+    expect(deniedUpload.status).toBe(403);
+    await A.controller.changeMember(library.id, PROFILE_B);
+    await expect(reopened.readContent(library.id, item.id)).rejects.toThrow();
+    expect(reopened.getSnapshot().revoked).toContain(library.id);
+    const blob = (await server.db.query<{ blob_id: string }>("select blob_id from public.item_versions where item_id=$1", [item.id])).rows[0].blob_id;
+    const deniedDownload = await fetch(`${server.apiUrl}/v1/libraries/${library.id}/blobs/${blob}/content`, { headers: { authorization: `Bearer ${token}` } });
+    expect(deniedDownload.status).toBe(404);
+    expect((await fetch(`${server.apiUrl}/v1/libraries/${library.id}/search?q=量子`, { headers: { authorization: `Bearer ${token}` } })).status).toBe(403);
+    await expect(B.controller.acceptInvite(invitation.token)).rejects.toThrow();
+    A.controller.dispose(); reopened.dispose();
+  }, 120000);
+
+  it("storage failure never changes projection; refresh/reopen/logout isolates identity", async () => {
+    const A = await profile("a@cloud.test", "persistence-test");
+    const library = await A.controller.createLibrary("存储测试"); await A.controller.refreshLibrary(library.id);
+    A.persistence.failNext();
+    await expect(A.controller.createItem({ libraryId: library.id, name: "未保存.md", kind: "markdown" })).rejects.toThrow();
+    expect(A.controller.getSnapshot().items).toHaveLength(0);
+    const before = (await A.store.getSession())!; await A.store.saveSession({ ...before, expiresAt: "2020-01-01" });
+    const after = await A.auth.load(); expect(after?.accessToken).not.toBe(before.accessToken);
+    const reopened = new CloudAuthSession(A.store, new SupabaseAuthRepository(connection), "persistence-test"); expect((await reopened.load())?.userId).toBe(PROFILE_A);
+    await reopened.signOut(); expect(await reopened.load()).toBeNull(); A.controller.dispose();
+  });
+  it("does not pause synchronization when an opening tab cancels its access request", async () => {
+    const A = await profile("a@cloud.test", "cancelled-tab"); const library = await A.controller.createLibrary("取消读取");
+    const abort = new AbortController();
+    const transport = new ApiTransport({ baseUrl: connection.apiUrl, getAccessToken: () => A.auth.accessToken(), fetchImpl: async (url, init) => { abort.abort(); throw new DOMException(`cancelled ${url}`, "AbortError"); } });
+    const reader = new CloudLibraryWorkspaceController(connection, PROFILE_A, A.persistence, transport); await reader.initialize();
+    await expect(reader.verifyAccess(library.id, abort.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(reader.getStatus().error).toBeNull();
+    reader.dispose(); A.controller.dispose();
+  });
+  it("shares self-service nicknames and snapshots the real annotation author's name", async () => {
+    const A = await profile("a@cloud.test", "nickname-a"); const B = await profile("b@cloud.test", "nickname-b");
+    const library = await A.controller.createLibrary("昵称协议");
+    await A.controller.setDisplayName(library.id, "研究员甲");
+    const invite = await A.controller.invite(library.id, "b@cloud.test", "commenter"); await B.controller.acceptInvite(invite.token);
+    await B.controller.setDisplayName(library.id, "研究员乙");
+    expect((await A.controller.members(library.id)).find(member => member.userId === PROFILE_B)?.displayName).toBe("研究员乙");
+    const file = await A.controller.createItem({ libraryId: library.id, name: "note.md", kind: "markdown" }, { kind: "text", text: "# Shared", mimeType: "text/markdown", updatedAt: new Date().toISOString() }); await A.controller.sync();
+    await B.controller.refreshLibrary(library.id);
+    const annotation = await B.controller.createAnnotation(library.id, { itemId: file.id, versionId: file.currentVersionId!, kind: "comment", target: { locatorType: "markdown-heading", locator: { heading: "Shared" } }, body: { text: "by B", authorDisplayName: "forged A" }, style: {} }); await B.controller.sync();
+    const remote = (await A.controller.annotations(library.id, file.id)).find(item => item.id === annotation.id)!;
+    expect(remote).toMatchObject({ authorId: PROFILE_B, body: { authorDisplayName: "研究员乙" } });
+    await B.controller.setDisplayName(library.id, "乙的新昵称");
+    await B.controller.persistAnnotations(library.id, file.id, [{ ...remote, body: { text: "updated", authorDisplayName: "forged" } }], []); await B.controller.sync();
+    expect((await A.controller.annotations(library.id, file.id))[0].body.authorDisplayName).toBe("研究员乙");
+    const forbidden = await fetch(`${server.apiUrl}/v1/libraries/${library.id}/members/${PROFILE_A}`, { method: "PATCH", headers: { authorization: `Bearer ${await B.auth.accessToken()}`, "content-type": "application/json" }, body: JSON.stringify({ displayName: "冒名" }) });
+    expect(forbidden.status).toBe(400);
+    const directForgery = await fetch(`${server.authUrl}/rest/v1/library_members?library_id=eq.${library.id}&user_id=eq.${PROFILE_B}`, { method: "PATCH", headers: { authorization: `Bearer ${await A.auth.accessToken()}`, "content-type": "application/json" }, body: JSON.stringify({ display_name: "owner impersonation" }) });
+    expect(directForgery.status).toBe(403);
+    await A.controller.changeMember(library.id, PROFILE_B, "viewer");
+    await expect(B.controller.setDisplayName(library.id, "只读成员也能设昵称")).resolves.toMatchObject({ displayName: "只读成员也能设昵称", role: "viewer" });
+    A.controller.dispose(); B.controller.dispose();
+  });
+  it("resumes a failed second chunk after controller restart, honors pause, and avoids unchanged/duplicate uploads", async () => {
+    const A = await profile("a@cloud.test", "large-device");
+    const library = await A.controller.createLibrary("恢复分片");
+    const data = new Uint8Array(6 * 1024 * 1024); data[0] = 239; data[data.length - 1] = 121;
+    const content: SharedLibraryItemContent = { kind: "binary", data: data.buffer, mimeType: "application/x-large-fixture", updatedAt: new Date().toISOString() };
+    const item = await A.controller.createItem({ libraryId: library.id, name: "large.custom", kind: "data" }, content);
+    const op = A.controller.getSnapshot().outbox.find(o => o.kind === "content")!;
+    await A.controller.pause(op.id); await A.controller.sync();
+    expect(A.controller.getSnapshot().outbox.find(o => o.id === op.id)?.parts).toBeUndefined();
+    await A.controller.retry(op.id); server.failNextPart(2); const calls = server.partCalls();
+    await A.controller.sync();
+    expect(A.controller.getSnapshot().outbox[0].parts).toHaveLength(1);
+    expect(A.controller.getSnapshot().outbox[0].state).toBe("pending");
+    A.controller.dispose();
+    const reopened = new CloudLibraryWorkspaceController(connection, PROFILE_A, A.persistence, new ApiTransport({ baseUrl: connection.apiUrl, getAccessToken: () => A.auth.accessToken() }));
+    await reopened.initialize(); await reopened.sync();
+    expect(reopened.getSnapshot().outbox.map(o => ({ state: o.state, error: o.error, parts: o.parts }))).toEqual([]);
+    expect(reopened.getStatus()).toMatchObject({ status: "synced", pending: 0 });
+    expect(server.partCalls() - calls).toBe(3); // chunk 1, failed chunk 2, resumed chunk 2
+    expect(await defaultSha256Hex((await reopened.readContent(library.id, item.id) as { data: ArrayBuffer }).data)).toBe(await defaultSha256Hex(data.buffer));
+    await reopened.save(library.id, item.id, content); expect(reopened.getSnapshot().outbox).toHaveLength(0);
+    const noUploadCalls = server.partCalls();
+    await reopened.createItem({ libraryId: library.id, name: "same-bytes.custom", kind: "data" }, content); await reopened.sync();
+    expect(server.partCalls()).toBe(noUploadCalls);
+    await reopened.createItem({ libraryId: library.id, name: "empty.custom", kind: "data" }, { kind: "binary", data: new ArrayBuffer(0), mimeType: "application/octet-stream", updatedAt: new Date().toISOString() }); await reopened.sync();
+    expect(reopened.getStatus().pending).toBe(0);
+    reopened.dispose();
+  });
+  it("keeps cached bytes and version identity consistent, and rejects an editor save based on stale content", async () => {
+    const A = await profile("a@cloud.test", "version-reader");
+    const library = await A.controller.createLibrary("版本一致性");
+    const text = (value: string): SharedLibraryItemContent => ({ kind: "text", text: value, mimeType: "text/markdown", updatedAt: new Date().toISOString() });
+    const item = await A.controller.createItem({ libraryId: library.id, name: "same.md", kind: "markdown" }, text("v1")); await A.controller.sync();
+    const v1 = structuredClone(A.controller.getSnapshot().items.find(i => i.id === item.id)!);
+    const B = await profile("b@cloud.test", "version-reader-b");
+    const invite = await A.controller.invite(library.id, "b@cloud.test", "editor"); await B.controller.acceptInvite(invite.token); await B.controller.refreshLibrary(library.id);
+    const provider = createCloudSourceProvider(B.controller); const read1 = await provider.read(library.id, item.id);
+    await A.controller.save(library.id, item.id, text("v2")); await A.controller.sync();
+    const read2 = await provider.read(library.id, item.id); expect(read2.versionId).not.toBe(read1.versionId);
+    const stale = structuredClone((await B.persistence.load())!); stale.items = stale.items.map(i => i.id === item.id ? v1 : i); await B.persistence.commit(stale);
+    B.controller.dispose();
+    const restored = new CloudLibraryWorkspaceController(connection, PROFILE_B, B.persistence, new ApiTransport({ baseUrl: connection.apiUrl, getAccessToken: () => B.auth.accessToken() })); await restored.initialize();
+    const fromCache = await createCloudSourceProvider(restored).read(library.id, item.id);
+    expect(fromCache).toMatchObject({ versionId: read2.versionId, content: { text: "v2" } });
+    expect(restored.getSnapshot().items.find(i => i.id === item.id)?.currentVersionId).toBe(read2.versionId);
+    await restored.save(library.id, item.id, text("v1 stale edit"), read1.versionId); await restored.sync();
+    expect(restored.getStatus().status).toBe("conflicted"); expect(await A.controller.readContent(library.id, item.id)).toMatchObject({ text: "v2" });
+    A.controller.dispose(); restored.dispose();
+  });
+  it("merges two offline controllers' journals and recovers completed R2 bytes after registration fails", async () => {
+    let online = true; const persistence = durableFixture(); const A = await profile("a@cloud.test", "multi-a", persistence, () => online);
+    const library = await A.controller.createLibrary("跨窗口持久化");
+    const other = new CloudLibraryWorkspaceController(connection, PROFILE_A, persistence, new ApiTransport({ baseUrl: connection.apiUrl, getAccessToken: () => A.auth.accessToken() }), () => online); await other.initialize();
+    online = false;
+    const content = (text: string): SharedLibraryItemContent => ({ kind: "text", text, mimeType: "text/plain", updatedAt: new Date().toISOString() });
+    await Promise.all([A.controller.createItem({ libraryId: library.id, name: "window-a.txt", kind: "data" }, content("A window")), other.createItem({ libraryId: library.id, name: "window-b.txt", kind: "data" }, content("B window"))]);
+    expect((await persistence.load())?.outbox).toHaveLength(4);
+    A.controller.dispose(); other.dispose(); online = true;
+    const restored = new CloudLibraryWorkspaceController(connection, PROFILE_A, persistence, new ApiTransport({ baseUrl: connection.apiUrl, getAccessToken: () => A.auth.accessToken() })); await restored.initialize();
+    server.failNextBlobRegistration(); await restored.sync(); expect(restored.getStatus().pending).toBeGreaterThan(0);
+    await restored.sync(); expect(restored.getStatus().pending).toBe(0);
+    expect(restored.getSnapshot().items.map(i => i.canonicalName).sort()).toEqual(["window-a.txt", "window-b.txt"]);
+    restored.dispose();
+  });
+  it("shares comments and annotation CAS while denying viewer mutations, and keeps child identity after parent rename", async () => {
+    const A = await profile("a@cloud.test", "annotation-a"); const B = await profile("b@cloud.test", "annotation-b");
+    const library = await A.controller.createLibrary("共同批注");
+    const content: SharedLibraryItemContent = { kind: "text", text: "# Parent", mimeType: "text/markdown", updatedAt: new Date().toISOString() };
+    const parent = await A.controller.createItem({ libraryId: library.id, name: "parent.md", kind: "markdown" }, content); await A.controller.sync();
+    const invitation = await A.controller.invite(library.id, "b@cloud.test", "editor"); await B.controller.acceptInvite(invitation.token); await B.controller.refreshLibrary(library.id);
+    const source = await createCloudSourceProvider(B.controller).read(library.id, parent.id);
+    const child = await createCloudSourceProvider(B.controller).createChild!(library.id, parent.id, { name: "child.md", kind: "markdown", content, expectedParentVersion: source.versionId! }); await B.controller.sync();
+    const annotation = await B.controller.createAnnotation(library.id, { itemId: parent.id, versionId: source.versionId!, kind: "comment", target: { locatorType: "markdown-heading", locator: { heading: "Parent" } }, style: {}, body: { text: "B note" } }); await B.controller.sync();
+    await A.controller.annotations(library.id, parent.id); await A.controller.createComment(library.id, parent.id, annotation.id, "A reply"); await A.controller.sync();
+    expect(await B.controller.comments(library.id, annotation.id)).toHaveLength(1);
+    await A.controller.persistAnnotations(library.id, parent.id, [{ ...annotation, body: { text: "A admin edit" } }], []); await A.controller.sync();
+    await B.controller.persistAnnotations(library.id, parent.id, [{ ...annotation, body: { text: "B local edit" } }], []); await B.controller.sync(); expect(B.controller.getStatus().status).toBe("conflicted");
+    await B.controller.resolveConflict(B.controller.getSnapshot().outbox[0].id, "local"); await B.controller.sync(); expect(B.controller.getStatus().pending).toBe(0);
+    expect((await A.controller.annotations(library.id, parent.id))[0].body.text).toBe("B local edit");
+    await A.controller.updateItem(library.id, parent.id, "renamed parent.md"); await A.controller.sync(); await B.controller.refreshLibrary(library.id);
+    expect((await B.controller.listChildren(library.id, parent.id))[0].childItemId).toBe(child.id);
+    await A.controller.changeMember(library.id, PROFILE_B, "viewer"); const before = (await server.db.query("select body,revision from public.annotations where id=$1", [annotation.id])).rows[0];
+    const response = await fetch(`${server.authUrl}/rest/v1/annotations?id=eq.${annotation.id}`, { method: "PATCH", headers: { authorization: `Bearer ${await B.auth.accessToken()}`, "content-type": "application/json" }, body: JSON.stringify({ body: { text: "denied" }, revision: 999 }) });
+    expect(response.ok).toBe(true); expect(await response.json()).toEqual([]); expect((await server.db.query("select body,revision from public.annotations where id=$1", [annotation.id])).rows[0]).toEqual(before);
+    const revoked = await A.controller.invite(library.id, "b@cloud.test", "editor"); await A.controller.revokeInvitation(library.id, revoked.id);
+    await expect(B.controller.acceptInvite(revoked.token)).rejects.toThrow();
+    const expired = await A.controller.invite(library.id, "b@cloud.test", "editor"); await server.db.query("update public.invitations set expires_at=now()-interval '1 second' where id=$1", [expired.id]);
+    await expect(B.controller.acceptInvite(expired.token)).rejects.toThrow();
+    await A.controller.suspendMember(library.id, PROFILE_B);
+    await expect(B.controller.readContent(library.id, parent.id)).rejects.toThrow();
+    expect((await A.controller.members(library.id)).find(member => member.userId === PROFILE_B)?.status).toBe("suspended");
+    A.controller.dispose(); B.controller.dispose();
+  });
+  it("replays upload creation idempotently and reserves library quota before bytes are transferred", async () => {
+    const A = await profile("a@cloud.test", "quota-device"); const library = await A.controller.createLibrary("额度库");
+    await server.db.query("update public.libraries set settings=$1 where id=$2", [JSON.stringify({ maxStorageBytes: 10 }), library.id]);
+    expect(await A.controller.usage(library.id)).toMatchObject({ usedBytes: 0, reservedBytes: 0, maxStorageBytes: 10 });
+    const token = await A.auth.accessToken(); const key = crypto.randomUUID();
+    const upload = (id: string, size: number) => fetch(`${server.apiUrl}/v1/libraries/${library.id}/uploads`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "idempotency-key": id }, body: JSON.stringify({ fileName: "quota.custom", mimeType: "application/octet-stream", sizeBytes: size }) });
+    const first = await upload(key, 8); expect(first.status).toBe(201); const firstSession = await first.json();
+    const replay = await upload(key, 8); expect(replay.status).toBe(200); expect((await replay.json()).uploadId).toBe(firstSession.uploadId);
+    expect((await server.db.query("select id from public.cloud_upload_sessions where library_id=$1", [library.id])).rows).toHaveLength(1);
+    const overQuota = await upload(crypto.randomUUID(), 8); expect(overQuota.status).toBe(413);
+    expect(await A.controller.usage(library.id)).toMatchObject({ usedBytes: 0, reservedBytes: 8, maxStorageBytes: 10 });
+    const quotaBypass = await fetch(`${server.authUrl}/rest/v1/cloud_upload_sessions?id=eq.${key}`, { method: "PATCH", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ descriptor: { libraryId: library.id, sizeBytes: 1, key: "unsafe" } }) });
+    expect(quotaBypass.status).toBe(403);
+    A.controller.dispose();
+  });
+});

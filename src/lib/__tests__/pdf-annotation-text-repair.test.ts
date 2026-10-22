@@ -4,7 +4,20 @@ import {
   repairPdfTextAnnotationFromModel,
 } from "@/lib/pdf-annotation-text-repair";
 import type { PdfPageTextModel } from "@/lib/pdf-page-text-cache";
+import { buildPdfCanonicalChars, resolvePdfVisualColumnScope } from "@/lib/pdf-canonical-text-anchoring";
+import { normalizePdfReadableText } from "@/lib/pdf-readable-text";
 import type { AnnotationItem } from "@/types/universal-annotation";
+
+const HUIE_EXACT_CAPTION = "(a) The experimental system consists of a glass vacuum cell with one microscope objective on either side. Atoms are illuminated with two retro-reflected probe beams that each have an angle with respect to the xy- and yz-planes. The tweezer array lies parallel to the y-axis. The DC magnetic field and the tweezer electric field point in the y-direction.";
+
+function createExactCaptionModel(text: string): PdfPageTextModel {
+  return {
+    pageNumber: 2, viewportWidth: 640, viewportHeight: 960,
+    textContent: { items: [], styles: {}, lang: null }, items: [], normalizedText: text,
+    itemRects: [{ itemIndex: 0, left: 60, top: 120, width: 500, height: 16 }],
+    segments: [{ itemIndex: 0, text, normalizedText: text, hasEOL: false, pageTextStart: 0, pageTextEnd: text.length, lineIndex: 0, blockIndex: 0, columnIndex: 0, layoutClass: "main" }],
+  };
+}
 
 function createSaffmanModel(): PdfPageTextModel {
   const line1 = "Even so, the electric field stability required to hold";
@@ -112,7 +125,156 @@ function createSaffmanFigFiveModel(): PdfPageTextModel {
   };
 }
 
+function createJenkinsTwoColumnModel(): PdfPageTextModel {
+  const leftLines = [
+    "at 90 degrees and a 0.6 NA microscope objective. To reach favorable",
+    "conditions for loading the tweezers, the atoms are first",
+    "captured in a 3D magneto-optical trap (MOT) operating on",
+    "the broad, Gamma_b/(2 pi) = 29 MHz, 399 nm P1 transition,",
+    "loaded from a 2D MOT [58,59]. The atoms are then",
+    "transferred to a narrow MOT that uses the 556 nm P1",
+    "transition with linewidth Gamma_g/(2 pi) = 183 kHz. From the",
+  ];
+  const rightLines = [
+    "III. NEAR-DETERMINISTIC LOADING",
+    "Reliable assembly of large defect-free patterns of qubits",
+    "is a major pursuit for the neutral-atom tweezer array",
+    "platform. While the number of atoms loaded from the",
+    "MOT into a tweezer follows a Poisson distribution",
+  ];
+  const viewportWidth = 612;
+  const viewportHeight = 792;
+  const lineHeight = 12;
+  const lineTops = [202, 218, 234, 250, 266, 282, 298];
+  const source = [
+    ...leftLines.map((text, index) => ({ text, left: 52, top: lineTops[index], width: 245, columnIndex: 0 })),
+    ...rightLines.map((text, index) => ({ text, left: index === 0 ? 342 : 326, top: lineTops[index], width: index === 0 ? 191 : 235, columnIndex: 1 })),
+  ];
+  let offset = 0;
+  const segments = source.map((item, itemIndex) => {
+    const pageTextStart = offset;
+    const pageTextEnd = pageTextStart + item.text.length;
+    offset = pageTextEnd + 1;
+    return {
+      itemIndex,
+      text: item.text,
+      normalizedText: item.text,
+      hasEOL: true,
+      pageTextStart,
+      pageTextEnd,
+      lineIndex: itemIndex < leftLines.length ? itemIndex : itemIndex - leftLines.length,
+      blockIndex: item.columnIndex,
+      columnIndex: item.columnIndex,
+      layoutClass: "main" as const,
+    };
+  });
+
+  return {
+    pageNumber: 3,
+    viewportWidth,
+    viewportHeight,
+    textContent: { items: [], styles: {}, lang: null },
+    items: [],
+    normalizedText: source.map((item) => item.text).join(" "),
+    itemRects: source.map((item, itemIndex) => ({
+      itemIndex,
+      left: item.left,
+      top: item.top,
+      width: item.width,
+      height: lineHeight,
+    })),
+    segments,
+  };
+}
+
 describe("pdf-annotation-text-repair", () => {
+  it("preserves all 353 verified Huie caption characters including xy- and when saving exact evidence", () => {
+    const model = createExactCaptionModel("FIG. 1. Overview. " + HUIE_EXACT_CAPTION + " An AC magnetic field follows.");
+    const annotation = buildCanonicalPdfTextMarkupAnnotationFromExact({ model, exact: HUIE_EXACT_CAPTION,
+      styleType: "highlight", color: "#FFD400", author: "ai", preserveExact: true });
+    expect(HUIE_EXACT_CAPTION).toHaveLength(353);
+    expect(annotation?.content).toBe(HUIE_EXACT_CAPTION);
+    expect(annotation?.content).toHaveLength(353);
+    expect(annotation?.target.type).toBe("pdf");
+    if (annotation?.target.type === "pdf") {
+      expect(annotation.target.textQuote?.exact).toBe(HUIE_EXACT_CAPTION);
+      expect(model.normalizedText.slice(annotation.target.startCharIndex, annotation.target.endCharIndex)).toBe(HUIE_EXACT_CAPTION);
+      expect(annotation.target.rects.length).toBeGreaterThan(0);
+      expect(annotation.target.quads).toHaveLength(annotation.target.rects.length);
+    }
+  });
+
+  it.each([
+    { exact: HUIE_EXACT_CAPTION.replace("xy- and", "xyand"), source: HUIE_EXACT_CAPTION },
+    { exact: HUIE_EXACT_CAPTION.replace("one microscope", "two microscopes"), source: HUIE_EXACT_CAPTION },
+    { exact: HUIE_EXACT_CAPTION, source: HUIE_EXACT_CAPTION + " " + HUIE_EXACT_CAPTION },
+  ])("rejects altered or non-unique text in the verified exact save path", ({ exact, source }) => {
+    const annotation = buildCanonicalPdfTextMarkupAnnotationFromExact({ model: createExactCaptionModel(source), exact,
+      styleType: "highlight", color: "#FFD400", author: "ai", preserveExact: true });
+    expect(annotation).toBeNull();
+  });
+
+  it("repairs a Jenkins left-column annotation whose stored quote and rects leak into the right column", () => {
+    const model = createJenkinsTwoColumnModel();
+    const expectedStart = model.normalizedText.indexOf("To reach favorable");
+    const expectedEnd = model.normalizedText.indexOf("183 kHz") + "183 kHz".length;
+    const staleStart = model.normalizedText.indexOf("ctive. To reach");
+    const staleEnd = model.normalizedText.indexOf("183 kHz");
+    const annotation: AnnotationItem = {
+      id: "ann-jenkins-stale-column",
+      target: {
+        type: "pdf",
+        page: 3,
+        rects: [
+          { x1: 224 / 612, y1: 202 / 792, x2: 365 / 612, y2: 214 / 792 },
+          { x1: 52 / 612, y1: 218 / 792, x2: 362 / 612, y2: 230 / 792 },
+          { x1: 52 / 612, y1: 234 / 792, x2: 350 / 612, y2: 246 / 792 },
+          { x1: 52 / 612, y1: 250 / 792, x2: 345 / 612, y2: 262 / 792 },
+          { x1: 52 / 612, y1: 266 / 792, x2: 356 / 612, y2: 278 / 792 },
+          { x1: 52 / 612, y1: 282 / 792, x2: 342 / 612, y2: 294 / 792 },
+          { x1: 52 / 612, y1: 298 / 792, x2: 251 / 612, y2: 310 / 792 },
+        ],
+        textQuote: {
+          exact: model.normalizedText.slice(staleStart, staleEnd),
+          prefix: "90 degrees and a 0.6 NA microscope obje",
+          suffix: "183 kHz. From the narrow green MOT",
+          source: "pdfjs-text-model",
+          confidence: "exact",
+        },
+        startCharIndex: staleStart,
+        endCharIndex: staleEnd,
+        textSource: "pdfjs-text-model",
+        textConfidence: 1,
+      },
+      style: { color: "#E56EEE", type: "highlight" },
+      content: model.normalizedText.slice(staleStart, staleEnd),
+      author: "user",
+      createdAt: 1,
+    };
+
+    const canonicalChars = buildPdfCanonicalChars(model);
+    const visualScope = resolvePdfVisualColumnScope({
+      chars: canonicalChars,
+      viewportWidth: model.viewportWidth,
+      verticalRange: { top: 202, bottom: 310 },
+      startX: 52,
+      endX: 52,
+    });
+    expect(visualScope).not.toBeNull();
+
+    const repaired = repairPdfTextAnnotationFromModel(annotation, model);
+
+    expect(repaired).not.toBeNull();
+    expect(repaired?.content).toBe(normalizePdfReadableText(model.normalizedText.slice(expectedStart, expectedEnd)));
+    expect(repaired?.content).not.toContain("NEAR-DETERMINISTIC");
+    expect(repaired?.target.type).toBe("pdf");
+    if (repaired?.target.type === "pdf") {
+      expect(repaired.target.startCharIndex).toBe(expectedStart);
+      expect(repaired.target.endCharIndex).toBe(expectedEnd);
+      expect(Math.max(...repaired.target.rects.map((rect) => rect.x2))).toBeLessThan(0.5);
+    }
+  });
+
   it("repairs a legacy Saffman annotation whose saved quote starts inside the first word", () => {
     const model = createSaffmanModel();
     const annotation: AnnotationItem = {

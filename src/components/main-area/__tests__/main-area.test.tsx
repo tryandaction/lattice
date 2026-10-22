@@ -8,6 +8,11 @@ import { MainArea } from "../main-area";
 
 const openDirectory = vi.fn();
 const openWorkspacePath = vi.fn();
+const closeRetainedLocalTab = vi.fn();
+const getWorkspaceState = vi.fn(() => ({
+  layout: { activePaneId: "pane-1", root: { id: "pane-1", type: "pane", tabs: [{ id: "retained-local-tab" }], activeTabIndex: 0 } },
+  closeTab: closeRetainedLocalTab,
+}));
 
 const workspaceState = {
   rootHandle: null,
@@ -23,9 +28,11 @@ const workspaceState = {
   setTabDirty: vi.fn(),
 };
 
-vi.mock("@/stores/workspace-store", () => ({
-  useWorkspaceStore: (selector: (state: typeof workspaceState) => unknown) => selector(workspaceState),
-}));
+vi.mock("@/stores/workspace-store", () => {
+  const useWorkspaceStore = (selector: (state: typeof workspaceState) => unknown) => selector(workspaceState);
+  useWorkspaceStore.getState = () => getWorkspaceState();
+  return { useWorkspaceStore };
+});
 
 vi.mock("@/stores/settings-store", () => ({
   useSettingsStore: (selector: (state: { settings: { recentWorkspacePaths: string[] } }) => unknown) => selector({
@@ -71,5 +78,17 @@ describe("MainArea welcome workspace entry", () => {
 
     fireEvent.click(screen.getByText("C:/research"));
     expect(openWorkspacePath).toHaveBeenCalledWith("C:/research");
+  });
+
+  it("does not close a retained local tab while a cloud workspace is active", () => {
+    const view = render(<MainArea active={false} />);
+    const cloudClose = new KeyboardEvent("keydown", { key: "w", ctrlKey: true, cancelable: true });
+    window.dispatchEvent(cloudClose);
+    expect(closeRetainedLocalTab).not.toHaveBeenCalled();
+    expect(cloudClose.defaultPrevented).toBe(false);
+
+    view.rerender(<MainArea active />);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "w", ctrlKey: true, cancelable: true }));
+    expect(closeRetainedLocalTab).toHaveBeenCalledWith("pane-1", 0);
   });
 });

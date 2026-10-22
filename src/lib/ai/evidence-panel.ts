@@ -1,4 +1,5 @@
 import type { AiContextNode, EvidenceRef } from './types';
+import { buildCitationContracts, groupCitationContracts } from './citation-contract';
 
 export interface EvidencePanelInput {
   evidenceRefs?: EvidenceRef[];
@@ -17,6 +18,7 @@ export interface EvidenceTreeLeaf {
   label: string;
   locator: string;
   preview?: string;
+  anchor?: EvidenceRef['anchor'];
 }
 
 export interface EvidenceTreeGroup {
@@ -33,6 +35,7 @@ export interface EvidenceDraftSeed {
 
 export interface EvidencePanelState {
   evidenceCount: number;
+  sourceCount: number;
   contextCount: number;
   contextGroups: EvidenceContextGroup[];
   referenceGroups: EvidenceTreeGroup[];
@@ -46,6 +49,7 @@ const CONTEXT_KIND_ORDER: AiContextNode['kind'][] = [
   'code_symbol',
   'notebook_cell',
   'workspace_chunk',
+  'pdf_page',
 ];
 
 const CONTEXT_KIND_TITLES: Record<AiContextNode['kind'], string> = {
@@ -56,6 +60,7 @@ const CONTEXT_KIND_TITLES: Record<AiContextNode['kind'], string> = {
   code_symbol: 'Code Symbols',
   notebook_cell: 'Notebook Cells',
   workspace_chunk: 'Workspace Chunks',
+  pdf_page: 'PDF Pages',
 };
 
 function locatorPath(locator: string): string {
@@ -72,32 +77,18 @@ function collectReferenceLeaves(
   evidenceRefs: EvidenceRef[],
   contextNodes: AiContextNode[],
 ): EvidenceTreeLeaf[] {
-  const seen = new Set<string>();
-  const leaves: EvidenceTreeLeaf[] = [];
-
-  const pushLeaf = (ref: EvidenceRef, id: string) => {
-    const key = `${ref.kind}:${ref.locator}:${ref.label}`;
-    if (seen.has(key)) {
-      return;
-    }
-    seen.add(key);
-    leaves.push({
-      id,
-      kind: ref.kind,
-      label: ref.label,
-      locator: ref.locator,
-      preview: ref.preview,
-    });
-  };
-
-  evidenceRefs.forEach((ref, index) => pushLeaf(ref, `evidence-${index}`));
-  contextNodes.forEach((node, index) => {
-    if (node.evidenceRef) {
-      pushLeaf(node.evidenceRef, `context-${index}`);
-    }
-  });
-
-  return leaves;
+  const refs = [
+    ...evidenceRefs,
+    ...contextNodes.flatMap((node) => node.evidenceRef ? [node.evidenceRef] : []),
+  ];
+  return buildCitationContracts(refs).map((citation) => ({
+    id: citation.stableId,
+    kind: citation.evidenceRef.kind,
+    label: citation.evidenceRef.label,
+    locator: citation.evidenceRef.locator,
+    preview: citation.evidenceRef.preview,
+    anchor: citation.evidenceRef.anchor,
+  }));
 }
 
 function buildReferenceGroups(
@@ -127,6 +118,7 @@ function leafToEvidenceRef(leaf: EvidenceTreeLeaf): EvidenceRef {
     label: leaf.label,
     locator: leaf.locator,
     preview: leaf.preview,
+    anchor: leaf.anchor,
   };
 }
 
@@ -213,6 +205,10 @@ export function buildEvidenceProposalPromptForSelection(leaves: EvidenceTreeLeaf
 export function buildEvidencePanelState(input: EvidencePanelInput): EvidencePanelState {
   const evidenceRefs = input.evidenceRefs ?? [];
   const contextNodes = input.contextNodes ?? [];
+  const allCitationContracts = buildCitationContracts([
+    ...evidenceRefs,
+    ...contextNodes.flatMap((node) => node.evidenceRef ? [node.evidenceRef] : []),
+  ]);
 
   const grouped = new Map<AiContextNode['kind'], AiContextNode[]>();
   contextNodes.forEach((node) => {
@@ -230,7 +226,8 @@ export function buildEvidencePanelState(input: EvidencePanelInput): EvidencePane
     .filter((group) => group.nodes.length > 0);
 
   return {
-    evidenceCount: evidenceRefs.length,
+    evidenceCount: allCitationContracts.length,
+    sourceCount: groupCitationContracts(allCitationContracts).length,
     contextCount: contextNodes.length,
     contextGroups,
     referenceGroups: buildReferenceGroups(evidenceRefs, contextNodes),

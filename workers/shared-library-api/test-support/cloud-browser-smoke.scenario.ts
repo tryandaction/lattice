@@ -1,0 +1,160 @@
+// @vitest-environment node
+import { describe, expect, it } from "vitest";
+import { chromium, type Page } from "playwright";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { createProtocolServer, PROFILE_B, TEST_PASSWORD } from "./protocol-server";
+import { BUILTIN_THEMES } from "@/lib/appearance/registry";
+import { themeToCSS } from "@/lib/appearance/css";
+import { APPEARANCE_CACHE_KEY } from "@/lib/appearance/bootstrap";
+import { PDFDocument, StandardFonts } from "pdf-lib";
+
+const configuredBaseUrl = process.env.CLOUD_LIBRARY_BROWSER_BASE_URL;
+if (!configuredBaseUrl) throw new Error("CLOUD_LIBRARY_BROWSER_BASE_URL is required for the dedicated cloud browser gate; start the application server first.");
+const baseUrl = new URL(configuredBaseUrl);
+const entryUrl = new URL(process.env.CLOUD_LIBRARY_BROWSER_ENTRY ?? "/library", baseUrl).toString();
+
+describe("cloud rendered real HTTP two-profile smoke", () => {
+  it("configures, logs in, creates folder/note, joins profile B, downloads unknown bytes, persists reopen and renders three themes", async () => {
+    const server = await createProtocolServer({ allowedOrigins: [baseUrl.origin] });
+    const browser = await chromium.launch({ headless: true });
+    const contextA = await browser.newContext({ viewport: { width: 1280, height: 850 } });
+    const contextB = await browser.newContext({ viewport: { width: 900, height: 760 } });
+    const pageA = await contextA.newPage(); let pageB = await contextB.newPage();
+    const errors: string[] = []; const evidence = resolve(".lattice-build/cloud-team-evidence-20261008");
+    await mkdir(evidence, { recursive: true });
+    for (const page of [pageA, pageB]) { page.on("pageerror", error => errors.push(error.message)); page.on("console", message => { if (message.type() === "error" && !message.text().includes("Failed to load resource")) errors.push(message.text()); }); }
+    async function configure(page: Page, email: string) {
+      await page.goto(entryUrl, { timeout: 120000 });
+      await page.getByRole("button", { name: "高级连接设置", exact: true }).click();
+      await page.getByLabel("连接名称", { exact: true }).fill("HTTP RLS Lab");
+      await page.getByLabel("Worker API URL", { exact: true }).fill(server.apiUrl);
+      await page.getByLabel("Supabase 项目 URL", { exact: true }).fill(server.authUrl);
+      await page.getByLabel("Supabase 公开 key", { exact: true }).fill("sb_publishable_fixture");
+      await page.getByRole("button", { name: "保存连接", exact: true }).click();
+      await page.getByLabel("云库邮箱", { exact: true }).fill(email);
+      await page.getByLabel("云库密码", { exact: true }).fill(TEST_PASSWORD);
+      await page.getByRole("button", { name: "登录云库", exact: true }).click();
+      await page.getByLabel("小组库", { exact: true }).waitFor();
+    }
+    try {
+      await configure(pageA, "a@cloud.test");
+      await pageA.getByRole("button", { name: "新建库", exact: true }).click();
+      await pageA.getByLabel("新建名称", { exact: true }).fill("浏览器 小组");
+      await pageA.getByRole("button", { name: "创建", exact: true }).click();
+      await pageA.getByRole("button", { name: "新建目录", exact: true }).waitFor();
+      await pageA.getByRole("button", { name: "新建目录", exact: true }).click();
+      await pageA.getByLabel("新建名称", { exact: true }).fill("课题 文件夹");
+      await pageA.getByRole("button", { name: "创建", exact: true }).click();
+      await pageA.getByRole("treeitem", { name: "课题 文件夹", exact: true }).click();
+      await pageA.getByRole("button", { name: "新建笔记", exact: true }).click();
+      await pageA.getByLabel("新建名称", { exact: true }).fill("研究.md");
+      await pageA.getByRole("button", { name: "创建", exact: true }).click();
+      await pageA.getByRole("treeitem", { name: "研究.md", exact: true }).click();
+      await pageA.getByRole("tab", { name: "研究.md", exact: true }).waitFor();
+      await pageA.locator(".cm-editor .cm-content").filter({ hasText: "研究.md" }).first().waitFor({ timeout: 120000 });
+      const pdf = await PDFDocument.create(); const font = await pdf.embedFont(StandardFonts.Helvetica);
+      for (let pageNumber = 1; pageNumber <= 2; pageNumber++) { const page = pdf.addPage([612, 792]); page.drawText(`Cloud team library evidence paragraph page ${pageNumber}`, { x: 55, y: 700, size: 16, font }); page.drawText("Normalized highlights persist across profiles.", { x: 55, y: 665, size: 14, font }); }
+      await pageA.getByLabel("选择要上传的文件", { exact: true }).setInputFiles({ name: "cloud-proof.pdf", mimeType: "application/pdf", buffer: Buffer.from(await pdf.save()) });
+      await pageA.getByRole("treeitem", { name: "cloud-proof.pdf", exact: true }).click();
+      const phrase = pageA.locator(".textLayer span").filter({ hasText: "Cloud team library evidence paragraph page 1" }).first();
+      await phrase.waitFor({ timeout: 120000 });
+      await pageA.screenshot({ path: resolve(evidence, "cloud-pdf-reading.png"), fullPage: false });
+      const box = await phrase.boundingBox(); if (!box) throw new Error("PDF文本未真实渲染。");
+      await pageA.mouse.move(box.x + 2, box.y + box.height / 2); await pageA.mouse.down(); await pageA.mouse.move(box.x + Math.min(box.width - 2, 400), box.y + box.height / 2, { steps: 20 }); await pageA.mouse.up();
+      await pageA.locator(".pdf-selection-color-picker").getByRole("button", { name: "黄色", exact: true }).click({ timeout: 10000 });
+      await pageA.getByLabel("刷新云库", { exact: true }).click();
+      await pageA.locator('[data-pdf-stored-annotation-segment="true"]').first().waitFor({ timeout: 30000 });
+      await pageA.screenshot({ path: resolve(evidence, "cloud-pdf-highlight.png"), fullPage: false });
+      await pageA.getByLabel("选择要上传的文件", { exact: true }).setInputFiles({ name: "unknown.custom", mimeType: "application/x-custom", buffer: Buffer.from([0, 255, 17, 33]) });
+      await pageA.getByRole("treeitem", { name: "unknown.custom", exact: true }).click();
+      const downloadPromise = pageA.waitForEvent("download");
+      await pageA.getByRole("button", { name: "下载原文件", exact: true }).click();
+      const download = await downloadPromise; await download.saveAs(resolve(evidence, "unknown-downloaded.custom"));
+      expect(await readFile(resolve(evidence, "unknown-downloaded.custom"))).toEqual(Buffer.from([0, 255, 17, 33]));
+      const directory = resolve(evidence, "browser-input", "目录共享");
+      await mkdir(resolve(directory, "子目录"), { recursive: true }); await writeFile(resolve(directory, "子目录", "中文 空格.md"), "# DirectoryPickerProof\nNested Chinese path", "utf8");
+      await pageA.getByLabel("选择要上传的文件夹", { exact: true }).setInputFiles(directory);
+      await pageA.getByRole("treeitem", { name: "目录共享", exact: true }).click(); await pageA.getByRole("treeitem", { name: "子目录", exact: true }).click(); await pageA.getByRole("treeitem", { name: "中文 空格.md", exact: true }).click();
+      await pageA.locator(".cm-editor .cm-content").filter({ hasText: "DirectoryPickerProof" }).first().waitFor({ timeout: 120000 });
+      await pageA.getByRole("button", { name: "课题 文件夹", exact: true }).click();
+      await pageA.getByLabel("小组成员", { exact: true }).click();
+      await pageA.getByTestId("member-invite-email").fill("b@cloud.test");
+      await pageA.getByTestId("member-invite-role").selectOption("editor");
+      await pageA.getByTestId("member-invite-submit").click();
+      await pageA.getByLabel("邀请链接", { exact: true }).waitFor();
+      await pageA.getByRole("button", { name: "撤销邀请 b@cloud.test", exact: true }).click();
+      await pageA.getByLabel("邀请链接", { exact: true }).waitFor({ state: "detached" });
+      await pageA.getByTestId("member-invite-email").fill("b@cloud.test"); await pageA.getByTestId("member-invite-submit").click();
+      await pageA.getByLabel("邀请链接", { exact: true }).waitFor();
+      const link = await pageA.getByLabel("邀请链接", { exact: true }).inputValue();
+      const libraryId = await pageA.getByLabel("小组库", { exact: true }).inputValue();
+      await pageB.goto(entryUrl, { timeout: 120000 });
+      await pageB.getByLabel("云库邀请链接或配置", { exact: true }).fill(link);
+      await pageB.getByRole("button", { name: "解析并连接", exact: true }).click();
+      await pageB.getByLabel("云库邮箱", { exact: true }).fill("b@cloud.test");
+      await pageB.getByLabel("云库密码", { exact: true }).fill(TEST_PASSWORD);
+      await pageB.getByRole("button", { name: "登录云库", exact: true }).click();
+      await pageB.getByRole("treeitem", { name: "课题 文件夹", exact: true }).click();
+      await pageB.getByRole("treeitem", { name: "cloud-proof.pdf", exact: true }).click();
+      await pageB.locator(".textLayer span").filter({ hasText: "Cloud team library evidence paragraph page 1" }).first().waitFor({ timeout: 120000 });
+      await pageB.locator('[data-pdf-stored-annotation-segment="true"]').first().waitFor({ timeout: 30000 });
+      await pageB.screenshot({ path: resolve(evidence, "cloud-pdf-profile-b.png") });
+      await pageB.getByRole("treeitem", { name: "研究.md", exact: true }).click();
+      await pageB.getByRole("tab", { name: "研究.md", exact: true }).waitFor();
+      await pageB.locator(".cm-editor .cm-content").filter({ hasText: "研究.md" }).first().waitFor({ timeout: 120000 });
+      const itemId = (await server.db.query<{ id: string }>("select id from public.items where canonical_name='研究.md' and library_id=$1", [libraryId])).rows[0].id;
+      const deepLink = new URL(entryUrl); deepLink.searchParams.set("library", libraryId); deepLink.searchParams.set("item", itemId);
+      await pageB.goto(deepLink.toString());
+      await pageB.getByRole("tab", { name: "研究.md", exact: true }).waitFor();
+      await pageB.reload(); await pageB.getByRole("tab", { name: "研究.md", exact: true }).waitFor();
+      await pageB.locator(".cm-editor .cm-content").filter({ hasText: "研究.md" }).first().waitFor({ timeout: 120000 });
+      await contextB.setOffline(true);
+      const editor = pageB.locator('.cm-editor .cm-content[contenteditable="true"]').first(); await editor.click(); await editor.press("Control+End"); await editor.press("Enter"); await editor.pressSequentially("OfflineQueueProof");
+      await pageB.getByRole("button", { name: "保存云端编辑", exact: true }).click();
+      await pageB.getByText("已保存到本机队列", { exact: true }).waitFor();
+      expect(await editor.innerText()).toContain("OfflineQueueProof");
+      const persistedTexts = await pageB.evaluate(async () => {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => { const open = indexedDB.open("lattice-cloud-library-v1", 1); open.onsuccess = () => resolve(open.result); open.onerror = () => reject(open.error); });
+        const values = await new Promise<unknown[]>((resolve, reject) => { const request = db.transaction("records", "readonly").objectStore("records").getAll(); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); db.close();
+        return values.filter((value): value is { kind: string; text: string } => typeof value === "object" && value !== null && "kind" in value && value.kind === "text").map(value => value.text);
+      });
+      expect(persistedTexts.some(text => text.includes("OfflineQueueProof"))).toBe(true);
+      expect(await pageB.getByTestId("cloud-sync-status").innerText()).toContain("离线");
+      await pageB.screenshot({ path: resolve(evidence, "cloud-offline-persisted.png") });
+      await pageB.close(); await contextB.setOffline(false); pageB = await contextB.newPage();
+      pageB.on("pageerror", error => errors.push(error.message));
+      await pageB.goto(deepLink.toString());
+      await pageB.locator(".cm-editor .cm-content").filter({ hasText: "OfflineQueueProof" }).first().waitFor({ timeout: 120000 });
+      await pageB.getByLabel("刷新云库", { exact: true }).click();
+      await pageB.waitForFunction(() => document.querySelector('[data-testid="cloud-sync-status"]')?.textContent?.includes("已同步"));
+      expect((await server.db.query<{ body: string }>("select body from public.search_documents where item_id=$1", [itemId])).rows[0].body).toContain("OfflineQueueProof");
+      for (const theme of BUILTIN_THEMES.slice(0, 3)) {
+        const cache = { version: 1, id: theme.id, mode: "light", light: themeToCSS(theme, "light"), dark: themeToCSS(theme, "dark") };
+        await pageB.evaluate(({ key, value }) => localStorage.setItem(key, value), { key: APPEARANCE_CACHE_KEY, value: JSON.stringify(cache) });
+        await pageB.reload(); await pageB.getByRole("tab", { name: "研究.md", exact: true }).waitFor();
+        await pageB.locator(".cm-editor .cm-content").filter({ hasText: "研究.md" }).first().waitFor({ timeout: 120000 });
+        expect(await pageB.getAttribute("html", "data-appearance-theme")).toBe(theme.id);
+        await pageB.screenshot({ path: resolve(evidence, `cloud-${theme.id}.png`), fullPage: false });
+      }
+      await pageB.setViewportSize({ width: 430, height: 820 }); await pageB.screenshot({ path: resolve(evidence, "cloud-narrow.png") });
+      await pageA.getByLabel("小组成员", { exact: true }).click(); await pageA.getByLabel("小组成员", { exact: true }).click();
+      await pageA.getByLabel(`Role for ${PROFILE_B}`, { exact: true }).selectOption("viewer");
+      await pageB.getByLabel("刷新云库", { exact: true }).click();
+      await pageB.getByRole("button", { name: "保存云端编辑", exact: true }).waitFor({ state: "detached" });
+      await pageA.getByTestId(`member-suspend-${PROFILE_B}`).click();
+      await pageA.getByTestId("member-row").filter({ hasText: PROFILE_B }).getByTestId("member-status").filter({ hasText: "suspended" }).waitFor();
+      await pageB.getByLabel("刷新云库", { exact: true }).click();
+      await pageB.getByText("该库访问已撤销；缓存和未同步编辑已隔离。", { exact: true }).waitFor();
+      await pageB.getByRole("button", { name: "退出", exact: true }).click(); await pageB.getByRole("button", { name: "登录云库", exact: true }).waitFor();
+      expect(await pageB.getByRole("tab").count()).toBe(0);
+      await writeFile(resolve(evidence, "browser-report.json"), JSON.stringify({ url: entryUrl, profiles: 2, postgresRLS: "real", authProvider: "fixture", r2: "fixture", pdf: { rendered: true, mouseHighlight: true, profileBReadHighlight: true }, offline: { savedToIndexedDB: true, closedPage: true, reopenedAndPushed: true }, membership: { invitationRevoked: true, downgradedToViewer: true, suspendedAndCacheIsolated: true }, directoryPicker: { nestedChinesePaths: true, actualLocalFixtureOnly: true }, unknownBytesVerified: true, themes: BUILTIN_THEMES.slice(0, 3).map(t => t.id), errors }, null, 2));
+      expect(errors).toEqual([]);
+    } catch (error) {
+      await pageA.screenshot({ path: resolve(evidence, "failure-a.png") });
+      await pageB.screenshot({ path: resolve(evidence, "failure-b.png") });
+      await writeFile(resolve(evidence, "failure.json"), JSON.stringify({ error: String(error), errors, diagnostics: server.diagnostics, body: await pageA.locator("body").innerText(), bodyB: await pageB.locator("body").innerText(), indexedNotes: (await server.db.query("select title,body from public.search_documents")).rows }, null, 2));
+      throw error;
+    } finally { await contextA.close(); await contextB.close(); await browser.close(); await server.close(); }
+  }, 240000);
+});

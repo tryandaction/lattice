@@ -191,13 +191,88 @@ vi.mock('@/hooks/use-i18n', () => ({
 import { AgentTracePanel } from '../agent-trace-panel';
 import { useAiChatStore } from '@/stores/ai-chat-store';
 import { useAgentSessionStore } from '@/stores/agent-session-store';
-import { executeAgentTool } from '@/lib/ai/agent-tool-broker';
+import { approveAgentToolRequest, executeAgentTool } from '@/lib/ai/agent-tool-broker';
+import { runResearchAgent } from '@/lib/ai/research-agent';
 import {
   buildCodingQaRunnerApprovalRequest,
   buildCodingQaRunnerViewModel,
 } from '@/lib/ai/coding-qa-runner-view-model';
 
 describe('AgentTracePanel', () => {
+  async function createComputationWaitingForApproval() {
+    const result = await runResearchAgent({ sessionId: 'planned-calculation', task: 'Run Python to compute 2 + 2', suggestMemory: false, compact: false, planSteps: [
+      { id: 'context-pack', title: 'Collect', description: 'Collect input.' },
+      { id: 'compute', title: 'Compute', description: 'Compute after approval.', toolName: 'runner.runCode', toolArgs: { language: 'python', code: 'print(2 + 2)' } },
+      { id: 'evidence-resolve', title: 'Resolve', description: 'Resolve input.', toolName: 'evidence.resolve' },
+      { id: 'synthesize-answer', title: 'Answer', description: 'Deliver output.' },
+    ] });
+    const chat = useAiChatStore.getState();
+    const conversationId = chat.newConversation();
+    chat.addUserMessage('Run Python to compute 2 + 2');
+    const messageId = chat.startAssistantMessage();
+    chat.setAssistantMetadata(messageId, { agentResult: { sessionId: result.sessionId } });
+    chat.finishAssistantMessage(messageId, result.answer);
+    return { conversationId, sessionId: result.sessionId };
+  }
+
+  it('queues same-session synthesis after a planned computation is approved in its active chat', async () => {
+    const { sessionId } = await createComputationWaitingForApproval();
+    render(<AgentTracePanel />);
+    fireEvent.click(screen.getByTitle('Approve and run'));
+    await waitFor(() => expect(useAiChatStore.getState().composerDraft).toMatchObject({
+      text: 'Run Python to compute 2 + 2', mode: 'agent', submit: true,
+      continuation: { sourceSessionId: sessionId, approvalResume: true },
+    }));
+    expect(useAgentSessionStore.getState().getSession(sessionId)?.status).toBe('running');
+    expect(defaultRunCodeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves another active chat and exposes an explicit continuation after approval', async () => {
+    const { sessionId, conversationId } = await createComputationWaitingForApproval();
+    const otherConversationId = useAiChatStore.getState().newConversation();
+    render(<AgentTracePanel />);
+    fireEvent.click(screen.getByTitle('Approve and run'));
+    await waitFor(() => expect(useAgentSessionStore.getState().getSession(sessionId)?.pendingApprovals[0].status).toBe('completed'));
+    expect(useAiChatStore.getState().composerDraft).toBeNull();
+    expect(useAiChatStore.getState().activeConversationId).toBe(otherConversationId);
+    fireEvent.click(screen.getByTitle('Resume after approval'));
+    expect(useAiChatStore.getState().activeConversationId).toBe(conversationId);
+    expect(useAiChatStore.getState().composerDraft).toMatchObject({ submit: true, continuation: { sourceSessionId: sessionId, approvalResume: true } });
+  });
+
+  it('does not queue approved-result synthesis over an ongoing chat request', async () => {
+    const { sessionId } = await createComputationWaitingForApproval();
+    useAiChatStore.getState().setGenerating(true);
+    render(<AgentTracePanel />);
+    fireEvent.click(screen.getByTitle('Approve and run'));
+    await waitFor(() => expect(useAgentSessionStore.getState().getSession(sessionId)?.pendingApprovals[0].status).toBe('completed'));
+    expect(useAiChatStore.getState().composerDraft).toBeNull();
+    expect(screen.getByTitle('Resume after approval').hasAttribute('disabled')).toBe(true);
+  });
+
+  it('leaves a failed runner failed without queuing a completed answer', async () => {
+    const { sessionId } = await createComputationWaitingForApproval();
+    defaultRunCodeMock.mockRejectedValue(new Error('Runtime execution failed'));
+    render(<AgentTracePanel />);
+    fireEvent.click(screen.getByTitle('Approve and run'));
+    await waitFor(() => expect(useAgentSessionStore.getState().getSession(sessionId)?.status).toBe('failed'));
+    expect(useAiChatStore.getState().composerDraft).toBeNull();
+    expect(screen.queryByTitle('Resume after approval')).toBeNull();
+    expect(defaultRunCodeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers explicit synthesis retry after approved execution succeeded but the model failed', async () => {
+    const { sessionId } = await createComputationWaitingForApproval();
+    const approvalId = useAgentSessionStore.getState().getSession(sessionId)!.pendingApprovals[0].id;
+    await approveAgentToolRequest(approvalId);
+    await expect(runResearchAgent({ continuation: { sourceSessionId: sessionId, approvalResume: true }, requireAnswer: true,
+      generateAnswer: async () => { throw new Error('Model timed out'); }, compact: false })).rejects.toThrow('Model timed out');
+    render(<AgentTracePanel />);
+    fireEvent.click(screen.getByTitle('Resume after approval'));
+    expect(useAiChatStore.getState().composerDraft).toMatchObject({ submit: true, continuation: { sourceSessionId: sessionId, approvalResume: true } });
+    expect(defaultRunCodeMock).toHaveBeenCalledTimes(1);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     Object.assign(navigator, {
@@ -219,6 +294,7 @@ describe('AgentTracePanel', () => {
       abortController: null,
       selectedResearchWorkflowId: null,
       composerDraft: null,
+      composerMode: 'chat',
     });
   });
 
@@ -254,6 +330,9 @@ describe('AgentTracePanel', () => {
     expect(screen.getByText('Run code through the workspace runner after approval.')).toBeTruthy();
     expect(screen.getByText((content) => content.includes('{ language: string, code: string }'))).toBeTruthy();
     expect(screen.getByText((content) => content.includes('Runner output text.'))).toBeTruthy();
+    const pendingRegion = screen.getByTestId('agent-trace-pending-approvals');
+    const runReport = screen.getByTestId('agent-run-report');
+    expect(pendingRegion.compareDocumentPosition(runReport) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     fireEvent.click(screen.getByTitle('Approve and run'));
 

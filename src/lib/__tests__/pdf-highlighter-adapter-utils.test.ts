@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPdfPreviewRect,
+  computePdfTextLayerGlyphCalibration,
   buildPdfSelectionRectsFromSnapshot,
   dedupeAnnotationsById,
   findPdfPageElementInScope,
   pdfSearchRectsToTargetRects,
   resolveSidebarSelectionTarget,
+  shouldSchedulePdfFontRecalibration,
   shouldPreserveExistingPdfSelectionText,
   shouldClearSelectedAnnotationAfterDelete,
 } from "@/lib/pdf-highlighter-adapter-utils";
@@ -27,6 +29,31 @@ function createAnnotation(id: string, page = 1): AnnotationItem {
 }
 
 describe("pdf-highlighter-adapter-utils", () => {
+  it("only schedules a second glyph calibration while fonts are still loading", () => {
+    expect(shouldSchedulePdfFontRecalibration("loaded")).toBe(false);
+    expect(shouldSchedulePdfFontRecalibration("loading")).toBe(true);
+    expect(shouldSchedulePdfFontRecalibration(undefined)).toBe(false);
+  });
+
+  it("computes a bounded post-layout correction for first-launch PDF.js glyph inflation", () => {
+    expect(computePdfTextLayerGlyphCalibration({
+      actualWidth: 959.1204833984375,
+      actualHeight: 50,
+      expectedWidth: 813,
+      expectedHeight: 34.8627,
+    })).toEqual({
+      scaleX: expect.closeTo(813 / 959.1204833984375, 6),
+      scaleY: expect.closeTo(34.8627 / 50, 6),
+    });
+
+    expect(computePdfTextLayerGlyphCalibration({
+      actualWidth: 0,
+      actualHeight: 50,
+      expectedWidth: 813,
+      expectedHeight: 34.8627,
+    })).toBeNull();
+  });
+
   it("finds the measured visible PDF page wrapper when duplicate page markers exist", () => {
     const root = document.createElement("div");
     const staleOverlay = document.createElement("div");

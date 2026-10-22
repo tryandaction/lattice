@@ -12,12 +12,43 @@ vi.mock('@/lib/storage-adapter', () => ({
 }));
 
 import { useAgentSessionStore } from '../agent-session-store';
+import type { DocumentResearchCheckpoint } from '@/lib/ai/document-research';
 
 function waitForSave(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 650));
 }
 
 describe('agent-session-store', () => {
+  it('recovers a final synthesis interrupted after all document units were read', async () => {
+    const id = useAgentSessionStore.getState().createSession({ id: 'final-synthesis', profile: 'research', task: 'Read all' });
+    const checkpoint: DocumentResearchCheckpoint = { version: 1, queryKey: 'read', sources: [], findings: [], summaries: ['Finished reading'], coverage: [], completedBatches: 1 };
+    await useAgentSessionStore.getState().saveDocumentResearch(id, { checkpoint, status: 'ready' });
+    const saved = { sessions: useAgentSessionStore.getState().sessions, activeSessionId: id };
+    useAgentSessionStore.setState({ sessions: [], activeSessionId: null });
+    storage.get.mockResolvedValueOnce(saved);
+    await useAgentSessionStore.getState().loadSessions();
+    expect(useAgentSessionStore.getState().getSession(id)).toMatchObject({ status: 'cancelled', documentResearch: { status: 'ready', checkpoint: { completedBatches: 1 } } });
+    useAgentSessionStore.getState().resumeDocumentSession(id);
+    expect(useAgentSessionStore.getState().getSession(id)?.status).toBe('running');
+  });
+  it('reports failed checkpoint persistence and retains in-memory progress for recovery', async () => {
+    const id = useAgentSessionStore.getState().createSession({ id: 'durable-checkpoint', profile: 'research', task: 'Read all' });
+    const checkpoint: DocumentResearchCheckpoint = { version: 1, queryKey: 'read', sources: [], findings: [], summaries: ['Batch one'], coverage: [], completedBatches: 1 };
+    storage.set.mockRejectedValueOnce(new Error('disk full'));
+    await expect(useAgentSessionStore.getState().saveDocumentResearch(id, { checkpoint, status: 'reading' })).rejects.toThrow('无法保存阅读进度');
+    expect(useAgentSessionStore.getState().getSession(id)?.documentResearch).toMatchObject({ status: 'failed', checkpoint: { completedBatches: 1 } });
+    await useAgentSessionStore.getState().saveDocumentResearch(id, { checkpoint, status: 'reading' });
+    expect(useAgentSessionStore.getState().getSession(id)?.documentResearch?.status).toBe('reading');
+  });
+  it('does not overwrite a new live task when old session hydration finishes late', async () => {
+    let resolve!: (value: unknown) => void;
+    storage.get.mockImplementationOnce(() => new Promise(value => { resolve = value; }));
+    const hydration = useAgentSessionStore.getState().loadSessions();
+    useAgentSessionStore.getState().createSession({ id: 'new-live-task', profile: 'research', task: 'New task' });
+    resolve({ sessions: [], activeSessionId: null });
+    await hydration;
+    expect(useAgentSessionStore.getState().getActiveSession()?.id).toBe('new-live-task');
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     useAgentSessionStore.setState({

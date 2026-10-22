@@ -11,20 +11,23 @@ vi.mock('@/lib/storage-adapter', () => ({
   getStorageAdapter: () => storage,
 }));
 
-import { formatAgentMemoryCitation } from '@/lib/ai/agent-memory';
+import { createAgentMemoryEntry, formatAgentMemoryCitation } from '@/lib/ai/agent-memory';
 import { useAgentMemoryStore } from '../agent-memory-store';
 
 describe('agent-memory-store', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await useAgentMemoryStore.getState().loadMemories();
     vi.clearAllMocks();
     storage.get.mockResolvedValue(null);
+    storage.set.mockResolvedValue(undefined);
     useAgentMemoryStore.setState({
       entries: [],
       loaded: false,
+      persistenceError: null,
     });
   });
 
-  it('adds scoped memories and queries active entries by scope', () => {
+  it('adds scoped memories and queries active entries by scope', async () => {
     const id = useAgentMemoryStore.getState().addMemory({
       id: 'memory-workspace-1',
       scope: 'workspace',
@@ -45,7 +48,7 @@ describe('agent-memory-store', () => {
         scope: 'workspace',
       }),
     ]);
-    expect(storage.set).toHaveBeenCalledWith('lattice-agent-memory-v1', expect.any(Object));
+    await vi.waitFor(() => expect(storage.set).toHaveBeenCalledWith('lattice-agent-memory-v1', expect.any(Object)));
   });
 
   it('pins, disables, restores, and deletes memory entries without hard removal', () => {
@@ -108,5 +111,80 @@ describe('agent-memory-store', () => {
     const entry = useAgentMemoryStore.getState().getMemory('memory-user-1');
     expect(entry).not.toBeNull();
     expect(formatAgentMemoryCitation(entry!)).toBe('[user] Tone preference - User preference (chat://preference)');
+  });
+
+  it('preserves persisted entries and an edit made while hydration is pending', async () => {
+    let finishLoad!: (value: unknown) => void;
+    storage.get.mockImplementationOnce(() => new Promise((resolve) => { finishLoad = resolve; }));
+    const loading = useAgentMemoryStore.getState().loadMemories();
+    useAgentMemoryStore.getState().addMemory({
+      id: 'new-memory', scope: 'user', title: 'New preference', content: 'Use concise Chinese.',
+      source: { label: 'Current conversation' }, now: 200,
+    });
+    expect(storage.set).not.toHaveBeenCalled();
+    finishLoad({ entries: [createAgentMemoryEntry({
+      id: 'saved-memory', scope: 'user', title: 'Existing preference', content: 'Preserve citations.',
+      source: { label: 'Earlier conversation' }, now: 100,
+    })] });
+    await loading;
+    expect(useAgentMemoryStore.getState().entries.map((entry) => entry.id).sort()).toEqual(['new-memory', 'saved-memory']);
+    await vi.waitFor(() => expect(storage.set).toHaveBeenCalledWith('lattice-agent-memory-v1', {
+      entries: expect.arrayContaining([expect.objectContaining({ id: 'saved-memory' }), expect.objectContaining({ id: 'new-memory' })]),
+    }));
+  });
+
+  it('serializes saves so an older slow write cannot replace the latest edit', async () => {
+    await useAgentMemoryStore.getState().loadMemories();
+    let finishFirstSave!: () => void;
+    storage.set.mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirstSave = resolve; }));
+    useAgentMemoryStore.getState().addMemory({
+      id: 'editable', scope: 'user', title: 'First title', content: 'Keep the latest edit.',
+      source: { label: 'Current conversation' }, now: 100,
+    });
+    await vi.waitFor(() => expect(storage.set).toHaveBeenCalledTimes(1));
+    useAgentMemoryStore.getState().updateMemory('editable', { title: 'Latest title' });
+    await Promise.resolve();
+    expect(storage.set).toHaveBeenCalledTimes(1);
+    finishFirstSave();
+    await vi.waitFor(() => expect(storage.set).toHaveBeenLastCalledWith('lattice-agent-memory-v1', {
+      entries: [expect.objectContaining({ id: 'editable', title: 'Latest title' })],
+    }));
+  });
+
+  it('does not overwrite an unreadable store and can retry after recovery', async () => {
+    storage.get.mockRejectedValue(new Error('Storage temporarily unavailable'));
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    useAgentMemoryStore.getState().addMemory({
+      id: 'unsaved', scope: 'user', title: 'Pending preference', content: 'Keep this after retry.',
+      source: { label: 'Current conversation' }, now: 200,
+    });
+    await useAgentMemoryStore.getState().loadMemories();
+    expect(useAgentMemoryStore.getState()).toMatchObject({ loaded: false, persistenceError: 'load' });
+    expect(storage.set).not.toHaveBeenCalled();
+    storage.get.mockResolvedValue({ entries: [createAgentMemoryEntry({
+      id: 'original', scope: 'user', title: 'Original preference', content: 'Keep existing data.',
+      source: { label: 'Earlier conversation' }, now: 100,
+    })] });
+    await useAgentMemoryStore.getState().loadMemories();
+    expect(useAgentMemoryStore.getState().entries.map((entry) => entry.id).sort()).toEqual(['original', 'unsaved']);
+    expect(useAgentMemoryStore.getState().persistenceError).toBeNull();
+    expect(storage.set).toHaveBeenCalledTimes(1);
+    errorLog.mockRestore();
+  });
+
+  it('retries a failed save without losing the current entry', async () => {
+    await useAgentMemoryStore.getState().loadMemories();
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    storage.set.mockRejectedValueOnce(new Error('Disk unavailable'));
+    useAgentMemoryStore.getState().addMemory({
+      id: 'retry-save', scope: 'user', title: 'Keep this preference', content: 'Do not lose unsaved changes.',
+      source: { label: 'Current conversation' }, now: 300,
+    });
+    await vi.waitFor(() => expect(useAgentMemoryStore.getState().persistenceError).toBe('save'));
+    expect(useAgentMemoryStore.getState().getMemory('retry-save')).not.toBeNull();
+    await useAgentMemoryStore.getState().loadMemories();
+    expect(useAgentMemoryStore.getState().persistenceError).toBeNull();
+    expect(storage.set).toHaveBeenCalledTimes(2);
+    errorLog.mockRestore();
   });
 });

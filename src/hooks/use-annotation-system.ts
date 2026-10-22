@@ -31,6 +31,44 @@ import { resolveFileIdentity } from '@/lib/file-identity';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 import type { ResolvedPdfDocumentBinding } from '@/lib/pdf-document-binding';
 
+interface AnnotationSession {
+  snapshot: UniversalAnnotationFile | null;
+  unsavedSnapshot: UniversalAnnotationFile | null;
+  listeners: Set<(snapshot: UniversalAnnotationFile) => void>;
+  writeQueue: Promise<unknown> | null;
+}
+
+// Mounted readers, outstanding writes and failed writes retain a session. Weak roots and
+// pruning on release keep this coordination state from becoming a file cache.
+const annotationSessions = new WeakMap<FileSystemDirectoryHandle, Map<string, AnnotationSession>>();
+
+function getAnnotationSession(root: FileSystemDirectoryHandle, fileId: string): AnnotationSession {
+  let sessions = annotationSessions.get(root);
+  if (!sessions) {
+    sessions = new Map();
+    annotationSessions.set(root, sessions);
+  }
+  let session = sessions.get(fileId);
+  if (!session) {
+    session = { snapshot: null, unsavedSnapshot: null, listeners: new Set(), writeQueue: null };
+    sessions.set(fileId, session);
+  }
+  return session;
+}
+
+function releaseAnnotationSession(root: FileSystemDirectoryHandle, fileId: string, session: AnnotationSession) {
+  if (!session.listeners.size && !session.writeQueue && !session.unsavedSnapshot) {
+    const sessions = annotationSessions.get(root);
+    if (sessions?.get(fileId) === session) sessions.delete(fileId);
+  }
+}
+
+function publishAnnotationSnapshot(session: AnnotationSession | null, snapshot: UniversalAnnotationFile) {
+  if (!session) return;
+  session.snapshot = snapshot;
+  session.listeners.forEach((listener) => listener(snapshot));
+}
+
 function isDesktopDirectoryTimeout(error: unknown): boolean {
   return error instanceof Error &&
     /Tauri command desktop_read_dir timed out/i.test(error.message);
@@ -50,6 +88,7 @@ export type AnnotationUpdates = {
   content?: string;
   comment?: string;
   preview?: AnnotationItem['preview'];
+  formula?: AnnotationItem['formula'];
   author?: string;
   createdAt?: number;
 };
@@ -87,6 +126,7 @@ export interface UseAnnotationSystemReturn {
   addAnnotation: (annotation: Omit<AnnotationItem, 'id' | 'createdAt'>) => string | null;
   upsertAnnotation: (annotation: AnnotationItem) => boolean;
   upsertAnnotations: (annotations: AnnotationItem[]) => number;
+  persistAnnotationChanges: (upserts: AnnotationItem[], removeIds?: string[]) => Promise<boolean>;
   updateAnnotation: (id: string, updates: AnnotationUpdates) => boolean;
   deleteAnnotation: (id: string) => boolean;
   
@@ -194,30 +234,95 @@ export function useAnnotationSystem({
   // Refs for debounced save
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const annotationFileRef = useRef<UniversalAnnotationFile | null>(null);
+  const annotationSessionRef = useRef<AnnotationSession | null>(null);
+  const dirtySnapshotRef = useRef<UniversalAnnotationFile | null>(null);
+  const writeQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const persistSnapshot = useCallback((snapshot: UniversalAnnotationFile) => {
+    const session = getAnnotationSession(rootHandle, snapshot.fileId);
+    session.unsavedSnapshot = session.snapshot ?? snapshot;
+    const operation = (session.writeQueue ?? Promise.resolve())
+      .then(() => saveWithRetry(snapshot, rootHandle))
+      .catch((saveError) => {
+        logger.error('[Annotations] Failed to persist annotation snapshot:', saveError);
+        return false;
+      }).then((success) => {
+        if (success && session.unsavedSnapshot === snapshot) session.unsavedSnapshot = null;
+        return success;
+      });
+    session.writeQueue = operation;
+    void operation.finally(() => {
+      if (session.writeQueue === operation) session.writeQueue = null;
+      releaseAnnotationSession(rootHandle, snapshot.fileId, session);
+    }).catch(() => undefined);
+    writeQueueRef.current = operation.catch(() => undefined);
+    return operation;
+  }, [rootHandle]);
   
   // Load annotations on mount
   useEffect(() => {
     let cancelled = false;
+    const restorationController = new AbortController();
+    let activeSession: AnnotationSession | null = null;
+    let releaseSession: (() => void) | null = null;
+
+    const applyLoadedFile = (snapshot: UniversalAnnotationFile) => {
+      if (cancelled) return;
+      const freshest = activeSession?.snapshot ?? snapshot;
+      publishAnnotationSnapshot(activeSession, freshest);
+    };
     
     async function loadAnnotations() {
+      annotationFileRef.current = null;
+      annotationSessionRef.current = null;
+      dirtySnapshotRef.current = null;
+      setFileId(null);
+      setAnnotations([]);
+      setPendingSave(false);
       if (deferLoad) {
-        setIsLoading(false);
+        setIsLoading(true);
         setError(null);
         return;
       }
 
       setIsLoading(true);
       setError(null);
+      // A new identity must never inherit the previous file's writable snapshot.
+      // Block mutations and persistence while the source is unknown.
       
       try {
+        // A reload of the same file must observe the edit flushed by cleanup.
+        await writeQueueRef.current;
+        if (cancelled) return;
         const fileName = filePath || fileHandle.name;
         const preferredPath = (filePath && filePath.trim()) ? filePath : fileHandle.name;
-        const candidateIds = binding?.storageCandidates ?? resolveAnnotationFileCandidates(fileHandle.name, filePath, storageFileId);
+        const candidateIds = binding?.storageCandidates ?? resolveAnnotationFileCandidates(fileHandle.name, filePath, storageFileId, rootHandle.name);
         const preferredFileId = binding?.canonicalStorageFileId ?? storageFileId ?? candidateIds[0];
         if (!preferredFileId) {
           throw new Error("Unable to derive annotation storage id");
         }
         setFileId(preferredFileId);
+        const session = getAnnotationSession(rootHandle, preferredFileId);
+        activeSession = session;
+        annotationSessionRef.current = session;
+        const receiveSnapshot = (snapshot: UniversalAnnotationFile) => {
+          if (cancelled) return;
+          annotationFileRef.current = snapshot;
+          setAnnotations(snapshot.annotations);
+        };
+        session.listeners.add(receiveSnapshot);
+        releaseSession = () => {
+          session.listeners.delete(receiveSnapshot);
+          releaseAnnotationSession(rootHandle, preferredFileId, session);
+        };
+        await session.writeQueue;
+        if (cancelled) return;
+        if (session.snapshot) {
+          receiveSnapshot(session.snapshot);
+          dirtySnapshotRef.current = session.unsavedSnapshot;
+          setPendingSave(Boolean(session.unsavedSnapshot));
+          if (session.unsavedSnapshot) setError('Previous annotation save failed; changes remain pending');
+          return;
+        }
         
         // Detect file type
         const detected = detectFileType(fileName);
@@ -229,26 +334,28 @@ export function useAnnotationSystem({
           const resolved = await loadAnnotationsForFileIdentity({
             rootHandle,
             fileIdentity: binding.fileIdentity,
-            workspaceKey: workspaceIdentity?.workspaceKey ?? null,
+            workspaceKey: binding.storageWorkspaceKey ?? workspaceIdentity?.workspaceKey ?? null,
             fileType: fileTypeOverride || detected,
+            signal: restorationController.signal,
           });
+          if (cancelled) return;
           const freshestAnnotationFile = resolved.source
             ? resolved.annotationFile
             : binding.annotationFile;
           const dedupedAnnotations = dedupeAnnotationsById(freshestAnnotationFile.annotations);
-          annotationFileRef.current = {
+          applyLoadedFile({
             ...freshestAnnotationFile,
             annotations: dedupedAnnotations,
             fileId: preferredFileId,
             fileType: fileTypeOverride || detected,
-          };
-          setAnnotations(dedupedAnnotations);
+          });
           setError(null);
           return;
         }
 
         // Try to load existing annotations
         const annotationsDir = await ensureAnnotationsDirectory(rootHandle);
+        if (cancelled) return;
         let loadedExistingFile = false;
 
         for (const candidateFileId of candidateIds) {
@@ -256,15 +363,18 @@ export function useAnnotationSystem({
 
           try {
             const annotationFileHandle = await annotationsDir.getFileHandle(annotationFileName);
+            if (cancelled) return;
             const file = await annotationFileHandle.getFile();
+            if (cancelled) return;
             const content = await file.text();
+            if (cancelled) return;
 
             let parsed: unknown;
             try {
               parsed = JSON.parse(content);
             } catch (parseErr) {
               logger.error(`[Annotations] Failed to parse annotation file ${annotationFileName}:`, parseErr);
-              continue;
+              throw new Error(`Invalid annotation sidecar: ${annotationFileName}`);
             }
 
             if (isLegacyAnnotationFile(parsed)) {
@@ -277,16 +387,13 @@ export function useAnnotationSystem({
 
               if (!cancelled) {
                 const dedupedAnnotations = dedupeAnnotationsById(normalizedMigrated.annotations);
-                annotationFileRef.current = normalizedMigrated;
-                annotationFileRef.current = {
+                const normalizedSnapshot = {
                   ...normalizedMigrated,
                   annotations: dedupedAnnotations,
                 };
-                setAnnotations(dedupedAnnotations);
-                await saveWithRetry({
-                  ...normalizedMigrated,
-                  annotations: dedupedAnnotations,
-                }, rootHandle);
+                if (!await persistSnapshot(normalizedSnapshot)) throw new Error("Failed to migrate annotation sidecar");
+                if (cancelled) return;
+                applyLoadedFile(normalizedSnapshot);
               }
               loadedExistingFile = true;
               break;
@@ -301,17 +408,19 @@ export function useAnnotationSystem({
                 fileId: preferredFileId,
                 fileType: fileTypeOverride || detected,
               };
-              annotationFileRef.current = normalizedFile;
-              setAnnotations(dedupedAnnotations);
-
               if (candidateFileId !== preferredFileId || universalFile.fileId !== preferredFileId) {
-                await saveWithRetry(normalizedFile, rootHandle);
+                if (!await persistSnapshot(normalizedFile)) throw new Error("Failed to migrate annotation sidecar");
+                if (cancelled) return;
               }
+              applyLoadedFile(normalizedFile);
               loadedExistingFile = true;
               break;
             }
-          } catch {
-            // Try next candidate id
+            if (!universalFile) throw new Error(`Invalid annotation sidecar: ${annotationFileName}`);
+          } catch (readError) {
+            // Only an absent alias is safe to skip. Permission, I/O and parse
+            // failures must leave this identity non-writable.
+            if (!(readError instanceof DOMException && readError.name === "NotFoundError")) throw readError;
           }
         }
 
@@ -322,12 +431,16 @@ export function useAnnotationSystem({
             filePath: preferredPath,
             workspaceIdentity,
           });
+          if (cancelled) return;
           const resolved = await loadAnnotationsForFileIdentity({
             rootHandle,
             fileIdentity,
             workspaceKey: workspaceIdentity?.workspaceKey ?? null,
             fileType: fileTypeOverride || detected,
+            signal: restorationController.signal,
           });
+
+          if (cancelled) return;
 
           if (resolved.source) {
             const dedupedAnnotations = dedupeAnnotationsById(resolved.annotationFile.annotations);
@@ -337,33 +450,27 @@ export function useAnnotationSystem({
               fileId: preferredFileId,
               fileType: fileTypeOverride || detected,
             };
-            annotationFileRef.current = resolvedFile;
-            setAnnotations(dedupedAnnotations);
+            applyLoadedFile(resolvedFile);
             loadedExistingFile = true;
           }
         }
 
         if (!loadedExistingFile && !cancelled) {
           const newFile = createUniversalAnnotationFile(preferredFileId, fileTypeOverride || detected);
-          annotationFileRef.current = newFile;
-          setAnnotations([]);
+          applyLoadedFile(newFile);
         }
       } catch (err) {
         if (!cancelled) {
           if (isDesktopDirectoryTimeout(err)) {
-            logger.warn("[Annotations] Desktop directory read timed out; continuing without blocking viewer.", err);
-            const fallbackFileId = storageFileId ?? resolveAnnotationFileCandidates(fileHandle.name, filePath)[0] ?? fileHandle.name;
-            const fallbackFile = createUniversalAnnotationFile(
-              fallbackFileId,
-              fileTypeOverride || detectFileType(filePath || fileHandle.name),
-            );
-            annotationFileRef.current = fallbackFile;
-            setFileId(fallbackFileId);
-            setAnnotations([]);
-            setError(null);
+            logger.warn("[Annotations] Desktop directory read timed out; annotation editing is paused.", err);
+            // A timeout means the source is unknown. Do not publish an empty
+            // file or allow a later edit to overwrite a recoverable sidecar.
+            annotationFileRef.current = null;
+            setFileId(null);
+            setError('Failed to load annotations: desktop directory read timed out');
             return;
           }
-          setError(err instanceof Error ? err.message : 'Failed to load annotations');
+          setError(err instanceof Error || err instanceof DOMException ? err.message : 'Failed to load annotations');
         }
       } finally {
         if (!cancelled) {
@@ -376,8 +483,27 @@ export function useAnnotationSystem({
     
     return () => {
       cancelled = true;
+      restorationController.abort();
+      // A folder switch/unmount must flush the last snapshot to the root that
+      // created it. Otherwise the next viewer can reuse the ref and write the
+      // previous file into a different root.
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      if (dirtySnapshotRef.current) {
+        const pendingSnapshot = annotationFileRef.current;
+        if (pendingSnapshot) {
+          void persistSnapshot(pendingSnapshot).then((success) => {
+            if (!success) logger.error('[Annotations] Failed to flush pending annotation save');
+          }).catch((flushError) => {
+            logger.error('[Annotations] Failed to flush pending annotation save:', flushError);
+          });
+        }
+      }
+      releaseSession?.();
     };
-  }, [binding, deferLoad, fileHandle, filePath, rootHandle, fileTypeOverride, storageFileId, workspaceIdentity]);
+  }, [binding, deferLoad, fileHandle, filePath, rootHandle, fileTypeOverride, storageFileId, workspaceIdentity, persistSnapshot]);
 
   // Debounced save function
   const scheduleSave = useCallback((newAnnotations: AnnotationItem[]) => {
@@ -391,39 +517,91 @@ export function useAnnotationSystem({
     setPendingSave(true);
     
     // Update the annotation file reference
-    annotationFileRef.current = {
+    const snapshot: UniversalAnnotationFile = {
       ...annotationFileRef.current,
-      annotations: dedupeAnnotationsById(newAnnotations),
+      // All mutation paths below already preserve unique IDs. Avoid scanning the
+      // complete annotation list again on every keystroke or drag update.
+      annotations: newAnnotations,
       lastModified: Date.now(),
     };
+    annotationFileRef.current = snapshot;
+    dirtySnapshotRef.current = snapshot;
+    if (annotationSessionRef.current) annotationSessionRef.current.unsavedSnapshot = snapshot;
+    publishAnnotationSnapshot(annotationSessionRef.current, snapshot);
     
     // Schedule save
     saveTimeoutRef.current = setTimeout(async () => {
-      if (!annotationFileRef.current) return;
+      saveTimeoutRef.current = null;
+      // Another pane may have added an annotation since this timer was set.
+      // Persist the synchronized snapshot, never the timer's older capture.
+      const latestSnapshot = annotationFileRef.current;
+      if (!latestSnapshot) return;
+      const success = await persistSnapshot(latestSnapshot);
+      if (success && annotationFileRef.current === latestSnapshot) dirtySnapshotRef.current = null;
       
-      const success = await saveWithRetry(annotationFileRef.current, rootHandle);
-      
+      if (annotationFileRef.current !== latestSnapshot) return;
       if (!success) {
         setError('Failed to save annotations after multiple retries');
+      } else if (annotationFileRef.current === latestSnapshot) {
+        setError(null);
       }
       
-      setPendingSave(false);
+      if (annotationFileRef.current === latestSnapshot) setPendingSave(!success);
     }, saveDelay);
-  }, [fileId, rootHandle, saveDelay]);
+  }, [fileId, persistSnapshot, saveDelay]);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
+  // Explicit AI approval waits for durable storage, rather than the debounce timer.
+  const persistAnnotationChanges = useCallback(async (upserts: AnnotationItem[], removeIds: string[] = []): Promise<boolean> => {
+    const current = annotationFileRef.current;
+    if (!current || !fileId) return false;
+    for (const annotation of upserts) {
+      const validation = validateAnnotationItem(annotation);
+      if (!validation.valid) {
+        setError(`Invalid annotation: ${validation.errors.join(', ')}`);
+        return false;
       }
-    };
-  }, []);
+    }
+    const removals = new Set(removeIds);
+    const merged = new Map(current.annotations.filter((item) => !removals.has(item.id)).map((item) => [item.id, item]));
+    upserts.forEach((item) => merged.set(item.id, item));
+    const next = { ...current, annotations: [...merged.values()], lastModified: Date.now() };
+    const hadPendingSave = pendingSave || saveTimeoutRef.current !== null;
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = null;
+    annotationFileRef.current = next;
+    dirtySnapshotRef.current = next;
+    if (annotationSessionRef.current) annotationSessionRef.current.unsavedSnapshot = next;
+    publishAnnotationSnapshot(annotationSessionRef.current, next);
+    setPendingSave(true);
+    const success = await persistSnapshot(next);
+    if (annotationFileRef.current === next) {
+      dirtySnapshotRef.current = success ? null : hadPendingSave ? current : null;
+      if (annotationSessionRef.current) annotationSessionRef.current.unsavedSnapshot = dirtySnapshotRef.current;
+      if (!success) {
+        annotationFileRef.current = current;
+        publishAnnotationSnapshot(annotationSessionRef.current, current);
+      }
+      if (!success && hadPendingSave) {
+        // The failed AI delta must not cancel an earlier manual edit's save.
+        scheduleSave(current.annotations);
+      } else {
+        setPendingSave(false);
+      }
+    }
+    if (annotationFileRef.current === next || annotationFileRef.current === current) {
+      setError(success ? null : 'Failed to save annotations after multiple retries');
+    }
+    return success;
+  }, [fileId, pendingSave, persistSnapshot, scheduleSave]);
 
   // Add annotation
   const addAnnotation = useCallback((
     annotation: Omit<AnnotationItem, 'id' | 'createdAt'>
   ): string | null => {
+    if (!fileId || !annotationFileRef.current) {
+      setError('Annotations are not loaded; wait for storage recovery before editing');
+      return null;
+    }
     // Create full annotation with generated fields
     const newAnnotation: AnnotationItem = {
       ...annotation,
@@ -438,40 +616,37 @@ export function useAnnotationSystem({
       return null;
     }
     
-    setAnnotations(prev => {
-      const updated = [...prev, newAnnotation];
-      const deduped = dedupeAnnotationsById(updated);
-      scheduleSave(deduped);
-      return deduped;
-    });
+    scheduleSave([...annotationFileRef.current.annotations, newAnnotation]);
     
     return newAnnotation.id;
-  }, [scheduleSave]);
+  }, [fileId, scheduleSave]);
 
   const upsertAnnotation = useCallback((annotation: AnnotationItem): boolean => {
+    if (!fileId || !annotationFileRef.current) {
+      setError('Annotations are not loaded; wait for storage recovery before editing');
+      return false;
+    }
     const validation = validateAnnotationItem(annotation);
     if (!validation.valid) {
       setError(`Invalid annotation: ${validation.errors.join(', ')}`);
       return false;
     }
 
-    setAnnotations(prev => {
-      const index = prev.findIndex((candidate) => candidate.id === annotation.id);
-      const next = [...prev];
-      if (index >= 0) {
-        next[index] = annotation;
-      } else {
-        next.push(annotation);
-      }
-      const deduped = dedupeAnnotationsById(next);
-      scheduleSave(deduped);
-      return deduped;
-    });
+    const prev = annotationFileRef.current.annotations;
+    const index = prev.findIndex((candidate) => candidate.id === annotation.id);
+    const next = [...prev];
+    if (index >= 0) next[index] = annotation;
+    else next.push(annotation);
+    scheduleSave(next);
     setError(null);
     return true;
-  }, [scheduleSave]);
+  }, [fileId, scheduleSave]);
 
   const upsertAnnotations = useCallback((nextAnnotations: AnnotationItem[]): number => {
+    if (!fileId || !annotationFileRef.current) {
+      setError('Annotations are not loaded; wait for storage recovery before editing');
+      return 0;
+    }
     const validAnnotations: AnnotationItem[] = [];
     for (const annotation of nextAnnotations) {
       const validation = validateAnnotationItem(annotation);
@@ -486,33 +661,28 @@ export function useAnnotationSystem({
       return 0;
     }
 
-    setAnnotations(prev => {
-      const byId = new Map(prev.map((annotation) => [annotation.id, annotation] as const));
-      validAnnotations.forEach((annotation) => {
-        byId.set(annotation.id, annotation);
-      });
-      const deduped = dedupeAnnotationsById(Array.from(byId.values()));
-      scheduleSave(deduped);
-      return deduped;
-    });
+    const byId = new Map(annotationFileRef.current.annotations.map((annotation) => [annotation.id, annotation] as const));
+    validAnnotations.forEach((annotation) => { byId.set(annotation.id, annotation); });
+    scheduleSave(Array.from(byId.values()));
     setError(null);
     return validAnnotations.length;
-  }, [scheduleSave]);
+  }, [fileId, scheduleSave]);
 
   // Update annotation
   const updateAnnotation = useCallback((
     id: string,
     updates: AnnotationUpdates
   ): boolean => {
-    let success = false;
-    let validationError: string | null = null;
-    
-    // Update state using functional update to ensure we have the latest state
-    setAnnotations(prev => {
+    if (!fileId || !annotationFileRef.current) {
+      setError('Annotations are not loaded; wait for storage recovery before editing');
+      return false;
+    }
+    // The synchronized ref is current even before React commits a batched render.
+    const prev = annotationFileRef.current.annotations;
       const index = prev.findIndex(a => a.id === id);
       if (index === -1) {
         console.warn(`[updateAnnotation] Annotation not found: ${id}`);
-        return prev;
+        return false;
       }
       
       const existingAnnotation = prev[index];
@@ -531,7 +701,8 @@ export function useAnnotationSystem({
         ...existingAnnotation,
         content: updates.content !== undefined ? updates.content : existingAnnotation.content,
         comment: updates.comment !== undefined ? updates.comment : existingAnnotation.comment,
-        preview: updates.preview !== undefined ? updates.preview : existingAnnotation.preview,
+        preview: 'preview' in updates ? updates.preview : existingAnnotation.preview,
+        formula: 'formula' in updates ? updates.formula : existingAnnotation.formula,
         author: updates.author !== undefined ? updates.author : existingAnnotation.author,
         createdAt: updates.createdAt !== undefined ? updates.createdAt : existingAnnotation.createdAt,
         style: mergedStyle as AnnotationItem['style'],
@@ -542,49 +713,28 @@ export function useAnnotationSystem({
       const validation = validateAnnotationItem(updated);
       if (!validation.valid) {
         console.error(`[updateAnnotation] Validation failed:`, validation.errors);
-        validationError = `Invalid annotation update: ${validation.errors.join(', ')}`;
-        return prev;
+        setError(`Invalid annotation update: ${validation.errors.join(', ')}`);
+        return false;
       }
       
       const newAnnotations = [...prev];
       newAnnotations[index] = updated;
-      const deduped = dedupeAnnotationsById(newAnnotations);
-      scheduleSave(deduped);
-      success = true;
-      return deduped;
-    });
-    
-    // Handle validation error outside of setState
-    if (validationError) {
-      setError(validationError);
-      return false;
-    }
-    
-    // Clear any previous error on success
-    if (success) {
-      setError(null);
-    }
-    
-    return success;
-  }, [scheduleSave]);
+      scheduleSave(newAnnotations);
+    setError(null);
+    return true;
+  }, [fileId, scheduleSave]);
 
   // Delete annotation
   const deleteAnnotation = useCallback((id: string): boolean => {
-    let success = false;
-    
-    setAnnotations(prev => {
-      const index = prev.findIndex(a => a.id === id);
-      if (index === -1) return prev;
-      
-      const newAnnotations = prev.filter(a => a.id !== id);
-      const deduped = dedupeAnnotationsById(newAnnotations);
-      scheduleSave(deduped);
-      success = true;
-      return deduped;
-    });
-    
-    return success;
-  }, [scheduleSave]);
+    if (!fileId || !annotationFileRef.current) {
+      setError('Annotations are not loaded; wait for storage recovery before editing');
+      return false;
+    }
+    const prev = annotationFileRef.current.annotations;
+    if (!prev.some((annotation) => annotation.id === id)) return false;
+    scheduleSave(prev.filter((annotation) => annotation.id !== id));
+    return true;
+  }, [fileId, scheduleSave]);
 
   // Scroll to annotation
   const scrollToAnnotation = useCallback((id: string): void => {
@@ -615,6 +765,7 @@ export function useAnnotationSystem({
     addAnnotation,
     upsertAnnotation,
     upsertAnnotations,
+    persistAnnotationChanges,
     updateAnnotation,
     deleteAnnotation,
     scrollToAnnotation,

@@ -28,6 +28,20 @@ export function computeDiff(original: string, modified: string): DiffResult {
   // Build LCS table
   const m = oldLines.length;
   const n = newLines.length;
+  // Bound quadratic allocation for full-file suggestions with many short lines.
+  if (m * n > 2_000_000) {
+    let prefix = 0;
+    while (prefix < Math.min(m, n) && oldLines[prefix] === newLines[prefix]) prefix++;
+    let suffix = 0;
+    while (suffix < Math.min(m, n) - prefix && oldLines[m - suffix - 1] === newLines[n - suffix - 1]) suffix++;
+    const lines: DiffLine[] = [
+      ...oldLines.slice(0, prefix).map((content, index) => ({ type: 'unchanged' as const, content, oldLineNum: index + 1, newLineNum: index + 1 })),
+      ...oldLines.slice(prefix, m - suffix).map((content, index) => ({ type: 'removed' as const, content, oldLineNum: prefix + index + 1 })),
+      ...newLines.slice(prefix, n - suffix).map((content, index) => ({ type: 'added' as const, content, newLineNum: prefix + index + 1 })),
+      ...newLines.slice(n - suffix).map((content, index) => ({ type: 'unchanged' as const, content, oldLineNum: m - suffix + index + 1, newLineNum: n - suffix + index + 1 })),
+    ];
+    return { lines, additions: n - prefix - suffix, deletions: m - prefix - suffix, unchanged: prefix + suffix };
+  }
   const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
 
   for (let i = 1; i <= m; i++) {

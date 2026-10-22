@@ -6,6 +6,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommandBar } from "../command-bar";
 import { DesktopWindowFrame } from "../desktop-window-frame";
+import type { TabState } from "@/types/layout";
 
 const workspaceState = {
   rootHandle: { name: "workspace" },
@@ -14,7 +15,7 @@ const workspaceState = {
     activePaneId: "pane-1",
   },
   commandBarByPane: {},
-  getActiveTab: () => ({ id: "tab-1", filePath: "workspace/notes.md" }),
+  getActiveTab: (): Pick<TabState, "id" | "filePath" | "fileName" | "kind"> => ({ id: "tab-1", filePath: "workspace/notes.md", fileName: "notes.md" }),
 };
 
 const desktopWindowMocks = vi.hoisted(() => {
@@ -64,7 +65,37 @@ vi.mock("@/lib/desktop-window", () => ({
 }));
 
 describe("CommandBar desktop interactions", () => {
+  it("exposes the active cloud reader's controls without leaking the retained local pane", () => {
+    workspaceState.getActiveTab = () => ({ id: "cloud-resource", kind: "cloud-file", filePath: "cloud://resource", fileName: "paper.pdf" });
+    const zoom = vi.fn();
+    workspaceState.commandBarByPane = {
+      "pane-1": { breadcrumbs: [{ label: "paper.pdf" }], actions: [{ id: "zoom-in", label: "Zoom cloud PDF", group: "primary", onTrigger: zoom }] },
+      "pane-local": { breadcrumbs: [{ label: "local-only-note.md" }], actions: [{ id: "save", label: "Save local file", group: "primary", onTrigger: vi.fn() }] },
+    };
+    render(<CommandBar onOpenWorkspace={vi.fn()} sharedLibraryActive />);
+    expect(screen.getByText("paper.pdf")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Zoom cloud PDF" }));
+    expect(zoom).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Save local file" })).toBeNull();
+  });
+  it("switches the explorer source without hiding tools for the still-active local file", () => {
+    const onOpenSharedLibrary = vi.fn();
+    (workspaceState.commandBarByPane as Record<string, unknown>)["pane-1"] = {
+      actions: [{ id: "save", label: "Save local file", group: "primary", onTrigger: vi.fn() }],
+      breadcrumbs: [{ label: "local-only-note.md" }],
+    };
+    const view = render(<CommandBar onOpenWorkspace={() => {}} onOpenSharedLibrary={onOpenSharedLibrary} />);
+    fireEvent.click(screen.getByTestId("desktop-commandbar-workspace"));
+    fireEvent.click(screen.getByRole("button", { name: "workbench.activity.library" }));
+    expect(onOpenSharedLibrary).toHaveBeenCalledTimes(1);
+    view.rerender(<CommandBar onOpenWorkspace={() => {}} onOpenSharedLibrary={onOpenSharedLibrary} sharedLibraryActive />);
+    expect(screen.getByRole("button", { name: "Save local file" })).toBeTruthy();
+    expect(screen.getByText("local-only-note.md")).toBeTruthy();
+    expect(screen.getByTestId("desktop-commandbar-workspace").textContent).toContain("workbench.activity.library");
+  });
+
   beforeEach(() => {
+    workspaceState.getActiveTab = () => ({ id: "tab-1", filePath: "workspace/notes.md", fileName: "notes.md" });
     desktopWindowMocks.reset();
     desktopWindowMocks.isDesktopWindowMaximized.mockClear();
     desktopWindowMocks.toggleDesktopWindowMaximize.mockClear();

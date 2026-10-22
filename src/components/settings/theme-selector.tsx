@@ -3,7 +3,9 @@
 import { Check, Sun, Moon, Monitor } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useTheme } from '@/hooks/use-theme';
+import { useSettingsStore } from '@/stores/settings-store';
 import type { ThemeMode } from '@/types/settings';
+import { AppearanceEditor } from './appearance-editor';
 
 interface ThemeSelectorProps {
   compact?: boolean;
@@ -18,13 +20,15 @@ const themeOptions: { value: ThemeMode; icon: typeof Sun; labelKey: 'settings.th
 export function ThemeSelector({ compact = false }: ThemeSelectorProps) {
   const { t } = useI18n();
   const { theme, setTheme } = useTheme();
+  const error = useSettingsStore(state => state.error);
 
   if (compact) {
     return (
-      <div className="flex gap-2">
+      <div><div className="flex gap-2">
         {themeOptions.map(({ value, icon: Icon, labelKey }) => (
           <button
             key={value}
+            aria-pressed={theme === value}
             onClick={() => setTheme(value)}
             className={`flex flex-col items-center gap-2 px-6 py-4 rounded-lg border transition-all ${
               theme === value
@@ -36,12 +40,12 @@ export function ThemeSelector({ compact = false }: ThemeSelectorProps) {
             <span className="text-sm font-medium">{t(labelKey)}</span>
           </button>
         ))}
-      </div>
+      </div>{error && <p role="alert" className="mt-2 text-xs text-destructive">{t('main.toast.saveFailed.title')}: {error}</p>}</div>
     );
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-5">
       <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
         <Sun className="h-4 w-4" />
         {t('settings.theme')}
@@ -50,6 +54,7 @@ export function ThemeSelector({ compact = false }: ThemeSelectorProps) {
         {themeOptions.map(({ value, icon: Icon, labelKey }) => (
           <button
             key={value}
+            aria-pressed={theme === value}
             onClick={() => setTheme(value)}
             className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
               theme === value
@@ -65,6 +70,8 @@ export function ThemeSelector({ compact = false }: ThemeSelectorProps) {
           </button>
         ))}
       </div>
+      {error && <p role="alert" className="text-xs text-destructive">{t('main.toast.saveFailed.title')}: {error}</p>}
+      <AppearanceEditor />
     </div>
   );
 }

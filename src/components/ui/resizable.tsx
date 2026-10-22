@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { GripHorizontal, GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 
@@ -27,6 +28,8 @@ interface ResizableHandleProps {
   withHandle?: boolean;
   className?: string;
   index?: number;
+  ariaLabel?: string;
+  testId?: string;
 }
 
 interface PanelContextValue {
@@ -199,6 +202,8 @@ export function ResizableHandle({
   withHandle,
   className,
   index = 0,
+  ariaLabel,
+  testId,
 }: ResizableHandleProps) {
   const context = React.useContext(PanelContext);
   const handleRef = useRef<HTMLDivElement>(null);
@@ -209,6 +214,29 @@ export function ResizableHandle({
   const startSizesRef = useRef<number[]>([]);
   const containerSizeRef = useRef(0);
   const activePointerIdRef = useRef<number | null>(null);
+  const pendingPositionRef = useRef<number | null>(null);
+  const dragFrameRef = useRef(0);
+  const previousBodyStylesRef = useRef<{ cursor: string; userSelect: string } | null>(null);
+
+  const restoreBodyStyles = useCallback(() => {
+    const previous = previousBodyStylesRef.current;
+    previousBodyStylesRef.current = null;
+    if (previous && typeof document !== "undefined") {
+      document.body.style.cursor = previous.cursor;
+      document.body.style.userSelect = previous.userSelect;
+    }
+  }, []);
+
+  useEffect(() => () => {
+    if (dragFrameRef.current !== 0) {
+      window.cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = 0;
+    }
+    pendingPositionRef.current = null;
+    isDragging.current = false;
+    activePointerIdRef.current = null;
+    restoreBodyStyles();
+  }, [restoreBodyStyles]);
 
   const resizeAdjacentPanels = useCallback((delta: number) => {
     context?.setSizes(() => {
@@ -255,16 +283,38 @@ export function ResizableHandle({
     [resizeAdjacentPanels],
   );
 
+  const scheduleDragPosition = useCallback((currentPosition: number) => {
+    pendingPositionRef.current = currentPosition;
+    if (dragFrameRef.current !== 0 || typeof window === "undefined") {
+      return;
+    }
+    dragFrameRef.current = window.requestAnimationFrame(() => {
+      dragFrameRef.current = 0;
+      const pendingPosition = pendingPositionRef.current;
+      pendingPositionRef.current = null;
+      if (pendingPosition !== null) {
+        updateDragPosition(pendingPosition);
+      }
+    });
+  }, [updateDragPosition]);
+
   const endDrag = useCallback(() => {
+    if (!isDragging.current) return;
+    if (dragFrameRef.current !== 0 && typeof window !== "undefined") {
+      window.cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = 0;
+    }
+    const pendingPosition = pendingPositionRef.current;
+    pendingPositionRef.current = null;
+    if (pendingPosition !== null) {
+      updateDragPosition(pendingPosition);
+    }
     isDragging.current = false;
     activePointerIdRef.current = null;
     setDragging(false);
     setShieldMounted(false);
-    if (typeof document !== "undefined") {
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    }
-  }, []);
+    restoreBodyStyles();
+  }, [restoreBodyStyles, updateDragPosition]);
 
   const handleNativePointerMove = useCallback(
     (event: PointerEvent) => {
@@ -272,21 +322,22 @@ export function ResizableHandle({
         return;
       }
       event.preventDefault();
-      updateDragPosition(context?.direction === "horizontal" ? event.clientX : event.clientY);
+      scheduleDragPosition(context?.direction === "horizontal" ? event.clientX : event.clientY);
     },
-    [context?.direction, updateDragPosition],
+    [context?.direction, scheduleDragPosition],
   );
 
   const handleNativeMouseMove = useCallback(
     (event: MouseEvent) => {
       event.preventDefault();
-      updateDragPosition(context?.direction === "horizontal" ? event.clientX : event.clientY);
+      scheduleDragPosition(context?.direction === "horizontal" ? event.clientX : event.clientY);
     },
-    [context?.direction, updateDragPosition],
+    [context?.direction, scheduleDragPosition],
   );
 
   const handleNativeEnd = useCallback(
     (event: PointerEvent | MouseEvent) => {
+      if ("pointerId" in event && activePointerIdRef.current !== null && event.pointerId !== activePointerIdRef.current) return;
       event.preventDefault();
       endDrag();
     },
@@ -298,20 +349,29 @@ export function ResizableHandle({
       return;
     }
 
-    window.addEventListener("pointermove", handleNativePointerMove, { passive: false });
-    window.addEventListener("pointerup", handleNativeEnd, { passive: false });
-    window.addEventListener("pointercancel", handleNativeEnd, { passive: false });
-    window.addEventListener("mousemove", handleNativeMouseMove, { passive: false });
-    window.addEventListener("mouseup", handleNativeEnd, { passive: false });
+    const supportsPointerEvents = "PointerEvent" in window;
+    window.addEventListener("blur", endDrag);
+    if (supportsPointerEvents) {
+      window.addEventListener("pointermove", handleNativePointerMove, { passive: false });
+      window.addEventListener("pointerup", handleNativeEnd, { passive: false });
+      window.addEventListener("pointercancel", handleNativeEnd, { passive: false });
+    } else {
+      window.addEventListener("mousemove", handleNativeMouseMove, { passive: false });
+      window.addEventListener("mouseup", handleNativeEnd, { passive: false });
+    }
 
     return () => {
-      window.removeEventListener("pointermove", handleNativePointerMove);
-      window.removeEventListener("pointerup", handleNativeEnd);
-      window.removeEventListener("pointercancel", handleNativeEnd);
-      window.removeEventListener("mousemove", handleNativeMouseMove);
-      window.removeEventListener("mouseup", handleNativeEnd);
+      window.removeEventListener("blur", endDrag);
+      if (supportsPointerEvents) {
+        window.removeEventListener("pointermove", handleNativePointerMove);
+        window.removeEventListener("pointerup", handleNativeEnd);
+        window.removeEventListener("pointercancel", handleNativeEnd);
+      } else {
+        window.removeEventListener("mousemove", handleNativeMouseMove);
+        window.removeEventListener("mouseup", handleNativeEnd);
+      }
     };
-  }, [dragging, handleNativeEnd, handleNativeMouseMove, handleNativePointerMove]);
+  }, [dragging, endDrag, handleNativeEnd, handleNativeMouseMove, handleNativePointerMove]);
 
   const beginDrag = useCallback(
     (startPosition: number, pointerId?: number) => {
@@ -324,6 +384,10 @@ export function ResizableHandle({
       startPosRef.current = startPosition;
       startSizesRef.current = [...(context?.sizes ?? [])];
       if (typeof document !== "undefined") {
+        previousBodyStylesRef.current = {
+          cursor: document.body.style.cursor,
+          userSelect: document.body.style.userSelect,
+        };
         document.body.style.cursor = context?.direction === "horizontal" ? "col-resize" : "row-resize";
         document.body.style.userSelect = "none";
       }
@@ -347,6 +411,7 @@ export function ResizableHandle({
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      if (e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
       if (typeof window !== "undefined" && "PointerEvent" in window) {
@@ -359,6 +424,7 @@ export function ResizableHandle({
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
+      if (e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
       try {
@@ -377,21 +443,22 @@ export function ResizableHandle({
         return;
       }
       e.preventDefault();
-      updateDragPosition(context?.direction === "horizontal" ? e.clientX : e.clientY);
+      scheduleDragPosition(context?.direction === "horizontal" ? e.clientX : e.clientY);
     },
-    [context?.direction, updateDragPosition],
+    [context?.direction, scheduleDragPosition],
   );
 
   const handleShieldMouseMove = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       e.preventDefault();
-      updateDragPosition(context?.direction === "horizontal" ? e.clientX : e.clientY);
+      scheduleDragPosition(context?.direction === "horizontal" ? e.clientX : e.clientY);
     },
-    [context?.direction, updateDragPosition],
+    [context?.direction, scheduleDragPosition],
   );
 
   const handleShieldEnd = useCallback(
     (e: React.PointerEvent<HTMLDivElement> | React.MouseEvent<HTMLDivElement>) => {
+      if ("pointerId" in e && activePointerIdRef.current !== null && e.pointerId !== activePointerIdRef.current) return;
       e.preventDefault();
       endDrag();
     },
@@ -426,7 +493,9 @@ export function ResizableHandle({
       onKeyDown={handleKeyDown}
       role="separator"
       aria-orientation={isHorizontal ? "vertical" : "horizontal"}
-      aria-label={isHorizontal ? "Resize panels horizontally" : "Resize panels vertically"}
+      aria-label={ariaLabel ?? (isHorizontal ? "Resize panels horizontally" : "Resize panels vertically")}
+      title={ariaLabel ?? (isHorizontal ? "Resize panels horizontally" : "Resize panels vertically")}
+      data-testid={testId}
       tabIndex={0}
       data-dragging={dragging ? "true" : "false"}
       style={{ zIndex: 90 }}
@@ -450,7 +519,25 @@ export function ResizableHandle({
           dragging && "bg-primary/70"
         )}
       />
-      {withHandle ? <span className="sr-only">Drag to resize</span> : null}
+      {withHandle ? (
+        <>
+          <span
+            aria-hidden="true"
+            data-testid={testId ? `${testId}-grip` : "resizable-handle-grip"}
+            className={cn(
+              "pointer-events-none absolute z-10 inline-flex items-center justify-center rounded-sm border border-border/80 bg-background/95 text-muted-foreground opacity-70 shadow-sm transition-[opacity,color,border-color] duration-150",
+              "group-hover:border-primary/40 group-hover:text-foreground group-hover:opacity-100 group-focus-visible:opacity-100",
+              isHorizontal ? "h-7 w-3" : "h-3 w-7",
+              dragging && "border-primary/50 text-primary opacity-100",
+            )}
+          >
+            {isHorizontal
+              ? <GripVertical className="h-3 w-3" />
+              : <GripHorizontal className="h-3 w-3" />}
+          </span>
+          <span className="sr-only">Drag to resize</span>
+        </>
+      ) : null}
       {shieldMounted && typeof document !== "undefined" && createPortal(
         <div
           data-testid="resizable-drag-shield"

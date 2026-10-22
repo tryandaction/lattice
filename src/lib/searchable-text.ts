@@ -1,9 +1,26 @@
 import mammoth from "mammoth";
 import { isCodeFile } from "@/lib/file-utils";
+import { useVSCodeCompatStore } from "@/stores/vscode-compat-store";
+import { isExcludedByPatterns } from "@/lib/vscode-compat/glob";
+import { isVSCodeCompatEnabled } from "@/lib/vscode-compat/enabled";
 
 const NON_LINE_NAVIGABLE_SEARCH_EXTENSIONS = new Set(["html", "htm", "ipynb", "docx", "pptx"]);
 
-function htmlToPlainText(html: string): string {
+/**
+ * Shared text normalization for local and remote search indexes. Every index
+ * (Web workspace search, Desktop workspace search, Cloud snapshot/extract
+ * jobs) must route through this function instead of keeping its own
+ * markdown/PDF/HTML cleaning logic.
+ */
+export function normalizeSearchText(raw: string): string {
+  return raw
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+export function htmlToPlainText(html: string): string {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -20,6 +37,14 @@ function htmlToPlainText(html: string): string {
 export function isSearchableTextExtension(extension: string): boolean {
   const ext = extension.toLowerCase();
   return ext === "md" || ext === "html" || ext === "htm" || ext === "ipynb" || ext === "docx" || ext === "pptx" || isCodeFile(ext);
+}
+
+export function shouldExcludeFromWorkspaceSearch(path: string): boolean {
+  if (!isVSCodeCompatEnabled()) {
+    return false;
+  }
+  const compat = useVSCodeCompatStore.getState();
+  return isExcludedByPatterns(path, compat.settings.searchExclude);
 }
 
 export function isLineNavigableSearchExtension(extension: string): boolean {

@@ -9,10 +9,12 @@ import type {
   AiStreamChunk,
 } from '../types';
 import { getMessageText } from '../types';
+import { extractProviderText, extractStreamTextDelta, parseSseJson } from '../provider-response';
 import { getApiKey as getKey, getBaseUrl as getUrl } from '../key-storage';
+import { classifyAiConnectionError } from '../provider-profiles';
 
 export interface OpenAiCompatibleProviderConfig {
-  id: Extract<AiProviderId, 'openai' | 'deepseek' | 'moonshot' | 'zhipu' | 'custom'>;
+  id: Extract<AiProviderId, 'openai' | 'deepseek' | 'moonshot' | 'zhipu' | 'openrouter' | 'groq' | 'together' | 'fireworks' | 'siliconflow' | 'azure-openai' | 'custom'>;
   name: string;
   defaultBaseUrl: string;
   defaultModel: string;
@@ -58,41 +60,6 @@ async function parseErrorMessage(response: Response): Promise<string> {
   }
 }
 
-async function* parseSSE(response: Response): AsyncIterable<Record<string, unknown>> {
-  const reader = response.body?.getReader();
-  if (!reader) {
-    return;
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
-        const data = trimmed.slice(6);
-        if (data === '[DONE]') return;
-        try {
-          yield JSON.parse(data);
-        } catch {
-          continue;
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
 function buildHeaders(apiKey: string): HeadersInit {
   return {
     'Content-Type': 'application/json',
@@ -113,24 +80,22 @@ export function createOpenAiCompatibleProvider(config: OpenAiCompatibleProviderC
         return { ok: false, message: '请先填写 API Key。' };
       }
 
+      const started = typeof performance !== 'undefined' ? performance.now() : Date.now();
       try {
         const response = await fetch(`${getBaseUrl(config.id, config.defaultBaseUrl)}/models`, {
           headers: buildHeaders(apiKey),
         });
 
         if (!response.ok) {
-          return {
-            ok: false,
-            message: `${config.name} 连接失败：${response.status} ${await parseErrorMessage(response)}`,
-          };
+          const body = await parseErrorMessage(response);
+          const classified = classifyAiConnectionError({ status: response.status, responseBody: body });
+          return { ...classified, message: `${config.name}：${classified.message}`, latencyMs: Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - started), requestId: response.headers.get('x-request-id') ?? undefined };
         }
 
-        return { ok: true, message: `${config.name} 连接成功。` };
+        return { ok: true, message: `${config.name} 连接成功。`, latencyMs: Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - started), requestId: response.headers.get('x-request-id') ?? undefined };
       } catch (error) {
-        return {
-          ok: false,
-          message: `${config.name} 网络连接失败：${error instanceof Error ? error.message : String(error)}`,
-        };
+        const classified = classifyAiConnectionError({ error });
+        return { ...classified, message: `${config.name}：${classified.message}`, latencyMs: Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - started) };
       }
     },
 
@@ -197,7 +162,7 @@ export function createOpenAiCompatibleProvider(config: OpenAiCompatibleProviderC
 
       const data = await response.json();
       return {
-        text: data?.choices?.[0]?.message?.content ?? '',
+        text: extractProviderText(data?.choices?.[0]?.message?.content),
         model: data?.model ?? options?.model ?? config.defaultModel,
         usage: data?.usage ? {
           promptTokens: data.usage.prompt_tokens ?? 0,
@@ -238,11 +203,16 @@ export function createOpenAiCompatibleProvider(config: OpenAiCompatibleProviderC
         return;
       }
 
-      for await (const chunk of parseSSE(response)) {
-        const delta = (chunk as { choices?: Array<{ delta?: { content?: string } }> }).choices?.[0]?.delta?.content;
-        if (delta) {
-          yield { type: 'text', text: delta };
+      try {
+        for await (const chunk of parseSseJson(response)) {
+          const delta = extractStreamTextDelta((chunk as { choices?: Array<{ delta?: unknown }> }).choices?.[0]?.delta);
+          if (delta) {
+            yield { type: 'text', text: delta };
+          }
         }
+      } catch (error) {
+        yield { type: 'error', error: error instanceof Error ? error.message : String(error) };
+        return;
       }
       yield { type: 'done' };
     },

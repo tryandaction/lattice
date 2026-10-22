@@ -4,15 +4,18 @@ import { useEffect, useState } from "react";
 import { X, Download, Zap, FolderOpen, Gauge } from "lucide-react";
 import { useI18n } from "@/hooks/use-i18n";
 import { isTauriHost } from "@/lib/storage-adapter";
+import { cn } from "@/lib/utils";
+import { UI_MODAL_OVERLAY_CLASS, UI_MODAL_OVERLAY_STYLE } from "@/lib/ui-layers";
+import { LATTICE_DESKTOP_RELEASES_URL } from "@/lib/product-links";
 
-export function DownloadAppDialog() {
+export function DownloadAppDialog({ blocked = false }: { blocked?: boolean }) {
   const { t } = useI18n();
   const isDesktopApp = isTauriHost();
   const [isOpen, setIsOpen] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
 
   useEffect(() => {
-    if (isDesktopApp) return;
+    if (isDesktopApp || blocked) return;
 
     const dismissed = localStorage.getItem("lattice-download-dismissed");
     if (dismissed === "true") return;
@@ -22,7 +25,7 @@ export function DownloadAppDialog() {
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [isDesktopApp]);
+  }, [isDesktopApp, blocked]);
 
   const handleClose = () => {
     if (dontShowAgain) {
@@ -31,13 +34,16 @@ export function DownloadAppDialog() {
     setIsOpen(false);
   };
 
-  if (isDesktopApp || !isOpen) return null;
+  if (isDesktopApp || blocked || !isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 px-4 pb-4 pt-6 backdrop-blur-sm md:pt-20">
+    <div className={cn(UI_MODAL_OVERLAY_CLASS, "flex items-start justify-center overflow-y-auto px-4 pb-4 pt-6 md:pt-20")} style={UI_MODAL_OVERLAY_STYLE}>
       <div
         className="relative max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-lg border border-border bg-card text-card-foreground shadow-2xl md:max-h-[calc(100vh-6rem)]"
         data-testid="download-app-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("downloadApp.title")}
       >
         <button
           type="button"
@@ -93,7 +99,7 @@ export function DownloadAppDialog() {
 
           <div className="space-y-3">
             <a
-              href="https://github.com/tryandaction/lattice/releases/latest"
+              href={LATTICE_DESKTOP_RELEASES_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 font-medium text-primary-foreground transition-colors hover:bg-primary/90"
@@ -102,6 +108,7 @@ export function DownloadAppDialog() {
               <Download className="h-5 w-5" />
               {t("downloadApp.download")}
             </a>
+            <p className="text-xs leading-5 text-muted-foreground">{t("downloadApp.releaseVerification")}</p>
 
             <button
               type="button"

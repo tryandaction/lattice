@@ -235,6 +235,48 @@ describe("formula extractor core", () => {
     expect(formulas.every((formula) => formula.target?.bbox)).toBe(true);
   });
 
+  it("preserves deterministic superscript and fraction structure from glyph geometry", () => {
+    const formulas = extractPdfFormulasFromPages([
+      {
+        pageNumber: 2,
+        text: "",
+        visible: true,
+        source: "pdfjs-text-model",
+        items: [
+          { text: "x", normalizedText: "x", lineIndex: 0, blockIndex: 0, baseline: .48, bbox: { x1: .30, y1: .40, x2: .34, y2: .48 } },
+          { text: "2", normalizedText: "2", lineIndex: 0, blockIndex: 0, baseline: .48, bbox: { x1: .345, y1: .35, x2: .365, y2: .40 } },
+          { text: "=", normalizedText: "=", lineIndex: 0, blockIndex: 0, baseline: .48, bbox: { x1: .39, y1: .42, x2: .43, y2: .47 } },
+          { text: "-", normalizedText: "-", lineIndex: 0, blockIndex: 0, baseline: .455, bbox: { x1: .45, y1: .44, x2: .58, y2: .455 } },
+          { text: "a", normalizedText: "a", lineIndex: 0, blockIndex: 0, baseline: .42, bbox: { x1: .46, y1: .36, x2: .50, y2: .42 } },
+          { text: "b", normalizedText: "b", lineIndex: 0, blockIndex: 0, baseline: .54, bbox: { x1: .46, y1: .48, x2: .50, y2: .54 } },
+        ],
+      },
+    ]);
+    expect(formulas).toHaveLength(1);
+    expect(formulas[0].latex).toMatch(/x[_^]\{2\}/);
+    expect(formulas[0].latex).toContain("a");
+    expect(formulas[0].needsReview).toBe(true);
+  });
+
+  it("keeps a two-row matrix reviewable when geometry is ambiguous", async () => {
+    const result = await extractFormulasFromSource({
+      viewerType: "pdf",
+      scope: "current-page",
+      pdfPages: [{
+        pageNumber: 8, text: "", visible: true, source: "pdfjs-text-model",
+        items: [
+          { text: "[", normalizedText: "[", lineIndex: 0, blockIndex: 0, bbox: { x1: .20, y1: .30, x2: .22, y2: .60 } },
+          { text: "1", normalizedText: "1", lineIndex: 0, blockIndex: 0, bbox: { x1: .25, y1: .32, x2: .28, y2: .38 } },
+          { text: "0", normalizedText: "0", lineIndex: 0, blockIndex: 0, bbox: { x1: .34, y1: .32, x2: .37, y2: .38 } },
+          { text: "0", normalizedText: "0", lineIndex: 1, blockIndex: 0, bbox: { x1: .25, y1: .48, x2: .28, y2: .54 } },
+          { text: "1", normalizedText: "1", lineIndex: 1, blockIndex: 0, bbox: { x1: .34, y1: .48, x2: .37, y2: .54 } },
+          { text: "]", normalizedText: "]", lineIndex: 1, blockIndex: 0, bbox: { x1: .40, y1: .30, x2: .42, y2: .60 } },
+        ],
+      }],
+    });
+    expect(result.formulas ?? []).toHaveLength(0);
+  });
+
   it("extracts centered multi-line Hamiltonian formulas from PDF text geometry", async () => {
     const result = await extractFormulasFromSource({
       viewerType: "pdf",

@@ -73,6 +73,12 @@ afterEach(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useSettingsStore.setState(state => ({
+    settings: { ...state.settings, language: 'zh-CN', searchPanelScope: 'all', searchPanelMode: 'name_and_content', searchPanelSort: 'relevance' },
+    isInitialized: true,
+    isLoading: false,
+    error: null,
+  }));
 });
 
 describe("WorkspaceSearchPanel", () => {

@@ -15,8 +15,8 @@ import {
 } from '../types/universal-annotation';
 import type { AnnotationLocationAlias, AnnotationSourceRecord } from '@/types/annotation-registry';
 import type { FileIdentity } from '@/types/workspace-identity';
-import { registerAnnotationLocation, resolveAnnotationRegistryMatch } from '@/lib/annotation-registry';
-import { isIgnoredDirectory } from '@/lib/constants';
+import { findAnnotationRegistryFingerprintAliases, registerAnnotationLocation, removeAnnotationDocumentAliases, resolveAnnotationRegistryMatch } from '@/lib/annotation-registry';
+import { isIndependentStoredPdf, resolvePdfLocationFileHandle, resolveWorkspaceStorageRoot } from '@/lib/pdf-item-location-registry';
 
 // ============================================================================
 // Constants
@@ -81,14 +81,19 @@ export function resolveAnnotationFileCandidates(
   fileHandleName: string,
   filePath?: string,
   preferredFileId?: string | null,
+  rootName?: string,
 ): string[] {
   const normalizedPath = (filePath && filePath.trim()) ? filePath.replace(/\\/g, "/") : fileHandleName;
   const pathParts = normalizedPath.split("/").filter(Boolean);
-  const suffixCandidates = pathParts.map((_, index) => pathParts.slice(index).join("/"));
+  // A suffix is only meaningful inside its own workspace root. In a larger
+  // root, paper.pdf may belong to a different document than papers/paper.pdf.
+  const suffixCandidates = rootName
+    ? [normalizedPath, ...(pathParts[0] === rootName ? [pathParts.slice(1).join("/")] : [])].filter(Boolean)
+    : pathParts.map((_, index) => pathParts.slice(index).join("/"));
   const candidates = [
     preferredFileId ?? null,
     ...suffixCandidates.map((candidate) => generateFileId(candidate)),
-    generateFileId(fileHandleName),
+    ...(rootName ? [] : [generateFileId(fileHandleName)]),
   ].filter((candidate): candidate is string => Boolean(candidate));
 
   return Array.from(new Set(candidates));
@@ -372,6 +377,14 @@ interface NestedAnnotationMatch {
   source: Omit<AnnotationSourceRecord, "documentId">;
 }
 
+function isMissingAnnotationEntry(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'NotFoundError';
+}
+
+function throwIfRestorationCancelled(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException('Annotation restoration cancelled', 'AbortError');
+}
+
 async function loadAnnotationFileHandleFromDirectory(
   directoryHandle: FileSystemDirectoryHandle,
   candidates: string[],
@@ -380,93 +393,8 @@ async function loadAnnotationFileHandleFromDirectory(
     try {
       const fileHandle = await directoryHandle.getFileHandle(`${candidate}.json`);
       return { fileHandle, fileId: candidate };
-    } catch {
-      // Try next candidate.
-    }
-  }
-
-  return null;
-}
-
-async function loadAnnotationFileHandleBySuffix(
-  directoryHandle: FileSystemDirectoryHandle,
-  candidates: string[],
-): Promise<{ fileHandle: FileSystemFileHandle; fileId: string } | null> {
-  const candidateNames = new Set(candidates.map((candidate) => `${candidate}.json`));
-
-  for await (const entry of directoryHandle.values()) {
-    if (entry.kind !== "file") {
-      continue;
-    }
-
-    if (candidateNames.has(entry.name)) {
-      return {
-        fileHandle: entry as FileSystemFileHandle,
-        fileId: entry.name.slice(0, -".json".length),
-      };
-    }
-
-    for (const candidate of candidates) {
-      if (entry.name.endsWith(`${candidate}.json`)) {
-        return {
-          fileHandle: entry as FileSystemFileHandle,
-          fileId: entry.name.slice(0, -".json".length),
-        };
-      }
-    }
-  }
-
-  return null;
-}
-
-async function walkForNestedAnnotationMatch(
-  directoryHandle: FileSystemDirectoryHandle,
-  currentPath: string,
-  candidates: string[],
-  workspaceKey: string | null,
-): Promise<NestedAnnotationMatch | null> {
-  for await (const entry of directoryHandle.values()) {
-    if (entry.kind !== "directory") {
-      continue;
-    }
-
-    const childDirectory = entry as FileSystemDirectoryHandle;
-    const childPath = `${currentPath}/${childDirectory.name}`;
-
-    if (childDirectory.name === ".lattice") {
-      try {
-        const annotationsDirectory = await childDirectory.getDirectoryHandle("annotations");
-        const matched = await loadAnnotationFileHandleFromDirectory(annotationsDirectory, candidates)
-          ?? await loadAnnotationFileHandleBySuffix(annotationsDirectory, candidates);
-        if (matched) {
-          return {
-            fileHandle: matched.fileHandle,
-            source: {
-              workspaceKey,
-              sourcePath: `${childPath}/annotations/${matched.fileId}.json`,
-              sourceKind: "nested-lattice",
-              fileId: matched.fileId,
-              canonicalPath: null,
-              relativePathFromRoot: null,
-              fileFingerprint: null,
-              versionFingerprint: null,
-              updatedAt: Date.now(),
-            },
-          };
-        }
-      } catch {
-        // Ignore malformed nested .lattice roots.
-      }
-      continue;
-    }
-
-    if (isIgnoredDirectory(childDirectory.name)) {
-      continue;
-    }
-
-    const nested = await walkForNestedAnnotationMatch(childDirectory, childPath, candidates, workspaceKey);
-    if (nested) {
-      return nested;
+    } catch (error) {
+      if (!isMissingAnnotationEntry(error)) throw error;
     }
   }
 
@@ -475,17 +403,78 @@ async function walkForNestedAnnotationMatch(
 
 async function findNestedAnnotationMatch(
   rootHandle: FileSystemDirectoryHandle,
-  candidates: string[],
   workspaceKey: string | null,
+  relativeFilePath: string | null,
 ): Promise<NestedAnnotationMatch | null> {
-  return walkForNestedAnnotationMatch(rootHandle, rootHandle.name, candidates, workspaceKey);
+  // Only ancestors of this file can be former workspace roots. Searching all
+  // siblings was both expensive and liable to attach another paper.pdf's notes.
+  const parts = (relativeFilePath ?? '').replace(/\\/g, '/').split('/').filter(Boolean);
+  if (parts[0] === rootHandle.name) parts.shift();
+  const directories = parts.slice(0, -1);
+  if (directories.some((part) => part === '..' || part === '.')) return null;
+  let current = rootHandle;
+  let sourcePath = rootHandle.name;
+  for (const [index, directory] of directories.entries()) {
+    try {
+      current = await current.getDirectoryHandle(directory);
+    } catch (error) {
+      if (isMissingAnnotationEntry(error)) return null;
+      throw error;
+    }
+    sourcePath += `/${directory}`;
+    try {
+      const lattice = await current.getDirectoryHandle('.lattice');
+      const annotations = await lattice.getDirectoryHandle('annotations');
+      const candidates = resolveAnnotationFileCandidates(
+        parts[parts.length - 1],
+        parts.slice(index).join('/'),
+        null,
+        current.name,
+      );
+      const matched = await loadAnnotationFileHandleFromDirectory(annotations, candidates);
+      if (matched) return {
+        fileHandle: matched.fileHandle,
+        source: {
+          workspaceKey,
+          sourcePath: `${sourcePath}/${ANNOTATIONS_DIR}/${matched.fileId}.json`,
+          sourceKind: 'nested-lattice',
+          fileId: matched.fileId,
+          canonicalPath: null,
+          relativePathFromRoot: null,
+          fileFingerprint: null,
+          versionFingerprint: null,
+          updatedAt: Date.now(),
+        },
+      };
+    } catch (error) {
+      if (!isMissingAnnotationEntry(error)) throw error;
+    }
+  }
+  return null;
 }
 
 async function tryResolveRegistryAnnotationMatch(
   rootHandle: FileSystemDirectoryHandle,
   aliases: AnnotationLocationAlias[],
-): Promise<NestedAnnotationMatch | null> {
+  signal?: AbortSignal,
+  workspaceKey?: string | null,
+  fileIdentity?: FileIdentity,
+  requirePhysicalIdentity = false,
+): Promise<(NestedAnnotationMatch & { annotationFile: UniversalAnnotationFile; rootHandle: FileSystemDirectoryHandle }) | null> {
+  const resolvedRoots = new Map<string | null, FileSystemDirectoryHandle | null>();
+  const independentDocuments = new Set<string>();
   for (const alias of aliases) {
+    throwIfRestorationCancelled(signal);
+    if (!resolvedRoots.has(alias.workspaceKey)) resolvedRoots.set(alias.workspaceKey,
+      !alias.workspaceKey || alias.workspaceKey === workspaceKey ? rootHandle : await resolveWorkspaceStorageRoot(alias.workspaceKey));
+    const aliasRoot = resolvedRoots.get(alias.workspaceKey);
+    if (aliasRoot && fileIdentity && await isIndependentStoredPdf(aliasRoot, alias.relativePathFromRoot, rootHandle, fileIdentity.relativePathFromRoot)) {
+      independentDocuments.add(alias.documentId);
+    }
+  }
+  for (const alias of aliases) {
+    throwIfRestorationCancelled(signal);
+    if (independentDocuments.has(alias.documentId)) continue;
     const normalizedSourcePath = alias.sourcePath;
     if (!normalizedSourcePath) {
       continue;
@@ -496,19 +485,40 @@ async function tryResolveRegistryAnnotationMatch(
       continue;
     }
 
-    const relativeParts = parts[0] === rootHandle.name ? parts.slice(1) : parts;
+    const aliasRoot = resolvedRoots.get(alias.workspaceKey);
+    throwIfRestorationCancelled(signal);
+    if (!aliasRoot) continue;
+    if (requirePhysicalIdentity) {
+      const previous = await resolvePdfLocationFileHandle(aliasRoot, alias.relativePathFromRoot);
+      const current = await resolvePdfLocationFileHandle(rootHandle, fileIdentity?.relativePathFromRoot ?? null);
+      if (!previous || !current || (previous !== current && !(current.isSameEntry && await current.isSameEntry(previous)))) continue;
+    }
+    if (fileIdentity && await isIndependentStoredPdf(aliasRoot, alias.relativePathFromRoot, rootHandle, fileIdentity.relativePathFromRoot)) continue;
+    const relativeParts = parts[0] === aliasRoot.name ? parts.slice(1) : parts;
+    if (relativeParts.some(part => part === '..' || part === '.' || part.includes(':'))) continue;
     if (relativeParts.length === 0) {
       continue;
     }
 
     try {
-      let current = rootHandle;
+      let current = aliasRoot;
       for (let index = 0; index < relativeParts.length - 1; index += 1) {
         current = await current.getDirectoryHandle(relativeParts[index]);
       }
       const fileHandle = await current.getFileHandle(relativeParts[relativeParts.length - 1]);
+      throwIfRestorationCancelled(signal);
+      const file = await fileHandle.getFile();
+      throwIfRestorationCancelled(signal);
+      const annotationFile = deserializeAnnotationFile(await file.text());
+      throwIfRestorationCancelled(signal);
+      if (!annotationFile) throw new Error(`Invalid annotation sidecar: ${alias.fileId}.json`);
+      // Relative aliases can resolve in a different workspace. The sidecar's
+      // stable identity must agree before it can be mirrored into this root.
+      if (annotationFile.documentId !== alias.documentId) continue;
       return {
+        rootHandle: aliasRoot,
         fileHandle,
+        annotationFile,
         source: {
           workspaceKey: alias.workspaceKey,
           sourcePath: normalizedSourcePath,
@@ -521,8 +531,9 @@ async function tryResolveRegistryAnnotationMatch(
           updatedAt: alias.updatedAt,
         },
       };
-    } catch {
+    } catch (error) {
       // Alias not available from this root; try next alias.
+      if (!isMissingAnnotationEntry(error)) throw error;
     }
   }
 
@@ -534,20 +545,60 @@ export async function loadAnnotationsForFileIdentity(input: {
   fileIdentity: FileIdentity;
   workspaceKey: string | null;
   fileType?: AnnotationFileType;
+  preferredDocumentId?: string | null;
+  preserveSourceRoot?: boolean;
+  signal?: AbortSignal;
 }): Promise<{
   annotationFile: UniversalAnnotationFile;
   source: AnnotationSourceRecord | null;
+  storageRootHandle?: FileSystemDirectoryHandle;
 }> {
+  throwIfRestorationCancelled(input.signal);
   const fileType = input.fileType ?? 'unknown';
+  const fileIdCandidates = Array.from(new Set([
+    input.preferredDocumentId,
+    input.fileIdentity.primaryFileId,
+    ...resolveAnnotationFileCandidates(
+      input.fileIdentity.fileName,
+      input.fileIdentity.relativePathFromRoot ?? undefined,
+      null,
+      input.rootHandle.name,
+    ),
+  ].filter((candidate): candidate is string => Boolean(candidate))));
 
   try {
     const annotationsDir = await ensureAnnotationsDirectory(input.rootHandle);
-    const currentMatch = await loadAnnotationFileHandleFromDirectory(annotationsDir, input.fileIdentity.fileIdCandidates);
+    throwIfRestorationCancelled(input.signal);
+    const currentMatch = await loadAnnotationFileHandleFromDirectory(annotationsDir, fileIdCandidates);
+    throwIfRestorationCancelled(input.signal);
     if (currentMatch) {
       const file = await currentMatch.fileHandle.getFile();
+      throwIfRestorationCancelled(input.signal);
       const content = await file.text();
+      throwIfRestorationCancelled(input.signal);
       const parsed = deserializeAnnotationFile(content);
+      if (!parsed) throw new Error(`Invalid annotation sidecar: ${currentMatch.fileId}.json`);
       if (parsed) {
+        // Recover a legacy empty cross-root record only when its document id
+        // differs from the established owner. A deliberately cleared document
+        // must not have its old annotations resurrected.
+        if (input.preserveSourceRoot && parsed.annotations.length === 0) {
+          const aliases = input.fileIdentity.fileFingerprint ? await findAnnotationRegistryFingerprintAliases(input.fileIdentity.fileFingerprint) : [];
+          throwIfRestorationCancelled(input.signal);
+          const recoveries = new Map<string, NonNullable<Awaited<ReturnType<typeof tryResolveRegistryAnnotationMatch>>>>();
+          for (const alias of aliases.filter(alias => alias.documentId !== parsed.documentId)) {
+            const candidate = await tryResolveRegistryAnnotationMatch(input.rootHandle, [alias], input.signal, input.workspaceKey, input.fileIdentity, true);
+            if (candidate?.annotationFile.annotations.length) recoveries.set(candidate.annotationFile.documentId, candidate);
+          }
+          if (recoveries.size === 1) {
+            const recovered = [...recoveries.values()][0];
+            await removeAnnotationDocumentAliases({ documentId: parsed.documentId,
+              canonicalPath: input.fileIdentity.canonicalPath, workspaceKey: input.workspaceKey });
+            throwIfRestorationCancelled(input.signal);
+            return { annotationFile: recovered.annotationFile, storageRootHandle: recovered.rootHandle,
+              source: buildAnnotationSourceRecord({ documentId: recovered.annotationFile.documentId, ...recovered.source }) };
+          }
+        }
         const normalized = normalizeLoadedAnnotationFile({
           annotationFile: parsed,
           canonicalFileId: input.fileIdentity.primaryFileId,
@@ -563,6 +614,7 @@ export async function loadAnnotationsForFileIdentity(input: {
             rootHandle: input.rootHandle,
             currentFileId: input.fileIdentity.primaryFileId,
           });
+          throwIfRestorationCancelled(input.signal);
         }
         await registerCurrentRootAnnotationLocation({
           documentId: normalized.documentId,
@@ -570,14 +622,15 @@ export async function loadAnnotationsForFileIdentity(input: {
           workspaceKey: input.workspaceKey,
           fileId: input.fileIdentity.primaryFileId,
         });
+        throwIfRestorationCancelled(input.signal);
         return {
           annotationFile: normalized,
           source: buildAnnotationSourceRecord({
             documentId: normalized.documentId,
             workspaceKey: input.workspaceKey,
-            sourcePath: `${ANNOTATIONS_DIR}/${currentMatch.fileId}.json`,
+            sourcePath: `${ANNOTATIONS_DIR}/${input.fileIdentity.primaryFileId}.json`,
             sourceKind: "current-root",
-            fileId: currentMatch.fileId,
+            fileId: input.fileIdentity.primaryFileId,
             canonicalPath: input.fileIdentity.canonicalPath,
             relativePathFromRoot: input.fileIdentity.relativePathFromRoot,
             fileFingerprint: input.fileIdentity.fileFingerprint,
@@ -586,8 +639,9 @@ export async function loadAnnotationsForFileIdentity(input: {
         };
       }
     }
-  } catch {
+  } catch (error) {
     // Fall through to registry / nested recovery.
+    if (!isMissingAnnotationEntry(error)) throw error;
   }
 
   const registryMatchCandidate = await resolveAnnotationRegistryMatch({
@@ -595,12 +649,30 @@ export async function loadAnnotationsForFileIdentity(input: {
     versionFingerprint: input.fileIdentity.versionFingerprint,
     canonicalPath: input.fileIdentity.canonicalPath,
   });
-  const registryMatch = await tryResolveRegistryAnnotationMatch(input.rootHandle, registryMatchCandidate.aliases);
+  throwIfRestorationCancelled(input.signal);
+  let registryMatch = await tryResolveRegistryAnnotationMatch(input.rootHandle, registryMatchCandidate.aliases, input.signal, input.workspaceKey, input.fileIdentity);
+  if (!registryMatch && input.preserveSourceRoot && input.fileIdentity.fileFingerprint) {
+    // Independent identical copies make the fingerprint index ambiguous. Keep
+    // only physically compatible document groups; never choose between two
+    // missing owners merely because their bytes match.
+    const aliases = await findAnnotationRegistryFingerprintAliases(input.fileIdentity.fileFingerprint);
+    const compatible = new Map<string, NonNullable<Awaited<ReturnType<typeof tryResolveRegistryAnnotationMatch>>>>();
+    for (const documentId of new Set(aliases.map(alias => alias.documentId))) {
+      const matched = await tryResolveRegistryAnnotationMatch(input.rootHandle,
+        aliases.filter(alias => alias.documentId === documentId), input.signal, input.workspaceKey, input.fileIdentity);
+      if (matched) compatible.set(documentId, matched);
+    }
+    if (compatible.size === 1) registryMatch = compatible.values().next().value ?? null;
+  }
+  throwIfRestorationCancelled(input.signal);
   if (registryMatch) {
     try {
-      const file = await registryMatch.fileHandle.getFile();
-      const parsed = deserializeAnnotationFile(await file.text());
+      const parsed = registryMatch.annotationFile;
       if (parsed) {
+        if (input.preserveSourceRoot) {
+          return { annotationFile: parsed, storageRootHandle: registryMatch.rootHandle,
+            source: buildAnnotationSourceRecord({ documentId: parsed.documentId, ...registryMatch.source }) };
+        }
         const normalized = normalizeLoadedAnnotationFile({
           annotationFile: parsed,
           canonicalFileId: input.fileIdentity.primaryFileId,
@@ -612,12 +684,14 @@ export async function loadAnnotationsForFileIdentity(input: {
           rootHandle: input.rootHandle,
           currentFileId: input.fileIdentity.primaryFileId,
         });
+        throwIfRestorationCancelled(input.signal);
         await registerCurrentRootAnnotationLocation({
           documentId: normalized.documentId,
           fileIdentity: input.fileIdentity,
           workspaceKey: input.workspaceKey,
           fileId: input.fileIdentity.primaryFileId,
         });
+        throwIfRestorationCancelled(input.signal);
         return {
           annotationFile: normalized,
           source: buildAnnotationSourceRecord({
@@ -626,20 +700,25 @@ export async function loadAnnotationsForFileIdentity(input: {
           }),
         };
       }
-    } catch {
+    } catch (error) {
       // Ignore stale registry alias.
+      if (!isMissingAnnotationEntry(error)) throw error;
     }
   }
 
   const nestedMatch = await findNestedAnnotationMatch(
     input.rootHandle,
-    input.fileIdentity.fileIdCandidates,
     input.workspaceKey,
+    input.fileIdentity.relativePathFromRoot,
   );
+  throwIfRestorationCancelled(input.signal);
   if (nestedMatch) {
     try {
       const file = await nestedMatch.fileHandle.getFile();
+      throwIfRestorationCancelled(input.signal);
       const parsed = deserializeAnnotationFile(await file.text());
+      throwIfRestorationCancelled(input.signal);
+      if (!parsed) throw new Error(`Invalid annotation sidecar: ${nestedMatch.source.fileId}.json`);
       if (parsed) {
         const normalized = normalizeLoadedAnnotationFile({
           annotationFile: parsed,
@@ -651,12 +730,14 @@ export async function loadAnnotationsForFileIdentity(input: {
           rootHandle: input.rootHandle,
           currentFileId: input.fileIdentity.primaryFileId,
         });
+        throwIfRestorationCancelled(input.signal);
         await registerCurrentRootAnnotationLocation({
           documentId: normalized.documentId,
           fileIdentity: input.fileIdentity,
           workspaceKey: input.workspaceKey,
           fileId: input.fileIdentity.primaryFileId,
         });
+        throwIfRestorationCancelled(input.signal);
         return {
           annotationFile: normalized,
           source: buildAnnotationSourceRecord({
@@ -665,8 +746,9 @@ export async function loadAnnotationsForFileIdentity(input: {
           }),
         };
       }
-    } catch {
+    } catch (error) {
       // Ignore nested source failure.
+      if (!isMissingAnnotationEntry(error)) throw error;
     }
   }
 
@@ -674,7 +756,7 @@ export async function loadAnnotationsForFileIdentity(input: {
     annotationFile: createUniversalAnnotationFile(
       input.fileIdentity.primaryFileId,
       fileType,
-      input.fileIdentity.primaryFileId,
+      input.preferredDocumentId ?? input.fileIdentity.primaryFileId,
     ),
     source: null,
   };
@@ -682,7 +764,8 @@ export async function loadAnnotationsForFileIdentity(input: {
 
 /**
  * Loads annotations for a file from disk
- * Returns empty annotation file if not found or corrupted
+ * Returns an empty file only when the sidecar does not exist.
+ * Read and validation failures propagate so callers cannot overwrite lost data.
  * 
  * @param fileId - The file ID to load annotations for
  * @param rootHandle - Root directory handle
@@ -709,9 +792,7 @@ export async function loadAnnotationsFromDisk(
         return annotationFile;
       }
       
-      // File exists but is corrupted - return empty
-      console.warn(`Corrupted annotation file for ${fileId}, starting fresh`);
-      return createUniversalAnnotationFile(fileId, fileType);
+      throw new Error(`Invalid annotation sidecar: ${fileName}`);
     } catch (error) {
       // File doesn't exist - return empty
       if (error instanceof DOMException && error.name === 'NotFoundError') {
@@ -720,8 +801,8 @@ export async function loadAnnotationsFromDisk(
       throw error;
     }
   } catch (error) {
-    console.error('Failed to load annotations:', error);
-    return createUniversalAnnotationFile(fileId, fileType);
+    if (isMissingAnnotationEntry(error)) return createUniversalAnnotationFile(fileId, fileType);
+    throw error;
   }
 }
 
@@ -817,7 +898,7 @@ export async function moveAnnotationSidecar(
   newPath: string,
   fileType: AnnotationFileType = "unknown",
 ): Promise<void> {
-  const oldCandidates = resolveAnnotationFileCandidates(oldPath.split("/").pop() ?? oldPath, oldPath);
+  const oldCandidates = resolveAnnotationFileCandidates(oldPath.split("/").pop() ?? oldPath, oldPath, null, rootHandle.name);
   const current = await loadAnnotationFileFromCurrentRootCandidates(rootHandle, oldCandidates);
   if (!current) {
     return;
@@ -829,7 +910,8 @@ export async function moveAnnotationSidecar(
     fileId: nextFileId,
     fileType: current.fileType || fileType,
   }, rootHandle);
-  await deleteAnnotationCandidatesFromCurrentRoot(rootHandle, oldCandidates);
+  // Remove only the matched old file, never every historical suffix candidate.
+  if (current.fileId !== nextFileId) await deleteAnnotationsFromDisk(current.fileId, rootHandle);
 }
 
 export async function copyAnnotationSidecar(
@@ -838,7 +920,7 @@ export async function copyAnnotationSidecar(
   targetPath: string,
   fileType: AnnotationFileType = "unknown",
 ): Promise<void> {
-  const sourceCandidates = resolveAnnotationFileCandidates(sourcePath.split("/").pop() ?? sourcePath, sourcePath);
+  const sourceCandidates = resolveAnnotationFileCandidates(sourcePath.split("/").pop() ?? sourcePath, sourcePath, null, rootHandle.name);
   const current = await loadAnnotationFileFromCurrentRootCandidates(rootHandle, sourceCandidates);
   if (!current) {
     return;
@@ -857,7 +939,7 @@ export async function deleteAnnotationSidecarsForPath(
   rootHandle: FileSystemDirectoryHandle,
   filePath: string,
 ): Promise<void> {
-  const candidates = resolveAnnotationFileCandidates(filePath.split("/").pop() ?? filePath, filePath);
+  const candidates = resolveAnnotationFileCandidates(filePath.split("/").pop() ?? filePath, filePath, null, rootHandle.name);
   await deleteAnnotationCandidatesFromCurrentRoot(rootHandle, candidates);
 }
 

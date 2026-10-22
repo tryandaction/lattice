@@ -22,6 +22,14 @@ const settings: AiRuntimeSettings = {
 };
 
 describe('research-agent-planner-provider', () => {
+  it('reports the routed model output ceiling to bounded answer recovery', () => {
+    const selection = routeModelMock.getMockImplementation()!();
+    selection.provider.getMaxOutputTokens = vi.fn(() => 8192);
+    routeModelMock.mockReturnValue(selection);
+    const adapter = createResearchAgentPlannerGenerate({ ...settings, maxTokens: 128000 });
+    expect(adapter.maxOutputTokens).toBe(8192);
+    expect(selection.provider.getMaxOutputTokens).toHaveBeenCalledWith('gpt-planner');
+  });
   beforeEach(() => {
     generateMock.mockReset();
     routeModelMock.mockReset();
@@ -68,7 +76,7 @@ describe('research-agent-planner-provider', () => {
         maxTokens: 600,
       }),
     );
-    expect(result).toEqual({ text: '{"steps":[]}' });
+    expect(result).toEqual({ text: '{"steps":[]}', model: 'gpt-planner' });
     expect(adapter.modelInfo.providerName).toBe('OpenAI');
     expect(adapter.policy.taskType).toBe('task_proposal');
   });
@@ -89,9 +97,22 @@ describe('research-agent-planner-provider', () => {
       expect.objectContaining({
         model: 'gpt-planner',
         temperature: 0.2,
-        maxTokens: 1200,
+        maxTokens: 4000,
       }),
     );
+  });
+
+  it('retains answer usage and content-free diagnostics for the executor and trace', async () => {
+    const response = {
+      text: '', model: 'gpt-planner', finishReason: 'length' as const,
+      usage: { promptTokens: 120, completionTokens: 1600, totalTokens: 1720 },
+      responseDiagnostics: { protocol: 'anthropic-messages' as const, mode: 'response' as const, blockTypes: ['thinking'], visibleCharacters: 0, stopReason: 'max_tokens' },
+    };
+    generateMock.mockResolvedValue(response);
+    const diagnostics = vi.fn();
+    const result = await createResearchAgentPlannerGenerate(settings).generateAnswer([{ role: 'user', content: 'Explain.' }], { onResponseDiagnostics: diagnostics });
+    expect(result).toEqual(response);
+    expect(generateMock.mock.calls[0][1].onResponseDiagnostics).toBe(diagnostics);
   });
 
   it('supports custom task routing and propagates provider errors to the planner runner', async () => {

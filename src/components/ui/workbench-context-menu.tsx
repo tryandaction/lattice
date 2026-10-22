@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { UI_LAYER_CLASS } from "@/lib/ui-layers";
 import { cn } from "@/lib/utils";
 import { positionAnchoredMenu, positionCursorMenu } from "@/lib/menu-positioning";
 
@@ -162,49 +164,57 @@ export function WorkbenchContextMenu({
     );
   };
 
-  return (
+  const menu = (
     <>
-    <div
-      ref={menuRef}
-      className={cn(
-        "fixed z-50 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg overflow-y-auto overscroll-contain",
-        minWidthClassName
-      )}
-      style={{ left: x, top: y, maxHeight: maxHeight ? `${maxHeight}px` : undefined }}
-      role="menu"
-    >
-      {actions.map((action) => (
-        <div key={action.id} onPointerEnter={(event) => openSubmenu(action, event.currentTarget.querySelector('button') ?? event.currentTarget, 0)}>
-          {action.separatorBefore && <div className="my-1 h-px bg-border" />}
-          {renderActionButton(action, 0)}
-        </div>
-      ))}
-    </div>
-    {submenuStates.map((submenuState, index) => (
       <div
-        key={`${submenuState.action.id}-${index}`}
-        ref={(element) => {
-          submenuRefs.current[index] = element;
-        }}
+        ref={menuRef}
         className={cn(
-          "fixed z-50 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg overflow-y-auto overscroll-contain",
+          "fixed rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg overflow-y-auto overscroll-contain",
+          UI_LAYER_CLASS.chromeMenu,
           minWidthClassName
         )}
-        style={{
-          left: submenuLayout[index] ? `${submenuLayout[index]?.left}px` : -9999,
-          top: submenuLayout[index] ? `${submenuLayout[index]?.top}px` : -9999,
-          maxHeight: submenuLayout[index]?.maxHeight ? `${submenuLayout[index]?.maxHeight}px` : undefined,
-        }}
+        style={{ left: x, top: y, maxHeight: maxHeight ? `${maxHeight}px` : undefined }}
         role="menu"
       >
-        {submenuState.action.children?.map((child) => (
-          <div key={child.id} onPointerEnter={(event) => openSubmenu(child, event.currentTarget.querySelector('button') ?? event.currentTarget, index + 1)}>
-            {child.separatorBefore && <div className="my-1 h-px bg-border" />}
-            {renderActionButton(child, index + 1)}
+        {actions.map((action) => (
+          <div key={action.id} onPointerEnter={(event) => openSubmenu(action, event.currentTarget.querySelector('button') ?? event.currentTarget, 0)}>
+            {action.separatorBefore && <div className="my-1 h-px bg-border" />}
+            {renderActionButton(action, 0)}
           </div>
         ))}
       </div>
-    ))}
+      {submenuStates.map((submenuState, index) => (
+        <div
+          key={`${submenuState.action.id}-${index}`}
+          ref={(element) => {
+            submenuRefs.current[index] = element;
+          }}
+          className={cn(
+            "fixed rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg overflow-y-auto overscroll-contain",
+            UI_LAYER_CLASS.chromeMenu,
+            minWidthClassName
+          )}
+          style={{
+            left: submenuLayout[index] ? `${submenuLayout[index]?.left}px` : -9999,
+            top: submenuLayout[index] ? `${submenuLayout[index]?.top}px` : -9999,
+            maxHeight: submenuLayout[index]?.maxHeight ? `${submenuLayout[index]?.maxHeight}px` : undefined,
+          }}
+          role="menu"
+        >
+          {submenuState.action.children?.map((child) => (
+            <div key={child.id} onPointerEnter={(event) => openSubmenu(child, event.currentTarget.querySelector('button') ?? event.currentTarget, index + 1)}>
+              {child.separatorBefore && <div className="my-1 h-px bg-border" />}
+              {renderActionButton(child, index + 1)}
+            </div>
+          ))}
+        </div>
+      ))}
     </>
   );
+
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(menu, document.body);
 }

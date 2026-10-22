@@ -322,6 +322,10 @@ export function shouldRevealAt(
         }
         return false; // Show as widget when cursor is outside
       }
+
+      if (elementType === ElementType.INLINE_IMAGE) {
+        return !selection.empty && selection.from <= from && selection.to >= to;
+      }
     }
 
     // Check if cursor is inside the range

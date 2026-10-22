@@ -8,11 +8,14 @@
 
 **Tech Stack:** React 19, Next.js 16, Tauri 2, Zustand stores, Vitest/JSDOM, existing Lattice `ResizablePanelGroup`, `AppLayout`, `AiChatPanel`, and settings stores.
 
+**Current status (2026-08-04):** The desktop AI dock resize path is verified end to end and covered at both AppLayout and controlled-layout rebuild levels. Real-browser checks confirm that desktop and 1280px-wide layouts can be dragged and preserve the selected width after refresh. The AI Workspace Shell Phase 1 is also implemented: chat remains primary, the status strip is always visible, and Memory/Trace/Evidence/Workbench are collapsed-by-default inspector tabs. These UI changes do not expand Tool Broker permissions or add direct write, shell, network, MCP, autonomous coding, or git execution.
+
 ---
 
 ## Root-Cause Notes
 
 - The real AI dock path is `AppLayout` -> `ResizablePanelGroup` -> `ResizableHandle` -> `resolveDesktopWorkbenchResize()` -> `setDesktopAiPanelSize()` -> `persistAiPanelSize()`.
+- The remaining real-browser failure was in `fitRightPanelsToAvailableSpace()`: when the requested right-panel widths already fit, it still distributed unused capacity and expanded a user-resized AI dock back toward its maximum. The layout now preserves requested widths unchanged when they fit and only scales them down when the right panels exceed available space.
 - Prior isolated tests only proved the handle can resize when the test manually sets `parentElement.offsetWidth = 1000`.
 - In the product, drag can fail if:
   - pointer movement is intercepted by PDF/canvas/editor surfaces before the portal drag shield receives events;
@@ -154,11 +157,15 @@ Each state must assert:
 - `resolveDesktopWorkbenchResize()` maps changed sizes back to `aiPanelSize`;
 - AI size is clamped but still moves across the practical range.
 
-- [ ] **Step 2: Add AppLayout-level smoke if existing mocks permit**
+- [x] **Step 2: Add AppLayout-level smoke if existing mocks permit**
 
 Render `AppLayout` with desktop viewport, settings initialized with `aiPanelOpen: true`, then drag the AI separator using `window.pointerMove`.
 
 Expected: `updateSetting("aiPanelWidth", next)` is eventually called.
+
+Implemented in `src/components/layout/__tests__/app-layout-ai-dock.test.tsx`. The test renders the real AppLayout desktop composition, drags the separator identified by `aria-label="Resize AI workspace"`, and verifies that a bounded changed width reaches settings persistence.
+
+The desktop layout helper also rebuilds from the persisted value in a regression test. This prevents a transient `updateSetting("aiPanelWidth", next)` call from passing while the controlled composition silently expands AI back to its previous maximum.
 
 ## Task 4: AI Chat Context Foundation
 

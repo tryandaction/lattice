@@ -3,9 +3,11 @@
  * Handles completion requests with caching and debouncing
  */
 
-import { getDefaultProvider } from './providers';
+import { getDefaultProvider, getProfileProvider } from './providers';
 import type { AiMessage } from './types';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useAiProviderProfileStore } from '@/stores/ai-provider-profile-store';
+import { getProfileDefaultModel } from './provider-profiles';
 import { evaluateAiUsagePolicy } from './usage-policy';
 
 interface CompletionCacheEntry {
@@ -57,8 +59,15 @@ export async function requestCompletion(
     return cached.text;
   }
 
-  const provider = getDefaultProvider();
-  if (!provider || !provider.isConfigured()) return null;
+  const settings = useSettingsStore.getState().settings;
+  const profileState = useAiProviderProfileStore.getState();
+  const activeProfile = profileState.profiles.find((profile) => profile.id === profileState.activeProfileId) ?? null;
+  const profileProvider = activeProfile ? getProfileProvider(activeProfile.id) : null;
+  if (activeProfile && !activeProfile.enabled) return null;
+  if (activeProfile && !profileProvider?.isConfigured()) return null;
+  const provider = profileProvider?.isConfigured() ? profileProvider : getDefaultProvider();
+  const model = activeProfile ? getProfileDefaultModel(activeProfile) : settings.aiModel;
+  if (!provider || !provider.isConfigured() || !model) return null;
 
   const messages: AiMessage[] = [
     {
@@ -71,7 +80,6 @@ export async function requestCompletion(
     },
   ];
 
-  const settings = useSettingsStore.getState().settings;
   const usageDecision = evaluateAiUsagePolicy({
     category: 'automatic-inline-completion',
     settings,
@@ -84,6 +92,7 @@ export async function requestCompletion(
 
   try {
     const result = await provider.generate(messages, {
+      model,
       temperature: 0.2,
       maxTokens: 150,
       signal,

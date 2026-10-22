@@ -528,6 +528,10 @@ const REGEX_PATTERNS = {
   inlineMath: /(?<!\$)\$(?!\$)([^\n$]+?)\$(?!\$)/g,
   // Inline math: \( ... \) - exclude newlines
   inlineMathParen: /\\\(([^\n]+?)\\\)/g,
+  // Inline/display math delimiters on a single line: \[ ... \]
+  inlineMathBracket: /\\\[([^\n]+?)\\\]/g,
+  // Single-line LaTeX environments: \begin{matrix} ... \end{matrix}
+  inlineMathEnv: /\\begin\{([A-Za-z][A-Za-z0-9*]*)\}([^\n]+?)\\end\{\1\}/g,
 
   // Bold+Italic: ***text*** - allows nested content
   boldItalic: /\*\*\*(.+?)\*\*\*/g,
@@ -2567,7 +2571,63 @@ function parseInlineElements(
     });
   }
 
-  // 2. 行内公式: $...$
+  // 2. 行内/展示公式: \[ ... \]
+  while ((match = REGEX_PATTERNS.inlineMathBracket.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    const endMarkerIndex = match.index + match[0].length - 2; // backslash before ]
+    if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
+
+    const latex = match[1];
+    if (!latex || latex.trim() === '' || latex === 'undefined' || latex === 'null') {
+      logger.debug('Invalid latex for inline math (bracket)', { position: lineFrom + match.index, latex, context: 'parseInlineElements' });
+      continue;
+    }
+
+    elements.push({
+      type: ElementType.MATH_INLINE,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      latex,
+      isBlock: false,
+      decorationData: {
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index + 2,
+        contentTo: lineFrom + match.index + match[0].length - 2,
+      },
+    });
+  }
+
+  // 3. 行内 LaTeX 环境: \begin{...}...\end{...}
+  while ((match = REGEX_PATTERNS.inlineMathEnv.exec(lineText)) !== null) {
+    const startIndex = match.index;
+    const endMarkerIndex = match.index + match[0].length - (`\\end{${match[1]}}`.length);
+    if (shouldSkipMatch(startIndex, endMarkerIndex)) continue;
+
+    const latex = match[0];
+    if (!match[2] || match[2].trim() === '') {
+      logger.debug('Invalid latex for inline math (env)', { position: lineFrom + match.index, latex, context: 'parseInlineElements' });
+      continue;
+    }
+
+    elements.push({
+      type: ElementType.MATH_INLINE,
+      from: lineFrom + match.index,
+      to: lineFrom + match.index + match[0].length,
+      lineNumber: lineNum,
+      latex,
+      isBlock: false,
+      decorationData: {
+        syntaxFrom: lineFrom + match.index,
+        syntaxTo: lineFrom + match.index + match[0].length,
+        contentFrom: lineFrom + match.index,
+        contentTo: lineFrom + match.index + match[0].length,
+      },
+    });
+  }
+
+  // 4. 行内公式: $...$
   while ((match = REGEX_PATTERNS.inlineMath.exec(lineText)) !== null) {
     const startIndex = match.index;
     const endMarkerIndex = match.index + match[0].length - 1;
@@ -2599,7 +2659,7 @@ function parseInlineElements(
     });
   }
 
-  // 3. 粗体+斜体: ***...***
+  // 5. 粗体+斜体: ***...***
   while ((match = REGEX_PATTERNS.boldItalic.exec(lineText)) !== null) {
     const startIndex = match.index;
     const endMarkerIndex = match.index + match[0].length - 3;

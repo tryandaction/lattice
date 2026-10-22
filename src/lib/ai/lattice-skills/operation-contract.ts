@@ -91,21 +91,21 @@ export const LATTICE_OPERATION_CONTRACTS: Record<LatticeOperationContractId, Lat
   'pdf-item-workspace': {
     id: 'pdf-item-workspace',
     title: 'PDF Item Workspace',
-    owner: 'pdf-thread',
-    status: 'reserved',
+    owner: 'ai-agent-thread',
+    status: 'approval-gated',
     requiredTools: ['lattice.resolvePathIdentity'],
     requiredCapabilities: ['lattice_read_identity', 'lattice_create_pdf_item'],
-    summary: 'PDF item workspaces are manifest-managed child workspaces under .lattice/items and remain reserved for the PDF implementation thread.',
+    summary: 'PDF item workspaces use stable manifests and executable reviewed child proposals for Markdown, code, Notebook and text data files.',
     rules: [
       'Current PDF item manifests are version 4 manifest.json files under .lattice/items/<generated-file-id>/ with itemId, pdfPath, itemFolderPath, annotationIndexPath, knownPdfPaths, fileFingerprint, and versionFingerprint.',
       'Annotation indexes for PDF items use _annotations.md inside the item folder, and notebooks store latticePdfItem metadata plus a relative Source PDF link.',
-      'Future PDF item creation must reuse pdf-item.ts services such as ensurePdfItemWorkspace and manifest index helpers.',
+      'PDF item creation reuses pdf-item.ts services and binds stable itemId, parent content revision, target content snapshot and workspace permission before review.',
       'Reading notes, notebooks, and annotation indexes inside a PDF item workspace must preserve existing files and generate unique child document names when needed.',
     ],
     prohibitions: [
       'Do not manually create .lattice/items folders or manifest.json files from a prompt-only plan.',
       'Do not migrate or delete legacy PDF item folders outside the dedicated PDF service path.',
-      'Do not expose PDF item write tools in the current AI Agent thread.',
+      'Do not expose proposal apply or review approval to a model tool bridge; apply only the specific user-reviewed content and target through the write guard.',
     ],
   },
   'pdf-annotation-sidecar': {

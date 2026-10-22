@@ -33,6 +33,32 @@ function Fixture({
   return null;
 }
 
+function UnstableFixture({
+  onTrigger,
+  active = false,
+}: {
+  onTrigger: () => void;
+  active?: boolean;
+}) {
+  usePaneCommandBar({
+    paneId: "pane-test",
+    scopeId: "pane-test::tab-1",
+    state: {
+      breadcrumbs: [{ label: "paper.pdf" }],
+      actions: [
+        {
+          id: "search",
+          label: "Search",
+          active,
+          onTrigger,
+        },
+      ],
+    },
+  });
+
+  return null;
+}
+
 describe("usePaneCommandBar", () => {
   afterEach(() => {
     useWorkspaceStore.getState().clearCommandBarState("pane-test");
@@ -81,5 +107,51 @@ describe("usePaneCommandBar", () => {
     expect(useWorkspaceStore.getState().commandBarByPane["pane-test"]?.scopeId).toBe("pane-test::tab-2");
 
     second.unmount();
+  });
+
+  it("keeps the registered command bar stable across presentation-equivalent renders", async () => {
+    const firstTrigger = vi.fn();
+    const secondTrigger = vi.fn();
+    const { rerender, unmount } = render(<UnstableFixture onTrigger={firstTrigger} />);
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().commandBarByPane["pane-test"]).toBeDefined();
+    });
+    const firstRegisteredState = useWorkspaceStore.getState().commandBarByPane["pane-test"];
+
+    rerender(<UnstableFixture onTrigger={secondTrigger} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(useWorkspaceStore.getState().commandBarByPane["pane-test"]).toBe(firstRegisteredState);
+
+    act(() => {
+      useWorkspaceStore.getState().commandBarByPane["pane-test"].actions[0].onTrigger?.();
+    });
+
+    expect(firstTrigger).not.toHaveBeenCalled();
+    expect(secondTrigger).toHaveBeenCalledTimes(1);
+
+    unmount();
+  });
+
+  it("re-registers the command bar when visible presentation changes", async () => {
+    const onTrigger = vi.fn();
+    const { rerender, unmount } = render(<UnstableFixture onTrigger={onTrigger} active={false} />);
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().commandBarByPane["pane-test"]).toBeDefined();
+    });
+    const firstRegisteredState = useWorkspaceStore.getState().commandBarByPane["pane-test"];
+
+    rerender(<UnstableFixture onTrigger={onTrigger} active />);
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().commandBarByPane["pane-test"]).not.toBe(firstRegisteredState);
+      expect(useWorkspaceStore.getState().commandBarByPane["pane-test"].actions[0].active).toBe(true);
+    });
+
+    unmount();
   });
 });

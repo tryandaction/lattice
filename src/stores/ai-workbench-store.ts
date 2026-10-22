@@ -263,8 +263,8 @@ export const useAiWorkbenchStore = create<AiWorkbenchState & AiWorkbenchActions>
         return;
       }
       set({
-        drafts: saved.drafts ?? [],
-        proposals: (saved.proposals ?? []).map(normalizeProposal),
+        drafts: [...(saved.drafts ?? []).filter(draft => !get().drafts.some(current => current.id === draft.id)), ...get().drafts],
+        proposals: [...(saved.proposals ?? []).map(normalizeProposal).filter(proposal => !get().proposals.some(current => current.id === proposal.id)), ...get().proposals],
         highlightedProposalId: null,
       });
     } catch (error) {

@@ -53,6 +53,20 @@ describe("OnboardingWizard visibility", () => {
     settingsState.completeOnboarding.mockClear();
   });
 
+  it("yields to cloud confirmation and resumes onboarding after the cloud dialog closes", async () => {
+    settingsState.isInitialized = true;
+    const { rerender } = render(<OnboardingWizard blocked />);
+    await act(async () => { vi.advanceTimersByTime(200); });
+    expect(screen.queryByText("onboarding.welcome")).toBeNull();
+    rerender(<OnboardingWizard />);
+    await act(async () => { vi.advanceTimersByTime(100); });
+    expect(screen.getByText("onboarding.welcome")).not.toBeNull();
+    rerender(<OnboardingWizard blocked />);
+    expect(screen.queryByText("onboarding.welcome")).toBeNull();
+    expect(settingsState.completeOnboarding).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it("stays hidden before settings are initialized and hides after onboarding completes", async () => {
     const { rerender } = render(<OnboardingWizard />);
 

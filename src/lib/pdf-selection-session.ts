@@ -1,4 +1,4 @@
-import type { BoundingBox, ImageAnnotationPreview, PdfQuad, PdfTextQuote, PdfTextQuoteSource } from "@/types/universal-annotation";
+import type { BoundingBox, ImageAnnotationPreview, PdfFormulaAnnotation, PdfQuad, PdfTextQuote, PdfTextQuoteSource } from "@/types/universal-annotation";
 
 export type PdfSelectionPhase =
   | "idle"
@@ -31,6 +31,11 @@ export interface PdfTransientSelectionRect {
 }
 
 export interface PdfCanonicalSelection {
+  readingOrder?: boolean;
+  formula?: PdfFormulaAnnotation;
+  formulaPreview?: ImageAnnotationPreview;
+  /** Page-local anchors for one selection spanning several rendered pages. */
+  pageSelections?: PdfCanonicalSelection[];
   pageNumber: number;
   startOffset: number;
   endOffset: number;
@@ -149,7 +154,7 @@ export function createPdfSelectionSnapshot(input: {
     },
     viewportRects: sortSelectionRects(input.selection.viewportRects),
     overlayRectsByPage,
-    pageNumbers: [input.selection.pageNumber],
+    pageNumbers: input.selection.pageSelections?.map(page => page.pageNumber) ?? [input.selection.pageNumber],
     signature: input.signature,
   };
 }

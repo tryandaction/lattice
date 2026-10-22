@@ -3,9 +3,17 @@
  */
 
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { JupyterRenderer } from "../jupyter-renderer";
+import { useSettingsStore } from "@/stores/settings-store";
+import { useVSCodeCompatStore } from "@/stores/vscode-compat-store";
+import { useVSCodeExtensionHostStore } from "@/stores/vscode-extension-host-store";
+import { createDefaultVSCodeWorkbenchSettings } from "@/lib/vscode-compat/mapper";
+
+const outputArea = vi.hoisted(() => vi.fn(({ outputs }: { outputs: Array<{ type: string }> }) => (
+  <div data-testid="output-area" data-output-types={outputs.map((output) => output.type).join(",")} />
+)));
 
 vi.mock("../markdown-renderer", () => ({
   MarkdownRenderer: ({ content }: { content: string }) => (
@@ -26,7 +34,7 @@ vi.mock("react-syntax-highlighter/dist/esm/styles/prism", () => ({
 }));
 
 vi.mock("@/components/notebook/output-area", () => ({
-  OutputArea: () => <div data-testid="output-area" />,
+  OutputArea: outputArea,
 }));
 
 vi.mock("@/components/ai/selection-context-menu", () => ({
@@ -76,6 +84,35 @@ vi.mock("@/hooks/use-i18n", () => ({
 describe("JupyterRenderer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useSettingsStore.setState({
+      settings: {
+        ...useSettingsStore.getState().settings,
+        vscodeCompatEnabled: false,
+      },
+    });
+    useVSCodeCompatStore.setState({
+      settings: createDefaultVSCodeWorkbenchSettings(),
+      keybindings: [],
+      snippets: [],
+      tasks: [],
+      extensions: [],
+      importedAt: null,
+      sourceLabel: null,
+      warnings: [],
+    });
+    useVSCodeExtensionHostStore.setState({
+      snapshot: {
+        status: "stopped",
+        runtime: "none",
+        commandCount: 0,
+        activeExtensionCount: 0,
+        commands: [],
+        views: [],
+        extensions: [],
+        lastError: null,
+      },
+      openDocument: vi.fn(async () => undefined),
+    } as never);
   });
 
   it("uses notebook metadata language instead of hard-coded python", () => {
@@ -139,5 +176,112 @@ describe("JupyterRenderer", () => {
 
     expect(container.querySelector("[data-testid='jupyter-renderer-root']")?.className).toContain("py-4");
     expect(container.querySelector("[data-testid='jupyter-cell-list']")?.className).toContain("space-y-3");
+  });
+
+  it("adds coding status without taking over imported read-only notebooks", () => {
+    useSettingsStore.setState({
+      settings: {
+        ...useSettingsStore.getState().settings,
+        vscodeCompatEnabled: true,
+      },
+    });
+    useVSCodeCompatStore.setState({
+      settings: createDefaultVSCodeWorkbenchSettings(),
+      keybindings: [],
+      snippets: [],
+      tasks: [],
+      extensions: [
+        { id: "ms-python.python", source: "installed", displayName: "Python" },
+      ],
+      importedAt: 1,
+      sourceLabel: "VS Code",
+      warnings: [],
+    });
+    const content = JSON.stringify({
+      nbformat: 4,
+      nbformat_minor: 5,
+      metadata: {
+        kernelspec: { display_name: "Python 3", language: "python", name: "python3" },
+      },
+      cells: [
+        { cell_type: "code", source: "print('ready')", metadata: {}, outputs: [] },
+      ],
+    });
+
+    render(<JupyterRenderer content={content} fileName="analysis.ipynb" />);
+
+    expect(screen.getByTestId("code-cell").textContent).toContain("print('ready')");
+    expect(screen.getByTestId("jupyter-renderer-root")).toBeTruthy();
+    expect(screen.queryByText(/Open in VS Code/)).toBeNull();
+    expect(screen.queryByLabelText("VS Code activity bar")).toBeNull();
+  });
+
+  it("does not register notebook documents with the removed simulated extension host", async () => {
+    const openDocument = vi.fn(async () => undefined);
+    useSettingsStore.setState({
+      settings: {
+        ...useSettingsStore.getState().settings,
+        vscodeCompatEnabled: true,
+      },
+    });
+    useVSCodeExtensionHostStore.setState({
+      snapshot: {
+        status: "ready",
+        runtime: "node",
+        commandCount: 0,
+        activeExtensionCount: 1,
+        commands: [],
+        views: [],
+        extensions: [],
+        lastError: null,
+      },
+      openDocument,
+    } as never);
+    const content = JSON.stringify({
+      nbformat: 4,
+      nbformat_minor: 5,
+      metadata: {},
+      cells: [],
+    });
+
+    render(<JupyterRenderer content={content} fileName="analysis.ipynb" filePath="C:/workspace/analysis.ipynb" />);
+
+    expect(openDocument).not.toHaveBeenCalled();
+  });
+
+  it("renders notebook error output as native execution output without a compatibility diagnostic", () => {
+    const content = JSON.stringify({
+      nbformat: 4,
+      nbformat_minor: 5,
+      metadata: {},
+      cells: [{
+        cell_type: "code",
+        source: "1 / 0",
+        metadata: {},
+        execution_count: 1,
+        outputs: [{
+          output_type: "error",
+          ename: "ZeroDivisionError",
+          evalue: "division by zero",
+          traceback: ["Traceback (most recent call last):", "ZeroDivisionError: division by zero"],
+        }],
+      }],
+    });
+
+    render(<JupyterRenderer content={content} fileName="errors.ipynb" />);
+
+    expect(screen.getByTestId("output-area").getAttribute("data-output-types")).toBe("error");
+    expect(outputArea).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outputs: [expect.objectContaining({
+          type: "error",
+          errorName: "ZeroDivisionError",
+          errorValue: "division by zero",
+        })],
+        variant: "compact",
+      }),
+      undefined,
+    );
+    expect(screen.queryByText(/extension activation failed/i)).toBeNull();
   });
 });

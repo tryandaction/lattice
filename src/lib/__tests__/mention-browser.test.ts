@@ -11,14 +11,14 @@ describe('createMentionSelectionResult', () => {
     expect(getMentionSelectionStage('notes/paper.md#Method')).toBe('fragments');
   });
 
-  it('turns a file selection into fragment selection mode', () => {
+  it('finishes a whole-file selection without requiring fragments', () => {
     expect(createMentionSelectionResult(
       { type: 'file', value: '@notes/paper.md' },
       'notes/paper.md',
     )).toEqual({
-      value: '@notes/paper.md#',
-      continueSelection: true,
-      nextQuery: 'notes/paper.md#',
+      value: '@notes/paper.md',
+      continueSelection: false,
+      nextQuery: null,
     });
   });
 

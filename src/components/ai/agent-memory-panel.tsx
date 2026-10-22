@@ -10,6 +10,7 @@ import {
   Database,
   Pin,
   PinOff,
+  Pencil,
   X,
   RotateCcw,
   Trash2,
@@ -165,12 +166,14 @@ function recommendationLabelKey(recommendation: AgentMemoryReviewRecommendation)
   }
 }
 
-export function AgentMemoryPanel() {
+export function AgentMemoryPanel({ loadPersisted = true }: { loadPersisted?: boolean } = {}) {
   const { t } = useI18n();
   const entries = useAgentMemoryStore((state) => state.entries);
   const loaded = useAgentMemoryStore((state) => state.loaded);
+  const persistenceError = useAgentMemoryStore((state) => state.persistenceError);
   const loadMemories = useAgentMemoryStore((state) => state.loadMemories);
   const setPinned = useAgentMemoryStore((state) => state.setPinned);
+  const updateMemory = useAgentMemoryStore((state) => state.updateMemory);
   const disableMemory = useAgentMemoryStore((state) => state.disableMemory);
   const deleteMemory = useAgentMemoryStore((state) => state.deleteMemory);
   const restoreMemory = useAgentMemoryStore((state) => state.restoreMemory);
@@ -182,12 +185,15 @@ export function AgentMemoryPanel() {
   const [collapsedWithEntries, setCollapsedWithEntries] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busyApprovalId, setBusyApprovalId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editContent, setEditContent] = useState("");
 
   useEffect(() => {
-    if (!loaded) {
+    if (loadPersisted && !loaded) {
       void loadMemories();
     }
-  }, [loadMemories, loaded]);
+  }, [loadMemories, loadPersisted, loaded]);
 
   useEffect(() => {
     if (focusTarget === "memory") {
@@ -242,7 +248,7 @@ export function AgentMemoryPanel() {
   const hasPanelContent = visibleEntries.length > 0 || pendingMemoryApprovals.length > 0;
   const isExpanded = hasPanelContent ? !collapsedWithEntries : expandedWhenEmpty;
 
-  if (!loaded && visibleEntries.length === 0) {
+  if (!loaded && visibleEntries.length === 0 && !persistenceError) {
     return null;
   }
 
@@ -289,6 +295,14 @@ export function AgentMemoryPanel() {
 
   return (
     <div className="border-t border-border bg-background/95">
+      {persistenceError && (
+        <div role="alert" className="flex items-center gap-2 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          <span>{t(persistenceError === "load" ? "chat.agentMemory.loadFailed" : "chat.agentMemory.saveFailed")}</span>
+          <button type="button" className="shrink-0 underline" onClick={() => void loadMemories()}>
+            {t("chat.agentMemory.retry")}
+          </button>
+        </div>
+      )}
       <button
         type="button"
         onClick={() => {
@@ -324,6 +338,7 @@ export function AgentMemoryPanel() {
 
       {isExpanded && (
         <div id="agent-memory-panel-body" className="max-h-72 space-y-3 overflow-y-auto border-t border-border/60 px-3 py-3">
+          <p className="text-xs text-muted-foreground">{t("chat.agentMemory.description")}</p>
           {pendingMemoryApprovals.length > 0 && (
             <section className="space-y-1.5">
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -531,12 +546,73 @@ export function AgentMemoryPanel() {
                 <div className="rounded border border-border/60 bg-background/70 p-2">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="text-xs font-medium text-foreground">{selectedEntry.title}</div>
-                      <div className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
-                        {selectedEntry.content}
-                      </div>
+                      {editingId === selectedEntry.id ? (
+                        <div className="grid gap-2">
+                          <input
+                            value={editTitle}
+                            onChange={(event) => setEditTitle(event.currentTarget.value)}
+                            aria-label={t("chat.agentMemory.editTitle")}
+                            data-testid="agent-memory-edit-title"
+                            className="h-8 rounded border border-border bg-background px-2 text-xs text-foreground"
+                          />
+                          <textarea
+                            value={editContent}
+                            onChange={(event) => setEditContent(event.currentTarget.value)}
+                            aria-label={t("chat.agentMemory.editContent")}
+                            data-testid="agent-memory-edit-content"
+                            rows={4}
+                            className="rounded border border-border bg-background px-2 py-1.5 text-[11px] leading-relaxed text-foreground"
+                          />
+                        </div>
+                      ) : (
+                        <>
+                          <div className="text-xs font-medium text-foreground">{selectedEntry.title}</div>
+                          <div className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
+                            {selectedEntry.content}
+                          </div>
+                        </>
+                      )}
                     </div>
                     <div className="flex shrink-0 gap-1">
+                      {editingId === selectedEntry.id ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              updateMemory(selectedEntry.id, { title: editTitle, content: editContent });
+                              setEditingId(null);
+                            }}
+                            className="rounded border border-primary/40 bg-primary/10 p-1 text-primary hover:bg-primary/20"
+                            title={t("chat.agentMemory.save")}
+                            aria-label={t("chat.agentMemory.save")}
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingId(null)}
+                            className="rounded border border-border/70 bg-background/70 p-1 text-muted-foreground hover:bg-accent"
+                            title={t("chat.agentMemory.cancelEdit")}
+                            aria-label={t("chat.agentMemory.cancelEdit")}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingId(selectedEntry.id);
+                            setEditTitle(selectedEntry.title);
+                            setEditContent(selectedEntry.content);
+                          }}
+                          className="rounded border border-border/70 bg-background/70 p-1 text-muted-foreground hover:bg-accent"
+                          title={t("chat.agentMemory.edit")}
+                          aria-label={t("chat.agentMemory.edit")}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => setPinned(selectedEntry.id, !selectedEntry.pinned)}

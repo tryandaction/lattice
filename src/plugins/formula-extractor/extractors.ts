@@ -10,6 +10,7 @@ import type {
   HiddenFormulaCandidate,
   HiddenFormulaCandidateReason,
 } from "./types";
+import { inferPdfFormulaFromSelection, type PdfFormulaGlyph } from "@/lib/pdf-formula-structure";
 
 type Candidate = Omit<ExtractedFormula, "id"> & { order?: number };
 type FormulaBBox = NonNullable<ExtractedFormula["bbox"]>;
@@ -694,14 +695,14 @@ function isLikelyEquationNumberLine(line: PdfVisualLine): boolean {
   return EQUATION_NUMBER_RE.test(line.text.trim()) && line.text.trim().length <= 6;
 }
 
-function getPdfLineFormulaText(line: PdfVisualLine): string {
+function _getPdfLineFormulaText(line: PdfVisualLine): string {
   const raw = extractEquationBody(line.text);
   return normalizePhysicsFormulaText(raw)
     .replace(/\b([A-Za-z\\]+)_\{?(\d+)\}?\s*\/\s*([A-Za-z0-9\\{}]+)\b/g, "\\frac{$1_{$2}}{$3}")
     .replace(/\b1\s*\/\s*([A-Za-z\\]+_\{?[^{}\s]+\}?)\b/g, "\\frac{1}{$1}");
 }
 
-function shouldKeepPdfFormulaLine(line: PdfVisualLine, score: number): boolean {
+function _shouldKeepPdfFormulaLine(line: PdfVisualLine, score: number): boolean {
   if (score >= 0.58) return true;
   const text = line.text.trim();
   if (RELATION_RE.test(text) && /[A-Za-z\u0370-\u03FF\\]/.test(text) && score >= 0.44) return true;
@@ -910,7 +911,8 @@ function extractPdfDisplayFormulaBlocks(page: PluginPdfTextPage): CandidateColle
       cursor += 1;
     }
 
-    const { latex, rawText, confidenceHint } = buildPdfDisplayFormulaLatex(blockLines);
+    const { latex: fallbackLatex, rawText, confidenceHint } = buildPdfDisplayFormulaLatex(blockLines);
+    const latex = fallbackLatex;
     const bbox = mergeBboxes(blockLines.map((blockLine) => blockLine.bbox));
     const confidence = Math.min(
       0.96,
@@ -927,12 +929,72 @@ function extractPdfDisplayFormulaBlocks(page: PluginPdfTextPage): CandidateColle
       rawText,
       displayMode: true,
       context: rawText,
-      needsReview: false,
+      needsReview: true,
       order: (page.pageNumber * 10000) + index,
     });
     index = cursor - 1;
   }
 
+  return collector;
+}
+
+function extractNativePdfFormulaBlocks(page: PluginPdfTextPage): CandidateCollector {
+  const collector: CandidateCollector = { accepted: [], hidden: [] };
+  const width = page.width!, height = page.height!;
+  const glyphs: PdfFormulaGlyph[] = (page.glyphs ?? []).map((glyph) => ({ text: glyph.text,
+    x1: glyph.bbox.x1 * width, x2: glyph.bbox.x2 * width, y1: glyph.bbox.y1 * height, y2: glyph.bbox.y2 * height,
+  })).filter((glyph) => glyph.text.trim());
+  const sizes = glyphs.filter((glyph) => !/[()[\]]/.test(glyph.text) && glyph.y2 - glyph.y1 > 2).map((glyph) => glyph.y2 - glyph.y1).sort((a,b) => a-b);
+  const em = sizes[Math.floor(sizes.length * .75)] ?? 12;
+  const groups: PdfFormulaGlyph[][] = [];
+  const pending = new Set(glyphs);
+  while (pending.size) {
+    const group = [pending.values().next().value!]; pending.delete(group[0]);
+    for (let i = 0; i < group.length; i++) {
+      const a = group[i];
+      for (const b of pending) {
+        const gapX = Math.max(0, a.x1 - b.x2, b.x1 - a.x2);
+        const gapY = Math.max(0, a.y1 - b.y2, b.y1 - a.y2);
+        const localEm = Math.max(em, Math.min(a.y2-a.y1, b.y2-b.y1));
+        if (gapX <= localEm * 2.7 && gapY <= localEm * 1.1 && Math.abs((a.y1+a.y2-b.y1-b.y2)/2) <= Math.max(localEm * 2.3, (a.y2-a.y1+b.y2-b.y1)/2)) {
+          group.push(b); pending.delete(b);
+        }
+      }
+    }
+    groups.push(group);
+  }
+  groups.sort((a,b) => {
+    const ay = Math.min(...a.map(g => g.y1)), by = Math.min(...b.map(g => g.y1));
+    return Math.abs(ay-by) < em*3 ? Math.min(...a.map(g=>g.x1))-Math.min(...b.map(g=>g.x1)) : ay-by;
+  });
+  for (const [order, originalChars] of groups.entries()) {
+    const chars = originalChars.map((char) => ({ ...char }));
+    // A PDF font's nominal ascent can clip the top row of a stretched bracket.
+    // A matching pair and nearby cells constrain this correction geometrically.
+    for (const open of chars.filter(g => /^[([]$/.test(g.text) && g.y2-g.y1 > em*1.8)) {
+      const close = chars.find(g => g.text === (open.text === '(' ? ')' : ']') && g.x1 > open.x2 && Math.abs(g.y1-open.y1) < em*.5 && Math.abs(g.y2-open.y2) < em*.5);
+      if (!close) continue;
+      const inside = chars.filter(g => g !== open && g !== close && g.x1 >= open.x2 && g.x2 <= close.x1 && g.y1 >= open.y1-em*1.8 && g.y2 <= open.y2+em);
+      if (inside.length < 4) continue;
+      open.y1 = close.y1 = Math.min(open.y1, ...inside.map(g=>g.y1));
+      open.y2 = close.y2 = Math.max(open.y2, ...inside.map(g=>g.y2));
+    }
+    const text = chars.map((glyph) => glyph.text).join('');
+    const inference = inferPdfFormulaFromSelection({ text, chars, rects: chars });
+    const bounds = inference.bounds;
+    const bbox = bounds ? { x1: bounds.x1/width, x2: bounds.x2/width, y1: bounds.y1/height, y2: bounds.y2/height } : undefined;
+    if (inference.status === 'unavailable') {
+      hidePdfCandidate(collector, { page: page.pageNumber, rawText: text, bbox, reason: 'prose-like' });
+      continue;
+    }
+    if (!/[=+−±∫∑α-ωΑ-Ω]/u.test(text) && inference.status !== 'ready') continue;
+    const latex = inference.latex ?? normalizeLatex(convertTextToLatex(text), true).latex;
+    pushCandidate(collector.accepted, { source: 'pdf', kind: 'geometry', page: page.pageNumber,
+      bbox, location: `page:${page.pageNumber}:geometry:${order}`, rawText: text, latex,
+      confidence: inference.status === 'ready' ? .88 : .5, displayMode: true,
+      needsReview: inference.status !== 'ready', context: inference.reason ?? text, order: page.pageNumber * 10000 + order,
+    });
+  }
   return collector;
 }
 
@@ -942,7 +1004,8 @@ export function extractPdfFormulasFromPagesWithDiagnostics(
 ): { formulas: ExtractedFormula[]; hiddenCandidates: HiddenFormulaCandidate[] } {
   const collector: CandidateCollector = { accepted: [], hidden: [] };
   for (const page of pages) {
-    const itemCollector = extractPdfDisplayFormulaBlocks(page);
+    const itemCollector = page.source === 'pdfjs-text-model' && page.glyphs && page.width && page.height
+      ? extractNativePdfFormulaBlocks(page) : extractPdfDisplayFormulaBlocks(page);
     collector.accepted.push(...itemCollector.accepted);
     collector.hidden.push(...itemCollector.hidden);
 

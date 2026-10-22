@@ -1,4 +1,7 @@
-import { resolvePdfAnnotationTextAnchor } from "@/lib/pdf-annotation-adjustment";
+import {
+  hasPdfAnnotationCrossColumnGeometry,
+  resolvePdfAnnotationTextAnchor,
+} from "@/lib/pdf-annotation-adjustment";
 import {
   buildPdfTextAnchorFromOffsets,
   resolvePdfExactQuoteOffsets,
@@ -124,19 +127,22 @@ function buildCanonicalPdfTextAnnotation(
   };
 }
 
-export function buildCanonicalPdfTextMarkupAnnotationFromExact(input: {
+function resolveUniqueSourceQuoteOffsets(model: PdfPageTextModel, exact: string): { startOffset: number; endOffset: number } | null {
+  if (!exact.trim()) return null;
+  const startOffset = model.normalizedText.indexOf(exact);
+  if (startOffset < 0 || model.normalizedText.indexOf(exact, startOffset + 1) >= 0) return null;
+  return { startOffset, endOffset: startOffset + exact.length };
+}
+
+export function buildCanonicalPdfTextMarkupTargetFromExact(input: {
   model: PdfPageTextModel;
   exact: string;
+  /** Require one complete literal source match and preserve its text verbatim. */
+  preserveExact?: boolean;
   page?: number;
-  styleType: "highlight" | "underline";
-  color: string;
-  author: string;
-  underlineStyle?: UnderlineStyleType;
-  id?: string;
-  createdAt?: number;
   preferredRects?: PdfTarget["rects"];
-}): Omit<AnnotationItem, "id" | "createdAt"> | AnnotationItem | null {
-  const offsets = resolvePdfExactQuoteOffsets({
+}): PdfTarget | null {
+  const offsets = input.preserveExact ? resolveUniqueSourceQuoteOffsets(input.model, input.exact) : resolvePdfExactQuoteOffsets({
     model: input.model,
     exact: input.exact,
     preferredRects: input.preferredRects,
@@ -150,33 +156,55 @@ export function buildCanonicalPdfTextMarkupAnnotationFromExact(input: {
     startOffset: offsets.startOffset,
     endOffset: offsets.endOffset,
     source: "pdfjs-text-model",
+    preserveExact: input.preserveExact,
   });
   const rects = normalizeTextMarkupRects(anchor?.rects ?? []);
   if (!anchor || rects.length === 0) {
     return null;
   }
 
+  return {
+    type: "pdf",
+    page: input.page ?? input.model.pageNumber,
+    rects,
+    textQuote: anchor.textQuote,
+    textKernelVersion: 2,
+    startCharIndex: anchor.startOffset,
+    endCharIndex: anchor.endOffset,
+    quads: buildPdfQuadsFromRects(rects),
+    textSource: anchor.textQuote.source,
+    textConfidence: 1,
+  };
+}
+
+export function buildCanonicalPdfTextMarkupAnnotationFromExact(input: {
+  model: PdfPageTextModel;
+  exact: string;
+  preserveExact?: boolean;
+  page?: number;
+  styleType: "highlight" | "underline";
+  color: string;
+  author: string;
+  underlineStyle?: UnderlineStyleType;
+  id?: string;
+  createdAt?: number;
+  preferredRects?: PdfTarget["rects"];
+}): Omit<AnnotationItem, "id" | "createdAt"> | AnnotationItem | null {
+  const target = buildCanonicalPdfTextMarkupTargetFromExact(input);
+  if (!target) {
+    return null;
+  }
+
   const annotation = {
     ...(input.id ? { id: input.id } : {}),
     ...(typeof input.createdAt === "number" ? { createdAt: input.createdAt } : {}),
-    target: {
-      type: "pdf" as const,
-      page: input.page ?? input.model.pageNumber,
-      rects,
-      textQuote: anchor.textQuote,
-      textKernelVersion: 1,
-      startCharIndex: anchor.startOffset,
-      endCharIndex: anchor.endOffset,
-      quads: buildPdfQuadsFromRects(rects),
-      textSource: anchor.textQuote.source,
-      textConfidence: 1,
-    },
+    target,
     style: {
       color: input.color,
       type: input.styleType,
       underlineStyle: input.styleType === "underline" ? (input.underlineStyle ?? "solid") : undefined,
     },
-    content: normalizePdfReadableText(anchor.textQuote.exact),
+    content: input.preserveExact ? (target.textQuote?.exact ?? "") : normalizePdfReadableText(target.textQuote?.exact),
     author: input.author,
   } satisfies Omit<AnnotationItem, "id" | "createdAt"> & Partial<Pick<AnnotationItem, "id" | "createdAt">>;
 
@@ -398,10 +426,36 @@ function resolveExactQuoteAnchor(
   });
 }
 
+function refineCrossColumnGeometryAnchor(
+  model: PdfPageTextModel,
+  anchor: NonNullable<ReturnType<typeof buildPdfTextAnchorFromOffsets>>,
+): ReturnType<typeof buildPdfTextAnchorFromOffsets> {
+  let startOffset = anchor.startOffset;
+  let endOffset = anchor.endOffset;
+  const selectedText = model.normalizedText.slice(startOffset, endOffset);
+  const detachedLeadingPunctuation = selectedText.match(/^[^\p{L}\p{M}\p{N}]+\s+/u)?.[0];
+  if (detachedLeadingPunctuation) {
+    startOffset += detachedLeadingPunctuation.length;
+  }
+  while (shouldExpandDroppedEndBoundary(model.normalizedText, endOffset)) {
+    endOffset += 1;
+  }
+  if (startOffset === anchor.startOffset && endOffset === anchor.endOffset) {
+    return anchor;
+  }
+  return buildPdfTextAnchorFromOffsets({
+    model,
+    startOffset,
+    endOffset,
+    source: anchor.textQuote.source,
+  });
+}
+
 export function repairPdfTextAnnotationFromModel(
   annotation: AnnotationItem,
   model: PdfPageTextModel,
 ): AnnotationItem | null {
+  if (annotation.formula || (annotation.target.type==='pdf' && annotation.target.readingOrder)) return null;
   if (
     annotation.target.type !== "pdf" ||
     (annotation.style.type !== "highlight" && annotation.style.type !== "underline")
@@ -439,7 +493,15 @@ export function repairPdfTextAnnotationFromModel(
     ),
   );
   const droppedBoundaryAnchor = resolveDroppedBoundaryQuoteAnchor(model, target, existingText);
-  const anchor = droppedBoundaryAnchor
+  const geometryPreferredAnchor = hasPdfAnnotationCrossColumnGeometry(model, target)
+    ? (() => {
+        const geometryAnchor = resolvePdfAnnotationTextAnchor(model, target);
+        return geometryAnchor ? refineCrossColumnGeometryAnchor(model, geometryAnchor) : null;
+      })()
+    : null;
+  const anchor = geometryPreferredAnchor
+      ? geometryPreferredAnchor
+    : droppedBoundaryAnchor
       ? droppedBoundaryAnchor
     : exactQuoteAnchor
       ? exactQuoteAnchor
@@ -481,6 +543,7 @@ export function canonicalizePdfTextAnnotationFromModel(
   annotation: AnnotationItem,
   model: PdfPageTextModel,
 ): AnnotationItem | null {
+  if (annotation.formula || (annotation.target.type==='pdf' && annotation.target.readingOrder)) return null;
   if (
     annotation.target.type !== "pdf" ||
     (annotation.style.type !== "highlight" && annotation.style.type !== "underline")

@@ -24,6 +24,11 @@ import {
   type ResearchAgentWorkflowPreset,
 } from './research-agent-workflows';
 import { buildNoteTakingDraftSuggestion } from './lattice-skills/note-taking-draft-planner';
+import { buildWorkflowAnswerInstructions } from './research-workflow-answer';
+import { preparePdfAnnotationProposal } from './pdf-annotation-agent';
+import type { TransientPdfAnnotation } from './transient-pdf-annotations';
+import { effectiveOutputTokenCeiling, outputTokenBudget } from './output-budget';
+import { requestsMarkdownDocument } from './task-outcome';
 
 export interface ResearchAgentChatRunInput extends Omit<
   ResearchAgentRunInput,
@@ -33,6 +38,9 @@ export interface ResearchAgentChatRunInput extends Omit<
   plannerSignal?: AbortSignal;
   workflowId?: ResearchAgentWorkflowId;
   noteConfigOverrides?: Partial<NoteTakingSkillConfig>;
+  onProgress?: import('./types').AiGenerateOptions['onProgress'];
+  responseMode?: 'conversation';
+  images?: import('./types').AiContentPart[];
 }
 
 export type ResearchAgentSurfaceRunInput = ResearchAgentChatRunInput;
@@ -49,6 +57,7 @@ export interface ResearchAgentSurfaceRunResult {
   workflow: ResearchAgentWorkflowPreset | null;
   workflowPlannerHints: string | null;
   workflowInferred: boolean;
+  annotationProposal?: TransientPdfAnnotation[];
 }
 
 export type ResearchAgentChatRunResult = ResearchAgentSurfaceRunResult;
@@ -238,6 +247,7 @@ export function formatResearchAgentChatAnswer(input: {
   plannerModel?: string | null;
   adapterWarnings?: string[];
 }): string {
+  const directAnswer = input.result.answer.trim() || 'Research Agent did not return a readable answer. Please retry the question.';
   const warnings = [
     ...(input.adapterWarnings ?? []),
     ...input.result.planWarnings,
@@ -267,7 +277,7 @@ export function formatResearchAgentChatAnswer(input: {
     : null;
 
   return [
-    input.result.answer,
+    directAnswer,
     '',
     '---',
     `Agent session: ${input.result.sessionId}`,
@@ -332,13 +342,20 @@ export async function runResearchAgentForSurface(
     workflowId,
     noteConfigOverrides,
     plannerHints,
+    onProgress,
+    responseMode,
+    images,
     ...agentInput
   } = input;
   const adapterWarnings: string[] = [];
   let generatePlan: ResearchAgentRunInput['generatePlan'];
+  let generateAnswer: ResearchAgentRunInput['generateAnswer'];
   let generateOmittedSummary: ResearchAgentRunInput['generateOmittedSummary'];
   let plannerModel: string | null = null;
+  let plannerRequestModel: string | undefined;
   let plannerModelInfo: AiModelInfo | null = null;
+  let answerTimeoutMs: number | undefined;
+  let answerOutputCeiling = effectiveOutputTokenCeiling(settings.maxTokens);
   const inferredWorkflowId = workflowId ?? inferResearchAgentWorkflow({
     task: agentInput.task,
     query: agentInput.query,
@@ -348,7 +365,10 @@ export async function runResearchAgentForSurface(
   });
   const workflowInferred = !workflowId;
   const workflow = getResearchAgentWorkflow(inferredWorkflowId);
+  const markdownDocument = requestsMarkdownDocument(agentInput.task ?? agentInput.query ?? '');
   const noteConfig = resolveNoteTakingSkillConfig(workflow, noteConfigOverrides);
+  const annotationLimit = noteConfigOverrides?.annotationLimit ?? (agentInput.documentSources?.length || agentInput.documentDirectory ? 12 : 5);
+  const answerConfig = { ...noteConfig, annotationLimit };
   const workflowPlannerHints = workflow
     ? buildResearchAgentWorkflowPlannerHints(
         workflow,
@@ -363,8 +383,13 @@ export async function runResearchAgentForSurface(
   try {
     const adapter = createResearchAgentPlannerGenerate(settings, {
       taskType: 'research',
+      onProgress,
+      images,
     });
     generatePlan = adapter.generatePlan;
+    generateAnswer = adapter.generateAnswer;
+    answerTimeoutMs = adapter.answerTimeoutMs;
+    answerOutputCeiling = effectiveOutputTokenCeiling(settings.maxTokens, adapter.maxOutputTokens);
     const omittedSummaryDecision = evaluateAiUsagePolicy({
       category: 'automatic-agent-omitted-summary',
       settings: {
@@ -387,27 +412,53 @@ export async function runResearchAgentForSurface(
       adapterWarnings.push(`Omitted-context model summary skipped: ${omittedSummaryDecision.reason}`);
     }
     plannerModelInfo = adapter.modelInfo;
+    plannerRequestModel = adapter.modelInfo.model ?? settings.model ?? undefined;
     plannerModel = adapter.modelInfo.model
       ? `${adapter.modelInfo.providerName}/${adapter.modelInfo.model}`
       : adapter.modelInfo.providerName;
   } catch (error) {
-    adapterWarnings.push(
-      `LLM planner unavailable; using the deterministic research plan. ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw new Error(`Agent model unavailable: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   const result = await runResearchAgent({
     ...agentInput,
+    ...((agentInput.documentDirectory || agentInput.documentSources?.length && !agentInput.latticeSourcePdfRuntime && !agentInput.apiToolRuntime) ? {
+      planSteps: agentInput.planSteps ?? [
+        { id: 'context-pack', title: '确认文档范围', description: '核对授权文档和版本。' },
+        { id: 'evidence-resolve', title: '分批阅读全文', description: '逐批分析正文，校验原文并保存覆盖检查点。', toolName: 'evidence.resolve' as const },
+        { id: 'synthesize-answer', title: '汇总有依据的结果', description: '使用各批次笔记和经核验的原文生成结果。' },
+      ],
+      maxObservationReplans: 0,
+    } : {}),
     generatePlan,
+    generateAnswer,
     generateOmittedSummary,
-    plannerModel: plannerModel ?? undefined,
+    plannerModel: plannerRequestModel,
+    plannerMaxTokens: agentInput.plannerMaxTokens ?? outputTokenBudget(settings.maxTokens, 'planning'),
+    answerMaxTokens: outputTokenBudget(answerOutputCeiling, 'detailed'),
+    answerRecoveryMaxTokens: answerOutputCeiling,
+    answerTimeoutMs,
+    requireAnswer: true,
+    answerInstructions: [responseMode === 'conversation' && !markdownDocument && workflow?.id !== 'pdf-annotation'
+      ? 'This is a conversational document question. Answer the latest question at its requested depth and honor explicit language or style preferences; otherwise mirror the language of the question. Explain mechanisms and supported derivations clearly, distinguishing evidence from deductions. Cite original passages. Do not output a reading-note template, annotation proposal or claim any file write.\n' + (settings.systemPrompt ?? '')
+      : buildWorkflowAnswerInstructions(workflow, answerConfig, settings.systemPrompt, { markdownDocument }), agentInput.answerInstructions].filter(Boolean).join('\n\n'),
+    validateAnswer: (answer, context) => {
+      agentInput.validateAnswer?.(answer, context);
+      const proposal = workflow?.id === 'pdf-annotation' ? preparePdfAnnotationProposal(answer, context.evidenceRefs, { maxAnnotations: annotationLimit }) : null;
+      if (proposal && markdownDocument && !proposal.text.trim()) {
+        throw new Error('缺少用户要求的 Markdown 讲解正文。请保留批注提案，同时补充有证据支持的完整讲解。');
+      }
+      if (proposal && !markdownDocument && proposal.annotations.length === 0) {
+        throw new Error('批注提案未通过原文或结构校验，本次没有写入。已读进度会保留，可继续重新生成建议。');
+      }
+    },
     plannerSignal,
     plannerHints: mergedPlannerHints,
     workflowId: workflow?.id,
     workflowTitle: workflow?.title,
     workflowInferred,
     title: agentInput.title ?? workflow?.traceLabels.run,
-    suggestMemory: agentInput.suggestMemory ?? true,
+    suggestMemory: agentInput.suggestMemory ?? false,
     includeWorkspaceSummary: agentInput.includeWorkspaceSummary ?? workflow?.contextProfile.includeWorkspaceSummary,
     contextBudgetProfileId: agentInput.contextBudgetProfileId ?? workflow?.contextProfile.contextBudgetProfileId,
     memoryQuery: resolveSurfaceMemoryQuery({
@@ -418,11 +469,21 @@ export async function runResearchAgentForSurface(
     }),
   });
 
-  const draftSuggestion = buildNoteTakingDraftSuggestion({
+  const draftSuggestion = result.documentReading?.resumable || responseMode === 'conversation' && !markdownDocument ? undefined : buildNoteTakingDraftSuggestion({
     workflow,
     result,
     noteConfig,
   });
+  const annotationProposal = workflow?.id === 'pdf-annotation' && !result.documentReading?.resumable
+    ? preparePdfAnnotationProposal(result.answer, result.promptContext.evidenceRefs, { maxAnnotations: annotationLimit })
+    : null;
+  if (annotationProposal && !markdownDocument && annotationProposal.annotations.length === 0) {
+    throw new Error('批注提案未通过原文或结构校验，本次没有写入。已读进度会保留，可继续重新生成建议。');
+  }
+
+  const readingEvidenceGap = result.documentReading?.evidenceIssues.length
+    ? `阅读过程中另有 ${result.documentReading.evidenceIssues.length} 条证据未通过原文校验，已排除；详见阅读进度中的证据缺口。`
+    : '';
 
   return {
     result,
@@ -432,17 +493,22 @@ export async function runResearchAgentForSurface(
     workflow,
     workflowPlannerHints,
     workflowInferred,
-    agentResult: buildResearchAgentResultMetadata({
+    agentResult: { ...buildResearchAgentResultMetadata({
       result,
       adapterWarnings,
-    }),
+    }), ...(annotationProposal ? { deliveryStatus: annotationProposal.annotations.length ? 'ready_for_review' as const : 'partial' as const } : {}) },
     followUpActions: buildWorkflowFollowUpActions({
       workflow,
       result,
       draftSuggestion,
     }),
     draftSuggestion,
-    chatText: formatResearchAgentChatAnswer({
+    annotationProposal: annotationProposal?.annotations,
+    chatText: annotationProposal
+      ? `${markdownDocument ? `${annotationProposal.text}\n\nMarkdown 讲解已生成，尚未保存为文件。\n\n` : ''}${result.documentReading ? `已分析 ${result.documentReading.coverage.reduce((sum, item) => sum + item.readUnits.length, 0)}/${result.documentReading.coverage.reduce((sum, item) => sum + item.totalUnits, 0)} 页/节。` : ''}${annotationProposal.annotations.length ? `已生成 ${annotationProposal.annotations.length} 条原文高亮建议，尚未写入 PDF。请核对下方引文与理由后应用。` : '批注未就绪：没有建议通过原文与结构校验，本次没有写入 PDF；Markdown 讲解已保留。'}${readingEvidenceGap}${annotationProposal.rejectedCount ? `另有 ${annotationProposal.rejectedCount} 条建议未通过原文校验，已排除。` : ''}${annotationProposal.limitedCount ? `按本次数量上限保留了最先列出的建议；另有 ${annotationProposal.limitedCount} 条未列入。` : ''}`
+      : responseMode === 'conversation' && result.answer.trim()
+      ? result.answer.trim()
+      : formatResearchAgentChatAnswer({
       result,
       plannerModel,
       adapterWarnings,

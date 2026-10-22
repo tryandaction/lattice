@@ -18,7 +18,7 @@ export interface FileNode {
   children?: TreeNode[];
   isExpanded?: boolean;
   canExpandVirtualChildren?: boolean;
-  virtualChildrenState?: "idle" | "loading" | "ready";
+  virtualChildrenState?: "idle" | "loading" | "ready" | "unavailable";
   isVirtual?: boolean;
   parentPdfPath?: string;
   entryRole?: "pdf-note" | "pdf-notebook" | "pdf-annotations";
@@ -35,6 +35,8 @@ export interface DirectoryNode {
   children: TreeNode[];
   path: string;
   isExpanded: boolean;
+  /** Whether direct children have been loaded for this directory. */
+  childrenState?: "idle" | "loading" | "ready" | "error";
 }
 
 /**

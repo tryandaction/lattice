@@ -1,8 +1,14 @@
 import type { BoundingBox, PdfTextQuote } from "@/types/universal-annotation";
 import type {
   PdfNativePageTextLayout,
-  PdfNativeTextChar,
 } from "@/lib/pdf-native-text-engine";
+import {
+  buildPdfCompactOffsetModel as buildCompactOffsetModel,
+  buildPdfNativeNormalizedModel as buildNativeTextModel,
+  expandPdfLigatures,
+  type PdfNativeNormalizedChar,
+  type PdfNativeNormalizedModel,
+} from "@/lib/pdf-native-text-model";
 import {
   buildRenderedPdfPageTextModel,
   normalizePdfText,
@@ -15,6 +21,7 @@ import {
   buildPdfReadableTextFromChars,
   buildPdfReadableTextForOffsets,
   type PdfCanonicalChar,
+  resolvePdfVisualColumnScope,
   resolvePdfPointerBoundary,
   type PdfCanonicalPointerBoundaryResult,
 } from "@/lib/pdf-canonical-text-anchoring";
@@ -23,21 +30,13 @@ import {
   type PdfCanonicalSelection,
   type PdfSelectionClientRect,
 } from "@/lib/pdf-selection-session";
+import { mergePdfTextOverlayRects } from "@/lib/pdf-text-rects";
+import { selectPdfReadingOrderChars, pdfReadingOrderText } from "./pdf-reading-order-selection";
 
 const PDF_TEXT_CONTEXT_RADIUS = 32;
 const PDF_SELECTION_MAX_TEXT_RECT_HEIGHT_RATIO = 0.12;
 const PDF_SELECTION_MAX_TEXT_RECT_AREA_RATIO = 0.18;
 const PDF_SELECTION_MAX_TEXT_RECT_LINE_MULTIPLIER = 3.5;
-const PDF_LIGATURE_MAP: Record<string, string> = {
-  "\u00a0": " ",
-  "\ufb00": "ff",
-  "\ufb01": "fi",
-  "\ufb02": "fl",
-  "\ufb03": "ffi",
-  "\ufb04": "ffl",
-  "\ufb05": "ft",
-  "\ufb06": "st",
-};
 const NATIVE_MATCH_WINDOW_CHARS = 160;
 const NATIVE_MAX_SELECTION_CHARS_FOR_FUZZY = 160;
 
@@ -66,26 +65,6 @@ export type PdfSelectionResolutionResult =
       reason: PdfSelectionResolutionFailureReason;
       viewportRects: PdfCanonicalSelection["viewportRects"];
     };
-
-interface PdfCompactOffsetModel {
-  compactText: string;
-  normalizedToCompact: number[];
-  compactStartToNormalized: number[];
-  compactEndToNormalized: number[];
-}
-
-interface PdfNativeNormalizedChar {
-  sourceChar: PdfNativeTextChar;
-  normalizedStart: number;
-  normalizedEnd: number;
-  text: string;
-}
-
-interface PdfNativeNormalizedModel {
-  normalizedText: string;
-  compact: PdfCompactOffsetModel;
-  chars: PdfNativeNormalizedChar[];
-}
 
 interface PdfNativeViewportChar extends PdfNativeNormalizedChar {
   left: number;
@@ -142,10 +121,6 @@ interface PdfSelectionCandidateFeatures {
   exactReferenceMatch: boolean;
   containsReference: boolean;
   isContainedByReference: boolean;
-}
-
-function expandPdfLigatures(text: string): string {
-  return Array.from(text ?? "", (character) => PDF_LIGATURE_MAP[character] ?? character).join("");
 }
 
 function normalizeComparablePdfText(text: string): string {
@@ -300,114 +275,6 @@ function isTrustworthyMultiLinePointerSelection(selection: PdfResolvedSelection)
   )));
 
   return maxRectWidth <= 0.72 && maxRectHeight <= 0.08 && maxRectArea <= 0.06;
-}
-
-function buildCompactOffsetModel(normalizedText: string): PdfCompactOffsetModel {
-  const normalizedToCompact = new Array(normalizedText.length + 1).fill(0);
-  const compactStartToNormalized: number[] = [];
-  const compactEndToNormalized: number[] = [0];
-  let compactText = "";
-  let compactOffset = 0;
-
-  for (let index = 0; index < normalizedText.length; index += 1) {
-    normalizedToCompact[index] = compactOffset;
-    const character = normalizedText[index];
-    if (/\s/.test(character)) {
-      continue;
-    }
-
-    compactStartToNormalized[compactOffset] = index;
-    compactText += character;
-    compactOffset += 1;
-    compactEndToNormalized[compactOffset] = index + 1;
-  }
-
-  normalizedToCompact[normalizedText.length] = compactOffset;
-  compactStartToNormalized[compactOffset] = normalizedText.length;
-
-  return {
-    compactText,
-    normalizedToCompact,
-    compactStartToNormalized,
-    compactEndToNormalized,
-  };
-}
-
-function buildNormalizedOffsetMap(text: string): {
-  normalizedText: string;
-  rawToNormalizedOffsets: number[];
-} {
-  const rawToNormalizedOffsets = new Array(text.length + 1).fill(0);
-  let normalizedText = "";
-  let sawNonWhitespace = false;
-  let pendingWhitespaceStart: number | null = null;
-
-  for (let index = 0; index < text.length; index += 1) {
-    rawToNormalizedOffsets[index] = normalizedText.length;
-    const expanded = expandPdfLigatures(text[index] ?? "");
-
-    for (const character of expanded) {
-      if (/\s/.test(character)) {
-        if (sawNonWhitespace && pendingWhitespaceStart === null) {
-          pendingWhitespaceStart = index;
-        }
-        rawToNormalizedOffsets[index + 1] = normalizedText.length;
-        continue;
-      }
-
-      if (pendingWhitespaceStart !== null && normalizedText.length > 0 && !normalizedText.endsWith(" ")) {
-        normalizedText += " ";
-        for (let boundary = pendingWhitespaceStart + 1; boundary <= index; boundary += 1) {
-          rawToNormalizedOffsets[boundary] = normalizedText.length;
-        }
-        pendingWhitespaceStart = null;
-      }
-
-      rawToNormalizedOffsets[index] = normalizedText.length;
-      normalizedText += character;
-      sawNonWhitespace = true;
-      rawToNormalizedOffsets[index + 1] = normalizedText.length;
-    }
-  }
-
-  rawToNormalizedOffsets[text.length] = normalizedText.length;
-  if (pendingWhitespaceStart !== null) {
-    for (let boundary = pendingWhitespaceStart + 1; boundary <= text.length; boundary += 1) {
-      rawToNormalizedOffsets[boundary] = normalizedText.length;
-    }
-  }
-  return {
-    normalizedText,
-    rawToNormalizedOffsets,
-  };
-}
-
-function buildNativeTextModel(layout: PdfNativePageTextLayout): PdfNativeNormalizedModel {
-  const { normalizedText, rawToNormalizedOffsets } = buildNormalizedOffsetMap(layout.text);
-  const normalizedChars = [...layout.chars]
-    .sort((left, right) => left.charIndex - right.charIndex)
-    .map((sourceChar) => {
-      const rawStart = Math.max(0, Math.min(layout.text.length, sourceChar.charIndex));
-      const rawEndIndex = typeof sourceChar.charEndIndex === "number"
-        ? sourceChar.charEndIndex
-        : sourceChar.charIndex + sourceChar.text.length;
-      const rawEnd = Math.max(rawStart, Math.min(layout.text.length, rawEndIndex));
-      const normalizedStart = rawToNormalizedOffsets[rawStart] ?? 0;
-      const normalizedEnd = rawToNormalizedOffsets[rawEnd] ?? normalizedStart;
-      return {
-        sourceChar,
-        normalizedStart,
-        normalizedEnd,
-        text: normalizeComparablePdfText(sourceChar.text),
-      } satisfies PdfNativeNormalizedChar;
-    })
-    .filter((character) => character.normalizedEnd > character.normalizedStart);
-
-  return {
-    normalizedText,
-    compact: buildCompactOffsetModel(normalizedText),
-    chars: normalizedChars,
-  };
 }
 
 function resolveExactSelectionText(input: {
@@ -591,6 +458,7 @@ function resolveNativeCompactMatch(input: {
 
 function buildViewportRectsFromNativeChars(input: {
   nativeChars: PdfNativeNormalizedChar[];
+  selectedChars?: PdfNativeNormalizedChar[];
   startOffset: number;
   endOffset: number;
   layout: PdfNativePageTextLayout;
@@ -598,8 +466,9 @@ function buildViewportRectsFromNativeChars(input: {
   pageHeight: number;
   pageNumber: number;
 }): PdfCanonicalSelection["viewportRects"] {
-  const selectedRects = input.nativeChars
-    .filter((character) => character.normalizedEnd > input.startOffset && character.normalizedStart < input.endOffset)
+  const selectedRects = (input.selectedChars ?? input.nativeChars.filter((character) => (
+    character.normalizedEnd > input.startOffset && character.normalizedStart < input.endOffset
+  )))
     .map((character) => ({
       left: (character.sourceChar.x1 / input.layout.width) * input.pageWidth,
       top: (character.sourceChar.y1 / input.layout.height) * input.pageHeight,
@@ -646,6 +515,30 @@ function buildViewportRectsFromNativeChars(input: {
   return merged;
 }
 
+function mergeTextSelectionViewportRects(input: {
+  rects: PdfCanonicalSelection["viewportRects"];
+  pageNumber: number;
+  pageWidth: number;
+}): PdfCanonicalSelection["viewportRects"] {
+  const pageRects = input.rects.filter((rect) => rect.pageNumber === input.pageNumber);
+  const otherPageRects = input.rects.filter((rect) => rect.pageNumber !== input.pageNumber);
+  const merged = mergePdfTextOverlayRects(pageRects, {
+    horizontalGap: 1.5,
+    maxHorizontalGap: 96,
+    inlineGapMultiplier: 4.5,
+    pageWidth: input.pageWidth,
+    allowWideSameColumnGaps: false,
+  }).map((rect) => ({
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height,
+    pageNumber: input.pageNumber,
+  }));
+
+  return normalizeViewportRects([...otherPageRects, ...merged]);
+}
+
 function buildNativeViewportChars(input: {
   nativeChars: PdfNativeNormalizedChar[];
   layout: PdfNativePageTextLayout;
@@ -673,6 +566,73 @@ function buildNativeViewportChars(input: {
       } satisfies PdfNativeViewportChar;
     })
     .filter((character) => character.width > 0 && character.height > 0);
+}
+
+function hasNativeTwoColumnGutter(input: {
+  chars: PdfNativeViewportChar[];
+  pageWidth: number;
+}): boolean {
+  if (input.pageWidth <= 0 || input.chars.length < 2) {
+    return false;
+  }
+
+  const pageMidX = input.pageWidth / 2;
+  const minimumGutter = Math.max(12, input.pageWidth * 0.025);
+  const orderedChars = [...input.chars].sort((left, right) => (
+    left.centerY - right.centerY || left.left - right.left || left.normalizedStart - right.normalizedStart
+  ));
+
+  for (let index = 1; index < orderedChars.length; index += 1) {
+    const previous = orderedChars[index - 1];
+    const current = orderedChars[index];
+    const lineTolerance = Math.max(3, Math.min(previous.height, current.height) * 0.55);
+    const horizontalGap = current.left - previous.right;
+    if (
+      Math.abs(current.centerY - previous.centerY) <= lineTolerance &&
+      horizontalGap >= minimumGutter &&
+      previous.centerX < pageMidX &&
+      current.centerX > pageMidX
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function buildReadableNativePointerText(chars: PdfNativeViewportChar[]): string {
+  const orderedChars = [...chars]
+    .filter((character) => character.text.length > 0)
+    .sort((left, right) => (
+      left.top - right.top || left.left - right.left || left.normalizedStart - right.normalizedStart
+    ));
+  let output = "";
+  let previous: PdfNativeViewportChar | null = null;
+
+  for (const character of orderedChars) {
+    if (previous) {
+      const sameLine = Math.abs(character.centerY - previous.centerY) <= Math.max(
+        3,
+        Math.min(character.height, previous.height) * 0.55,
+      );
+      const gap = character.left - previous.right;
+      const minimumWordGap = Math.max(1.5, Math.min(character.height, previous.height) * 0.18);
+      if (!sameLine) {
+        if (output.endsWith("-") && /^[a-z]/.test(character.text)) {
+          output = output.slice(0, -1);
+        } else if (output && !/\s$/.test(output)) {
+          output += " ";
+        }
+      } else if (gap > minimumWordGap && output && !/\s$/.test(output)) {
+        output += " ";
+      }
+    }
+
+    output += character.text;
+    previous = character;
+  }
+
+  return normalizeComparablePdfText(output);
 }
 
 function normalizeViewportRects(rects: PdfCanonicalSelection["viewportRects"]): PdfCanonicalSelection["viewportRects"] {
@@ -1912,6 +1872,7 @@ function dragEndpointsMissSingleRect(input: {
 }
 
 function resolveRenderedSelectionFromZoteroPointerRange(input: {
+  allowCrossColumn?: boolean;
   model: PdfPageTextModel;
   pageElement: HTMLElement;
   pageNumber: number;
@@ -1949,12 +1910,39 @@ function resolveRenderedSelectionFromZoteroPointerRange(input: {
     return null;
   }
 
+  const endBoundarySeed = resolveZoteroPointerCharOffset({ chars: allChars, point: endPoint, side: 'end' });
+  const startColumnScope = resolvePdfVisualColumnScope({
+    chars: allChars, viewportWidth: pageRect.width,
+    verticalRange: { top: Math.min(startPoint.y, endPoint.y), bottom: Math.max(startPoint.y, endPoint.y) },
+    startX: startPoint.x, endX: startPoint.x,
+  });
+  const crossesColumns = endBoundarySeed && startColumnScope &&
+    (endPoint.x < startColumnScope.boundaryX ? 'left' : 'right') !== startColumnScope.side &&
+    getPdfCharRectDistance(startBoundarySeed.char, startPoint) <= Math.max(2, startBoundarySeed.char.height * 0.2) &&
+    getPdfCharRectDistance(endBoundarySeed.char, endPoint) <= Math.max(2, endBoundarySeed.char.height * 0.2);
+  if (crossesColumns && input.allowCrossColumn !== false) {
+    const selected=selectPdfReadingOrderChars({chars:allChars,gutter:startColumnScope.boundaryX,start:startPoint,end:endPoint});
+    const resolved=selected?.length ? buildZoteroSelectionFromChars({...input,chars:selected}) : null;
+    if(resolved&&selected){const text=pdfReadingOrderText(selected);return {...resolved,readingOrder:true,text,textQuote:{...resolved.textQuote,exact:text}};}
+  }
+
+  const visualColumnScope = resolvePdfVisualColumnScope({
+    chars: allChars,
+    viewportWidth: pageRect.width,
+    verticalRange: { top: Math.min(startPoint.y, endPoint.y), bottom: Math.max(startPoint.y, endPoint.y) },
+    startX: startPoint.x,
+    endX: endPoint.x,
+  });
   const scopedChars = allChars.filter((char) => (
     char.layoutClass === startBoundarySeed.char.layoutClass &&
     (
-      typeof startBoundarySeed.char.columnIndex === "number"
-        ? char.columnIndex === startBoundarySeed.char.columnIndex
-        : typeof startBoundarySeed.char.blockIndex !== "number" || char.blockIndex === startBoundarySeed.char.blockIndex
+      visualColumnScope
+        ? (visualColumnScope.side === "left" ? char.centerX < visualColumnScope.boundaryX : char.centerX > visualColumnScope.boundaryX)
+        : (
+            typeof startBoundarySeed.char.columnIndex === "number"
+              ? char.columnIndex === startBoundarySeed.char.columnIndex
+              : typeof startBoundarySeed.char.blockIndex !== "number" || char.blockIndex === startBoundarySeed.char.blockIndex
+          )
     )
   ));
   const activeChars = scopedChars.length > 0 ? scopedChars : allChars;
@@ -1996,6 +1984,69 @@ function resolveRenderedSelectionFromZoteroPointerRange(input: {
     pageWidth: input.pageWidth,
     pageHeight: input.pageHeight,
   });
+}
+
+function hasSameColumnRenderedPointerEndpoints(input: {
+  model: PdfPageTextModel;
+  pageElement: HTMLElement;
+  dragStartPoint: { x: number; y: number };
+  dragEndPoint: { x: number; y: number };
+}): boolean {
+  const pageRect = input.pageElement.getBoundingClientRect();
+  if (pageRect.width <= 0 || pageRect.height <= 0) {
+    return false;
+  }
+
+  const chars = buildPdfCanonicalChars(input.model)
+    .filter((char) => char.width > 0 && char.height > 0 && !/^\s$/.test(char.text))
+    .sort(compareZoteroPointerChars);
+  const columnIndexes = new Set(
+    chars
+      .map((char) => char.columnIndex)
+      .filter((columnIndex): columnIndex is number => typeof columnIndex === "number"),
+  );
+  if (chars.length === 0 || columnIndexes.size < 2) {
+    return false;
+  }
+
+  const startPoint = {
+    x: input.dragStartPoint.x - pageRect.left,
+    y: input.dragStartPoint.y - pageRect.top,
+  };
+  const endPoint = {
+    x: input.dragEndPoint.x - pageRect.left,
+    y: input.dragEndPoint.y - pageRect.top,
+  };
+  const visualColumnScope = resolvePdfVisualColumnScope({
+    chars,
+    viewportWidth: pageRect.width,
+    verticalRange: { top: Math.min(startPoint.y, endPoint.y), bottom: Math.max(startPoint.y, endPoint.y) },
+    startX: startPoint.x,
+    endX: endPoint.x,
+  });
+  if (visualColumnScope) {
+    return true;
+  }
+
+  const start = resolveZoteroPointerCharOffset({
+    chars,
+    point: {
+      x: startPoint.x,
+      y: startPoint.y,
+    },
+    side: "start",
+  });
+  const end = resolveZoteroPointerCharOffset({
+    chars,
+    point: {
+      x: endPoint.x,
+      y: endPoint.y,
+    },
+    side: "end",
+  });
+
+  return typeof start?.char.columnIndex === "number" &&
+    start.char.columnIndex === end?.char.columnIndex;
 }
 
 function resolveRenderedSelectionFromPointerBounds(input: {
@@ -2284,7 +2335,7 @@ function choosePreferredRenderedSelection(input: {
     return input.domSelection;
   }
 
-  if (isBoundaryPunctuationSuperset(input.geometrySelection.textQuote.exact, input.domSelection.textQuote.exact)) {
+  if (isPdfBoundaryPunctuationSuperset(input.geometrySelection.textQuote.exact, input.domSelection.textQuote.exact)) {
     return input.domSelection;
   }
 
@@ -2452,6 +2503,31 @@ function selectCharForPointer(input: {
     localY,
   });
   const scopedChars = sameLineChars.length > 0 ? sameLineChars : input.chars;
+  const orderedLineChars = [...scopedChars].sort((left, right) => (
+    left.left - right.left || left.normalizedStart - right.normalizedStart
+  ));
+  const centralGutter = orderedLineChars
+    .slice(1)
+    .map((character, index) => ({
+      leftCharacter: orderedLineChars[index],
+      rightCharacter: character,
+      gap: character.left - orderedLineChars[index].right,
+    }))
+    .filter((candidate) => (
+      candidate.gap >= Math.max(12, input.pageRect.width * 0.025) &&
+      candidate.leftCharacter.right <= input.pageRect.width * 0.65 &&
+      candidate.rightCharacter.left >= input.pageRect.width * 0.35
+    ))
+    .sort((left, right) => right.gap - left.gap)[0];
+  if (
+    centralGutter &&
+    localX > centralGutter.leftCharacter.right &&
+    localX < centralGutter.rightCharacter.left
+  ) {
+    return input.side === "end"
+      ? centralGutter.leftCharacter
+      : centralGutter.rightCharacter;
+  }
   const horizontalTolerance = Math.max(
     1,
     Math.min(
@@ -2636,9 +2712,9 @@ function chooseBestSelectionCandidate(
   return availableCandidates[0]?.selection ?? null;
 }
 
-function isBoundaryPunctuationSuperset(candidateText: string, baseText: string): boolean {
-  const normalizedCandidate = normalizeComparablePdfText(candidateText);
-  const normalizedBase = normalizeComparablePdfText(baseText);
+export function isPdfBoundaryPunctuationSuperset(candidateText: string, baseText: string): boolean {
+  const normalizedCandidate = stripPdfWhitespace(normalizeComparablePdfText(candidateText));
+  const normalizedBase = stripPdfWhitespace(normalizeComparablePdfText(baseText));
   if (!normalizedCandidate || !normalizedBase || normalizedCandidate === normalizedBase) {
     return false;
   }
@@ -2679,8 +2755,16 @@ function resolveNativeSelectionFromPointerBounds(input: {
     pageRect,
     side: "start",
   });
+  const pageMidX = pageRect.width / 2;
+  const endLocalX = input.dragEndPoint.x - pageRect.left;
+  const centerBoundaryTolerance = Math.max(12, pageRect.width * 0.02);
+  const endCharScope = startChar && startChar.centerX < pageMidX && endLocalX <= pageMidX + centerBoundaryTolerance
+    ? nativeViewportChars.filter((character) => character.centerX < pageMidX)
+    : startChar && startChar.centerX >= pageMidX && endLocalX >= pageMidX - centerBoundaryTolerance
+      ? nativeViewportChars.filter((character) => character.centerX >= pageMidX)
+      : nativeViewportChars;
   const endChar = selectCharForPointer({
-    chars: nativeViewportChars,
+    chars: endCharScope.length > 0 ? endCharScope : nativeViewportChars,
     point: input.dragEndPoint,
     pageRect,
     side: "end",
@@ -2696,8 +2780,32 @@ function resolveNativeSelectionFromPointerBounds(input: {
     return null;
   }
 
+  const selectedNativeChars = nativeViewportChars.filter((character) => (
+    character.normalizedEnd > startOffset && character.normalizedStart < endOffset
+  ));
+  const sameColumnEndpoints = (
+    (startChar.centerX < pageMidX && endChar.centerX < pageMidX) ||
+    (startChar.centerX >= pageMidX && endChar.centerX >= pageMidX)
+  );
+  const restrictToEndpointColumn = sameColumnEndpoints &&
+    hasNativeTwoColumnGutter({
+      chars: selectedNativeChars,
+      pageWidth: pageRect.width,
+    });
+  const visualSelectionChars = restrictToEndpointColumn
+    ? selectedNativeChars.filter((character) => (
+        startChar.centerX < pageMidX
+          ? character.centerX < pageMidX
+          : character.centerX >= pageMidX
+      ))
+    : selectedNativeChars;
+  if (visualSelectionChars.length === 0) {
+    return null;
+  }
+
   const viewportRects = buildViewportRectsFromNativeChars({
     nativeChars: input.nativeModel.chars,
+    selectedChars: visualSelectionChars,
     startOffset,
     endOffset,
     layout: input.layout,
@@ -2714,7 +2822,9 @@ function resolveNativeSelectionFromPointerBounds(input: {
     viewportRects,
     pageWidth: input.pageWidth,
     pageHeight: input.pageHeight,
-    selectedText: input.nativeModel.normalizedText.slice(startOffset, endOffset),
+    selectedText: restrictToEndpointColumn
+      ? buildReadableNativePointerText(visualSelectionChars)
+      : input.nativeModel.normalizedText.slice(startOffset, endOffset),
     source: "pdfium-native",
     confidence: "validated-native",
   });
@@ -3007,6 +3117,9 @@ function reconcileSelectionQuoteWithLiveDomText(input: {
   }
 
   const selectionExact = input.selection.textQuote.exact;
+  if (isPdfBoundaryPunctuationSuperset(selectionExact, liveExact)) {
+    return input.selection;
+  }
   if (
     hasPdfLineBreakHyphenArtifact(liveExact) &&
     !hasPdfLineBreakHyphenArtifact(selectionExact)
@@ -3185,6 +3298,13 @@ function choosePreferredPointerSelection(input: {
   const baseDistance = baseFeatures.distanceFromReference;
   const pointerBoundaryDistance = pointerFeatures.boundaryDistance;
   const baseBoundaryDistance = baseFeatures.boundaryDistance;
+  const pointerCompletesBoundaryPunctuation = Boolean(
+    isPdfBoundaryPunctuationSuperset(
+      input.pointerSelection.textQuote.exact,
+      input.baseSelection.textQuote.exact,
+    ) &&
+    pointerBoundaryDistance <= baseBoundaryDistance + Math.max(4, input.viewportRectCount * 2)
+  );
   const shortPointerDrivenSelection =
     input.viewportRectCount <= 2 &&
     domCompact.length <= 96 &&
@@ -3239,6 +3359,10 @@ function choosePreferredPointerSelection(input: {
   }
 
   if (pointerCompact === domCompact) {
+    return input.pointerSelection;
+  }
+
+  if (pointerCompletesBoundaryPunctuation) {
     return input.pointerSelection;
   }
 
@@ -3411,6 +3535,13 @@ function shouldRejectNativeSelectionForRenderedVisual(input: {
   const renderedCompact = getCompactSelectionText(input.renderedSelection);
   const nativeCompact = getCompactSelectionText(input.nativeSelection);
   if (!renderedCompact || !nativeCompact || renderedCompact === nativeCompact) {
+    return false;
+  }
+
+  if (isPdfBoundaryPunctuationSuperset(
+    input.nativeSelection.textQuote.exact,
+    input.renderedSelection.textQuote.exact,
+  )) {
     return false;
   }
 
@@ -3724,13 +3855,17 @@ function reconcileSelectionGeometryWithViewportRects(input: {
         pageNumber: input.pageNumber,
       }))
   ));
-  const nextViewportRects = normalizeViewportRects(
+  const nextViewportRects = mergeTextSelectionViewportRects({
+    rects: normalizeViewportRects(
     clippedViewportRects.length > 0
       ? clippedViewportRects
       : candidateViewportRects.length > 0
         ? candidateViewportRects
         : referenceViewportRects,
-  );
+    ),
+    pageNumber: input.pageNumber,
+    pageWidth: input.pageWidth,
+  });
 
   const pageRects = nextViewportRects.map((rect) => ({
     x1: Math.max(0, Math.min(1, rect.left / input.pageWidth)),
@@ -3841,6 +3976,7 @@ export function resolvePdfSelectionFromDomRange(input: {
   dragStartPoint?: { x: number; y: number };
   dragEndPoint?: { x: number; y: number };
   ignoreDomText?: boolean;
+  trustDomText?: boolean;
 }): PdfSelectionResolutionResult {
   const startPageElement = findPdfPageElementForNode(input.range.startContainer);
   const endPageElement = findPdfPageElementForNode(input.range.endContainer);
@@ -3996,7 +4132,7 @@ export function resolvePdfSelectionFromDomRange(input: {
   const liveSelectedText = geometryFirst ? "" : input.text;
   const domOffsetText = geometryFirst ? "" : domSelectedText;
   const finalizeResolvedSelection = (selection: PdfResolvedSelection): PdfResolvedSelection => {
-    const quoteReconciledSelection = reconcileSelectionQuoteWithLiveDomText({
+    let quoteReconciledSelection = reconcileSelectionQuoteWithLiveDomText({
       selection: ensureSelectionHasViewportRects({
         selection,
         fallbackViewportRects: fallbackViewportRectsForSelection,
@@ -4007,6 +4143,41 @@ export function resolvePdfSelectionFromDomRange(input: {
       liveSelectedText,
       domOffsetText,
     });
+    // Locking a pointer candidate to a trusted live quote must also lock its
+    // offsets. Otherwise the next kernel pass reconstructs the old substring
+    // from stale pointer offsets even though the displayed quote was corrected.
+    if (
+      input.trustDomText &&
+      hasResolvedDomOffsets &&
+      quoteReconciledSelection.textQuote.source === "dom-selection" &&
+      stripPdfWhitespace(normalizeComparablePdfText(pageModel.normalizedText.slice(startOffset, endOffset))) ===
+        stripPdfWhitespace(normalizeComparablePdfText(quoteReconciledSelection.textQuote.exact))
+    ) {
+      const pageRects = buildPdfRectsForOffsets(pageModel, startOffset, endOffset);
+      if (pageRects.length > 0) {
+        quoteReconciledSelection = {
+          ...quoteReconciledSelection,
+          startOffset,
+          endOffset,
+          textQuote: buildTextQuote({
+            pageText: pageModel.normalizedText,
+            startOffset,
+            endOffset,
+            exact: quoteReconciledSelection.textQuote.exact,
+            source: "dom-selection",
+          }),
+          textSource: "pdfjs-text-model",
+          pageRects,
+          viewportRects: pageRects.map((rect) => ({
+            pageNumber: startPageNumber,
+            left: rect.x1 * page.width,
+            top: rect.y1 * page.height,
+            width: (rect.x2 - rect.x1) * page.width,
+            height: (rect.y2 - rect.y1) * page.height,
+          })),
+        };
+      }
+    }
     return rebuildFinalSelectionGeometryFromOffsets({
       selection: quoteReconciledSelection,
       model: pageModel,
@@ -4054,6 +4225,7 @@ export function resolvePdfSelectionFromDomRange(input: {
   const renderedPointerSelection = hasMeaningfulDrag(input)
     ? (
         resolveRenderedSelectionFromZoteroPointerRange({
+          allowCrossColumn: !input.nativeLayout || input.dragEndPoint.y < input.dragStartPoint.y || input.dragEndPoint.x < input.dragStartPoint.x || selectionViewportRects.some(rect=>rect.left>page.width*.5),
           model: pageModel,
           pageElement: page.element,
           pageNumber: startPageNumber,
@@ -4072,13 +4244,38 @@ export function resolvePdfSelectionFromDomRange(input: {
         })
       )
     : null;
-  if (hasImplausibleSelectionGeometry && renderedPointerSelection) {
+  const sameColumnVisualPointerSelection = Boolean(
+    input.nativeLayout &&
+    renderedPointerSelection &&
+    hasMeaningfulDrag(input) &&
+    hasSameColumnRenderedPointerEndpoints({
+      model: pageModel,
+      pageElement: page.element,
+      dragStartPoint: input.dragStartPoint,
+      dragEndPoint: input.dragEndPoint,
+    }),
+  );
+  if(renderedPointerSelection?.readingOrder && !sameColumnVisualPointerSelection)return {ok:true,selection:renderedPointerSelection};
+  // PDF content streams and DOM ranges may traverse the opposite column even
+  // though both drag endpoints visibly belong to one column. Preserve the
+  // visual pointer range before native offset candidates can reintroduce it.
+  if (
+    sameColumnVisualPointerSelection &&
+    renderedPointerSelection &&
+    (geometryFirst || !hasResolvedDomOffsets || !domSelectedText)
+  ) {
     return {
       ok: true,
       selection: finalizeResolvedSelection(renderedPointerSelection),
     };
   }
-  if (geometryFirst) {
+  if (hasImplausibleSelectionGeometry && renderedPointerSelection && !input.nativeLayout) {
+    return {
+      ok: true,
+      selection: finalizeResolvedSelection(renderedPointerSelection),
+    };
+  }
+  if (geometryFirst && !input.nativeLayout) {
     if (
       renderedPointerSelection &&
       isResolvedSelectionAtWordBoundaries(renderedPointerSelection, pageModel.normalizedText)
@@ -4209,24 +4406,30 @@ export function resolvePdfSelectionFromDomRange(input: {
       viewportRectCount,
       viewportRects: selectionViewportRects,
     });
-    const nativeSelection = choosePreferredPointerSelection({
-      baseSelection: baseNativeSelection,
-      pointerSelection,
-      domSelectedText: selectionCandidateText,
-      viewportRectCount,
-      viewportRects: selectionViewportRects,
-      dragDistanceX: input.dragStartPoint && input.dragEndPoint
-        ? Math.abs(input.dragEndPoint.x - input.dragStartPoint.x)
-        : undefined,
-      referenceSpanWidth: viewportRectCount > 0
-        ? (
-            Math.max(...selectionViewportRects.filter((rect) => rect.pageNumber === startPageNumber).map((rect) => rect.left + rect.width)) -
-            Math.min(...selectionViewportRects.filter((rect) => rect.pageNumber === startPageNumber).map((rect) => rect.left))
-          )
-        : undefined,
-    });
+    const nativeSelection = geometryFirst && pointerSelection
+      ? pointerSelection
+      : choosePreferredPointerSelection({
+          baseSelection: baseNativeSelection,
+          pointerSelection,
+          domSelectedText: selectionCandidateText,
+          viewportRectCount,
+          viewportRects: selectionViewportRects,
+          dragDistanceX: input.dragStartPoint && input.dragEndPoint
+            ? Math.abs(input.dragEndPoint.x - input.dragStartPoint.x)
+            : undefined,
+          referenceSpanWidth: viewportRectCount > 0
+            ? (
+                Math.max(...selectionViewportRects.filter((rect) => rect.pageNumber === startPageNumber).map((rect) => rect.left + rect.width)) -
+                Math.min(...selectionViewportRects.filter((rect) => rect.pageNumber === startPageNumber).map((rect) => rect.left))
+              )
+            : undefined,
+        });
     const nativeMatchesLiveSelection = selectionTextMatchesLiveText(nativeSelection, selectionCandidateText);
-    const nativePointerTracksSelection = Boolean(pointerSelection && nativeSelection === pointerSelection);
+    const nativePointerTracksSelection = Boolean(
+      pointerSelection &&
+      nativeSelection === pointerSelection &&
+      (!input.trustDomText || !selectionCandidateText || nativeMatchesLiveSelection)
+    );
     const safeNativeSelection = nativeMatchesLiveSelection || nativePointerTracksSelection ? nativeSelection : null;
     const pointerWasUsed = Boolean(pointerSelection && safeNativeSelection === pointerSelection);
 
@@ -4238,22 +4441,29 @@ export function resolvePdfSelectionFromDomRange(input: {
         allowGeometryOverride: hasExplicitSelectionClientRects,
         liveSelectedText,
       });
-      const pointerFallbackSelection = choosePreferredPointerSelection({
-        baseSelection: fallbackSelection,
-        pointerSelection: renderedPointerSelection,
-        domSelectedText: selectionCandidateText,
-        viewportRectCount,
-        viewportRects: selectionViewportRects,
-        dragDistanceX: input.dragStartPoint && input.dragEndPoint
-          ? Math.abs(input.dragEndPoint.x - input.dragStartPoint.x)
-          : undefined,
-        referenceSpanWidth: viewportRectCount > 0
-          ? (
-              Math.max(...selectionViewportRects.filter((rect) => rect.pageNumber === startPageNumber).map((rect) => rect.left + rect.width)) -
-              Math.min(...selectionViewportRects.filter((rect) => rect.pageNumber === startPageNumber).map((rect) => rect.left))
-            )
-          : undefined,
-      });
+      const hasMatchingTrustedDomFallback = Boolean(
+        input.trustDomText &&
+        selectionCandidateText &&
+        selectionTextMatchesLiveText(fallbackSelection, selectionCandidateText),
+      );
+      const pointerFallbackSelection = hasMatchingTrustedDomFallback
+        ? fallbackSelection
+        : choosePreferredPointerSelection({
+            baseSelection: fallbackSelection,
+            pointerSelection: renderedPointerSelection,
+            domSelectedText: selectionCandidateText,
+            viewportRectCount,
+            viewportRects: selectionViewportRects,
+            dragDistanceX: input.dragStartPoint && input.dragEndPoint
+              ? Math.abs(input.dragEndPoint.x - input.dragStartPoint.x)
+              : undefined,
+            referenceSpanWidth: viewportRectCount > 0
+              ? (
+                  Math.max(...selectionViewportRects.filter((rect) => rect.pageNumber === startPageNumber).map((rect) => rect.left + rect.width)) -
+                  Math.min(...selectionViewportRects.filter((rect) => rect.pageNumber === startPageNumber).map((rect) => rect.left))
+                )
+              : undefined,
+          });
       if (pointerFallbackSelection) {
         return {
           ok: true,
@@ -4463,6 +4673,7 @@ export function resolvePdfSelectionFromNativeRange(input: {
   dragStartPoint?: { x: number; y: number };
   dragEndPoint?: { x: number; y: number };
   ignoreDomText?: boolean;
+  trustDomText?: boolean;
 }): PdfSelectionResolutionResult {
   return resolvePdfSelectionFromDomRange(input);
 }

@@ -4,7 +4,7 @@
 
 ### Web
 
-直接访问：<https://lattice-apq.pages.dev/>
+直接访问：<https://lattice-apq-7xj.pages.dev/>
 
 ### Desktop
 
@@ -52,9 +52,9 @@ npm run build
 验证后应至少确认：
 
 - `web-dist/index.html` 存在
-- `web-dist/guide/index.html` 存在
-- `web-dist/diagnostics/index.html` 存在
-- `web-dist/performance-test/index.html` 存在
+- `web-dist/guide.html` 存在
+- `web-dist/diagnostics.html` 存在
+- `web-dist/library.html` 存在
 
 ### Desktop 构建
 
@@ -92,7 +92,7 @@ npm run release:prepare -- --upload
 
 ```bash
 npm run build
-npx wrangler pages deploy web-dist --project-name lattice
+npm run deploy:cloudflare
 ```
 
 ## 6. 故障排查

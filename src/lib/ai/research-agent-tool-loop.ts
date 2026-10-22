@@ -1,19 +1,28 @@
 import {
   executeAgentTool,
+  buildRunCodeRequestSignature,
+  isLatticeApiToolName,
   type AgentToolExecutionResult,
   type AgentToolRequest,
   type ReadIndexedContextToolArgs,
   type ResolveLatticePathIdentityToolArgs,
   type ResolveEvidenceToolArgs,
   type WorkspaceSearchToolArgs,
+  type ScheduleTaskToolArgs,
+  type LatticeSourcePdfExecutionRuntime,
+  type LatticeApiToolRuntime,
 } from './agent-tool-broker';
+import { LATTICE_HARNESS_TOOLS } from './harness/lattice-tool-definitions';
 import {
   updateResearchAgentPlanStepStatus,
+  normalizeResearchAgentRunCodeArgs,
   type ResearchAgentPlanStep,
   type ResearchAgentPlanStepStatus,
 } from './research-agent-planner';
 import { useAgentSessionStore } from '@/stores/agent-session-store';
 import type { AgentSession } from './agent-session';
+import type { AgentSourceSelection } from './source-index';
+import { targetedSourceSearchPlan } from './research-source-recovery';
 
 export interface ResearchAgentPlannedToolSummary {
   stepId: string;
@@ -23,7 +32,10 @@ export interface ResearchAgentPlannedToolSummary {
 }
 
 export interface ResearchAgentToolObservation extends ResearchAgentPlannedToolSummary {
-  purpose: 'read' | 'recovery_read';
+  /** Untrusted output from a matching execution receipt; never an instruction. */
+  output?: string;
+  outputTruncated?: boolean;
+  purpose: 'read' | 'recovery_read' | 'action';
   recoveryLocator: string | null;
   evidenceCount: number;
   requestSignature: string;
@@ -57,10 +69,13 @@ const CORE_STEP_IDS = new Set([
   'compact-session',
 ]);
 
-const READ_TOOL_NAMES = new Set<AgentToolRequest['name']>([
+const PLANNED_TOOL_NAMES = new Set<AgentToolRequest['name']>([
+  ...LATTICE_HARNESS_TOOLS.map(tool => tool.name),
   'workspace.search',
   'workspace.readIndexedContext',
   'lattice.resolvePathIdentity',
+  'schedule_task',
+  'runner.runCode',
 ]);
 
 const DEFAULT_MAX_READ_TOOL_STEPS = 8;
@@ -85,7 +100,13 @@ function appendPlanStepTrace(input: {
   timestamp: number;
   message: string;
   resultPreview?: string;
+  approvalRequestId?: string;
+  requestSignature?: string;
 }) {
+  const session = useAgentSessionStore.getState().getSession(input.sessionId);
+  // The broker may already have recorded a terminal failure or rejection.
+  // Preserve that state while still returning its observation to the caller.
+  if (session && (session.status === 'failed' || session.status === 'cancelled' || session.status === 'completed')) return;
   useAgentSessionStore.getState().appendTrace(input.sessionId, {
     id: `${input.sessionId}:plan:${input.step.id}:${input.status}:${input.timestamp}`,
     kind: 'planning',
@@ -96,11 +117,16 @@ function appendPlanStepTrace(input: {
       planStepStatus: input.status,
       toolName: input.step.toolName ?? null,
       resultPreview: input.resultPreview ?? null,
+      approvalRequestId: input.approvalRequestId ?? null,
+      requestSignature: input.requestSignature ?? null,
     },
   });
 }
 
 function buildReadToolRequest(step: ResearchAgentPlanStep, query: string): AgentToolRequest | null {
+  if (step.toolName && isLatticeApiToolName(step.toolName)) {
+    return { name: step.toolName, args: (step.toolArgs ?? {}) as Record<string, unknown> };
+  }
   switch (step.toolName) {
     case 'workspace.search': {
       const args = (step.toolArgs ?? {}) as Partial<WorkspaceSearchToolArgs>;
@@ -129,6 +155,15 @@ function buildReadToolRequest(step: ResearchAgentPlanStep, query: string): Agent
         args,
       };
     }
+    case 'schedule_task': {
+      const args = step.toolArgs as ScheduleTaskToolArgs | undefined;
+      if (!args?.title || !args.schedule) return null;
+      return { name: 'schedule_task', args };
+    }
+    case 'runner.runCode': {
+      const args = normalizeResearchAgentRunCodeArgs(step.toolArgs);
+      return args ? { name: 'runner.runCode', args } : null;
+    }
     default:
       return null;
   }
@@ -142,6 +177,10 @@ function buildMetadataPreview(metadata: AgentToolExecutionResult['resultMetadata
   const preferredKeys = [
     'resultStatus',
     'resultSummary',
+    'complete',
+    'nextCursor',
+    'pendingUnitCount',
+    'pendingUnitsPreview',
     'resultMetricsPreview',
     'resultArtifactsPreview',
     'resultDiagnosticsPreview',
@@ -173,7 +212,54 @@ function readMetadataString(metadata: AgentToolExecutionResult['resultMetadata']
 }
 
 function buildRequestSignature(request: AgentToolRequest): string {
+  if (request.name === 'runner.runCode') return buildRunCodeRequestSignature(request.args);
   return `${request.name}:${JSON.stringify(request.args)}`;
+}
+
+function restoreRunnerApprovalResult(
+  session: AgentSession | null,
+  step: ResearchAgentPlanStep,
+  request: Extract<AgentToolRequest, { name: 'runner.runCode' }>,
+): AgentToolExecutionResult<'runner.runCode'> | null {
+  if (!session) return null;
+  const requestSignature = buildRunCodeRequestSignature(request.args);
+  const binding = session.trace.slice().reverse().find((event) =>
+    event.kind === 'planning' && event.metadata?.planStepId === step.id &&
+    event.metadata?.requestSignature === requestSignature &&
+    typeof event.metadata?.approvalRequestId === 'string',
+  );
+  const approval = session.pendingApprovals.slice().reverse().find((item) => {
+    if (item.id === binding?.metadata?.approvalRequestId) return true;
+    const args = normalizeResearchAgentRunCodeArgs(item.request.args);
+    return item.planStepId === step.id && item.toolName === 'runner.runCode' && args && buildRunCodeRequestSignature(args) === requestSignature;
+  });
+  const approvedArgs = normalizeResearchAgentRunCodeArgs(approval?.request.args);
+  if (!approval || approval.toolName !== 'runner.runCode' || approval.request.name !== 'runner.runCode' ||
+    !approvedArgs || buildRunCodeRequestSignature(approvedArgs) !== requestSignature) return null;
+
+  const base = { sessionId: session.id, toolName: 'runner.runCode' as const, decision: approval.decision, approvalRequestId: approval.id };
+  if (approval.status === 'pending' || approval.status === 'approved' || approval.status === 'executing') {
+    return { ...base, status: 'requires_approval', resultPreview: approval.status === 'executing' ? 'Approved computation is still running.' : 'Computation is waiting for explicit tool approval.' };
+  }
+  if (approval.status === 'rejected') return { ...base, status: 'denied', error: approval.error ?? 'User rejected the computation.' };
+
+  const receipt = approval.executionReceipt;
+  if (!receipt || receipt.sessionId !== session.id || receipt.approvalRequestId !== approval.id ||
+    receipt.requestSignature !== requestSignature || receipt.status !== approval.status) {
+    return { ...base, status: 'failed', error: 'A matching execution receipt is unavailable; the computation was not rerun.' };
+  }
+  const failed = receipt.status === 'failed';
+  return {
+    ...base, status: receipt.status,
+    ...(failed ? { error: receipt.output } : { result: { output: receipt.output } }),
+    resultPreview: approval.resultPreview ?? receipt.output.slice(0, 320),
+    resultMetadata: {
+      resultStatus: failed ? 'failed' : receipt.truncated ? 'partial' : 'completed',
+      resultSummary: failed ? 'Approved runner execution failed.' : receipt.truncated ? 'Runner output captured; retained output is truncated.' : 'Runner output captured.',
+      resultSize: receipt.outputLength, outputTruncated: receipt.truncated,
+      resultDiagnosticsPreview: failed ? receipt.output : null, restored: true,
+    },
+  };
 }
 
 function readRecoveryLocator(step: ResearchAgentPlanStep): string | null {
@@ -193,7 +279,7 @@ function restoreCompletedObservation(input: {
   session: AgentSession | null;
   step: ResearchAgentPlanStep;
 }): ResearchAgentToolObservation | null {
-  if (!input.session || !input.step.toolName || !READ_TOOL_NAMES.has(input.step.toolName)) {
+  if (!input.session || !input.step.toolName || !PLANNED_TOOL_NAMES.has(input.step.toolName)) {
     return null;
   }
 
@@ -233,14 +319,24 @@ function restoreCompletedObservation(input: {
 }
 
 export async function runResearchAgentReadToolLoop(input: {
+  apiToolRuntime?: LatticeApiToolRuntime;
+  latticeSourcePdfRuntime?: LatticeSourcePdfExecutionRuntime;
   sessionId: string;
   planSteps: ResearchAgentPlanStep[];
   query: string;
+  filePath?: string;
+  sourceIntentQuery?: string;
+  sourceSelections?: readonly AgentSourceSelection[];
+  requireSourceRead?: boolean;
   now: number;
   maxReadToolSteps?: number;
+  allowCodeExecution?: boolean;
   signal?: AbortSignal;
 }): Promise<ResearchAgentReadToolLoopResult> {
-  let planSteps = input.planSteps;
+  let planSteps = input.requireSourceRead !== false && (input.maxReadToolSteps ?? DEFAULT_MAX_READ_TOOL_STEPS) > 0 && (input.apiToolRuntime || input.latticeSourcePdfRuntime)
+    ? targetedSourceSearchPlan({ query: input.query, sourceIntentQuery: input.sourceIntentQuery,
+      filePath: input.filePath, selections: input.sourceSelections, steps: input.planSteps })
+    : input.planSteps;
   const toolResults: AgentToolExecutionResult[] = [];
   const summaries: ResearchAgentPlannedToolSummary[] = [];
   const observations: ResearchAgentToolObservation[] = [];
@@ -249,18 +345,24 @@ export async function runResearchAgentReadToolLoop(input: {
   let executedReadToolSteps = 0;
   const session = useAgentSessionStore.getState().getSession(input.sessionId);
 
-  for (const step of input.planSteps) {
+  for (const step of planSteps) {
     throwIfAborted(input.signal);
-    if (step.status !== 'pending' || !step.toolName || CORE_STEP_IDS.has(step.id) || !READ_TOOL_NAMES.has(step.toolName)) {
+    const isComputation = step.toolName === 'runner.runCode';
+    if ((!isComputation && step.status !== 'pending') || !step.toolName || CORE_STEP_IDS.has(step.id) || !PLANNED_TOOL_NAMES.has(step.toolName)) {
       continue;
+    }
+    if (isComputation && !input.allowCodeExecution) {
+      throw new Error('runner.runCode requires explicit execution intent for this task.');
     }
 
     const request = buildReadToolRequest(step, input.query);
     if (!request) {
+      if (isComputation) throw new Error('Invalid runner.runCode arguments; expected language (python or javascript) and non-empty code.');
       continue;
     }
 
-    const restoredObservation = restoreCompletedObservation({ session, step });
+    const restoredResult = request.name === 'runner.runCode' ? restoreRunnerApprovalResult(session, step, request) : null;
+    const restoredObservation = isComputation || isLatticeApiToolName(request.name) ? null : restoreCompletedObservation({ session, step });
     if (restoredObservation) {
       planSteps = updateResearchAgentPlanStepStatus(planSteps, step.id, 'completed');
       summaries.push(restoredObservation);
@@ -276,7 +378,7 @@ export async function runResearchAgentReadToolLoop(input: {
       continue;
     }
 
-    if (executedReadToolSteps >= maxReadToolSteps) {
+    if (!restoredResult && executedReadToolSteps >= maxReadToolSteps) {
       planSteps = updateResearchAgentPlanStepStatus(planSteps, step.id, 'failed');
       const message = `Research agent read-tool step limit exceeded (${maxReadToolSteps}).`;
       appendPlanStepTrace({
@@ -290,6 +392,9 @@ export async function runResearchAgentReadToolLoop(input: {
       throw new Error(message);
     }
 
+    if (isComputation && !restoredResult && step.status !== 'pending') {
+      throw new Error('A matching runner.runCode approval is unavailable for this resumed step.');
+    }
     planSteps = updateResearchAgentPlanStepStatus(planSteps, step.id, 'running');
     appendPlanStepTrace({
       sessionId: input.sessionId,
@@ -300,8 +405,9 @@ export async function runResearchAgentReadToolLoop(input: {
     });
 
     throwIfAborted(input.signal);
-    executedReadToolSteps += 1;
-    const result = await executeAgentTool(request, { sessionId: input.sessionId });
+    if (!restoredResult) executedReadToolSteps += 1;
+    const result = restoredResult ?? await executeAgentTool(request, { sessionId: input.sessionId, planStepId: step.id, deferSourceReadFailure: true,
+      apiToolRuntime: input.apiToolRuntime, latticeSourcePdfRuntime: input.latticeSourcePdfRuntime, signal: input.signal });
     throwIfAborted(input.signal);
     toolResults.push(result);
 
@@ -318,7 +424,11 @@ export async function runResearchAgentReadToolLoop(input: {
       stepId: step.id,
       toolName: request.name,
       status: result.status,
-      purpose: recoveryLocator ? 'recovery_read' : 'read',
+      purpose: step.toolName === 'schedule_task' || isComputation || request.name.includes('.propose') || request.name === 'lattice.compute.evaluate' ? 'action' : recoveryLocator ? 'recovery_read' : 'read',
+      ...(isComputation && result.status === 'completed' && result.result && typeof result.result === 'object' && 'output' in result.result && typeof result.result.output === 'string' ? {
+        output: result.result.output, outputTruncated: result.resultMetadata?.outputTruncated === true,
+      } : {}),
+      ...(isLatticeApiToolName(request.name) && result.status === 'completed' ? { output: JSON.stringify(result.result).slice(0, 32000), outputTruncated: JSON.stringify(result.result).length > 32000 } : {}),
       recoveryLocator,
       preview: resultPreview,
       evidenceCount: readEvidenceCount(result.resultMetadata),
@@ -343,6 +453,8 @@ export async function runResearchAgentReadToolLoop(input: {
         ? `Plan step blocked on approval: ${step.title}.`
         : `Plan step ${status}: ${step.title}.`,
       resultPreview,
+      approvalRequestId: result.approvalRequestId,
+      requestSignature: buildRequestSignature(request),
     });
 
     if (status !== 'completed') {

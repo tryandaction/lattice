@@ -1,44 +1,51 @@
 ﻿'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Settings, Palette, FolderOpen, Info, Keyboard, RotateCcw, Cable, Bot } from 'lucide-react';
+import { X, Settings, Palette, FolderOpen, Info, Keyboard, RotateCcw, Cable, Bot, Import, RefreshCw } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
+import type { TranslationKey } from '@/lib/i18n';
 import { useSettingsStore } from '@/stores/settings-store';
+import { DEFAULT_SETTINGS } from '@/types/settings';
 import { usePluginStore } from '@/stores/plugin-store';
 import { LanguageSelector } from './language-selector';
 import { ThemeSelector } from './theme-selector';
+import { PluginsPanel } from './plugins-panel';
 import { FolderSelector } from './folder-selector';
 import { QuantumKeyboardEditor } from './quantum-keyboard-editor';
-import { isTauri } from '@/lib/storage-adapter';
+import { isTauri, isTauriHost } from '@/lib/storage-adapter';
 import { getAvailablePlugins } from '@/lib/plugins/registry';
+import { readVSCodeConfigFromDetectedProfiles } from '@/lib/vscode-compat/auto-discovery';
+import { getRunnableVSCodeExtensions } from '@/lib/vscode-compat/extensions';
+import { summarizeVSCodeCompat } from '@/lib/vscode-compat/status';
+import { useVSCodeCompatStore } from '@/stores/vscode-compat-store';
+import { useVSCodeExtensionHostStore } from '@/stores/vscode-extension-host-store';
+import { useCodeIntelligenceStore } from '@/stores/code-intelligence-store';
+import { useFileSystem } from '@/hooks/use-file-system';
+import { useWorkspaceStore } from '@/stores/workspace-store';
 import {
-  getRegisteredCommands,
-  subscribePluginRegistry,
   getPluginHealthSnapshot,
   subscribePluginHealth,
   getPluginAuditLog,
   subscribePluginAudit,
-  clearPluginAuditLog,
 } from '@/lib/plugins/runtime';
 import { cn } from '@/lib/utils';
 import { UI_MODAL_OVERLAY_CLASS, UI_MODAL_OVERLAY_STYLE, UI_MODAL_PANEL_CLASS } from '@/lib/ui-layers';
-import type { TranslationKey } from '@/lib/i18n';
-import type { PluginCommand, PluginManifest, PluginSettingField } from '@/lib/plugins/types';
 import type { PluginHealth, PluginAuditEvent } from '@/lib/plugins/runtime';
 import {
-  getPluginPermissionMeta,
-  type PluginPermissionRisk,
-} from '@/lib/plugins/permission-catalog';
-import {
   buildPluginMarketplaceCatalog,
-  type PluginMarketplaceSource,
 } from '@/lib/plugins/marketplace';
 import { FORMULA_EXTRACTOR_PLUGIN_ID } from '@/lib/plugins/defaults';
 import packageJson from '../../../package.json';
+import { AiProviderProfilesPanel } from './ai-provider-profiles-panel';
+import { useAiProviderProfileStore } from '@/stores/ai-provider-profile-store';
+import { createProfiledProvider } from '@/lib/ai/profiled-provider';
+import { McpServersPanel } from './mcp-servers-panel';
+import { normalizeMcpServerConfig, type McpServerConfig } from '@/lib/ai/mcp-config';
 
 interface SettingsDialogProps {
   isOpen: boolean;
   onClose: () => void;
+  initialTab?: SettingsTab;
 }
 
 type SettingsTab = 'general' | 'appearance' | 'files' | 'extensions' | 'ai' | 'shortcuts' | 'about';
@@ -55,98 +62,98 @@ const tabs: { id: SettingsTab; icon: typeof Settings; labelKey: 'settings.genera
 
 const APP_VERSION = packageJson.version;
 
-type PluginSourceFilter = 'all' | PluginMarketplaceSource;
-type PluginStatusFilter = 'all' | 'enabled' | 'disabled' | 'untrusted' | 'error';
-type PluginRiskFilter = 'all' | PluginPermissionRisk;
-
-const compareSemver = (left: string, right: string) => {
-  const parse = (value: string) => {
-    const cleaned = value.split('+')[0];
-    const [core, prereleaseRaw] = cleaned.split('-');
-    const coreParts = core.split('.').map((part) => {
-      const parsed = Number(part);
-      return Number.isFinite(parsed) ? parsed : 0;
-    });
-    const prerelease = prereleaseRaw ? prereleaseRaw.split('.') : [];
-    return { coreParts, prerelease };
-  };
-
-  const compareIdentifiers = (a: string, b: string) => {
-    const aNum = Number(a);
-    const bNum = Number(b);
-    const aIsNum = Number.isFinite(aNum) && String(aNum) === a;
-    const bIsNum = Number.isFinite(bNum) && String(bNum) === b;
-    if (aIsNum && bIsNum) return aNum - bNum;
-    if (aIsNum && !bIsNum) return -1;
-    if (!aIsNum && bIsNum) return 1;
-    if (a === b) return 0;
-    return a < b ? -1 : 1;
-  };
-
-  const a = parse(left);
-  const b = parse(right);
-  const length = Math.max(a.coreParts.length, b.coreParts.length);
-  for (let i = 0; i < length; i += 1) {
-    const diff = (a.coreParts[i] ?? 0) - (b.coreParts[i] ?? 0);
-    if (diff !== 0) return diff;
-  }
-
-  const aPre = a.prerelease;
-  const bPre = b.prerelease;
-  if (aPre.length === 0 && bPre.length === 0) return 0;
-  if (aPre.length === 0) return 1;
-  if (bPre.length === 0) return -1;
-
-  const preLength = Math.max(aPre.length, bPre.length);
-  for (let i = 0; i < preLength; i += 1) {
-    const aId = aPre[i];
-    const bId = bPre[i];
-    if (aId === undefined) return -1;
-    if (bId === undefined) return 1;
-    const diff = compareIdentifiers(aId, bId);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-};
-
-function getPluginRiskClass(risk: PluginPermissionRisk): string {
-  if (risk === 'high') return 'border-destructive/40 text-destructive bg-destructive/10';
-  if (risk === 'medium') return 'border-amber-400/40 text-amber-700 bg-amber-500/10 dark:text-amber-300';
-  if (risk === 'low') return 'border-emerald-500/30 text-emerald-700 bg-emerald-500/10 dark:text-emerald-300';
-  return 'border-border text-muted-foreground bg-muted/30';
-}
-
-function getPluginSourceLabelKey(source: PluginMarketplaceSource): TranslationKey {
-  if (source === 'override') return 'settings.plugins.source.override';
-  if (source === 'installed') return 'settings.plugins.source.installed';
-  return 'settings.plugins.source.builtIn';
-}
-
-export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
+export function SettingsDialog({ isOpen, onClose, initialTab = 'general' }: SettingsDialogProps) {
   const { t } = useI18n();
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const updateSetting = useSettingsStore((state) => state.updateSetting);
   const updateSettings = useSettingsStore((state) => state.updateSettings);
   const settings = useSettingsStore((state) => state.settings);
+  const [systemPromptDraft, setSystemPromptDraft] = useState({
+    global: DEFAULT_SETTINGS.aiSystemPrompt,
+    chat: DEFAULT_SETTINGS.aiChatSystemPrompt ?? '',
+    agent: DEFAULT_SETTINGS.aiAgentSystemPrompt ?? '',
+  });
+  const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
   const installedPlugins = usePluginStore((state) => state.plugins);
-  const loadPlugins = usePluginStore((state) => state.loadPlugins);
-  const installFromZip = usePluginStore((state) => state.installFromZip);
-  const installFromDirectory = usePluginStore((state) => state.installFromDirectory);
-  const removePlugin = usePluginStore((state) => state.removePlugin);
-  const pluginError = usePluginStore((state) => state.error);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [registeredCommands, setRegisteredCommands] = useState<PluginCommand[]>([]);
-  const [trustDialogPlugin, setTrustDialogPlugin] = useState<PluginManifest | null>(null);
-  const [networkInput, setNetworkInput] = useState('');
-  const [pluginQuery, setPluginQuery] = useState('');
-  const [pluginSourceFilter, setPluginSourceFilter] = useState<PluginSourceFilter>('all');
-  const [pluginStatusFilter, setPluginStatusFilter] = useState<PluginStatusFilter>('all');
-  const [pluginRiskFilter, setPluginRiskFilter] = useState<PluginRiskFilter>('all');
+  const importVSCodeConfig = useVSCodeCompatStore((state) => state.importFromJson);
+  const resetVSCodeCompat = useVSCodeCompatStore((state) => state.reset);
+  const vscodeCompatWorkbenchSettings = useVSCodeCompatStore((state) => state.settings);
+  const vscodeCompatKeybindings = useVSCodeCompatStore((state) => state.keybindings);
+  const vscodeCompatSnippets = useVSCodeCompatStore((state) => state.snippets);
+  const vscodeCompatTasks = useVSCodeCompatStore((state) => state.tasks);
+  const vscodeCompatLaunches = useVSCodeCompatStore((state) => state.launches);
+  const vscodeCompatExtensions = useVSCodeCompatStore((state) => state.extensions);
+  const vscodeCompatImportedAt = useVSCodeCompatStore((state) => state.importedAt);
+  const vscodeCompatSourceLabel = useVSCodeCompatStore((state) => state.sourceLabel);
+  const vscodeCompatWarnings = useVSCodeCompatStore((state) => state.warnings);
+  const vscodeHostSnapshot = useVSCodeExtensionHostStore((state) => state.snapshot);
+  const syncVSCodeHost = useVSCodeExtensionHostStore((state) => state.syncWithCompat);
+  const codeIntelligenceProviders = useCodeIntelligenceStore((state) => state.providers);
+  const refreshCodeIntelligence = useCodeIntelligenceStore((state) => state.refresh);
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
+  const aiProfiles = useAiProviderProfileStore((state) => state.profiles);
+  const activeAiProfileId = useAiProviderProfileStore((state) => state.activeProfileId);
+  const aiProfilePersistenceError = useAiProviderProfileStore((state) => state.error);
+  const retryAiProfilePersistence = useAiProviderProfileStore((state) => state.retryPersistence);
+  const hydrateAiProfiles = useAiProviderProfileStore((state) => state.hydrate);
+  const createAiProfile = useAiProviderProfileStore((state) => state.createProfile);
+  const setActiveAiProfile = useAiProviderProfileStore((state) => state.setActiveProfile);
+  const setDefaultAiProfile = useAiProviderProfileStore((state) => state.setDefaultProfile);
+  const updateAiProfile = useAiProviderProfileStore((state) => state.updateProfile);
+  const removeAiModel = useAiProviderProfileStore((state) => state.removeModel);
+  const reconcileAiRemoteModels = useAiProviderProfileStore((state) => state.reconcileRemoteModels);
+  const setAiModelProvider = useAiProviderProfileStore((state) => state.setModelProvider);
+  const removeAiProfile = useAiProviderProfileStore((state) => state.removeProfile);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const dialogs = document.querySelectorAll('[aria-modal="true"]:is([role="dialog"], [role="alertdialog"])');
+      if (dialogs.item(dialogs.length - 1) !== dialogRef.current) return;
+      event.preventDefault();
+      onClose();
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (isOpen) void hydrateAiProfiles();
+  }, [hydrateAiProfiles, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || typeof window === 'undefined') return;
+    try {
+      const raw = JSON.parse(window.localStorage.getItem('lattice-mcp-servers-v1') ?? '[]') as unknown;
+      const values = Array.isArray(raw) ? raw.map((entry) => normalizeMcpServerConfig(entry as Partial<McpServerConfig>)).filter((entry): entry is McpServerConfig => Boolean(entry)) : [];
+      setMcpServers(values);
+    } catch {
+      setMcpServers([]);
+    }
+  }, [isOpen]);
+
+  const handleMcpServersChange = (servers: McpServerConfig[]) => {
+    setMcpServers(servers);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('lattice-mcp-servers-v1', JSON.stringify(servers));
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setSystemPromptDraft({
+      global: settings.aiSystemPrompt,
+      chat: settings.aiChatSystemPrompt ?? '',
+      agent: settings.aiAgentSystemPrompt ?? '',
+    });
+  }, [isOpen, settings.aiAgentSystemPrompt, settings.aiChatSystemPrompt, settings.aiSystemPrompt]);
+  const { refreshDirectory } = useFileSystem();
+  const [vscodeImportMessage, setVSCodeImportMessage] = useState<{ key: TranslationKey; params?: Record<string, string | number> } | null>(null);
+  const [isVSCodeImporting, setIsVSCodeImporting] = useState(false);
   const [pluginHealthMap, setPluginHealthMap] = useState<Record<string, PluginHealth>>({});
   const [pluginAuditLog, setPluginAuditLog] = useState<PluginAuditEvent[]>([]);
-  const supportsDirectoryInstall =
-    typeof window !== 'undefined' && 'showDirectoryPicker' in window;
-
   const builtInPlugins = useMemo(() => {
     try {
       return getAvailablePlugins();
@@ -162,51 +169,10 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
     trustedPluginIds: settings.trustedPlugins,
   }), [builtInPlugins, installedPlugins, settings.enabledPlugins, settings.trustedPlugins]);
 
-  const normalizedPluginQuery = pluginQuery.trim().toLowerCase();
-  const filteredPluginEntries = useMemo(() => {
-    return pluginCatalog.filter((entry) => {
-      if (pluginSourceFilter !== 'all' && entry.source !== pluginSourceFilter) return false;
-      if (pluginRiskFilter !== 'all' && entry.risk !== pluginRiskFilter) return false;
-      const health = pluginHealthMap[entry.id];
-      const isActive = settings.pluginsEnabled && entry.enabled;
-      const status = !isActive ? 'inactive' : health?.status ?? 'active';
-      if (pluginStatusFilter === 'enabled' && !entry.enabled) return false;
-      if (pluginStatusFilter === 'disabled' && entry.enabled) return false;
-      if (pluginStatusFilter === 'untrusted' && entry.trusted) return false;
-      if (pluginStatusFilter === 'error' && status !== 'error') return false;
-      if (!normalizedPluginQuery) return true;
-      const haystack = [entry.name, entry.id, entry.description, entry.author, entry.category]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(normalizedPluginQuery);
-    });
-  }, [
-    normalizedPluginQuery,
-    pluginCatalog,
-    pluginHealthMap,
-    pluginRiskFilter,
-    pluginSourceFilter,
-    pluginStatusFilter,
-    settings.pluginsEnabled,
-  ]);
-  const pluginNameById = useMemo(
-    () => new Map(pluginCatalog.map((plugin) => [plugin.id, plugin.name])),
-    [pluginCatalog]
-  );
-
   const networkAllowlist = useMemo(
     () => (Array.isArray(settings.pluginNetworkAllowlist) ? settings.pluginNetworkAllowlist : []),
     [settings.pluginNetworkAllowlist]
   );
-
-  const updateCount = useMemo(() => {
-    return pluginCatalog.filter((entry) => (
-      entry.source === 'override' &&
-      entry.builtInVersion &&
-      compareSemver(entry.builtInVersion, entry.version) > 0
-    )).length;
-  }, [pluginCatalog]);
 
   const aboutPluginStatus = useMemo(() => {
     const formulaExtractor = pluginCatalog.find((entry) => entry.id === FORMULA_EXTRACTOR_PLUGIN_ID);
@@ -215,17 +181,58 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
       officialCount: pluginCatalog.filter((entry) => entry.official).length,
       installedCount: pluginCatalog.filter((entry) => entry.source === 'installed' || entry.source === 'override').length,
       highRiskCount: pluginCatalog.filter((entry) => entry.risk === 'high').length,
-      formulaExtractorReady: Boolean(settings.pluginsEnabled && formulaExtractor?.enabled && formulaExtractor.trusted),
+      activeCount: settings.pluginsEnabled
+        ? pluginCatalog.filter((entry) => entry.enabled && entry.trusted && pluginHealthMap[entry.id]?.status === 'active').length
+        : 0,
+      formulaExtractorReady: Boolean(
+        settings.pluginsEnabled && formulaExtractor?.enabled && formulaExtractor.trusted &&
+        pluginHealthMap[FORMULA_EXTRACTOR_PLUGIN_ID]?.status === 'active'
+      ),
     };
-  }, [pluginCatalog, settings.pluginsEnabled]);
-
-  const formatTimestamp = (value?: number) => {
-    if (!value) return '';
-    try {
-      return new Date(value).toLocaleString();
-    } catch {
-      return String(value);
+  }, [pluginCatalog, pluginHealthMap, settings.pluginsEnabled]);
+  const vscodeCompatSummary = useMemo(
+    () => summarizeVSCodeCompat({
+      settings: vscodeCompatWorkbenchSettings,
+      keybindings: vscodeCompatKeybindings,
+      snippets: vscodeCompatSnippets,
+      tasks: vscodeCompatTasks,
+      launches: vscodeCompatLaunches,
+      extensions: vscodeCompatExtensions,
+      importedAt: vscodeCompatImportedAt,
+      sourceLabel: vscodeCompatSourceLabel,
+      warnings: vscodeCompatWarnings,
+    }),
+    [
+      vscodeCompatExtensions,
+      vscodeCompatImportedAt,
+      vscodeCompatKeybindings,
+      vscodeCompatSnippets,
+      vscodeCompatSourceLabel,
+      vscodeCompatTasks,
+      vscodeCompatLaunches,
+      vscodeCompatWarnings,
+      vscodeCompatWorkbenchSettings,
+    ],
+  );
+  const runnableVSCodeExtensions = useMemo(
+    () => getRunnableVSCodeExtensions(vscodeCompatExtensions),
+    [vscodeCompatExtensions],
+  );
+  const readyCodeIntelligenceCount = useMemo(
+    () => codeIntelligenceProviders.filter((provider) => provider.status === "ready").length,
+    [codeIntelligenceProviders],
+  );
+  const codeIntelligenceStatusLabel = useMemo(() => {
+    if (codeIntelligenceProviders.length === 0) {
+      return t('settings.compat.notDetected');
     }
+    return t('settings.compat.readyCount', { ready: readyCodeIntelligenceCount, total: codeIntelligenceProviders.length });
+  }, [codeIntelligenceProviders, readyCodeIntelligenceCount, t]);
+
+  const compactCompatSource = (value: string | null | undefined) => {
+    if (!value) return "VS Code";
+    if (value.length <= 72) return value;
+    return `${value.slice(0, 28)}…${value.slice(-28)}`;
   };
 
   const handleRestartOnboarding = async () => {
@@ -235,56 +242,44 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
     window.location.reload();
   };
 
-  const handleConfirmTrust = async () => {
-    if (!trustDialogPlugin) return;
-    const nextTrusted = Array.from(new Set([...settings.trustedPlugins, trustDialogPlugin.id]));
-    await updateSettings({ trustedPlugins: nextTrusted });
-    setTrustDialogPlugin(null);
-  };
+  const handleImportVSCodeAuto = async () => {
+    if (!isTauriHost()) {
+      setVSCodeImportMessage({ key: 'settings.compat.desktopRequired' });
+      return;
+    }
 
-  const handleCancelTrust = () => {
-    setTrustDialogPlugin(null);
-  };
-
-  const handleAddNetworkAllowlist = async () => {
-    const normalized = normalizeAllowlistEntry(networkInput);
-    if (!normalized) return;
-    const next = Array.from(new Set([...networkAllowlist, normalized]));
-    await updateSetting('pluginNetworkAllowlist', next);
-    setNetworkInput('');
-  };
-
-  const handleRemoveNetworkAllowlist = async (entry: string) => {
-    const next = networkAllowlist.filter((item) => item !== entry);
-    await updateSetting('pluginNetworkAllowlist', next);
-  };
-
-  const handleInstallFromFolder = async () => {
-    const picker = (window as Window & { showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle> })
-      .showDirectoryPicker;
-    if (!picker) return;
+    setIsVSCodeImporting(true);
+    setVSCodeImportMessage({ key: 'settings.compat.scanning' });
     try {
-      const handle = await picker();
-      await installFromDirectory(handle);
+      const imported = await readVSCodeConfigFromDetectedProfiles();
+      const extensionCount = imported.config.extensions?.length ?? 0;
+      if (imported.discoveredFiles.length === 0 && extensionCount === 0) {
+        setVSCodeImportMessage({ key: 'settings.compat.notFound' });
+        return;
+      }
+
+      await importVSCodeConfig(imported.config, imported.sourceLabel, imported.warnings);
+      await updateSetting('vscodeCompatEnabled', true);
+      await refreshDirectory({ silent: true });
+      setVSCodeImportMessage({ key: 'settings.compat.imported', params: { files: imported.discoveredFiles.length, extensions: extensionCount } });
+      setActiveTab("files");
+      if (imported.warnings.length > 0) {
+        console.warn("VS Code import warnings:", imported.warnings);
+      }
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return;
-      console.error('Failed to install plugin from folder:', error);
+      console.error("Failed to auto import VS Code config:", error);
+      setVSCodeImportMessage({ key: 'settings.compat.failed' });
+    } finally {
+      setIsVSCodeImporting(false);
     }
   };
 
-  useEffect(() => {
-    if (!isOpen || activeTab !== 'extensions') return;
-    const updateCommands = () => {
-      try {
-        setRegisteredCommands(getRegisteredCommands());
-      } catch (err) {
-        console.error('Failed to get registered commands:', err);
-      }
-    };
-    updateCommands();
-    const unsubscribe = subscribePluginRegistry(updateCommands);
-    return () => unsubscribe();
-  }, [isOpen, activeTab]);
+  const handleResetVSCodeCompat = async () => {
+    await resetVSCodeCompat();
+    await updateSetting('vscodeCompatEnabled', false);
+    await refreshDirectory({ silent: true });
+    setVSCodeImportMessage({ key: 'settings.compat.resetDone' });
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -322,6 +317,10 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
       style={UI_MODAL_OVERLAY_STYLE}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('settings.title')}
         className={cn("flex w-full max-w-5xl flex-col overflow-hidden rounded-xl max-h-[calc(100vh-2rem)] md:max-h-[calc(100vh-6rem)]", UI_MODAL_PANEL_CLASS)}
       >
         {/* Header */}
@@ -336,14 +335,15 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
           </button>
         </div>
 
-        <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           {/* Sidebar */}
-          <div className="w-48 shrink-0 border-r border-border p-2 space-y-1 overflow-y-auto">
+          <nav aria-label={t('settings.title')} className="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-2 md:block md:w-48 md:space-y-1 md:overflow-y-auto md:border-b-0 md:border-r">
             {tabs.map(({ id, icon: Icon, labelKey }) => (
               <button
                 key={id}
                 onClick={() => setActiveTab(id)}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                aria-pressed={activeTab === id}
+                className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm transition-colors md:w-full ${
                   activeTab === id
                     ? 'bg-primary/10 text-primary'
                     : 'hover:bg-muted text-muted-foreground hover:text-foreground'
@@ -353,10 +353,10 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                 {t(labelKey)}
               </button>
             ))}
-          </div>
+          </nav>
 
           {/* Content */}
-          <div className="min-h-0 flex-1 overflow-y-auto p-6">
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 md:p-6">
             {activeTab === 'general' && (
               <div className="space-y-6">
                 <LanguageSelector />
@@ -388,6 +388,163 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
             {activeTab === 'files' && (
               <div className="space-y-6">
                 <FolderSelector showNotFoundWarning />
+                <div className="rounded border border-border bg-background p-3">
+                  <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-foreground">{t('settings.compat.title')}</div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t('settings.compat.description')}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
+                      <button
+                        type="button"
+                        onClick={() => void handleImportVSCodeAuto()}
+                        disabled={isVSCodeImporting}
+                        className="inline-flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {isVSCodeImporting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Import className="h-3.5 w-3.5" />}
+                        {t(isVSCodeImporting ? 'settings.compat.importing' : 'settings.compat.import')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleResetVSCodeCompat()}
+                        className="inline-flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        {t('settings.compat.reset')}
+                      </button>
+                    </div>
+                  </div>
+                  {vscodeImportMessage && (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      {t(vscodeImportMessage.key, vscodeImportMessage.params)}
+                    </div>
+                  )}
+                  {vscodeCompatSummary.isImported && (
+                    <div className="mt-3 space-y-3 border-t border-border pt-3">
+                      <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2 xl:grid-cols-4">
+                        <StatusItem
+                          label={t('settings.compat.profile')}
+                          value={compactCompatSource(vscodeCompatSummary.sourceLabel)}
+                        />
+                        <StatusItem
+                          label={t('settings.compat.importedAt')}
+                          value={vscodeCompatSummary.importedAtLabel ?? t('settings.about.status.ready')}
+                        />
+                        <StatusItem
+                          label={t('settings.compat.host')}
+                          value={
+                            vscodeHostSnapshot.status === "unavailable" && vscodeHostSnapshot.lastError
+                              ? `${t('settings.compat.unavailable')}: ${vscodeHostSnapshot.lastError}`
+                              : `${compatStatusLabel(vscodeHostSnapshot.status, t)} / ${vscodeHostSnapshot.runtime}`
+                          }
+                        />
+                        <StatusItem
+                          label={t('settings.compat.intelligence')}
+                          value={codeIntelligenceStatusLabel}
+                        />
+                        <StatusItem
+                          label={t('settings.compat.runnable')}
+                          value={String(runnableVSCodeExtensions.length)}
+                        />
+                        <StatusItem
+                          label={t('settings.compat.commands')}
+                          value={String(vscodeHostSnapshot.commandCount)}
+                        />
+                        <StatusItem
+                          label={t('settings.compat.tasks')}
+                          value={String(vscodeCompatSummary.counts.tasks)}
+                        />
+                        <StatusItem
+                          label={t('settings.compat.launch')}
+                          value={String(vscodeCompatSummary.counts.launches)}
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void syncVSCodeHost({
+                            enabled: settings.vscodeCompatEnabled,
+                            workspaceRootPath,
+                            extensions: vscodeCompatExtensions,
+                            settings: vscodeCompatWorkbenchSettings,
+                          })}
+                          className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-[11px] text-foreground transition-colors hover:bg-accent"
+                        >
+                          <RefreshCw className="h-3 w-3" />
+                          {t('settings.compat.restartHost')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void refreshCodeIntelligence(workspaceRootPath)}
+                          className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-[11px] text-foreground transition-colors hover:bg-accent"
+                        >
+                          <RefreshCw className="h-3 w-3" />
+                          {t('settings.compat.refresh')}
+                        </button>
+                      </div>
+                      <details className="rounded-md border border-border bg-muted/20 p-2">
+                        <summary className="cursor-pointer text-xs font-medium text-foreground">
+                          {t('settings.compat.details')}
+                        </summary>
+                        <div className="mt-3 space-y-3">
+                          <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-3">
+                            <StatusItem
+                              label={t('settings.compat.theme')}
+                              value={vscodeCompatSummary.theme.current ?? t('settings.compat.default')}
+                            />
+                            <StatusItem
+                              label={t('settings.compat.snippets')}
+                              value={String(vscodeCompatSummary.counts.snippets)}
+                            />
+                            <StatusItem
+                              label={t('settings.compat.associations')}
+                              value={String(vscodeCompatSummary.counts.fileAssociations)}
+                            />
+                          </div>
+                          {codeIntelligenceProviders.length > 0 ? (
+                            <div className="grid gap-2 md:grid-cols-3">
+                              {codeIntelligenceProviders.map((provider) => (
+                                <div key={provider.id} className="rounded border border-border bg-background px-2 py-1.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-medium text-foreground">{provider.label}</span>
+                                    <span className={cn(
+                                      "rounded px-1.5 py-0.5 text-[10px]",
+                                      provider.status === "ready"
+                                        ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                                        : provider.status === "error"
+                                          ? "bg-red-500/10 text-red-700 dark:text-red-300"
+                                          : "bg-muted text-muted-foreground",
+                                    )}>
+                                      {compatStatusLabel(provider.status, t)}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1 break-all text-[10px] text-muted-foreground">{provider.detail}</div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                          {runnableVSCodeExtensions.length > 0 ? (
+                            <div className="grid gap-2 md:grid-cols-2">
+                              {runnableVSCodeExtensions.slice(0, 8).map((extension) => (
+                                <div key={extension.id} className="min-w-0 rounded border border-border bg-background px-2 py-1.5">
+                                  <div className="truncate text-xs font-medium text-foreground">{extension.displayName ?? extension.id}</div>
+                                  <div className="mt-1 truncate font-mono text-[10px] text-muted-foreground">{extension.id}</div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                          {vscodeCompatSummary.warnings.length > 0 ? (
+                            <div className="rounded-md border border-amber-400/30 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-300">
+                              {vscodeCompatSummary.warnings[0]}
+                            </div>
+                          ) : null}
+                        </div>
+                      </details>
+                    </div>
+                  )}
+                </div>
                 <label className="flex items-start gap-3 rounded border border-border bg-background p-3">
                   <input
                     type="checkbox"
@@ -522,506 +679,14 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
             )}
 
             {activeTab === 'extensions' && (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm font-medium text-muted-foreground">
-                    {t('settings.plugins.available')}
-                    {updateCount > 0 && (
-                      <span className="ml-2 text-xs text-amber-600">
-                        {t('settings.plugins.update.availableCount', { count: updateCount })}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void loadPlugins()}
-                      className="px-3 py-1 text-xs rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                    >
-                      {t('settings.plugins.update.check')}
-                    </button>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".zip"
-                      className="hidden"
-                      onChange={async (event) => {
-                        const file = event.target.files?.[0];
-                        if (!file) return;
-                        try {
-                          await installFromZip(file);
-                        } catch (error) {
-                          console.error('Failed to install plugin:', error);
-                        }
-                        event.currentTarget.value = '';
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="px-3 py-1 text-xs rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                    >
-                      {t('settings.plugins.install')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleInstallFromFolder()}
-                      className="px-3 py-1 text-xs rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={!supportsDirectoryInstall}
-                      title={
-                        supportsDirectoryInstall
-                          ? undefined
-                          : t('settings.plugins.installFolder.unsupported')
-                      }
-                    >
-                      {t('settings.plugins.installFolder')}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={pluginQuery}
-                    onChange={(event) => setPluginQuery(event.target.value)}
-                    placeholder={t('settings.plugins.search.placeholder')}
-                    className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-xs"
-                  />
-                  {pluginQuery.trim().length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setPluginQuery('')}
-                      className="px-3 py-2 text-xs rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                    >
-                      {t('common.clear')}
-                    </button>
-                  )}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    value={pluginSourceFilter}
-                    onChange={(event) => setPluginSourceFilter(event.currentTarget.value as PluginSourceFilter)}
-                    className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground"
-                    aria-label={t('settings.plugins.filter.source')}
-                  >
-                    <option value="all">{t('settings.plugins.filter.source.all')}</option>
-                    <option value="built-in">{t('settings.plugins.source.builtIn')}</option>
-                    <option value="installed">{t('settings.plugins.source.installed')}</option>
-                    <option value="override">{t('settings.plugins.source.override')}</option>
-                  </select>
-                  <select
-                    value={pluginStatusFilter}
-                    onChange={(event) => setPluginStatusFilter(event.currentTarget.value as PluginStatusFilter)}
-                    className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground"
-                    aria-label={t('settings.plugins.filter.status')}
-                  >
-                    <option value="all">{t('settings.plugins.filter.status.all')}</option>
-                    <option value="enabled">{t('settings.plugins.filter.status.enabled')}</option>
-                    <option value="disabled">{t('settings.plugins.filter.status.disabled')}</option>
-                    <option value="untrusted">{t('settings.plugins.filter.status.untrusted')}</option>
-                    <option value="error">{t('settings.plugins.filter.status.error')}</option>
-                  </select>
-                  <select
-                    value={pluginRiskFilter}
-                    onChange={(event) => setPluginRiskFilter(event.currentTarget.value as PluginRiskFilter)}
-                    className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground"
-                    aria-label={t('settings.plugins.filter.risk')}
-                  >
-                    <option value="all">{t('settings.plugins.filter.risk.all')}</option>
-                    <option value="none">{t('settings.plugins.risk.none')}</option>
-                    <option value="low">{t('settings.plugins.risk.low')}</option>
-                    <option value="medium">{t('settings.plugins.risk.medium')}</option>
-                    <option value="high">{t('settings.plugins.risk.high')}</option>
-                  </select>
-                </div>
-
-                <div className="flex items-start justify-between gap-4 rounded-lg border border-border bg-muted/30 p-3">
-                  <div>
-                    <div className="text-sm font-medium">{t('settings.plugins.enable')}</div>
-                  </div>
-                  <input
-                    id="settings-plugins-enabled"
-                    type="checkbox"
-                    className="mt-1 h-4 w-4 rounded border-border text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    checked={settings.pluginsEnabled}
-                    onChange={(event) => updateSetting('pluginsEnabled', event.target.checked)}
-                  />
-                </div>
-
-                <div className="rounded-lg border border-border bg-muted/30 p-3">
-                  <div className="text-sm font-medium">{t('settings.plugins.networkAllowlist')}</div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {t('settings.plugins.networkAllowlist.description')}
-                  </p>
-                  <div className="mt-3 flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={networkInput}
-                      onChange={(event) => setNetworkInput(event.target.value)}
-                      placeholder={t('settings.plugins.networkAllowlist.placeholder')}
-                      className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-xs"
-                      disabled={!settings.pluginsEnabled}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          void handleAddNetworkAllowlist();
-                        }
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void handleAddNetworkAllowlist()}
-                      className="px-3 py-2 text-xs rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                      disabled={!settings.pluginsEnabled}
-                    >
-                      {t('settings.plugins.networkAllowlist.add')}
-                    </button>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {networkAllowlist.length === 0 ? (
-                      <div className="text-xs text-muted-foreground">
-                        {t('settings.plugins.networkAllowlist.empty')}
-                      </div>
-                    ) : (
-                      networkAllowlist.map((entry) => (
-                        <div
-                          key={entry}
-                          className="flex items-center gap-1 rounded-full border border-border bg-background px-2 py-1 text-xs"
-                        >
-                          <span>{entry}</span>
-                          <button
-                            type="button"
-                            onClick={() => void handleRemoveNetworkAllowlist(entry)}
-                            className="text-muted-foreground hover:text-foreground"
-                            aria-label={t('settings.plugins.networkAllowlist.remove')}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  {pluginCatalog.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">{t('settings.plugins.none')}</div>
-                  ) : filteredPluginEntries.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">{t('settings.plugins.search.empty')}</div>
-                  ) : (
-                    <div className="space-y-2">
-                      {filteredPluginEntries.map((entry) => {
-                        const plugin = entry.manifest;
-                        const isEnabled = entry.enabled;
-                        const isTrusted = entry.trusted;
-                        const isBuiltIn = entry.source === 'built-in';
-                        const isInstalled = entry.installed;
-                        const updateAvailable =
-                          entry.source === 'override' &&
-                          entry.builtInVersion &&
-                          compareSemver(entry.builtInVersion, entry.version) > 0;
-                        const sourceLabelKey = getPluginSourceLabelKey(entry.source);
-                        const health = pluginHealthMap[entry.id];
-                        const isActive = settings.pluginsEnabled && isEnabled;
-                        const status = !isActive ? 'inactive' : health?.status ?? 'active';
-                        const statusLabelKey =
-                          status === 'error'
-                            ? 'settings.plugins.status.error'
-                            : status === 'active'
-                              ? 'settings.plugins.status.active'
-                              : 'settings.plugins.status.inactive';
-                        const checkboxId = `settings-plugin-${plugin.id}`;
-                        const trustId = `settings-plugin-trust-${plugin.id}`;
-                        const permissions = plugin.permissions ?? [];
-                        return (
-                          <div
-                            key={entry.id}
-                            className={`rounded-lg border p-3 transition-colors ${
-                              settings.pluginsEnabled
-                                ? isActive
-                                  ? 'border-primary/25 bg-primary/5'
-                                  : 'border-border bg-background hover:bg-muted/30'
-                                : 'bg-muted/30 text-muted-foreground'
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <label htmlFor={checkboxId} className="min-w-0 flex-1 cursor-pointer">
-                                <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
-                                  <span className="truncate">{plugin.name}</span>
-                                  {entry.recommended && (
-                                    <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
-                                      {t('settings.plugins.badge.official')}
-                                    </span>
-                                  )}
-                                  <span
-                                    className={cn(
-                                      "rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                                      status === 'error'
-                                        ? "border-destructive/40 text-destructive"
-                                        : status === 'active'
-                                          ? "border-primary/30 text-primary"
-                                          : "border-border text-muted-foreground"
-                                    )}
-                                  >
-                                    {t(statusLabelKey as TranslationKey)}
-                                  </span>
-                                  <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide", getPluginRiskClass(entry.risk))}>
-                                    {t(`settings.plugins.risk.${entry.risk}` as TranslationKey)}
-                                  </span>
-                                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                                    {entry.official && isTrusted ? t('settings.plugins.badge.trusted') : t(sourceLabelKey)}
-                                  </span>
-                                </div>
-                                {plugin.description && (
-                                  <div className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
-                                    {plugin.description}
-                                  </div>
-                                )}
-                                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                                  <span>v{plugin.version}{plugin.author ? ` · ${plugin.author}` : ''}</span>
-                                  <span>{plugin.id}</span>
-                                </div>
-                                {entry.validation.warnings.length > 0 && (
-                                  <div className="mt-2 rounded-md border border-amber-400/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300">
-                                    {entry.validation.warnings.join(' · ')}
-                                  </div>
-                                )}
-                                {entry.validation.errors.length > 0 && (
-                                  <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
-                                    {entry.validation.errors.join(' · ')}
-                                  </div>
-                                )}
-                                {permissions.length > 0 ? (
-                                  <div className="mt-2 flex flex-wrap gap-1.5">
-                                    {permissions.map((permission) => {
-                                      const meta = getPluginPermissionMeta(permission);
-                                      return (
-                                        <span
-                                          key={permission}
-                                          className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground"
-                                          title={permission}
-                                        >
-                                          {t(meta.titleKey)}
-                                        </span>
-                                      );
-                                    })}
-                                  </div>
-                                ) : null}
-                                {isInstalled && (
-                                  <div className="text-xs text-muted-foreground mt-1">
-                                    {t('settings.plugins.installedAt')}: {formatTimestamp(entry.installedAt)}
-                                    {entry.updatedAt
-                                      ? ` · ${t('settings.plugins.updatedAt')}: ${formatTimestamp(entry.updatedAt)}`
-                                      : ''}
-                                  </div>
-                                )}
-                                {updateAvailable && (
-                                  <div className="text-xs text-amber-600 mt-1">
-                                    {t('settings.plugins.update.available')}
-                                    {entry.builtInVersion
-                                      ? ` · ${t('settings.plugins.update.builtInVersion')}: v${entry.builtInVersion}`
-                                      : ''}
-                                  </div>
-                                )}
-                                {plugin.settings && plugin.settings.length > 0 && isEnabled && settings.pluginsEnabled && (
-                                  <PluginSettingsFields pluginId={plugin.id} fields={plugin.settings} />
-                                )}
-                                {status === 'error' && health?.lastError && (
-                                  <div className="mt-2 text-xs text-destructive">
-                                    {t('settings.plugins.status.errorDetail')}: {health.lastError}
-                                  </div>
-                                )}
-                                {status === 'error' && health?.lastErrorAt && (
-                                  <div className="text-xs text-muted-foreground mt-1">
-                                    {t('settings.plugins.status.errorAt')}: {formatTimestamp(health.lastErrorAt)}
-                                  </div>
-                                )}
-                                {!isTrusted && settings.pluginsEnabled && (
-                                  <div className="text-xs text-muted-foreground mt-1">
-                                    {t('settings.plugins.trust.required')}
-                                  </div>
-                                )}
-                              </label>
-                              <input
-                                id={checkboxId}
-                                type="checkbox"
-                                className="mt-1 h-4 w-4 rounded border-border text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                checked={isEnabled}
-                                disabled={!settings.pluginsEnabled || !isTrusted}
-                                onChange={(event) => {
-                                  const nextEnabled = event.target.checked
-                                    ? Array.from(new Set([...settings.enabledPlugins, plugin.id]))
-                                    : settings.enabledPlugins.filter((id) => id !== plugin.id);
-                                  updateSetting('enabledPlugins', nextEnabled);
-                                }}
-                              />
-                            </div>
-                            <div className="mt-3 flex flex-wrap items-center gap-2">
-                              {!isBuiltIn && (
-                                <label htmlFor={trustId} className="inline-flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
-                                  <input
-                                    id={trustId}
-                                    type="checkbox"
-                                    className="h-4 w-4 rounded border-border text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                    checked={isTrusted}
-                                    onChange={(event) => {
-                                      if (event.target.checked) {
-                                        setTrustDialogPlugin(plugin);
-                                        return;
-                                      }
-                                      const nextTrusted = settings.trustedPlugins.filter((id) => id !== plugin.id);
-                                      const nextEnabled = settings.enabledPlugins.filter((id) => id !== plugin.id);
-                                      updateSettings({ trustedPlugins: nextTrusted, enabledPlugins: nextEnabled });
-                                    }}
-                                  />
-                                  {t('settings.plugins.trust')}
-                                </label>
-                              )}
-                              {isInstalled && (
-                                <button
-                                  type="button"
-                                  onClick={() => void removePlugin(plugin.id)}
-                                  className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
-                                >
-                                  {t('settings.plugins.uninstall')}
-                                </button>
-                              )}
-                              {updateAvailable && (
-                                <button
-                                  type="button"
-                                  onClick={() => void removePlugin(plugin.id)}
-                                  className="rounded-md border border-amber-500/30 px-2 py-1 text-xs text-amber-600 transition-colors hover:bg-amber-500/10"
-                                >
-                                  {t('settings.plugins.update.useBuiltIn')}
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {pluginError && (
-                  <div className="text-xs text-destructive">
-                    {pluginError}
-                  </div>
-                )}
-
-                <div className="rounded-lg border border-border bg-muted/30 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm font-medium text-muted-foreground">
-                      {t('settings.plugins.audit.title')}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        clearPluginAuditLog();
-                        setPluginAuditLog([]);
-                      }}
-                      className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {t('settings.plugins.audit.clear')}
-                    </button>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {t('settings.plugins.audit.description')}
-                  </p>
-                  <div className="mt-3 max-h-56 overflow-y-auto space-y-2">
-                    {pluginAuditLog.length === 0 ? (
-                      <div className="text-xs text-muted-foreground">
-                        {t('settings.plugins.audit.empty')}
-                      </div>
-                    ) : (
-                      pluginAuditLog.map((event) => {
-                        const label = pluginNameById.get(event.pluginId) ?? event.pluginId;
-                        const timeLabel = new Date(event.timestamp).toLocaleTimeString();
-                        return (
-                          <div
-                            key={event.id}
-                            className="rounded-md border border-border bg-background px-3 py-2 text-xs"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium text-foreground">{label}</span>
-                                <span
-                                  className={cn(
-                                    "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide",
-                                    event.level === 'error'
-                                      ? "border-destructive/40 text-destructive"
-                                      : event.level === 'warn'
-                                        ? "border-amber-400/40 text-amber-600"
-                                        : "border-border text-muted-foreground"
-                                  )}
-                                >
-                                  {event.level}
-                                </span>
-                              </div>
-                              <span className="text-[10px] text-muted-foreground">{timeLabel}</span>
-                            </div>
-                            <div className="mt-1 text-muted-foreground">
-                              {event.message}
-                            </div>
-                            {event.data && (
-                              <div className="mt-1 text-[10px] text-muted-foreground/80">
-                                {JSON.stringify(event.data)}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between gap-3 mb-2">
-                    <div className="text-sm font-medium text-muted-foreground">
-                      {t('settings.plugins.commands')}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setRegisteredCommands(getRegisteredCommands())}
-                      className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                      disabled={!settings.pluginsEnabled}
-                    >
-                      {t('settings.plugins.commands.refresh')}
-                    </button>
-                  </div>
-                  {!settings.pluginsEnabled ? (
-                    <div className="text-xs text-muted-foreground">
-                      {t('settings.plugins.commands.disabled')}
-                    </div>
-                  ) : registeredCommands.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">
-                      {t('settings.plugins.commands.empty')}
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {registeredCommands.map((command) => (
-                        <div
-                          key={command.id}
-                          className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2"
-                        >
-                          <div>
-                            <div className="text-sm font-medium text-foreground">{command.title}</div>
-                            <div className="text-xs text-muted-foreground">{command.id}</div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => void command.run()}
-                            className="px-2 py-1 text-xs rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                          >
-                            {t('settings.plugins.commands.run')}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
+              <PluginsPanel
+                onOpenGuide={() => {
+                  onClose();
+                  window.dispatchEvent(new Event('lattice:open-guide'));
+                }}
+                onOpenResult={onClose}
+                onPluginsChanged={async () => { await refreshDirectory({ silent: true }); }}
+              />
             )}
 
             {activeTab === 'ai' && (
@@ -1052,65 +717,29 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
 
                 {settings.aiEnabled && (
                   <>
-                    {/* Provider Selection */}
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('settings.ai.providerLabel')}</label>
-                      <select
-                        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                        value={settings.aiProvider ?? ''}
-                        onChange={(e) => {
-                          const value = e.target.value || null;
-                          void updateSetting('aiProvider', value);
-                        }}
-                      >
-                        <option value="">{t('settings.ai.providerPlaceholder')}</option>
-                        <option value="openai">OpenAI</option>
-                        <option value="anthropic">Anthropic</option>
-                        <option value="google">Google Gemini</option>
-                        <option value="ollama">Ollama (Local)</option>
-                        <option value="deepseek">DeepSeek</option>
-                        <option value="moonshot">Kimi (Moonshot)</option>
-                        <option value="zhipu">{t('settings.ai.provider.zhipu')}</option>
-                        <option value="custom">{t('settings.ai.provider.custom')}</option>
-                      </select>
-                    </div>
-
-                    {/* API Key Input */}
-                    {settings.aiProvider && settings.aiProvider !== 'ollama' && (
-                      <AiApiKeyInput provider={settings.aiProvider} />
-                    )}
-
-                    {/* Base URL */}
-                    {settings.aiProvider && (
-                      <AiBaseUrlInput provider={settings.aiProvider} />
-                    )}
-
-                    {/* Ollama Help */}
-                    {settings.aiProvider === 'ollama' && !isTauri() && (
-                      <div className="rounded-lg border border-amber-400/50 bg-amber-50/10 p-3 text-xs text-amber-700 dark:text-amber-400">
-                        <div className="font-semibold mb-1">{t('settings.ai.ollamaCors.title')}</div>
-                        <p className="mb-1">{t('settings.ai.ollamaCors.description')}</p>
-                        <code className="block bg-black/10 dark:bg-white/10 rounded px-2 py-1 font-mono text-[11px] break-all">
-                          OLLAMA_ORIGINS=* ollama serve
-                        </code>
-                        <p className="mt-1 text-muted-foreground">
-                          {t('settings.ai.ollamaCors.restrict')}<code className="font-mono">OLLAMA_ORIGINS=https://lattice-apq.pages.dev ollama serve</code>
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Model Selection */}
-                    {settings.aiProvider && (
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">{t('settings.ai.modelLabel')}</label>
-                        <AiModelSelector provider={settings.aiProvider} currentModel={settings.aiModel} onSelect={(m) => updateSetting('aiModel', m)} />
-                      </div>
-                    )}
-
-                    {/* Connection Test */}
-                    {settings.aiProvider && (
-                      <AiProviderConnectionTest provider={settings.aiProvider} />
-                    )}
+                    <AiProviderProfilesPanel
+                      persistenceError={aiProfilePersistenceError}
+                      retryPersistence={retryAiProfilePersistence}
+                      profiles={aiProfiles}
+                      activeProfileId={activeAiProfileId}
+                      createProfile={(presetId) => createAiProfile(presetId)}
+                      setActiveProfile={(profileId) => {
+                        setActiveAiProfile(profileId);
+                        const profile = aiProfiles.find((candidate) => candidate.id === profileId);
+                        if (profile) {
+                          void updateSettings({ aiProvider: profile.provider, aiModel: profile.model });
+                        }
+                      }}
+                      setDefaultProfile={setDefaultAiProfile}
+                      updateProfile={updateAiProfile}
+                      removeModel={removeAiModel}
+                      reconcileRemoteModels={reconcileAiRemoteModels}
+                      setModelProvider={setAiModelProvider}
+                      removeProfile={removeAiProfile}
+                      testProfile={async (profile) => createProfiledProvider(profile).testConnection()}
+                      refreshModels={async (profile) => createProfiledProvider(profile).getAvailableModels()}
+                    />
+                    <McpServersPanel servers={mcpServers} onChange={handleMcpServersChange} />
 
                     <div className="rounded-lg border border-amber-400/50 bg-amber-50/60 p-3 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
                       <div className="flex items-start justify-between gap-4">
@@ -1154,7 +783,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
 
                     {/* Temperature */}
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Temperature: {settings.aiTemperature.toFixed(1)}</label>
+                      <label className="text-sm font-medium">{t('settings.ai.temperature')}: {settings.aiTemperature.toFixed(1)}</label>
                       <input
                         type="range"
                         min="0"
@@ -1165,8 +794,8 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                         onChange={(e) => updateSetting('aiTemperature', parseFloat(e.target.value))}
                       />
                       <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>Precise</span>
-                        <span>Creative</span>
+                        <span>{t('settings.ai.precise')}</span>
+                        <span>{t('settings.ai.creative')}</span>
                       </div>
                     </div>
 
@@ -1186,15 +815,66 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
 
                     {/* System Prompt */}
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('settings.ai.systemPromptLabel')}</label>
+                      <label className="text-sm font-medium">{t('settings.ai.systemPrompt.globalLabel')}</label>
                       <textarea
                         className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm min-h-[80px] resize-y"
-                        value={settings.aiSystemPrompt ?? ''}
-                        onChange={(e) => updateSetting('aiSystemPrompt', e.target.value)}
+                        value={systemPromptDraft.global}
+                        onChange={(e) => setSystemPromptDraft((draft) => ({ ...draft, global: e.target.value }))}
                         placeholder={t('settings.ai.systemPromptPlaceholder')}
                         rows={3}
                       />
-                      <p className="text-xs text-muted-foreground">{t('settings.ai.systemPromptHint')}</p>
+                      <p className="text-xs text-muted-foreground">{t('settings.ai.systemPrompt.globalHint')}</p>
+                      <label className="text-sm font-medium">{t('settings.ai.systemPrompt.chatLabel')}</label>
+                      <textarea
+                        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm min-h-[64px] resize-y"
+                        value={systemPromptDraft.chat}
+                        onChange={(e) => setSystemPromptDraft((draft) => ({ ...draft, chat: e.target.value }))}
+                        placeholder={t('settings.ai.systemPrompt.chatPlaceholder')}
+                        rows={2}
+                      />
+                      <label className="text-sm font-medium">{t('settings.ai.systemPrompt.agentLabel')}</label>
+                      <textarea
+                        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm min-h-[64px] resize-y"
+                        value={systemPromptDraft.agent}
+                        onChange={(e) => setSystemPromptDraft((draft) => ({ ...draft, agent: e.target.value }))}
+                        placeholder={t('settings.ai.systemPrompt.agentPlaceholder')}
+                        rows={2}
+                      />
+                      <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                        <button
+                          type="button"
+                          className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+                          onClick={() => setSystemPromptDraft({
+                            global: DEFAULT_SETTINGS.aiSystemPrompt,
+                            chat: '',
+                            agent: '',
+                          })}
+                        >
+                          {t('settings.ai.systemPrompt.restoreDefaults')}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+                          onClick={() => setSystemPromptDraft({
+                            global: settings.aiSystemPrompt,
+                            chat: settings.aiChatSystemPrompt ?? '',
+                            agent: settings.aiAgentSystemPrompt ?? '',
+                          })}
+                        >
+                          {t('settings.ai.systemPrompt.cancel')}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground hover:opacity-90"
+                          onClick={() => void updateSettings({
+                            aiSystemPrompt: systemPromptDraft.global.trim() || DEFAULT_SETTINGS.aiSystemPrompt,
+                            aiChatSystemPrompt: systemPromptDraft.chat.trim() || null,
+                            aiAgentSystemPrompt: systemPromptDraft.agent.trim() || null,
+                          })}
+                        >
+                          {t('settings.ai.systemPrompt.save')}
+                        </button>
+                      </div>
                     </div>
 
                     {/* Streaming Toggle */}
@@ -1248,7 +928,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                       />
                       <StatusItem
                         label={t('settings.about.plugins.active')}
-                        value={String(settings.enabledPlugins.length)}
+                        value={String(aboutPluginStatus.activeCount)}
                       />
                       <StatusItem
                         label={t('settings.about.plugins.audit')}
@@ -1294,16 +974,16 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
           </div>
         </div>
       </div>
-      {trustDialogPlugin && (
-        <PluginTrustDialog
-          plugin={trustDialogPlugin}
-          onConfirm={handleConfirmTrust}
-          onCancel={handleCancelTrust}
-          t={t}
-        />
-      )}
     </div>
   );
+}
+function compatStatusLabel(status: string, translate: (key: TranslationKey) => string): string {
+  const labels: Record<string, TranslationKey> = {
+    ready: 'settings.about.status.ready', idle: 'settings.compat.idle', starting: 'settings.compat.starting',
+    error: 'settings.compat.error', unavailable: 'settings.compat.unavailable', stopped: 'settings.compat.stopped',
+    disabled: 'common.disabled', unsupported: 'settings.compat.unavailable', missing: 'settings.compat.notDetected',
+  };
+  return labels[status] ? translate(labels[status]) : status;
 }
 
 function ShortcutItem({ label, shortcut }: { label: string; shortcut: string }) {
@@ -1335,380 +1015,3 @@ function StatusItem({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-
-function normalizeAllowlistEntry(value: string): string | null {
-  const trimmed = value.trim().toLowerCase();
-  if (!trimmed) return null;
-
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-    try {
-      const url = new URL(trimmed);
-      return url.hostname.toLowerCase();
-    } catch {
-      return null;
-    }
-  }
-
-  const withoutPath = trimmed.split('/')[0];
-  if (!withoutPath) return null;
-  if (withoutPath.startsWith('*.')) {
-    return withoutPath;
-  }
-  return withoutPath.split(':')[0] || null;
-}
-
-function PluginTrustDialog({
-  plugin,
-  onConfirm,
-  onCancel,
-  t,
-}: {
-  plugin: PluginManifest;
-  onConfirm: () => void;
-  onCancel: () => void;
-  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
-}) {
-  useEffect(() => {
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onCancel();
-      }
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [onCancel]);
-
-  const permissions = Array.from(new Set(plugin.permissions ?? []));
-
-  return (
-    <div
-      className={cn(UI_MODAL_OVERLAY_CLASS, "flex items-start justify-center px-4 pb-4 pt-6 md:pt-24")}
-      style={UI_MODAL_OVERLAY_STYLE}
-    >
-      <div
-        className={cn("w-full max-w-lg rounded-xl p-6 max-h-[calc(100vh-2rem)] overflow-y-auto md:max-h-[calc(100vh-8rem)]", UI_MODAL_PANEL_CLASS)}
-        role="dialog"
-        aria-modal="true"
-      >
-        <h3 className="text-lg font-semibold">{t('settings.plugins.trust.dialog.title')}</h3>
-        <p className="mt-2 text-xs text-muted-foreground">
-          {t('settings.plugins.trust.dialog.description')}
-        </p>
-
-        <div className="mt-4 rounded-lg border border-border bg-muted/30 p-3 text-xs">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-sm font-medium text-foreground">{plugin.name}</div>
-            <div className="text-muted-foreground">v{plugin.version}</div>
-          </div>
-          <div className="mt-2 text-muted-foreground">
-            {t('settings.plugins.id')}: {plugin.id}
-          </div>
-          {plugin.author && (
-            <div className="mt-1 text-muted-foreground">
-              {plugin.author}
-            </div>
-          )}
-        </div>
-
-        <div className="mt-4 space-y-2">
-          <div className="text-xs font-medium text-muted-foreground">
-            {t('settings.plugins.trust.dialog.permissions')}
-          </div>
-          {permissions.length === 0 ? (
-            <div className="text-xs text-muted-foreground">
-              {t('settings.plugins.trust.dialog.none')}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {permissions.map((permission) => {
-                const meta = getPluginPermissionMeta(permission);
-                const title = t(meta.titleKey);
-                const description = t(meta.descKey);
-                return (
-                  <div
-                    key={permission}
-                    className="rounded-lg border border-border bg-background p-3"
-                  >
-                    <div className="text-sm font-medium text-foreground">{title}</div>
-                    <div className="mt-1 text-xs text-muted-foreground">{description}</div>
-                    <div className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-                      {permission}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="mt-6 flex justify-end gap-2">
-          <button
-            onClick={onCancel}
-            className="rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-muted transition-colors"
-          >
-            {t('common.cancel')}
-          </button>
-          <button
-            onClick={onConfirm}
-            className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground hover:bg-primary/90 transition-colors"
-          >
-            {t('settings.plugins.trust.dialog.confirm')}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PluginSettingsFields({ pluginId, fields }: { pluginId: string; fields: PluginSettingField[] }) {
-  const { t } = useI18n();
-  const [values, setValues] = useState<Record<string, unknown>>(() => {
-    const initial: Record<string, unknown> = {};
-    for (const field of fields) {
-      const raw = localStorage.getItem(`lattice-plugin-kv:${pluginId}:setting:${field.id}`);
-      initial[field.id] = raw !== null ? (() => { try { return JSON.parse(raw); } catch { return raw; } })() : field.default;
-    }
-    return initial;
-  });
-
-  const handleChange = (fieldId: string, value: unknown) => {
-    setValues((prev) => ({ ...prev, [fieldId]: value }));
-    localStorage.setItem(`lattice-plugin-kv:${pluginId}:setting:${fieldId}`, JSON.stringify(value));
-  };
-
-  return (
-    <div className="mt-2 space-y-2 border-t border-border pt-2">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">{t('settings.title')}</div>
-      {fields.map((field) => (
-        <div key={field.id} className="flex items-center justify-between gap-2">
-          <div>
-            <div className="text-xs text-foreground">{field.label}</div>
-            {field.description && <div className="text-[10px] text-muted-foreground">{field.description}</div>}
-          </div>
-          {field.type === 'boolean' && (
-            <input
-              type="checkbox"
-              className="h-3.5 w-3.5 rounded border-border"
-              checked={Boolean(values[field.id])}
-              onChange={(e) => handleChange(field.id, e.target.checked)}
-            />
-          )}
-          {field.type === 'string' && (
-            <input
-              type="text"
-              className="w-32 rounded border border-border bg-background px-2 py-1 text-xs"
-              value={String(values[field.id] ?? '')}
-              onChange={(e) => handleChange(field.id, e.target.value)}
-            />
-          )}
-          {field.type === 'number' && (
-            <input
-              type="number"
-              className="w-20 rounded border border-border bg-background px-2 py-1 text-xs"
-              value={Number(values[field.id] ?? 0)}
-              onChange={(e) => handleChange(field.id, Number(e.target.value))}
-            />
-          )}
-          {field.type === 'select' && (
-            <select
-              className="w-32 rounded border border-border bg-background px-2 py-1 text-xs"
-              value={String(values[field.id] ?? '')}
-              onChange={(e) => handleChange(field.id, e.target.value)}
-            >
-              {field.options?.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function getAiProviderMeta(t: ReturnType<typeof useI18n>["t"]): Record<string, { name: string; defaultBaseUrl?: string; apiKeyPlaceholder?: string }> {
-  return {
-    openai: { name: 'OpenAI', defaultBaseUrl: 'https://api.openai.com/v1', apiKeyPlaceholder: 'sk-...' },
-    anthropic: { name: 'Anthropic', defaultBaseUrl: 'https://api.anthropic.com', apiKeyPlaceholder: 'sk-ant-...' },
-    google: { name: 'Google Gemini', defaultBaseUrl: 'https://generativelanguage.googleapis.com', apiKeyPlaceholder: 'AIza...' },
-    ollama: { name: 'Ollama', defaultBaseUrl: 'http://localhost:11434' },
-    deepseek: { name: 'DeepSeek', defaultBaseUrl: 'https://api.deepseek.com', apiKeyPlaceholder: 'sk-...' },
-    moonshot: { name: 'Kimi (Moonshot)', defaultBaseUrl: 'https://api.moonshot.cn/v1', apiKeyPlaceholder: 'sk-...' },
-    zhipu: { name: t('settings.ai.provider.zhipu'), defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4', apiKeyPlaceholder: t('settings.ai.apiKeyPlaceholder.zhipu') },
-    custom: { name: t('settings.ai.provider.custom'), defaultBaseUrl: 'https://api.example.com/v1', apiKeyPlaceholder: t('settings.ai.apiKeyPlaceholder.custom') },
-  };
-}
-
-function AiApiKeyInput({ provider }: { provider: string }) {
-  const { t } = useI18n();
-  const providerMeta = getAiProviderMeta(t);
-  const [key, setKey] = useState('');
-
-  // Load key from secure storage on mount
-  useEffect(() => {
-    import('@/lib/ai/key-storage').then(({ getApiKey }) => {
-      setKey(getApiKey(provider as import('@/lib/ai/types').AiProviderId));
-    }).catch(() => {});
-  }, [provider]);
-
-  const save = (value: string) => {
-    setKey(value);
-    import('@/lib/ai/key-storage').then(({ setApiKey, clearApiKey }) => {
-      if (value) {
-        setApiKey(provider as import('@/lib/ai/types').AiProviderId, value);
-      } else {
-        clearApiKey(provider as import('@/lib/ai/types').AiProviderId);
-      }
-    }).catch(() => {});
-  };
-
-  return (
-    <div className="space-y-2">
-      <label className="text-sm font-medium">{providerMeta[provider]?.name ?? provider} API Key</label>
-      <input
-        type="password"
-        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
-        value={key}
-        onChange={(e) => save(e.target.value)}
-        placeholder={providerMeta[provider]?.apiKeyPlaceholder ?? 'sk-...'}
-      />
-      <p className="text-xs text-muted-foreground">
-        {t('settings.ai.apiKey.persist')}
-      </p>
-    </div>
-  );
-}
-
-function AiBaseUrlInput({ provider }: { provider: string }) {
-  const { t } = useI18n();
-  const providerMeta = getAiProviderMeta(t);
-  const [url, setUrl] = useState('');
-
-  useEffect(() => {
-    import('@/lib/ai/key-storage').then(({ getBaseUrl }) => {
-      setUrl(getBaseUrl(provider as import('@/lib/ai/types').AiProviderId));
-    }).catch(() => {});
-  }, [provider]);
-
-  const save = (value: string) => {
-    setUrl(value);
-    import('@/lib/ai/key-storage').then(({ setBaseUrl }) => {
-      setBaseUrl(provider as import('@/lib/ai/types').AiProviderId, value.trim());
-    }).catch(() => {});
-  };
-
-  return (
-    <div className="space-y-2">
-      <label className="text-sm font-medium">
-        {provider === 'ollama' ? t('settings.ai.baseUrl.ollama') : t('settings.ai.baseUrl.default')}
-      </label>
-      <input
-        type="text"
-        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-        value={url}
-        onChange={(e) => save(e.target.value)}
-        placeholder={providerMeta[provider]?.defaultBaseUrl ?? ''}
-      />
-      <p className="text-xs text-muted-foreground">
-        {t('settings.ai.baseUrl.fallback', { url: providerMeta[provider]?.defaultBaseUrl ?? 'provider default' })}
-      </p>
-    </div>
-  );
-}
-
-function AiProviderConnectionTest({ provider }: { provider: string }) {
-  const { t } = useI18n();
-  const [testing, setTesting] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
-
-  const test = async () => {
-    setTesting(true);
-    setResult(null);
-    try {
-      const { getProvider } = await import('@/lib/ai/providers');
-      const resolved = getProvider(provider as import('@/lib/ai/types').AiProviderId);
-      if (!resolved) {
-        setResult({ ok: false, message: t('settings.ai.connection.providerMissing') });
-      } else {
-        const nextResult = await resolved.testConnection();
-        setResult({ ok: nextResult.ok, message: nextResult.message || (nextResult.ok ? t('settings.ai.connection.success') : t('settings.ai.connection.failure')) });
-      }
-    } catch (error) {
-      setResult({ ok: false, message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  return (
-    <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-sm font-medium">{t('settings.ai.connection.title')}</div>
-          <p className="text-xs text-muted-foreground mt-1">
-            {t('settings.ai.connection.description')}
-          </p>
-        </div>
-        <button
-          onClick={test}
-          disabled={testing}
-          className="rounded-md border border-border px-3 py-2 text-xs hover:bg-accent disabled:opacity-50 transition-colors"
-        >
-          {testing ? t('settings.ai.connection.testing') : t('settings.ai.connection.test')}
-        </button>
-      </div>
-      {result && (
-        <p className={cn('text-xs whitespace-pre-wrap', result.ok ? 'text-green-600' : 'text-destructive')}>
-          {result.message}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function AiModelSelector({ provider, currentModel, onSelect }: { provider: string; currentModel: string | null; onSelect: (model: string) => void }) {
-  const { t } = useI18n();
-  const [models, setModels] = useState<Array<{ id: string; name: string }>>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    import('@/lib/ai/providers').then(async ({ getProvider }) => {
-      const p = getProvider(provider as import('@/lib/ai/types').AiProviderId);
-      if (p && !cancelled) {
-        try {
-          const available = await p.getAvailableModels();
-          if (!cancelled) setModels(available.map((m) => ({ id: m.id, name: m.name })));
-        } catch {
-          if (!cancelled) setModels([]);
-        }
-      }
-      if (!cancelled) setLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [provider]);
-
-  return (
-    <div className="space-y-2">
-      <input
-        list={`ai-models-${provider}`}
-        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-        value={currentModel ?? ''}
-        onChange={(e) => onSelect(e.target.value)}
-        placeholder={loading ? t('settings.ai.modelLoading') : t('settings.ai.modelPlaceholder')}
-      />
-      <datalist id={`ai-models-${provider}`}>
-        {models.map((model) => (
-          <option key={model.id} value={model.id}>{model.name}</option>
-        ))}
-      </datalist>
-      <p className="text-xs text-muted-foreground">
-        {models.length > 0
-          ? t('settings.ai.modelHint.withCount', { count: models.length })
-          : t('settings.ai.modelHint.empty')}
-      </p>
-    </div>
-  );
-}
-

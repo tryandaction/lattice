@@ -8,6 +8,15 @@ export interface MentionSelectionResult {
 
 export type MentionSelectionStage = 'files' | 'fragments';
 
+/** UI-generated paths are encoded; whitespace ends the mention being edited. */
+export function getActiveMentionQuery(value: string, caret: number): string | null {
+  const before = value.slice(0, caret);
+  const at = before.lastIndexOf('@');
+  if (at < 0 || at > 0 && !/[\s([{，。；：、“「《]/u.test(before[at - 1])) return null;
+  const query = before.slice(at + 1);
+  return /[\s@]/u.test(query) ? null : query;
+}
+
 export function getMentionSelectionStage(query: string): MentionSelectionStage {
   return query.includes('#') ? 'fragments' : 'files';
 }
@@ -30,7 +39,7 @@ export function createMentionSelectionResult(
   const valueHasFragment = item.value.includes('#');
   const isFragmentPlaceholder = item.value.endsWith('#');
 
-  if (item.type === 'file' && (!currentHasFragment || isFragmentPlaceholder)) {
+  if (item.type === 'file' && currentHasFragment && isFragmentPlaceholder) {
     const nextValue = valueHasFragment
       ? item.value
       : `${item.value}#`;
@@ -39,6 +48,10 @@ export function createMentionSelectionResult(
       continueSelection: true,
       nextQuery: nextValue.slice(1),
     };
+  }
+
+  if (item.type === 'folder') {
+    return { value: item.value, continueSelection: false, nextQuery: null };
   }
 
   return {

@@ -66,8 +66,6 @@ type BlockContext = {
   listIndent?: number;
 };
 
-const DOUBLE_CLICK_DELAY = 260;
-
 function getLivePreviewKaTeXOptions(displayMode: boolean) {
   return getKaTeXOptions(displayMode, { output: 'html' });
 }
@@ -300,40 +298,6 @@ export class FormattedTextWidget extends WidgetType {
 
           if (e.button !== 0) return;
 
-          if ((span as unknown as { _linkClickTimer?: number })._linkClickTimer) {
-            window.clearTimeout((span as unknown as { _linkClickTimer?: number })._linkClickTimer);
-            (span as unknown as { _linkClickTimer?: number })._linkClickTimer = undefined;
-            handleWidgetClick(view, span, e, this.contentFrom, this.contentTo, (visibleOffset, widget) => {
-              const map = (widget as HTMLElement & { _v2sMap?: number[] })._v2sMap;
-              if (map && visibleOffset < map.length) return map[visibleOffset];
-              const visibleText = widget.textContent ?? '';
-              return this.mapVisibleOffsetToSourceOffset(visibleText, visibleOffset);
-            });
-            return;
-          }
-
-          if (e.ctrlKey || e.metaKey) {
-            if (isWikiLink) {
-              dispatchWikiLinkClick(span, linkTarget);
-            } else if (!isExternalUrl(linkTarget)) {
-              dispatchWorkspaceLinkClick(span, linkTarget);
-            } else {
-              dispatchExternalLinkClick(span, linkTarget);
-            }
-            return;
-          }
-
-          (span as unknown as { _linkClickTimer?: number })._linkClickTimer = window.setTimeout(() => {
-            (span as unknown as { _linkClickTimer?: number })._linkClickTimer = undefined;
-            if (isWikiLink) {
-              dispatchWikiLinkClick(span, linkTarget);
-            } else if (!isExternalUrl(linkTarget)) {
-              dispatchWorkspaceLinkClick(span, linkTarget);
-            } else {
-              dispatchExternalLinkClick(span, linkTarget);
-            }
-          }, DOUBLE_CLICK_DELAY);
-
           return;
         }
       }
@@ -351,7 +315,26 @@ export class FormattedTextWidget extends WidgetType {
       if (target?.tagName === 'A') {
         e.preventDefault();
         e.stopPropagation();
+        if (e.detail > 1 && !(e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)) return;
+        const isWikiLink = target.classList.contains('cm-wiki-link-table');
+        const linkTarget = decodeLinkTarget(isWikiLink ? target.dataset.target ?? '' : target.getAttribute('href') ?? '');
+        if (!linkTarget) return;
+        if (isWikiLink) dispatchWikiLinkClick(span, linkTarget);
+        else if (!isExternalUrl(linkTarget)) dispatchWorkspaceLinkClick(span, linkTarget);
+        else dispatchExternalLinkClick(span, linkTarget);
       }
+    });
+
+    span.addEventListener('dblclick', (e) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.tagName !== 'A') return;
+      e.preventDefault();
+      e.stopPropagation();
+      handleWidgetClick(view, span, e, this.contentFrom, this.contentTo, (visibleOffset, widget) => {
+        const map = (widget as HTMLElement & { _v2sMap?: number[] })._v2sMap;
+        if (map && visibleOffset < map.length) return map[visibleOffset];
+        return this.mapVisibleOffsetToSourceOffset(widget.textContent ?? '', visibleOffset);
+      });
     });
 
     return span;
@@ -641,41 +624,30 @@ export class LinkWidget extends WidgetType {
       handleWidgetClick(view, link, e, this.contentFrom, this.contentTo);
     };
 
-    // 处理点击
+    // 处理 pointer down only for focus/selection; navigation is emitted by click.
     link.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
-
       if (e.button !== 0) return;
-
-      if ((link as unknown as { _linkClickTimer?: number })._linkClickTimer) {
-        window.clearTimeout((link as unknown as { _linkClickTimer?: number })._linkClickTimer);
-        (link as unknown as { _linkClickTimer?: number })._linkClickTimer = undefined;
-        positionCursor(e);
-        return;
-      }
-
-      if (e.ctrlKey || e.metaKey) {
-        navigateToLink();
-        return;
-      }
-
-      (link as unknown as { _linkClickTimer?: number })._linkClickTimer = window.setTimeout(() => {
-        (link as unknown as { _linkClickTimer?: number })._linkClickTimer = undefined;
-        navigateToLink();
-      }, DOUBLE_CLICK_DELAY);
     });
 
     link.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (e.detail <= 1 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) navigateToLink();
+    });
+
+    link.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      positionCursor(e);
     });
 
     return link;
   }
 
   ignoreEvent(e: Event) {
-    return e.type !== 'mousedown' && e.type !== 'click';
+    return e.type !== 'mousedown' && e.type !== 'click' && e.type !== 'dblclick';
   }
 }
 
@@ -734,57 +706,36 @@ export class AnnotationLinkWidget extends WidgetType {
     link.dataset.filePath = this.filePath;
     link.dataset.annotationId = this.annotationId;
 
-    // 处理点击
+    // Single click navigates; double click positions the cursor in source.
     link.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
-
       if (e.button !== 0) return;
-
-      if ((link as unknown as { _linkClickTimer?: number })._linkClickTimer) {
-        window.clearTimeout((link as unknown as { _linkClickTimer?: number })._linkClickTimer);
-        (link as unknown as { _linkClickTimer?: number })._linkClickTimer = undefined;
-        handleWidgetClick(view, link, e, this.contentFrom, this.contentTo);
-        return;
-      }
-
-      if (e.ctrlKey || e.metaKey) {
-        view.dom.dispatchEvent(
-          new CustomEvent('annotation-link-click', {
-            detail: {
-              filePath: this.filePath,
-              annotationId: this.annotationId,
-            },
-            bubbles: true,
-          })
-        );
-        return;
-      }
-
-      (link as unknown as { _linkClickTimer?: number })._linkClickTimer = window.setTimeout(() => {
-        (link as unknown as { _linkClickTimer?: number })._linkClickTimer = undefined;
-        view.dom.dispatchEvent(
-          new CustomEvent('annotation-link-click', {
-            detail: {
-              filePath: this.filePath,
-              annotationId: this.annotationId,
-            },
-            bubbles: true,
-          })
-        );
-      }, DOUBLE_CLICK_DELAY);
     });
 
     link.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (e.detail > 1 && !(e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)) return;
+      view.dom.dispatchEvent(
+        new CustomEvent('annotation-link-click', {
+          detail: { filePath: this.filePath, annotationId: this.annotationId },
+          bubbles: true,
+        }),
+      );
+    });
+
+    link.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      handleWidgetClick(view, link, e, this.contentFrom, this.contentTo);
     });
 
     return link;
   }
 
   ignoreEvent(e: Event) {
-    return e.type !== 'mousedown' && e.type !== 'click';
+    return e.type !== 'mousedown' && e.type !== 'click' && e.type !== 'dblclick';
   }
 }
 
@@ -840,6 +791,19 @@ export class ImageWidget extends WidgetType {
     this.replaceSource(view, this.buildSource(width));
   }
 
+  private selectImage(view: EditorView, container: HTMLElement) {
+    const previous = view.dom.querySelector('.cm-image-container[data-selected="true"]');
+    if (previous && previous !== container) {
+      previous.removeAttribute('data-selected');
+    }
+    container.dataset.selected = 'true';
+    view.dispatch({
+      selection: { anchor: Math.min(this.elementTo + 1, view.state.doc.length) },
+      scrollIntoView: false,
+    });
+    view.focus();
+  }
+
   toDOM(view: EditorView) {
     const container = document.createElement('span');
     container.className = 'cm-image-container cm-formatted-widget cm-syntax-transition';
@@ -847,6 +811,15 @@ export class ImageWidget extends WidgetType {
     container.dataset.contentTo = String(this.contentTo);
     container.dataset.elementFrom = String(this.elementFrom);
     container.dataset.elementTo = String(this.elementTo);
+    container.dataset.imageUrl = this.url;
+    container.dataset.imageAlt = this.alt;
+    container.dataset.imageSyntax = this.syntax;
+    if (this.width) {
+      container.dataset.imageWidth = String(this.width);
+    }
+    container.tabIndex = 0;
+    container.setAttribute('role', 'button');
+    container.setAttribute('aria-label', this.alt ? `Image: ${this.alt}` : 'Image');
 
     const frame = document.createElement('span');
     frame.className = 'cm-image-frame';
@@ -933,9 +906,51 @@ export class ImageWidget extends WidgetType {
       this.replaceSource(view, view.state.sliceDoc(this.elementFrom, this.elementTo), true);
     }));
 
-    // 点击定位到alt文本
+    controls.appendChild(makeButton('Edit', 'Edit image', () => {
+      container.dispatchEvent(new CustomEvent('lattice-markdown-image-edit', {
+        bubbles: true,
+        detail: {
+          url: this.url,
+          alt: this.alt,
+          width: this.width,
+          syntax: this.syntax,
+          elementFrom: this.elementFrom,
+          elementTo: this.elementTo,
+        },
+      }));
+    }));
+
     container.addEventListener('mousedown', (e) => {
-      handleWidgetClick(view, container, e, this.contentFrom, this.contentTo);
+      if (e.button !== 0) return;
+      if ((e.target as HTMLElement | null)?.closest('.cm-image-controls')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.selectImage(view, container);
+    });
+    container.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement | null)?.closest('.cm-image-controls')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.selectImage(view, container);
+    });
+    container.addEventListener('dblclick', (e) => {
+      if ((e.target as HTMLElement | null)?.closest('.cm-image-controls')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.replaceSource(view, view.state.sliceDoc(this.elementFrom, this.elementTo), true);
+    });
+    container.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.replaceSource(view, view.state.sliceDoc(this.elementFrom, this.elementTo), true);
+      }
+      if (e.key === ' ') {
+        e.preventDefault();
+        this.selectImage(view, container);
+      }
+      if (e.key === 'Escape') {
+        container.removeAttribute('data-selected');
+      }
     });
 
     frame.appendChild(img);
@@ -947,7 +962,7 @@ export class ImageWidget extends WidgetType {
   ignoreEvent(e: Event) {
     const target = e.target as HTMLElement | null;
     if (target?.closest('.cm-image-controls')) return true;
-    return e.type !== 'mousedown';
+    return e.type !== 'mousedown' && e.type !== 'click' && e.type !== 'dblclick' && e.type !== 'keydown';
   }
 }
 
@@ -2809,20 +2824,23 @@ export class TableWidget extends WidgetType {
     return Math.max(96, visibleRows * 44 + 12);
   }
 
-  updateDOM() {
-    return false;
-  }
+  private renderIntoHost(host: TableWidgetRootHost, view: EditorView) {
+    if (host.__tableUnmountTimer !== undefined) {
+      const win = host.ownerDocument.defaultView ?? window;
+      win.clearTimeout(host.__tableUnmountTimer);
+      host.__tableUnmountTimer = undefined;
+    }
 
-  toDOM(view: EditorView) {
-    const wrapper = document.createElement('div') as TableWidgetRootHost;
-    wrapper.className = 'cm-table-widget-wrapper cm-table-widget';
-    wrapper.dataset.from = String(this.from);
-    wrapper.dataset.to = String(this.to);
-    applyBlockContext(wrapper, this.context);
+    host.className = 'cm-table-widget-wrapper cm-table-widget';
+    host.dataset.from = String(this.from);
+    host.dataset.to = String(this.to);
+    applyBlockContext(host, this.context);
 
-    const root = createRoot(wrapper);
-    wrapper.__tableRoot = root;
-    root.render(
+    if (!host.__tableRoot) {
+      host.__tableRoot = createRoot(host);
+    }
+
+    host.__tableRoot.render(
       createElement(TableEditor, {
         rows: stripMarkdownTableSeparatorRow(this.rows, this.hasHeader),
         hasHeader: this.hasHeader,
@@ -2834,7 +2852,18 @@ export class TableWidget extends WidgetType {
         renderCellHtml: (value: string) => renderInlineMarkdownHtml(value, this.referenceDefs),
       })
     );
+  }
 
+  updateDOM(dom: HTMLElement, view: EditorView) {
+    const host = dom as TableWidgetRootHost;
+    this.renderIntoHost(host, view);
+    view.requestMeasure();
+    return true;
+  }
+
+  toDOM(view: EditorView) {
+    const wrapper = document.createElement('div') as TableWidgetRootHost;
+    this.renderIntoHost(wrapper, view);
     view.requestMeasure();
     return wrapper;
   }

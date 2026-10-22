@@ -18,10 +18,9 @@ import {
   type CreateAgentSessionInput,
   type ResolveAgentPendingApprovalInput,
 } from '@/lib/ai/agent-session';
-import { getStorageAdapter } from '@/lib/storage-adapter';
+import { getAgentSessionPersistence, type AgentSessionPersistence, type AgentSessionPersistenceData } from '@/lib/ai/agent-session-persistence';
 
-const AGENT_SESSION_STORAGE_KEY = 'lattice-agent-sessions-v1';
-const MAX_PERSISTED_SESSIONS = 40;
+const MAX_ARCHIVED_SESSIONS = 40;
 
 interface AgentSessionState {
   sessions: AgentSession[];
@@ -30,6 +29,10 @@ interface AgentSessionState {
 }
 
 interface AgentSessionActions {
+  resumeExecutionSynthesisSession: (sessionId: string) => void;
+  saveExecutionContinuation: (sessionId: string, continuation: AgentSession['executionContinuation']) => Promise<void>;
+  saveDocumentResearch: (sessionId: string, state: NonNullable<AgentSession['documentResearch']>) => Promise<void>;
+  resumeDocumentSession: (sessionId: string) => void;
   createSession: (input: CreateAgentSessionInput) => string;
   setActiveSession: (sessionId: string | null) => void;
   focusSession: (sessionId: string, target: 'trace' | 'memory') => void;
@@ -51,6 +54,64 @@ interface AgentSessionActions {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let saveTail: Promise<void> = Promise.resolve();
+let persistenceOwner: AgentSessionPersistence | undefined;
+let hydrated = false;
+let hydration: Promise<AgentSessionPersistenceData | null> | null = null;
+let hydrationBaseline: AgentSessionPersistenceData | null = null;
+let hydrationRevision = 0;
+const deletedSessionIds = new Set<string>();
+function persistenceContext(): AgentSessionPersistence {
+  const persistence = getAgentSessionPersistence();
+  if (persistence !== persistenceOwner) {
+    persistenceOwner = persistence; hydrated = false; hydration = null; hydrationBaseline = null; hydrationRevision = 0;
+    deletedSessionIds.clear();
+  }
+  return persistence;
+}
+function recoverSession(session: AgentSession): AgentSession {
+  if (!session.documentResearch || !['running', 'queued'].includes(session.status)) return session;
+  return { ...session, status: session.documentResearch.status === 'failed' ? 'failed' : 'cancelled',
+    documentResearch: { ...session.documentResearch, status: session.documentResearch.status === 'reading' ? 'paused' : session.documentResearch.status } };
+}
+function mergedData(saved: AgentSessionPersistenceData | null, current: AgentSessionPersistenceData): AgentSessionPersistenceData {
+  const sessions = sortSessions([...new Map([...(saved?.sessions ?? []), ...current.sessions].map(session => [session.id, session])).values()]
+    .filter(session => !deletedSessionIds.has(session.id)));
+  const active = current.activeSessionId ?? saved?.activeSessionId;
+  return { sessions, activeSessionId: active && sessions.some(session => session.id === active) ? active : sessions[0]?.id ?? null };
+}
+function hydrate(persistence: AgentSessionPersistence, force = false): Promise<AgentSessionPersistenceData | null> {
+  if (hydration) return hydration;
+  if (hydrated && !force) return Promise.resolve(hydrationBaseline);
+  hydrated = false;
+  hydration = persistence.load().then(saved => {
+    if (persistenceOwner !== persistence) throw new Error('Agent session storage changed during loading; retry without replacing existing data.');
+    const recovered = saved ? { ...saved, sessions: saved.sessions.map(recoverSession) } : null;
+    const data = mergedData(recovered, useAgentSessionStore.getState());
+    useAgentSessionStore.setState({ ...data, focusTarget: null });
+    hydrationBaseline = recovered;
+    hydrationRevision++;
+    hydrated = true;
+    hydration = null;
+    return recovered;
+  }).catch(error => { hydration = null; throw error; });
+  return hydration;
+}
+function persistNow(state: AgentSessionState): Promise<void> {
+  const persistence = persistenceContext();
+  // Clone before entering the queued write or hydration await.
+  const captured = structuredClone({ sessions: sortSessions(state.sessions), activeSessionId: state.activeSessionId });
+  const needsHydration = !hydrated || Boolean(hydration);
+  const capturedRevision = hydrationRevision;
+  const operation = saveTail.then(async () => {
+    const saved = needsHydration || !hydrated || hydration ? await hydrate(persistence)
+      : capturedRevision !== hydrationRevision ? hydrationBaseline : null;
+    const data = mergedData(saved, captured);
+    await persistence.save(data);
+  });
+  saveTail = operation.catch(() => undefined);
+  return operation;
+}
 
 function normalizeSession(session: AgentSession): AgentSession {
   return {
@@ -63,22 +124,34 @@ function normalizeSession(session: AgentSession): AgentSession {
   };
 }
 
+function hasUnfinishedWork(session: AgentSession): boolean {
+  if (['queued', 'running', 'waiting_approval'].includes(session.status)) return true;
+  if (session.approvalRequestIds.length || session.pendingApprovals.some(approval =>
+    ['pending', 'approved', 'executing'].includes(approval.status))) return true;
+  const reading = session.documentResearch;
+  const directory = reading?.directory;
+  if (directory && (!directory.manifest?.complete || directory.phase !== 'ready'
+    || directory.files.some(file => file.status !== 'complete'))) return true;
+  if (reading && (reading.status !== 'ready' || session.status !== 'completed')) return true;
+  return Boolean(session.executionContinuation && session.status !== 'completed');
+}
+
 function sortSessions(sessions: AgentSession[]): AgentSession[] {
+  let archivedCount = 0;
   return [...sessions]
     .map(normalizeSession)
     .sort((left, right) => right.updatedAt - left.updatedAt)
-    .slice(0, MAX_PERSISTED_SESSIONS);
+    // A checkpoint or pending approval is user work, not disposable history.
+    // Apply the history limit only to terminal sessions with no continuation.
+    .filter(session => hasUnfinishedWork(session) || archivedCount++ < MAX_ARCHIVED_SESSIONS);
 }
 
-function persistSessions(state: AgentSessionState) {
+function persistSessions() {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     try {
-      const storage = getStorageAdapter();
-      await storage.set(AGENT_SESSION_STORAGE_KEY, {
-        sessions: sortSessions(state.sessions),
-        activeSessionId: state.activeSessionId,
-      });
+      // Hydration may have added historical tasks since this debounce was scheduled.
+      await persistNow(useAgentSessionStore.getState());
     } catch (error) {
       console.error('Failed to save agent sessions:', error);
     }
@@ -110,20 +183,59 @@ export const useAgentSessionStore = create<AgentSessionState & AgentSessionActio
   sessions: [],
   activeSessionId: null,
   focusTarget: null,
+  resumeExecutionSynthesisSession: (sessionId) => {
+    const current = get().getSession(sessionId);
+    const failure = current?.trace.slice().reverse().find((event) => event.metadata?.errorStage);
+    if (current?.status !== 'failed' || !current.executionContinuation?.synthesisContext ||
+      failure?.metadata?.errorStage !== 'synthesis.answer' || current.pendingApprovals.some((approval) => approval.status !== 'completed')) {
+      throw new Error('This execution session cannot resume final synthesis.');
+    }
+    set((state) => ({ sessions: replaceSession(state.sessions, sessionId, (session) => ({ ...session, status: 'running', error: undefined, completedAt: undefined, updatedAt: Date.now() })), activeSessionId: sessionId }));
+    persistSessions();
+  },
+  saveExecutionContinuation: async (sessionId, executionContinuation) => {
+    set((state) => ({ sessions: replaceSession(state.sessions, sessionId, (session) => ({ ...session, executionContinuation, updatedAt: Date.now() })) }));
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
+    await persistNow(get());
+  },
+  saveDocumentResearch: async (sessionId, documentResearch) => {
+    set((state) => ({ sessions: replaceSession(state.sessions, sessionId, (session) => ({ ...session, documentResearch, updatedAt: Date.now() })) }));
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
+    try {
+      await persistNow(get());
+    } catch (error) {
+      const message = '无法保存阅读进度，请检查可用存储空间后重试。当前窗口仍保留已读进度。';
+      set((state) => ({ sessions: replaceSession(state.sessions, sessionId, (session) => ({ ...session,
+        documentResearch: { ...documentResearch, status: 'failed', error: message },
+      })) }));
+      throw new Error(message, { cause: error });
+    }
+  },
+  resumeDocumentSession: (sessionId) => {
+    const current = get().getSession(sessionId);
+    if (!current?.documentResearch || current.pendingApprovals.some(item => item.status === 'pending' || item.status === 'executing')) throw new Error('This task cannot resume document reading yet.');
+    set((state) => ({ sessions: replaceSession(state.sessions, sessionId, (session) => ({ ...session, status: 'running', completedAt: undefined, error: undefined,
+      documentResearch: { ...session.documentResearch!, status: 'reading', error: undefined }, updatedAt: Date.now() })), activeSessionId: sessionId }));
+    persistSessions();
+  },
 
   createSession: (input) => {
+    persistenceContext();
+    if (input.id) deletedSessionIds.delete(input.id);
     const session = createAgentSession(input);
     set((state) => ({
       sessions: sortSessions([session, ...state.sessions]),
       activeSessionId: session.id,
     }));
-    persistSessions(get());
+    persistSessions();
     return session.id;
   },
 
   setActiveSession: (sessionId) => {
     set({ activeSessionId: sessionId });
-    persistSessions(get());
+    persistSessions();
   },
 
   focusSession: (sessionId, target) => {
@@ -131,7 +243,7 @@ export const useAgentSessionStore = create<AgentSessionState & AgentSessionActio
       activeSessionId: sessionId,
       focusTarget: target,
     });
-    persistSessions(get());
+    persistSessions();
   },
 
   consumeFocusTarget: (target) => {
@@ -149,7 +261,7 @@ export const useAgentSessionStore = create<AgentSessionState & AgentSessionActio
       ),
       activeSessionId: sessionId,
     }));
-    persistSessions(get());
+    persistSessions();
   },
 
   addMemorySnapshotIds: (sessionId, memoryIds, now) => {
@@ -161,7 +273,7 @@ export const useAgentSessionStore = create<AgentSessionState & AgentSessionActio
       ),
       activeSessionId: sessionId,
     }));
-    persistSessions(get());
+    persistSessions();
   },
 
   addPendingApproval: (sessionId, approval) => {
@@ -173,7 +285,7 @@ export const useAgentSessionStore = create<AgentSessionState & AgentSessionActio
       ),
       activeSessionId: sessionId,
     }));
-    persistSessions(get());
+    persistSessions();
   },
 
   resolvePendingApproval: (sessionId, approval) => {
@@ -185,7 +297,7 @@ export const useAgentSessionStore = create<AgentSessionState & AgentSessionActio
       ),
       activeSessionId: sessionId,
     }));
-    persistSessions(get());
+    persistSessions();
   },
 
   resumeSession: (sessionId, resolvedApprovalIds) => {
@@ -197,7 +309,7 @@ export const useAgentSessionStore = create<AgentSessionState & AgentSessionActio
       ),
       activeSessionId: sessionId,
     }));
-    persistSessions(get());
+    persistSessions();
   },
 
   completeSession: (sessionId, result) => {
@@ -209,7 +321,7 @@ export const useAgentSessionStore = create<AgentSessionState & AgentSessionActio
       ),
       activeSessionId: sessionId,
     }));
-    persistSessions(get());
+    persistSessions();
   },
 
   failSession: (sessionId, error) => {
@@ -221,7 +333,7 @@ export const useAgentSessionStore = create<AgentSessionState & AgentSessionActio
       ),
       activeSessionId: sessionId,
     }));
-    persistSessions(get());
+    persistSessions();
   },
 
   cancelSession: (sessionId, reason) => {
@@ -233,7 +345,7 @@ export const useAgentSessionStore = create<AgentSessionState & AgentSessionActio
       ),
       activeSessionId: sessionId,
     }));
-    persistSessions(get());
+    persistSessions();
   },
 
   compactSession: (sessionId, input) => {
@@ -245,10 +357,13 @@ export const useAgentSessionStore = create<AgentSessionState & AgentSessionActio
       ),
       activeSessionId: sessionId,
     }));
-    persistSessions(get());
+    persistSessions();
   },
 
   deleteSession: (sessionId) => {
+    persistenceContext();
+    // A load already in flight may still contain this id.
+    deletedSessionIds.add(sessionId);
     set((state) => {
       const sessions = state.sessions.filter((session) => session.id !== sessionId);
       return {
@@ -258,7 +373,7 @@ export const useAgentSessionStore = create<AgentSessionState & AgentSessionActio
           : state.activeSessionId,
       };
     });
-    persistSessions(get());
+    persistSessions();
   },
 
   getSession: (sessionId) =>
@@ -281,22 +396,7 @@ export const useAgentSessionStore = create<AgentSessionState & AgentSessionActio
 
   loadSessions: async () => {
     try {
-      const storage = getStorageAdapter();
-      const saved = await storage.get<AgentSessionState>(AGENT_SESSION_STORAGE_KEY);
-      if (!saved) {
-        return;
-      }
-
-      const sessions = sortSessions(saved.sessions ?? []);
-      const activeSessionId = saved.activeSessionId && sessions.some((session) => session.id === saved.activeSessionId)
-        ? saved.activeSessionId
-        : sessions[0]?.id ?? null;
-
-      set({
-        sessions,
-        activeSessionId,
-        focusTarget: null,
-      });
+      await hydrate(persistenceContext(), true);
     } catch (error) {
       console.error('Failed to load agent sessions:', error);
     }

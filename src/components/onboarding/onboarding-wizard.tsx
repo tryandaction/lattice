@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
@@ -14,7 +14,7 @@ type OnboardingStep = 'welcome' | 'language' | 'theme' | 'folder' | 'complete';
 
 const steps: OnboardingStep[] = ['welcome', 'language', 'theme', 'folder', 'complete'];
 
-export function OnboardingWizard() {
+export function OnboardingWizard({ blocked = false }: { blocked?: boolean }) {
   const { t } = useI18n();
   const [currentStep, setCurrentStep] = useState<OnboardingStep>('welcome');
   const [isVisible, setIsVisible] = useState(false);
@@ -23,14 +23,14 @@ export function OnboardingWizard() {
   const isInitialized = useSettingsStore((state) => state.isInitialized);
 
   useEffect(() => {
-    if (isInitialized && !onboardingCompleted) {
+    if (isInitialized && !onboardingCompleted && !blocked) {
       // Small delay for smooth appearance
       const timer = setTimeout(() => setIsVisible(true), 100);
       return () => clearTimeout(timer);
     }
-  }, [isInitialized, onboardingCompleted]);
+  }, [isInitialized, onboardingCompleted, blocked]);
 
-  if (!isInitialized || !isVisible || onboardingCompleted) return null;
+  if (blocked || !isInitialized || !isVisible || onboardingCompleted) return null;
 
   const currentIndex = steps.indexOf(currentStep);
   const isFirst = currentIndex === 0;
@@ -188,7 +188,7 @@ function WelcomeStep() {
           data-guide-entry="onboarding"
           className="inline-flex items-center rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
         >
-          查看实时预览指南
+          {t('onboarding.openGuide')}
         </button>
       </div>
     </div>

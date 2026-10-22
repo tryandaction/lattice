@@ -24,6 +24,7 @@ import {
   getPdfOcrPageTextKernel,
   peekDesktopPdfOcrPageTextLayout,
   registerPdfOcrPageProvider,
+  resolvePdfOcrSelectionFromPointer,
   shouldUsePdfOcrFallback,
   type PdfOcrPageTextLayout,
 } from "../pdf-ocr-text-engine";
@@ -64,6 +65,26 @@ describe("pdf-ocr-text-engine", () => {
     expect(model?.itemRects[0]).toMatchObject({ left: 40, top: 60, width: 90, height: 20 });
   });
 
+  it("keeps OCR words left-to-right when baselines jitter within one recognized line", () => {
+    const model = buildPdfPageTextModelFromOcrLayout({
+      source: "ocr",
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      text: "justice. Scientific skepticism would trust",
+      confidence: 0.9,
+      words: [
+        { text: "justice.", left: 20, top: 102, width: 60, height: 20, confidence: 0.9, lineIndex: 4, wordIndex: 0 },
+        { text: "Scientific", left: 90, top: 99, width: 75, height: 20, confidence: 0.9, lineIndex: 4, wordIndex: 1 },
+        { text: "skepticism", left: 175, top: 103, width: 80, height: 20, confidence: 0.9, lineIndex: 4, wordIndex: 2 },
+        { text: "would", left: 265, top: 100, width: 45, height: 20, confidence: 0.9, lineIndex: 4, wordIndex: 3 },
+        { text: "trust", left: 320, top: 98, width: 38, height: 20, confidence: 0.9, lineIndex: 4, wordIndex: 4 },
+      ],
+    });
+
+    expect(model?.normalizedText).toBe("justice. Scientific skepticism would trust");
+  });
+
   it("builds an OCR-backed text kernel and anchors with OCR source", async () => {
     registerPdfOcrPageProvider(async () => createOcrLayout());
 
@@ -91,6 +112,45 @@ describe("pdf-ocr-text-engine", () => {
     expect(kernelPage.chars[0].source).toBe("ocr");
     expect(anchor?.text).toBe("Scanned");
     expect(anchor?.quote.source).toBe("ocr-text-model");
+  });
+
+  it("resolves scanned-page text from pointer geometry without a DOM text range", () => {
+    const selection = resolvePdfOcrSelectionFromPointer({
+      layout: createOcrLayout(),
+      pageRect: new DOMRect(100, 200, 1200, 1600),
+      dragStartPoint: { x: 182, y: 330 },
+      dragEndPoint: { x: 468, y: 330 },
+    });
+
+    expect(selection).not.toBeNull();
+    expect(selection?.text).toBe("Scanned text");
+    expect(selection?.textQuote.source).toBe("ocr-text-model");
+    expect(selection?.pageRects).toHaveLength(1);
+    expect(selection?.viewportRects).toHaveLength(1);
+  });
+
+  it("keeps a near-horizontal OCR drag on its starting line when adjacent word boxes overlap", () => {
+    const selection = resolvePdfOcrSelectionFromPointer({
+      layout: {
+        source: "ocr",
+        pageNumber: 1,
+        width: 600,
+        height: 800,
+        text: "Alpha Beta noise",
+        confidence: 0.9,
+        words: [
+          { text: "Alpha", left: 40, top: 60, width: 60, height: 20, confidence: 0.92, lineIndex: 0, wordIndex: 0 },
+          { text: "Beta", left: 120, top: 60, width: 60, height: 20, confidence: 0.91, lineIndex: 0, wordIndex: 1 },
+          { text: "noise", left: 175, top: 64, width: 55, height: 20, confidence: 0.75, lineIndex: 1, wordIndex: 0 },
+        ],
+      },
+      pageRect: new DOMRect(0, 0, 600, 800),
+      dragStartPoint: { x: 41, y: 70 },
+      dragEndPoint: { x: 190, y: 70 },
+    });
+
+    expect(selection?.text).toBe("Alpha Beta");
+    expect(selection?.pageRects).toHaveLength(1);
   });
 
   it("creates a desktop OCR provider backed by the Tauri OCR command", async () => {
@@ -150,6 +210,50 @@ describe("pdf-ocr-text-engine", () => {
       pageNumber: 3,
       options: { language: "eng+chi_sim", psm: 6 },
     })?.text).toBe("Scanned text");
+  });
+
+  it("limits concurrent desktop OCR work so page prefetch cannot saturate the UI", async () => {
+    const fileHandle = {} as FileSystemFileHandle;
+    const resolvers: Array<(layout: PdfOcrPageTextLayout) => void> = [];
+    mocks.isTauriHost.mockReturnValue(true);
+    mocks.getDesktopPdfPath.mockReturnValue("C:/papers/scanned.pdf");
+    mocks.invokeTauriCommand.mockImplementation((_command, args: { pageNumber: number }) => (
+      new Promise<PdfOcrPageTextLayout>((resolve) => {
+        resolvers.push((layout) => resolve({ ...layout, pageNumber: args.pageNumber }));
+      })
+    ));
+
+    const requests = [1, 2, 3].map((pageNumber) => getDesktopPdfOcrPageTextLayout({
+      fileHandle,
+      pageNumber,
+    }));
+    await Promise.resolve();
+    expect(mocks.invokeTauriCommand).toHaveBeenCalledTimes(2);
+
+    resolvers[0](createOcrLayout());
+    await requests[0];
+    await vi.waitFor(() => {
+      expect(mocks.invokeTauriCommand).toHaveBeenCalledTimes(3);
+    });
+    resolvers[1](createOcrLayout());
+    resolvers[2](createOcrLayout());
+    await Promise.all(requests);
+  });
+
+  it("evicts old resolved OCR layouts after the bounded page cache fills", async () => {
+    const fileHandle = {} as FileSystemFileHandle;
+    mocks.isTauriHost.mockReturnValue(true);
+    mocks.getDesktopPdfPath.mockReturnValue("C:/papers/large-scan.pdf");
+    mocks.invokeTauriCommand.mockImplementation((_command, args: { pageNumber: number }) => (
+      Promise.resolve({ ...createOcrLayout(), pageNumber: args.pageNumber })
+    ));
+
+    for (let pageNumber = 1; pageNumber <= 25; pageNumber += 1) {
+      await getDesktopPdfOcrPageTextLayout({ fileHandle, pageNumber });
+    }
+
+    expect(peekDesktopPdfOcrPageTextLayout({ fileHandle, pageNumber: 1 })).toBeNull();
+    expect(peekDesktopPdfOcrPageTextLayout({ fileHandle, pageNumber: 25 })?.pageNumber).toBe(25);
   });
 
   it("does not invoke desktop OCR outside Tauri or without a desktop path", async () => {

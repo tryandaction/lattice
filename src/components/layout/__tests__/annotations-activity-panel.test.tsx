@@ -9,6 +9,7 @@ import { AnnotationsActivityPanel } from "../annotations-activity-panel";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { DEFAULT_SETTINGS } from "@/types/settings";
+import { t } from '@/lib/i18n';
 
 const navigateLinkMock = vi.fn().mockResolvedValue(true);
 const loadAnnotationsFromDiskMock = vi.fn();
@@ -197,12 +198,12 @@ describe("AnnotationsActivityPanel", () => {
     expect(screen.getByText("pdf match with full quote")).toBeTruthy();
     expect(screen.getByText("important pdf comment")).toBeTruthy();
     expect(screen.getByText("extra annotation 4")).toBeTruthy();
-    expect(screen.getAllByText("高亮").length).toBeGreaterThan(0);
-    expect(screen.getByText("第 3 页")).toBeTruthy();
+    expect(screen.getAllByText("Highlight").length).toBeGreaterThan(0);
+    expect(screen.getByText("Page 3")).toBeTruthy();
     const annotationButton = screen.getByText("pdf match with full quote").closest("button");
     expect(annotationButton?.querySelector("[style*='rgb(255, 212, 0)']")).toBeTruthy();
 
-    fireEvent.change(screen.getByPlaceholderText("搜索批注正文、评论、标签或文件..."), {
+    fireEvent.change(screen.getByRole('textbox'), {
       target: { value: "markdown" },
     });
 
@@ -212,16 +213,16 @@ describe("AnnotationsActivityPanel", () => {
       expect(screen.getByText("markdown match")).toBeTruthy();
     });
 
-    fireEvent.change(screen.getByPlaceholderText("搜索批注正文、评论、标签或文件..."), {
+    fireEvent.change(screen.getByRole('textbox'), {
       target: { value: "" },
     });
 
-    fireEvent.click(screen.getByText("当前文件"));
+    fireEvent.click(screen.getByText(t('workbench.annotations.scope.current')));
 
     await waitFor(() => {
       expect(screen.getByText("paper.pdf")).toBeTruthy();
       expect(screen.queryByText("note.md")).toBeNull();
-      expect(screen.getByText("5 条批注")).toBeTruthy();
+      expect(screen.getByText('5 annotations')).toBeTruthy();
     });
 
     fireEvent.click(screen.getByText("pdf match with full quote"));

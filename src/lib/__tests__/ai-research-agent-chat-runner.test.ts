@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ResearchAgentRunResult } from '../ai/research-agent';
+import type { ResearchAgentRunInput, ResearchAgentRunResult } from '../ai/research-agent';
 import type { AiRuntimeSettings } from '../ai/types';
+import { buildCitationContract } from '../ai/citation-contract';
 
 const mocks = vi.hoisted(() => ({
   runResearchAgent: vi.fn(),
@@ -97,7 +98,7 @@ function createResult(overrides: Partial<ResearchAgentRunResult> = {}): Research
       evidenceRefs: [],
       truncated: false,
     },
-    answer: 'Task: Explain Alpha\n\nEvidence: no explicit evidence refs resolved.',
+    answer: 'Alpha improves evidence grounding and reproducibility.',
     planSteps: [
       {
         id: 'context-pack',
@@ -127,9 +128,125 @@ function createResult(overrides: Partial<ResearchAgentRunResult> = {}): Research
   };
 }
 
+it('bounds both Agent initial output and empty-output recovery to the routed model ceiling', async () => {
+  mocks.runResearchAgent.mockResolvedValue(createResult());
+  mocks.createResearchAgentPlannerGenerate.mockReturnValue({
+    generatePlan:vi.fn(), generateAnswer:vi.fn(), generateOmittedSummary:vi.fn(), maxOutputTokens:8192,
+    modelInfo:{providerId:'custom',providerName:'Synthetic gateway',model:'test-model',source:'cloud'},
+    policy:{taskType:'research',preferredProvider:null,fallbackProvider:null,maxContextTokens:18000,evidenceRequired:true},
+  });
+  await runResearchAgentForChat({settings:{...settings,maxTokens:128000},task:'Explain the supplied mechanism',content:'Actual synthetic evidence.'});
+  expect(mocks.runResearchAgent).toHaveBeenLastCalledWith(expect.objectContaining({answerMaxTokens:8192,answerRecoveryMaxTokens:8192}));
+});
+
 describe('research-agent-chat-runner', () => {
+  it('keeps execution trace metadata out of conversational document answers and history', async () => {
+    mocks.runResearchAgent.mockResolvedValue(createResult());
+    const result = await runResearchAgentForChat({ settings, responseMode: 'conversation', workflowId: 'paper-reading', task: 'Explain this paper in detail', content: 'Actual evidence.' });
+    expect(result.chatText).toBe('Alpha improves evidence grounding and reproducibility.');
+    expect(result.agentResult.sessionId).toBe('research-session-chat');
+    expect(result.draftSuggestion).toBeUndefined();
+  });
+
+  it('keeps an explicit named Markdown PDF child deliverable in automatic document chat', async () => {
+    const task = '在当前 PDF 下创建 note.md 子文件，内容包含讲解、表格、公式和代码';
+    const base = createResult();
+    mocks.runResearchAgent.mockResolvedValue(createResult({ session: { ...base.session, task },
+      promptContext: { ...base.promptContext, evidenceRefs: [{ kind: 'pdf_page', label: 'paper.pdf', locator: 'paper.pdf#page=1', anchor: { page: 1, snippet: 'Actual source.' } }] } }));
+    const result = await runResearchAgentForChat({ settings, responseMode: 'conversation', workflowId: 'paper-reading', task, filePath: 'paper.pdf' });
+    expect(result.draftSuggestion).toMatchObject({ pdfChildTarget: { sourcePath: 'paper.pdf', suggestedTargetPath: '.lattice/items/paper.pdf/note.md' }, writeMode: 'create' });
+    expect(result.draftSuggestion?.content).toContain('Alpha improves');
+  });
+
+  it('passes usable note requirements into answer synthesis instead of only into planning', async () => {
+    mocks.createResearchAgentPlannerGenerate.mockReturnValue({ generatePlan: vi.fn(), generateAnswer: vi.fn(), modelInfo: { providerId: 'openai', providerName: 'OpenAI', model: 'gpt-test', source: 'cloud' } });
+    mocks.runResearchAgent.mockResolvedValue(createResult({ answer: 'A grounded note.' }));
+    await runResearchAgentForChat({ settings, workflowId: 'reading-note', noteConfigOverrides: { language: 'en-US', sections: ['Findings', 'Limitations'], template: '## Findings\n{{findings}}' }, task: 'Write a useful reading note', content: 'Actual evidence.' });
+    const input = mocks.runResearchAgent.mock.calls[0][0];
+    expect(input.requireAnswer).toBe(true);
+    expect(input.answerInstructions).toContain('English');
+    expect(input.answerInstructions).toContain('Findings');
+    expect(input.answerInstructions).toContain('Limitations');
+    expect(input.answerInstructions).toContain('{{findings}}');
+    expect(input.answerInstructions).toContain('Do not claim');
+  });
+
+  it.each(['glm-5.3', 'vendor/model:v2'])('keeps the provider display name out of the actual model request: %s', async (model) => {
+    mocks.createResearchAgentPlannerGenerate.mockReturnValue({
+      generatePlan: vi.fn(), generateAnswer: vi.fn(),
+      modelInfo: { providerId: 'custom', providerName: 'Custom Provider', model, source: 'cloud' },
+    });
+    mocks.runResearchAgent.mockResolvedValue(createResult());
+    const result = await runResearchAgentForChat({ settings: { ...settings, providerId: 'custom', model }, task: 'Read and annotate', content: 'Actual source text' });
+    expect(mocks.runResearchAgent).toHaveBeenCalledWith(expect.objectContaining({ plannerModel: model }));
+    expect(result.plannerModel).toBe(`Custom Provider/${model}`);
+  });
+
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    mocks.createResearchAgentPlannerGenerate.mockReturnValue({
+      generatePlan: vi.fn(), generateAnswer: vi.fn(), generateOmittedSummary: vi.fn(),
+      modelInfo: { providerId: 'openai', providerName: 'OpenAI', model: 'gpt-test', source: 'cloud' },
+    });
+  });
+
+  it('turns validated PDF annotation output into a reviewable proposal without exposing JSON or claiming writes', async () => {
+    const quote = 'The measured magnetic field was 58 G throughout the experiment.';
+    const evidenceRef = { kind: 'pdf_page' as const, label: 'Paper p.4', locator: 'papers/source.pdf#page=4', preview: quote, anchor: { page: 4 } };
+    const sourceId = buildCitationContract(evidenceRef).stableId;
+    const answer = `I have highlighted the entire paper.\n\n\`\`\`lattice-annotations\n${JSON.stringify({ annotations: [{ sourceId, page: 4, quote, reason: 'Records the field used in the measurement.' }] })}\n\`\`\``;
+    const context = { nodes: [], prompt: quote, evidenceRefs: [evidenceRef], truncated: false };
+    const validateAnswer = vi.fn();
+    mocks.runResearchAgent.mockImplementation(async (input: ResearchAgentRunInput) => {
+      input.validateAnswer?.(answer, context);
+      return createResult({ answer, promptContext: context, workflowId: 'pdf-annotation' });
+    });
+    const result = await runResearchAgentForChat({ settings, workflowId: 'pdf-annotation', task: 'Highlight the key results', filePath: 'papers/source.pdf', content: quote, validateAnswer });
+    expect(validateAnswer).toHaveBeenCalledWith(answer, context);
+    expect(result.annotationProposal).toEqual([expect.objectContaining({ documentPath: 'papers/source.pdf', page: 4, quote, reason: 'Records the field used in the measurement.', rects: [] })]);
+    expect(result.chatText).toContain('1 条原文高亮建议');
+    expect(result.chatText).toContain('尚未写入 PDF');
+    expect(result.chatText).not.toContain('lattice-annotations');
+    expect(result.chatText).not.toContain(sourceId);
+    expect(result.chatText).not.toContain('highlighted the entire paper');
+    expect(result.draftSuggestion).toBeUndefined();
+    expect(result.followUpActions).toEqual([]);
+  });
+
+  it('rejects invalid annotation output through the engine validator before returning a surface result', async () => {
+    let returnedFromEngine = false;
+    mocks.runResearchAgent.mockImplementation(async (input: ResearchAgentRunInput) => {
+      const answer = '```lattice-annotations\n{"annotations":[]}\n```';
+      input.validateAnswer?.(answer, createResult().promptContext);
+      returnedFromEngine = true;
+      return createResult({ answer, workflowId: 'pdf-annotation' });
+    });
+    await expect(runResearchAgentForChat({ settings, workflowId: 'pdf-annotation', task: 'Highlight the key results', filePath: 'papers/source.pdf' })).rejects.toThrow('批注提案未通过原文或结构校验');
+    expect(returnedFromEngine).toBe(false);
+    expect(mocks.runResearchAgent.mock.calls[0][0]).toEqual(expect.objectContaining({ requireAnswer: true, validateAnswer: expect.any(Function) }));
+  });
+
+  it.each([true, false])('delivers the requested Markdown independently of annotation validity: %s', async (valid) => {
+    const task = '阅读并批注本文要点，尤其门实现原理以及保真度、鲁棒性。并生成一个md子文档详细讲解本文';
+    const quote = 'The measured magnetic field was 58 G throughout the experiment.';
+    const ref = { kind: 'pdf_page' as const, label: 'Paper', locator: 'atom/papers/source.pdf#page=4', preview: quote, anchor: { page: 4, snippet: quote } };
+    const id = buildCitationContract(ref).stableId;
+    const note = '## 实现原理\n正文解释实验条件及其适用范围。\n\n## 鲁棒性\n区分原文已验证的条件和仍待验证的误差来源。';
+    const answer = note + '\n\n```lattice-annotations\n' + JSON.stringify({ annotations: [{ sourceId: valid ? id : 'invalid', passageId: id, reason: '实验复现条件。' }] }) + '\n```';
+    const context = { nodes: [], prompt: quote, evidenceRefs: [ref], truncated: false };
+    mocks.runResearchAgent.mockImplementation(async (input: ResearchAgentRunInput) => {
+      input.validateAnswer?.(answer, context);
+      return createResult({ answer, promptContext: context, workflowId: 'pdf-annotation', session: { ...createResult().session, task } });
+    });
+    const result = await runResearchAgentForChat({ settings, task, filePath: 'atom/papers/source.pdf', workflowId: 'pdf-annotation' });
+    expect(result.draftSuggestion).toMatchObject({ content: note, targetPath: '.lattice/items/atom-papers-source.pdf/source Reading Note.md', writeMode: 'create',
+      pdfChildTarget: { sourcePath: 'atom/papers/source.pdf', suggestedTargetPath: '.lattice/items/atom-papers-source.pdf/source Reading Note.md' } });
+    expect(result.chatText).toContain(note);
+    expect(result.chatText).not.toContain('lattice-annotations');
+    expect(result.annotationProposal).toHaveLength(valid ? 1 : 0);
+    expect(result.followUpActions.map(action => action.kind)).toContain('create_draft');
+    expect(mocks.runResearchAgent.mock.calls[0][0].answerInstructions).toContain('complete Markdown');
+    if (!valid) expect(result.chatText).toContain('批注未就绪');
   });
 
   it('runs the research agent with a routed LLM planner and formats chat output', async () => {
@@ -220,7 +337,7 @@ describe('research-agent-chat-runner', () => {
       workflowInferred: true,
       generatePlan,
       generateOmittedSummary: undefined,
-      plannerModel: 'OpenAI/gpt-test',
+      plannerModel: 'gpt-test',
       contextBudgetProfileId: 'chat',
       continuation: {
         sourceSessionId: 'source-session-alpha',
@@ -311,7 +428,7 @@ describe('research-agent-chat-runner', () => {
     ]));
   });
 
-  it('falls back to the deterministic plan when planner routing is unavailable', async () => {
+  it('reports an unavailable model instead of presenting a deterministic context dump as an answer', async () => {
     mocks.createResearchAgentPlannerGenerate.mockImplementation(() => {
       throw new Error('No provider configured');
     });
@@ -322,24 +439,12 @@ describe('research-agent-chat-runner', () => {
       workflowInferred: true,
     }));
 
-    const result = await runResearchAgentForChat({
+    await expect(runResearchAgentForChat({
       settings,
       task: 'Explain Beta',
       query: 'Explain Beta',
-    });
-
-    expect(mocks.runResearchAgent).toHaveBeenCalledWith(expect.objectContaining({
-      task: 'Explain Beta',
-      workflowId: 'teaching-explain',
-      workflowTitle: 'Teaching Explain',
-      workflowInferred: true,
-      generatePlan: undefined,
-      plannerModel: undefined,
-    }));
-    expect(result.adapterWarnings[0]).toContain('LLM planner unavailable');
-    expect(result.workflow?.id).toBe('teaching-explain');
-    expect(result.workflowInferred).toBe(true);
-    expect(result.chatText).toContain('Planner warnings: LLM planner unavailable');
+    })).rejects.toThrow('Agent model unavailable: No provider configured');
+    expect(mocks.runResearchAgent).not.toHaveBeenCalled();
   });
 
   it('injects workflow planner hints into surface research runs', async () => {
@@ -380,13 +485,13 @@ describe('research-agent-chat-runner', () => {
     expect(mocks.runResearchAgent).toHaveBeenCalledWith(expect.objectContaining({
       task: 'Explain notebook results',
       generatePlan,
-      plannerModel: 'OpenAI/gpt-test',
+      plannerModel: 'gpt-test',
       workflowId: 'notebook-analysis',
       workflowTitle: 'Notebook Analysis',
       workflowInferred: false,
       includeWorkspaceSummary: true,
       contextBudgetProfileId: 'notebook',
-      suggestMemory: true,
+      suggestMemory: false,
       plannerHints: expect.stringContaining('Workflow: Notebook Analysis (notebook-analysis)'),
       memoryQuery: expect.objectContaining({
         scopes: ['workspace', 'project', 'conversation', 'user'],
@@ -410,18 +515,15 @@ describe('research-agent-chat-runner', () => {
       targetPath: 'AI Drafts/Notebook Analysis Explain Alpha.md',
       writeMode: 'create',
     });
-    expect(result.draftSuggestion?.content).toContain('> Workflow: Notebook Analysis');
-    expect(result.draftSuggestion?.content).toContain('### Observed results');
-    expect(result.draftSuggestion?.content).toContain('### Next experiment');
+    expect(result.draftSuggestion?.content).toBe(createResult().answer);
+    expect(callInput.answerInstructions).toContain('Observed results');
+    expect(callInput.answerInstructions).toContain('Next experiment');
     expect(result.followUpActions.map((action) => action.kind)).toEqual(['create_draft']);
     expect(result.chatText).toContain('Workflow: Notebook Analysis (notebook-analysis)');
     expect(result.agentResult.workflowLabel).toBe('Notebook Analysis');
   });
 
   it('maps product workflows to focused Workbench follow-up actions', async () => {
-    mocks.createResearchAgentPlannerGenerate.mockImplementation(() => {
-      throw new Error('No provider configured');
-    });
     mocks.runResearchAgent.mockResolvedValueOnce(createResult({
       workflowId: 'reading-note',
       workflowTitle: 'Reading Note',
@@ -482,9 +584,8 @@ describe('research-agent-chat-runner', () => {
       targetPath: 'AI Drafts/Reading Note Explain Alpha.md',
       writeMode: 'create',
     });
-    expect(readingNote.draftSuggestion?.content).toContain('> Workflow: Reading Note');
-    expect(readingNote.draftSuggestion?.content).toContain('> Quote policy: evidence-table');
-    expect(readingNote.draftSuggestion?.content).toContain('## Configured Sections');
+    expect(readingNote.draftSuggestion?.content).toBe(createResult().answer);
+    expect(readingNote.draftSuggestion?.content).not.toContain('Configured Sections');
     expect(matrix.draftSuggestion).toMatchObject({
       type: 'comparison_summary',
       templateId: 'comparison-summary',
@@ -492,8 +593,7 @@ describe('research-agent-chat-runner', () => {
       targetPath: 'AI Drafts/Literature Matrix Explain Alpha.md',
       writeMode: 'create',
     });
-    expect(matrix.draftSuggestion?.content).toContain('> Workflow: Literature Matrix');
-    expect(matrix.draftSuggestion?.content).toContain('## Evidence-backed draft');
+    expect(matrix.draftSuggestion?.content).toBe(createResult().answer);
     expect(organization.draftSuggestion).toBeUndefined();
     expect(organization.followUpActions).toEqual([
       { id: 'create-organization-proposal', label: '生成整理计划', kind: 'propose_task' },
@@ -506,16 +606,11 @@ describe('research-agent-chat-runner', () => {
   });
 
   it('maps markdown-research into an evidence-backed Workbench draft contract', async () => {
-    mocks.createResearchAgentPlannerGenerate.mockImplementation(() => {
-      throw new Error('No provider configured');
-    });
     mocks.runResearchAgent.mockResolvedValue(createResult({
       workflowId: 'markdown-research',
       workflowTitle: 'Markdown Research',
       answer: [
-        'Task: Explain Alpha',
-        '',
-        'Workflow output:',
+        '## Findings',
         '- Alpha depends on source-backed notes.',
       ].join('\n'),
       promptContext: {
@@ -547,17 +642,12 @@ describe('research-agent-chat-runner', () => {
       targetPath: 'AI Drafts/Markdown Research Explain Alpha.md',
       writeMode: 'create',
     });
-    expect(result.draftSuggestion?.content).toContain('> Workflow: Markdown Research');
-    expect(result.draftSuggestion?.content).toContain('> Quote policy: paraphrase-first');
-    expect(result.draftSuggestion?.content).toContain('- Alpha depends on source-backed notes.');
-    expect(result.draftSuggestion?.content).toContain('alpha.md (notes/alpha.md) - Alpha evidence preview');
+    expect(result.draftSuggestion?.content).toBe('## Findings\n- Alpha depends on source-backed notes.');
+    expect(result.draftSuggestion?.content).not.toContain('Alpha evidence preview');
     expect(result.followUpActions.map((action) => action.kind)).toEqual(['create_draft']);
   });
 
   it('applies note config overrides to draft path, sections, and quote policy', async () => {
-    mocks.createResearchAgentPlannerGenerate.mockImplementation(() => {
-      throw new Error('No provider configured');
-    });
     mocks.runResearchAgent.mockResolvedValue(createResult({
       workflowId: 'reading-note',
       workflowTitle: 'Reading Note',
@@ -586,16 +676,14 @@ describe('research-agent-chat-runner', () => {
       targetPath: 'AI Drafts/2026-01-15 Reading Note Explain Alpha.md',
       writeMode: 'create',
     });
-    expect(result.draftSuggestion?.content).toContain('> Quote policy: short-quotes-only');
-    expect(result.draftSuggestion?.content).toContain('### Core claim');
-    expect(result.draftSuggestion?.content).toContain('### Evidence trail');
-    expect(result.draftSuggestion?.content).not.toContain('### Methods / Setup');
+    expect(result.draftSuggestion?.content).toBe(createResult().answer);
+    const callInput = mocks.runResearchAgent.mock.calls[0][0];
+    expect(callInput.answerInstructions).toContain('Core claim');
+    expect(callInput.answerInstructions).toContain('Evidence trail');
+    expect(callInput.answerInstructions).toContain('short-quotes-only');
   });
 
   it('scopes default memory reads to the current workspace and session without adding UI controls', async () => {
-    mocks.createResearchAgentPlannerGenerate.mockImplementation(() => {
-      throw new Error('No provider configured');
-    });
     mocks.runResearchAgent.mockResolvedValue(createResult());
 
     await runResearchAgentForChat({
@@ -617,9 +705,6 @@ describe('research-agent-chat-runner', () => {
   });
 
   it('preserves explicit memory queries from advanced callers', async () => {
-    mocks.createResearchAgentPlannerGenerate.mockImplementation(() => {
-      throw new Error('No provider configured');
-    });
     mocks.runResearchAgent.mockResolvedValue(createResult());
 
     await runResearchAgentForChat({
@@ -653,6 +738,14 @@ describe('research-agent-chat-runner', () => {
 
     expect(text).toContain('Plan source: fallback');
     expect(text).toContain('Planner warnings: Adapter unavailable. Planner output did not contain JSON.');
+  });
+
+  it('keeps the Agent answer visible when synthesis returns empty text', () => {
+    const text = formatResearchAgentChatAnswer({
+      result: createResult({ answer: '' }),
+    });
+
+    expect(text.split('\n')[0]).toContain('Research Agent did not return a readable answer.');
   });
 
   it('includes workflow metadata in the formatted answer', () => {

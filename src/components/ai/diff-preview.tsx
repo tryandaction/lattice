@@ -14,8 +14,8 @@ import { cn } from "@/lib/utils";
 interface DiffPreviewProps {
   original: string;
   modified: string;
-  onAccept: (result: string) => void;
-  onReject: () => void;
+  onAccept?: (result: string) => void;
+  onReject?: () => void;
   className?: string;
 }
 
@@ -23,7 +23,7 @@ export function DiffPreview({ original, modified, onAccept, onReject, className 
   const diff = useMemo(() => computeDiff(original, modified), [original, modified]);
 
   const handleAccept = useCallback(() => {
-    onAccept(applyDiff(original, diff));
+    onAccept?.(applyDiff(original, diff));
   }, [original, diff, onAccept]);
 
   const handleCopy = useCallback(async () => {
@@ -49,20 +49,20 @@ export function DiffPreview({ original, modified, onAccept, onReject, className 
           >
             <Copy className="w-3.5 h-3.5" />
           </button>
-          <button
+          {onReject ? <button
             onClick={onReject}
             className="p-1.5 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
             title="Reject changes"
           >
             <X className="w-3.5 h-3.5" />
-          </button>
-          <button
+          </button> : null}
+          {onAccept ? <button
             onClick={handleAccept}
             className="p-1.5 rounded hover:bg-green-500/10 text-muted-foreground hover:text-green-500 transition-colors"
             title="Accept changes"
           >
             <Check className="w-3.5 h-3.5" />
-          </button>
+          </button> : null}
         </div>
       </div>
 

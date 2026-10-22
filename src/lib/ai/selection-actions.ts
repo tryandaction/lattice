@@ -11,6 +11,8 @@ import {
 import { useAgentSessionStore } from '@/stores/agent-session-store';
 import { runResearchAgentForSurface } from './research-agent-chat-runner';
 import type { ResearchAgentWorkflowId } from './research-agent-workflows';
+import { inferResearchAgentWorkflow } from './research-agent-workflows';
+import { useAiPdfCompanionStore } from '@/stores/ai-pdf-companion-store';
 import type { Locale } from '@/types/settings';
 
 function failSessionIfOpen(sessionId: string, error: string) {
@@ -45,7 +47,10 @@ function buildExecutionPrompt(mode: SelectionAiMode, prompt: string, context: Se
   return parts.join('\n\n');
 }
 
-export function inferSelectionResearchWorkflow(context: SelectionContext): ResearchAgentWorkflowId {
+export function inferSelectionResearchWorkflow(context: SelectionContext, prompt?: string): ResearchAgentWorkflowId {
+  if (context.sourceKind === 'pdf' && prompt?.trim()) {
+    return inferResearchAgentWorkflow({ task: prompt, query: prompt, filePath: context.filePath ?? context.fileName, selection: context.selectedText });
+  }
   switch (context.sourceKind) {
     case 'notebook':
       return 'notebook-analysis';
@@ -82,13 +87,13 @@ export async function runSelectionAiMode(input: {
     chatStore.setGenerating(true, controller);
 
     try {
-      const workflowId = inferSelectionResearchWorkflow(input.context);
+      const workflowId = inferSelectionResearchWorkflow(input.context, displayPrompt);
       const result = await runResearchAgentForSurface({
         settings: input.settings,
         workflowId,
         task: displayPrompt,
         title: `${origin.sourceLabel} - ${origin.mode}`,
-        query: prompt,
+        query: displayPrompt,
         filePath: input.context.filePath ?? input.context.fileName,
         content: input.context.contextText || input.context.selectedText,
         selection: input.context.selectedText,
@@ -105,12 +110,18 @@ export async function runSelectionAiMode(input: {
       }
 
       chatStore.appendToAssistantMessage(messageId, result.chatText);
+      if (result.annotationProposal?.length) {
+        useAiPdfCompanionStore.getState().setTransientAnnotations(result.annotationProposal, messageId);
+      }
       chatStore.finishAssistantMessage(messageId);
       chatStore.setAssistantMetadata(messageId, {
         model: result.plannerModelInfo ?? undefined,
         evidenceRefs: result.result.promptContext.evidenceRefs,
         promptContext: result.result.promptContext,
         origin,
+        agentResult: result.agentResult,
+        followUpActions: result.followUpActions,
+        draftSuggestion: result.draftSuggestion,
       });
       return { kind: 'chat', title: displayPrompt };
     } catch (error) {

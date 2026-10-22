@@ -14,6 +14,7 @@ import { useI18n } from "@/hooks/use-i18n";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useAiChatStore } from "@/stores/ai-chat-store";
 import { getRegisteredCommands, subscribePluginRegistry } from "@/lib/plugins/runtime";
+import { useVSCodeExtensionHostStore } from "@/stores/vscode-extension-host-store";
 import type { PluginCommand } from "@/lib/plugins/types";
 import { cn } from "@/lib/utils";
 import { UI_MODAL_OVERLAY_CLASS, UI_MODAL_OVERLAY_STYLE, UI_MODAL_PANEL_CLASS } from "@/lib/ui-layers";
@@ -30,8 +31,8 @@ export interface PluginCommandDialogProps {
   onOpenGuide?: () => void;
 }
 
-type CommandSource = "core" | "plugin";
-type CommandCategory = "ai" | "system" | "docs" | "plugin";
+type CommandSource = "core" | "plugin" | "vscode";
+type CommandCategory = "ai" | "system" | "docs" | "plugin" | "vscode";
 type CommandSectionKey = "recent" | "suggested" | "plugins" | "results";
 type CommandItem = PluginCommand & {
   source: CommandSource;
@@ -95,7 +96,9 @@ function compareCommandPriority(left: CommandItem, right: CommandItem): number {
 
 function getSourceLabel(source: CommandSource, language: string): string {
   const isZh = language !== "en-US";
-  return source === "core" ? (isZh ? "内置" : "Built-in") : (isZh ? "插件" : "Plugin");
+  if (source === "core") return isZh ? "内置" : "Built-in";
+  if (source === "vscode") return "VS Code";
+  return isZh ? "插件" : "Plugin";
 }
 
 function getCategoryLabel(category: CommandCategory, language: string): string {
@@ -107,6 +110,8 @@ function getCategoryLabel(category: CommandCategory, language: string): string {
       return isZh ? "系统" : "System";
     case "docs":
       return isZh ? "指南" : "Guide";
+    case "vscode":
+      return "VS Code";
     default:
       return isZh ? "插件" : "Plugin";
   }
@@ -303,6 +308,8 @@ export function PluginCommandDialog({
   const setResearchWorkflow = useAiChatStore((state) => state.setResearchWorkflow);
   const language = settings.language || "zh-CN";
   const [pluginCommands, setPluginCommands] = useState<PluginCommand[]>([]);
+  const vscodeHostCommands = useVSCodeExtensionHostStore((state) => state.snapshot.commands);
+  const runVSCodeHostCommand = useVSCodeExtensionHostStore((state) => state.runCommand);
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim());
   const [activeIndex, setActiveIndex] = useState(0);
@@ -344,8 +351,23 @@ export function PluginCommandDialog({
         }))
       : [];
 
-    return dedupeCommands([...builtinCommands, ...pluginItems]);
-  }, [builtinCommands, language, pluginCommands, settings.pluginsEnabled]);
+    const vscodeItems = vscodeHostCommands.map((command) => ({
+      id: command.id,
+      title: command.title,
+      source: "vscode" as const,
+      category: "vscode" as const,
+      description: language === "en-US"
+        ? `VS Code extension command - ${command.extensionId}`
+        : `VS Code 扩展命令 - ${command.extensionId}`,
+      keywords: [command.id, command.extensionId, command.category ?? ""],
+      priority: 60,
+      run: async () => {
+        await runVSCodeHostCommand(command.id);
+      },
+    }));
+
+    return dedupeCommands([...builtinCommands, ...pluginItems, ...vscodeItems]);
+  }, [builtinCommands, language, pluginCommands, runVSCodeHostCommand, settings.pluginsEnabled, vscodeHostCommands]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -405,7 +427,7 @@ export function PluginCommandDialog({
       .filter((command) => command.source === "core" && !recentIdsSet.has(command.id))
       .sort(compareCommandPriority);
     const plugins = allCommands
-      .filter((command) => command.source === "plugin" && !recentIdsSet.has(command.id))
+      .filter((command) => (command.source === "plugin" || command.source === "vscode") && !recentIdsSet.has(command.id))
       .sort(compareCommandPriority);
 
     const nextSections: CommandSection[] = [];

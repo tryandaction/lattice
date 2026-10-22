@@ -240,7 +240,6 @@ export function JupyterRenderer({ content, fileName, paneId, filePath, rootHandl
       notebook.metadata.language_info?.codemirror_mode,
     );
   }, [notebook]);
-
   const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
     containerRef,
     ({ text, eventTarget }) => {

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildPdfTextKernelAnchor,
   buildPdfTextKernelPage,
+  buildPdfTextKernelPageFromNativeLayout,
+  buildPdfTextKernelRunRects,
   clearPdfTextKernelPageCache,
   getPdfTextKernelRangeText,
 } from "../pdf-text-kernel";
@@ -9,6 +11,7 @@ import {
   buildPdfReadableTextForOffsets,
 } from "../pdf-canonical-text-anchoring";
 import type { PdfPageTextModel } from "../pdf-page-text-cache";
+import type { PdfNativePageTextLayout } from "../pdf-native-text-engine";
 
 function createModel(): PdfPageTextModel {
   return {
@@ -139,6 +142,88 @@ function createSaffmanFig7Model(): PdfPageTextModel {
 }
 
 describe("pdf-text-kernel", () => {
+  it('keeps display equation numbers and distant same-row caption runs separate', () => {
+    const layout: PdfNativePageTextLayout = {
+      source: 'pdfium', pageNumber: 1, width: 640, height: 960, text: 'E=mc² (1)',
+      chars: [...'E=mc²(1)'].map((text, index) => ({
+        charIndex: index < 5 ? index : index + 1, text,
+        x1: index < 5 ? 180 + index * 12 : 550 + (index - 5) * 10,
+        x2: index < 5 ? 190 + index * 12 : 558 + (index - 5) * 10,
+        y1: 180, y2: 200, fontSize: 16,
+      })),
+    };
+    const page = buildPdfTextKernelPageFromNativeLayout({ layout });
+    const rects = buildPdfTextKernelRunRects(page, page.chars);
+    expect(rects).toHaveLength(2);
+    expect(rects[0].x2).toBeCloseTo(238 / 640);
+    expect(rects[1].x1).toBeCloseTo(550 / 640);
+    expect(getPdfTextKernelRangeText(page, 0, 9)).toBe('E=mc² (1)');
+  });
+  it("builds the shared page kernel directly from PDFium character geometry", () => {
+    const layout: PdfNativePageTextLayout = {
+      source: "pdfium",
+      pageNumber: 4,
+      width: 200,
+      height: 100,
+      text: "alpha beta",
+      chars: [
+        ..."alpha".split("").map((text, index) => ({
+          charIndex: index,
+          text,
+          x1: 20 + (index * 10),
+          y1: 10,
+          x2: 28 + (index * 10),
+          y2: 30,
+          fontSize: 12,
+        })),
+        ..."beta".split("").map((text, index) => ({
+          charIndex: index + 6,
+          text,
+          x1: 80 + (index * 10),
+          y1: 10,
+          x2: 88 + (index * 10),
+          y2: 30,
+          fontSize: 12,
+        })),
+        {
+          charIndex: 10,
+          text: "",
+          x1: 0,
+          y1: 0,
+          x2: 0,
+          y2: 0,
+          fontSize: 0,
+        },
+      ],
+    };
+
+    const page = buildPdfTextKernelPageFromNativeLayout({ layout });
+
+    expect(page).toMatchObject({
+      pageNumber: 4,
+      pageText: "alpha beta",
+      normalizedText: "alpha beta",
+      viewportWidth: 200,
+      viewportHeight: 100,
+      source: "pdfium",
+    });
+    expect(page.chars).toHaveLength(9);
+    expect(page.chars[0]).toMatchObject({
+      charIndex: 0,
+      normalizedText: "a",
+      pdfRect: { x1: 0.1, y1: 0.1, x2: 0.14, y2: 0.3 },
+      viewportRect: { left: 20, top: 10, width: 8, height: 20 },
+      source: "pdfium",
+      spaceAfter: false,
+    });
+    expect(page.chars[4].spaceAfter).toBe(true);
+    expect(page.chars[5]).toMatchObject({
+      charIndex: 6,
+      normalizedText: "b",
+      wordIndex: 1,
+    });
+  });
+
   it("builds a character-level kernel from the page text model", () => {
     const model = createModel();
     const page = buildPdfTextKernelPage({ model });

@@ -7,7 +7,7 @@
  * with support for navigation and real-time updates.
  */
 
-import { useMemo, useCallback, useState } from "react";
+import { memo, useMemo, useCallback, useState, useEffect, useRef, useDeferredValue } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -20,7 +20,9 @@ import {
   File
 } from "lucide-react";
 import type { AnnotationItem, AnnotationTarget } from "../../types/universal-annotation";
-import { AnnotationMarkdownRenderer } from "./annotation-markdown-renderer";
+import { handleAnnotationSidebarKeyDown, scrollToSidebarAnnotation, useAnnotationSidebarCallback } from "./annotation-sidebar-interactions";
+import { DeferredAnnotationMarkdown, useAnnotationCommentObserver, type AnnotationCommentObserver } from "./deferred-annotation-markdown";
+import { useI18n } from "@/hooks/use-i18n";
 
 // ============================================================================
 // Types
@@ -124,13 +126,14 @@ export function groupAnnotations(annotations: AnnotationItem[]): AnnotationGroup
 
   for (const annotation of annotations) {
     const key = getGroupKey(annotation.target);
-    const existing = groups.get(key) ?? [];
-    groups.set(key, [...existing, annotation]);
+    const existing = groups.get(key);
+    if (existing) existing.push(annotation);
+    else groups.set(key, [annotation]);
   }
 
   // Sort groups and annotations within each group
   return Array.from(groups.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
     .map(([key, groupAnnotations]) => ({
       key,
       label: getGroupLabel(key),
@@ -215,20 +218,27 @@ function StyleIcon({ styleType, className = "h-3 w-3" }: StyleIconProps) {
 interface AnnotationItemComponentProps {
   annotation: AnnotationItem;
   isSelected: boolean;
-  onClick: () => void;
+  onClick: (annotation: AnnotationItem) => void;
+  commentObserver: AnnotationCommentObserver;
+  eagerComment: boolean;
 }
 
 /**
  * Single annotation item in the sidebar
  */
-function AnnotationItemComponent({ annotation, isSelected, onClick }: AnnotationItemComponentProps) {
+const AnnotationItemComponent = memo(function AnnotationItemComponent({ annotation, isSelected, onClick, commentObserver, eagerComment }: AnnotationItemComponentProps) {
+  const [commentFocused, setCommentFocused] = useState(false);
   const previewText = annotation.content || getTargetLabel(annotation.target);
   const colorStyle = getColorStyle(annotation.style.color);
   const isHexColor = !colorStyle && annotation.style.color.startsWith('#');
 
   return (
     <button
-      onClick={onClick}
+      type="button"
+      onClick={() => onClick(annotation)}
+      onFocus={() => setCommentFocused(true)}
+      aria-pressed={isSelected}
+      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 96px" }}
       className={`w-full rounded-md px-2 py-2 text-left transition-colors ${
         isSelected 
           ? 'bg-primary/10 ring-1 ring-primary' 
@@ -265,7 +275,7 @@ function AnnotationItemComponent({ annotation, isSelected, onClick }: Annotation
             <div className="mt-1 flex items-start gap-1">
               <MessageSquare className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
               <div className="flex-1 min-w-0 max-h-16 overflow-hidden">
-                <AnnotationMarkdownRenderer content={annotation.comment} />
+                <DeferredAnnotationMarkdown content={annotation.comment} observe={commentObserver} eager={eagerComment || isSelected || commentFocused} />
               </div>
             </div>
           )}
@@ -273,34 +283,54 @@ function AnnotationItemComponent({ annotation, isSelected, onClick }: Annotation
       </div>
     </button>
   );
-}
+});
 
 interface AnnotationGroupComponentProps {
   group: AnnotationGroup;
   selectedAnnotationId: string | null | undefined;
   onAnnotationClick: (annotation: AnnotationItem) => void;
   defaultExpanded?: boolean;
+  searchQuery?: string;
+  commentObserver: AnnotationCommentObserver;
+  eagerCommentIds: Set<string>;
 }
 
 /**
  * Collapsible group of annotations
  */
-function AnnotationGroupComponent({ 
+const AnnotationGroupComponent = memo(function AnnotationGroupComponent({
   group, 
   selectedAnnotationId, 
   onAnnotationClick,
   defaultExpanded = true,
+  searchQuery,
+  commentObserver,
+  eagerCommentIds,
 }: AnnotationGroupComponentProps) {
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const selectedInGroup = group.annotations.some((annotation) => annotation.id === selectedAnnotationId);
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded || selectedInGroup);
+  const groupRef = useRef<HTMLDivElement>(null);
+  const [revealState, setRevealState] = useState({ selectedAnnotationId, searchQuery });
+  if (revealState.selectedAnnotationId !== selectedAnnotationId || revealState.searchQuery !== searchQuery) {
+    setRevealState({ selectedAnnotationId, searchQuery });
+    if (selectedInGroup) setIsExpanded(true);
+    if (searchQuery) setIsExpanded(true);
+  }
+
+  useEffect(() => {
+    if (isExpanded && selectedInGroup) scrollToSidebarAnnotation(groupRef.current, selectedAnnotationId);
+  }, [isExpanded, selectedAnnotationId, selectedInGroup]);
 
   const toggleExpanded = useCallback(() => {
     setIsExpanded((prev) => !prev);
   }, []);
 
   return (
-    <div className="border-b border-border last:border-b-0">
+    <div ref={groupRef} className="border-b border-border last:border-b-0">
       {/* Group header */}
       <button
+        type="button"
+        aria-expanded={isExpanded}
         onClick={toggleExpanded}
         className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/50"
       >
@@ -323,14 +353,16 @@ function AnnotationGroupComponent({
               key={annotation.id}
               annotation={annotation}
               isSelected={annotation.id === selectedAnnotationId}
-              onClick={() => onAnnotationClick(annotation)}
+              onClick={onAnnotationClick}
+              commentObserver={commentObserver}
+              eagerComment={eagerCommentIds.has(annotation.id)}
             />
           ))}
         </div>
       )}
     </div>
   );
-}
+});
 
 // ============================================================================
 // Main Component
@@ -353,10 +385,29 @@ export function UniversalAnnotationSidebar({
   selectedAnnotationId,
   isLoading = false,
 }: UniversalAnnotationSidebarProps) {
+  const { t } = useI18n();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const commentObserver = useAnnotationCommentObserver(scrollRef);
+  const handleAnnotationClick = useAnnotationSidebarCallback(onAnnotationClick);
+  const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery.trim().toLowerCase());
+  const searchIndex = useMemo(() => annotations.map((annotation) => ({
+    annotation,
+    text: [annotation.content, annotation.comment, getTargetLabel(annotation.target)].filter(Boolean).join('\n').toLowerCase(),
+  })), [annotations]);
+  const filteredAnnotations = useMemo(() => deferredSearchQuery
+    ? searchIndex.filter((entry) => entry.text.includes(deferredSearchQuery)).map((entry) => entry.annotation)
+    : annotations, [annotations, searchIndex, deferredSearchQuery]);
+  const [previousSelectedId, setPreviousSelectedId] = useState(selectedAnnotationId);
+  if (previousSelectedId !== selectedAnnotationId) {
+    setPreviousSelectedId(selectedAnnotationId);
+    if (selectedAnnotationId && annotations.some((annotation) => annotation.id === selectedAnnotationId)) setSearchQuery('');
+  }
   // Group annotations
   const groups = useMemo(() => {
-    return groupAnnotations(annotations);
-  }, [annotations]);
+    return groupAnnotations(filteredAnnotations);
+  }, [filteredAnnotations]);
+  const eagerCommentIds = useMemo(() => new Set(groups.flatMap((group) => group.annotations).slice(0, 12).map((annotation) => annotation.id)), [groups]);
 
   const totalCount = annotations.length;
 
@@ -393,22 +444,34 @@ export function UniversalAnnotationSidebar({
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
       <div className="border-b border-border px-3 py-2">
         <h3 className="text-sm font-medium">
           Annotations ({totalCount})
         </h3>
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          aria-label={t('pdf.sidebar.search.placeholder')}
+          placeholder={t('pdf.sidebar.search.placeholder')}
+          className="mt-2 h-7 w-full rounded-md border border-border bg-muted/50 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+        />
       </div>
 
       {/* Scrollable list */}
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto" onKeyDown={handleAnnotationSidebarKeyDown}>
+        {groups.length === 0 && <p className="p-4 text-center text-xs text-muted-foreground">{t('pdf.sidebar.emptyFiltered')}</p>}
         {groups.map((group) => (
           <AnnotationGroupComponent
             key={group.key}
             group={group}
-            selectedAnnotationId={selectedAnnotationId}
-            onAnnotationClick={onAnnotationClick}
+            selectedAnnotationId={group.annotations.some((annotation) => annotation.id === selectedAnnotationId) ? selectedAnnotationId : null}
+            onAnnotationClick={handleAnnotationClick}
+            searchQuery={deferredSearchQuery}
+            commentObserver={commentObserver}
+            eagerCommentIds={eagerCommentIds}
           />
         ))}
       </div>

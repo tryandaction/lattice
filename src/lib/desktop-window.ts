@@ -17,6 +17,23 @@ export interface DesktopWindowStatePayload {
   isMaximized: boolean;
 }
 
+type DesktopWindowCloseHandler = () => void | Promise<void>;
+
+const desktopWindowCloseHandlers = new Set<DesktopWindowCloseHandler>();
+let closeFlight: Promise<void> | null = null;
+let guardedDestroy: (() => Promise<void>) | null = null;
+
+export function registerDesktopWindowCloseHandler(handler: DesktopWindowCloseHandler): () => void {
+  desktopWindowCloseHandlers.add(handler);
+  return () => desktopWindowCloseHandlers.delete(handler);
+}
+
+async function flushDesktopWindowCloseHandlers(): Promise<void> {
+  const results = await Promise.allSettled([...desktopWindowCloseHandlers].map(handler => Promise.resolve().then(handler)));
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failure) throw failure.reason;
+}
+
 function mapResizeDirection(direction: DesktopResizeDirection):
   | "East"
   | "North"
@@ -160,18 +177,43 @@ export async function isDesktopWindowMaximized(): Promise<boolean> {
   return false;
 }
 
-export async function closeDesktopWindow(): Promise<void> {
-  const invoked = await invokeDesktopWindowCommand("desktop_window_close");
-  if (invoked !== null) {
-    return;
-  }
+export function closeDesktopWindow(): Promise<void> {
+  if (closeFlight) return closeFlight;
+  closeFlight = (async () => {
+    await flushDesktopWindowCloseHandlers();
+    if (guardedDestroy) {
+      await guardedDestroy();
+      return;
+    }
+    const invoked = await invokeDesktopWindowCommand("desktop_window_close");
+    if (invoked !== null && invoked !== undefined) return;
+    const desktopWindow = getDesktopWindow();
+    if (desktopWindow) await desktopWindow.close();
+  })().finally(() => { closeFlight = null; });
+  return closeFlight;
+}
 
+/** Covers OS close requests as well as the custom titlebar. Prevent close
+ * before awaiting storage; destroy once afterward to avoid a close-event loop. */
+export async function subscribeDesktopWindowCloseRequests(onError: (error: unknown) => void): Promise<() => void> {
   const desktopWindow = getDesktopWindow();
-  if (!desktopWindow) {
-    return;
+  if (!desktopWindow || desktopWindow.label !== "main") return () => {};
+  const destroy = () => desktopWindow.destroy();
+  guardedDestroy = destroy;
+  try {
+    const unlisten = await desktopWindow.onCloseRequested(async event => {
+      event.preventDefault();
+      try { await closeDesktopWindow(); }
+      catch (error) { onError(error); }
+    });
+    return () => {
+      unlisten();
+      if (guardedDestroy === destroy) guardedDestroy = null;
+    };
+  } catch (error) {
+    if (guardedDestroy === destroy) guardedDestroy = null;
+    throw error;
   }
-
-  await desktopWindow.close();
 }
 
 export async function subscribeDesktopWindowState(

@@ -8,7 +8,6 @@ import { PdfSearchOverlay } from "./pdf-search-overlay";
 import { PdfOutlineSidebar } from "./pdf-outline-sidebar";
 import { useI18n } from "@/hooks/use-i18n";
 import { useObjectUrl } from "@/hooks/use-object-url";
-import { isTauriHost } from "@/lib/storage-adapter";
 import { buildPersistedFileViewStateKey, loadPersistedFileViewState, savePersistedFileViewState } from "@/lib/file-view-state";
 import { captureRelativeScrollPosition, restoreRelativeScrollPosition, type ScrollContainerLike } from "@/lib/pdf-view-state";
 import {
@@ -203,7 +202,6 @@ function PDFViewerInner({
   onRequestAnnotationMode,
 }: PDFViewerProps) {
   const { t } = useI18n();
-  const isDesktopRuntime = isTauriHost();
   const documentKey = useMemo(
     () => `${paneId ?? "default"}:${documentId}`,
     [documentId, paneId],
@@ -255,8 +253,10 @@ function PDFViewerInner({
     }
 
     const runtimeDpr = window.devicePixelRatio || 1;
-    return isDesktopRuntime ? Math.min(runtimeDpr, 2) : runtimeDpr;
-  }, [isDesktopRuntime]);
+    // Capping the backing store keeps high-DPI PDFs responsive without
+    // materially reducing readable output in the document viewer.
+    return Math.min(runtimeDpr, 2);
+  }, []);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -295,7 +295,7 @@ function PDFViewerInner({
   const isDesktopUrlSource = source.kind === "desktop-url";
   const fileDataSource = isDesktopUrlSource ? source.url : source.data;
   const pdfBlob = useMemo(() => (
-    isDesktopUrlSource ? null : new Blob([(fileDataSource as ArrayBuffer).slice(0)], { type: "application/pdf" })
+    isDesktopUrlSource ? null : new Blob([fileDataSource as ArrayBuffer], { type: "application/pdf" })
   ), [fileDataSource, isDesktopUrlSource]);
   const objectUrl = useObjectUrl(pdfBlob);
   const fileData = useMemo(() => (

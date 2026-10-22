@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { memo, useCallback } from "react";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -96,13 +96,11 @@ interface SplitRendererProps {
  */
 function SplitRenderer({ split, activePaneId }: SplitRendererProps) {
   const resizePanes = useWorkspaceStore((state) => state.resizePanes);
-
-  const handleResize = useCallback(
-    (sizes: number[]) => {
-      resizePanes(split.id, sizes);
-    },
-    [resizePanes, split.id]
-  );
+  // ResizableHandle already coalesces pointer events and flushes on pointerup.
+  // A second frame here delays feedback and can lose the final size on unmount.
+  const handleResize = useCallback((sizes: number[]) => {
+    resizePanes(split.id, sizes);
+  }, [resizePanes, split.id]);
 
   return (
     <ResizablePanelGroup
@@ -145,9 +143,12 @@ function SplitChild({ child, size, activePaneId, isLast, index }: SplitChildProp
         minSize={10}
         className="h-full min-h-0 min-w-0 overflow-hidden"
       >
-        <LayoutRenderer node={child} activePaneId={activePaneId} />
+        <StableLayoutRenderer node={child} activePaneId={activePaneId} />
       </ResizablePanel>
       {!isLast && <ResizableHandle withHandle index={index} />}
     </>
   );
 }
+
+// Panel geometry can change without rebuilding the expensive document subtree.
+const StableLayoutRenderer = memo(LayoutRenderer);

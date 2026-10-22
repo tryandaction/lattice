@@ -1,6 +1,6 @@
 # AI Coding Agent Roadmap
 
-Last updated: 2026-06-18
+Last updated: 2026-08-17
 
 This document scopes the next Lattice AI Agent slice for coding, co-work, and agent workflows. It builds on `AI_AGENT_WORKBENCH_PLAN.md` and `AI_AGENT_SYSTEM_TODO.md`: Lattice remains evidence-first, local-first, and approval-first. The goal is not to clone a generic autonomous coding agent; the goal is to make code review and change planning fit Lattice's mixed workspace of notes, papers, notebooks, code, evidence refs, and Workbench artifacts.
 
@@ -29,13 +29,19 @@ Useful source map:
 
 ## Current Lattice Stage
 
-Lattice is in a late P5 / early P6 product-hardening stage for Research Agent infrastructure. The first coding-agent slice is now implemented as a reviewable, approval-first workflow rather than an autonomous writer:
+AI Workspace Phase 2 is complete for the current UI slice: focused conversation, teaching-oriented answer expression, a full-height on-demand Review Workspace, New chat Review reset, root-aware evidence navigation, deduplicated reference entries, and a 38% default / 32% minimum / 52% maximum desktop PDF Companion are implemented. PDF evidence can appear as a temporary source highlight, but it enters the existing annotation system only after the user explicitly confirms injection. It remains a UI-only companion to the P4/P5/P6 research-agent work: it does not advance the core Tool Broker phases or enable shell, network, MCP, direct-write, autonomous coding, automatic git, or new permissions.
+
+The 2026-08-17 performance closeout keeps that surface responsive under many open or annotated PDFs: clean binary content is limited to the current and two recent documents, PDF text/reference caches are bounded, reference extraction is demand-driven, cold canvas/text/annotation resources are released, and long annotation lists skip off-screen layout/paint. Evidence navigation now carries page/snippet/rect anchors to the existing PDF renderer; this changes review ergonomics only and adds no execution capability.
+
+The sequential Research Agent track is in P5 production-hardening closeout. P4 is complete for the current productization slice; P6 remains a horizontal backlog and only explicitly scheduled support slices run alongside P5. The first coding-agent slice is implemented as a reviewable, approval-first workflow rather than an autonomous writer:
 
 - Strong: AgentSession, Trace, approval records, context packs, memory, workflow presets, Lattice skills, operation contracts, and Workbench draft/proposal handoff.
 - Strong: policy denies shell/network/direct workspace writes by default and keeps draft/proposal/code/memory behind approval.
 - Implemented: `code-change-plan` workflow preset, `coding-change-review` operation contract, coding-aware Workbench proposal planned writes, coding result surface, and reviewable target/risk/test/patch-preview output.
 - Implemented: Approval-gated QA Runner planning that turns inferred target files into allowed/suggested/rejected command plans, creates Agent approval requests, records trace events, imports resolved approval results into Evidence, and links Evidence entries back to the source Agent Trace.
 - Implemented: Co-work Session Inbox that aggregates local Agent sessions, pending approvals, handoff summaries, blocked/running state, and workspace dirty-file risk for multi-window handoff.
+- Implemented: AI Workspace Shell Redesign Phase 1 plus Phase 2 Review refinement. The desktop AI dock has a discoverable, persisted resize path whose controlled layout rebuild preserves the user's requested width; the first viewport prioritizes Header, Agent status, Chat timeline, and Composer; Memory, Trace, Evidence, and Workbench open in a mutually exclusive full-height Review Workspace; pending approvals and focused audit targets open the relevant Review tab.
+- Implemented: AI Chat is split into focused shell, timeline, composer, status, inspector, and Workbench queue components. Long Workbench titles, draft bodies, and target paths are clamped or truncated while detail remains explicitly expandable.
 - Still intentionally denied: autonomous file editing, host shell, network fetches, git operations, production APIs, and automatic test execution.
 
 ## Product Target

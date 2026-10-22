@@ -27,6 +27,7 @@ interface NotebookCellProps {
   onLinkNavigate?: (target: string) => void;
   rootHandle?: FileSystemDirectoryHandle | null;
   notebookFilePath?: string;
+  vscodeDocumentPath?: string;
   codeLanguage?: CodeEditorLanguage;
   onRunCell?: (cellId: string, source: string) => Promise<unknown>;
   isExecuting?: boolean;
@@ -210,6 +211,7 @@ export const NotebookCellComponent = memo(function NotebookCellComponent({
   onLinkNavigate,
   rootHandle,
   notebookFilePath,
+  vscodeDocumentPath,
   codeLanguage = "python",
   onRunCell,
   isExecuting = false,
@@ -285,12 +287,11 @@ export const NotebookCellComponent = memo(function NotebookCellComponent({
   return (
     <div
       className={cn(
-        "group relative",
-        "border-l-2 transition-all duration-300 pl-4 rounded-r-md",
+        "group relative border-l-2 py-1 transition-colors",
         isActive
-          ? "border-primary bg-primary/5"
-          : "border-transparent hover:border-muted",
-        isHighlighted && "border-amber-400 bg-amber-400/10 shadow-[0_0_0_1px_rgba(251,191,36,0.22)]"
+          ? "border-primary bg-primary/[0.035]"
+          : "border-transparent hover:border-border",
+        isHighlighted && "lattice-reference-target-flash"
       )}
       onMouseEnter={() => setShowControls(true)}
       onMouseLeave={() => setShowControls(false)}
@@ -300,7 +301,7 @@ export const NotebookCellComponent = memo(function NotebookCellComponent({
       {/* Cell toolbar */}
       <div
         className={cn(
-          "mb-1.5 flex items-center gap-2 transition-opacity",
+          "mb-1 flex h-7 items-center gap-1 pl-16 pr-2 transition-opacity",
           showControls || isActive ? "opacity-100" : "opacity-0"
         )}
       >
@@ -337,6 +338,7 @@ export const NotebookCellComponent = memo(function NotebookCellComponent({
           onNavigateDown={onNavigateDown}
           cellId={cell.id}
           notebookFilePath={notebookFilePath}
+          vscodeDocumentPath={vscodeDocumentPath}
           onRunCell={onRunCell}
           isExecuting={isExecuting}
           canRun={canRunCell}

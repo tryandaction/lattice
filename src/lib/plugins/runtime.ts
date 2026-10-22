@@ -1,4 +1,5 @@
 import { isTauri } from '@/lib/storage-adapter';
+import {t} from '@/lib/i18n';
 import { getPluginModule } from './registry';
 import { loadStoredPlugin, loadStoredPluginResource, type StoredPlugin } from './repository';
 import { PluginWorkerHost } from './worker-host';
@@ -7,10 +8,13 @@ import { useAnnotationStore } from '@/stores/annotation-store';
 import { deriveFileId } from '@/lib/annotation-storage';
 import { useSettingsStore } from '@/stores/settings-store';
 import { extractMarkdownDocument } from '@/lib/markdown/extract';
-import { buildRenderedPdfPageTextModel, getPdfPageTextModel } from '@/lib/pdf-page-text-cache';
+import { getPdfPageTextModel } from '@/lib/pdf-page-text-cache';
+import { buildPluginPdfTextPage, readPaintedFormulaRules, selectPluginPdfRegion } from './pdf-geometry';
 import { getActivePdfSelectionImage } from '@/lib/pdf-selection-image-provider';
 import { loadPdfJsDocument } from '@/lib/pdf-js-document-loader';
 import { isFileTabState } from '@/types/layout';
+import { readFileSourceRevision } from '@/lib/file-source-revision';
+import { withTimeout } from '@/lib/async-task-guard';
 import type {
   PluginCommand,
   PluginContext,
@@ -19,6 +23,9 @@ import type {
   PluginPanel,
   PluginDocumentRevealTarget,
   PluginPdfTextPage,
+  PluginPdfTextOptions,
+  PluginPdfSelectionImageOptions,
+  PluginActiveDocumentInfo,
   PluginPermission,
   PluginViewerType,
   CachedFileMetadata,
@@ -33,13 +40,37 @@ type RegisteredPanel = { panel: PluginPanel; pluginId: string };
 
 const activePlugins = new Map<string, PluginModule>();
 const activeWorkers = new Map<string, PluginWorkerHost>();
+const pluginDisposers = new Map<string, Set<() => void>>();
+const pluginControllers = new Map<string, AbortController>();
+
+function trackPluginDisposer(pluginId:string,dispose:()=>void):()=>void {
+  const entries=pluginDisposers.get(pluginId)??new Set<()=>void>();
+  let active=true;
+  const cleanup=()=>{if(!active)return;active=false;entries.delete(cleanup);dispose();};
+  entries.add(cleanup);pluginDisposers.set(pluginId,entries);
+  return cleanup;
+}
+
+function cleanupPluginResources(pluginId:string) {
+  pluginControllers.get(pluginId)?.abort();pluginControllers.delete(pluginId);
+  for(const dispose of pluginDisposers.get(pluginId)??[]) {try{dispose();}catch(error){recordPluginAudit({pluginId,level:'warn',action:'cleanup',message:String(error)});}}
+  pluginDisposers.delete(pluginId);
+  const prefix=`${pluginId}:`;
+  for(const key of editorExtensions.keys())if(key.startsWith(prefix))editorExtensions.delete(key);
+  for(const [key,style] of themeStyles)if(key.startsWith(prefix)){style.remove();themeStyles.delete(key);if(activeThemeId===key)activeThemeId=null;}
+  for(const listener of editorExtensionListeners){try{listener();}catch{/* isolated */}}
+  for(const listener of themeChangeListeners){try{listener();}catch{/* isolated */}}
+  revokeAssetUrls(pluginId);unregisterCommandsFor(pluginId);unregisterPanelsFor(pluginId);unregisterUIItemsFor(pluginId);
+}
 const commands = new Map<string, RegisteredCommand>();
 const panels = new Map<string, RegisteredPanel>();
 // Live panel props — updated by plugins via ctx.panels.update()
 const panelProps = new Map<string, Record<string, unknown>>();
 const EMPTY_PANEL_PROPS: Record<string, unknown> = {};
+
 const panelPropsListeners = new Set<() => void>();
 const assetUrls = new Map<string, Set<string>>();
+const assetImageUrls = new Map<string, Set<string>>();
 const registryListeners = new Set<() => void>();
 let registryEmitScheduled = false;
 const healthListeners = new Set<() => void>();
@@ -289,6 +320,7 @@ function revokeAssetUrls(pluginId: string) {
     }
   }
   assetUrls.delete(pluginId);
+  assetImageUrls.delete(pluginId);
 }
 
 async function getPluginAssetUrl(pluginId: string, path: string): Promise<string> {
@@ -300,7 +332,18 @@ async function getPluginAssetUrl(pluginId: string, path: string): Promise<string
   const blob = new Blob([safeBuffer], { type: resource.mimeType });
   const url = URL.createObjectURL(blob);
   trackAssetUrl(pluginId, url);
+  if (resource.mimeType.startsWith('image/')) {
+    const images = assetImageUrls.get(pluginId) ?? new Set<string>();
+    images.add(url);
+    assetImageUrls.set(pluginId, images);
+  }
   return url;
+}
+
+/** Only live image resources belonging to this registered panel's plugin. */
+export function isPanelAssetImageUrlAllowed(panelId: string, url: string): boolean {
+  const owner = panels.get(panelId)?.pluginId;
+  return Boolean(owner && assetImageUrls.get(owner)?.has(url));
 }
 
 async function readPluginAssetText(pluginId: string, path: string): Promise<string> {
@@ -338,6 +381,26 @@ export function subscribePluginAudit(listener: () => void) {
 
 export function getPluginAuditLog(): PluginAuditEvent[] {
   return auditLog.slice();
+}
+
+export function getPluginSetting(pluginId: string, key: string): unknown {
+  return pluginKvGet(`lattice-plugin-kv:${pluginId}:setting:${key}`);
+}
+
+export async function setPluginSetting(pluginId: string, key: string, value: unknown): Promise<void> {
+  await pluginKvSet(`lattice-plugin-kv:${pluginId}:setting:${key}`, value);
+  const listeners = settingsChangeListeners.get(`${pluginId}:${key}`);
+  for (const listener of listeners ?? []) {
+    try { listener(value); } catch { /* plugin setting listeners are isolated */ }
+  }
+}
+
+export function subscribePluginSetting(pluginId: string, key: string, listener: (value: unknown) => void): () => void {
+  const fullKey = `${pluginId}:${key}`;
+  const listeners = settingsChangeListeners.get(fullKey) ?? new Set<(value: unknown) => void>();
+  listeners.add(listener);
+  settingsChangeListeners.set(fullKey, listeners);
+  return () => {listeners.delete(listener);if(!listeners.size)settingsChangeListeners.delete(fullKey);};
 }
 
 export function clearPluginAuditLog(): void {
@@ -573,7 +636,7 @@ function unregisterUIItemsFor(pluginId: string) {
   }
   // Clean up settings change listeners for this plugin
   for (const key of settingsChangeListeners.keys()) {
-    if (key.startsWith(prefix)) settingsChangeListeners.delete(key);
+    if (key.startsWith(prefix) && !settingsChangeListeners.get(key)?.size) settingsChangeListeners.delete(key);
   }
 }
 
@@ -621,6 +684,10 @@ function assertPluginPermission(
 
 export const __pluginRuntimeTest = {
   assertPluginPermission,
+  exportPluginFile: (options: { suggestedName: string; content: string; mimeType?: string }, permissions: PluginPermission[]) => exportPluginFile(options, permissions),
+  findPdfPageElement: (pageNumber: number, paneId: string | null) => findPdfPageElement(pageNumber, paneId),
+  findPluginPaneRoot: (paneId: string | null) => findPluginPaneRoot(paneId),
+  capturePdfSelectionImage: (options?: PluginPdfSelectionImageOptions) => capturePdfSelectionImage(options),
 };
 
 function getViewerTypeFromPath(path: string | null | undefined, fallbackName?: string | null): PluginViewerType {
@@ -643,6 +710,40 @@ function getActiveDocumentInfo() {
     paneId: pane?.id ?? null,
     tabId: tab?.id ?? null,
   };
+}
+
+function samePdfDocument(left: PluginActiveDocumentInfo, right: PluginActiveDocumentInfo): boolean {
+  return left.viewerType === 'pdf' && right.viewerType === 'pdf' && left.filePath === right.filePath
+    && left.paneId === right.paneId && left.tabId === right.tabId
+    && (!left.revision || !right.revision || left.revision === right.revision);
+}
+
+async function capturePdfSelectionImage(options: PluginPdfSelectionImageOptions = {}) {
+  options.signal?.throwIfAborted();
+  const active = getActiveDocumentInfo();
+  const tab = useWorkspaceStore.getState().getActiveTab();
+  if (active.viewerType !== 'pdf' || options.expectedDocument && !samePdfDocument(options.expectedDocument, active)) {
+    throw new Error(t('formula.region.sourceChanged'));
+  }
+  const readRevision = async () => {
+    if (!tab || !isFileTabState(tab)) return undefined;
+    return readFileSourceRevision(tab.fileHandle, options.signal);
+  };
+  const revision = await readRevision();
+  const captured = { ...active, revision };
+  const check = () => {
+    options.signal?.throwIfAborted();
+    if (useWorkspaceStore.getState().getActiveTab() !== tab || !samePdfDocument(captured, getActiveDocumentInfo())) {
+      throw new Error(t('formula.region.sourceChanged'));
+    }
+  };
+  check();
+  if (options.expectedDocument && !samePdfDocument(options.expectedDocument, captured)) throw new Error(t('formula.region.sourceChanged'));
+  const image = await getActivePdfSelectionImage({ signal: options.signal, expectedDocument: captured });
+  check();
+  if (await readRevision() !== revision) throw new Error(t('formula.region.sourceChanged'));
+  check();
+  return image;
 }
 
 function getCurrentSelectionText(): string {
@@ -675,123 +776,78 @@ async function readCurrentDocumentContent(permissions: PluginPermission[]) {
   };
 }
 
-function getPdfTextPagesFromRenderedDom(options?: { scope?: 'visible' | 'current-page' | 'all' }): PluginPdfTextPage[] {
-  if (typeof document === 'undefined') {
-    return [];
-  }
-  const scope = options?.scope ?? 'visible';
-  const pageElements = Array.from(document.querySelectorAll<HTMLElement>('[data-page-number]'))
-    .filter((element) => element.querySelector('.textLayer'));
-  const visiblePages = pageElements.filter((element) => (
-    element.dataset.pdfPageVisible === 'true' ||
-    element.dataset.pdfPageVisible === '1' ||
-    element.getAttribute('data-pdf-page-visible') === 'true' ||
-    element.getAttribute('data-pdf-page-visible') === '1'
-  ));
-  const candidates = scope === 'all'
-    ? pageElements
-    : visiblePages.length > 0
-      ? visiblePages
-      : pageElements.slice(0, 1);
-  const selected = scope === 'current-page'
-    ? candidates
-      .slice()
-      .sort((left, right) => {
-        if (typeof window === 'undefined') return 0;
-        const anchor = window.innerHeight * 0.35;
-        return Math.abs(left.getBoundingClientRect().top - anchor) - Math.abs(right.getBoundingClientRect().top - anchor);
-      })
-      .slice(0, 1)
-    : candidates;
-
-  return selected.flatMap((element): PluginPdfTextPage[] => {
-    const model = buildRenderedPdfPageTextModel(element);
-    if (!model?.normalizedText) return [];
-    return [{
-      pageNumber: model.pageNumber,
-      text: model.normalizedText,
-      visible: element.dataset.pdfPageVisible === 'true' || element.getAttribute('data-pdf-page-visible') === 'true',
-      source: 'rendered-text-layer',
-      items: model.segments.map((segment) => {
-        const rect = model.itemRects.find((itemRect) => itemRect.itemIndex === segment.itemIndex);
-        return {
-          text: segment.text,
-          normalizedText: segment.normalizedText,
-          bbox: rect
-            ? {
-                x1: rect.left / Math.max(1, model.viewportWidth),
-                y1: rect.top / Math.max(1, model.viewportHeight),
-                x2: (rect.left + rect.width) / Math.max(1, model.viewportWidth),
-                y2: (rect.top + rect.height) / Math.max(1, model.viewportHeight),
-              }
-            : undefined,
-          lineIndex: segment.lineIndex,
-          blockIndex: segment.blockIndex,
-          columnIndex: segment.columnIndex,
-          layoutClass: segment.layoutClass,
-        };
-      }),
-    }];
-  });
+function getRenderedPdfPageElements() {
+  if (typeof document === 'undefined') return [];
+  const active = getActiveDocumentInfo();
+  const containers = Array.from(document.querySelectorAll<HTMLElement>('[data-testid^="pdf-viewer-container-"]'));
+  const container = containers.find(element => element.dataset.filePath === active.filePath || element.dataset.tabId === active.tabId)
+    ?? containers.find(element => element.getBoundingClientRect().width > 0) ?? document;
+  return Array.from(container.querySelectorAll<HTMLElement>('[data-page-number]')).filter(element => element.querySelector('.textLayer'));
 }
 
-async function getPdfTextPagesFromDocumentModel(): Promise<PluginPdfTextPage[]> {
+function getCurrentPdfPageNumber() {
+  const elements = getRenderedPdfPageElements();
+  const visible = elements.filter(element => element.dataset.pdfPageVisible === 'true' || element.dataset.pdfPageVisible === '1');
+  const anchor = typeof window === 'undefined' ? 0 : window.innerHeight * .35;
+  const element = (visible.length ? visible : elements).sort((a,b) => Math.abs(a.getBoundingClientRect().top-anchor)-Math.abs(b.getBoundingClientRect().top-anchor))[0];
+  return Number(element?.dataset.pageNumber) || 1;
+}
+
+async function getPdfTextPagesFromDocumentModel(options: PluginPdfTextOptions = {}): Promise<PluginPdfTextPage[]> {
+  options.signal?.throwIfAborted();
+  const scope = options.scope ?? 'current-page';
+  const selectedPage = options.selection?.pageNumber ?? getCurrentPdfPageNumber();
   const content = await readCurrentDocumentContent(['read-current-document']);
-  if (!content.arrayBuffer) return [];
-  const pdf = await loadPdfJsDocument({
-    data: content.arrayBuffer,
-    label: 'formula-extractor-pdf-text',
-    timeoutMs: 45000,
-  });
+  if (!content.arrayBuffer) throw new Error('Open a PDF document before scanning.');
+  const pdf = await loadPdfJsDocument({ data: content.arrayBuffer, label: 'formula-extractor-pdf-text', timeoutMs: 45000 });
+  const cancel = () => { void pdf.destroy(); };
+  options.signal?.addEventListener('abort', cancel, { once: true });
   try {
+    const pageNumbers = scope === 'all' ? Array.from({length:pdf.numPages},(_,i)=>i+1)
+      : scope === 'visible' ? getRenderedPdfPageElements().filter(element=>element.dataset.pdfPageVisible==='true').map(element=>Number(element.dataset.pageNumber)) : [selectedPage];
+    if (!pageNumbers.length) pageNumbers.push(selectedPage);
     const pages: PluginPdfTextPage[] = [];
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-      const model = await getPdfPageTextModel(pdf, pageNumber);
-      if (!model.normalizedText) continue;
-      pages.push({
-        pageNumber,
-        text: model.normalizedText,
-        visible: false,
-        source: 'pdfjs-text-model',
-        items: model.segments.map((segment) => {
-          const rect = model.itemRects.find((itemRect) => itemRect.itemIndex === segment.itemIndex);
-          return {
-            text: segment.text,
-            normalizedText: segment.normalizedText,
-            bbox: rect
-              ? {
-                  x1: rect.left / Math.max(1, model.viewportWidth),
-                  y1: rect.top / Math.max(1, model.viewportHeight),
-                  x2: (rect.left + rect.width) / Math.max(1, model.viewportWidth),
-                  y2: (rect.top + rect.height) / Math.max(1, model.viewportHeight),
-                }
-              : undefined,
-            lineIndex: segment.lineIndex,
-            blockIndex: segment.blockIndex,
-            columnIndex: segment.columnIndex,
-            layoutClass: segment.layoutClass,
-          };
-        }),
-      });
-      if (pageNumber % 8 === 0) {
-        await new Promise((resolve) => {
-          if (typeof window !== 'undefined') {
-            window.setTimeout(resolve, 0);
-            return;
-          }
-          setTimeout(resolve, 0);
-        });
+    for (const [index, number] of pageNumbers.entries()) {
+      options.signal?.throwIfAborted();
+      const model = await getPdfPageTextModel(pdf, number);
+      const page = await pdf.getPage(number);
+      let rules: import('@/lib/pdf-formula-structure').PdfFormulaGlyph[] = [];
+      const warnings: string[] = [];
+      try { rules = await readPaintedFormulaRules(page, model, options.signal); }
+      catch(error) { options.signal?.throwIfAborted(); warnings.push('painted-rules-unavailable'); recordPluginAudit({pluginId:'formula-extractor',level:'warn',action:'pdf-rules',message:String(error)}); }
+      let data:PluginPdfTextPage={ ...buildPluginPdfTextPage(model, rules), warnings, visible: number === selectedPage };
+      if (scope === 'selection') {
+        if (!options.selection) throw new Error('The PDF selection has expired. Select the formula region again.');
+        data=selectPluginPdfRegion(data,options.selection.bbox);
       }
+      pages.push(data);
+      options.onProgress?.({ completed: index+1, total: pageNumbers.length });
+      await new Promise(resolve=>setTimeout(resolve,0));
     }
+    options.signal?.throwIfAborted();
     return pages;
   } finally {
+    options.signal?.removeEventListener('abort', cancel);
     await pdf.destroy();
   }
 }
 
-function removePluginRevealHighlights() {
-  if (typeof document === 'undefined') return;
-  document.querySelectorAll('[data-plugin-reveal-highlight="true"]').forEach((element) => element.remove());
+function escapeSelectorValue(value: string): string {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value);
+  return value.replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`);
+}
+
+function findPluginPaneRoot(paneId: string | null): HTMLElement | Document {
+  if (typeof document === 'undefined' || !paneId) return document;
+  const escaped = escapeSelectorValue(paneId);
+  return document.querySelector<HTMLElement>(`[data-testid="pdf-viewer-container-${escaped}"]`)
+    ?? document.querySelector<HTMLElement>(`[data-pane-id="${escaped}"]`)
+    ?? document.querySelector<HTMLElement>(`[data-testid="pane-wrapper-${escaped}"]`)
+    ?? document;
+}
+
+function findPdfPageElement(pageNumber: number, paneId: string | null): HTMLElement | null {
+  return findPluginPaneRoot(paneId).querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`);
 }
 
 function revealPdfTarget(target: PluginDocumentRevealTarget): boolean {
@@ -799,7 +855,9 @@ function revealPdfTarget(target: PluginDocumentRevealTarget): boolean {
   const pageNumber = target.page;
   if (!Number.isInteger(pageNumber) || !pageNumber || pageNumber < 1) return false;
 
-  const pageElement = document.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`);
+  const active = getActiveDocumentInfo();
+  const paneId = active.paneId ?? active.tabId ?? null;
+  const pageElement = findPdfPageElement(pageNumber, paneId);
   if (!pageElement) return false;
 
   const scrollContainer = pageElement.closest<HTMLElement>('[data-testid^="pdf-viewer-container-"]')
@@ -809,7 +867,7 @@ function revealPdfTarget(target: PluginDocumentRevealTarget): boolean {
   pageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
   if (target.bbox) {
-    removePluginRevealHighlights();
+    pageElement.querySelectorAll<HTMLElement>('[data-plugin-reveal-highlight="true"]').forEach((element) => element.remove());
     const pageBox = pageElement.getBoundingClientRect();
     const highlight = document.createElement('div');
     const x1 = Math.max(0, Math.min(1, target.bbox.x1));
@@ -852,11 +910,15 @@ function revealTextQuote(quote: string): boolean {
   if (typeof document === 'undefined') return false;
   const needle = quote.trim();
   if (!needle) return false;
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const active = getActiveDocumentInfo();
+  const paneId = active.paneId ?? active.tabId ?? null;
+  const scopedRoot = findPluginPaneRoot(paneId);
+  const walker = document.createTreeWalker(scopedRoot === document ? document.body : scopedRoot, NodeFilter.SHOW_TEXT);
   let current = walker.nextNode();
   while (current) {
     const text = current.textContent ?? '';
-    if (text.includes(needle)) {
+    const element = current.parentElement;
+    if (!element?.closest('[data-plugin-panel], [data-plugin-result], [role="dialog"]') && text.includes(needle)) {
       current.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return true;
     }
@@ -905,10 +967,12 @@ async function exportPluginFile(
     }) => Promise<FileSystemFileHandle>;
   }).showSaveFilePicker;
   const mimeType = options.mimeType ?? 'text/plain;charset=utf-8';
+  const pickerMimeType = mimeType.split(';', 1)[0].trim() || 'text/plain';
+  const extension = options.suggestedName.slice(options.suggestedName.lastIndexOf('.') || 0) || '.txt';
   if (picker) {
     const handle = await picker({
       suggestedName: options.suggestedName,
-      types: [{ description: 'Export file', accept: { [mimeType]: [options.suggestedName.slice(options.suggestedName.lastIndexOf('.')) || '.txt'] } }],
+      types: [{ description: 'Export file', accept: { [pickerMimeType]: [extension] } }],
     });
     const writable = await handle.createWritable();
     await writable.write(new Blob([options.content], { type: mimeType }));
@@ -934,7 +998,10 @@ function createContext(manifest: PluginManifest): PluginContext {
   const canWriteFiles = permissions.includes('file:write');
   const workspaceListeners = new Set<(path: string | null) => void>();
   let subscription: { dispose: () => void } | null = null;
+  const controller=new AbortController();pluginControllers.set(pluginId,controller);
+  const track=(dispose:()=>void)=>trackPluginDisposer(pluginId,dispose);
   return {
+    lifecycle:{signal:controller.signal,registerCleanup:track},
     app: {
       platform: isTauri() ? 'desktop' : 'web',
     },
@@ -975,15 +1042,15 @@ function createContext(manifest: PluginManifest): PluginContext {
           },
           onChange: (callback) => {
             if (!canReadFiles) return () => {};
-            return subscribeVaultChange(callback);
+            return track(subscribeVaultChange(callback));
           },
           onRename: (callback) => {
             if (!canReadFiles) return () => {};
-            return subscribeVaultRename(callback);
+            return track(subscribeVaultRename(callback));
           },
           onDelete: (callback) => {
             if (!canReadFiles) return () => {};
-            return subscribeVaultDelete(callback);
+            return track(subscribeVaultDelete(callback));
           },
         },
         workspace: {
@@ -999,13 +1066,13 @@ function createContext(manifest: PluginManifest): PluginContext {
             }
             const current = getActiveFilePath();
             callback(current ?? null);
-            return () => {
+            return track(() => {
               workspaceListeners.delete(callback);
               if (workspaceListeners.size === 0 && subscription) {
                 subscription.dispose();
                 subscription = null;
               }
-            };
+            });
           },
         },
       },
@@ -1017,16 +1084,20 @@ function createContext(manifest: PluginManifest): PluginContext {
     commands: {
       register: (command) => {
         if (!canRegisterCommands) return;
+        controller.signal.throwIfAborted();
         registerCommand(pluginId, command);
       },
     },
     panels: {
       register: (panel) => {
         if (!canRegisterPanels) return;
+        controller.signal.throwIfAborted();
         registerPanel(pluginId, panel);
       },
       update: (panelId, props) => {
         if (!canRegisterPanels) return;
+        if(controller.signal.aborted)return;
+        if(panels.get(panelId)?.pluginId!==pluginId)throw new Error('Cannot update another plugin panel');
         updatePanelProps(panelId, props);
       },
     },
@@ -1057,27 +1128,37 @@ function createContext(manifest: PluginManifest): PluginContext {
     events: {
       onFileOpen: (cb) => {
         fileOpenListeners.add(cb);
-        return () => fileOpenListeners.delete(cb);
+        return track(() => {fileOpenListeners.delete(cb);});
       },
       onFileSave: (cb) => {
         fileSaveListeners.add(cb);
-        return () => fileSaveListeners.delete(cb);
+        return track(() => {fileSaveListeners.delete(cb);});
       },
       onFileClose: (cb) => {
         fileCloseListeners.add(cb);
-        return () => fileCloseListeners.delete(cb);
+        return track(() => {fileCloseListeners.delete(cb);});
       },
       onWorkspaceOpen: (cb) => {
         workspaceOpenListeners.add(cb);
-        return () => workspaceOpenListeners.delete(cb);
+        return track(() => {workspaceOpenListeners.delete(cb);});
       },
       onActiveFileChange: (cb) => {
         activeFileChangeListeners.add(cb);
-        return () => activeFileChangeListeners.delete(cb);
+        return track(() => {activeFileChangeListeners.delete(cb);});
       },
     },
     document: {
-      getActive: async () => getActiveDocumentInfo(),
+      getActive: async () => {
+        const info=getActiveDocumentInfo();
+        const tab=useWorkspaceStore.getState().getActiveTab();
+        if (!tab || !isFileTabState(tab)) return info;
+        const revision = await readFileSourceRevision(tab.fileHandle, controller.signal);
+        const current = getActiveDocumentInfo();
+        if (useWorkspaceStore.getState().getActiveTab() !== tab || current.paneId !== info.paneId || current.filePath !== info.filePath) {
+          throw new Error(t('formula.region.sourceChanged'));
+        }
+        return { ...info, revision };
+      },
       getViewerType: async () => getActiveDocumentInfo().viewerType,
       getSelectionText: async () => getCurrentSelectionText(),
       readCurrent: async () => readCurrentDocumentContent(permissions),
@@ -1085,30 +1166,29 @@ function createContext(manifest: PluginManifest): PluginContext {
         if (!canReadCurrentDocument(permissions)) {
           throw new Error('Permission denied');
         }
-        if (options?.scope === 'all') {
-          try {
-            return await getPdfTextPagesFromDocumentModel();
-          } catch (error) {
-            console.warn('Plugin PDF document text extraction failed, falling back to rendered pages:', error);
-          }
-        }
-        return getPdfTextPagesFromRenderedDom(options);
+        return getPdfTextPagesFromDocumentModel(options);
       },
-      getPdfSelectionImage: async () => {
+      getPdfSelectionImage: async (options) => {
         if (!canReadCurrentDocument(permissions)) {
           throw new Error('Permission denied');
         }
-        return await getActivePdfSelectionImage();
+        return capturePdfSelectionImage({ ...options, signal: AbortSignal.any([controller.signal, ...(options?.signal ? [options.signal] : [])]) });
       },
       reveal: async (target) => revealDocumentTarget(target, permissions),
     },
     ui: {
       openPanel: async (panelId) => {
+        assertPluginPermission(pluginId,permissions,'ui:panels','ui.openPanel');
+        controller.signal.throwIfAborted();
+        if(panelId && panels.get(panelId)?.pluginId!==pluginId)throw new Error('Plugin panel is not registered by this plugin');
         const settingsStore = useSettingsStore.getState();
-        await settingsStore.updateSettings({
+        const persisted = await settingsStore.updateSettings({
           pluginPanelDockOpen: true,
           ...(panelId ? { pluginPanelLastActiveId: panelId } : {}),
         });
+        if (persisted === false) throw new Error(settingsStore.error ?? 'Could not persist plugin panel state.');
+        controller.signal.throwIfAborted();
+        if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent('lattice:open-plugin-panel',{detail:{panelId}}));
       },
     },
     clipboard: {
@@ -1116,24 +1196,9 @@ function createContext(manifest: PluginManifest): PluginContext {
     },
     exportFile: async (options) => exportPluginFile(options, permissions),
     settings: {
-      get: (key) => {
-        return pluginKvGet(`lattice-plugin-kv:${pluginId}:setting:${key}`);
-      },
-      set: async (key, value) => {
-        await pluginKvSet(`lattice-plugin-kv:${pluginId}:setting:${key}`, value);
-        const listeners = settingsChangeListeners.get(`${pluginId}:${key}`);
-        if (listeners) {
-          for (const l of listeners) { try { l(value); } catch { /* */ } }
-        }
-      },
-      onChange: (key, cb) => {
-        const fullKey = `${pluginId}:${key}`;
-        if (!settingsChangeListeners.has(fullKey)) {
-          settingsChangeListeners.set(fullKey, new Set());
-        }
-        settingsChangeListeners.get(fullKey)!.add(cb);
-        return () => settingsChangeListeners.get(fullKey)?.delete(cb);
-      },
+      get: key=>getPluginSetting(pluginId,key),
+      set: (key,value)=>setPluginSetting(pluginId,key,value),
+      onChange: (key,cb)=>track(subscribePluginSetting(pluginId,key,cb)),
     },
     assets: {
       getUrl: async (path) => await getPluginAssetUrl(pluginId, path),
@@ -1354,6 +1419,16 @@ async function activatePlugin(plugin: PluginModule): Promise<void> {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Plugin activation failed';
+    // Activation may have registered resources before throwing. Treat the
+    // plugin as inactive and remove every registry entry before reporting the
+    // failure, so a retry cannot accumulate duplicate commands or panels.
+    revokeAssetUrls(plugin.manifest.id);
+    unregisterCommandsFor(plugin.manifest.id);
+    unregisterPanelsFor(plugin.manifest.id);
+    unregisterUIItemsFor(plugin.manifest.id);
+    activePlugins.delete(plugin.manifest.id);
+    try{await plugin.deactivate?.();}catch{/* partial plugin teardown may fail */}
+    cleanupPluginResources(plugin.manifest.id);
     setPluginHealth(plugin.manifest.id, { status: 'error', lastError: message, lastErrorAt: Date.now() });
     recordPluginAudit({
       pluginId: plugin.manifest.id,
@@ -1367,15 +1442,20 @@ async function activatePlugin(plugin: PluginModule): Promise<void> {
 
 async function deactivatePlugin(plugin: PluginModule): Promise<void> {
   if (!activePlugins.has(plugin.manifest.id)) return;
-  if (plugin.deactivate) {
-    await plugin.deactivate();
+  try {
+    if (plugin.deactivate) await plugin.deactivate();
+  } catch(error) {
+    recordPluginAudit({pluginId:plugin.manifest.id,level:'warn',action:'deactivate',message:String(error)});
+  } finally {
+    // Cleanup is guaranteed even when a plugin's own deactivate hook throws.
+    revokeAssetUrls(plugin.manifest.id);
+    activePlugins.delete(plugin.manifest.id);
+    unregisterCommandsFor(plugin.manifest.id);
+    unregisterPanelsFor(plugin.manifest.id);
+    unregisterUIItemsFor(plugin.manifest.id);
+    setPluginHealth(plugin.manifest.id, { status: 'inactive' });
+    cleanupPluginResources(plugin.manifest.id);
   }
-  revokeAssetUrls(plugin.manifest.id);
-  activePlugins.delete(plugin.manifest.id);
-  unregisterCommandsFor(plugin.manifest.id);
-  unregisterPanelsFor(plugin.manifest.id);
-  unregisterUIItemsFor(plugin.manifest.id);
-  setPluginHealth(plugin.manifest.id, { status: 'inactive' });
   recordPluginAudit({
     pluginId: plugin.manifest.id,
     level: 'info',
@@ -1817,8 +1897,12 @@ async function activateWorkerPlugin(manifest: PluginManifest, main: string): Pro
   if (activeWorkers.has(manifest.id)) return;
   const permissions = manifest.permissions ?? [];
   const host = createWorkerHost(manifest, permissions, main);
-  registerManifestPanels(manifest, permissions);
-  await host.start();
+  try {
+    await host.start();
+    registerManifestPanels(manifest, permissions);
+  } catch(error) {
+    await host.stop();cleanupPluginResources(manifest.id);throw error;
+  }
   activeWorkers.set(manifest.id, host);
   setPluginHealth(manifest.id, { status: 'active', lastError: undefined, lastErrorAt: undefined });
   recordPluginAudit({
@@ -1832,7 +1916,7 @@ async function activateWorkerPlugin(manifest: PluginManifest, main: string): Pro
 async function deactivateWorkerPlugin(pluginId: string): Promise<void> {
   const host = activeWorkers.get(pluginId);
   if (!host) return;
-  await host.stop();
+  try {await host.stop();}finally{cleanupPluginResources(pluginId);}
   revokeAssetUrls(pluginId);
   activeWorkers.delete(pluginId);
   unregisterCommandsFor(pluginId);
@@ -1883,7 +1967,25 @@ export function resolveDependencyOrder(
   return order;
 }
 
-export async function syncPlugins(options: {
+let pluginSyncQueue:Promise<void>=Promise.resolve();
+export function syncPlugins(options:{pluginsEnabled:boolean;enabledPluginIds:string[]}):Promise<void> {
+  const request={...options,enabledPluginIds:[...options.enabledPluginIds]};
+  const next=pluginSyncQueue.catch(()=>{}).then(()=>syncPluginsNow(request));
+  pluginSyncQueue=next;return next;
+}
+
+/**
+ * Stop one plugin before replacing its stored package. The operation is
+ * intentionally idempotent so installers can safely call it for a newly
+ * installed ID as well as an existing active plugin.
+ */
+export async function deactivatePluginById(pluginId: string): Promise<void> {
+  const plugin = activePlugins.get(pluginId);
+  if (plugin) await deactivatePlugin(plugin);
+  if (activeWorkers.has(pluginId)) await deactivateWorkerPlugin(pluginId);
+}
+
+async function syncPluginsNow(options: {
   pluginsEnabled: boolean;
   enabledPluginIds: string[];
 }): Promise<void> {
@@ -1909,7 +2011,9 @@ export async function syncPlugins(options: {
   >();
 
   for (const id of targetIds) {
-    const stored = await loadStoredPlugin(id);
+    const stored = await withTimeout(loadStoredPlugin(id),4000,`Plugin ${id} package load`).catch(error=>{
+      recordPluginAudit({pluginId:id,level:'warn',action:'package-load',message:String(error)});return null;
+    });
     if (stored) {
       desiredModes.set(id, { mode: 'worker', stored });
       continue;
@@ -1950,14 +2054,23 @@ export async function syncPlugins(options: {
   for (const id of activationOrder) {
     const entry = desiredModes.get(id);
     if (!entry) continue;
-    if (entry.mode === 'worker') {
-      if (!activeWorkers.has(id)) {
-        await activateWorkerPlugin(entry.stored.manifest, entry.stored.main);
+    try {
+      if (entry.mode === 'worker') {
+        if (!activeWorkers.has(id)) {
+          await activateWorkerPlugin(entry.stored.manifest, entry.stored.main);
+        }
+        continue;
       }
-      continue;
-    }
-    if (!activePlugins.has(id)) {
-      await activatePlugin(entry.plugin);
+      if (!activePlugins.has(id)) {
+        await activatePlugin(entry.plugin);
+      }
+    } catch (error) {
+      // One broken plugin must not prevent the remaining enabled plugins from
+      // reaching a usable state. The per-plugin health record contains the
+      // actionable error and keeps the requested state visible to the UI.
+      const message = error instanceof Error ? error.message : 'Plugin activation failed';
+      setPluginHealth(id, { status: 'error', lastError: message, lastErrorAt: Date.now() });
+      console.error(`Plugin ${id} sync failed:`, error);
     }
   }
 }
@@ -2006,6 +2119,10 @@ export async function runPluginCommand(commandId: string, payload?: unknown): Pr
     console.error(`Plugin command ${commandId} failed:`, error);
     throw error;
   }
+}
+
+export function getCommandsForPlugin(pluginId:string):PluginCommand[] {
+  return Array.from(commands.values()).filter(entry=>entry.pluginId===pluginId).map(entry=>entry.command);
 }
 
 export function updatePluginNetworkAllowlist(allowlist: string[]) {

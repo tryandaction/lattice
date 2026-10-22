@@ -7,7 +7,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SelectionAiHub } from "../selection-ai-hub";
 import { useSelectionAiStore } from "@/stores/selection-ai-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useAiProviderProfileStore } from "@/stores/ai-provider-profile-store";
 import { DEFAULT_SETTINGS } from "@/types/settings";
+import { createDefaultAiProviderProfile } from "@/lib/ai/provider-profiles";
 
 const runSelectionAiMode = vi.fn();
 
@@ -91,7 +93,16 @@ describe("SelectionAiHub", () => {
       settings: {
         ...DEFAULT_SETTINGS,
         aiEnabled: true,
+        aiProvider: "openai",
+        aiModel: "legacy-model",
       },
+      isLoading: false,
+      isInitialized: true,
+      error: null,
+    });
+    useAiProviderProfileStore.setState({
+      profiles: [],
+      activeProfileId: null,
       isLoading: false,
       isInitialized: true,
       error: null,
@@ -154,6 +165,41 @@ describe("SelectionAiHub", () => {
 
     expect(useSelectionAiStore.getState().recentPrompts[0]?.prompt).toBe("Analyze key risks");
     expect(useSelectionAiStore.getState().preferredMode).toBe("agent");
+  });
+
+  it("passes the active connection and default model to selection AI", async () => {
+    const profile = createDefaultAiProviderProfile("custom-openai-compatible", {
+      id: "selection-gateway",
+      model: "vendor-selection-model",
+    });
+    useAiProviderProfileStore.setState({
+      profiles: [profile],
+      activeProfileId: profile.id,
+      isLoading: false,
+      isInitialized: true,
+      error: null,
+    });
+    runSelectionAiMode.mockResolvedValue({ kind: "chat", title: "done" });
+
+    render(
+      <SelectionAiHub
+        context={context}
+        initialMode="chat"
+        onClose={() => {}}
+      />,
+    );
+
+    fireEvent.keyDown(document, { ctrlKey: true, key: "Enter" });
+
+    await waitFor(() => {
+      expect(runSelectionAiMode).toHaveBeenCalledWith(expect.objectContaining({
+        settings: expect.objectContaining({
+          providerId: "custom",
+          model: "vendor-selection-model",
+          profileId: "selection-gateway",
+        }),
+      }));
+    });
   });
 
   it("shows plan-mode execution target and filters recent prompts by mode", async () => {

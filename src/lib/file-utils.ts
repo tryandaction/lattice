@@ -234,6 +234,8 @@ export const CODE_EXTENSIONS: Record<string, string> = {
  */
 export const TEXT_EXTENSIONS = new Set([
   'md',
+  'mdx',
+  'markdown',
   'ipynb',
   'ink',      // Handwriting note files
   'lattice',  // Lattice handwriting files
@@ -243,7 +245,7 @@ export const TEXT_EXTENSIONS = new Set([
 /**
  * Editable file extensions (files that can be modified and saved)
  */
-export const EDITABLE_EXTENSIONS = new Set(['md', 'txt', 'ipynb', 'ink', 'lattice']);
+export const EDITABLE_EXTENSIONS = new Set(['md', 'mdx', 'markdown', 'txt', 'ipynb', 'ink', 'lattice']);
 
 /**
  * Extensions that should be read as binary (ArrayBuffer)
@@ -319,7 +321,8 @@ export function getRendererForExtension(extension: string): RendererType {
   const ext = extension.toLowerCase();
   
   // Check specific types first
-  if (ext === 'md') return 'markdown';
+  // MDX is displayed as Markdown source; its JavaScript/JSX is never executed.
+  if (ext === 'md' || ext === 'mdx' || ext === 'markdown') return 'markdown';
   if (ext === 'pdf') return 'pdf';
   if (ext === 'ipynb') return 'jupyter';
   if (ext === 'doc' || ext === 'docx') return 'word';

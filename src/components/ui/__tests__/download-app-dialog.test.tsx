@@ -7,28 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { DownloadAppDialog } from "../download-app-dialog";
-
-vi.mock("@/hooks/use-i18n", () => ({
-  useI18n: () => ({
-    t: (key: string) => {
-      const mapping: Record<string, string> = {
-        "common.close": "Close",
-        "downloadApp.title": "Download Desktop App",
-        "downloadApp.subtitle": "Get a better Lattice experience",
-        "downloadApp.benefit.performance.title": "Faster startup, smaller footprint",
-        "downloadApp.benefit.performance.description": "Under 6 MB, 3x faster startup, and 50% lower memory use.",
-        "downloadApp.benefit.workspace.title": "Remember workspaces",
-        "downloadApp.benefit.workspace.description": "Automatically reopen recent folders and set a default workspace.",
-        "downloadApp.benefit.native.title": "Native window experience",
-        "downloadApp.benefit.native.description": "No browser shell, double-click launch, and stronger file-system access.",
-        "downloadApp.download": "Go To Download Page",
-        "downloadApp.continueWeb": "Continue In Browser",
-        "downloadApp.dontShowAgain": "Do not show this again",
-      };
-      return mapping[key] ?? key;
-    },
-  }),
-}));
+import { setLocale } from "@/lib/i18n";
 
 function enableTauriRuntime() {
   Object.defineProperty(window, "__TAURI_INTERNALS__", {
@@ -49,6 +28,7 @@ function disableTauriRuntime() {
 
 describe("DownloadAppDialog", () => {
   beforeEach(() => {
+    setLocale("en-US");
     disableTauriRuntime();
     localStorage.clear();
     vi.useFakeTimers();
@@ -56,6 +36,7 @@ describe("DownloadAppDialog", () => {
 
   afterEach(() => {
     cleanup();
+    setLocale("zh-CN");
     vi.useRealTimers();
     disableTauriRuntime();
   });
@@ -72,6 +53,17 @@ describe("DownloadAppDialog", () => {
     expect(screen.queryByText("Download Desktop App")).not.toBeNull();
   });
 
+  it("opens the release list without promising an unverified latest build", () => {
+    render(<DownloadAppDialog />);
+    act(() => { vi.advanceTimersByTime(2100); });
+    const releaseLink = screen.getByRole("link", { name: "View desktop releases" });
+    expect(releaseLink.getAttribute("href")).toBe("https://github.com/tryandaction/lattice/releases");
+    expect(screen.getByTestId("download-app-dialog").textContent).toContain("Check its build time and checksum");
+    act(() => setLocale("zh-CN"));
+    expect(screen.getByRole("link", { name: "查看桌面发行版本" })).toBeTruthy();
+    expect(screen.getByTestId("download-app-dialog").textContent).toContain("构建时间与校验值");
+  });
+
   it("never shows download dialog in tauri runtime", () => {
     enableTauriRuntime();
     render(<DownloadAppDialog />);
@@ -80,6 +72,25 @@ describe("DownloadAppDialog", () => {
       vi.advanceTimersByTime(5000);
     });
 
+    expect(screen.queryByText("Download Desktop App")).toBeNull();
+  });
+
+  it("waits until the active onboarding or work dialog is closed", () => {
+    const { rerender } = render(<DownloadAppDialog blocked />);
+    act(() => { vi.advanceTimersByTime(5000); });
+    expect(screen.queryByText("Download Desktop App")).toBeNull();
+
+    rerender(<DownloadAppDialog blocked={false} />);
+    act(() => { vi.advanceTimersByTime(2100); });
+    expect(screen.queryByText("Download Desktop App")).not.toBeNull();
+  });
+
+  it("does not cover a work dialog opened after the download notice", () => {
+    const { rerender } = render(<DownloadAppDialog />);
+    act(() => { vi.advanceTimersByTime(2100); });
+    expect(screen.queryByText("Download Desktop App")).not.toBeNull();
+
+    rerender(<DownloadAppDialog blocked />);
     expect(screen.queryByText("Download Desktop App")).toBeNull();
   });
 

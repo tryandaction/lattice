@@ -51,6 +51,7 @@ export interface PdfTextQuote {
  * PDF annotation target - anchors to page and rectangles
  */
 export interface PdfTarget {
+  readingOrder?: boolean;
   type: 'pdf';
   page: number;           // 1-indexed page number
   rects: BoundingBox[];   // Selection rectangles
@@ -196,6 +197,7 @@ export const ANNOTATION_STYLE_TYPES: readonly AnnotationStyleType[] = [
  * Universal annotation item
  */
 export interface AnnotationItem {
+  formula?: PdfFormulaAnnotation;
   id: string;                    // UUID v4
   target: AnnotationTarget;      // Polymorphic target
   style: AnnotationStyle;
@@ -204,7 +206,37 @@ export interface AnnotationItem {
   tags?: string[];                // User/AI labels for filtering and workflows
   preview?: ImageAnnotationPreview;
   author: string;                // Author identifier
+  authorDisplayName?: string;    // Verified shared-library display name; never an authorization identity
   createdAt: number;             // Unix timestamp (ms)
+}
+
+/** Structured math is separate from the verbatim source quotation. */
+export interface PdfFormulaAnnotation {
+  latex?: string;
+  originalLatex?: string;
+  initialLatex?: string;
+  recognitionTruncated?: boolean;
+  tokenCount?: number;
+  rawText: string;
+  status: 'ready' | 'needs-review';
+  source: 'geometry' | 'ocr' | 'manual';
+  originalRects: BoundingBox[];
+}
+
+export function isPdfFormulaAnnotation(value: unknown): value is PdfFormulaAnnotation {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return typeof item.rawText === 'string' && item.rawText.length <= 30000
+    && (item.status === 'ready' || item.status === 'needs-review')
+    && (item.source === 'geometry' || item.source === 'ocr' || item.source === 'manual')
+    && (item.latex === undefined || (typeof item.latex === 'string' && item.latex.length <= 20000))
+    && (item.originalLatex === undefined || (typeof item.originalLatex === 'string' && item.originalLatex.length <= 20000))
+    && (item.initialLatex === undefined || (typeof item.initialLatex === 'string' && item.initialLatex.length <= 20000))
+    && (item.recognitionTruncated === undefined || typeof item.recognitionTruncated === 'boolean')
+    && (item.tokenCount === undefined || (typeof item.tokenCount === 'number' && Number.isInteger(item.tokenCount) && item.tokenCount >= 2 && item.tokenCount <= 1024))
+    && (item.status !== 'ready' || (typeof item.latex === 'string' && item.latex.trim().length > 0))
+    && Array.isArray(item.originalRects) && item.originalRects.length > 0 && item.originalRects.length <= 2000
+    && item.originalRects.every(rect => isBoundingBox(rect) && rect.x2 > rect.x1 && rect.y2 > rect.y1);
 }
 
 export function getCanonicalPdfAnnotationText(annotation: Pick<AnnotationItem, 'target' | 'content'>): string | undefined {
@@ -315,6 +347,7 @@ export function isPdfTarget(value: unknown): value is PdfTarget {
   const target = value as Record<string, unknown>;
   
   if (target.type !== 'pdf') return false;
+  if (target.readingOrder !== undefined && typeof target.readingOrder !== 'boolean') return false;
   if (typeof target.page !== 'number' || !Number.isInteger(target.page) || target.page < 1) return false;
   if (!Array.isArray(target.rects)) return false;
   if (target.textQuote !== undefined && target.textQuote !== null && !isPdfTextQuote(target.textQuote)) return false;
@@ -465,6 +498,7 @@ export function isAnnotationItem(value: unknown): value is AnnotationItem {
     (!Array.isArray(item.tags) || !item.tags.every((tag) => typeof tag === 'string'))
   ) return false;
   if (item.preview !== undefined && item.preview !== null && !isImageAnnotationPreview(item.preview)) return false;
+  if (item.formula !== undefined && (!isPdfTarget(item.target) || !isPdfFormulaAnnotation(item.formula))) return false;
   
   return true;
 }
@@ -710,6 +744,9 @@ export function validateAnnotationItem(value: unknown): ValidationResult {
 
   if (item.preview !== undefined && item.preview !== null && !isImageAnnotationPreview(item.preview)) {
     errors.push('Annotation preview must be a valid image preview if provided');
+  }
+  if (item.formula !== undefined && (!isPdfTarget(item.target) || !isPdfFormulaAnnotation(item.formula))) {
+    errors.push('Formula metadata must contain bounded source geometry and a valid recognition state');
   }
   
   return { valid: errors.length === 0, errors };

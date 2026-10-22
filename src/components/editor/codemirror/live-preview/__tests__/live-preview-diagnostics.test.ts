@@ -102,6 +102,18 @@ describe("live preview diagnostics", () => {
     expect(highlights[0]?.content).toBe("marked");
   });
 
+  it("parses multiple LaTeX delimiter forms in ordinary markdown text", () => {
+    const text = String.raw`Inline \(a+b\), bracket \[\int_0^1 x\,dx\], and env \begin{aligned}f(x)&=x^2\end{aligned}.`;
+    const math = resolveConflicts(parseDocumentFromText(text))
+      .filter((element) => element.type === ElementType.MATH_INLINE);
+
+    expect(math.map((element) => element.latex)).toEqual([
+      "a+b",
+      String.raw`\int_0^1 x\,dx`,
+      String.raw`\begin{aligned}f(x)&=x^2\end{aligned}`,
+    ]);
+  });
+
   it("includes frontmatter properties in text diagnostics parsing", () => {
     const text = "---\nstatus: draft\naliases:\n  - one\n---\n\n# Note";
     const elements = resolveConflicts(parseDocumentFromText(text));

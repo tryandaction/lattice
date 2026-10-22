@@ -21,6 +21,16 @@ const RIGHT_FALLBACK_TARGET = "dipole-dipole interaction";
 const EXACT_TARGET = process.env.LATTICE_DESKTOP_PRODUCT_SMOKE_EXACT_TARGET ?? "";
 const EXACT_STYLE_TYPE = process.env.LATTICE_DESKTOP_PRODUCT_SMOKE_EXACT_STYLE_TYPE ?? "highlight";
 const EXACT_COLOR = process.env.LATTICE_DESKTOP_PRODUCT_SMOKE_EXACT_COLOR ?? "#ffd400";
+const POINTER_TARGET = process.env.LATTICE_DESKTOP_PRODUCT_SMOKE_POINTER_TARGET ?? "";
+const POINTER_ONLY = process.env.LATTICE_DESKTOP_PRODUCT_SMOKE_POINTER_ONLY === "1";
+const POINTER_NATIVE_DRAG = process.env.LATTICE_DESKTOP_PRODUCT_SMOKE_POINTER_NATIVE_DRAG === "1";
+const POINTER_SAVE_ONLY = process.env.LATTICE_DESKTOP_PRODUCT_SMOKE_POINTER_SAVE_ONLY === "1";
+const POINTER_SAVE_STYLE_TYPE = process.env.LATTICE_DESKTOP_PRODUCT_SMOKE_POINTER_SAVE_STYLE_TYPE === "underline"
+  ? "underline"
+  : "highlight";
+const POINTER_EXPECTED_SEGMENTS = Number(process.env.LATTICE_DESKTOP_PRODUCT_SMOKE_POINTER_EXPECTED_SEGMENTS ?? 0);
+const SIDECAR_ONLY = process.env.LATTICE_DESKTOP_PRODUCT_SMOKE_SIDECAR_ONLY === "1";
+const SIDECAR_PATH = process.env.LATTICE_DESKTOP_PRODUCT_SMOKE_SIDECAR_PATH ?? "";
 const ASSERT_TIMEOUT_MS = Number(process.env.LATTICE_DESKTOP_PRODUCT_SMOKE_TIMEOUT_MS ?? 120000);
 
 function normalizePath(value) {
@@ -172,6 +182,8 @@ async function ensureProductWorkspace(page, workspacePath, pdfRelativePath) {
     return false;
   }
 
+  await page.getByTestId("desktop-commandbar-workspace").waitFor();
+  await page.waitForTimeout(1000);
   await page.evaluate(async ({ rootPath, relativePdfPath }) => {
     const invoke = window.__TAURI__?.core?.invoke ?? window.__TAURI_INTERNALS__?.invoke;
     if (typeof invoke !== "function") {
@@ -179,6 +191,7 @@ async function ensureProductWorkspace(page, workspacePath, pdfRelativePath) {
     }
 
     const settings = await invoke("get_setting", { key: "lattice-settings" }) ?? {};
+    await invoke("set_last_workspace_path", { path: rootPath });
     const workspaceKey = `desktop:${rootPath}`;
     const nextSettings = {
       ...settings,
@@ -501,11 +514,14 @@ async function scrollProductPdfTextIntoView(page, pageNumber, targetText) {
 
       const scrollRoot = findScrollRoot(pageElement);
       const rootRect = scrollRoot === document.scrollingElement || scrollRoot === document.documentElement
-        ? { top: 0, height: window.innerHeight }
+        ? { top: 0, left: 0, height: window.innerHeight, width: window.innerWidth }
         : scrollRoot.getBoundingClientRect();
       const targetCenterY = (bounds.top + bounds.bottom) / 2;
+      const targetCenterX = (bounds.left + bounds.right) / 2;
       const desiredCenterY = rootRect.top + rootRect.height * 0.45;
+      const desiredCenterX = rootRect.left + rootRect.width * 0.5;
       scrollRoot.scrollTop += targetCenterY - desiredCenterY;
+      scrollRoot.scrollLeft += targetCenterX - desiredCenterX;
     }, { targetPageNumber: pageNumber, text: targetText });
 
     await new Promise((resolve) => setTimeout(resolve, 450));
@@ -617,6 +633,66 @@ async function selectProductPdfTextRange(page, pageNumber, targetText) {
     document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
     const first = rects[0];
     const last = rects[rects.length - 1];
+    const serializeRect = (rect) => ({
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+    });
+    const debugEntries = textNodes
+      .filter((entry) => entry.end > start && entry.start < end)
+      .map((entry) => {
+        const parentElement = entry.node.parentElement;
+        const parentRect = parentElement?.getBoundingClientRect();
+        const parentStyle = parentElement ? getComputedStyle(parentElement) : null;
+        const nodeRange = document.createRange();
+        nodeRange.selectNodeContents(entry.node);
+        const nodeRect = nodeRange.getBoundingClientRect();
+        const nodeClientRects = Array.from(nodeRange.getClientRects()).map(serializeRect);
+        const localStart = Math.max(0, start - entry.start);
+        const localEnd = Math.min(entry.node.textContent?.length ?? 0, end - entry.start);
+        const sampleStart = Math.max(0, localStart - 3);
+        const sampleEnd = Math.min(entry.node.textContent?.length ?? 0, localEnd + 3);
+        const chars = [];
+        for (let index = sampleStart; index < sampleEnd; index += 1) {
+          const charRange = document.createRange();
+          charRange.setStart(entry.node, index);
+          charRange.setEnd(entry.node, index + 1);
+          chars.push({
+            index,
+            text: entry.node.textContent?.slice(index, index + 1) ?? "",
+            rect: serializeRect(charRange.getBoundingClientRect()),
+          });
+        }
+        return {
+          text: entry.node.textContent ?? "",
+          parentRect: parentRect ? serializeRect(parentRect) : null,
+          parentInlineStyle: parentElement?.getAttribute("style") ?? "",
+          parentTransform: parentStyle?.transform ?? "",
+          parentTransformOrigin: parentStyle?.transformOrigin ?? "",
+          parentPosition: parentStyle?.position ?? "",
+          parentFontSize: parentStyle?.fontSize ?? "",
+          parentFontFamily: parentStyle?.fontFamily ?? "",
+          parentFontStretch: parentStyle?.fontStretch ?? "",
+          parentFontWeight: parentStyle?.fontWeight ?? "",
+          parentLineHeight: parentStyle?.lineHeight ?? "",
+          parentLetterSpacing: parentStyle?.letterSpacing ?? "",
+          parentWordSpacing: parentStyle?.wordSpacing ?? "",
+          parentTextSizeAdjust: parentStyle?.textSizeAdjust ?? "",
+          parentGlyphScaleX: parentElement?.dataset.pdfTextGlyphScaleX ?? "",
+          parentGlyphScaleY: parentElement?.dataset.pdfTextGlyphScaleY ?? "",
+          parentZoom: parentStyle?.zoom ?? "",
+          devicePixelRatio: window.devicePixelRatio,
+          visualViewportScale: window.visualViewport?.scale ?? null,
+          nodeRect: serializeRect(nodeRect),
+          nodeClientRects,
+          localStart,
+          localEnd,
+          chars,
+        };
+      });
     return {
       startX: first.left + 1,
       startY: first.top + first.height / 2,
@@ -629,6 +705,7 @@ async function selectProductPdfTextRange(page, pageNumber, targetText) {
       width: Math.max(...rects.map((rect) => rect.right)) - Math.min(...rects.map((rect) => rect.left)),
       height: Math.max(...rects.map((rect) => rect.bottom)) - Math.min(...rects.map((rect) => rect.top)),
       selectedText: selection?.toString() ?? range.toString(),
+      debugEntries,
     };
   }, { targetPageNumber: pageNumber, text: targetText });
 
@@ -651,6 +728,45 @@ async function selectProductPdfTextRange(page, pageNumber, targetText) {
   await page.mouse.up();
   await page.evaluate(() => document.dispatchEvent(new Event("selectionchange", { bubbles: true })));
   return selectionBox;
+}
+
+async function dragProductPdfTextBox(page, selectionBox, reverse = false) {
+  await page.evaluate(() => {
+    window.getSelection()?.removeAllRanges();
+    document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+  });
+  const start = reverse
+    ? { x: selectionBox.endX, y: selectionBox.endY }
+    : { x: selectionBox.startX, y: selectionBox.startY };
+  const end = reverse
+    ? { x: selectionBox.startX, y: selectionBox.startY }
+    : { x: selectionBox.endX, y: selectionBox.endY };
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 18 });
+  await page.mouse.up();
+}
+
+async function dispatchProductPdfPointerEvent(page, type, point, buttons) {
+  await page.evaluate(({ eventType, clientX, clientY, pointerButtons }) => {
+    const target = document.elementFromPoint(clientX, clientY);
+    target?.dispatchEvent(new PointerEvent(eventType, {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: pointerButtons,
+      clientX,
+      clientY,
+      pointerId: 1,
+      pointerType: "mouse",
+      isPrimary: true,
+    }));
+  }, {
+    eventType: type,
+    clientX: point.x,
+    clientY: point.y,
+    pointerButtons: buttons,
+  });
 }
 
 async function waitForSelectionMenuText(page, primary, fallback, timeoutMs = 6000) {
@@ -769,6 +885,18 @@ async function saveSelectionAsHighlight(page) {
   if (!clicked) {
     throw new Error("Selection color picker was not available for saving highlight.");
   }
+}
+
+async function saveSelectionAsUnderline(page, selectionBox) {
+  const directAction = page.locator('[data-testid="pdf-selection-draft-action-underline"]');
+  if (await directAction.isVisible().catch(() => false)) {
+    await directAction.click();
+    return;
+  }
+  await page.mouse.click(selectionBox.endX, selectionBox.endY, { button: "right" });
+  const underlineAction = page.locator('[data-testid="pdf-context-menu-action-underline-selection"]');
+  await underlineAction.waitFor({ state: "visible", timeout: ASSERT_TIMEOUT_MS });
+  await underlineAction.click();
 }
 
 async function getSelectionState(page) {
@@ -902,6 +1030,38 @@ async function clickFirstStoredAnnotationType(page, type) {
   }
   await page.mouse.click(point.x, point.y);
   return true;
+}
+
+async function getTransientSelectionQuality(page, rightColumnLeft) {
+  return page.evaluate(({ columnLeft }) => {
+    const segments = Array.from(document.querySelectorAll("[data-pdf-transient-selection-segment='true']"))
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom,
+          width: rect.width,
+          height: rect.height,
+        };
+      })
+      .filter((segment) => segment.width > 0 && segment.height > 0);
+    const heights = segments.map((segment) => segment.height);
+    const minHeight = heights.length > 0 ? Math.min(...heights) : 0;
+    const maxHeight = heights.length > 0 ? Math.max(...heights) : 0;
+    return {
+      segmentCount: segments.length,
+      segments,
+      minHeight,
+      maxHeight,
+      heightRatio: minHeight > 0 ? maxHeight / minHeight : null,
+      crossesRightColumn: Number.isFinite(columnLeft)
+        ? segments.some((segment) => segment.right >= columnLeft - 2)
+        : false,
+      hasDegenerateSegment: segments.some((segment) => segment.width < 2 || segment.height < 2),
+    };
+  }, { columnLeft: rightColumnLeft });
 }
 
 async function clickFirstVisibleSelector(page, selector) {
@@ -1097,10 +1257,15 @@ async function main() {
   const realPdfPath = path.resolve(process.env.LATTICE_DESKTOP_PRODUCT_SMOKE_REAL_PDF_PATH ?? DEFAULT_REAL_PDF_UNICODE);
   const pdfRelativePath = relativeWorkspacePath(workspacePath, realPdfPath);
   const realPdfName = path.basename(realPdfPath);
+  const sidecarPath = SIDECAR_PATH ? path.resolve(SIDECAR_PATH) : "";
+  const sidecarRelativePath = sidecarPath ? relativeWorkspacePath(workspacePath, sidecarPath) : "";
 
   await access(exePath);
   await access(workspacePath);
   await access(realPdfPath);
+  if (SIDECAR_ONLY) {
+    await access(sidecarPath);
+  }
   await mkdir(OUTPUT_DIR, { recursive: true });
   await closeExistingLatticeProcesses();
 
@@ -1140,11 +1305,325 @@ async function main() {
     page = await waitForDesktopPage(browser, ASSERT_TIMEOUT_MS);
     page.setDefaultTimeout(ASSERT_TIMEOUT_MS);
 
-    const productSessionWasSeeded = await ensureProductWorkspace(page, workspacePath, pdfRelativePath);
+    const productSessionWasSeeded = await ensureProductWorkspace(
+      page,
+      workspacePath,
+      SIDECAR_ONLY ? sidecarRelativePath : pdfRelativePath,
+    );
+    if (SIDECAR_ONLY) {
+      await page.waitForSelector(".lattice-pdf-annotation-preview", { state: "visible", timeout: ASSERT_TIMEOUT_MS });
+      await page.waitForFunction(() => {
+        const images = Array.from(document.querySelectorAll(".lattice-pdf-annotation-preview"));
+        return images.length > 0 && images.every((image) => (
+          image instanceof HTMLImageElement &&
+          image.src.startsWith("blob:")
+        ));
+      }, null, { timeout: ASSERT_TIMEOUT_MS });
+      const previewImages = page.locator(".lattice-pdf-annotation-preview");
+      const previewImageCount = await previewImages.count();
+      for (let index = 0; index < previewImageCount; index += 1) {
+        await previewImages.nth(index).scrollIntoViewIfNeeded();
+        await page.waitForFunction((imageIndex) => {
+          const image = document.querySelectorAll(".lattice-pdf-annotation-preview")[imageIndex];
+          return image instanceof HTMLImageElement &&
+            image.src.startsWith("blob:") &&
+            image.complete &&
+            image.naturalWidth > 0 &&
+            image.naturalHeight > 0;
+        }, index, { timeout: ASSERT_TIMEOUT_MS });
+      }
+      const sidecarState = await page.evaluate(() => {
+        const readColoredElement = (element) => {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return {
+            color: element.getAttribute("data-color"),
+            annotationColor: element.style.getPropertyValue("--annotation-color"),
+            borderColor: style.borderLeftColor || style.borderColor,
+            backgroundColor: style.backgroundColor,
+            width: rect.width,
+            height: rect.height,
+          };
+        };
+        return {
+          images: Array.from(document.querySelectorAll(".lattice-pdf-annotation-preview")).map((element) => ({
+            ...readColoredElement(element),
+            src: element instanceof HTMLImageElement ? element.src : "",
+            complete: element instanceof HTMLImageElement ? element.complete : false,
+            naturalWidth: element instanceof HTMLImageElement ? element.naturalWidth : 0,
+            naturalHeight: element instanceof HTMLImageElement ? element.naturalHeight : 0,
+          })),
+          quotes: Array.from(document.querySelectorAll(".lattice-pdf-annotation-quote")).map(readColoredElement),
+          chips: Array.from(document.querySelectorAll(".lattice-pdf-annotation-chip")).map(readColoredElement),
+        };
+      });
+      if (sidecarState.images.length === 0 || sidecarState.quotes.length === 0 || sidecarState.chips.length === 0) {
+        throw new Error(`PDF annotation sidecar is missing visible content: ${JSON.stringify(sidecarState)}`);
+      }
+      const invalidColoredElement = [...sidecarState.images, ...sidecarState.quotes, ...sidecarState.chips]
+        .find((element) => !element.color || element.annotationColor.toLowerCase() !== element.color.toLowerCase());
+      if (invalidColoredElement) {
+        throw new Error(`PDF annotation sidecar lost its annotation color: ${JSON.stringify(invalidColoredElement)}`);
+      }
+      await page.screenshot({ path: path.join(OUTPUT_DIR, "desktop-pdf-annotation-sidecar.png"), fullPage: true });
+      await writeFile(
+        path.join(OUTPUT_DIR, "desktop-pdf-annotation-sidecar.json"),
+        `${JSON.stringify({
+          generatedAt: new Date().toISOString(),
+          exePath,
+          workspacePath,
+          sidecarPath,
+          sidecarRelativePath,
+          productSessionWasSeeded,
+          activeUrl: page.url(),
+          ...sidecarState,
+        }, null, 2)}\n`,
+        "utf8",
+      );
+      console.log(`[desktop-product-smoke] sidecar passed ${JSON.stringify({
+        images: sidecarState.images.length,
+        quotes: sidecarState.quotes.length,
+        chips: sidecarState.chips.length,
+      })}`);
+      return;
+    }
     await waitForProductPdf(page, realPdfName);
     await scrollProductPdfToPage(page, REAL_PDF_PAGE);
     await waitForPageText(page, REAL_PDF_PAGE, LEFT_TARGET);
     await waitForPageText(page, REAL_PDF_PAGE, RIGHT_TARGET);
+
+    let pointerSelectionResult = null;
+    if (POINTER_TARGET.trim()) {
+      const beforePointerCreate = await getSelectionState(page);
+      await clearPdfMenusAndSelection(page);
+      const pointerTargetBox = await scrollProductPdfTextIntoView(page, REAL_PDF_PAGE, POINTER_TARGET);
+      if (!pointerTargetBox) {
+        throw new Error(`Unable to locate native pointer target box for "${POINTER_TARGET}".`);
+      }
+      const pointerSelectionBox = await selectProductPdfTextRange(page, REAL_PDF_PAGE, POINTER_TARGET);
+      if (!pointerSelectionBox) {
+        throw new Error(`Unable to create a real pointer selection for "${POINTER_TARGET}".`);
+      }
+      if (POINTER_NATIVE_DRAG) {
+        await dragProductPdfTextBox(page, pointerSelectionBox);
+      } else {
+        await page.evaluate(() => window.getSelection()?.removeAllRanges());
+        await dispatchProductPdfPointerEvent(
+          page,
+          "pointerdown",
+          { x: pointerSelectionBox.startX, y: pointerSelectionBox.startY },
+          1,
+        );
+        await selectProductPdfTextRange(page, REAL_PDF_PAGE, POINTER_TARGET);
+        await dispatchProductPdfPointerEvent(
+          page,
+          "pointerup",
+          { x: pointerSelectionBox.endX, y: pointerSelectionBox.endY },
+          0,
+        );
+      }
+      const pointerMenuOpened = await waitForSelectionMenuText(
+        page,
+        POINTER_TARGET,
+        POINTER_TARGET,
+        Math.min(15000, ASSERT_TIMEOUT_MS),
+      );
+      if (!pointerMenuOpened) {
+        const pointerFailureState = await page.evaluate(() => {
+          const readDiagnosticText = (fragment) => (
+            Array.from(document.querySelectorAll(`[data-testid*='${fragment}']`))
+              .map((element) => element.textContent?.trim() ?? "")
+              .find(Boolean) ?? ""
+          );
+          return {
+            nativeText: window.getSelection()?.toString() ?? "",
+            previewText: readDiagnosticText("pdf-selection-preview-"),
+            source: readDiagnosticText("pdf-selection-source-"),
+            rectCount: readDiagnosticText("pdf-selection-overlay-rect-count-"),
+            menuText: Array.from(document.querySelectorAll(".pdf-selection-color-picker, [data-pdf-annotation-menu]"))
+              .map((element) => element.textContent?.trim() ?? "")
+              .filter(Boolean),
+          };
+        });
+        throw new Error(`Native pointer selection menu did not match "${POINTER_TARGET}": ${JSON.stringify({
+          pointerSelectionBox,
+          pointerFailureState,
+        })}`);
+      }
+
+      pointerSelectionResult = await page.evaluate(() => {
+        const readDiagnosticText = (fragment) => (
+          Array.from(document.querySelectorAll(`[data-testid*='${fragment}']`))
+            .map((element) => element.textContent?.trim() ?? "")
+            .find(Boolean) ?? ""
+        );
+        return {
+          text: readDiagnosticText("pdf-selection-preview-"),
+          source: readDiagnosticText("pdf-selection-source-"),
+          rectCount: Number(readDiagnosticText("pdf-selection-overlay-rect-count-")),
+          nativeText: window.getSelection()?.toString() ?? "",
+          menuText: document.querySelector(".pdf-selection-color-picker")?.textContent?.trim() ?? "",
+        };
+      });
+      const previewRightColumnBox = await scrollProductPdfTextIntoView(page, REAL_PDF_PAGE, RIGHT_TARGET);
+      if (!previewRightColumnBox) {
+        throw new Error(`Unable to locate right-column boundary target "${RIGHT_TARGET}" while validating transient selection.`);
+      }
+      const transientSelectionState = await getTransientSelectionQuality(page, previewRightColumnBox.left);
+      if (
+        transientSelectionState.segmentCount < 1 ||
+        (POINTER_EXPECTED_SEGMENTS > 0 && transientSelectionState.segmentCount !== POINTER_EXPECTED_SEGMENTS) ||
+        transientSelectionState.crossesRightColumn ||
+        transientSelectionState.hasDegenerateSegment ||
+        (transientSelectionState.heightRatio !== null && transientSelectionState.heightRatio > 1.2)
+      ) {
+        throw new Error(`Native pointer transient selection failed visual geometry checks: ${JSON.stringify(transientSelectionState)}`);
+      }
+      const compactPointerMenu = compactText(pointerSelectionResult.menuText);
+      const pointerMenuMatches = compactPointerMenu.includes(compactText(POINTER_TARGET));
+      if (POINTER_SAVE_ONLY && pointerMenuMatches) {
+        const pointerStyleType = POINTER_SAVE_STYLE_TYPE;
+        const previousSegmentCount = pointerStyleType === "underline"
+          ? beforePointerCreate.underlineSegments
+          : beforePointerCreate.highlightSegments;
+        if (pointerStyleType === "underline") {
+          await saveSelectionAsUnderline(page, pointerSelectionBox);
+        } else {
+          await saveSelectionAsHighlight(page);
+        }
+        await page.waitForFunction(({ previousCount, styleType }) => (
+          document.querySelectorAll(`[data-pdf-stored-annotation-type='${styleType}']`).length > previousCount
+        ), {
+          previousCount: previousSegmentCount,
+          styleType: pointerStyleType,
+        }, { timeout: ASSERT_TIMEOUT_MS });
+        const rightColumnBox = await scrollProductPdfTextIntoView(page, REAL_PDF_PAGE, RIGHT_TARGET);
+        if (!rightColumnBox) {
+          throw new Error(`Unable to locate right-column boundary target "${RIGHT_TARGET}" after pointer save.`);
+        }
+        const savedPointerState = await page.evaluate(({ previousCount, rightColumnLeft, targetPage, styleType }) => {
+          const pageElement = document.querySelector(`[data-page-number="${targetPage}"]`);
+          const pageRect = pageElement instanceof HTMLElement ? pageElement.getBoundingClientRect() : null;
+          const segments = Array.from(document.querySelectorAll(`[data-pdf-stored-annotation-type='${styleType}']`))
+            .slice(previousCount)
+            .map((element) => {
+              const rect = element.getBoundingClientRect();
+              const style = getComputedStyle(element);
+              return {
+                annotationId: element.getAttribute("data-pdf-stored-annotation-id") ?? "",
+                left: rect.left,
+                right: rect.right,
+                top: rect.top,
+                bottom: rect.bottom,
+                normalizedLeft: pageRect && pageRect.width > 0 ? (rect.left - pageRect.left) / pageRect.width : null,
+                normalizedRight: pageRect && pageRect.width > 0 ? (rect.right - pageRect.left) / pageRect.width : null,
+                backgroundColor: style.backgroundColor,
+                backgroundImage: style.backgroundImage,
+                backgroundPosition: style.backgroundPosition,
+                backgroundSize: style.backgroundSize,
+                opacity: style.opacity,
+              };
+            });
+          const heights = segments.map((segment) => segment.bottom - segment.top);
+          const minHeight = heights.length > 0 ? Math.min(...heights) : 0;
+          const maxHeight = heights.length > 0 ? Math.max(...heights) : 0;
+          return {
+            styleType,
+            segmentCount: segments.length,
+            segments,
+            rightColumnLeft,
+            minHeight,
+            maxHeight,
+            heightRatio: minHeight > 0 ? maxHeight / minHeight : null,
+            crossesRightColumn: segments.some((segment) => (
+              segment.right >= rightColumnLeft - 2
+            )),
+            hasDegenerateSegment: segments.some((segment) => (
+              segment.right - segment.left < 2 || segment.bottom - segment.top < 2
+            )),
+            hasBrokenDecoration: styleType === "underline"
+              ? segments.some((segment) => segment.backgroundImage === "none" || !segment.backgroundPosition.includes("100%"))
+              : segments.some((segment) => segment.backgroundColor === "rgba(0, 0, 0, 0)"),
+          };
+        }, {
+          previousCount: previousSegmentCount,
+          rightColumnLeft: rightColumnBox.left,
+          targetPage: REAL_PDF_PAGE,
+          styleType: pointerStyleType,
+        });
+        if (
+          savedPointerState.segmentCount < 1 ||
+          savedPointerState.crossesRightColumn ||
+          savedPointerState.hasDegenerateSegment ||
+          savedPointerState.hasBrokenDecoration ||
+          (savedPointerState.heightRatio !== null && savedPointerState.heightRatio > 1.2)
+        ) {
+          throw new Error(`Saved native pointer ${pointerStyleType} failed visual geometry checks: ${JSON.stringify(savedPointerState)}`);
+        }
+        const result = {
+          generatedAt: new Date().toISOString(),
+          exePath,
+          workspacePath,
+          realPdfPath,
+          pdfRelativePath,
+          cdpPort,
+          pointerTargetBox,
+          pointerSelectionBox,
+          pointerSelectionResult,
+          transientSelectionState,
+          savedPointerState,
+          productSessionWasSeeded,
+          activeUrl: page.url(),
+        };
+        await page.screenshot({
+          path: path.join(OUTPUT_DIR, `desktop-pdf-product-pointer-${pointerStyleType}-save.png`),
+          fullPage: false,
+        });
+        await writeFile(
+          path.join(OUTPUT_DIR, `desktop-pdf-product-pointer-${pointerStyleType}-save-smoke.json`),
+          `${JSON.stringify(result, null, 2)}\n`,
+          "utf8",
+        );
+        console.log(`[desktop-product-smoke] pointer save passed ${JSON.stringify(savedPointerState)}`);
+        return;
+      }
+      const acceptedPointerSources = new Set(["pdfjs-text-model", "pdfium-native"]);
+      if (!acceptedPointerSources.has(pointerSelectionResult.source)) {
+        throw new Error(`Real pointer selection did not use a validated PDF text source: ${JSON.stringify(pointerSelectionResult)}`);
+      }
+      if (!compactText(pointerSelectionResult.text).includes(compactText(POINTER_TARGET))) {
+        throw new Error(`Real pointer selection returned an incomplete quote: ${JSON.stringify(pointerSelectionResult)}`);
+      }
+      if (!Number.isFinite(pointerSelectionResult.rectCount) || pointerSelectionResult.rectCount < 1) {
+        throw new Error(`Real pointer selection returned no visible text rects: ${JSON.stringify(pointerSelectionResult)}`);
+      }
+
+      if (POINTER_ONLY) {
+        const result = {
+          generatedAt: new Date().toISOString(),
+          exePath,
+          workspacePath,
+          realPdfPath,
+          pdfRelativePath,
+          cdpPort,
+          pointerTargetBox,
+          pointerSelectionBox,
+          pointerSelectionResult,
+          transientSelectionState,
+          productSessionWasSeeded,
+          activeUrl: page.url(),
+        };
+        await writeFile(
+          path.join(OUTPUT_DIR, "desktop-pdf-product-pointer-smoke.json"),
+          `${JSON.stringify(result, null, 2)}\n`,
+          "utf8",
+        );
+        console.log(`[desktop-product-smoke] pointer passed ${JSON.stringify(pointerSelectionResult)}`);
+        return;
+      }
+
+      await clearPdfMenusAndSelection(page);
+    }
 
     const leftBox = await scrollProductPdfTextIntoView(page, REAL_PDF_PAGE, LEFT_TARGET);
     if (!leftBox) {
@@ -1333,6 +1812,7 @@ async function main() {
       rightSelectionState,
       exactMarkupResult,
       exactMarkupState,
+      pointerSelectionResult,
       storedBeforeClick,
       storedQuality,
       optionalAnnotationClicks,

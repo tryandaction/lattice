@@ -4,7 +4,8 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { createTab, createWebTab } from "@/lib/layout-utils";
-import { loadWorkbenchSession, saveWorkbenchSession } from "@/lib/layout-persistence";
+import { loadWorkbenchSession, loadWorkbenchSessionStaged, saveWorkbenchSession } from "@/lib/layout-persistence";
+import { placeVSCodeWorkbenchTab } from "@/lib/vscode-workbench/layout";
 import { isWebTabState } from "@/types/layout";
 
 class FakeFileHandle {
@@ -59,6 +60,45 @@ class FakeDirectoryHandle {
 describe("workbench session persistence", () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+
+  it("omits the transient VS Code Workbench tab from persisted sessions", async () => {
+    const root = new FakeDirectoryHandle("workspace");
+    const notesHandle = root.addFile(new FakeFileHandle("notes.md"));
+    const documentTab = createTab(
+      notesHandle as unknown as FileSystemFileHandle,
+      "workspace/notes.md",
+    );
+    const placed = placeVSCodeWorkbenchTab(
+      {
+        type: "pane",
+        id: "pane-main",
+        tabs: [documentTab],
+        activeTabIndex: 0,
+      },
+      "pane-main",
+      "C:/workspace",
+    );
+
+    await saveWorkbenchSession(
+      "workspace",
+      "workspace",
+      { root: placed.root, activePaneId: "pane-main" },
+      false,
+    );
+    const restored = await loadWorkbenchSession(
+      "workspace",
+      "workspace",
+      root as unknown as FileSystemDirectoryHandle,
+    );
+
+    expect(restored?.layout.root.type).toBe("pane");
+    if (restored?.layout.root.type !== "pane") {
+      throw new Error("Expected pane layout");
+    }
+    expect(restored.layout.root.tabs).toHaveLength(1);
+    expect(restored.layout.root.tabs[0]?.filePath).toBe("workspace/notes.md");
+    expect(restored.layout.root.activeTabIndex).toBe(0);
   });
 
   it("restores a split workbench layout per workspace", async () => {
@@ -178,5 +218,34 @@ describe("workbench session persistence", () => {
     expect(restored.layout.root.tabs[1].url).toBe("https://example.com/docs/getting-started");
     expect(restored.layout.root.tabs[1].fileName).toBe("Getting Started");
     expect(restored.layout.root.activeTabIndex).toBe(1);
+  });
+
+  it("restores the active tab first and fills remaining tabs in the background", async () => {
+    const root = new FakeDirectoryHandle("workspace");
+    const files = ["one.md", "two.md", "three.md", "four.md"].map((name) => root.addFile(new FakeFileHandle(name)));
+    const layout = {
+      root: {
+        type: "pane" as const,
+        id: "pane-main",
+        tabs: files.map((file) => createTab(file as unknown as FileSystemFileHandle, `workspace/${file.name}`)),
+        activeTabIndex: 3,
+      },
+      activePaneId: "pane-main",
+    };
+
+    await saveWorkbenchSession("workspace", "workspace", layout, false);
+    const staged = await loadWorkbenchSessionStaged("workspace", "workspace", root as unknown as FileSystemDirectoryHandle);
+
+    const initial = staged.initial;
+    expect(initial).not.toBeNull();
+    if (!initial || initial.layout.root.type !== "pane") throw new Error("Expected pane layout");
+    expect(initial.layout.root.tabs.map((tab) => tab.filePath)).toEqual(["workspace/four.md"]);
+    expect(initial.layout.root.activeTabIndex).toBe(0);
+
+    const completed = await staged.complete;
+    expect(completed?.layout.root.type).toBe("pane");
+    if (completed?.layout.root.type !== "pane") throw new Error("Expected pane layout");
+    expect(completed.layout.root.tabs).toHaveLength(4);
+    expect(completed.layout.root.activeTabIndex).toBe(3);
   });
 });

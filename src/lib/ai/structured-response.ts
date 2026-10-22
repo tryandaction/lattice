@@ -1,4 +1,11 @@
-export type AiStructuredSectionKind = 'conclusion' | 'evidence' | 'next_actions';
+export type AiStructuredSectionKind =
+  | 'conclusion'
+  | 'concept'
+  | 'steps'
+  | 'example'
+  | 'evidence'
+  | 'next_question'
+  | 'next_actions';
 
 export interface AiStructuredSection {
   kind: AiStructuredSectionKind;
@@ -36,6 +43,50 @@ const SECTION_MATCHERS: Array<{
     ],
     inlinePatterns: [
       /^(?:\*\*)?(?:evidence|citations|references|证据|依据|引用)(?:\*\*)?\s*[:：](?:\*\*)?\s*(.+)$/i,
+    ],
+  },
+  {
+    kind: 'concept',
+    title: 'Core idea',
+    headerPatterns: [
+      /^#{1,6}\s*(concept|core idea|why it works|核心思路|概念)\s*$/i,
+      /^(?:\*\*)?(concept|core idea|why it works|核心思路|概念)(?:\*\*)?\s*[:：]?\s*$/i,
+    ],
+    inlinePatterns: [
+      /^(?:\*\*)?(?:concept|core idea|why it works|核心思路|概念)(?:\*\*)?\s*[:：]\s*(.+)$/i,
+    ],
+  },
+  {
+    kind: 'steps',
+    title: 'Steps',
+    headerPatterns: [
+      /^#{1,6}\s*(steps|step-by-step|分步解释|步骤)\s*$/i,
+      /^(?:\*\*)?(steps|step-by-step|分步解释|步骤)(?:\*\*)?\s*[:：]?\s*$/i,
+    ],
+    inlinePatterns: [
+      /^(?:\*\*)?(?:steps|step-by-step|分步解释|步骤)(?:\*\*)?\s*[:：]\s*(.+)$/i,
+    ],
+  },
+  {
+    kind: 'example',
+    title: 'Example',
+    headerPatterns: [
+      /^#{1,6}\s*(example|minimal example|最小示例|例子)\s*$/i,
+      /^(?:\*\*)?(example|minimal example|最小示例|例子)(?:\*\*)?\s*[:：]?\s*$/i,
+    ],
+    inlinePatterns: [
+      /^(?:\*\*)?(?:example|minimal example|最小示例|例子)(?:\*\*)?\s*[:：]\s*(.+)$/i,
+    ],
+  },
+  {
+    kind: 'next_question',
+    title: 'Next question',
+    headerPatterns: [
+      /^#{1,6}\s*(next question|follow-up question|延伸问题|下一问题)\s*$/i,
+      /^(?:\*\*)?(next question|follow-up question|延伸问题|下一问题)(?:\*\*)?\s*[:：]?\s*$/i,
+    ],
+    inlinePatterns: [
+      /^(?:\*\*)?(?:next question|follow-up question|延伸问题|下一问题)(?:\*\*)?\s*[:：]\s*(.+)$/i,
     ],
   },
   {
@@ -86,6 +137,7 @@ export function parseStructuredAiResponse(content: string): AiStructuredResponse
 
   const lines = normalized.split(/\r?\n/);
   const sections: AiStructuredSection[] = [];
+  const preamble: string[] = [];
 
   let current: AiStructuredSection | null = null;
   let foundStructuredHeader = false;
@@ -111,6 +163,7 @@ export function parseStructuredAiResponse(content: string): AiStructuredResponse
     }
 
     if (!current) {
+      preamble.push(line);
       continue;
     }
 
@@ -126,6 +179,14 @@ export function parseStructuredAiResponse(content: string): AiStructuredResponse
 
   if (!foundStructuredHeader || sections.length === 0) {
     return null;
+  }
+
+  if (preamble.join('\n').trim()) {
+    sections.unshift({
+      kind: 'conclusion',
+      title: 'Conclusion',
+      content: preamble.join('\n').trim(),
+    });
   }
 
   return {

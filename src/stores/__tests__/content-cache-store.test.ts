@@ -116,6 +116,24 @@ describe('Content Cache Store', () => {
           },
         },
       });
+      expect(store.getContent(tabId)).toBeUndefined();
+      expect(store.getUnsavedTabs()).toEqual([]);
+    });
+
+    it('keeps only three recently used clean binary documents while preserving view state', () => {
+      const store = useContentCacheStore.getState();
+      store.saveEditorState('pdf-1', { cursorPosition: 0, scrollTop: 720 });
+
+      for (let index = 1; index <= 4; index += 1) {
+        const content = new Uint8Array([index]).buffer;
+        store.setContent(`pdf-${index}`, content, content);
+      }
+
+      expect(store.getContent('pdf-1')).toBeUndefined();
+      expect(store.getContent('pdf-2')?.content).toBeInstanceOf(ArrayBuffer);
+      expect(store.getContent('pdf-3')?.content).toBeInstanceOf(ArrayBuffer);
+      expect(store.getContent('pdf-4')?.content).toBeInstanceOf(ArrayBuffer);
+      expect(store.getEditorState('pdf-1')).toEqual({ cursorPosition: 0, scrollTop: 720 });
     });
   });
 

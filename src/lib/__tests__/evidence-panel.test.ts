@@ -33,7 +33,7 @@ describe('buildEvidencePanelState', () => {
       ],
     });
 
-    expect(state.evidenceCount).toBe(2);
+    expect(state.evidenceCount).toBe(3);
     expect(state.contextCount).toBe(3);
     expect(state.contextGroups.map((group) => group.kind)).toEqual([
       'selection',
@@ -66,10 +66,39 @@ describe('buildEvidencePanelState', () => {
   it('returns empty groups for empty input', () => {
     expect(buildEvidencePanelState({})).toEqual({
       evidenceCount: 0,
+      sourceCount: 0,
       contextCount: 0,
       contextGroups: [],
       referenceGroups: [],
     });
+  });
+
+  it('counts the unique citation passages actually shown in the reference tree', () => {
+    const ref = { kind: 'pdf_page' as const, label: 'paper', locator: 'paper.pdf#page=12', preview: 'BB1 sequence' };
+    const state = buildEvidencePanelState({ evidenceRefs: [ref, { ...ref }], contextNodes: [
+      { id: 'page12', kind: 'pdf_page', label: 'Page 12', content: 'BB1 sequence', priority: 1, evidenceRef: ref },
+    ] });
+    expect(state.sourceCount).toBe(1);
+    expect(state.evidenceCount).toBe(1);
+    expect(state.referenceGroups[0].leaves).toHaveLength(1);
+  });
+
+  it('reports one source and twelve passages for a multi-page PDF', () => {
+    const state = buildEvidencePanelState({
+      evidenceRefs: Array.from({ length: 12 }, (_, index) => ({
+        kind: 'pdf_page' as const,
+        label: 'papers/quantum.pdf',
+        locator: `papers/quantum.pdf#page=${index + 1}`,
+        preview: `Passage ${index + 1}`,
+        anchor: { page: index + 1, snippet: `Passage ${index + 1}` },
+      })),
+    });
+
+    expect(state.sourceCount).toBe(1);
+    expect(state.evidenceCount).toBe(12);
+    expect(state.referenceGroups).toHaveLength(1);
+    expect(state.referenceGroups[0]?.title).toBe('quantum.pdf');
+    expect(state.referenceGroups[0]?.leaves).toHaveLength(12);
   });
 
   it('builds a draft seed for a single evidence leaf', () => {
@@ -79,6 +108,10 @@ describe('buildEvidencePanelState', () => {
       label: 'notes.md#Method',
       locator: 'notes.md#Method',
       preview: 'Method summary',
+      anchor: {
+        page: 2,
+        snippet: 'The encoded logical qubit survives a detected erasure.',
+      },
     });
 
     expect(seed.title).toBe('Evidence - notes.md#Method');
@@ -88,6 +121,10 @@ describe('buildEvidencePanelState', () => {
         label: 'notes.md#Method',
         locator: 'notes.md#Method',
         preview: 'Method summary',
+        anchor: {
+          page: 2,
+          snippet: 'The encoded logical qubit survives a detected erasure.',
+        },
       },
     ]);
     expect(seed.content).toContain('Method summary');

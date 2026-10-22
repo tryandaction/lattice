@@ -45,6 +45,39 @@ function renderDesktopDockPanels(onSizesChange = vi.fn()) {
 }
 
 describe("ResizablePanelGroup", () => {
+  it("cancels pending drag work and restores body styles when a split unmounts", () => {
+    const callbacks: FrameRequestCallback[] = [];
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    const cancelRaf = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    const onSizesChange = vi.fn();
+    document.body.style.cursor = "crosshair";
+    document.body.style.userSelect = "text";
+    const { unmount } = render(
+      <ResizablePanelGroup direction="horizontal" sizes={[50, 50]} onSizesChange={onSizesChange}>
+        <ResizablePanel index={0}>left</ResizablePanel>
+        <ResizableHandle />
+        <ResizablePanel index={1}>right</ResizablePanel>
+      </ResizablePanelGroup>,
+    );
+    const handle = screen.getByRole("separator");
+    Object.defineProperty(handle.parentElement, "offsetWidth", { configurable: true, value: 1000 });
+    fireEvent.pointerDown(handle, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 700, pointerId: 1 });
+    unmount();
+    expect(cancelRaf).toHaveBeenCalledWith(1);
+    callbacks[0]?.(16);
+    expect(onSizesChange).not.toHaveBeenCalled();
+    expect(document.body.style.cursor).toBe("crosshair");
+    expect(document.body.style.userSelect).toBe("text");
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    raf.mockRestore();
+    cancelRaf.mockRestore();
+  });
+
   it("exposes handles as keyboard-adjustable separators with a wide hit target", () => {
     const onSizesChange = renderHorizontalPanels();
 
@@ -129,6 +162,33 @@ describe("ResizablePanelGroup", () => {
     expect(document.querySelector("[data-testid='resizable-drag-shield']")).toBeNull();
   });
 
+  it("coalesces burst pointer movement into one layout update per animation frame", () => {
+    const callbacks: FrameRequestCallback[] = [];
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    const cancelRaf = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    const onSizesChange = renderHorizontalPanels();
+    const handle = screen.getByRole("separator");
+    Object.defineProperty(handle.parentElement, "offsetWidth", { configurable: true, value: 1000 });
+
+    fireEvent.pointerDown(handle, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 520, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 540, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 560, pointerId: 1 });
+
+    expect(callbacks).toHaveLength(1);
+    expect(onSizesChange).not.toHaveBeenCalled();
+    callbacks[0]?.(16);
+    expect(onSizesChange).toHaveBeenCalledTimes(1);
+    expect(onSizesChange).toHaveBeenLastCalledWith([56, 44]);
+
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    raf.mockRestore();
+    cancelRaf.mockRestore();
+  });
+
   it("falls back to the panel group bounding rect when offset size is zero", () => {
     const onSizesChange = renderDesktopDockPanels();
     const handles = screen.getAllByRole("separator");
@@ -153,16 +213,17 @@ describe("ResizablePanelGroup", () => {
     expect(onSizesChange).toHaveBeenLastCalledWith([20, 44, 36]);
   });
 
-  it("renders one visible separator line with an invisible drag target", () => {
+  it("renders a visible grip inside the wide drag target", () => {
     renderHorizontalPanels();
     const handle = screen.getByRole("separator");
     const visualLine = handle.querySelector("[aria-hidden='true']");
+    const grip = screen.getByTestId("resizable-handle-grip");
     const accessibleLabel = screen.getByText("Drag to resize");
 
     expect(visualLine?.className).toContain("w-px");
     expect(visualLine?.className).toContain("group-hover:w-0.5");
     expect(visualLine?.className).toContain("group-focus-visible:w-0.5");
+    expect(grip.getAttribute("aria-hidden")).toBe("true");
     expect(accessibleLabel.className).toContain("sr-only");
-    expect(handle.querySelector("svg")).toBeNull();
   });
 });

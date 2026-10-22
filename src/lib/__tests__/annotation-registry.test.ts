@@ -31,6 +31,15 @@ import {
 } from "@/lib/annotation-registry";
 
 describe("annotation-registry", () => {
+  it("keeps independent document bindings when two PDFs register concurrently", async () => {
+    await Promise.all(['parallel-a', 'parallel-b'].map(documentId => registerAnnotationLocation({ documentId,
+      alias: { sourcePath: `.lattice/annotations/${documentId}.json`, canonicalPath: `root/${documentId}.pdf`, relativePathFromRoot: `${documentId}.pdf`, fileId: documentId, workspaceKey: 'parallel-root', updatedAt: 1 },
+      fileFingerprint: documentId,
+    })));
+    const registry = await loadAnnotationRegistry();
+    expect(registry.entriesByDocumentId['parallel-a']).toBeDefined();
+    expect(registry.entriesByDocumentId['parallel-b']).toBeDefined();
+  });
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();

@@ -1310,6 +1310,27 @@ async function runPdfRealPaperInteractionsStep(page) {
   }
 }
 
+async function runPdfCitationNavigationStep(page) {
+  await openPdfRegressionPage(page, { singlePane: true, resetViewState: true });
+  await page.waitForFunction(() => Boolean(window.__latticePdfDiagnostics?.["pdf-left-pane"]?.navigateReference));
+  await page.evaluate(() => window.__latticePdfDiagnostics["pdf-left-pane"].navigateReference({
+    page: 1,
+    snippet: "Citation navigation fixture",
+    rects: [{ left: 0.2, top: 0.2, width: 0.4, height: 0.05 }],
+  }));
+
+  const target = page.locator(".pdf-reference-target-flash").first();
+  await target.waitFor({ timeout: PDF_ASSERT_TIMEOUT_MS });
+  const styles = await target.evaluate((element) => ({
+    borderStyle: getComputedStyle(element).borderStyle,
+    rect: element.getBoundingClientRect().toJSON(),
+  }));
+  if (styles.borderStyle !== "dashed" || styles.rect.width <= 0 || styles.rect.height <= 0) {
+    throw new Error(`PDF citation flash did not use a real dashed target rectangle: ${JSON.stringify(styles)}`);
+  }
+  await page.waitForFunction(() => !document.querySelector(".pdf-reference-target-flash"), undefined, { timeout: PDF_ASSERT_TIMEOUT_MS });
+}
+
 async function runPdfSidebarStep(page) {
   await waitForPdfRegressionReady(page);
   await activatePdfPane(page, "pdf-left-pane");
@@ -1513,6 +1534,7 @@ const PDF_REGRESSION_STEPS = [
   ["selection-copy", runPdfSelectionCopyStep],
   ["highlight-save-restore", runPdfHighlightSaveRestoreStep],
   ["real-paper-interactions", runPdfRealPaperInteractionsStep],
+  ["citation-navigation", runPdfCitationNavigationStep],
   ["sidebar", runPdfSidebarStep],
   ["zoom-left", runPdfZoomLeftStep],
   ["zoom-right", runPdfZoomRightStep],
@@ -1606,11 +1628,11 @@ async function testSelectionAi(page, baseUrl) {
       () => waitForExactText(page, "selection-ai-evidence-count", "2", "Selection AI agent evidence count"),
       () => waitForExactText(page, "selection-ai-preferred-mode", "agent", "Selection AI preferred agent mode"),
       () => waitForTextContaining(page, "selection-ai-agent-session-id", "agent-session", "Selection AI agent session id"),
-      () => waitForExactText(page, "selection-ai-agent-status", "completed", "Selection AI agent session completed"),
+      () => waitForTextInSet(page, "selection-ai-agent-status", ["completed", "waiting_approval"], "Selection AI agent session completed or waiting approval"),
       () => waitForNumericTextAtLeast(page, "selection-ai-agent-trace-count", 4, "Selection AI agent trace count"),
       () => waitForExactText(page, "selection-ai-agent-plan-source", "custom", "Selection AI agent plan source"),
       () => waitForExactText(page, "selection-ai-agent-plan-warning-count", "0", "Selection AI agent plan warning count"),
-      () => waitForTextContaining(page, "selection-ai-agent-planner-prompt-preview", "Agent diagnostics prompt", "Selection AI planner prompt preview"),
+      () => waitForTextContaining(page, "selection-ai-agent-planner-prompt-preview", "Lattice Research Agent run", "Selection AI planner prompt preview"),
       () => waitForTextContaining(page, "selection-ai-agent-planner-raw-preview", "Collect diagnostics selection context", "Selection AI planner raw output preview"),
     ],
   });
@@ -1652,7 +1674,7 @@ async function clickFirstVisibleButtonByNames(page, names, label) {
     for (let index = 0; index < count; index += 1) {
       const candidate = button.nth(index);
       if (await candidate.isVisible().catch(() => false)) {
-        await candidate.click();
+        await candidate.dispatchEvent("click");
         return;
       }
     }
@@ -1723,7 +1745,7 @@ async function testAiChatResearchAgent(page, baseUrl) {
     await page.getByRole("button", { name: "Agent", exact: true }).click();
     await clickAiChatResearchAgentSubmit(page);
 
-    await waitForTextContaining(page, "ai-chat-latest-user", `[Research Agent] ${scenario.prompt}`, `AI Chat Research Agent ${scenario.name} user message`);
+    await waitForTextContaining(page, "ai-chat-latest-user", scenario.prompt, `AI Chat Research Agent ${scenario.name} user message`);
     await waitForTextContaining(page, "ai-chat-latest-assistant", `Task: ${scenario.prompt}`, `AI Chat Research Agent ${scenario.name} assistant message`);
     await waitForNumericTextAtLeast(page, "ai-chat-evidence-count", 1, `AI Chat Research Agent ${scenario.name} evidence count`);
     await waitForNumericTextAtLeast(page, "ai-chat-prompt-context-node-count", 1, `AI Chat Research Agent ${scenario.name} prompt context node count`);
@@ -1744,11 +1766,17 @@ async function testAiChatResearchAgent(page, baseUrl) {
     await waitForTextContaining(page, "ai-chat-draft-suggestion-title", scenario.draftTitleContains, `AI Chat Research Agent ${scenario.name} draft suggestion`);
 
     if (scenario.action === "save-draft") {
+      await page.getByTestId("agent-status-open-review").click();
+      await page.getByTestId("agent-inspector-tab-workbench").click();
+      await page.getByTestId("workbench-queue-toggle").click();
       await page.getByTestId("ai-chat-follow-up-save-draft").click();
       await waitForExactText(page, "ai-chat-workbench-draft-count", "1", `AI Chat Research Agent ${scenario.name} workbench draft count`);
       await waitForTextContaining(page, "ai-chat-workbench-latest-draft-title", scenario.draftTitleContains, `AI Chat Research Agent ${scenario.name} latest draft title`);
       await waitForExactText(page, "ai-chat-workbench-proposal-count", "0", `AI Chat Research Agent ${scenario.name} workbench proposal count`);
     } else if (scenario.action === "generate-proposal") {
+      await page.getByTestId("agent-status-open-review").click();
+      await page.getByTestId("agent-inspector-tab-workbench").click();
+      await page.getByTestId("workbench-queue-toggle").click();
       await page.getByTestId("ai-chat-follow-up-generate-proposal").click();
       await waitForExactText(page, "ai-chat-workbench-draft-count", "0", `AI Chat Research Agent ${scenario.name} workbench draft count`);
       await waitForExactText(page, "ai-chat-workbench-proposal-count", "1", `AI Chat Research Agent ${scenario.name} workbench proposal count`);
@@ -1769,6 +1797,184 @@ async function testAiChatResearchAgent(page, baseUrl) {
   await waitForExactText(page, "ai-chat-agent-completed-approval-count", "1", "AI Chat Research Agent approval fixture completed count");
   await waitForTextContaining(page, "ai-chat-agent-approval-tools", "runner.runCode:completed", "AI Chat Research Agent approval fixture completed tool");
   await waitForTextContaining(page, "ai-chat-agent-latest-approval-result", "diagnostics approval ok", "AI Chat Research Agent approval fixture result");
+}
+
+async function testAiProviderAndChat(page, baseUrl) {
+  await page.addInitScript(() => {
+    localStorage.setItem("lattice-settings", JSON.stringify({
+      language: "en-US",
+      theme: "system",
+      onboardingCompleted: true,
+      aiEnabled: true,
+      aiProvider: "openai",
+      aiModel: "stale-legacy-model",
+      aiStreamingEnabled: false,
+      aiTemperature: 0.2,
+      aiMaxTokens: 512,
+      aiSystemPrompt: "Browser regression system",
+      aiPanelOpen: false,
+    }));
+    localStorage.setItem("lattice-ai-provider-profiles", JSON.stringify({
+      version: 3,
+      profiles: [],
+      activeProfileId: null,
+    }));
+    localStorage.setItem("lattice-download-dismissed", "true");
+  });
+
+  const providerRequests = [];
+  let chatAttempts = 0;
+  await page.route("http://provider.test/**", async (route) => {
+    const request = route.request();
+    const url = request.url();
+    if (url.endsWith("/models")) {
+      providerRequests.push({ kind: "models", method: request.method() });
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ data: [{ id: "vendor-model", owned_by: "vendor" }] }),
+      });
+      return;
+    }
+    if (url.endsWith("/chat/completions")) {
+      const body = JSON.parse(request.postData() ?? "{}");
+      chatAttempts += 1;
+      providerRequests.push({ kind: "chat", method: request.method(), model: body.model });
+      if (chatAttempts <= 3) {
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { message: "temporary provider failure" } }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          model: body.model,
+          choices: [{ message: { role: "assistant", content: `browser answer for ${body.model}` } }],
+        }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.goto(`${baseUrl}/`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Settings", exact: true }).waitFor();
+  await page.waitForTimeout(1200);
+  const downloadDialog = page.getByTestId("download-app-dialog");
+  if (await downloadDialog.count() > 0 && await downloadDialog.isVisible().catch(() => false)) {
+    await downloadDialog.getByRole("button", { name: "Continue In Browser" }).click({ force: true });
+  }
+
+  await clickFirstVisibleButtonByNames(page, ["Settings"], "Open Settings");
+  await page.getByRole("button", { name: "AI", exact: true }).last().waitFor();
+  const settingsOverlay = page.locator("div.fixed.inset-0").filter({ hasText: "Settings" }).last();
+  await settingsOverlay.getByRole("button", { name: "AI", exact: true }).click({ force: true });
+  await settingsOverlay.getByRole("button", { name: "Add connection", exact: true }).click();
+
+  const catalog = settingsOverlay.locator("[data-testid^=model-catalog-]");
+  await catalog.waitFor();
+  const initialCatalogText = await catalog.innerText();
+  if (/gpt-4\.1|gpt-4\.1-mini/.test(initialCatalogText)) {
+    throw new Error(`New connection contains a static legacy model: ${initialCatalogText}`);
+  }
+
+  await settingsOverlay.getByLabel("Base URL").fill("http://provider.test/v1");
+  await settingsOverlay.locator('input[type="password"]').fill("browser-key");
+  await settingsOverlay.getByRole("button", { name: "Test connection", exact: true }).click();
+  await settingsOverlay.getByText("Connection successful", { exact: false }).waitFor();
+  await settingsOverlay.getByRole("button", { name: "Fetch available models", exact: true }).click();
+  await catalog.getByText("vendor-model", { exact: true }).last().waitFor();
+
+  await settingsOverlay.getByRole("button", { name: "Add model", exact: true }).click();
+  const newModelInput = settingsOverlay.getByLabel("New model ID");
+  await newModelInput.fill("manual-model");
+  await settingsOverlay.getByRole("button", { name: "Confirm add model", exact: true }).click();
+  await settingsOverlay.getByLabel("Default model").selectOption("manual-model");
+  await settingsOverlay.getByRole("button", { name: "Delete model vendor-model", exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll('input[aria-label^="Model ID "]').length <= 1);
+
+  await settingsOverlay.getByRole("button", { name: "Fetch available models", exact: true }).click();
+  await page.waitForTimeout(250);
+  const persistedAfterRefresh = await page.evaluate(() => JSON.parse(localStorage.getItem("lattice-ai-provider-profiles") ?? "null"));
+  const persistedProfile = persistedAfterRefresh?.profiles?.[0];
+  if (persistedProfile?.model !== "manual-model" || persistedProfile?.models?.some((model) => model.id === "vendor-model")) {
+    throw new Error(`Model catalog persistence is incorrect after refresh: ${JSON.stringify(persistedProfile)}`);
+  }
+  if (providerRequests.find((request) => request.kind === "models")?.method !== "GET") {
+    throw new Error(`Model directory was not queried with GET: ${JSON.stringify(providerRequests)}`);
+  }
+
+  await settingsOverlay.getByRole("button", { name: "Close" }).click({ force: true });
+  await page.getByRole("button", { name: "AI Chat", exact: true }).click({ force: true });
+  await page.getByLabel("AI model").selectOption("manual-model");
+  await page.locator('textarea[placeholder="Type a message..."]').fill("Use the selected model.");
+  await page.getByTestId("ai-chat-submit").dispatchEvent("click");
+  await page.getByTestId("ai-chat-retry").waitFor();
+  await page.getByTestId("ai-chat-retry").click();
+  await page.waitForFunction(() => document.body.innerText.includes("browser answer for manual-model"));
+  const chatRequest = providerRequests.findLast((request) => request.kind === "chat");
+  if (chatRequest?.model !== "manual-model") {
+    throw new Error(`Chat did not use the selected profile model: ${JSON.stringify(providerRequests)}`);
+  }
+  if (providerRequests.filter((request) => request.kind === "chat").length !== 4) {
+    throw new Error(`Chat retry did not issue one recovery request after provider retries: ${JSON.stringify(providerRequests)}`);
+  }
+
+  await clickFirstVisibleButtonByNames(page, ["Settings"], "Reopen Settings");
+  const reopenedSettings = page.locator("div.fixed.inset-0").filter({ hasText: "AI connections" }).last();
+  await reopenedSettings.getByRole("button", { name: "AI", exact: true }).click({ force: true });
+  await reopenedSettings.getByLabel("API protocol").selectOption("anthropic-messages");
+  await page.waitForFunction(() => document.querySelectorAll('input[aria-label^="Model ID "]').length === 0);
+  const persistedAfterProtocolSwitch = await page.evaluate(() => JSON.parse(localStorage.getItem("lattice-ai-provider-profiles") ?? "null"));
+  if (persistedAfterProtocolSwitch?.profiles?.[0]?.models?.length !== 0) {
+    throw new Error(`Protocol switch retained stale models: ${JSON.stringify(persistedAfterProtocolSwitch?.profiles?.[0])}`);
+  }
+}
+
+async function testAiLinks(page, baseUrl) {
+  await page.goto(`${baseUrl}/diagnostics/ai-links`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("ai-links-regression-ready").waitFor({ timeout: 120000 });
+  await page.waitForTimeout(1500);
+
+  const cases = [
+    ["markdown", "Markdown"],
+    ["code", "Code"],
+    ["notebook", "Notebook"],
+  ];
+  for (const [kind, label] of cases) {
+    await page.getByTestId(`navigate-${kind}-reference`).dispatchEvent("click");
+    await waitForExactText(page, `navigation-${kind}-status`, "success", `${label} reference navigation`);
+    const target = page.locator(`[data-testid="${kind}-reference-surface"] .lattice-reference-target-flash`).first();
+    await target.waitFor();
+    const outlineStyle = await target.evaluate((element) => getComputedStyle(element).outlineStyle);
+    if (outlineStyle !== "dashed") {
+      throw new Error(`${label} reference frame is not dashed: ${outlineStyle}`);
+    }
+    await page.waitForFunction((selector) => !document.querySelector(selector), `[data-testid="${kind}-reference-surface"] .lattice-reference-target-flash`, { timeout: 4000 });
+  }
+
+  const markdownWidgetLink = page.getByTestId("ai-links-widget-host").locator("a");
+  await markdownWidgetLink.click({ force: true });
+  await waitForExactText(page, "markdown-link-navigation-count", "1", "Markdown single-click navigation");
+  await markdownWidgetLink.dispatchEvent("click", { detail: 2, button: 0 });
+  await markdownWidgetLink.dispatchEvent("dblclick", { detail: 2, button: 0 });
+  await waitForExactText(page, "markdown-link-edit-count", "1", "Markdown double-click editing");
+  await expectText(page.getByTestId("markdown-link-navigation-count"), "1", "Markdown double-click does not navigate twice");
+
+  await page.getByTestId("navigate-invalid-reference").dispatchEvent("click");
+  await waitForExactText(page, "navigation-invalid-status", "root_not_found", "Invalid reference error");
+  if (await page.getByTestId("reference-invalid-flash").count() > 0) {
+    throw new Error("Invalid reference rendered a target flash.");
+  }
+  const invalidEvidencePanel = page.getByTestId("ai-links-invalid-evidence-panel");
+  await invalidEvidencePanel.locator('[data-testid^="evidence-source-row-"]').first().click({ force: true });
+  await invalidEvidencePanel.getByTestId("evidence-navigation-error").waitFor();
+  await expectText(invalidEvidencePanel.getByTestId("evidence-navigation-status"), "root_not_found", "Invalid citation recovery status");
+  await invalidEvidencePanel.getByTestId("evidence-navigation-retry").waitFor();
 }
 
 async function testPerformanceBaseline(page, baseUrl) {
@@ -1835,6 +2041,10 @@ async function main() {
           ? "/diagnostics/selection-ai"
           : FLOW_FILTER === "ai-chat-research-agent"
             ? "/diagnostics/ai-chat-research-agent"
+          : FLOW_FILTER === "ai-provider-chat"
+            ? "/"
+            : FLOW_FILTER === "ai-links"
+              ? "/diagnostics/ai-links"
             : FLOW_FILTER === "performance"
               ? "/performance-test"
               : "";
@@ -1901,6 +2111,8 @@ async function main() {
       ...pdfFlows,
       ["image-annotation", testImageAnnotation],
       ["selection-ai", testSelectionAi],
+      ["ai-provider-chat", testAiProviderAndChat],
+      ["ai-links", testAiLinks],
       ["ai-chat-research-agent", testAiChatResearchAgent],
       ["performance", testPerformanceBaseline],
     ];

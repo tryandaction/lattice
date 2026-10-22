@@ -19,6 +19,28 @@ export function resolveDesktopPreviewUrl(path: string): string {
   return convertFileSrc(normalizeDesktopPath(path), PREVIEW_PROTOCOL);
 }
 
+/**
+ * Creates a preview URL for extension webview assets without collapsing the
+ * source path into one encoded segment. CSS and ES modules resolve relative
+ * assets from their URL path, so this form must retain directory boundaries.
+ */
+export function resolveDesktopWebviewResourceUrl(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  if (!isTauriHost()) {
+    return normalized;
+  }
+
+  const encodedPath = normalized
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  // WebView2 exposes Tauri custom protocols through an HTTP localhost origin.
+  // Keeping that origin preserves CORS compatibility while retaining each path
+  // segment for CSS and ES module relative-resource resolution.
+  const previewOrigin = new URL(resolveDesktopPreviewUrl("/")).origin;
+  return `${previewOrigin}${encodedPath.startsWith("/") ? "" : "/"}${encodedPath}`;
+}
+
 export async function setDesktopPreviewRoot(path: string | null | undefined): Promise<void> {
   if (!isTauriHost()) {
     return;

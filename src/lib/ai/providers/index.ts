@@ -7,7 +7,10 @@ import { deepseekProvider } from './deepseek';
 import { moonshotProvider } from './moonshot';
 import { zhipuProvider } from './zhipu';
 import { customProvider } from './custom';
+import { createOpenAiCompatibleProvider } from './openai-compatible';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useAiProviderProfileStore } from '@/stores/ai-provider-profile-store';
+import { createProfiledProvider } from '../profiled-provider';
 
 const providers = new Map<AiProviderId, AiProvider>([
   ['openai', openaiProvider],
@@ -18,6 +21,12 @@ const providers = new Map<AiProviderId, AiProvider>([
   ['moonshot', moonshotProvider],
   ['zhipu', zhipuProvider],
   ['custom', customProvider],
+  ['openrouter', createOpenAiCompatibleProvider({ id: 'openrouter', name: 'OpenRouter', defaultBaseUrl: 'https://openrouter.ai/api/v1', defaultModel: 'openai/gpt-4.1-mini', models: [] })],
+  ['groq', createOpenAiCompatibleProvider({ id: 'groq', name: 'Groq', defaultBaseUrl: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.3-70b-versatile', models: [] })],
+  ['together', createOpenAiCompatibleProvider({ id: 'together', name: 'Together AI', defaultBaseUrl: 'https://api.together.xyz/v1', defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', models: [] })],
+  ['fireworks', createOpenAiCompatibleProvider({ id: 'fireworks', name: 'Fireworks AI', defaultBaseUrl: 'https://api.fireworks.ai/inference/v1', defaultModel: 'accounts/fireworks/models/llama-v3p1-70b-instruct', models: [] })],
+  ['siliconflow', createOpenAiCompatibleProvider({ id: 'siliconflow', name: 'SiliconFlow', defaultBaseUrl: 'https://api.siliconflow.cn/v1', defaultModel: 'Qwen/Qwen2.5-72B-Instruct', models: [] })],
+  ['azure-openai', createOpenAiCompatibleProvider({ id: 'azure-openai', name: 'Azure OpenAI', defaultBaseUrl: 'https://YOUR_RESOURCE.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT', defaultModel: 'YOUR_DEPLOYMENT', models: [] })],
 ]);
 
 const providerOverrides = new Map<AiProviderId, AiProvider>();
@@ -32,6 +41,11 @@ function getResolvedProviderMap(): Map<AiProviderId, AiProvider> {
 
 export function getProvider(id: AiProviderId): AiProvider | null {
   return getResolvedProviderMap().get(id) ?? null;
+}
+
+export function getProfileProvider(profileId: string): AiProvider | null {
+  const profile = useAiProviderProfileStore.getState().profiles.find((candidate) => candidate.id === profileId);
+  return profile ? createProfiledProvider(profile) : null;
 }
 
 export function getAllProviders(): AiProvider[] {

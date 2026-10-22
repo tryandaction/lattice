@@ -162,6 +162,9 @@ async function auditPdfFile(pdfjs, file, options) {
     textLength: 0,
     lowTextPages: 0,
     emptyTextPages: 0,
+    lowTextPageNumbers: [],
+    emptyTextPageNumbers: [],
+    pageTextLengths: [],
     sample: "",
     classification: "unknown",
     durationMs: 0,
@@ -193,11 +196,14 @@ async function auditPdfFile(pdfjs, file, options) {
       result.pagesAudited += 1;
       result.textItems += textItems.length;
       result.textLength += pageTextLength;
+      result.pageTextLengths.push({ pageNumber, textLength: pageTextLength });
       if (pageTextLength === 0) {
         result.emptyTextPages += 1;
+        result.emptyTextPageNumbers.push(pageNumber);
       }
       if (pageTextLength < 80) {
         result.lowTextPages += 1;
+        result.lowTextPageNumbers.push(pageNumber);
       }
       if (!result.sample && pageTextLength > 0) {
         result.sample = truncateSample(pageText);
@@ -275,9 +281,9 @@ async function writeReports(payload) {
     "",
     "## Non-Born-Digital / Error Samples",
     "",
-    "| Class | Pages | Text chars | Size | Path | Error |",
-    "| --- | ---: | ---: | ---: | --- | --- |",
-    ...topProblems.map((result) => `| ${result.classification} | ${result.pageCount} | ${result.textLength} | ${formatBytes(result.sizeBytes)} | ${result.path.replace(/\|/g, "\\|")} | ${(result.error ?? "").replace(/\|/g, "\\|")} |`),
+    "| Class | Pages | Low/empty pages | Text chars | Size | Path | Error |",
+    "| --- | ---: | --- | ---: | ---: | --- | --- |",
+    ...topProblems.map((result) => `| ${result.classification} | ${result.pageCount} | ${(result.lowTextPageNumbers ?? []).join(", ") || "-"}/${(result.emptyTextPageNumbers ?? []).join(", ") || "-"} | ${result.textLength} | ${formatBytes(result.sizeBytes)} | ${result.path.replace(/\|/g, "\\|")} | ${(result.error ?? "").replace(/\|/g, "\\|")} |`),
     "",
     "## Notes",
     "",

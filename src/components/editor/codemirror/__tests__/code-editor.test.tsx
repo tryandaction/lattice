@@ -10,7 +10,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, cleanup, screen, waitFor } from "@testing-library/react";
 import fc from "fast-check";
-import { CodeEditor, CodeEditorLanguage, vscodeStyleKeymap } from "../code-editor";
+import { CodeEditor, CodeEditorLanguage, type CodeEditorRef, vscodeStyleKeymap } from "../code-editor";
+import { flashReferenceRange } from "@/lib/reference-target-flash";
+import { buildCodeMinimapRows } from "../minimap";
+
+const quoteFlashCleanup = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/reference-target-flash", () => ({
+  flashReferenceRange: vi.fn(() => quoteFlashCleanup),
+  flashReferenceTarget: vi.fn(() => quoteFlashCleanup),
+}));
 
 // Mock the dynamic imports for language extensions
 vi.mock("@codemirror/lang-python", () => ({
@@ -38,6 +46,9 @@ vi.mock("@codemirror/language", () => ({
   },
   syntaxHighlighting: () => [],
   bracketMatching: () => [],
+  foldGutter: () => [],
+  foldKeymap: [],
+  indentOnInput: () => [],
 }));
 
 vi.mock("@codemirror/legacy-modes/mode/stex", () => ({
@@ -50,6 +61,14 @@ vi.mock("@codemirror/legacy-modes/mode/clike", () => ({
 }));
 
 describe("CodeEditor Properties", () => {
+  it('restores cursor and selection safely when an external edit shortened the document', async () => {
+    const editorRef = { current: null as CodeEditorRef | null };
+    render(<CodeEditor initialValue="Short." language="plaintext" onChange={vi.fn()} editorRef={editorRef} />);
+    await waitFor(() => expect(editorRef.current?.isReady()).toBe(true));
+    expect(() => editorRef.current?.restoreEditorState({ cursorPosition: 90, scrollTop: 120,
+      selection: { from: 30, to: 90 } })).not.toThrow();
+    expect(editorRef.current?.getEditorState()?.selection).toEqual({ from: 6, to: 6 });
+  });
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -58,7 +77,30 @@ describe("CodeEditor Properties", () => {
     cleanup();
   });
 
+  it("outlines only the requested code substring and cleans old flashes", async () => {
+    const editorRef = { current: null as CodeEditorRef | null };
+    const { unmount } = render(<CodeEditor initialValue="const value = 42;" language="plaintext" onChange={vi.fn()} editorRef={editorRef} />);
+    await waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("const value = 42;"));
+    expect(editorRef.current?.flashRange({ from: 6, to: 11 })).toBe(true);
+    expect(vi.mocked(flashReferenceRange).mock.calls.at(-1)?.[0].toString()).toBe("value");
+    expect(editorRef.current?.flashRange({ from: 14, to: 16 })).toBe(true);
+    expect(quoteFlashCleanup).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(flashReferenceRange).mock.calls.at(-1)?.[0].toString()).toBe("42");
+    expect(editorRef.current?.flashRange({ from: 0, to: 99 })).toBe(false);
+    expect(quoteFlashCleanup).toHaveBeenCalledTimes(2);
+    editorRef.current?.flashRange({ from: 6, to: 11 });
+    unmount();
+    expect(quoteFlashCleanup).toHaveBeenCalledTimes(3);
+  });
+
   describe("VS Code style key bindings", () => {
+    it("does not report a quote revealed when its DOM range has no drawable fragments", async () => {
+      const editorRef = { current: null as CodeEditorRef | null };
+      render(<CodeEditor initialValue="value = 42" language="plaintext" onChange={vi.fn()} editorRef={editorRef} />);
+      await waitFor(() => expect(document.querySelector(".cm-content")?.textContent).toBe("value = 42"));
+      vi.mocked(flashReferenceRange).mockReturnValueOnce(null);
+      expect(editorRef.current?.flashRange({ from: 8, to: 10 })).toBe(false);
+    });
     it("registers common editor shortcut aliases", () => {
       const bindings = new Set(vscodeStyleKeymap.map((binding) => binding.key));
 
@@ -73,6 +115,40 @@ describe("CodeEditor Properties", () => {
       expect(bindings.has("Alt-ArrowDown")).toBe(true);
       expect(bindings.has("Shift-Alt-ArrowUp")).toBe(true);
       expect(bindings.has("Shift-Alt-ArrowDown")).toBe(true);
+    });
+  });
+
+  describe("Code minimap", () => {
+    it("caps sampled rows for large documents while preserving document coverage", () => {
+      const doc = {
+        lines: 1000,
+        line: (lineNumber: number) => ({ text: `line-${lineNumber}` }),
+      };
+
+      const rows = buildCodeMinimapRows(doc);
+
+      expect(rows).toHaveLength(180);
+      expect(rows[0]?.top).toBe(0);
+      expect(rows.at(-1)?.top).toBeGreaterThan(99);
+    });
+
+    it("renders the minimap by default for scrollable code editors and honors opt-out", async () => {
+      const onChange = vi.fn();
+      const { rerender } = render(
+        <CodeEditor initialValue={"one\ntwo\nthree"} language="typescript" onChange={onChange} />,
+      );
+
+      await waitFor(() => {
+        expect(document.querySelector('[data-testid="code-minimap"]')).toBeTruthy();
+      });
+
+      rerender(
+        <CodeEditor initialValue={"one\ntwo\nthree"} language="typescript" onChange={onChange} minimap={false} />,
+      );
+
+      await waitFor(() => {
+        expect(document.querySelector('[data-testid="code-minimap"]')).toBeFalsy();
+      });
     });
   });
 

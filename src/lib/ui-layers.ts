@@ -28,6 +28,8 @@ export const UI_MODAL_OVERLAY_STYLE = {
 export const UI_LAYER = {
   pdfSearchMatchOverlay: 11,
   pdfTransientSelectionOverlay: 12,
+  pdfReferenceCitationHotspot: 13,
+  pdfReferenceTargetOverlay: 14,
   pdfTextAnnotation: 15,
   pdfPinAnnotation: 18,
   pdfStoredAnnotationOverlay: 24,

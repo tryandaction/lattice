@@ -1,10 +1,12 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { Toaster } from "sonner";
 import "./globals.css";
 import { HUDProvider } from "@/components/hud/hud-provider";
 import { ChunkReloadGuard, ServiceWorkerRegister } from "@/components/pwa";
+import { APPEARANCE_BOOTSTRAP_SCRIPT } from "@/lib/appearance/bootstrap";
 
 export const metadata: Metadata = {
   title: "Lattice 格致 - Scientific Workbench",
@@ -34,16 +36,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
       <head>
         <link rel="icon" type="image/png" href="/favicon.png" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
-      <body
-        className={`${GeistSans.variable} ${GeistMono.variable} antialiased`}
-      >
+      <body className="antialiased">
+        <Script
+          id="lattice-appearance-bootstrap"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{ __html: `${APPEARANCE_BOOTSTRAP_SCRIPT}\nperformance.mark('lattice-appearance-applied');` }}
+        />
         <HUDProvider>
           {children}
         </HUDProvider>

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { parseStructuredAiResponse } from '../ai/structured-response';
 
+it('preserves sentence-local citations in a preamble before a later conclusion', () => {
+  const result = parseStructuredAiResponse('Measured field [p.3](citation:citation-example).\n\nIndependent finding.\n\n## Conclusion\nSummary.');
+  expect(result?.sections.map((section) => section.content)).toEqual([
+    'Measured field [p.3](citation:citation-example).\n\nIndependent finding.',
+    'Summary.',
+  ]);
+});
+
 describe('parseStructuredAiResponse', () => {
   it('parses markdown heading sections', () => {
     const parsed = parseStructuredAiResponse([

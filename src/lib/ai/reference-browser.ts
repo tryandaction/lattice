@@ -1,9 +1,15 @@
 import type { MentionSuggestion } from './mention-resolver';
 import type { AiContextNode, EvidenceRef } from './types';
+import {
+  buildCitationContracts,
+  groupCitationContracts,
+  type CitationContract,
+} from './citation-contract';
 
 export type ReferenceBrowserNodeKind =
   | 'group'
   | 'selection'
+  | 'folder'
   | 'file'
   | 'heading'
   | 'code_line'
@@ -23,6 +29,7 @@ export interface ReferenceBrowserNode {
   selectable?: boolean;
   children?: ReferenceBrowserNode[];
   evidenceRef?: EvidenceRef;
+  passageCount?: number;
 }
 
 function locatorPath(locator: string): string {
@@ -33,6 +40,36 @@ function locatorPath(locator: string): string {
 function titleFromPath(path: string): string {
   const parts = path.split('/').filter(Boolean);
   return parts[parts.length - 1] || path;
+}
+
+function compactEvidenceLabel(ref: EvidenceRef): string {
+  const path = locatorPath(ref.locator);
+  const basename = titleFromPath(path);
+  const label = ref.label?.trim();
+  if (!label || label === path || label.startsWith(`${path}#`) || label.startsWith(`${path} `)) {
+    const suffix = label?.slice(path.length).trim();
+    return suffix ? `${basename} ${suffix}` : basename;
+  }
+  return label;
+}
+
+function compactCitationLabel(citation: CitationContract): string {
+  const location = citation.location;
+  const prefix = location.page
+    ? `p.${location.page}`
+    : location.line
+      ? `line ${location.line}`
+      : location.cell
+        ? `cell ${location.cell}`
+        : location.heading
+          ? location.heading
+          : location.annotation
+            ? `annotation ${location.annotation}`
+            : null;
+  if (citation.sourceKind === 'pdf_page' || citation.sourceKind === 'pdf_annotation') {
+    return [prefix, citation.boundedQuote].filter(Boolean).join(' · ') || citation.basename;
+  }
+  return prefix || compactEvidenceLabel(citation.evidenceRef);
 }
 
 function nodeKindFromEvidenceKind(kind: EvidenceRef['kind']): ReferenceBrowserNodeKind {
@@ -57,7 +94,7 @@ export function buildReferenceBrowserNodesFromMentionSuggestions(
 ): ReferenceBrowserNode[] {
   return suggestions.map((item) => ({
     id: item.value,
-    kind: item.type === 'selection' ? 'selection' : item.type === 'file' ? 'file' : item.type,
+    kind: item.type === 'selection' ? 'selection' : item.type,
     label: item.label,
     description: item.description,
     value: item.value,
@@ -68,45 +105,29 @@ export function buildReferenceBrowserNodesFromEvidence(
   evidenceRefs: EvidenceRef[] = [],
   contextNodes: AiContextNode[] = [],
 ): ReferenceBrowserNode[] {
-  const grouped = new Map<string, ReferenceBrowserNode[]>();
-  const seen = new Set<string>();
+  const citations = buildCitationContracts([
+    ...evidenceRefs,
+    ...contextNodes.flatMap((node) => node.evidenceRef ? [node.evidenceRef] : []),
+  ]);
 
-  const pushLeaf = (ref: EvidenceRef) => {
-    const key = `${ref.kind}:${ref.locator}:${ref.label}`;
-    if (seen.has(key)) {
-      return;
-    }
-    seen.add(key);
-    const path = locatorPath(ref.locator);
-    const leaves = grouped.get(path) ?? [];
-    leaves.push({
-      id: key,
-      kind: nodeKindFromEvidenceKind(ref.kind),
-      label: ref.label,
-      description: ref.locator,
-      locator: ref.locator,
-      preview: ref.preview,
-      evidenceRef: ref,
-      selectable: true,
-    });
-    grouped.set(path, leaves);
-  };
-
-  evidenceRefs.forEach(pushLeaf);
-  contextNodes.forEach((node) => {
-    if (node.evidenceRef) {
-      pushLeaf(node.evidenceRef);
-    }
-  });
-
-  return Array.from(grouped.entries())
-    .map(([path, children]) => ({
-      id: `group:${path}`,
+  return groupCitationContracts(citations)
+    .map((group) => ({
+      id: group.sourceGroupId,
       kind: 'group' as const,
-      label: titleFromPath(path),
-      description: path,
-      locator: path,
-      children: children.sort((left, right) => left.label.localeCompare(right.label)),
+      label: group.displayTitle,
+      description: group.canonicalPath,
+      locator: group.canonicalPath,
+      passageCount: group.passageCount,
+      children: group.passages.map((citation) => ({
+        id: citation.stableId,
+        kind: nodeKindFromEvidenceKind(citation.sourceKind),
+        label: compactCitationLabel(citation),
+        description: citation.evidenceRef.locator,
+        locator: citation.evidenceRef.locator,
+        preview: citation.preview,
+        evidenceRef: citation.evidenceRef,
+        selectable: true,
+      })),
     }))
     .sort((left, right) => (left.locator ?? '').localeCompare(right.locator ?? ''));
 }

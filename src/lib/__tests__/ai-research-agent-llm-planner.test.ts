@@ -7,6 +7,36 @@ import {
 } from '../ai/research-agent-llm-planner';
 
 describe('research-agent-llm-planner', () => {
+  it('distinguishes priority documents from the wider authorized workspace', () => {
+    const prompt = buildResearchAgentPlannerPrompt({ task: 'Compare calibration notes', query: 'Compare the experiment with the calibration note',
+      filePath: 'paper.pdf', sourceSelections: [{ kind: 'file', path: 'paper.pdf' }], authorizedSourceSelections: [{ kind: 'folder', path: '.' }],
+      latticeSourcePdfToolsAvailable: true });
+    expect(prompt).toContain('Priority document targets: [{"kind":"file","path":"paper.pdf"}]');
+    expect(prompt).toContain('Actual authorized tool scope: [{"kind":"folder","path":"."}]');
+    expect(prompt).not.toContain('Authorized source selections:');
+    expect(prompt).toContain('source-language keywords');
+    expect(prompt).toContain('nextCursor');
+  });
+
+  it('includes bounded conversation intent and neutralizes historical citations before planning', () => {
+    const history = [{ role: 'user' as const, content: 'Read paper.pdf and explain BB1.' },
+      { role: 'assistant' as const, content: 'Next search the BB1 definition. [p.12](citation:old?quote=Prior%20claim)' }];
+    const prompt = buildResearchAgentPlannerPrompt({ task: 'Explain the mechanism further', query: 'Why does that cancel amplitude error?', history });
+    expect(prompt).toContain('Read paper.pdf and explain BB1.');
+    expect(prompt).toContain('Next search the BB1 definition.');
+    expect(prompt).toContain('历史引文未重新核验');
+    expect(prompt).not.toContain('citation:old');
+    expect(prompt).toContain('not source evidence or tool approval');
+    expect(history[1].content).toContain('citation:old');
+    const bounded = buildResearchAgentPlannerPrompt({ task: 'Follow up', query: 'Explain', history: [{ role: 'assistant', content: 'x'.repeat(20000) }] });
+    expect(bounded).not.toContain('x'.repeat(5000));
+  });
+  it('retains content-free diagnostics when an empty model response falls back to a plan', async () => {
+    const responseDiagnostics = { protocol: 'anthropic-messages' as const, mode: 'response' as const, blockTypes: ['thinking'], visibleCharacters: 0, stopReason: 'max_tokens' };
+    const result = await runResearchAgentPlanner({ task: 'Read a source', query: 'Explain', generatePlan: async () => ({ text: '', finishReason: 'length', responseDiagnostics }) });
+    expect(result.plan.source).toBe('fallback');
+    expect(result.responseDiagnostics).toEqual(responseDiagnostics);
+  });
   it('builds a constrained JSON-only planner prompt with supported tools and task context', () => {
     const prompt = buildResearchAgentPlannerPrompt({
       task: 'Compare source notes',
@@ -24,6 +54,9 @@ describe('research-agent-llm-planner', () => {
     });
 
     expect(prompt).toContain('Return only JSON');
+    const schema = JSON.parse(prompt.slice(prompt.indexOf('Schema:\n') + 'Schema:\n'.length, prompt.indexOf('\n\nRequired step ids:')));
+    expect(schema.steps[0].toolArgs).toEqual({});
+    expect(prompt).toContain('never serialize toolArgs as a JSON string');
     expect(prompt).toContain('Required step ids: context-pack, evidence-resolve, synthesize-answer');
     expect(prompt).toContain('Supported tool names: workspace.search');
     expect(prompt).toContain('Allowed toolArgs: workspace.search {query, limit}');

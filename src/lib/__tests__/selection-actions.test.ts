@@ -28,7 +28,7 @@ vi.mock('../ai/research-agent-chat-runner', () => ({
   runResearchAgentForSurface: runResearchAgentForSurfaceMock,
 }));
 
-import { runSelectionAiMode } from '../ai/selection-actions';
+import { inferSelectionResearchWorkflow, runSelectionAiMode } from '../ai/selection-actions';
 import { createSelectionContext, defaultPromptForSelectionMode } from '../ai/selection-context';
 import { useAiChatStore } from '@/stores/ai-chat-store';
 import { useAiWorkbenchStore } from '@/stores/ai-workbench-store';
@@ -57,6 +57,10 @@ function buildContext() {
 }
 
 describe('runSelectionAiMode', () => {
+  it('routes an explicit PDF highlight request to annotation proposals instead of generic markdown research', () => {
+    const context = createSelectionContext({ sourceKind: 'pdf', paneId: 'pane-main', fileName: 'paper.pdf', filePath: 'papers/paper.pdf', selectedText: 'The measured field is 58 G.' });
+    expect(inferSelectionResearchWorkflow(context, '请高亮这段关键内容')).toBe('pdf-annotation');
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
@@ -203,7 +207,7 @@ describe('runSelectionAiMode', () => {
     expect(runResearchAgentForSurfaceMock).toHaveBeenCalledWith(expect.objectContaining({
       workflowId: 'markdown-research',
       task: defaultPromptForSelectionMode('agent', context),
-      query: expect.stringContaining('Act as a research agent. Be evidence-first'),
+      query: defaultPromptForSelectionMode('agent', context),
       filePath: 'notes/notes.md',
       content: 'Local context block',
       selection: 'A highlighted research paragraph',

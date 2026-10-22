@@ -7,6 +7,7 @@ export type AgentSafetyProfile =
 export type AgentPermissionLevel = 'auto' | 'ask' | 'deny';
 
 export type AgentToolCapability =
+  | 'prepare_pdf_child'
   | 'read_workspace'
   | 'search_workspace'
   | 'resolve_evidence'
@@ -43,6 +44,7 @@ export interface AgentCapabilityDecision {
 }
 
 const CAPABILITIES: AgentToolCapability[] = [
+  'prepare_pdf_child',
   'read_workspace',
   'search_workspace',
   'resolve_evidence',
@@ -109,11 +111,13 @@ export function buildAgentCapabilityPolicy(profile: AgentSafetyProfile): AgentCa
           resolve_evidence: 'auto',
           lattice_read_identity: 'auto',
           create_draft: 'ask',
+          prepare_pdf_child: 'auto',
           propose_write: 'ask',
           lattice_create_note: 'ask',
           lattice_create_notebook: 'ask',
           lattice_update_note: 'ask',
           run_code: 'ask',
+          schedule_task: 'ask',
           memory_read: 'auto',
           memory_write: 'ask',
         },
@@ -133,6 +137,7 @@ export function buildAgentCapabilityPolicy(profile: AgentSafetyProfile): AgentCa
           resolve_evidence: 'auto',
           lattice_read_identity: 'auto',
           create_draft: 'auto',
+          prepare_pdf_child: 'auto',
           propose_write: 'auto',
           write_workspace: 'ask',
           lattice_create_note: 'ask',

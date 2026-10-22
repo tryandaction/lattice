@@ -27,8 +27,183 @@ import { useAiWorkbenchStore } from '@/stores/ai-workbench-store';
 import { useAgentMemoryStore } from '@/stores/agent-memory-store';
 import { useAgentSessionStore } from '@/stores/agent-session-store';
 import { getWorkspaceIndex } from '../ai/workspace-indexer';
+import { buildCitationContracts } from '../ai/citation-contract';
+import { estimateTokens } from '../ai/token-estimator';
+import { createAgentMemoryEntry } from '../ai/agent-memory';
 
 describe('research-agent', () => {
+  it('records planner response diagnostics even when the model returned no plan text', async () => {
+    const result = await runResearchAgent({ task: 'Explain supplied text', content: 'Synthetic text supplied directly by the user.', compact: false, suggestMemory: false,
+      generatePlan: async () => ({ text: '', finishReason: 'length', responseDiagnostics: { protocol: 'anthropic-messages', mode: 'response', blockTypes: ['thinking'], visibleCharacters: 0, stopReason: 'max_tokens' } }),
+      generateAnswer: async () => ({ text: 'Synthetic text explanation.', finishReason: 'stop' }) });
+    expect(result.session.trace).toContainEqual(expect.objectContaining({ metadata: expect.objectContaining({ responseProtocol: 'anthropic-messages', responseBlockTypes: 'thinking', responseVisibleCharacters: 0, responseStopReason: 'max_tokens' }) }));
+  });
+  it('keeps empty-output recovery within the configured ceiling and records content-free diagnostics', async () => {
+    const budgets: number[] = [];
+    const diagnostics = { protocol: 'anthropic-messages' as const, mode: 'response' as const, blockTypes: ['thinking'],
+      visibleCharacters: 0, stopReason: 'max_tokens', finishReason: 'length' as const,
+      usage: { promptTokens: 600, completionTokens: 1000, totalTokens: 1600, reasoningTokens: 1000 } };
+    const result = await runResearchAgent({ task: 'Explain supplied evidence', content: 'Source evidence',
+      answerMaxTokens: 500, answerRecoveryMaxTokens: 1200, suggestMemory: false, compact: false,
+      generateAnswer: async (_messages, options) => {
+        budgets.push(options.maxTokens!);
+        return budgets.length === 1 ? { text: '', finishReason: 'length', responseDiagnostics: diagnostics }
+          : { text: 'A complete supported explanation.', finishReason: 'stop' };
+      } });
+    expect(budgets).toEqual([500, 1200]);
+    expect(result.session.trace).toContainEqual(expect.objectContaining({ metadata: expect.objectContaining({
+      stage: 'synthesis.response', responseProtocol: 'anthropic-messages', responseBlockTypes: 'thinking', responseVisibleCharacters: 0,
+      responseStopReason: 'max_tokens', responseReasoningTokens: 1000,
+    }) }));
+  });
+
+  it('retains empty-response diagnostics when no visible answer can be recovered', async () => {
+    await expect(runResearchAgent({ sessionId: 'empty-response-diagnostics', task: 'Explain', content: 'Source evidence',
+      suggestMemory: false, compact: false, generateAnswer: async () => ({ text: '', finishReason: 'stop',
+        responseDiagnostics: { protocol: 'anthropic-messages', mode: 'response', blockTypes: ['thinking'], visibleCharacters: 0, stopReason: 'end_turn' },
+      }) })).rejects.toThrow('未返回可见回答');
+    const session = useAgentSessionStore.getState().getSession('empty-response-diagnostics');
+    expect(session?.status).toBe('failed');
+    expect(session?.trace.filter(event => event.metadata?.stage === 'synthesis.response')).toHaveLength(2);
+  });
+  it('retains the first synthesis segment and appends its continuation before declaring the task complete', async () => {
+    const generateAnswer = vi.fn().mockResolvedValueOnce({ text: 'Incomplete explanation', finishReason: 'length' }).mockResolvedValueOnce({ text: 'A complete supported explanation.', finishReason: 'stop' });
+    const result = await runResearchAgent({ task: 'Analyze', content: 'Original evidence', generateAnswer, suggestMemory: false, compact: false });
+    expect(generateAnswer).toHaveBeenCalledTimes(2);
+    expect(result.answer).toContain('Incomplete explanation');
+    expect(result.answer).toContain('A complete supported explanation.');
+    expect(result.answer.indexOf('Incomplete explanation')).toBeLessThan(result.answer.indexOf('A complete supported explanation.'));
+    expect(generateAnswer.mock.calls[1][0]).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'assistant', content: 'Incomplete explanation' })]));
+  });
+  it('repairs unbound final citations and supplies the rejected answer to the repair turn', async () => {
+    const invalid = 'Unsupported citation [p.3](citation:invented).';
+    const generateAnswer = vi.fn().mockResolvedValueOnce({ text: invalid }).mockResolvedValueOnce({ text: '当前材料不足以核实该论点，缺少第三页对应原文。' });
+    const result = await runResearchAgent({ task: 'Analyze', content: 'Original evidence', generateAnswer, suggestMemory: false, compact: false });
+    expect(generateAnswer).toHaveBeenCalledTimes(2);
+    expect(generateAnswer.mock.calls[1][0]).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'assistant', content: invalid })]));
+    expect(result.answer).toContain('不足以核实');
+  });
+
+  it('does not complete an agent answer whose citations remain invalid after repair', async () => {
+    const generateAnswer = vi.fn().mockResolvedValue({ text: '[p.3](citation:invented)' });
+    await expect(runResearchAgent({ task: 'Analyze', content: 'Original evidence', generateAnswer, suggestMemory: false, compact: false })).rejects.toThrow('引文校验未通过');
+    expect(generateAnswer).toHaveBeenCalledTimes(2);
+  });
+  it('rejects a final repair that removes the broken citation without correcting its claim', async () => {
+    const generateAnswer = vi.fn().mockResolvedValueOnce({ text: 'The measured value is 58 G [p.3](citation:invented).' }).mockResolvedValueOnce({ text: 'The measured value is 58 G.' });
+    await expect(runResearchAgent({ task: 'Analyze', content: 'Original evidence', generateAnswer, suggestMemory: false, compact: false })).rejects.toThrow('仅删除');
+  });
+
+  it('budgets the complete final synthesis messages including citation menus for a long Chinese paper', async () => {
+    const pages = Array.from({ length: 40 }, (_, index) => `第${index + 1}页的唯一实验结果：${'测量误差经过独立校准后保持稳定。'.repeat(23)}`);
+    const source = { path: '中文论文.pdf', kind: 'pdf' as const, version: 'hash', unitLabel: 'page' as const, totalUnits: pages.length,
+      readUnit: vi.fn(async (unit: number) => ({ text: pages[unit - 1], status: 'text' as const })), close: vi.fn(async () => {}) };
+    let synthesisTokens = 0;
+    const generateAnswer = vi.fn(async (messages: AiMessage[]) => {
+      if (getMessageText(messages[0].content).startsWith('Read the supplied document fragments')) {
+        const batch = JSON.parse(getMessageText(messages[1].content));
+        return { text: JSON.stringify({ summary: '本批实验结果均经过独立校准。'.repeat(50), findings: batch.units.flatMap((unit: { id: string; passages: Array<{ passageId?: string; text: string }> }) => {
+          const passage = unit.passages.find(item => item.passageId && item.text.includes('唯一实验结果'));
+          return passage ? [{ sourceId: unit.id, passageId: passage.passageId, reason: '用于核对校准后的实验结果。'.repeat(45), importance: 2 }] : [];
+        }) }) };
+      }
+      synthesisTokens = estimateTokens(messages.map(message => getMessageText(message.content)).join('\n'));
+      return { text: '全文已逐批分析；结论由经过核验的原文支持。' };
+    });
+    const result = await runResearchAgent({ task: '阅读全文', query: '阅读全文', documentSources: [source], requireAnswer: true, generateAnswer, suggestMemory: false, compact: false });
+    expect(result.documentReading?.complete).toBe(true);
+    expect(result.documentReading?.findings).toHaveLength(40);
+    expect(synthesisTokens).toBeGreaterThan(0);
+    expect(synthesisTokens).toBeLessThanOrEqual(12000 - 450);
+    expect(result.promptContext.evidenceRefs.some(ref => ref.anchor?.page === 40)).toBe(true);
+  });
+  it('persists document progress and continues the same session without re-reading completed pages', async () => {
+    const pages = Array.from({ length: 27 }, (_, index) => `Important result on page ${index + 1}. ` + 'Supporting data. '.repeat(140));
+    const makeSource = () => ({ path: 'paper.pdf', kind: 'pdf' as const, version: 'content-hash', unitLabel: 'page' as const, totalUnits: pages.length,
+      readUnit: vi.fn(async (unit: number) => ({ text: pages[unit - 1], status: 'text' as const })), close: vi.fn(async () => {}) });
+    const generateAnswer = vi.fn(async (messages: AiMessage[]) => {
+      if (getMessageText(messages[0].content).startsWith('Read the supplied document fragments')) {
+        const batch = JSON.parse(getMessageText(messages[1].content));
+        return { text: JSON.stringify({ summary: 'Measured source results.', findings: batch.units.flatMap((unit: { id: string; passages: Array<{ passageId?: string; text: string }> }) => {
+          const passage = unit.passages.find(item => item.passageId && /Important result on page \d+\./.test(item.text));
+          return passage ? [{ sourceId: unit.id, passageId: passage.passageId, reason: 'Relevant experimental result' }] : [];
+        }) }) };
+      }
+      return { text: 'The full document was analyzed; its final page reports an important result.' };
+    });
+    const first = await runResearchAgent({ sessionId: 'read-doc', task: 'Read all', query: 'Read all', documentSources: [makeSource()], documentMaxCalls: 1, requireAnswer: true, generateAnswer, suggestMemory: false, compact: false });
+    expect(first.documentReading?.resumable).toBe(true);
+    expect(first.session.status).not.toBe('completed');
+    expect(storage.set).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ sessions: expect.arrayContaining([expect.objectContaining({ documentResearch: expect.any(Object) })]) }));
+    const completed = first.documentReading!.coverage[0].readUnits;
+    expect(completed.length).toBeGreaterThan(0);
+    useAgentSessionStore.getState().resumeDocumentSession(first.sessionId);
+    const source = makeSource();
+    const result = await runResearchAgent({ sessionId: first.sessionId, task: 'Read all', query: 'Read all', documentSources: [source], requireAnswer: true, generateAnswer, suggestMemory: false, compact: false });
+    expect(result.sessionId).toBe(first.sessionId);
+    expect(result.documentReading?.complete).toBe(true);
+    expect(result.documentReading?.coverage[0].readUnits).toHaveLength(27);
+    for (const page of completed) expect(source.readUnit.mock.calls.some(([unit]) => unit === page)).toBe(false);
+    expect(result.promptContext.evidenceRefs.some(ref => ref.anchor?.page === 27)).toBe(true);
+    expect(result.session.status).toBe('completed');
+  });
+
+  it('continues all 22 pages after mixed evidence failures and passes explicit gaps into synthesis', async () => {
+    const pages = Array.from({ length: 22 }, (_, index) => `Page ${index + 1} uniquely reports Ω = ${index + 1} and measured pulse fidelity for this experiment.`);
+    const source = { path: 'paper.pdf', kind: 'pdf' as const, version: 'mixed-content-hash', unitLabel: 'page' as const, totalUnits: pages.length,
+      readUnit: vi.fn(async (unit: number) => ({ text: pages[unit - 1], status: 'text' as const })), close: vi.fn(async () => {}) };
+    let synthesisPrompt = '';
+    const result = await runResearchAgent({ sessionId: 'mixed-evidence', task: '全文阅读并标记证据缺口', query: 'read all', documentSources: [source], requireAnswer: true, suggestMemory: false, compact: false, generateAnswer: async (messages: AiMessage[]) => {
+      if (getMessageText(messages[0].content).startsWith('Read the supplied document fragments')) {
+        const batch = JSON.parse(getMessageText(messages[1].content));
+        const verified = batch.units.slice(0, 7).flatMap((unit: { id: string; passages: Array<{ passageId?: string }> }) => {
+          const passage = unit.passages.find(item => item.passageId);
+          return passage ? [{ sourceId: unit.id, passageId: passage.passageId, reason: 'Direct experimental evidence.' }] : [];
+        });
+        return { text: JSON.stringify({ summary: 'Unverified summary that must not reach synthesis.', findings: [...verified, { sourceId: 'invented', quote: 'No source supports this invented sentence.', reason: 'Unsupported.' }] }) };
+      }
+      synthesisPrompt = messages.map(message => getMessageText(message.content)).join('\n');
+      return { text: '已阅读全文22页，但部分证据未通过原文校验并已排除；保留的原文可支持后续分析。' };
+    } });
+    expect(result.documentReading?.coverage[0].readUnits).toEqual(Array.from({ length: 22 }, (_, index) => index + 1));
+    expect(result.documentReading?.findings.some(finding => finding.unit === 22)).toBe(true);
+    expect(result.documentReading?.findings.every(finding => pages.includes(finding.quote))).toBe(true);
+    expect(result.documentReading?.complete).toBe(true);
+    expect(result.documentReading?.evidenceComplete).toBe(false);
+    expect(result.documentReading!.evidenceIssues.length).toBeGreaterThan(0);
+    expect(result.session.documentResearch?.checkpoint.evidenceIssues).toEqual(result.documentReading?.evidenceIssues);
+    expect(synthesisPrompt).toContain('Evidence gaps:');
+    expect(synthesisPrompt).not.toContain('Unverified summary that must not reach synthesis.');
+    expect(synthesisPrompt).not.toContain('No source supports this invented sentence.');
+    expect(result.answer).toContain('未通过原文校验');
+    expect(result.session.status).toBe('completed');
+  });
+
+  it('does not synthesize a successful answer when every document finding fails verification', async () => {
+    const source = { path: 'paper.pdf', kind: 'pdf' as const, version: 'invalid-content-hash', unitLabel: 'page' as const, totalUnits: 22,
+      readUnit: async (unit: number) => ({ text: `Page ${unit} contains a unique experimental observation.`, status: 'text' as const }), close: vi.fn(async () => {}) };
+    let synthesisCalls = 0;
+    await expect(runResearchAgent({ sessionId: 'invalid-evidence', task: 'read all', query: 'read all', documentSources: [source], requireAnswer: true, suggestMemory: false, compact: false, generateAnswer: async (messages: AiMessage[]) => {
+      if (getMessageText(messages[0].content).startsWith('Read the supplied document fragments')) return { text: JSON.stringify({ summary: 'Fabricated summary.', findings: [{ sourceId: 'invented', quote: 'Entirely invented evidence.', reason: 'Unsupported.' }] }) };
+      synthesisCalls++;
+      return { text: 'This must not be generated.' };
+    } })).rejects.toThrow(/validation failed/i);
+    const session = useAgentSessionStore.getState().getSession('invalid-evidence');
+    expect(synthesisCalls).toBe(0);
+    expect(session?.status).toBe('failed');
+    expect(session?.documentResearch?.checkpoint.coverage[0].readUnits).toEqual([]);
+    expect(session?.documentResearch?.checkpoint.findings).toEqual([]);
+  });
+
+  it('repairs an invalid final response once before accepting the output', async () => {
+    const generateAnswer = vi.fn().mockResolvedValueOnce({ text: 'invalid' }).mockResolvedValueOnce({ text: 'Valid supported answer.' });
+    const result = await runResearchAgent({ task: 'Analyze', content: 'Original evidence', generateAnswer,
+      validateAnswer: answer => { if (answer === 'invalid') throw new Error('Missing required result format'); }, suggestMemory: false, compact: false });
+    expect(result.answer).toBe('Valid supported answer.');
+    expect(generateAnswer).toHaveBeenCalledTimes(2);
+    expect(result.session.trace.some(event => event.metadata?.stage === 'synthesis.repair')).toBe(true);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     useAgentSessionStore.setState({
@@ -102,8 +277,9 @@ describe('research-agent', () => {
       expect.arrayContaining(['selection', 'active_file', 'memory', 'workspace_chunk']),
     );
     expect(result.promptContext.evidenceRefs.map((ref) => ref.locator)).toContain('notes/alpha.md');
-    expect(result.answer).toContain('Task: Compare Alpha evidence');
-    expect(result.answer).toContain('Evidence:');
+    expect(result.answer).toContain('尚未生成答复');
+    expect(result.answer).not.toContain('Task:');
+    expect(result.answer).not.toContain('The result improves');
     expect(result.planSteps).toEqual([
       expect.objectContaining({ id: 'context-pack', status: 'completed' }),
       expect.objectContaining({
@@ -161,6 +337,243 @@ describe('research-agent', () => {
       recoveryHintsPreview: expect.any(String),
     });
     expect(result.contextPack.omittedSummary.recoveryHints.length).toBeLessThanOrEqual(5);
+  });
+
+  it('continues an ordinary research answer when memory retrieval is unavailable', async () => {
+    const queryMemories = vi.spyOn(useAgentMemoryStore.getState(), 'queryMemories').mockImplementation(() => {
+      throw new Error('memory storage unavailable');
+    });
+
+    const result = await runResearchAgent({
+      sessionId: 'research-memory-fallback',
+      task: 'Answer without memory',
+      filePath: 'notes/fallback.md',
+      content: 'Evidence remains available without memory.',
+      query: 'What remains available?',
+      compact: false,
+      generateAnswer: async () => ({ text: 'Answer generated without memory.' }),
+    });
+
+    expect(result.answer).toContain('without memory');
+    expect(result.memorySnapshotIds).toEqual([]);
+    expect(result.planWarnings.join(' ')).toContain('memory');
+    queryMemories.mockRestore();
+  });
+
+  it('loads persisted memory before querying it without requiring the memory panel', async () => {
+    const saved = createAgentMemoryEntry({ id: 'persisted-style', scope: 'user', title: 'Explanation style', content: 'Explain with a short derivation.', source: { label: 'User preference' }, now: Date.now() });
+    useAgentMemoryStore.setState({ entries: [], loaded: false, persistenceError: null });
+    storage.get.mockResolvedValueOnce({ entries: [saved] });
+    const result = await runResearchAgent({ task: 'Explain a concept', content: 'Supplied evidence.', compact: false, suggestMemory: false });
+    expect(result.memorySnapshotIds).toContain('persisted-style');
+  });
+
+  it('does not consume in-memory context after persisted memory loading fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const saved = createAgentMemoryEntry({ id: 'unverified-memory', scope: 'user', title: 'Unavailable prior context', content: 'Do not consume this after loading fails.', source: { label: 'Saved context' }, now: Date.now() });
+    useAgentMemoryStore.setState({ entries: [saved], loaded: false, persistenceError: null });
+    storage.get.mockRejectedValueOnce(new Error('Synthetic memory load failure'));
+    const result = await runResearchAgent({ task: 'Explain a concept', content: 'Supplied evidence.', compact: false, suggestMemory: false });
+    expect(result.memorySnapshotIds).toEqual([]);
+    expect(result.planWarnings.join(' ')).toContain('memory');
+    consoleError.mockRestore();
+  });
+
+  it('uses the injected answer generator for a direct answer instead of returning the audit context dump', async () => {
+    const result = await runResearchAgent({
+      sessionId: 'research-session-direct-answer',
+      now: 301,
+      task: 'Explain Alpha',
+      query: 'What does Alpha improve?',
+      content: '# Alpha\nThe result improves evidence grounding and reproducibility.',
+      selection: 'The result improves evidence grounding.',
+      generateAnswer: async () => ({
+        text: 'Conclusion: Alpha improves evidence grounding and reproducibility.\n\nExample: compare the cited result with the original note.',
+      }),
+      compact: false,
+    });
+
+    expect(result.answer).toContain('Alpha improves evidence grounding and reproducibility.');
+    expect(result.answer).not.toContain('Context pack:');
+    expect(result.answer).not.toContain('Memory snapshot:');
+  });
+
+  it('keeps multi-page context but requires targeted passage citations in the answer', async () => {
+    const generateAnswer = vi.fn(async (_messages: AiMessage[]) => ({ text: 'Evidence-backed answer.' }));
+    const result = await runResearchAgent({
+      sessionId: 'research-inline-citations', task: 'Compare measurements', query: 'measurement',
+      filePath: 'measurements.pdf',
+      content: Array.from({ length: 8 }, (_, index) => `--- Page ${index + 1} ---\nMeasurement ${index + 1}: verified result.`).join('\n'),
+      compact: false, generateAnswer,
+    });
+    const contracts = buildCitationContracts(result.promptContext.evidenceRefs);
+    expect(contracts.length).toBeGreaterThan(6);
+    const messages = generateAnswer.mock.calls[0][0];
+    expect(getMessageText(messages[0].content)).toContain('immediately after');
+    expect(getMessageText(messages[0].content)).toContain('Do not list all available sources or context pages');
+    expect(getMessageText(messages[0].content)).toContain('A PDF page without a passage anchor is context, not a precise citation');
+    const sourceTable = getMessageText(messages[1].content);
+    for (const contract of contracts) {
+      expect(sourceTable).toContain(`citation:${contract.stableId}?quote=URL_ENCODED_EXACT_QUOTE`);
+      expect(sourceTable).not.toContain(`(citation:${contract.stableId})`);
+    }
+  });
+
+  it('fails synthesis without exposing context or creating artifacts when the provider fails', async () => {
+    await expect(runResearchAgent({
+      sessionId: 'research-session-answer-fallback',
+      now: 302,
+      task: 'Explain Alpha',
+      query: 'What does Alpha improve?',
+      content: '# Alpha\nThe result improves evidence grounding and reproducibility.',
+      selection: 'The result improves evidence grounding.',
+      generateAnswer: async () => {
+        throw new Error('answer provider unavailable');
+      },
+      compact: false,
+      suggestMemory: true,
+    })).rejects.toThrow('answer provider unavailable');
+
+    const session = useAgentSessionStore.getState().getSession('research-session-answer-fallback')!;
+    expect(session.status).toBe('failed');
+    expect(session.trace).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'research-session-answer-fallback:synthesis-failed',
+        kind: 'planning',
+        metadata: expect.objectContaining({
+          errorCategory: 'provider',
+          errorStage: 'synthesis.answer',
+        }),
+      }),
+    ]));
+    expect(session.trace.some((event) => event.id === 'research-session-answer-fallback:synthesis')).toBe(false);
+    expect(useAgentMemoryStore.getState().entries).toHaveLength(0);
+    expect(useAiWorkbenchStore.getState().drafts).toHaveLength(0);
+  });
+
+  it('rejects empty synthesis and records failure instead of a successful fallback', async () => {
+    await expect(runResearchAgent({
+      sessionId: 'research-empty-answer', task: 'Explain the result', content: 'PRIVATE SOURCE CONTEXT',
+      generateAnswer: async () => ({ text: '   ' }), compact: false,
+    })).rejects.toMatchObject({ reason: 'no_progress' });
+    expect(useAgentSessionStore.getState().getSession('research-empty-answer')?.status).toBe('failed');
+  });
+
+  it('validates generated workflow output before completing synthesis or executing approved artifacts', async () => {
+    const validateAnswer = vi.fn(() => { throw new Error('No verified annotation quotes'); });
+    await expect(runResearchAgent({
+      sessionId: 'research-invalid-artifact', task: 'Highlight the key findings',
+      filePath: 'paper.pdf', content: '--- Page 4 ---\nVerified experimental finding.',
+      requireAnswer: true, compact: false, suggestMemory: true,
+      generateAnswer: async () => ({ text: '{"annotations":[]}' }), validateAnswer,
+      artifacts: { approvedByUser: true, draft: { type: 'paper_note', title: 'Invalid annotation', content: 'Must not be written', sourceRefs: [] } },
+    })).rejects.toThrow('No verified annotation quotes');
+    expect(validateAnswer).toHaveBeenCalledWith('{"annotations":[]}', expect.objectContaining({ prompt: expect.stringContaining('Verified experimental finding.') }));
+    const session = useAgentSessionStore.getState().getSession('research-invalid-artifact')!;
+    expect(session.status).toBe('failed');
+    expect(session.trace.some((event) => event.metadata?.planStepId === 'synthesize-answer' && event.metadata?.planStepStatus === 'completed')).toBe(false);
+    expect(session.trace.some((event) => event.tool?.toolName === 'workbench.createDraft')).toBe(false);
+    expect(useAiWorkbenchStore.getState().drafts).toHaveLength(0);
+    expect(useAgentMemoryStore.getState().entries).toHaveLength(0);
+  });
+
+  it('does not invent a selection from the beginning of a whole document', async () => {
+    const generateAnswer = vi.fn(async () => ({ text: 'The result is supported.' }));
+    const result = await runResearchAgent({
+      task: 'Read this paper', filePath: 'paper.pdf',
+      content: '[PDF context coverage]\n--- Page 3 ---\nThe result is supported.',
+      generateAnswer, compact: false,
+    });
+    expect(result.promptContext.nodes.some((node) => node.kind === 'selection')).toBe(false);
+  });
+
+  it('requires a model on production calls and never returns collected source text', async () => {
+    await expect(runResearchAgent({
+      sessionId: 'research-required-answer', task: 'Read the paper', content: 'PRIVATE SOURCE CONTEXT',
+      requireAnswer: true, compact: false,
+    })).rejects.toThrow('generation is unavailable');
+    expect(useAgentSessionStore.getState().getSession('research-required-answer')?.status).toBe('failed');
+  });
+
+  it('rejects an internal prompt echo as a failed answer', async () => {
+    await expect(runResearchAgent({
+      sessionId: 'research-echo-answer', task: 'Read the paper', content: 'PRIVATE SOURCE CONTEXT',
+      generateAnswer: async () => ({ text: 'Task: Read the paper\nQuestion: Read the paper\nPRIVATE SOURCE CONTEXT' }),
+      compact: false,
+    })).rejects.toThrow('internal context');
+    expect(useAgentSessionStore.getState().getSession('research-echo-answer')?.status).toBe('failed');
+  });
+
+  it('never restores an audit preview as the source or answer for a production run', async () => {
+    const store = useAgentSessionStore.getState();
+    const sessionId = 'research-production-preview';
+    store.createSession({ id: sessionId, profile: 'research', task: 'Explain the result' });
+    store.appendTrace(sessionId, {
+      id: `${sessionId}:old-evidence`, kind: 'planning', timestamp: 1, message: 'Old evidence',
+      metadata: { planStepId: 'evidence-resolve', planStepStatus: 'completed', toolName: 'evidence.resolve', resolvedPromptPreview: 'OLD AUDIT PREVIEW' },
+    });
+    store.appendTrace(sessionId, {
+      id: `${sessionId}:synthesis`, kind: 'planning', timestamp: 2, message: 'Old synthesis',
+      metadata: { answerPreview: 'Task: Old prompt dump', answerLength: 5000 },
+    });
+    const generateAnswer = vi.fn(async (_messages: AiMessage[]) => ({ text: 'The new measurement is 60 G.' }));
+    const result = await runResearchAgent({
+      sessionId, filePath: 'paper.pdf', task: 'Explain the new measurement',
+      content: '--- Page 4 ---\nThe new measurement is 60 G.',
+      requireAnswer: true, generateAnswer, compact: false,
+    });
+    expect(generateAnswer).toHaveBeenCalledOnce();
+    expect(result.answer).toBe('The new measurement is 60 G.');
+    expect(getMessageText(generateAnswer.mock.calls[0][0][1].content)).toContain('The new measurement is 60 G.');
+    expect(result.promptContext.prompt).not.toContain('OLD AUDIT PREVIEW');
+    expect(result.answer).not.toContain('Restored synthesis preview');
+  });
+
+  it('passes workflow output requirements to synthesis without leaking them as a result', async () => {
+    const generateAnswer = vi.fn(async (_messages: AiMessage[]) => ({ text: 'A concise reading note.' }));
+    const result = await runResearchAgent({
+      task: 'Read this paper', content: 'Real evidence.',
+      answerInstructions: 'Write the note in Chinese with Methods and Open questions sections.',
+      generateAnswer, compact: false,
+    });
+    expect(getMessageText(generateAnswer.mock.calls[0][0][0].content)).toContain('Write the note in Chinese');
+    expect(result.answer).toBe('A concise reading note.');
+  });
+
+  it('supplies referenced PDF pages and Markdown passages to the actual answer prompt', async () => {
+    const generateAnswer = vi.fn(async (_messages: AiMessage[]) => ({ text: 'Both sources agree.' }));
+    const result = await runResearchAgent({
+      task: 'Compare the sources', query: 'Compare measurement', filePath: 'active.pdf',
+      content: '--- Page 12 ---\nThe active measurement is 58 G.',
+      references: [
+        { path: 'second.pdf', content: '--- Page 4 ---\nThe second measurement is 60 G.' },
+        { path: 'notes/comparison.md', content: '# Comparison\nThe difference is 2 G.' },
+      ],
+      generateAnswer, requireAnswer: true, compact: false,
+    });
+    const prompt = getMessageText(generateAnswer.mock.calls[0][0][1].content);
+    expect(prompt).toContain('The second measurement is 60 G.');
+    expect(prompt).toContain('The difference is 2 G.');
+    expect(result.promptContext.evidenceRefs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ locator: 'second.pdf#page=4', preview: expect.stringContaining('60 G') }),
+      expect.objectContaining({ locator: 'notes/comparison.md', preview: expect.stringContaining('2 G') }),
+    ]));
+    expect(result.promptContext.evidenceRefs.some((ref) => ref.locator === 'second.pdf#page=12')).toBe(false);
+    expect([...result.contextPack.sections, ...result.contextPack.omitted].some((item) => item.content.includes('The second measurement is 60 G.'))).toBe(true);
+  });
+
+  it('cancels synthesis without creating a completed result or memory', async () => {
+    const controller = new AbortController();
+    await expect(runResearchAgent({
+      sessionId: 'research-cancelled-answer', task: 'Read this paper', content: 'Real evidence.',
+      plannerSignal: controller.signal, suggestMemory: true, compact: false,
+      generateAnswer: async () => {
+        controller.abort();
+        return { text: 'Late model result.' };
+      },
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(useAgentSessionStore.getState().getSession('research-cancelled-answer')?.status).toBe('cancelled');
+    expect(useAgentMemoryStore.getState().entries).toHaveLength(0);
   });
 
   it('applies named context budget profiles to the generated context pack', async () => {
@@ -232,8 +645,8 @@ describe('research-agent', () => {
     });
 
     expect(result.memorySnapshotIds).toEqual(['memory-filtered-1', 'memory-filtered-3']);
-    expect(result.answer).toContain('Memory health: weak=2');
-    expect(result.answer).toContain('memory-filtered-1:weak:review');
+    expect(result.answer).not.toContain('Memory health:');
+    expect(JSON.stringify(result.session.trace)).toContain('memory-filtered-1:weak:review');
     expect(result.session.trace.find((event) => event.id === 'research-session-memory-filter:context-pack')).toMatchObject({
       metadata: expect.objectContaining({
         memoryCount: 2,
@@ -331,11 +744,8 @@ describe('research-agent', () => {
     }));
     expect(generated.plannerPrompt).toContain('Omitted context model summary');
     expect(generated.plannerPrompt).toContain('Model omitted summary: Beta and Gamma context were omitted');
-    expect(generated.answer).toContain('Long-context summary:');
-    expect(generated.answer).toContain('Omitted context:');
-    expect(generated.answer).toContain('Model summary (generated');
-    expect(generated.answer).toContain('Model omitted summary: Beta and Gamma context were omitted');
-    expect(generated.answer).toContain('Recovery plan:');
+    expect(generated.answer).toContain('尚未生成答复');
+    expect(generated.answer).not.toContain('Model omitted summary:');
     expect(generated.session.trace.find((event) => event.id === 'research-session-model-omitted-summary:context-pack')).toMatchObject({
       metadata: expect.objectContaining({
         omittedContextModelSummary: 'Model omitted summary: Beta and Gamma context were omitted but should guide follow-up reads.',
@@ -406,6 +816,7 @@ describe('research-agent', () => {
       sessionId: 'research-session-memory-suggestion',
       now: 320,
       task: 'Capture reusable Alpha finding',
+      generateAnswer: async () => ({ text: 'Alpha improves evidence grounding and reproducibility.' }),
       filePath: 'notes/alpha.md',
       content: '# Alpha\nAlpha improves evidence grounding for reading notes.',
       selection: 'Alpha improves evidence grounding for reading notes.',
@@ -442,7 +853,7 @@ describe('research-agent', () => {
         memorySuggestionApplicability: expect.stringContaining('Workspace: workspace-memory'),
         memorySuggestionEvidenceSummary: expect.stringContaining(result.contextPack.id),
         memorySuggestionCaution: 'Approve only if this finding should influence future research runs in the shown scope.',
-        memorySuggestionAnswerPreview: expect.stringContaining('Task: Capture reusable Alpha finding'),
+        memorySuggestionAnswerPreview: expect.stringContaining('Alpha improves evidence grounding and reproducibility.'),
       }),
     });
     const pendingApproval = result.session.pendingApprovals.find((approval) => approval.toolName === 'memory.write');
@@ -472,7 +883,7 @@ describe('research-agent', () => {
         scope: 'workspace',
         title: expect.stringContaining('What reusable finding'),
         candidateKind: 'finding',
-        content: expect.stringContaining('Finding: Task: Capture reusable Alpha finding'),
+        content: expect.stringContaining('Finding: Alpha improves evidence grounding and reproducibility.'),
         source: expect.objectContaining({
           fingerprint: expect.stringMatching(/^mem-src-/),
         }),
@@ -515,6 +926,7 @@ describe('research-agent', () => {
       sessionId: 'research-session-memory-duplicate',
       now: 320,
       task: 'Capture reusable Alpha finding',
+      generateAnswer: async () => ({ text: 'Alpha improves evidence grounding and reproducibility.' }),
       filePath: 'notes/alpha.md',
       content: '# Alpha\nAlpha improves evidence grounding for reading notes.',
       selection: 'Alpha improves evidence grounding for reading notes.',
@@ -843,6 +1255,29 @@ describe('research-agent', () => {
     });
   });
 
+  it('reports unsupported scheduled execution without leaving an impossible approval', async () => {
+    const result = runResearchAgent({
+      sessionId: 'research-session-scheduled-plan',
+      now: 510,
+      task: 'Schedule a digest',
+      filePath: 'notes/scheduled.md',
+      content: 'Schedule a digest from this note.',
+      compact: false,
+      plannerOutput: JSON.stringify({ steps: [
+        { id: 'context-pack', title: 'Collect context', description: 'Collect context.' },
+        { id: 'evidence-resolve', title: 'Resolve evidence', description: 'Resolve evidence.' },
+        { id: 'schedule-task', title: 'Schedule digest', description: 'Create an approved recurring digest.', toolName: 'schedule_task', toolArgs: { title: 'Daily digest', prompt: 'Summarize notes', schedule: { kind: 'interval', everyMs: 60000 } } },
+        { id: 'synthesize-answer', title: 'Write answer', description: 'Write answer.' },
+      ] }),
+    });
+
+    await expect(result).rejects.toThrow('Scheduled AI execution is unavailable in this version.');
+    const session = useAgentSessionStore.getState().getSession('research-session-scheduled-plan');
+    expect(session?.status).toBe('failed');
+    expect(session?.pendingApprovals).toEqual([]);
+    expect(session?.error).toContain('unavailable in this version');
+  });
+
   it('restores continuation evidence and recovery hints into the next context pack', async () => {
     const store = useAgentSessionStore.getState();
     store.createSession({
@@ -979,11 +1414,11 @@ describe('research-agent', () => {
         }),
       ]),
     );
-    expect(result.answer).toContain('Recovered omitted context digest:');
-    expect(result.answer).toContain('Recovered omitted context: 1 read / completed=1 / useful=0 / lowValue=1 / locators=notes/alpha-omitted.md');
+    expect(result.answer).not.toContain('Recovered omitted context digest:');
+    expect(result.answer).toContain('尚未生成答复');
     expect(result.session.trace.find((event) => event.id === 'research-session-continuation-recovery:observation-replan')).toMatchObject({
       metadata: expect.objectContaining({
-        observationCount: 1,
+        observationCount: 2,
         recoveryObservationCount: 1,
         recoveryObservationLocatorsPreview: 'notes/alpha-omitted.md',
         recoveryQualityStatus: 'weak',
@@ -1121,9 +1556,8 @@ describe('research-agent', () => {
         expect.objectContaining({ id: 'evidence-resolve', status: 'completed', toolName: 'evidence.resolve' }),
       ]),
     );
-    expect(result.answer).toContain('Planned tool results:');
-    expect(result.answer).toContain('workspace.search (completed)');
-    expect(result.answer).toContain('No matching indexed files.');
+    expect(result.answer).not.toContain('Planned tool results:');
+    expect(result.answer).toContain('尚未生成答复');
     expect(result.session.trace).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1334,7 +1768,7 @@ describe('research-agent', () => {
     expect(result.promptContext.evidenceRefs).toEqual([
       expect.objectContaining({ locator: 'notes/restored.md' }),
     ]);
-    expect(result.answer).toContain('Restored evidence prompt preview.');
+    expect(result.answer).not.toContain('Restored evidence prompt preview.');
     expect(result.session.trace).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1723,11 +2157,8 @@ describe('research-agent', () => {
     expect(result.plannerRawOutput).toContain('Collect injected context');
     expect(result.workflowId).toBe('reading-note');
     expect(result.workflowTitle).toBe('Reading Note');
-    expect(result.answer).toContain('Workflow output: Reading Note');
-    expect(result.answer).toContain('One-sentence takeaway:');
-    expect(result.answer).toContain('Evidence map:');
-    expect(result.answer).toContain('Methods / setup:');
-    expect(result.answer).toContain('Open questions:');
+    expect(result.answer).toContain('尚未生成答复');
+    expect(result.answer).not.toContain('Workflow output:');
     expect(result.session.trace.find((event) => event.id === 'research-session-generate-plan:plan-created')).toMatchObject({
       metadata: expect.objectContaining({
         agentKind: 'research_agent',
@@ -2405,6 +2836,7 @@ describe('research-agent', () => {
     expect(result.plannerRawOutput).toBeNull();
     expect(result.planSteps).toEqual([
       expect.objectContaining({ id: 'context-pack', status: 'completed' }),
+      expect.objectContaining({ id: 'resolve-lattice-path-identity', status: 'completed', toolArgs: expect.objectContaining({ filePathOrAbsolutePath: 'notes/eta.md' }) }),
       expect.objectContaining({ id: 'evidence-resolve', status: 'completed' }),
       expect.objectContaining({ id: 'synthesize-answer', status: 'completed' }),
     ]);

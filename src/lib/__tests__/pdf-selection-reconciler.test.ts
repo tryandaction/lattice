@@ -10,6 +10,7 @@ import {
   type PdfResolvedSelection,
 } from "../pdf-selection-reconciler";
 import type { PdfTextQuoteSource } from "@/types/universal-annotation";
+import { resolvePdfMultiPageSelection } from '../pdf-multi-page-selection';
 
 const originalRangeGetBoundingClientRect = Range.prototype.getBoundingClientRect;
 const originalRangeGetClientRects = Range.prototype.getClientRects;
@@ -2725,6 +2726,139 @@ describe("pdf-selection-reconciler", () => {
     }
   });
 
+  it("preserves an exact trusted DOM quote when same-column pointer mapping drifts at both boundaries", () => {
+    const line = "at 90 degrees and a 0.6 NA microscope objective. To reach favorable conditions for loading the tweezers, the atoms are first";
+    const selectedText = "To reach favorable conditions for loading the tweezers";
+    const lineLeft = 52;
+    const lineTop = 452;
+    const charWidth = 2;
+    const selectionStart = line.indexOf(selectedText);
+    const selectionEnd = selectionStart + selectedText.length;
+    const page = createPageContext({
+      fragments: [
+        { text: line, left: lineLeft, top: lineTop, width: line.length * charWidth, height: 22 },
+        { text: "Reliable assembly of large defect-free patterns of qubits", left: 356, top: lineTop, width: 238, height: 22 },
+      ],
+    });
+    const range = createRangeWithinFragment(line, selectedText);
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: selectedText,
+      pages: [page],
+      clientRects: [{
+        left: lineLeft + (selectionStart * charWidth),
+        right: lineLeft + (selectionEnd * charWidth),
+        top: lineTop,
+        bottom: lineTop + 22,
+      }],
+      // Native pointer hit-testing can land a few glyphs inside/outside the
+      // DOM Range in WebView2. A trustworthy DOM quote remains authoritative.
+      dragStartPoint: { x: lineLeft + ((selectionStart + 2) * charWidth), y: lineTop + 11 },
+      dragEndPoint: { x: lineLeft + ((selectionEnd + 6) * charWidth), y: lineTop + 11 },
+      trustDomText: true,
+      nativeLayout: {
+        source: "pdfium",
+        pageNumber: 1,
+        width: 640,
+        height: 960,
+        text: line,
+        chars: Array.from(line).map((character, index) => ({
+          charIndex: index,
+          text: character,
+          x1: lineLeft + (index * charWidth),
+          y1: lineTop,
+          x2: lineLeft + ((index + 1) * charWidth),
+          y2: lineTop + 22,
+          fontSize: 22,
+        })),
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(selectedText);
+      expect(result.selection.text).toBe(selectedText);
+      expect(Math.max(...result.selection.pageRects.map((rect) => rect.x2))).toBeLessThan(0.5);
+    }
+  });
+
+  it("keeps a left-column pointer endpoint in the gutter from jumping to the right column", () => {
+    const leftLines = [
+      "Here, we report such methods",
+      "reveal scalability characteristics",
+      "powerful for quantum science broadly",
+      "controlling the nuclear qubit",
+    ];
+    const rightLines = [
+      "right column first line",
+      "right column second line",
+      "right column third line",
+      "right column fourth line",
+    ];
+    const rightColumnLeft = 318;
+    const lineTops = [180, 212, 244, 276];
+    const page = createPageContext({
+      fragments: [
+        ...leftLines.map((text, index) => ({ text, left: 40, top: lineTops[index], width: text.length * 6, height: 24 })),
+        ...rightLines.map((text, index) => ({ text, left: rightColumnLeft, top: lineTops[index], width: text.length * 6, height: 24 })),
+      ],
+    });
+    const range = createRangeAcrossFragments({
+      startFragment: leftLines[0],
+      endFragment: leftLines[leftLines.length - 1],
+    });
+    const nativeLines = lineTops.flatMap((top, lineIndex) => ([
+      { text: leftLines[lineIndex], left: 40, top },
+      { text: rightLines[lineIndex], left: rightColumnLeft, top },
+    ]));
+    const nativeText = nativeLines.map(({ text }) => text).join(" ");
+    let nativeOffset = 0;
+    const nativeChars = nativeLines.flatMap(({ text, left, top }, flatIndex) => {
+      const chars = Array.from(text).map((character, index) => ({
+        charIndex: nativeOffset + index,
+        text: character,
+        x1: left + (index * 6),
+        y1: top,
+        x2: left + (index * 6) + 5,
+        y2: top + 24,
+        fontSize: 24,
+      }));
+      nativeOffset += text.length + (flatIndex < nativeLines.length - 1 ? 1 : 0);
+      return chars;
+    });
+
+    const result = resolvePdfSelectionFromNativeRange({
+      range,
+      text: "",
+      pages: [page],
+      clientRects: leftLines.map((line, index) => ({
+        left: 40,
+        right: 40 + (line.length * 6),
+        top: lineTops[index],
+        bottom: lineTops[index] + 24,
+      })),
+      dragStartPoint: { x: 41, y: lineTops[0] + 12 },
+      dragEndPoint: { x: 325, y: lineTops[3] + 12 },
+      ignoreDomText: true,
+      nativeLayout: {
+        source: "pdfium",
+        pageNumber: 1,
+        width: 640,
+        height: 960,
+        text: nativeText,
+        chars: nativeChars,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe(leftLines.join(" "));
+      expect(result.selection.textQuote.source).toBe("pdfium-native");
+      expect(Math.max(...result.selection.pageRects.map((rect) => rect.x2))).toBeLessThan(0.55);
+    }
+  });
+
   it("keeps the full DOM quote when native text recognition only resolves an inner substring", () => {
     const selectedText = "Here we demonstrate a new neutral atom qubit using the nuclear spin";
     const innerText = "new neutral atom qubit using the nuclear spin";
@@ -2926,6 +3060,135 @@ describe("pdf-selection-reconciler", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.reason).toBe("cross-page");
+    }
+  });
+  it('splits a cross-page paragraph into complete page-local quotes and geometry', () => {
+    const page1 = createPageContext({ pageNumber: 1, fragments: [
+      { text: 'before selected first page', left: 20, top: 900, width: 250, height: 20 },
+    ] });
+    const page2 = createPageContext({ pageNumber: 2, top: 1000, fragments: [
+      { text: 'selected second page after', left: 20, top: 24, width: 260, height: 20 },
+    ] });
+    const range = createRangeAcrossFragments({ startFragment: 'before selected first page', startOffset: 7,
+      endFragment: 'selected second page after', endOffset: 20 });
+    const result = resolvePdfMultiPageSelection({ range, pages: [page1, page2] });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.text).toBe('selected first page\n\nselected second page');
+      expect(result.selection.pageSelections?.map(page => page.textQuote.exact)).toEqual(['selected first page', 'selected second page']);
+      expect(result.selection.pageSelections?.map(page => page.pageNumber)).toEqual([1, 2]);
+      expect(result.selection.pageSelections?.[1].startOffset).toBe(0);
+      expect(result.selection.pageSelections?.[1].endOffset).toBe(20);
+      expect(result.selection.pageSelections?.[1].pageRects[0].y1).toBeCloseTo(24 / 960);
+      expect(result.selection.viewportRects.map(rect => rect.pageNumber)).toEqual([1, 2]);
+    }
+  });
+  it('rejects a multi-page range when an interior page has not been rendered', () => {
+    const page1 = createPageContext({ pageNumber: 1, fragments: [{ text: 'start', left: 20, top: 900, width: 50, height: 20 }] });
+    const page3 = createPageContext({ pageNumber: 3, top: 2000, fragments: [{ text: 'end', left: 20, top: 24, width: 30, height: 20 }] });
+    const range = createRangeAcrossFragments({ startFragment: 'start', endFragment: 'end' });
+    expect(resolvePdfMultiPageSelection({ range, pages: [page1, page3] })).toMatchObject({ ok: false, reason: 'missing-page' });
+  });
+  it.each([false,true])('uses page and column order for cross-page pointer endpoints even when the browser range collapses, reversed=%s', reverse=>{
+    const fragments=(n:number)=>[
+      {text:`Page${n} left beginning.`,left:30,top:50,width:220,height:20},
+      {text:`Page${n} right beginning.`,left:350,top:50,width:220,height:20},
+      {text:`Page${n} left ending.`,left:30,top:730,width:220,height:20},
+      {text:`Page${n} right ending.`,left:350,top:730,width:220,height:20},
+    ];
+    const page1=createPageContext({pageNumber:1,fragments:fragments(1)}),page2=createPageContext({pageNumber:2,top:1000,fragments:fragments(2)});
+    const range=createRangeWithinFragment('Page1 right ending.','Page1 right ending.');
+    const start={x:350,y:740},end={x:250,y:1060};
+    const result=resolvePdfMultiPageSelection({range,pages:[page1,page2],dragStartPoint:reverse?end:start,dragEndPoint:reverse?start:end});
+    expect(result.ok).toBe(true);
+    if(result.ok){expect(result.selection.text.replace(/\s+/g,' ')).toBe('Page1 right ending. Page2 left beginning.');expect(result.selection.pageSelections?.map(p=>p.pageNumber)).toEqual([1,2]);}
+  });
+  it.each(['empty-end', 'empty-start'])('keeps the selected page when the cross-page range has an %s boundary', boundary => {
+    const page1 = createPageContext({ pageNumber: 1, fragments: [{ text: 'first page', left: 20, top: 900, width: 100, height: 20 }] });
+    const page2 = createPageContext({ pageNumber: 2, top: 1000, fragments: [{ text: 'second page', left: 20, top: 24, width: 110, height: 20 }] });
+    const range = createRangeAcrossFragments({ startFragment: 'first page', startOffset: boundary === 'empty-start' ? 10 : 0,
+      endFragment: 'second page', endOffset: boundary === 'empty-end' ? 0 : 11 });
+    const result = resolvePdfMultiPageSelection({ range, pages: [page1, page2] });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.text).toBe(boundary === 'empty-end' ? 'first page' : 'second page');
+      expect(result.selection.pageSelections?.map(page => page.pageNumber)).toEqual([boundary === 'empty-end' ? 1 : 2]);
+    }
+  });
+  it('keeps column reading order across pages when a full-width title covers the gutter', () => {
+    const page1 = createPageContext({ pageNumber: 1, fragments: [
+      { text: 'FULL WIDTH SYNTHETIC HEADING SPANNING BOTH COLUMNS OF THIS PAGE', left: 30, top: 10, width: 560, height: 24 },
+      { text: 'Left beginning.', left: 30, top: 100, width: 220, height: 20 },
+      { text: 'Right beginning.', left: 350, top: 100, width: 220, height: 20 },
+      { text: 'Left ending.', left: 30, top: 730, width: 220, height: 20 },
+      { text: 'Right ending.', left: 350, top: 730, width: 220, height: 20 },
+    ] });
+    const page2 = createPageContext({ pageNumber: 2, top: 1000, fragments: [
+      { text: 'Second page opening.', left: 30, top: 24, width: 220, height: 20 },
+    ] });
+    const range = createRangeWithinFragment('Left ending.', 'Left ending.');
+    const result = resolvePdfMultiPageSelection({ range, pages: [page1, page2],
+      dragStartPoint: { x: 30, y: 740 }, dragEndPoint: { x: 250, y: 1034 } });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.selection.text.replace(/\s+/g, ' ')).toBe('Left ending. Right beginning. Right ending. Second page opening.');
+  });
+  it('excludes a full-width title above both cross-column pointer endpoints', () => {
+    const page = createPageContext({ fragments: [
+      { text: 'FULL WIDTH SYNTHETIC HEADING SPANNING BOTH COLUMNS OF THIS PAGE', left: 30, top: 10, width: 560, height: 24 },
+      { text: 'Unselected left opening.', left: 30, top: 100, width: 220, height: 20 },
+      { text: 'Selected right opening.', left: 350, top: 100, width: 220, height: 20 },
+      { text: 'Selected left ending.', left: 30, top: 730, width: 220, height: 20 },
+      { text: 'Unselected right ending.', left: 350, top: 730, width: 220, height: 20 },
+    ] });
+    const range = createRangeWithinFragment('Selected left ending.', 'Selected left ending.');
+    const result = resolvePdfSelectionFromNativeRange({ range, pages: [page], text: '', ignoreDomText: true,
+      dragStartPoint: { x: 30, y: 740 }, dragEndPoint: { x: 570, y: 110 } });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.selection.textQuote.exact).toBe('Selected left ending. Selected right opening.');
+  });
+  it('preserves a deliberate cross-column selection without bridging the gutter', () => {
+    const page = createPageContext({ fragments: [
+      { text: 'Last left paragraph.', left: 30, top: 730, width: 200, height: 20 },
+      { text: 'First right paragraph.', left: 350, top: 50, width: 210, height: 20 },
+    ] });
+    const range = createRangeAcrossFragments({ startFragment: 'Last left paragraph.', endFragment: 'First right paragraph.' });
+    const result = resolvePdfSelectionFromNativeRange({ range, pages: [page], text: 'Last left paragraph. First right paragraph.', trustDomText: true });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe('Last left paragraph. First right paragraph.');
+      expect(result.selection.pageRects.some(rect => rect.x1 < 0.1)).toBe(true);
+      expect(result.selection.pageRects.some(rect => rect.x1 > 0.5)).toBe(true);
+      expect(result.selection.pageRects.every(rect => rect.x2 - rect.x1 < 0.4)).toBe(true);
+    }
+  });
+  it.each([false,true])('follows column reading order from lower left to upper right despite interleaved DOM, reversed=%s', reverse => {
+    const page=createPageContext({fragments:[
+      {text:'Unselected left beginning.',left:30,top:50,width:220,height:20},
+      {text:'Selected right beginning.',left:350,top:50,width:220,height:20},
+      {text:'Selected left ending.',left:30,top:730,width:220,height:20},
+      {text:'Unselected right ending.',left:350,top:730,width:220,height:20},
+    ]});
+    const range=createRangeWithinFragment('Selected left ending.','Selected left ending.');
+    const start={x:30,y:740},end={x:570,y:60};
+    const result=resolvePdfSelectionFromNativeRange({range,pages:[page],text:'',ignoreDomText:true,dragStartPoint:reverse?end:start,dragEndPoint:reverse?start:end});
+    expect(result.ok).toBe(true);
+    if(result.ok){expect(result.selection.textQuote.exact).toBe('Selected left ending. Selected right beginning.');expect(result.selection.readingOrder).toBe(true);expect(result.selection.pageRects).toHaveLength(2);}
+  });
+  it('uses both explicit pointer columns when the native range stops in the starting column', () => {
+    const page = createPageContext({ fragments: [
+      { text: 'Cross-column left block.', left: 30, top: 100, width: 200, height: 20 },
+      { text: 'Cross-column right block.', left: 350, top: 100, width: 210, height: 20 },
+      { text: 'Unselected later paragraph.', left: 30, top: 250, width: 220, height: 20 },
+    ] });
+    const range = createRangeWithinFragment('Cross-column left block.', 'Cross-column left block.');
+    const result = resolvePdfSelectionFromNativeRange({ range, pages: [page], text: '', ignoreDomText: true,
+      dragStartPoint: { x: 30, y: 110 }, dragEndPoint: { x: 560, y: 110 },
+      clientRects: [{ left: 30, right: 230, top: 100, bottom: 120 }, { left: 350, right: 560, top: 100, bottom: 120 }],
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.selection.textQuote.exact).toBe('Cross-column left block. Cross-column right block.');
+      expect(result.selection.pageRects.every(rect => rect.x2 - rect.x1 < 0.4)).toBe(true);
     }
   });
 });

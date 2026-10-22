@@ -6,7 +6,7 @@
 
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useSyncExternalStore, useCallback } from 'react';
 import { 
   t, 
   getLocale, 
@@ -23,15 +23,7 @@ import {
 import type { Locale } from '@/types/settings';
 
 export function useI18n() {
-  const [locale, setLocaleState] = useState<Locale>(getLocale);
-
-  useEffect(() => {
-    // Subscribe to locale changes
-    const unsubscribe = subscribeToLocaleChanges((newLocale) => {
-      setLocaleState(newLocale);
-    });
-    return unsubscribe;
-  }, []);
+  const locale = useSyncExternalStore(subscribeToLocaleChanges, getLocale, () => 'zh-CN' as const);
 
   const changeLocale = useCallback((newLocale: Locale) => {
     setLocale(newLocale);

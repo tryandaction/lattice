@@ -1,0 +1,3 @@
+# Cloudflare Pages serves the exported Library shell for arbitrary shared
+# Library/Item deep links. The client parses the preserved browser pathname.
+/library/* /library 200

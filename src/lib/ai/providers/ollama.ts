@@ -8,6 +8,7 @@ import type {
   AiStreamChunk,
 } from '../types';
 import { getMessageText } from '../types';
+import { extractProviderText, extractStreamTextDelta, parseSseJson } from '../provider-response';
 import { getBaseUrl as getUrl } from '../key-storage';
 
 const DEFAULT_BASE_URL = 'http://localhost:11434';
@@ -64,38 +65,6 @@ async function parseErrorMessage(response: Response): Promise<string> {
   }
 }
 
-async function* parseSSE(response: Response): AsyncIterable<Record<string, unknown>> {
-  const reader = response.body?.getReader();
-  if (!reader) return;
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
-        const data = trimmed.slice(6);
-        if (data === '[DONE]') return;
-        try {
-          yield JSON.parse(data);
-        } catch {
-          continue;
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
 async function fetchOllamaModels(): Promise<AiModel[]> {
   const response = await fetch(`${getRootBaseUrl()}/api/tags`);
   if (!response.ok) {
@@ -131,7 +100,7 @@ async function generateViaCompat(messages: AiMessage[], options?: AiGenerateOpti
 
   const data = await response.json();
   return {
-    text: data?.choices?.[0]?.message?.content ?? '',
+    text: extractProviderText(data?.choices?.[0]?.message?.content),
     model: data?.model ?? options?.model ?? DEFAULT_MODEL,
     usage: data?.usage ? {
       promptTokens: data.usage.prompt_tokens ?? 0,
@@ -163,7 +132,7 @@ async function generateViaNative(messages: AiMessage[], options?: AiGenerateOpti
 
   const data = await response.json();
   return {
-    text: data?.message?.content ?? '',
+    text: extractProviderText(data?.message?.content),
     model: data?.model ?? options?.model ?? DEFAULT_MODEL,
     usage: data?.eval_count ? {
       promptTokens: data.prompt_eval_count ?? 0,
@@ -191,8 +160,8 @@ async function* streamViaCompat(messages: AiMessage[], options?: AiGenerateOptio
     throw new Error(`compat:${response.status}:${await parseErrorMessage(response)}`);
   }
 
-  for await (const chunk of parseSSE(response)) {
-    const delta = (chunk as { choices?: Array<{ delta?: { content?: string } }> }).choices?.[0]?.delta?.content;
+  for await (const chunk of parseSseJson(response)) {
+    const delta = extractStreamTextDelta((chunk as { choices?: Array<{ delta?: unknown }> }).choices?.[0]?.delta);
     if (delta) {
       yield { type: 'text', text: delta };
     }
@@ -220,38 +189,20 @@ async function* streamViaNative(messages: AiMessage[], options?: AiGenerateOptio
     throw new Error(`${response.status}:${await parseErrorMessage(response)}`);
   }
 
-  const reader = response.body?.getReader();
-  if (!reader) {
-    yield { type: 'done' };
-    return;
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const data = JSON.parse(line);
-        if (data.done) {
-          yield { type: 'done' };
-          return;
-        }
-        if (data.message?.content) {
-          yield { type: 'text', text: data.message.content };
-        }
+    for await (const data of parseSseJson(response)) {
+      if ((data as { done?: boolean }).done) {
+        yield { type: 'done' };
+        return;
+      }
+      const text = extractProviderText((data as { message?: { content?: unknown } }).message?.content);
+      if (text) {
+        yield { type: 'text', text };
       }
     }
-  } finally {
-    reader.releaseLock();
+  } catch (error) {
+    yield { type: 'error', error: error instanceof Error ? error.message : String(error) };
+    return;
   }
 
   yield { type: 'done' };

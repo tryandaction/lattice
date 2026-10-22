@@ -10,7 +10,7 @@ function createAgentMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
     id: 'assistant-agent',
     role: 'assistant',
-    content: 'Agent answer\n---\nmetadata',
+    content: 'Agent answer\n---\nAgent session: agent-session-1\nPlan source: custom',
     timestamp: 100,
     agentResult: {
       sessionId: 'agent-session-1',
@@ -24,6 +24,18 @@ function createAgentMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
 }
 
 describe('agent result view model', () => {
+  it('keeps the complete teaching answer after Markdown thematic breaks', () => {
+    const content = '# 本文详细讲解\n\n## 一句话结论\n简短概括。\n\n---\n\n## 1. 物理机制\n完整机制与推导。\n\n---\n\n## 2. 鲁棒性与边界\n误差分析与适用条件。';
+    const sections = buildAgentResultSections(createAgentMessage({ content, requestMode: 'chat' }));
+    expect(sections?.[0].content).toBe(content);
+  });
+
+  it('removes only a recognized legacy execution footer, keeping earlier separators', () => {
+    const answer = '## 结论\n结论。\n\n---\n\n## 详细机制\n足够完整的解释。';
+    const sections = buildAgentResultSections(createAgentMessage({ content: answer + '\n---\nAgent session: agent-session-1\nPlan source: custom\nPlan:\n- completed: Done' }));
+    expect(sections?.[0].content).toBe(answer);
+  });
+
   it('builds compact answer, run, and workbench sections for agent messages', () => {
     const sections = buildAgentResultSections(createAgentMessage({
       agentResult: {
@@ -80,6 +92,23 @@ describe('agent result view model', () => {
     expect(observations).toContain('Summary: 1 observations');
     expect(observations).toContain('workspace.search via search, 2 evidence');
     expect(observations).toContain('summary=2 indexed matches');
+  });
+
+  it('includes navigable evidence links in the agent run summary', () => {
+    const sections = buildAgentResultSections(createAgentMessage({
+      evidenceRefs: [
+        { kind: 'file', label: 'Methods note', locator: 'notes/methods.md#Setup' },
+        { kind: 'pdf_page', label: 'Paper page 4', locator: 'papers/results.pdf#page=4' },
+      ],
+      agentResult: {
+        sessionId: 'agent-session-evidence',
+        workflowLabel: 'Research',
+      },
+    }));
+
+    const run = sections?.find((section) => section.title === 'Run');
+    expect(run?.content).toContain('[Methods note](notes/methods.md#Setup)');
+    expect(run?.content).toContain('[Paper page 4](papers/results.pdf#page=4)');
   });
 
   it('summarizes and truncates observation lines deterministically', () => {

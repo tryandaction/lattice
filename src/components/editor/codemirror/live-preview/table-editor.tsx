@@ -17,7 +17,6 @@ import {
   PanelRight,
   PanelTop,
   Pencil,
-  Plus,
   Rows3,
   Table2,
   Trash2,
@@ -59,6 +58,7 @@ interface TableMutationResult {
 
 interface TableOverlayMetrics {
   columnCenters: number[];
+  columnRightEdges: number[];
   rowCenters: number[];
 }
 
@@ -639,21 +639,30 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     () => normalizeEditorState(initialRows, initialAlignments),
     [initialRows, initialAlignments]
   );
+  const initialStateSignature = useMemo(
+    () => JSON.stringify({ rows: initialState.rows, alignments: initialState.alignments }),
+    [initialState.alignments, initialState.rows]
+  );
   const [rows, setRows] = useState(initialState.rows);
   const [alignments, setAlignments] = useState(initialState.alignments);
   const [selectedCell, setSelectedCell] = useState<CellPosition | null>(null);
   const [editingCell, setEditingCell] = useState<CellPosition | null>(null);
   const [draftValue, setDraftValue] = useState('');
   const [isHovered, setIsHovered] = useState(false);
-  const [overlayMetrics, setOverlayMetrics] = useState<TableOverlayMetrics>({ columnCenters: [], rowCenters: [] });
+  const [overlayMetrics, setOverlayMetrics] = useState<TableOverlayMetrics>({ columnCenters: [], columnRightEdges: [], rowCenters: [] });
   const [structureMenu, setStructureMenu] = useState<TableStructureMenuState | null>(null);
   const [showSource, setShowSource] = useState(false);
+  const [columnWidths, setColumnWidths] = useState<number[]>([]);
+  const [resizingColumn, setResizingColumn] = useState<number | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isMountedRef = useRef(true);
   const pendingCommitTimerRef = useRef<number | null>(null);
   const metricsFrameRef = useRef<number | null>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const lastInitialStateSignatureRef = useRef(initialStateSignature);
+  const focusedEditingCellRef = useRef<string | null>(null);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -667,19 +676,45 @@ export const TableEditor: React.FC<TableEditorProps> = ({
         window.cancelAnimationFrame(metricsFrameRef.current);
         metricsFrameRef.current = null;
       }
+      resizeCleanupRef.current?.();
+      resizeCleanupRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    if (editingCell && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
+    if (!editingCell) {
+      focusedEditingCellRef.current = null;
+      return;
     }
-    if (editingCell && inputRef.current) {
-      inputRef.current.style.height = '0px';
-      inputRef.current.style.height = `${inputRef.current.scrollHeight}px`;
+
+    const input = inputRef.current;
+    if (!input) {
+      return;
     }
+
+    const editingCellKey = `${editingCell.row}:${editingCell.col}`;
+    if (focusedEditingCellRef.current !== editingCellKey) {
+      focusedEditingCellRef.current = editingCellKey;
+      input.focus();
+      const caretPosition = input.value.length;
+      input.setSelectionRange(caretPosition, caretPosition);
+    }
+
+    input.style.height = '0px';
+    input.style.height = `${input.scrollHeight}px`;
   }, [draftValue, editingCell]);
+
+  useEffect(() => {
+    if (lastInitialStateSignatureRef.current === initialStateSignature || editingCell) {
+      return;
+    }
+
+    lastInitialStateSignatureRef.current = initialStateSignature;
+    setRows(initialState.rows);
+    setAlignments(initialState.alignments);
+    setDraftValue('');
+    setSelectedCell((cell) => clampCellPosition(cell, initialState.rows, initialState.alignments));
+  }, [editingCell, initialState.alignments, initialState.rows, initialStateSignature]);
 
   useEffect(() => {
     const table = tableRef.current;
@@ -692,16 +727,21 @@ export const TableEditor: React.FC<TableEditorProps> = ({
       const columnCenters = firstRow
         ? Array.from(firstRow.cells).map((cell) => cell.offsetLeft + (cell.offsetWidth / 2))
         : [];
+      const columnRightEdges = firstRow
+        ? Array.from(firstRow.cells).map((cell) => cell.offsetLeft + cell.offsetWidth)
+        : [];
       const rowCenters = Array.from(table.rows).map((row) => row.offsetTop + (row.offsetHeight / 2));
       setOverlayMetrics((previous) => {
         const sameColumns = previous.columnCenters.length === columnCenters.length &&
           previous.columnCenters.every((value, index) => Math.abs(value - columnCenters[index]) < 0.5);
+        const sameColumnEdges = previous.columnRightEdges.length === columnRightEdges.length &&
+          previous.columnRightEdges.every((value, index) => Math.abs(value - columnRightEdges[index]) < 0.5);
         const sameRows = previous.rowCenters.length === rowCenters.length &&
           previous.rowCenters.every((value, index) => Math.abs(value - rowCenters[index]) < 0.5);
-        if (sameColumns && sameRows) {
+        if (sameColumns && sameColumnEdges && sameRows) {
           return previous;
         }
-        return { columnCenters, rowCenters };
+        return { columnCenters, columnRightEdges, rowCenters };
       });
     };
     const scheduleMetricsUpdate = () => {
@@ -729,6 +769,16 @@ export const TableEditor: React.FC<TableEditorProps> = ({
   }, [rows, alignments, editingCell]);
 
   const columnCount = useMemo(() => getColumnCount(rows, alignments), [rows, alignments]);
+
+  useEffect(() => {
+    setColumnWidths((previous) => {
+      if (previous.length === columnCount) {
+        return previous;
+      }
+      return Array.from({ length: columnCount }, (_, index) => previous[index] ?? 0);
+    });
+  }, [columnCount]);
+
   const currentMarkdown = useMemo(
     () => tableToMarkdown(rows, alignments, hasHeader),
     [alignments, hasHeader, rows]
@@ -834,6 +884,21 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     applyTableState(nextRows, alignments, nextSelection ?? editingCell);
   }, [alignments, applyTableState, draftValue, editingCell, rows]);
 
+  const getRowsWithActiveDraft = useCallback(() => {
+    if (!editingCell) {
+      return rows;
+    }
+
+    const normalized = clampCellPosition(editingCell, rows, alignments);
+    if (!normalized) {
+      return rows;
+    }
+
+    const nextRows = cloneRows(rows);
+    nextRows[normalized.row][normalized.col] = draftValue;
+    return nextRows;
+  }, [alignments, draftValue, editingCell, rows]);
+
   const cancelEditing = useCallback(() => {
     setEditingCell(null);
     setDraftValue('');
@@ -893,16 +958,16 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     event.preventDefault();
     event.stopPropagation();
     if (isWikiLink || !isExternalLinkTarget(linkTarget)) {
-    if (linkTarget) {
-      link.dispatchEvent(
-        new CustomEvent(isWikiLink ? 'wiki-link-click' : 'workspace-link-click', {
-          detail: { target: linkTarget },
-          bubbles: true,
-        })
-      );
+      if (linkTarget) {
+        link.dispatchEvent(
+          new CustomEvent(isWikiLink ? 'wiki-link-click' : 'workspace-link-click', {
+            detail: { target: linkTarget },
+            bubbles: true,
+          })
+        );
+      }
+      return;
     }
-    return;
-  }
 
     if (linkTarget) {
       link.dispatchEvent(
@@ -913,6 +978,15 @@ export const TableEditor: React.FC<TableEditorProps> = ({
       );
     }
   }, [selectCell]);
+
+  const handleStaticCellMouseDown = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+  }, []);
 
   const handleWrapperKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (editingCell || columnCount === 0 || rows.length === 0 || !activeCell) {
@@ -1015,59 +1089,68 @@ export const TableEditor: React.FC<TableEditorProps> = ({
   }, [cancelEditing, columnCount, commitEditing, editingCell, rows.length]);
 
   const handleInsertColumn = useCallback((colIndex: number, position: 'left' | 'right') => {
-    const result = insertTableColumn(rows, alignments, hasHeader, position === 'left' ? colIndex - 1 : colIndex);
+    const currentRows = getRowsWithActiveDraft();
+    const result = insertTableColumn(currentRows, alignments, hasHeader, position === 'left' ? colIndex - 1 : colIndex);
     applyTableState(result.rows, result.alignments, { row: selectedCell?.row ?? 0, col: position === 'left' ? colIndex : colIndex + 1 });
     closeStructureMenu();
-  }, [alignments, applyTableState, closeStructureMenu, hasHeader, rows, selectedCell]);
+  }, [alignments, applyTableState, closeStructureMenu, getRowsWithActiveDraft, hasHeader, selectedCell]);
 
   const handleDeleteColumn = useCallback((colIndex: number) => {
-    const result = deleteTableColumn(rows, alignments, hasHeader, colIndex);
+    const currentRows = getRowsWithActiveDraft();
+    const result = deleteTableColumn(currentRows, alignments, hasHeader, colIndex);
     applyTableState(result.rows, result.alignments, { row: selectedCell?.row ?? 0, col: Math.max(0, Math.min(colIndex, result.alignments.length - 1)) });
     closeStructureMenu();
-  }, [alignments, applyTableState, closeStructureMenu, hasHeader, rows, selectedCell]);
+  }, [alignments, applyTableState, closeStructureMenu, getRowsWithActiveDraft, hasHeader, selectedCell]);
 
   const handleInsertRow = useCallback((rowIndex: number, position: 'above' | 'below') => {
-    const result = insertTableDataRow(rows, alignments, hasHeader, rowIndex, position);
+    const currentRows = getRowsWithActiveDraft();
+    const result = insertTableDataRow(currentRows, alignments, hasHeader, rowIndex, position);
     const nextRow = position === 'above' ? rowIndex : rowIndex + 1;
     applyTableState(result.rows, result.alignments, { row: nextRow, col: selectedCell?.col ?? 0 });
     closeStructureMenu();
-  }, [alignments, applyTableState, closeStructureMenu, hasHeader, rows, selectedCell]);
+  }, [alignments, applyTableState, closeStructureMenu, getRowsWithActiveDraft, hasHeader, selectedCell]);
 
   const handleDeleteRow = useCallback((rowIndex: number) => {
-    const result = deleteTableDataRow(rows, alignments, hasHeader, rowIndex);
+    const currentRows = getRowsWithActiveDraft();
+    const result = deleteTableDataRow(currentRows, alignments, hasHeader, rowIndex);
     applyTableState(result.rows, result.alignments, { row: Math.max(dataRowStart, Math.min(rowIndex, result.rows.length - 1)), col: selectedCell?.col ?? 0 });
     closeStructureMenu();
-  }, [alignments, applyTableState, closeStructureMenu, dataRowStart, hasHeader, rows, selectedCell]);
+  }, [alignments, applyTableState, closeStructureMenu, dataRowStart, getRowsWithActiveDraft, hasHeader, selectedCell]);
 
   const handleDuplicateRow = useCallback((rowIndex: number) => {
-    const result = duplicateTableDataRow(rows, alignments, hasHeader, rowIndex);
+    const currentRows = getRowsWithActiveDraft();
+    const result = duplicateTableDataRow(currentRows, alignments, hasHeader, rowIndex);
     applyTableState(result.rows, result.alignments, { row: Math.min(rowIndex + 1, result.rows.length - 1), col: selectedCell?.col ?? 0 });
     closeStructureMenu();
-  }, [alignments, applyTableState, closeStructureMenu, hasHeader, rows, selectedCell]);
+  }, [alignments, applyTableState, closeStructureMenu, getRowsWithActiveDraft, hasHeader, selectedCell]);
 
   const handleMoveRow = useCallback((rowIndex: number, direction: -1 | 1) => {
-    const result = moveTableDataRow(rows, alignments, hasHeader, rowIndex, direction);
+    const currentRows = getRowsWithActiveDraft();
+    const result = moveTableDataRow(currentRows, alignments, hasHeader, rowIndex, direction);
     applyTableState(result.rows, result.alignments, { row: Math.max(dataRowStart, Math.min(rowIndex + direction, result.rows.length - 1)), col: selectedCell?.col ?? 0 });
     closeStructureMenu();
-  }, [alignments, applyTableState, closeStructureMenu, dataRowStart, hasHeader, rows, selectedCell]);
+  }, [alignments, applyTableState, closeStructureMenu, dataRowStart, getRowsWithActiveDraft, hasHeader, selectedCell]);
 
   const handleSetAlignment = useCallback((colIndex: number, alignment: TableAlignment) => {
-    const result = setTableColumnAlignment(rows, alignments, hasHeader, colIndex, alignment);
+    const currentRows = getRowsWithActiveDraft();
+    const result = setTableColumnAlignment(currentRows, alignments, hasHeader, colIndex, alignment);
     applyTableState(result.rows, result.alignments, selectedCell);
     closeStructureMenu();
-  }, [alignments, applyTableState, closeStructureMenu, hasHeader, rows, selectedCell]);
+  }, [alignments, applyTableState, closeStructureMenu, getRowsWithActiveDraft, hasHeader, selectedCell]);
 
   const handleDuplicateColumn = useCallback((colIndex: number) => {
-    const result = duplicateTableColumn(rows, alignments, hasHeader, colIndex);
+    const currentRows = getRowsWithActiveDraft();
+    const result = duplicateTableColumn(currentRows, alignments, hasHeader, colIndex);
     applyTableState(result.rows, result.alignments, { row: selectedCell?.row ?? dataRowStart, col: Math.min(colIndex + 1, result.alignments.length - 1) });
     closeStructureMenu();
-  }, [alignments, applyTableState, closeStructureMenu, dataRowStart, hasHeader, rows, selectedCell]);
+  }, [alignments, applyTableState, closeStructureMenu, dataRowStart, getRowsWithActiveDraft, hasHeader, selectedCell]);
 
   const handleMoveColumn = useCallback((colIndex: number, direction: -1 | 1) => {
-    const result = moveTableColumn(rows, alignments, hasHeader, colIndex, direction);
+    const currentRows = getRowsWithActiveDraft();
+    const result = moveTableColumn(currentRows, alignments, hasHeader, colIndex, direction);
     applyTableState(result.rows, result.alignments, { row: selectedCell?.row ?? dataRowStart, col: Math.max(0, Math.min(colIndex + direction, result.alignments.length - 1)) });
     closeStructureMenu();
-  }, [alignments, applyTableState, closeStructureMenu, dataRowStart, hasHeader, rows, selectedCell]);
+  }, [alignments, applyTableState, closeStructureMenu, dataRowStart, getRowsWithActiveDraft, hasHeader, selectedCell]);
 
   const handleCopyMarkdown = useCallback(() => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
@@ -1094,6 +1177,63 @@ export const TableEditor: React.FC<TableEditorProps> = ({
     setShowSource((value) => !value);
     closeStructureMenu();
   }, [closeStructureMenu]);
+
+  const beginColumnResize = useCallback((colIndex: number, event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closeStructureMenu();
+    resizeCleanupRef.current?.();
+    setResizingColumn(colIndex);
+
+    const table = tableRef.current;
+    const cell = table?.rows.item(0)?.cells.item(colIndex) ?? null;
+    const measuredWidth = cell?.getBoundingClientRect().width ?? 0;
+    const startWidth = columnWidths[colIndex] || Math.round(measuredWidth) || 72;
+    const startX = event.clientX;
+    const pointerId = event.pointerId;
+    const target = event.currentTarget;
+    target.setPointerCapture?.(pointerId);
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) {
+        return;
+      }
+      moveEvent.preventDefault();
+      const nextWidth = Math.max(56, Math.round(startWidth + moveEvent.clientX - startX));
+      setColumnWidths((previous) => {
+        const next = Array.from({ length: columnCount }, (_, index) => previous[index] ?? 0);
+        next[colIndex] = nextWidth;
+        return next;
+      });
+    };
+
+    const finishResize = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId !== pointerId) {
+        return;
+      }
+      upEvent.preventDefault();
+      target.releasePointerCapture?.(pointerId);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', finishResize);
+      window.removeEventListener('pointercancel', finishResize);
+      resizeCleanupRef.current = null;
+      setResizingColumn(null);
+      focusWrapper();
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', finishResize);
+    window.addEventListener('pointercancel', finishResize);
+    resizeCleanupRef.current = () => {
+      target.releasePointerCapture?.(pointerId);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', finishResize);
+      window.removeEventListener('pointercancel', finishResize);
+      if (isMountedRef.current) {
+        setResizingColumn(null);
+      }
+    };
+  }, [closeStructureMenu, columnCount, columnWidths, focusWrapper]);
 
   const handleHighlightCell = useCallback((cell: CellPosition) => {
     applyTableState(toggleCellHighlight(rows, cell.row, cell.col), alignments, cell);
@@ -1211,13 +1351,27 @@ export const TableEditor: React.FC<TableEditorProps> = ({
           key={`column-handle-${colIndex}`}
           type="button"
           className="table-editor-perimeter-handle table-editor-perimeter-handle--column"
-          style={{ left: `${center}px`, top: "-10px", transform: "translate(-50%, -100%)" }}
+          style={{ left: `${center}px`, top: 0, transform: 'translate(-50%, -50%)' }}
           aria-label={`Column ${colIndex + 1} actions`}
           onMouseDown={(event) => event.preventDefault()}
           onClick={(event) => openStructureMenu({ kind: 'column', col: colIndex, x: center, y: 0 }, event.currentTarget)}
         >
           <Ellipsis aria-hidden="true" size={14} />
         </button>
+      ))}
+
+      {(isHovered || structureMenu || selectedCell || resizingColumn !== null) && overlayMetrics.columnRightEdges.slice(0, Math.max(0, columnCount - 1)).map((edge, colIndex) => (
+        <button
+          key={`column-resize-${colIndex}`}
+          type="button"
+          role="separator"
+          aria-label={`Resize column ${colIndex + 1}`}
+          aria-orientation="vertical"
+          className={`table-editor-column-resize-handle${resizingColumn === colIndex ? ' is-resizing' : ''}`}
+          style={{ left: `${edge}px`, top: 0 }}
+          onPointerDown={(event) => beginColumnResize(colIndex, event)}
+          onMouseDown={(event) => event.preventDefault()}
+        />
       ))}
 
       {(isHovered || structureMenu || selectedCell) && overlayMetrics.rowCenters.slice(dataRowStart).map((center, index) => {
@@ -1227,7 +1381,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({
             key={`row-handle-${rowIndex}`}
             type="button"
             className="table-editor-perimeter-handle table-editor-perimeter-handle--row"
-            style={{ left: "-10px", top: `${center}px`, transform: "translate(-100%, -50%)" }}
+            style={{ left: 0, top: `${center}px`, transform: 'translate(-50%, -50%)' }}
             aria-label={`Row ${rowIndex + 1} actions`}
             onMouseDown={(event) => event.preventDefault()}
           onClick={(event) => openStructureMenu({ kind: 'row', row: rowIndex, x: 0, y: center }, event.currentTarget)}
@@ -1241,12 +1395,12 @@ export const TableEditor: React.FC<TableEditorProps> = ({
         <button
           type="button"
           className="table-editor-perimeter-handle table-editor-perimeter-handle--table"
-          style={{ left: "6px", top: "6px" }}
+          style={{ left: 0, top: 0, transform: 'translate(-50%, -50%)' }}
           aria-label="Table actions"
           onMouseDown={(event) => event.preventDefault()}
-          onClick={(event) => openStructureMenu({ kind: 'table', x: 6, y: 34 }, event.currentTarget)}
+          onClick={(event) => openStructureMenu({ kind: 'table', x: 0, y: 0 }, event.currentTarget)}
         >
-          <Plus aria-hidden="true" size={14} />
+          <Table2 aria-hidden="true" size={14} />
         </button>
       ) : null}
 
@@ -1312,7 +1466,19 @@ export const TableEditor: React.FC<TableEditorProps> = ({
       ), document.body) : null}
 
       <div className="table-editor-viewport">
-        <table ref={tableRef} className="table-editor">
+        <table
+          ref={tableRef}
+          className={`table-editor${columnWidths.some((width) => width > 0) ? ' table-editor--resized' : ''}`}
+        >
+          <colgroup>
+            {Array.from({ length: columnCount }, (_, colIndex) => (
+              <col
+                key={colIndex}
+                data-table-col-width={colIndex}
+                style={columnWidths[colIndex] ? { width: `${columnWidths[colIndex]}px` } : undefined}
+              />
+            ))}
+          </colgroup>
           <tbody>
             {rows.map((row, rowIndex) => (
               <tr key={rowIndex}>
@@ -1334,6 +1500,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({
                       !isEditing && isSelected ? 'selected' : '',
                     ].filter(Boolean).join(' ')}
                     style={{ textAlign: alignments[colIndex] || 'left' }}
+                    onMouseDown={!isEditing ? handleStaticCellMouseDown : undefined}
                     onClick={() => !isEditing && handleCellClick(rowIndex, colIndex)}
                     onDoubleClick={() => handleCellDoubleClick(rowIndex, colIndex)}
                   >

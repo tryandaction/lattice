@@ -8,6 +8,12 @@ import { resolveAutoOpenWorkspacePath, useAutoOpenFolder } from "../use-auto-ope
 import { useSettingsStore } from "@/stores/settings-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 
+const handleRegistration = vi.hoisted(() => ({ load: vi.fn(async () => null) }));
+vi.mock("@/lib/workspace-identity", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/workspace-identity")>(),
+  loadWorkspaceHandleRegistration: handleRegistration.load,
+}));
+
 describe("resolveAutoOpenWorkspacePath", () => {
   it("prefers last workspace path over legacy and default folder", () => {
     expect(resolveAutoOpenWorkspacePath({
@@ -35,10 +41,20 @@ describe("resolveAutoOpenWorkspacePath", () => {
       defaultFolder: "C:/workspace/default",
     })).toBe("C:/workspace/default");
   });
+
+  it("uses the first recent workspace before falling back to a desktop scan", () => {
+    expect(resolveAutoOpenWorkspacePath({
+      lastOpenedFolder: null,
+      recentWorkspacePaths: ["C:/workspace/recent"],
+      defaultFolder: "C:/workspace/default",
+    })).toBe("C:/workspace/recent");
+  });
 });
 
 describe("useAutoOpenFolder", () => {
   beforeEach(() => {
+    handleRegistration.load.mockReset();
+    handleRegistration.load.mockResolvedValue(null);
     localStorage.clear();
     sessionStorage.clear();
     useSettingsStore.setState((state) => ({
@@ -50,6 +66,8 @@ describe("useAutoOpenFolder", () => {
         defaultFolder: null,
         lastOpenedFolder: "C:/vault-legacy",
         lastWorkspacePath: "C:/vault-last",
+        lastWorkspaceKey: null,
+        workspaceDisplayPaths: {},
         recentWorkspacePaths: [],
       },
     }));
@@ -118,6 +136,20 @@ describe("useAutoOpenFolder", () => {
     };
   });
 
+  it("does not request browser folder permission during automatic startup", async () => {
+    delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    const requestPermission = vi.fn(async () => "granted");
+    const queryPermission = vi.fn(async () => "prompt");
+    handleRegistration.load.mockResolvedValueOnce({ handle: { queryPermission, requestPermission } } as never);
+    useSettingsStore.setState((state) => ({ settings: { ...state.settings,
+      lastWorkspaceKey: "web:requires-click", workspaceDisplayPaths: { "web:requires-click": "browser" },
+    } }));
+    renderHook(() => useAutoOpenFolder());
+    await waitFor(() => expect(queryPermission).toHaveBeenCalled());
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(useWorkspaceStore.getState().rootHandle).toBeNull();
+  });
+
   it("restores startup workspace in desktop mode through __TAURI_INTERNALS__.invoke", async () => {
     renderHook(() => useAutoOpenFolder());
 
@@ -176,6 +208,10 @@ describe("useAutoOpenFolder", () => {
               { name: "paper.md", isDirectory: false, isFile: true, isSymlink: false },
             ];
           }
+        }
+
+        if (command === "desktop_is_directory") {
+          return false;
         }
 
         throw new Error(`Unexpected invoke: ${command}`);

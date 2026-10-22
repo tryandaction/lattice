@@ -40,6 +40,20 @@ export interface FileTabState extends BaseTabState {
   fileHandle: FileSystemFileHandle;
 }
 
+/** A cloud document participates in the same layout without impersonating a local handle. */
+export interface CloudFileTabState extends BaseTabState {
+  kind: "cloud-file";
+  cloud: {
+    scope: string;
+    resourceId: string;
+    libraryId: string;
+    itemId: string;
+    versionId?: string;
+    mimeType?: string;
+    role: import("@/lib/shared-library/domain").LibraryRole;
+  };
+}
+
 /**
  * State for an internal web tab.
  */
@@ -52,9 +66,21 @@ export interface WebTabState extends BaseTabState {
 }
 
 /**
+ * Transient host tab for the singleton native VS Code Workbench.
+ *
+ * The Workbench owns its editor, terminal, debugger, and extension state, so
+ * this tab is never serialized as a workspace document or generic web page.
+ */
+export interface VSCodeWorkbenchTabState extends BaseTabState {
+  kind: "vscode-workbench";
+  /** Absolute workspace path served by the native Workbench runtime. */
+  workspacePath: string;
+}
+
+/**
  * State for an individual tab within a pane.
  */
-export type TabState = FileTabState | WebTabState;
+export type TabState = FileTabState | CloudFileTabState | WebTabState | VSCodeWorkbenchTabState;
 
 /**
  * Pane node (leaf node in the layout tree)
@@ -149,13 +175,14 @@ export function isSplitNode(node: LayoutNode): node is SplitNode {
  */
 export interface SerializedTab {
   id: string;
-  kind: "file" | "web";
+  kind: "file" | "web" | "cloud-file";
   filePath: string;
   fileName: string;
   isDirty: boolean;
   scrollPosition: number;
   url?: string;
   pageTitle?: string | null;
+  cloud?: CloudFileTabState["cloud"];
 }
 
 /**
@@ -232,9 +259,21 @@ export interface SplitZoneDropTarget {
 export type DropTarget = TabBarDropTarget | SplitZoneDropTarget;
 
 export function isFileTabState(tab: TabState): tab is FileTabState {
-  return tab.kind !== "web";
+  return tab.kind === undefined || tab.kind === "file";
 }
 
 export function isWebTabState(tab: TabState): tab is WebTabState {
   return tab.kind === "web";
+}
+
+export function isCloudFileTabState(tab: TabState): tab is CloudFileTabState {
+  return tab.kind === "cloud-file";
+}
+
+export function isDocumentTabState(tab: TabState): tab is FileTabState | CloudFileTabState {
+  return isFileTabState(tab) || isCloudFileTabState(tab);
+}
+
+export function isVSCodeWorkbenchTabState(tab: TabState): tab is VSCodeWorkbenchTabState {
+  return tab.kind === "vscode-workbench";
 }

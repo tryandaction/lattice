@@ -11,6 +11,7 @@ import {
   runPluginCommand,
   subscribePanelProps,
   subscribePluginRegistry,
+  isPanelAssetImageUrlAllowed,
 } from "@/lib/plugins/runtime";
 import type { PluginCommand, PluginPanel, PluginPanelSchema } from "@/lib/plugins/types";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,7 @@ import { MarkdownRenderer } from "@/components/renderers/markdown-renderer";
 import { highlightMatch } from "@/components/ui/search-highlight";
 import { FormulaExtractorPanel } from "@/plugins/formula-extractor/panel";
 import type { FormulaExtractionResult } from "@/plugins/formula-extractor/types";
+import {localizePluginPanel} from '@/lib/plugins/panel-labels';
 
 export interface PluginPanelDockProps {
   onClose: () => void;
@@ -45,7 +47,7 @@ function renderPanelSchema(
   const props = schema.props ?? {};
   if (schema.type === "markdown") {
     const content = typeof props.content === "string" ? props.content : "";
-    return <MarkdownRenderer content={content} />;
+    return <MarkdownRenderer content={content} isImageUrlAllowed={(url) => isPanelAssetImageUrlAllowed(panelId, url)} />;
   }
 
   if (schema.type === "list") {
@@ -136,6 +138,11 @@ function renderPanelSchema(
         result={(props.result as FormulaExtractionResult | null | undefined) ?? null}
         busy={Boolean(props.busy)}
         error={typeof props.error === "string" ? props.error : null}
+        progress={typeof props.progress === 'number' ? props.progress : 0}
+        canCancel={Boolean(props.canCancel)}
+        canRetry={Boolean(props.canRetry)}
+        stale={Boolean(props.stale)}
+        scope={props.scope === 'selection' || props.scope === 'current-page' ? props.scope : 'document'}
       />
     );
   }
@@ -148,7 +155,7 @@ function renderPanelSchema(
 }
 
 export function PluginPanelDock({ onClose }: PluginPanelDockProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const lastActivePanelId = useSettingsStore((state) => state.settings.pluginPanelLastActiveId);
   const recentPanelIds = useSettingsStore((state) => state.settings.pluginPanelRecentIds);
   const updateSetting = useSettingsStore((state) => state.updateSetting);
@@ -220,7 +227,7 @@ export function PluginPanelDock({ onClose }: PluginPanelDockProps) {
 
   useEffect(() => {
     const updateRegistry = () => {
-      const current = getRegisteredPanels();
+      const current = getRegisteredPanels().map(localizePluginPanel);
       const preferred = preferredPanelRef.current;
       setPanels(current);
       setCommands(getRegisteredCommands());
@@ -234,7 +241,7 @@ export function PluginPanelDock({ onClose }: PluginPanelDockProps) {
     updateRegistry();
     const unsubscribe = subscribePluginRegistry(updateRegistry);
     return () => unsubscribe();
-  }, []);
+  }, [locale]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -327,23 +334,23 @@ export function PluginPanelDock({ onClose }: PluginPanelDockProps) {
   }, [commandsById, formState]);
 
   return (
-    <div className="flex h-full flex-col bg-background">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <div className="flex items-center gap-2">
+    <div className="flex h-full min-h-0 min-w-0 flex-col bg-background max-lg:fixed max-lg:inset-0 max-lg:z-[190] max-lg:h-dvh max-lg:w-full" data-testid="plugin-panel-dock">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
           <Cable className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">{t("panels.title")}</h2>
+          <h2 className="truncate text-sm font-semibold">{t("panels.title")}</h2>
         </div>
         <button
           onClick={onClose}
-          className="p-1.5 rounded-lg hover:bg-muted transition-colors"
+          className="shrink-0 p-1.5 rounded-lg hover:bg-muted transition-colors"
           aria-label={t("common.close")}
         >
           <X className="w-4 h-4" />
         </button>
       </div>
 
-      <div className="flex min-h-0 flex-1">
-        <div className="w-48 shrink-0 space-y-1 overflow-y-auto border-r border-border p-2">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className={cn('max-h-40 w-full shrink-0 space-y-1 overflow-y-auto border-b border-border p-2',panels.length===1&&'hidden')}>
           <div className="px-2 pb-2">
             <input
               type="text"
@@ -440,7 +447,7 @@ export function PluginPanelDock({ onClose }: PluginPanelDockProps) {
           )}
         </div>
 
-        <div className="min-w-0 flex-1 overflow-y-auto p-4">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4">
           {activePanelWithLiveProps && (
             <div className="space-y-4">
               <div>
@@ -461,7 +468,7 @@ export function PluginPanelDock({ onClose }: PluginPanelDockProps) {
               )}
 
               {activePanelWithLiveProps.actions && activePanelWithLiveProps.actions.length > 0 && (
-                <div className="flex items-center gap-2 pt-2 border-t border-border">
+                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border">
                   {activePanelWithLiveProps.actions.map((action) => (
                     <button
                       key={action.id}

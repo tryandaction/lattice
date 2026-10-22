@@ -23,6 +23,7 @@ export function getLocale(): Locale {
 }
 
 export function setLocale(locale: Locale): void {
+  if (typeof document !== 'undefined') document.documentElement.lang = locale;
   if (currentLocale === locale) {
     return;
   }

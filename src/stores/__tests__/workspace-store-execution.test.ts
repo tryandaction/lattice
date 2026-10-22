@@ -1,16 +1,31 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { waitFor } from "@testing-library/react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 import { destroyExecutionScope, ensureExecutionSession, getExecutionSession } from "@/stores/execution-session-store";
 import { isFileTabState } from "@/types/layout";
+import { useVSCodeWorkbenchStore } from "@/stores/vscode-workbench-store";
 import type { DirectoryNode } from "@/types/file-system";
+import { setDesktopPreviewRoot } from "@/lib/desktop-preview";
+
+vi.mock("@/lib/desktop-preview", () => ({
+  setDesktopPreviewRoot: vi.fn(),
+}));
 
 function createFileHandle(name: string): FileSystemFileHandle {
   return {
     kind: "file",
     name,
   } as FileSystemFileHandle;
+}
+
+function createDesktopFileHandle(name: string, fullPath: string): FileSystemFileHandle {
+  return {
+    kind: "file",
+    name,
+    fullPath,
+    __latticeDesktopHandle: true,
+  } as unknown as FileSystemFileHandle;
 }
 
 describe("workspace-store execution scope cleanup", () => {
@@ -20,6 +35,70 @@ describe("workspace-store execution scope cleanup", () => {
       await destroyExecutionScope(scopeId);
     }
     useWorkspaceStore.getState().resetWorkbenchState();
+    useVSCodeWorkbenchStore.getState().reset();
+    useWorkspaceStore.getState().setWorkspaceRootPath(null);
+    delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
+  });
+
+  it("opens desktop code files as ordinary Lattice tabs without queuing Workbench resources", () => {
+    (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
+      core: { invoke: vi.fn() },
+    };
+    const store = useWorkspaceStore.getState();
+    const paneId = store.layout.activePaneId;
+    store.setWorkspaceRootPath("C:/workspace");
+
+    store.openFileInPane(paneId, createDesktopFileHandle("main.ts", "C:/workspace/main.ts"), "workspace/main.ts");
+    store.openFileInPane(paneId, createDesktopFileHandle("latest.py", "C:/workspace/latest.py"), "workspace/latest.py");
+
+    const pane = useWorkspaceStore.getState().getActivePane();
+    expect(pane?.tabs).toHaveLength(2);
+    expect(pane?.tabs.every(isFileTabState)).toBe(true);
+    expect(pane?.tabs.map((tab) => tab.filePath)).toEqual([
+      "workspace/main.ts",
+      "workspace/latest.py",
+    ]);
+    expect(useVSCodeWorkbenchStore.getState().pendingResource).toBeNull();
+  });
+
+  it("synchronizes the preview root for restored and cleared workspace paths", () => {
+    const store = useWorkspaceStore.getState();
+    vi.mocked(setDesktopPreviewRoot).mockClear();
+
+    store.setWorkspaceRootPath("C:/workspace");
+    store.setWorkspaceRootPath(null);
+
+    expect(setDesktopPreviewRoot).toHaveBeenNthCalledWith(1, "C:/workspace");
+    expect(setDesktopPreviewRoot).toHaveBeenNthCalledWith(2, null);
+  });
+
+  it("keeps notebooks and TeX in Lattice without activating the full Workbench", () => {
+    (window as Window & { __TAURI__?: unknown }).__TAURI__ = { core: { invoke: vi.fn() } };
+    const store = useWorkspaceStore.getState();
+    const paneId = store.layout.activePaneId;
+    store.setWorkspaceRootPath("C:/workspace");
+
+    store.openFileInPane(paneId, createDesktopFileHandle("analysis.ipynb", "C:/workspace/analysis.ipynb"), "analysis.ipynb");
+    store.openFileInPane(paneId, createDesktopFileHandle("paper.tex", "C:/workspace/paper.tex"), "paper.tex");
+
+    const pane = useWorkspaceStore.getState().getActivePane();
+    expect(pane?.tabs).toHaveLength(2);
+    expect(pane?.tabs.every(isFileTabState)).toBe(true);
+    expect(useVSCodeWorkbenchStore.getState().pendingResource).toBeNull();
+  });
+
+  it("keeps desktop PDF files in the Lattice file viewer", () => {
+    (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
+      core: { invoke: vi.fn() },
+    };
+    const store = useWorkspaceStore.getState();
+    const paneId = store.layout.activePaneId;
+    store.setWorkspaceRootPath("C:/workspace");
+
+    store.openFileInPane(paneId, createDesktopFileHandle("paper.pdf", "C:/workspace/paper.pdf"), "workspace/paper.pdf");
+
+    const pane = useWorkspaceStore.getState().getActivePane();
+    expect(pane?.tabs[0] && isFileTabState(pane.tabs[0])).toBe(true);
   });
 
   it("关闭标签时会销毁对应 execution scope", async () => {

@@ -2,7 +2,7 @@
 
 > **Source of Truth** for the Lattice project's technical decisions and component relationships.
 > 
-> Last Updated: 2026-03-28 | Version: 2.1
+> Last Updated: 2026-08-20 | Version: 2.2
 
 ---
 
@@ -16,6 +16,7 @@
 6. [AI System](#ai-system)
 7. [Storage Layer](#storage-layer)
 8. [Component Diagrams](#component-diagrams)
+9. [Shared Library](#shared-library)
 
 ---
 
@@ -699,3 +700,71 @@ sequenceDiagram
 
 - [UX_GUIDELINES.md](./UX_GUIDELINES.md) - Interaction philosophy and patterns
 - [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md) - Current status and decision log
+- [guides/shared-library.md](./guides/shared-library.md) - Shared library user guide
+- [operations/shared-library-runbook.md](./operations/shared-library-runbook.md) - Ops runbook
+
+---
+
+## Shared Library
+
+The shared research library is a **local-first** collaboration boundary layered on
+top of the existing local workbench. Design principles:
+
+- **Identity is opaque and path-independent.** Entity ids are UUID-like, never file
+  paths. PDF item identity is additionally bound to a **content fingerprint**
+  (`fileFingerprint`) so moves/renames reattach sub-files, notes, annotations and the
+  `.lattice/annotations/<itemId>.json` sidecar instead of orphaning them.
+- **Every write is local-first.** Changes go into a durable sync queue
+  (`sync-queue.ts`) and are pushed by a background worker (`desktop-bridge.ts` +
+  `sync-engine.ts`). Network failures never delete pending operations.
+- **Idempotent operations.** `idempotencyKey` = `deviceId:clientSequence` dedupes
+  replayed operations; repeated operations never create duplicate entities.
+- **Conflicts are visible, never silently overwritten.** `conflict-model.ts`
+  classifies binary-version / annotation-revision / delete-edit / permission-revoked /
+  quota-exceeded into a view model with both sides, authors, time, a recommended
+  action and a recoverable payload; each resolution action maps to a distinct
+  operation.
+
+### Layers
+
+| Layer | Module | Responsibility |
+|-------|--------|----------------|
+| Domain | `shared-library/domain.ts` | Entities, roles, capabilities, idempotency |
+| Repository | `shared-library/repository.ts` + `local-repository.ts` | Data-access seam; in-memory fake for tests |
+| Sync | `sync-queue.ts`, `sync-engine.ts`, `desktop-bridge.ts` | Durable queue, push/pull state machine, Tauri bridge |
+| Auth/Device | `auth.ts`, `device.ts` | Session + device identity (secure store via bridge) |
+| Cloud | `api-transport.ts`, `remote-repository.ts` | Typed API transport; library-scoped writes stubbed |
+| Blob | `blob-store.ts`, `upload-manager.ts` | Multipart uploads with idempotent completion |
+| Search | `search-client.ts`, `web-snapshot.ts`, `job-state.ts` | Search contract, SSRF-safe snapshot state machine, idempotent jobs |
+| Conflict/Activity | `conflict-model.ts`, `activity.ts` | Conflict view model + activity feed |
+| UI | `components/shared-library/*` | Library shell, item workspace, conflict center, member management, activity panel |
+
+### Remote boundary
+
+Cloud persistence targets Supabase (Postgres + RLS, `supabase/migrations/`), Cloudflare
+R2 for blobs, and a Worker for jobs/search (`workers/shared-library-api/`). RLS is the
+**real** authorization boundary; the permission matrix in `permissions.ts` is a UX guard
+only. The Worker and R2 are scaffolded but not yet deployed — smoke tests use fakes
+(`smoke-runner.ts`).
+
+### Sync flow
+
+```mermaid
+sequenceDiagram
+    participant UI as React UI
+    participant Store as SharedLibraryStore
+    participant Repo as Local Repository
+    participant Queue as Sync Queue
+    participant Engine as SyncEngine
+    participant Bridge as Desktop Bridge
+    participant Cloud as API/R2
+
+    UI->>Store: mutate (create item / annotate)
+    Store->>Repo: write
+    Store->>Queue: appendOperation (idempotencyKey)
+    Engine->>Queue: pushPending (due ops)
+    Engine->>Bridge: push batch (Tauri invoke / fetch)
+    Bridge->>Cloud: upload
+    Cloud-->>Bridge: accepted / rejected / conflicts
+    Engine->>Queue: markAccepted / markRetryable / markConflict
+```

@@ -247,6 +247,7 @@ export interface PluginCommand {
   id: string;
   title: string;
   shortcut?: string;
+  opensPanel?: boolean;
   run: (payload?: unknown) => void | Promise<void>;
 }
 
@@ -258,6 +259,7 @@ export interface PluginActiveDocumentInfo {
   viewerType: PluginViewerType;
   paneId?: string | null;
   tabId?: string | null;
+  revision?: string;
 }
 
 export interface PluginDocumentContent {
@@ -271,6 +273,19 @@ export interface PluginPdfTextPage {
   text: string;
   visible: boolean;
   source: 'pdfjs-text-model' | 'rendered-text-layer' | 'unknown';
+  /** Source viewport dimensions preserve the aspect ratio for geometry inference. */
+  width?: number;
+  height?: number;
+  glyphs?: Array<{
+    text: string;
+    bbox: { x1: number; y1: number; x2: number; y2: number };
+    fontSize?: number;
+    baseline?: number;
+    itemIndex?: number;
+    charIndex?: number;
+    ruleKind?: 'fraction-bar';
+  }>;
+  warnings?: string[];
   items?: Array<{
     text: string;
     normalizedText: string;
@@ -279,6 +294,10 @@ export interface PluginPdfTextPage {
     blockIndex?: number;
     columnIndex?: number;
     layoutClass?: string;
+    fontSize?: number;
+    baseline?: number;
+    mathAxis?: number;
+    ruleKind?: 'fraction-bar' | 'matrix-delimiter' | 'unknown';
   }>;
 }
 
@@ -290,6 +309,15 @@ export interface PluginPdfSelectionImage {
   height: number;
   bbox: { x1: number; y1: number; x2: number; y2: number };
   source: "current-selection" | "current-page";
+  /** Pixel crop extent, including padding; bbox remains the exact selected region. */
+  imageBbox?: { x1: number; y1: number; x2: number; y2: number };
+  document?: { filePath: string; paneId: string; tabId?: string; revision?: string };
+  selectionToken?: number;
+}
+
+export interface PluginPdfSelectionImageOptions {
+  signal?: AbortSignal;
+  expectedDocument?: PluginActiveDocumentInfo;
 }
 
 export interface PluginDocumentRevealTarget {
@@ -300,13 +328,20 @@ export interface PluginDocumentRevealTarget {
   location?: string;
 }
 
+export interface PluginPdfTextOptions {
+  scope?: 'visible' | 'current-page' | 'all' | 'selection';
+  selection?: { pageNumber: number; bbox: { x1: number; y1: number; x2: number; y2: number } };
+  signal?: AbortSignal;
+  onProgress?: (progress: { completed: number; total: number }) => void;
+}
+
 export interface PluginDocumentAPI {
   getActive: () => Promise<PluginActiveDocumentInfo>;
   getViewerType: () => Promise<PluginViewerType>;
   getSelectionText: () => Promise<string>;
   readCurrent: () => Promise<PluginDocumentContent>;
-  getPdfTextPages: (options?: { scope?: 'visible' | 'current-page' | 'all' }) => Promise<PluginPdfTextPage[]>;
-  getPdfSelectionImage: () => Promise<PluginPdfSelectionImage | null>;
+  getPdfTextPages: (options?: PluginPdfTextOptions) => Promise<PluginPdfTextPage[]>;
+  getPdfSelectionImage: (options?: PluginPdfSelectionImageOptions) => Promise<PluginPdfSelectionImage | null>;
   reveal: (target: PluginDocumentRevealTarget) => Promise<boolean>;
 }
 
@@ -369,6 +404,7 @@ export interface PluginAnnotationsAPI {
 // ============================================================================
 
 export interface PluginContext {
+  lifecycle: { signal: AbortSignal; registerCleanup: (dispose: () => void) => () => void };
   app: {
     platform: 'web' | 'desktop';
   };

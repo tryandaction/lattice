@@ -134,7 +134,10 @@ export function isTauri(): boolean {
 
 export interface StorageAdapter {
   get<T>(key: string): Promise<T | null>;
+  getStrict?<T>(key: string): Promise<T | null>;
   set<T>(key: string, value: T): Promise<void>;
+  /** Critical state must reach the authoritative store, or reject. */
+  setStrict?<T>(key: string, value: T): Promise<void>;
   remove(key: string): Promise<void>;
   clear(): Promise<void>;
 }
@@ -143,6 +146,13 @@ export interface StorageAdapter {
  * Web Storage Adapter using localStorage
  */
 class WebStorageAdapter implements StorageAdapter {
+  async getStrict<T>(key: string): Promise<T | null> {
+    const value = localStorage.getItem(key);
+    return value === null ? null : JSON.parse(value) as T;
+  }
+  async setStrict<T>(key: string, value: T): Promise<void> {
+    localStorage.setItem(key, JSON.stringify(value));
+  }
   async get<T>(key: string): Promise<T | null> {
     try {
       const item = localStorage.getItem(key);
@@ -185,6 +195,12 @@ class WebStorageAdapter implements StorageAdapter {
 class TauriStorageAdapter implements StorageAdapter {
   private webFallback = new WebStorageAdapter();
 
+  async setStrict<T>(key: string, value: T): Promise<void> {
+    // A browser fallback can be masked by an older desktop value on restart.
+    await invokeTauriCommand("set_setting", { key, value }, { timeoutMs: 4000 });
+    await this.webFallback.remove(key);
+  }
+
   async get<T>(key: string): Promise<T | null> {
     try {
       const value = await invokeTauriCommand<T | null>("get_setting", { key }, { timeoutMs: 4000 });
@@ -200,8 +216,19 @@ class TauriStorageAdapter implements StorageAdapter {
       return fallbackValue;
     } catch (error) {
       console.error(`Failed to get ${key} from Tauri store`, error);
-      return this.webFallback.get<T>(key);
+      const fallback = await this.webFallback.get<T>(key);
+      if (fallback !== null) return fallback;
+      // An unavailable store is not an empty store. Callers must not persist defaults over it.
+      return null;
     }
+  }
+
+  async getStrict<T>(key: string): Promise<T | null> {
+    const value = await invokeTauriCommand<T | null>("get_setting", { key }, { timeoutMs: 4000 });
+    if (value !== null && value !== undefined) return value;
+    const legacy = await this.webFallback.getStrict<T>(key);
+    if (legacy !== null) await this.setStrict(key, legacy);
+    return legacy;
   }
 
   async set<T>(key: string, value: T): Promise<void> {
@@ -247,6 +274,7 @@ export function getStorageAdapter(): StorageAdapter {
     return {
       get: async () => null,
       set: async () => {},
+      setStrict: async () => { throw new Error('Persistent storage is unavailable during server rendering'); },
       remove: async () => {},
       clear: async () => {},
     };

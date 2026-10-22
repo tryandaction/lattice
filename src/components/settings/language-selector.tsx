@@ -10,20 +10,21 @@ interface LanguageSelectorProps {
 }
 
 export function LanguageSelector({ compact = false }: LanguageSelectorProps) {
-  const { locale, setLocale, t, getLocaleDisplayName, availableLocales } = useI18n();
+  const { locale, t, getLocaleDisplayName, availableLocales } = useI18n();
   const updateSetting = useSettingsStore((state) => state.setLanguage);
+  const error = useSettingsStore((state) => state.error);
 
   const handleSelect = async (newLocale: Locale) => {
-    setLocale(newLocale);
     await updateSetting(newLocale);
   };
 
   if (compact) {
     return (
-      <div className="flex gap-2">
+      <div><div className="flex gap-2">
         {availableLocales.map((loc) => (
           <button
             key={loc}
+            aria-pressed={locale === loc}
             onClick={() => handleSelect(loc)}
             className={`px-4 py-2 rounded-lg border transition-all ${
               locale === loc
@@ -34,7 +35,7 @@ export function LanguageSelector({ compact = false }: LanguageSelectorProps) {
             <span className="font-medium">{getLocaleDisplayName(loc)}</span>
           </button>
         ))}
-      </div>
+      </div>{error && <p role="alert" className="mt-2 text-xs text-destructive">{t('main.toast.saveFailed.title')}: {error}</p>}</div>
     );
   }
 
@@ -48,6 +49,7 @@ export function LanguageSelector({ compact = false }: LanguageSelectorProps) {
         {availableLocales.map((loc) => (
           <button
             key={loc}
+            aria-pressed={locale === loc}
             onClick={() => handleSelect(loc)}
             className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
               locale === loc
@@ -60,6 +62,7 @@ export function LanguageSelector({ compact = false }: LanguageSelectorProps) {
           </button>
         ))}
       </div>
+      {error && <p role="alert" className="text-xs text-destructive">{t('main.toast.saveFailed.title')}: {error}</p>}
     </div>
   );
 }

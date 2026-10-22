@@ -45,6 +45,12 @@ import { gotoLine, highlightSelectionMatches, openSearchPanel, searchKeymap } fr
 import { academicThemeExtension } from "./academic-theme";
 import { registerCodeMirrorView, unregisterCodeMirrorView, setActiveInputTargetFromElement } from "@/lib/unified-input-handler";
 import type { ExecutionContextRef, ExecutionProblem } from "@/lib/runner/types";
+import { useSettingsStore } from "@/stores/settings-store";
+import { useVSCodeCompatStore } from "@/stores/vscode-compat-store";
+import { buildVSCodeEditorExtensions } from "@/lib/vscode-compat/editor-adapter";
+import { codeMinimapExtension } from "./minimap";
+import { flashReferenceRange, flashReferenceTarget } from "@/lib/reference-target-flash";
+import type { ReferenceTextRange } from "@/lib/reference-text-range";
 
 type CodeMirrorViewWithHandler = EditorView & {
   _unifiedInputFocusHandler?: () => void;
@@ -76,12 +82,16 @@ export interface CodeEditorStateSnapshot {
  * Ref handle for CodeEditor component
  */
 export interface CodeEditorRef {
+  /** True once the current document has a mounted CodeMirror view. */
+  isReady: () => boolean;
   /** Focus the editor */
   focus: () => void;
   /** Scroll to a specific line */
   scrollToLine: (lineNumber: number) => void;
   /** Flash a specific line to confirm navigation */
   flashLine: (lineNumber: number) => void;
+  /** Outline the actual quoted text, returning false when it is not rendered. */
+  flashRange: (range: ReferenceTextRange) => boolean;
   /** Get current content */
   getContent: () => string;
   /** Get selected text (empty string if no selection) */
@@ -96,6 +106,8 @@ export interface CodeEditorRef {
   } | null;
   /** Check if there's a selection */
   hasSelection: () => boolean;
+  /** Get current cursor offset */
+  getCursorOffset: () => number | null;
   /** Get current editor state for restoration */
   getEditorState: () => CodeEditorStateSnapshot | null;
   /** Restore editor state (cursor/selection/scroll) */
@@ -110,6 +122,8 @@ export interface CodeEditorRef {
  * Props for the CodeEditor component
  */
 export interface CodeEditorProps {
+  /** Called when the current editor document is ready for navigation. */
+  onReady?: () => void;
   /** Initial content for the editor */
   initialValue: string;
   
@@ -127,6 +141,9 @@ export interface CodeEditorProps {
   
   /** Optional className for container styling */
   className?: string;
+
+  /** Extra editor extensions contributed by the caller */
+  extraExtensions?: Extension[];
   
   /** Unique identifier for memoization */
   fileId?: string;
@@ -136,6 +153,9 @@ export interface CodeEditorProps {
 
   /** Enable lightweight syntax diagnostics */
   syntaxDiagnostics?: boolean;
+
+  /** Show the document minimap for scrollable file editors */
+  minimap?: boolean;
 
   /** Base context used when emitting syntax problems */
   problemContext?: ExecutionContextRef | null;
@@ -299,22 +319,36 @@ function CodeEditorComponent({
   isReadOnly = false,
   autoHeight = false,
   className = "",
+  extraExtensions = [],
   basicCompletion = false,
   syntaxDiagnostics = false,
+  minimap,
   problemContext = null,
   onProblemsChange,
   onNavigateUp,
   onNavigateDown,
   onEscape,
   editorRef,
+  onReady,
 }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const referenceFlashCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => {
+    referenceFlashCleanupRef.current?.();
+    referenceFlashCleanupRef.current = null;
+  }, []);
   const [error, setError] = useState<Error | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const vscodeCompatEnabled = useSettingsStore((state) => state.settings.vscodeCompatEnabled);
+  const vscodeCompatSettings = useVSCodeCompatStore((state) => state.settings);
+  const vscodeCompatSnippets = useVSCodeCompatStore((state) => state.snippets);
+  const minimapEnabled = !autoHeight && (minimap ?? (!vscodeCompatEnabled || vscodeCompatSettings.minimapEnabled));
   
   // Store callbacks in refs to avoid recreating editor
   const onChangeRef = useRef(onChange);
+  const onReadyRef = useRef(onReady);
+  useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
   const onNavigateUpRef = useRef(onNavigateUp);
   const onNavigateDownRef = useRef(onNavigateDown);
   const onEscapeRef = useRef(onEscape);
@@ -427,6 +461,9 @@ function CodeEditorComponent({
         ]);
         
         // Build extensions array
+        const vscodeCompatExtensions = vscodeCompatEnabled
+          ? buildVSCodeEditorExtensions(vscodeCompatSettings, vscodeCompatSnippets)
+          : [];
         const extensions: Extension[] = [
           // Core extensions
           lineNumbers(),
@@ -460,6 +497,9 @@ function CodeEditorComponent({
           
           // Theme
           academicThemeExtension,
+          ...(minimapEnabled ? [codeMinimapExtension] : []),
+          ...vscodeCompatExtensions,
+          ...extraExtensions,
           
           // Language
           langExtension,
@@ -528,6 +568,7 @@ function CodeEditorComponent({
         view.dom.addEventListener('focusin', focusHandler);
         (view as CodeMirrorViewWithHandler)._unifiedInputFocusHandler = focusHandler;
         setIsLoading(false);
+        onReadyRef.current?.();
 
         if (syntaxDiagnostics) {
           scheduleSyntaxProblemUpdate(view.state);
@@ -547,6 +588,8 @@ function CodeEditorComponent({
     // Cleanup on unmount
     return () => {
       mounted = false;
+      referenceFlashCleanupRef.current?.();
+      referenceFlashCleanupRef.current = null;
       if (viewRef.current) {
         const existingView = viewRef.current as CodeMirrorViewWithHandler;
         const existingHandler = existingView._unifiedInputFocusHandler;
@@ -563,7 +606,20 @@ function CodeEditorComponent({
       }
       onProblemsChangeRef.current?.([]);
     };
-  }, [autoHeight, basicCompletion, initialValue, isReadOnly, language, scheduleSyntaxProblemUpdate, syntaxDiagnostics]);
+  }, [
+    autoHeight,
+    basicCompletion,
+    extraExtensions,
+    initialValue,
+    isReadOnly,
+    language,
+    minimapEnabled,
+    scheduleSyntaxProblemUpdate,
+    syntaxDiagnostics,
+    vscodeCompatEnabled,
+    vscodeCompatSettings,
+    vscodeCompatSnippets,
+  ]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -592,9 +648,11 @@ function CodeEditorComponent({
       from: state.cursorPosition,
       to: state.cursorPosition,
     };
+    const clamp = (position: number) => Math.min(view.state.doc.length,
+      Math.max(0, Number.isFinite(position) ? Math.floor(position) : 0));
 
     view.dispatch({
-      selection: { anchor: selection.from, head: selection.to },
+      selection: { anchor: clamp(selection.from), head: clamp(selection.to) },
       scrollIntoView: false,
     });
 
@@ -615,6 +673,8 @@ function CodeEditorComponent({
   }, []);
 
   const scrollToLine = useCallback((lineNumber: number) => {
+    referenceFlashCleanupRef.current?.();
+    referenceFlashCleanupRef.current = null;
     const view = viewRef.current;
     if (!view) return;
 
@@ -641,17 +701,25 @@ function CodeEditorComponent({
       return;
     }
 
-    lineElement.animate(
-      [
-        { backgroundColor: 'rgba(250, 204, 21, 0.38)' },
-        { backgroundColor: 'rgba(250, 204, 21, 0.18)' },
-        { backgroundColor: 'transparent' },
-      ],
-      {
-        duration: 1800,
-        easing: 'ease-out',
-      },
-    );
+    referenceFlashCleanupRef.current?.();
+    referenceFlashCleanupRef.current = flashReferenceTarget(lineElement);
+  }, []);
+
+  const flashRange = useCallback(({ from, to }: ReferenceTextRange): boolean => {
+    referenceFlashCleanupRef.current?.();
+    referenceFlashCleanupRef.current = null;
+    const view = viewRef.current;
+    if (!view || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to <= from || to > view.state.doc.length) return false;
+    // domAtPos can return viewport edges for virtualized text; never frame those
+    // edges as if they were the requested evidence.
+    if (from < view.viewport.from || to > view.viewport.to) return false;
+    const start = view.domAtPos(from, 1);
+    const end = view.domAtPos(to, -1);
+    const range = document.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    referenceFlashCleanupRef.current = flashReferenceRange(range);
+    return referenceFlashCleanupRef.current !== null;
   }, []);
 
   // Get current content
@@ -691,6 +759,11 @@ function CodeEditorComponent({
     return !viewRef.current.state.selection.main.empty;
   }, []);
 
+  const getCursorOffset = useCallback(() => {
+    if (!viewRef.current) return null;
+    return viewRef.current.state.selection.main.head;
+  }, []);
+
   const openSearch = useCallback(() => {
     if (!viewRef.current) return;
     openSearchPanel(viewRef.current);
@@ -707,13 +780,16 @@ function CodeEditorComponent({
   useEffect(() => {
     if (editorRef && 'current' in editorRef) {
       editorRef.current = {
+        isReady: () => viewRef.current !== null,
         focus,
         scrollToLine,
         flashLine,
+        flashRange,
         getContent,
         getSelection,
         getSelectionDetails,
         hasSelection,
+        getCursorOffset,
         getEditorState,
         restoreEditorState,
         openSearch,
@@ -725,7 +801,7 @@ function CodeEditorComponent({
         editorRef.current = null;
       }
     };
-  }, [editorRef, flashLine, focus, getContent, getEditorState, getSelection, getSelectionDetails, hasSelection, openGotoLine, openSearch, restoreEditorState, scrollToLine]);
+  }, [editorRef, flashLine, flashRange, focus, getContent, getCursorOffset, getEditorState, getSelection, getSelectionDetails, hasSelection, openGotoLine, openSearch, restoreEditorState, scrollToLine]);
 
   // Error state
   if (error) {
@@ -772,6 +848,7 @@ export const CodeEditor = memo(CodeEditorComponent, (prevProps, nextProps) => {
   // Re-render if editor capabilities change
   if (prevProps.basicCompletion !== nextProps.basicCompletion) return false;
   if (prevProps.syntaxDiagnostics !== nextProps.syntaxDiagnostics) return false;
+  if (prevProps.minimap !== nextProps.minimap) return false;
   
   // Don't re-render for onChange, navigation callbacks, or initialValue changes
   // (these are handled via refs or internal state)

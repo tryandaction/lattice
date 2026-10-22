@@ -1,6 +1,6 @@
 # AI Agent Workbench Plan
 
-Last updated: 2026-06-09
+Last updated: 2026-08-17
 
 This document defines the next AI Chat / Agent system direction for Lattice. It is intentionally grounded in the current codebase: Lattice already has `AiOrchestrator`, `AiContextGraph`, Evidence refs, Prompt Templates, Selection AI, and AI Workbench drafts/proposals. The next phase is to turn those pieces into a coherent research agent workbench, not to bolt on a generic autonomous coding agent.
 
@@ -20,7 +20,30 @@ The main Research Agent roadmap uses Phase/P0-P5 as the sequential product track
 
 `AI_AGENT_SYSTEM_TODO.md` also contains P6, a horizontal Lattice Product Skills Adaptation Backlog derived from the user-provided Lattice adaptation prompt. P6 is not a replacement for P4/P5 and does not mean the main track has skipped ahead. P6 items are pulled into the active main phase only when they support that phase or are explicitly scheduled. PDF-scoped P6 work remains owned by the separate PDF window.
 
-Current active work is P5 closeout plus scheduled current-thread P6 slices that strengthen the Research Agent main path. The AI Agent thread owns workflow execution profiles, note-taking config, Tool Broker policy integration, Trace/approval contracts, and non-PDF workflow surfaces; PDF item workspace and PDF annotation writeback remain in the separate PDF implementation window.
+Sequential status is fixed across the AI planning documents: P4 is complete for the current productization slice, P5 production hardening is the active closeout track, and P6 remains a horizontal backlog whose current-thread slices run only when explicitly scheduled to support P5. P6 is not an "early next phase." The AI Agent thread owns workflow execution profiles, note-taking config, Tool Broker policy integration, Trace/approval contracts, and non-PDF workflow surfaces; PDF item workspace and PDF annotation writeback remain in the separate PDF implementation window.
+
+### AI Workspace Phase 2: Focused Conversation + Review Workspace
+
+Status: complete for the current UI and performance-closeout slice (2026-08-17). This is a presentation, review-flow, and client-performance refinement, not a new execution phase in the P0-P6 roadmap.
+
+- The first viewport prioritizes the current question, direct answer, concise status, and composer.
+- Teaching-oriented response sections may show a direct answer, core idea, steps, minimal example, evidence entry points, and a next question only when the model supplied them.
+- Evidence, Trace, Memory, Workbench, raw locators, and long plans remain in an on-demand, full-height Review Workspace that replaces the conversation body instead of stacking beneath it. Citations in chat are deduplicated, basename-first chips that open Evidence Review.
+- Pending approvals still automatically focus Trace Review, but ordinary evidence and Workbench state do not open Review automatically.
+- PDF Companion review is an on-demand, full-height companion surface: PDF evidence can show temporary, non-persistent highlights from anchored sources. A user must explicitly confirm and inject a highlight before the existing annotation persistence path is used.
+- This phase does not add shell, network, MCP, direct-write, autonomous coding, automatic git, or any new permission capability.
+- Performance closeout uses bounded client resources: three clean binary document buffers (current plus two recent), 24 extracted PDF page models per document, 16 nearby reference-preview models, and a 6 MP per-page canvas budget. Cold page canvases, text layers, annotation layers, and PDF.js page resources are explicitly released.
+- Evidence citations retain `page`, `snippet`, and optional normalized rectangles through workspace navigation. PDF targets jump to the page and flash the resolved quote; ordinary mathematical text such as `4,2,2` is not treated as a workspace link.
+
+### AI Workspace Shell Redesign Phase 1
+
+The first shell redesign is implemented as a UI and state-architecture layer over the existing Agent system:
+
+- The desktop AI dock uses the real controlled path from `ResizablePanelGroup` through `aiPanelWidth` persistence, with AppLayout drag and controlled-layout rebuild regression tests. Requested widths are preserved when the right-side panels fit, and the visible separator exposes discoverable resize/collapse labels and a concrete drag grip.
+- The primary viewport contains only the header, compact Agent status strip, chat timeline, and composer. Empty chat uses a compact quick-start row instead of a full-height centered state.
+- Memory, Trace, Evidence, and Workbench live in a collapsed-by-default inspector. Selection evidence, focused Trace/Memory targets, highlighted proposals, and newly pending approvals open the corresponding review surface.
+- Workbench defaults to a compact queue with draft/proposal/pending-approval counts; long content and paths are bounded until the user expands detail.
+- Chat/Agent mode, model selection, templates, context resolution, send/stop, Research Agent, Trace, Memory, Evidence, Workbench, and approvals retain their existing behavior. This phase adds no shell, network, MCP, direct-write, autonomous coding, or git capability.
 
 ## Design Thesis
 
@@ -603,7 +626,8 @@ Acceptance:
 
 Status:
 
-- Current main phase: P4 / Phase 4.
+- Current infrastructure track: P4 productization is complete for the current slice; P5 production hardening and scheduled P6 support slices remain the sequential engineering track.
+- Current product surface: AI Workspace Phase 2 (Focused Conversation + Review Workspace) is complete for the current UI slice and is tracked independently from P0-P6. The product now defaults to an answer-first conversation, compact status and composer, on-demand Evidence/Trace/Memory/Workbench review, a 38% desktop AI Companion default with a 32% minimum, root-aware evidence navigation, deduplicated references, and temporary PDF source highlights that require explicit user confirmation before annotation injection. These changes affect result expression and review flow only; they do not add execution permissions or capabilities.
 - P3 is closed out for the current slice: Memory, long-context summaries, continuation recovery, and Chat/Trace/Memory focus handoff are implemented and verified.
 - P6.4 workflow preset registry and note-taking config are supporting infrastructure for P4, not a separate active sequential phase.
 - First P4 productization slice completed: Auto now infers a concrete workflow preset for product Research Agent runs from task, query, file, selection, and content cues; explicit workflow selections still override inference.

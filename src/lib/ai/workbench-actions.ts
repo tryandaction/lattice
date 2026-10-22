@@ -1,5 +1,8 @@
 import { generateUniqueName, sanitizeFileName } from '@/lib/file-operations';
 import { normalizeWorkspacePath } from '@/lib/link-router/path-utils';
+import { resolveAuthorizedDocumentHandle } from './document-source-capture';
+import { getDesktopHandlePath } from '@/lib/desktop-file-system';
+import { isLatticeTextDocumentPath } from './lattice-skills/text-content-validation';
 import type {
   AiDraftArtifact,
   AiDraftTemplateId,
@@ -41,19 +44,6 @@ function resolveDraftTemplateId(
   }
 }
 
-function formatEvidenceRefs(refs: EvidenceRef[]): string {
-  if (refs.length === 0) {
-    return '_No evidence references attached._';
-  }
-
-  return refs
-    .map((ref) => {
-      const preview = ref.preview ? `\n  - Preview: ${ref.preview}` : '';
-      return `- ${ref.label} (${ref.kind})\n  - Locator: ${ref.locator}${preview}`;
-    })
-    .join('\n');
-}
-
 export function formatDraftArtifactMarkdown(
   draft: Pick<AiDraftArtifact, 'title' | 'content' | 'sourceRefs' | 'createdAt' | 'type'> & Partial<Pick<AiDraftArtifact, 'templateId' | 'originMessageId' | 'originProposalId'>>,
   options: { headingLevel?: 1 | 2 | 3 } = {}
@@ -71,7 +61,6 @@ export function formatDraftArtifactMarkdown(
       : templateId === 'comparison-summary'
         ? 'Comparison'
         : 'Content';
-  const nextActionsHeading = templateId === 'task-plan' ? 'Execution Notes' : 'Next Actions';
 
   return [
     `${headingPrefix} ${draft.title}`,
@@ -85,14 +74,6 @@ export function formatDraftArtifactMarkdown(
     `${contentHeadingPrefix} ${contentHeadingTitle}`,
     '',
     draft.content.trim() || '_Empty draft content._',
-    '',
-    `${contentHeadingPrefix} Evidence`,
-    '',
-    formatEvidenceRefs(draft.sourceRefs),
-    '',
-    `${contentHeadingPrefix} ${nextActionsHeading}`,
-    '',
-    '_Pending review._',
     '',
   ].filter(Boolean).join('\n');
 }
@@ -163,13 +144,7 @@ function titleFromTargetPath(targetPath: string, fallback: string): string {
 }
 
 function writeModeForDraft(write: AiPlannedWrite): AiDraftWriteMode {
-  if (write.mode === 'append') {
-    return 'append';
-  }
-  if (write.mode === 'update') {
-    return 'append';
-  }
-  return 'create';
+  return write.mode;
 }
 
 function contentForPlannedWrite(
@@ -177,11 +152,6 @@ function contentForPlannedWrite(
   write: AiPlannedWrite,
 ): string {
   const lines: string[] = [];
-
-  if (write.mode === 'update') {
-    lines.push(`Review note: the original proposal suggested updating \`${write.targetPath}\`. This draft defaults to append mode for safety.`);
-    lines.push('');
-  }
 
   if (write.contentPreview.trim()) {
     lines.push(write.contentPreview.trim());
@@ -254,12 +224,15 @@ export function summarizeProposalTargetDrafts(
   };
 }
 
-function isDraftReadyForWriteback(draft: Pick<AiDraftArtifact, 'writeMode' | 'targetPath' | 'status'>): boolean {
+function isDraftReadyForWriteback(draft: Pick<AiDraftArtifact, 'writeMode' | 'targetPath' | 'status' | 'fileChange'>): boolean {
   if (draft.status !== 'draft') {
     return false;
   }
   if ((draft.writeMode ?? 'create') === 'append') {
     return Boolean(draft.targetPath?.trim());
+  }
+  if (draft.writeMode === 'update') {
+    return Boolean(draft.targetPath?.trim() && typeof draft.fileChange?.expectedContent === 'string');
   }
   return true;
 }
@@ -271,11 +244,13 @@ export interface BatchDraftWriteResult {
   ok: boolean;
   error?: string;
   handle?: FileSystemFileHandle;
+  parentPdfPath?: string;
 }
 
 export async function applyDraftArtifactsToWorkspace(
   rootHandle: FileSystemDirectoryHandle,
   drafts: AiDraftArtifact[],
+  options: { workspaceKey?: string; beforeWrite?: (relativePath: string) => void } = {},
 ): Promise<BatchDraftWriteResult[]> {
   const results: BatchDraftWriteResult[] = [];
 
@@ -296,6 +271,8 @@ export async function applyDraftArtifactsToWorkspace(
       const result = await writeDraftArtifactToTarget(rootHandle, draft, {
         targetPath,
         writeMode,
+        workspaceKey: options.workspaceKey,
+        beforeWrite: options.beforeWrite,
       });
       results.push({
         draftId: draft.id,
@@ -303,6 +280,7 @@ export async function applyDraftArtifactsToWorkspace(
         ok: true,
         path: result.path,
         handle: result.handle,
+        ...(result.parentPdfPath ? { parentPdfPath: result.parentPdfPath } : {}),
       });
     } catch (error) {
       results.push({
@@ -386,9 +364,24 @@ function normalizeTargetInput(
   }
 
   return {
-    relativePath: trimWorkspacePrefix(targetPath, rootHandle.name),
+    relativePath: normalizeWorkspaceWritePath(rootHandle, targetPath),
     explicitPath: true,
   };
+}
+
+/** Validate before normalization so dot segments cannot escape the workspace. */
+export function normalizeWorkspaceWritePath(rootHandle: FileSystemDirectoryHandle, target: string): string {
+  let path = target.trim().replace(/\\/g, '/');
+  if (!path || /[\u0000-\u001f?#]/u.test(path) || path.split('/').some(part => part === '.' || part === '..')) throw new Error('目标文件路径无效。');
+  const desktopRoot = getDesktopHandlePath(rootHandle)?.replace(/\\/g, '/').replace(/\/$/, '');
+  if (/^[a-z]:\//i.test(path) || path.startsWith('/')) {
+    if (!desktopRoot || !path.toLowerCase().startsWith(desktopRoot.toLowerCase() + '/')) throw new Error('目标文件不在当前工作区。');
+    path = path.slice(desktopRoot.length + 1);
+  }
+  const relative = trimWorkspacePrefix(path, rootHandle.name);
+  const pdfChildNote = /^\.lattice\/items\/[^/]+\/[^/]+$/i.test(relative) && isLatticeTextDocumentPath(relative);
+  if (!relative || relative.split('/').some(part => part === '.git' || (part === '.lattice' && !pdfChildNote))) throw new Error('不能写入工作区内部配置目录。');
+  return relative;
 }
 
 function splitTargetPath(relativePath: string): { directoryPath: string; fileName: string } {
@@ -449,18 +442,80 @@ export async function writeDraftArtifactToWorkspace(
 
 export async function writeDraftArtifactToTarget(
   rootHandle: FileSystemDirectoryHandle,
-  draft: Pick<AiDraftArtifact, 'title' | 'content' | 'sourceRefs' | 'createdAt' | 'type'>,
+  draft: Pick<AiDraftArtifact, 'title' | 'content' | 'sourceRefs' | 'createdAt' | 'type'> & Partial<Pick<AiDraftArtifact, 'pdfChildTarget' | 'cloudPdfChildProposal' | 'cloudFileProposal' | 'targetPath' | 'contentFormat' | 'fileChange'>>,
   options: {
     targetPath?: string;
     writeMode?: AiDraftWriteMode;
+    workspaceKey?: string;
+    beforeWrite?: (relativePath: string) => void;
   } = {}
-): Promise<{ handle: FileSystemFileHandle; path: string }> {
+): Promise<{ handle: FileSystemFileHandle; path: string; parentPdfPath?: string }> {
+  if (draft.cloudPdfChildProposal || draft.cloudFileProposal || draft.sourceRefs.some(ref => ref.cloudIdentity) && /^\/?(?:library\?|cloud:)/i.test(options.targetPath ?? draft.targetPath ?? '')) throw new Error('云文件提案必须通过已授权云 provider 审查应用，不能写入本地文件系统。');
   const writeMode = options.writeMode ?? 'create';
-  const { relativePath, explicitPath } = normalizeTargetInput(rootHandle, options.targetPath, draft);
+  const child = draft.pdfChildTarget;
+  const requestedPath = options.targetPath ?? draft.targetPath;
+  if (child && (writeMode === 'create' || writeMode === 'update') && (!requestedPath?.trim()
+    || splitTargetPath(trimWorkspacePrefix(requestedPath, rootHandle.name)).directoryPath === splitTargetPath(trimWorkspacePrefix(child.suggestedTargetPath, rootHandle.name)).directoryPath)) {
+    const desktopPath = getDesktopHandlePath(rootHandle)?.replace(/\\/g, '/').replace(/\/$/, '');
+    const workspaceKey = options.workspaceKey ?? (desktopPath ? `desktop:${desktopPath}` : rootHandle.name);
+    if (child.workspaceKey && child.workspaceKey !== workspaceKey) throw new Error('请回到原 PDF 所在工作区后保存子文档。');
+    const sourcePath = normalizeWorkspaceWritePath(rootHandle, child.sourcePath);
+    if (!draft.sourceRefs.some(ref => (ref.kind === 'pdf_page' || ref.kind === 'pdf_annotation' || (draft.contentFormat === 'raw' && ref.kind === 'file'))
+      && normalizeWorkspaceWritePath(rootHandle, ref.locator.split('#', 1)[0].split('?', 1)[0]) === sourcePath)) {
+      throw new Error('子文档缺少原 PDF 的已核实来源。');
+    }
+    const { getPdfItemManifestIndex } = await import('@/lib/pdf-item');
+    const index = await getPdfItemManifestIndex(rootHandle);
+    const known = (child.parentItemId ? index.byDocumentId.get(child.parentItemId) : undefined) ?? index.byKnownPdfPath.get(normalizeWorkspacePath(sourcePath))
+      ?? index.byKnownPdfPath.get(trimWorkspacePrefix(sourcePath, rootHandle.name));
+    if (child.parentItemId && known && ![known.pdfPath, ...known.knownPdfPaths].some(path => {
+      try { return normalizeWorkspaceWritePath(rootHandle, path) === sourcePath; } catch { return false; }
+    })) throw new Error('PDF 来源路径与稳定文件身份不匹配。');
+    const parentPath = known?.pdfPath ?? sourcePath;
+    // Check the authorized original (or its manifest-recorded move) before any write.
+    const parentHandle = await resolveAuthorizedDocumentHandle(rootHandle, parentPath);
+    const parentFile = await parentHandle.getFile();
+    if (!child.parentVersion || !child.parentItemId) throw new Error('PDF 子文件草稿缺少父文件版本，请重新读取 PDF 并生成建议。');
+    const { getAgentDocumentVersion } = await import('./document-source');
+    if (await getAgentDocumentVersion(parentFile, child.parentItemId) !== child.parentVersion) throw new Error('PDF 在生成建议后已改变，本次没有写入；请重新读取并生成。');
+    const relativeParentPath = trimWorkspacePrefix(desktopPath && parentPath.toLowerCase().startsWith(`${desktopPath.toLowerCase()}/`)
+      ? parentPath.slice(desktopPath.length + 1) : parentPath, rootHandle.name);
+    const fileName = splitTargetPath(requestedPath?.trim() || child.suggestedTargetPath).fileName;
+    if (writeMode === 'update') {
+      if (!draft.fileChange || typeof draft.fileChange.expectedContent !== 'string') throw new Error('更新 PDF 子文件需要原文件版本快照，请重新生成。');
+      const actual = await resolveAuthorizedDocumentHandle(rootHandle, draft.fileChange.targetPath);
+      if (await (await actual.getFile()).text() !== draft.fileChange.expectedContent) throw new Error('子文件在生成建议后已改变，本次没有写入。');
+    }
+    const { preparePdfChildProposal, applyReviewedPdfChildProposal, pdfChildProposalApproval } = await import('./lattice-skills/pdf-child-skill');
+    const proposal = await preparePdfChildProposal({ root: rootHandle, workspaceKey, parentPath: relativeParentPath,
+      parentItemId: child.parentItemId, fileName, content: draft.contentFormat === 'raw' ? draft.content : formatDraftArtifactMarkdown(draft),
+      mode: writeMode, sourceRefs: draft.sourceRefs, expectedParentVersion: child.parentVersion,
+      ...(writeMode === 'update' ? { expectedContent: draft.fileChange?.expectedContent } : {}) });
+    options.beforeWrite?.(proposal.targetPath);
+    const saved = await applyReviewedPdfChildProposal({ root: rootHandle, workspaceKey, proposal, approval: pdfChildProposalApproval(proposal) });
+    return { handle: saved.handle, path: `${rootHandle.name}/${saved.path}`, parentPdfPath: `${rootHandle.name}/${trimWorkspacePrefix(saved.parentPath, rootHandle.name)}` };
+  }
+  const { relativePath, explicitPath } = normalizeTargetInput(rootHandle, requestedPath, draft);
   const { directoryPath, fileName } = splitTargetPath(relativePath);
 
   if (!fileName) {
     throw new Error('目标路径缺少文件名。');
+  }
+
+  const desktopRoot = getDesktopHandlePath(rootHandle)?.replace(/\\/g, '/').replace(/\/$/, '');
+  const workspaceKey = options.workspaceKey ?? (desktopRoot ? `desktop:${desktopRoot}` : rootHandle.name);
+  if (draft.fileChange?.workspaceKey && draft.fileChange.workspaceKey !== workspaceKey) throw new Error('请回到此文件所属工作区后应用更改。');
+  if (draft.contentFormat === 'raw' && /\.(?:pdf|png|jpe?g|docx?|xlsx?|pptx?|exe|dll)$/i.test(fileName)) throw new Error('文件编辑仅支持文本文件；二进制文件需要对应的文档工具。');
+  if (writeMode === 'update') {
+    if (!explicitPath || !draft.fileChange || typeof draft.fileChange.expectedContent !== 'string') throw new Error('修改现有文件需要读取原文件并保留版本快照，请重新生成编辑建议。');
+    if (normalizeWorkspaceWritePath(rootHandle, draft.fileChange.targetPath) !== relativePath) throw new Error('编辑建议绑定原文件，不能直接改为另一文件；请重新生成建议。');
+    const handle = await resolveAuthorizedDocumentHandle(rootHandle, relativePath);
+    if (await readExistingFile(handle) !== draft.fileChange.expectedContent) throw new Error('文件在生成建议后已改变，本次没有写入；请基于最新内容重新生成。');
+    options.beforeWrite?.(relativePath);
+    await writeFileContent(handle, draft.contentFormat === 'raw' ? draft.content : formatDraftArtifactMarkdown(draft));
+    const expected = draft.contentFormat === 'raw' ? draft.content : formatDraftArtifactMarkdown(draft);
+    if (await readExistingFile(handle) !== expected) throw new Error('写入后回读不一致，请检查文件。');
+    return { handle, path: `${rootHandle.name}/${relativePath}` };
   }
 
   const targetDirectory = await ensureDirectoryHandle(rootHandle, directoryPath);
@@ -475,7 +530,8 @@ export async function writeDraftArtifactToTarget(
 
     const fileHandle = await targetDirectory.getFileHandle(fileName);
     const existingContent = await readExistingFile(fileHandle);
-    const nextContent = `${existingContent.trimEnd()}${APPEND_SEPARATOR}${buildAppendMarkdown(draft)}`;
+    const nextContent = draft.contentFormat === 'raw' ? existingContent + draft.content : `${existingContent.trimEnd()}${APPEND_SEPARATOR}${buildAppendMarkdown(draft)}`;
+    options.beforeWrite?.(relativePath);
     await writeFileContent(fileHandle, nextContent);
 
     return {
@@ -492,8 +548,11 @@ export async function writeDraftArtifactToTarget(
     throw new Error('目标文件已存在，请改用追加模式或更换路径。');
   }
 
+  options.beforeWrite?.(directoryPath ? directoryPath + "/" + resolvedFileName : resolvedFileName);
   const fileHandle = await targetDirectory.getFileHandle(resolvedFileName, { create: true });
-  await writeFileContent(fileHandle, formatDraftArtifactMarkdown(draft));
+  const fileContent = draft.contentFormat === 'raw' ? draft.content : formatDraftArtifactMarkdown(draft);
+  await writeFileContent(fileHandle, fileContent);
+  if (await readExistingFile(fileHandle) !== fileContent) throw new Error('写入后回读不一致，请检查文件。');
 
   const resolvedRelativePath = directoryPath
     ? `${directoryPath}/${resolvedFileName}`

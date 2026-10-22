@@ -183,6 +183,27 @@ vi.mock("@/components/renderers/image-viewer", () => ({
   ),
 }));
 
+vi.mock("@/components/editor/obsidian-markdown-viewer", () => ({
+  ObsidianMarkdownViewer: ({ content, onChange }: { content: string; onChange: (value: string) => void }) => (
+    <textarea data-testid="markdown-source" value={content} onChange={(event) => onChange(event.target.value)} />
+  ),
+}));
+
+describe('Markdown source identity', () => {
+  it.each(['md', 'mdx', 'markdown'])('keeps original math and HTML source when opening and editing .%s', async (extension) => {
+    const content = String.raw`Text \(x^2\) and <strong>evidence</strong>.`;
+    const onContentChange = vi.fn();
+    render(<UniversalFileViewer paneId="pane-left" handle={{ name: `note.${extension}` } as FileSystemFileHandle}
+      content={{ kind: 'text', text: content }} isLoading={false} error={null} fileId="note-id"
+      filePath={`notes/note.${extension}`} onContentChange={onContentChange} />);
+    const editor = await screen.findByTestId('markdown-source');
+    expect((editor as HTMLTextAreaElement).value).toBe(content);
+    expect(onContentChange).not.toHaveBeenCalled();
+    fireEvent.change(editor, { target: { value: `${content} More.` } });
+    expect(onContentChange).toHaveBeenCalledWith(`${content} More.`);
+  });
+});
+
 vi.mock("@/components/renderers/image-tldraw-adapter", () => ({
   ImageTldrawAdapter: ({
     fileName,
@@ -314,6 +335,7 @@ describe("UniversalFileViewer PDF routing", () => {
       expect(screen.getByTestId("mock-pdf-highlighter-pane-left")).toBeTruthy();
       expect(screen.queryByTestId("mock-pdf-viewer-pane-left")).toBeNull();
     });
+    expect(resolvePdfDocumentBindingMock).not.toHaveBeenCalled();
   });
 
   it("falls back to the lightweight viewer when annotation context is missing", async () => {

@@ -2,13 +2,16 @@
  * @vitest-environment jsdom
  */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ExplorerSidebar } from "../explorer-sidebar";
+vi.mock('@/hooks/use-explorer-file-drop', () => ({ useExplorerFileDrop: () => ({ hovered: null, busy: false }) }));
 
 const openDirectory = vi.fn();
+const refreshDirectory = vi.fn();
 const openWorkspacePath = vi.fn();
 const removeRecentWorkspacePath = vi.fn();
+const fileSystemStatus = vi.hoisted(() => ({ isLoading: false, error: null as string | null }));
 const mockFileTree: {
   root: {
     name: string;
@@ -36,9 +39,9 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/hooks/use-file-system", () => ({
   useFileSystem: () => ({
     fileTree: mockFileTree,
-    isLoading: false,
-    error: null,
+    ...fileSystemStatus,
     openDirectory,
+    refreshDirectory,
     openWorkspacePath,
     openQaWorkspace: undefined,
     isSupported: true,
@@ -105,6 +108,20 @@ vi.mock("@/components/ui/plugin-sidebar-slot", () => ({
 }));
 
 describe("ExplorerSidebar", () => {
+  it("keeps the current tree mounted while refreshing or showing a folder access error", () => {
+    fileSystemStatus.isLoading = true;
+    const { rerender } = render(<ExplorerSidebar />);
+    expect(screen.getByText("tree-view")).not.toBeNull();
+    fileSystemStatus.isLoading = false;
+    fileSystemStatus.error = "Folder permission was denied";
+    rerender(<ExplorerSidebar />);
+    expect(screen.getByText("tree-view")).not.toBeNull();
+    expect(screen.getByText("Folder permission was denied")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "explorer.refresh" }));
+    expect(refreshDirectory).toHaveBeenCalledOnce();
+    expect(openDirectory).not.toHaveBeenCalled();
+    fileSystemStatus.error = null;
+  });
   it("renders explorer header without duplicating recent workspace actions", () => {
     render(<ExplorerSidebar />);
 

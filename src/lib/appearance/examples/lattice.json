@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "id": "user-example-lattice",
+  "name": "格致",
+  "author": "Lattice",
+  "license": "Built-in",
+  "packageVersion": "1.0.0",
+  "colors": {
+    "light": {
+      "background": "#f8fafc",
+      "foreground": "#20242b",
+      "surface": "#ffffff",
+      "elevated": "#ffffff",
+      "muted": "#eef2f6",
+      "mutedForeground": "#52606d",
+      "border": "#cbd5e1",
+      "controlBorder": "#64748b",
+      "primary": "#243b53",
+      "primaryForeground": "#ffffff",
+      "focus": "#1d4ed8",
+      "selected": "#dbeafe",
+      "selectedForeground": "#172554",
+      "success": "#166534",
+      "warning": "#92400e",
+      "danger": "#b91c1c",
+      "info": "#1e40af"
+    },
+    "dark": {
+      "background": "#10141c",
+      "foreground": "#f3f5f7",
+      "surface": "#151922",
+      "elevated": "#1d2430",
+      "muted": "#252d3a",
+      "mutedForeground": "#b1bdcb",
+      "border": "#3d4a5b",
+      "controlBorder": "#9aaabd",
+      "primary": "#d9e5f2",
+      "primaryForeground": "#18212b",
+      "focus": "#7dd3fc",
+      "selected": "#1e3a5f",
+      "selectedForeground": "#e0f2fe",
+      "success": "#86efac",
+      "warning": "#fcd34d",
+      "danger": "#fca5a5",
+      "info": "#93c5fd"
+    }
+  },
+  "rules": {
+    "uiFont": "geist",
+    "readingFont": "system",
+    "codeFont": "mono",
+    "density": "standard",
+    "radius": "soft",
+    "shadow": "subtle",
+    "motion": "subtle"
+  }
+}

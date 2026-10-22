@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useEffect, useRef, useState, useCallback } from "react";
+import { useMemo, useEffect, useRef, useState, useCallback, useContext } from "react";
+import { AssetSourceContext, type AsyncAssetResolver } from '@/lib/asset-source-context';
+import { Loader2 } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import type { CommandBarAction, CommandBarState, PaneId } from "@/types/layout";
@@ -16,11 +18,13 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { buildPersistedFileViewStateKey } from "@/lib/file-view-state";
 import { usePersistedViewState } from "@/hooks/use-persisted-view-state";
 import { buildHtmlPreviewDocument } from "@/lib/html-preview";
+import { resolveHtmlWorkspaceAssets } from "@/lib/html-workspace-assets";
 import { shouldLetHtmlPreviewHandleAnchor } from "@/lib/html-navigation";
 import { getDesktopPreviewPath, resolveDesktopPreviewUrl } from "@/lib/desktop-preview";
 import { navigateLinkWithFeedback } from "@/lib/link-router/navigate-link-with-feedback";
 import { findClosestAnchorHref, shouldOpenLinkExternally } from "@/lib/link-router/link-click";
 import { CodeEditorViewer } from "@/components/renderers/code-editor-viewer";
+import { cn } from "@/lib/utils";
 
 interface HTMLViewerProps {
   content: string;
@@ -33,6 +37,7 @@ interface HTMLViewerProps {
   onSave?: () => Promise<void>;
   tabId?: string;
   executionScopeId?: string;
+  asyncAssetResolver?: AsyncAssetResolver;
 }
 
 function buildPositionFromRect(rect: DOMRect | undefined, fallback: DOMRect): { x: number; y: number } {
@@ -60,7 +65,10 @@ export function HTMLViewer({
   onSave,
   tabId,
   executionScopeId,
+  asyncAssetResolver,
 }: HTMLViewerProps) {
+  const assetSource = useContext(AssetSourceContext);
+  const assetResolver = asyncAssetResolver ?? assetSource?.resolveAsset;
   const { t } = useI18n();
   const [showSource, setShowSource] = useState(false);
   const [selectionHubState, setSelectionHubState] = useState<{
@@ -70,7 +78,10 @@ export function HTMLViewer({
   } | null>(null);
   const [iframeMenuState, setIframeMenuState] = useState<SelectionContextMenuState<SelectionContext> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const frameARef = useRef<HTMLIFrameElement>(null);
+  const frameBRef = useRef<HTMLIFrameElement>(null);
+  const [activeFrameIndex, setActiveFrameIndex] = useState<0 | 1>(0);
+  const [activePreviewDocument, setActivePreviewDocument] = useState("");
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
   const persistedViewStateKey = buildPersistedFileViewStateKey({
@@ -84,14 +95,38 @@ export function HTMLViewer({
     const desktopPreviewPath = getDesktopPreviewPath(fileHandle);
     return desktopPreviewPath ? resolveDesktopPreviewUrl(desktopPreviewPath) : null;
   }, [fileHandle]);
+  const [workspacePreview, setWorkspacePreview] = useState<{ content: string; filePath: string; root?: FileSystemDirectoryHandle | null; resolver?: AsyncAssetResolver; html: string } | null>(null);
+  useEffect(() => {
+    if (previewBaseUrl || !rootHandle && !assetResolver) return;
+    let cancelled = false;
+    let dispose: (() => void) | undefined;
+    void resolveHtmlWorkspaceAssets(content, filePath, rootHandle, assetResolver).then((result) => {
+      if (cancelled) { result.dispose(); return; }
+      dispose = result.dispose;
+      setWorkspacePreview({ content, filePath, root: rootHandle, resolver: assetResolver, html: result.html });
+    }).catch(() => {});
+    return () => { cancelled = true; dispose?.(); };
+  }, [content, filePath, previewBaseUrl, rootHandle, assetResolver]);
+  const resolvedHtml = workspacePreview?.content === content && workspacePreview.filePath === filePath && workspacePreview.root === rootHandle && workspacePreview.resolver === assetResolver
+    ? workspacePreview.html : content;
   const previewDocument = useMemo(
     () => buildHtmlPreviewDocument({
-      html: content,
+      html: resolvedHtml,
       baseHref: previewBaseUrl,
     }),
-    [content, previewBaseUrl],
+    [resolvedHtml, previewBaseUrl],
   );
   const canEditSource = Boolean(onContentChange && onSave && tabId && executionScopeId);
+  const activeIframeRef = activeFrameIndex === 0 ? frameARef : frameBRef;
+  const pendingPreviewDocument = previewDocument && previewDocument !== activePreviewDocument
+    ? previewDocument
+    : "";
+  const loadingFrameIndex: 0 | 1 | null = pendingPreviewDocument
+    ? (activeFrameIndex === 0 ? 1 : 0)
+    : null;
+  const frameDocs: [string, string] = activeFrameIndex === 0
+    ? [activePreviewDocument, pendingPreviewDocument]
+    : [pendingPreviewDocument, activePreviewDocument];
 
   const { menuState: selectionMenuState, closeMenu: closeSelectionMenu } = useSelectionContextMenu(
     containerRef,
@@ -160,12 +195,20 @@ export function HTMLViewer({
     });
   }, [closeSelectionMenu]);
 
+  const handlePreviewFrameLoad = useCallback((frameIndex: 0 | 1) => {
+    if (frameIndex !== loadingFrameIndex || !pendingPreviewDocument) {
+      return;
+    }
+    setActivePreviewDocument(pendingPreviewDocument);
+    setActiveFrameIndex(frameIndex);
+  }, [loadingFrameIndex, pendingPreviewDocument]);
+
   useEffect(() => {
     if (showSource || iframeMenuState) {
       return;
     }
 
-    const iframe = iframeRef.current;
+    const iframe = activeIframeRef.current;
     if (!iframe) {
       return;
     }
@@ -291,7 +334,7 @@ export function HTMLViewer({
       cleanup?.();
       iframe.removeEventListener("load", handleLoad);
     };
-  }, [content, fileName, filePath, iframeMenuState, paneId, rootHandle, showSource]);
+  }, [activeFrameIndex, activeIframeRef, content, fileName, filePath, iframeMenuState, paneId, rootHandle, showSource]);
 
   const sourceViewer = canEditSource && tabId && executionScopeId
     ? (
@@ -342,15 +385,38 @@ export function HTMLViewer({
         </>
       ) : null}
 
-      <div className="flex-1 overflow-auto">
+      <div className="relative flex-1 overflow-auto">
         {showSource ? sourceViewer : (
-          <iframe
-            ref={iframeRef}
-            srcDoc={previewDocument}
-            className="h-full w-full border-0 bg-white"
-            sandbox="allow-same-origin"
-            title={fileName}
-          />
+          <>
+            <iframe
+              ref={frameARef}
+              srcDoc={frameDocs[0]}
+              onLoad={() => handlePreviewFrameLoad(0)}
+              className={cn(
+                "absolute inset-0 h-full w-full border-0 bg-white",
+                activeFrameIndex === 0 ? "opacity-100" : "pointer-events-none opacity-0",
+              )}
+              sandbox="allow-same-origin"
+              title={fileName}
+            />
+            <iframe
+              ref={frameBRef}
+              srcDoc={frameDocs[1]}
+              onLoad={() => handlePreviewFrameLoad(1)}
+              className={cn(
+                "absolute inset-0 h-full w-full border-0 bg-white",
+                activeFrameIndex === 1 ? "opacity-100" : "pointer-events-none opacity-0",
+              )}
+              sandbox="allow-same-origin"
+              title={fileName}
+            />
+            {loadingFrameIndex !== null ? (
+              <div className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-2 rounded-md border border-border bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                <span>{t("viewer.loading.preparing")}</span>
+              </div>
+            ) : null}
+          </>
         )}
       </div>
     </div>

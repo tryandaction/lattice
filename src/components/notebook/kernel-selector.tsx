@@ -188,7 +188,7 @@ export function KernelSelector({
           }
           setIsOpen((open) => !open);
         }}
-        className="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded hover:bg-muted transition-colors"
+        className="flex h-7 max-w-[22rem] items-center gap-2 border-l border-border px-2 text-xs hover:bg-muted transition-colors"
         disabled={isLoading || !isNotebookLanguageSupported}
       >
         {isLoading ? (
@@ -211,7 +211,7 @@ export function KernelSelector({
       {isOpen && !isLoading && isNotebookLanguageSupported && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-          <div className="absolute top-full left-0 mt-1 w-[28rem] bg-card border border-border rounded-lg shadow-lg z-50 overflow-hidden">
+          <div className="absolute right-0 top-full z-50 mt-1 w-[28rem] max-w-[min(28rem,calc(100vw-2rem))] overflow-hidden border border-border bg-card shadow-lg">
             <div className="max-h-96 overflow-y-auto">
               <div className="border-b border-border px-4 py-3 text-xs text-muted-foreground">
                 {t("workbench.notebook.kernel.currentHost", {

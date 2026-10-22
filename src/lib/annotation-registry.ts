@@ -1,6 +1,7 @@
 "use client";
 
 import { getStorageAdapter } from "@/lib/storage-adapter";
+import { withStorageMutation } from "@/lib/storage-mutation-queue";
 import type {
   AnnotationLocationAlias,
   AnnotationRegistryConflict,
@@ -182,7 +183,9 @@ function migrateLegacyRegistryState(legacy: LegacyAnnotationRegistryState): Anno
 
 export async function loadAnnotationRegistry(): Promise<AnnotationRegistryState> {
   const storage = getStorageAdapter();
-  const loaded = await storage.get<AnnotationRegistryState | LegacyAnnotationRegistryState>(ANNOTATION_REGISTRY_STORAGE_KEY);
+  const loaded = storage.getStrict
+    ? await storage.getStrict<AnnotationRegistryState | LegacyAnnotationRegistryState>(ANNOTATION_REGISTRY_STORAGE_KEY)
+    : await storage.get<AnnotationRegistryState | LegacyAnnotationRegistryState>(ANNOTATION_REGISTRY_STORAGE_KEY);
   if (!loaded || typeof loaded !== "object") {
     return createEmptyRegistry();
   }
@@ -196,7 +199,8 @@ export async function loadAnnotationRegistry(): Promise<AnnotationRegistryState>
 
 export async function saveAnnotationRegistry(state: AnnotationRegistryState): Promise<void> {
   const storage = getStorageAdapter();
-  await storage.set(ANNOTATION_REGISTRY_STORAGE_KEY, normalizeRegistryState(state));
+  if (storage.setStrict) await storage.setStrict(ANNOTATION_REGISTRY_STORAGE_KEY, normalizeRegistryState(state));
+  else await storage.set(ANNOTATION_REGISTRY_STORAGE_KEY, normalizeRegistryState(state));
 }
 
 function updateCanonicalConflictState(
@@ -241,6 +245,7 @@ export async function registerAnnotationLocation(input: {
   fileFingerprint?: string | null;
   versionFingerprint?: string | null;
 }): Promise<void> {
+  return withStorageMutation(getStorageAdapter(), ANNOTATION_REGISTRY_STORAGE_KEY, async () => {
   const registry = await loadAnnotationRegistry();
   const current = registry.entriesByDocumentId[input.documentId] ?? {
     documentId: input.documentId,
@@ -297,6 +302,7 @@ export async function registerAnnotationLocation(input: {
   }
 
   await saveAnnotationRegistry(registry);
+  });
 }
 
 export async function removeAnnotationDocumentAliases(input: {
@@ -304,6 +310,7 @@ export async function removeAnnotationDocumentAliases(input: {
   canonicalPath?: string | null;
   workspaceKey?: string | null;
 }): Promise<void> {
+  return withStorageMutation(getStorageAdapter(), ANNOTATION_REGISTRY_STORAGE_KEY, async () => {
   const registry = await loadAnnotationRegistry();
   const current = registry.entriesByDocumentId[input.documentId];
   if (!current) {
@@ -335,6 +342,7 @@ export async function removeAnnotationDocumentAliases(input: {
   }
 
   await saveAnnotationRegistry(registry);
+  });
 }
 
 export async function resolveAnnotationRegistryMatch(input: {
@@ -379,7 +387,8 @@ export async function resolveAnnotationRegistryMatch(input: {
   }
 
   if (input.fileFingerprint) {
-    const fingerprintDocumentIds = registry.documentIdsByFingerprint[input.fileFingerprint] ?? [];
+    const fingerprintDocumentIds = (registry.documentIdsByFingerprint[input.fileFingerprint] ?? [])
+      .filter(id => registry.entriesByDocumentId[id]?.aliases.length);
     if (fingerprintDocumentIds.length === 1) {
       const entry = registry.entriesByDocumentId[fingerprintDocumentIds[0]];
       if (entry) {
@@ -408,4 +417,10 @@ export async function resolveAnnotationRegistryAliases(input: {
 }): Promise<AnnotationLocationAlias[]> {
   const match = await resolveAnnotationRegistryMatch(input);
   return match.aliases;
+}
+
+/** Recovery candidates only; callers must check physical identity and reject ambiguity. */
+export async function findAnnotationRegistryFingerprintAliases(fileFingerprint: string): Promise<AnnotationLocationAlias[]> {
+  const registry = await loadAnnotationRegistry();
+  return (registry.documentIdsByFingerprint[fileFingerprint] ?? []).flatMap(id => registry.entriesByDocumentId[id]?.aliases ?? []);
 }

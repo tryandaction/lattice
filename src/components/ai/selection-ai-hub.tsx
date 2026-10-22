@@ -12,7 +12,7 @@ import type { SelectionAiMode, SelectionContext } from "@/lib/ai/selection-conte
 import { defaultPromptForSelectionMode } from "@/lib/ai/selection-context";
 import { runSelectionAiMode } from "@/lib/ai/selection-actions";
 import { buildSelectionOrigin, getSelectionModeMeta } from "@/lib/ai/selection-ui";
-import type { AiRuntimeSettings } from "@/lib/ai/types";
+import { toRuntimeSettings } from "./ai-chat-context";
 import type { PromptTemplate } from "@/lib/prompt/types";
 import { buildSelectionPromptContextValues } from "@/lib/prompt/context-builders";
 import { executePromptTemplateForSurface } from "@/lib/prompt/surface-actions";
@@ -48,19 +48,6 @@ const MODE_OUTPUT_ALLOWLIST = {
 
 function templateMatchesMode(mode: SelectionAiMode, template: PromptTemplate): boolean {
   return MODE_OUTPUT_ALLOWLIST[mode].some((outputMode) => outputMode === template.outputMode);
-}
-
-function toRuntimeSettings(settings: ReturnType<typeof useSettingsStore.getState>["settings"]): AiRuntimeSettings {
-  return {
-    aiEnabled: settings.aiEnabled,
-    providerId: (settings.aiProvider as AiRuntimeSettings["providerId"]) ?? null,
-    model: settings.aiModel,
-    temperature: settings.aiTemperature,
-    maxTokens: settings.aiMaxTokens,
-    systemPrompt: settings.aiSystemPrompt,
-    preferLocal: settings.aiProvider === "ollama",
-    agentOmittedSummaryEnabled: settings.aiAgentOmittedSummaryEnabled,
-  };
 }
 
 export function SelectionAiHub({ context, initialMode = null, returnFocusTo, runMode, onClose }: SelectionAiHubProps) {
@@ -185,7 +172,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
         context,
         mode,
         prompt,
-        settings: toRuntimeSettings(settings),
+        settings: toRuntimeSettings(settings, mode === "agent" ? "agent" : "chat"),
         locale,
       });
 
@@ -235,7 +222,7 @@ export function SelectionAiHub({ context, initialMode = null, returnFocusTo, run
       const result = await executePromptTemplateForSurface({
         template: promptRunState.template,
         surface: "selection",
-        settings: toRuntimeSettings(settings),
+        settings: toRuntimeSettings(settings, mode === "agent" ? "agent" : "chat"),
         contextValues: buildSelectionPromptContextValues(context),
         workspaceKey,
         workspaceRootPath,

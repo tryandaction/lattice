@@ -7,6 +7,13 @@ export interface PluginInstallResult {
   manifest: PluginManifest;
 }
 
+export interface PluginInstallOptions {
+  /** Run after validation and resource collection, immediately before storage. */
+  beforeStore?: (pluginId: string) => Promise<void>;
+  /** Marks the point after which a storage failure must not restore old trust. */
+  onStoreStart?: () => void;
+}
+
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   const chunkSize = 8192;
@@ -64,7 +71,7 @@ async function collectDirectoryResources(
   return resources;
 }
 
-export async function installPluginFromZip(file: File): Promise<PluginInstallResult> {
+export async function installPluginFromZip(file: File, options: PluginInstallOptions = {}): Promise<PluginInstallResult> {
   const zip = await JSZip.loadAsync(file);
   const manifestRaw = await readZipFile(zip, 'manifest.json');
   if (!manifestRaw) {
@@ -94,12 +101,15 @@ export async function installPluginFromZip(file: File): Promise<PluginInstallRes
     ...(await collectZipResources(zip, 'assets')),
   };
 
+  await options.beforeStore?.(manifest.id);
+  options.onStoreStart?.();
   await storePluginPackage(manifest.id, manifest, mainCode, resources);
   return { manifest };
 }
 
 export async function installPluginFromDirectory(
-  handle: FileSystemDirectoryHandle
+  handle: FileSystemDirectoryHandle,
+  options: PluginInstallOptions = {},
 ): Promise<PluginInstallResult> {
   const manifestHandle = await handle.getFileHandle('manifest.json');
   const manifestText = await (await manifestHandle.getFile()).text();
@@ -124,6 +134,8 @@ export async function installPluginFromDirectory(
     ...(await collectDirectoryResources(handle, 'assets')),
   };
 
+  await options.beforeStore?.(manifest.id);
+  options.onStoreStart?.();
   await storePluginPackage(manifest.id, manifest, mainCode, resources);
   return { manifest };
 }

@@ -132,6 +132,32 @@ describe("pdf-text-rects", () => {
     expect(Math.max(...merged.map((segment) => segment.height))).toBeLessThan(30);
   });
 
+  it("keeps inline superscript and subscript fragments in one transient visual row", () => {
+    const merged = mergePdfTextOverlayRects([
+      { left: 232, top: 120, width: 14, height: 24 },
+      { left: 246, top: 130, width: 8, height: 12 },
+      { left: 255, top: 112, width: 8, height: 12 },
+      { left: 264, top: 120, width: 96, height: 24 },
+    ], {
+      horizontalGap: 1.5,
+      maxHorizontalGap: 4,
+      inlineGapMultiplier: 0.18,
+      allowWideSameColumnGaps: false,
+      strictRows: true,
+      targetSegmentHeightRatio: 0.86,
+      minSegmentHeightRatio: 0.72,
+      maxSegmentHeightRatio: 0.98,
+      minimumSegmentHeight: 6,
+      lineGapHeightMultiplier: 0.78,
+    });
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].left).toBe(232);
+    expect(merged[0].width).toBe(128);
+    expect(merged[0].height).toBeGreaterThanOrEqual(18);
+    expect(merged[0].height).toBeLessThanOrEqual(24);
+  });
+
   it("leaves visible space between strict text markup rows", () => {
     const merged = mergePdfTextOverlayRects([
       { left: 60, top: 80, width: 420, height: 38 },
@@ -149,5 +175,33 @@ describe("pdf-text-rects", () => {
 
     expect(merged).toHaveLength(2);
     expect(merged[0].top + merged[0].height).toBeLessThan(merged[1].top);
+  });
+
+  it("restores readable line boxes from thin PDFium ink bounds", () => {
+    const merged = mergePageRelativePdfTextMarkupRects([
+      {
+        x1: 0.7042810784313726,
+        y1: 0.439693859656608,
+        x2: 0.9146091503267975,
+        y2: 0.4410695746868263,
+      },
+      {
+        x1: 0.5154078921568627,
+        y1: 0.452909695148011,
+        x2: 0.9152987581699346,
+        y2: 0.4580642815116474,
+      },
+      {
+        x1: 0.5152517973856209,
+        y1: 0.4662915148989899,
+        x2: 0.766657595016509,
+        y2: 0.47281112398989894,
+      },
+    ]);
+
+    expect(merged).toHaveLength(3);
+    expect(Math.min(...merged.map((segment) => segment.height))).toBeGreaterThan(0.85);
+    expect(merged[0].top + merged[0].height).toBeLessThan(merged[1].top);
+    expect(merged[1].top + merged[1].height).toBeLessThan(merged[2].top);
   });
 });

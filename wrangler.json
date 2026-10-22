@@ -1,0 +1,4 @@
+{
+  "name": "lattice-apq",
+  "pages_build_output_dir": "./web-dist"
+}

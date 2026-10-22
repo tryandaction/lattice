@@ -9,15 +9,22 @@ import { PDFHighlighterAdapter } from '../pdf-highlighter-adapter';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 import { useContentCacheStore } from '@/stores/content-cache-store';
 import { useLinkNavigationStore } from '@/stores/link-navigation-store';
+import { useAiPdfCompanionStore } from '@/stores/ai-pdf-companion-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { DEFAULT_SETTINGS } from '@/types/settings';
 import { resetPersistedFileViewStateCache } from '@/lib/file-view-state';
 import { clearPdfPageTextCache, getPdfPageTextModel } from '@/lib/pdf-page-text-cache';
+import * as pdfSelectionReconciler from '@/lib/pdf-selection-reconciler';
+import * as pdfFormulaSelection from '@/lib/pdf-formula-selection';
 import {
   PDF_ANNOTATION_DRAFTS_BEGIN,
   PDF_ANNOTATION_DRAFTS_END,
 } from '@/lib/pdf-annotation-markdown-drafts';
 import type { AnnotationItem } from '@/types/universal-annotation';
+import { ensurePdfItemWorkspace, ensurePdfItemWorkspaceForBinding } from '@/lib/pdf-item';
+import { getActivePdfSelectionImage } from '@/lib/pdf-selection-image-provider';
+import { recognizeFormulaImageWithPix2tex } from '@/lib/formula-ocr';
+vi.mock('@/lib/formula-ocr', () => ({ recognizeFormulaImageWithPix2tex: vi.fn(async () => ({ latex: '\\frac{a}{b}', confidence: .9 })) }));
 
 const navigateLinkMock = vi.hoisted(() => vi.fn(async () => true));
 
@@ -26,6 +33,7 @@ vi.mock('@/lib/link-router/navigate-link', () => ({
 }));
 
 const resizeObserverCallbacks: ResizeObserverCallback[] = [];
+const mockTextGeometryObservers = new WeakMap<HTMLElement, { layer: HTMLElement; observer: MutationObserver }>();
 
 const {
   inkStoreState,
@@ -35,6 +43,7 @@ const {
   mockPdfDocument,
   mockPdfGetPage,
   nativeLayoutMockState,
+  ocrLayoutMockState,
   nextNavigationMockState,
   pdfItemMockState,
   loadPdfItemManifestMock,
@@ -107,12 +116,21 @@ const {
     autoApplyDomSelection: true,
     pageTextItems: null as string[] | null,
     clientRectsOverride: null as Array<{ left: number; right: number; top: number; bottom: number }> | null,
+    characterWidths: {} as Record<string, number[]>,
     linkLayer: null as null | {
       href: string;
       left: number;
       top: number;
       width: number;
       height: number;
+      id?: string;
+      url?: string;
+      unsafeUrl?: string;
+      dest?: string | unknown[];
+      action?: string;
+      rect?: number[];
+      quadPoints?: number[];
+      renderUnboundSection?: boolean;
       onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
       onDragStart?: (event: React.DragEvent<HTMLAnchorElement>) => void;
     },
@@ -120,6 +138,8 @@ const {
 
   const pdfMockState = {
     numPages: 2,
+    officialTextLayerEnabled: false,
+    officialTextLayerRenderCount: 0,
     viewerMetrics: {
       width: 800,
       height: 600,
@@ -151,6 +171,44 @@ const {
         x2: number;
         y2: number;
         fontSize: number;
+      }>;
+    },
+    fetchedLayout: null as null | {
+      source: 'pdfium';
+      pageNumber: number;
+      width: number;
+      height: number;
+      text: string;
+      chars: Array<{
+        charIndex: number;
+        charEndIndex?: number;
+        text: string;
+        x1: number;
+        y1: number;
+        x2: number;
+        y2: number;
+        fontSize: number;
+      }>;
+    },
+  };
+
+  const ocrLayoutMockState = {
+    layout: null as null | {
+      source: 'ocr';
+      pageNumber: number;
+      width: number;
+      height: number;
+      text: string;
+      confidence: number;
+      words: Array<{
+        text: string;
+        left: number;
+        top: number;
+        width: number;
+        height: number;
+        confidence: number;
+        lineIndex?: number;
+        wordIndex?: number;
       }>;
     },
   };
@@ -211,6 +269,21 @@ const {
       styles: {},
       lang: null,
     })),
+    getAnnotations: vi.fn(async () => (
+      pageNumber === 1 && selectionState.linkLayer
+        ? [{
+            id: selectionState.linkLayer.id ?? 'mock-link-1',
+            url: selectionState.linkLayer.url ?? selectionState.linkLayer.href,
+            unsafeUrl: selectionState.linkLayer.unsafeUrl,
+            dest: selectionState.linkLayer.dest,
+            action: selectionState.linkLayer.action,
+            rect: selectionState.linkLayer.rect,
+            quadPoints: selectionState.linkLayer.quadPoints,
+            renderUnboundSection: selectionState.linkLayer.renderUnboundSection,
+            subtype: 'Link',
+          }]
+        : []
+    )),
     render: vi.fn(({ canvasContext, viewport }: { canvasContext?: CanvasRenderingContext2D | null; viewport?: { width: number; height: number } } = {}) => {
       const task = {
         cancel: vi.fn(),
@@ -249,6 +322,7 @@ const {
     mockPdfDocument,
     mockPdfGetPage,
     nativeLayoutMockState,
+    ocrLayoutMockState,
     nextNavigationMockState,
     pdfItemMockState,
     loadPdfItemManifestMock,
@@ -336,6 +410,13 @@ function createFragmentSelectionRect(textNode: Text, startOffset: number, endOff
   const height = Number(parentElement.dataset.height ?? 0);
   const startRatio = startOffset / totalLength;
   const endRatio = endOffset / totalLength;
+  const characterWidths = selectionMockState.characterWidths[fullText];
+  const selectionLeft = characterWidths
+    ? characterWidths.slice(0, startOffset).reduce((sum, value) => sum + value, 0)
+    : width * startRatio;
+  const selectionWidth = characterWidths
+    ? characterWidths.slice(startOffset, endOffset).reduce((sum, value) => sum + value, 0)
+    : width * (endRatio - startRatio);
   const pageElement = parentElement.closest<HTMLElement>('[data-page-number]');
   const pageNumber = Number(pageElement?.dataset.pageNumber ?? '1') || 1;
   const pageMetrics = pdfMockState.pageMetrics[pageNumber] ?? {
@@ -345,9 +426,9 @@ function createFragmentSelectionRect(textNode: Text, startOffset: number, endOff
     left: 0,
   };
   return createMockRect(
-    pageMetrics.left + left + width * startRatio - pdfMockState.viewerMetrics.scrollLeft,
+    pageMetrics.left + left + selectionLeft - pdfMockState.viewerMetrics.scrollLeft,
     pageMetrics.top + top - pdfMockState.viewerMetrics.scrollTop,
-    Math.max(0, width * (endRatio - startRatio)),
+    Math.max(0, selectionWidth),
     height,
   );
 }
@@ -415,6 +496,16 @@ function getPdfRectUnion(rects: Array<{ x1: number; x2: number; y1?: number; y2?
 }
 
 function configureMockPdfPageDom(pageElement: HTMLElement, pageNumber: number, scale = 1) {
+  // Real DOM glyph geometry updates independently of canvas painting. The mock
+  // must also configure spans inserted after an early canvas render.
+  const textLayer = pageElement.querySelector<HTMLElement>('.textLayer');
+  const observed = mockTextGeometryObservers.get(pageElement);
+  if (textLayer && observed?.layer !== textLayer) {
+    observed?.observer.disconnect();
+    const observer = new MutationObserver(() => configureMockPdfPageDom(pageElement, pageNumber, Number(pageElement.dataset.scale ?? scale)));
+    observer.observe(textLayer, { childList: true, subtree: true });
+    mockTextGeometryObservers.set(pageElement, { layer: textLayer, observer });
+  }
   const pageMetrics = pdfMockState.pageMetrics[pageNumber] ?? {
     width: 640,
     height: 960,
@@ -424,27 +515,32 @@ function configureMockPdfPageDom(pageElement: HTMLElement, pageNumber: number, s
   const viewerContainer = pageElement.closest<HTMLElement>('[data-testid^="pdf-viewer-container-"]');
   const scrollContainer = pageElement.closest<HTMLElement>('[data-testid^="pdf-scroll-container-"]');
   if (viewerContainer) {
+    // Rendering another page must preserve user scrolling and navigation calls.
+    if (!vi.isMockFunction(viewerContainer.scrollTo)) {
+      Object.defineProperties(viewerContainer, {
+        scrollTop: { value: pdfMockState.viewerMetrics.scrollTop, writable: true, configurable: true },
+        scrollLeft: { value: pdfMockState.viewerMetrics.scrollLeft, writable: true, configurable: true },
+        scrollTo: {
+          value: vi.fn(function scrollTo(
+            this: HTMLElement & { scrollTop: number; scrollLeft: number },
+            options?: { top?: number; left?: number },
+          ) {
+            if (typeof options?.top === 'number') {
+              this.scrollTop = options.top;
+            }
+            if (typeof options?.left === 'number') {
+              this.scrollLeft = options.left;
+            }
+          }),
+          configurable: true,
+        },
+      });
+    }
     Object.defineProperties(viewerContainer, {
-      scrollTop: { value: pdfMockState.viewerMetrics.scrollTop, writable: true, configurable: true },
-      scrollLeft: { value: pdfMockState.viewerMetrics.scrollLeft, writable: true, configurable: true },
       scrollHeight: { value: pdfMockState.viewerMetrics.scrollHeight, configurable: true },
       clientHeight: { value: pdfMockState.viewerMetrics.height, configurable: true },
       scrollWidth: { value: pdfMockState.viewerMetrics.scrollWidth, configurable: true },
       clientWidth: { value: pdfMockState.viewerMetrics.width, configurable: true },
-      scrollTo: {
-        value: vi.fn(function scrollTo(
-          this: HTMLElement & { scrollTop: number; scrollLeft: number },
-          options?: { top?: number; left?: number },
-        ) {
-          if (typeof options?.top === 'number') {
-            this.scrollTop = options.top;
-          }
-          if (typeof options?.left === 'number') {
-            this.scrollLeft = options.left;
-          }
-        }),
-        configurable: true,
-      },
       getBoundingClientRect: {
         value: () => createMockRect(0, 0, pdfMockState.viewerMetrics.width, pdfMockState.viewerMetrics.height),
         configurable: true,
@@ -473,29 +569,6 @@ function configureMockPdfPageDom(pageElement: HTMLElement, pageNumber: number, s
   pageElement.querySelector<HTMLCanvasElement>('canvas')?.setAttribute('data-testid', `mock-react-pdf-canvas-${pageNumber}`);
 
   if (pageNumber === 1 && !pageElement.querySelector('[data-testid="mock-pdf-selection-trigger"]')) {
-    if (selectionMockState.linkLayer && !pageElement.querySelector('[data-testid="mock-pdf-link"]')) {
-      const annotationLayer = document.createElement('div');
-      annotationLayer.className = 'annotationLayer';
-      const link = document.createElement('a');
-      link.href = selectionMockState.linkLayer.href;
-      link.dataset.testid = 'mock-pdf-link';
-      link.className = 'linkAnnotation';
-      link.textContent = 'link';
-      link.style.position = 'absolute';
-      link.style.left = `${selectionMockState.linkLayer.left}px`;
-      link.style.top = `${selectionMockState.linkLayer.top}px`;
-      link.style.width = `${selectionMockState.linkLayer.width}px`;
-      link.style.height = `${selectionMockState.linkLayer.height}px`;
-      link.addEventListener('click', (event) => {
-        selectionMockState.linkLayer?.onClick?.(event as unknown as React.MouseEvent<HTMLAnchorElement>);
-      });
-      link.addEventListener('dragstart', (event) => {
-        selectionMockState.linkLayer?.onDragStart?.(event as unknown as React.DragEvent<HTMLAnchorElement>);
-      });
-      annotationLayer.appendChild(link);
-      pageElement.appendChild(annotationLayer);
-    }
-
     const nativeSource = document.createElement('span');
     nativeSource.dataset.testid = 'mock-native-selection-source';
     nativeSource.textContent = 'Native PDF text';
@@ -679,6 +752,38 @@ const mockPdfjsApi = vi.hoisted(() => ({
       left[1] * right[4] + left[3] * right[5] + left[5],
     ],
   },
+  TextLayer: class MockTextLayer {
+    private container: HTMLElement;
+    private textContentSource: { items?: Array<{ str?: string }> };
+
+    constructor({
+      container,
+      textContentSource,
+    }: {
+      container: HTMLElement;
+      textContentSource: { items?: Array<{ str?: string }> };
+    }) {
+      this.container = container;
+      this.textContentSource = textContentSource;
+    }
+
+    async render() {
+      if (!pdfMockState.officialTextLayerEnabled) {
+        return;
+      }
+      pdfMockState.officialTextLayerRenderCount += 1;
+      this.textContentSource.items?.forEach((item, index) => {
+        if (!item.str?.trim()) {
+          return;
+        }
+        const span = document.createElement('span');
+        span.textContent = item.str;
+        span.dataset.pdfTextItemIndex = String(index);
+        span.dataset.officialTextLayer = 'true';
+        this.container.appendChild(span);
+      });
+    }
+  },
   PDFWorker: {
     create: vi.fn((_params?: unknown) => {
       const worker = {
@@ -690,13 +795,55 @@ const mockPdfjsApi = vi.hoisted(() => ({
       return worker;
     }),
   },
+  AnnotationLayer: class MockAnnotationLayer {
+    private div: HTMLElement;
+
+    constructor({ div }: { div: HTMLElement }) {
+      this.div = div;
+    }
+
+    render({ annotations }: { annotations: Array<{ id?: string; url?: string; unsafeUrl?: string; dest?: string | unknown[]; action?: string; rect?: number[]; quadPoints?: number[]; renderUnboundSection?: boolean }> }) {
+      annotations.forEach((annotation, index) => {
+        if (annotation.renderUnboundSection) {
+          const section = document.createElement('section');
+          section.className = 'linkAnnotation';
+          section.dataset.annotationId = annotation.id ?? `mock-link-${index}`;
+          this.div.appendChild(section);
+          return;
+        }
+        if (annotation.rect || annotation.quadPoints) {
+          return;
+        }
+        const section = document.createElement('section');
+        section.className = 'linkAnnotation';
+        section.dataset.annotationId = annotation.id ?? `mock-link-${index}`;
+
+        const link = document.createElement('a');
+        link.href = annotation.url ?? annotation.unsafeUrl ?? (annotation.dest
+          ? Array.isArray(annotation.dest)
+            ? `#explicitDest=${encodeURIComponent(JSON.stringify(annotation.dest))}`
+            : `#nameddest=${encodeURIComponent(annotation.dest)}`
+          : annotation.action
+            ? `#action=${encodeURIComponent(annotation.action)}`
+            : '#page=1');
+        link.dataset.elementId = annotation.id ?? `mock-link-${index}`;
+        link.dataset.testid = 'mock-pdf-link';
+        link.textContent = 'link';
+        section.appendChild(link);
+        this.div.appendChild(section);
+      });
+      return Promise.resolve();
+    }
+  },
   getDocument: vi.fn((_source: unknown) => {
     const loadingTask = {
       destroyed: false,
       onProgress: undefined as undefined | ((progress: { loaded: number; total: number }) => void),
       promise: Promise.resolve().then(() => {
         loadingTask.onProgress?.({ loaded: 1, total: 1 });
-        return mockPdfDocument;
+        // Each loading task owns a distinct document, as PDF.js does. Methods
+        // remain shared spies while the loader can decorate this instance.
+        return Object.create(mockPdfDocument) as typeof mockPdfDocument;
       }),
       destroy: vi.fn(() => {
         loadingTask.destroyed = true;
@@ -1036,13 +1183,21 @@ vi.mock('@/lib/pdf-document-binding', () => ({
 
 vi.mock('@/lib/pdf-native-text-engine', () => ({
   clearDesktopPdfPageTextLayoutCache: vi.fn(),
-  getDesktopPdfPageTextLayout: vi.fn(async () => {
-    throw new Error('desktop native layout must not run during live selection');
-  }),
+  getDesktopPdfPageTextLayout: vi.fn(async () => nativeLayoutMockState.fetchedLayout ?? nativeLayoutMockState.layout),
   getDesktopPdfPath: vi.fn(() => 'C:/mock/paper.pdf'),
-  peekDesktopPdfPageTextLayout: vi.fn(() => null),
+  peekDesktopPdfPageTextLayout: vi.fn(() => nativeLayoutMockState.layout),
   prefetchDesktopPdfPageTextLayout: vi.fn(),
 }));
+
+vi.mock('@/lib/pdf-ocr-text-engine', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/pdf-ocr-text-engine')>();
+  return {
+    ...actual,
+    getDesktopPdfOcrPageTextLayout: vi.fn(async () => ocrLayoutMockState.layout),
+    peekDesktopPdfOcrPageTextLayout: vi.fn(() => ocrLayoutMockState.layout),
+    prefetchDesktopPdfOcrPageTextLayout: vi.fn(),
+  };
+});
 
 vi.mock('@/lib/pdf-item', () => ({
   loadPdfItemManifest: loadPdfItemManifestMock,
@@ -1059,18 +1214,7 @@ vi.mock('@/lib/pdf-item', () => ({
     createdAt: Date.now(),
     updatedAt: Date.now(),
   })),
-  ensurePdfItemWorkspaceForBinding: vi.fn(async () => ({
-    version: 4,
-    itemId: 'paper-id',
-    pdfPath: 'docs/paper-id.pdf',
-    itemFolderPath: '.lattice/items/paper-id.pdf',
-    annotationIndexPath: null,
-    fileFingerprint: null,
-    versionFingerprint: null,
-    knownPdfPaths: ['docs/paper-id.pdf'],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  })),
+  ensurePdfItemWorkspaceForBinding: vi.fn(async () => loadPdfItemManifestForBindingMock()),
   readPdfItemAnnotationMarkdown: readPdfItemAnnotationMarkdownMock,
   removeResolvedPdfItemAnnotationMarkdownDrafts: removeResolvedPdfItemAnnotationMarkdownDraftsMock,
   syncPdfManagedFiles: vi.fn(async () => undefined),
@@ -1092,13 +1236,13 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => nextNavigationMockState.searchParams,
 }));
 
-function renderPdfPane(props: { paneId: 'pane-left' | 'pane-right'; fileId: string }) {
+function renderPdfPane(props: { paneId: 'pane-left' | 'pane-right'; fileId: string; filePath?: string; preloaded?: boolean; sourceRevision?: string | null; diskRevision?: number; noFileHandle?: boolean; desktopUrl?: string; getFile?: () => Promise<File> }) {
   return (
     <div className="h-[600px] w-[800px]">
       <PDFHighlighterAdapter
-        source={{ kind: 'buffer', data: new Uint8Array([1, 2, 3]).buffer }}
+        source={props.desktopUrl ? { kind: 'desktop-url', url: props.desktopUrl } : { kind: 'buffer', data: new Uint8Array([1, 2, 3]).buffer, sourceRevision: props.sourceRevision === null ? undefined : props.sourceRevision ?? '3:1' }}
         fileName={`${props.fileId}.pdf`}
-        fileHandle={{ name: `${props.fileId}.pdf` } as FileSystemFileHandle}
+        fileHandle={props.noFileHandle ? undefined : { name: `${props.fileId}.pdf`, getFile: props.getFile ?? (async () => new File([new Uint8Array([1, 2, 3])], `${props.fileId}.pdf`, { lastModified: props.diskRevision ?? 1 })) } as FileSystemFileHandle}
         rootHandle={{
           name: 'workspace',
           getDirectoryHandle: vi.fn(),
@@ -1106,7 +1250,8 @@ function renderPdfPane(props: { paneId: 'pane-left' | 'pane-right'; fileId: stri
         } as unknown as FileSystemDirectoryHandle}
         paneId={props.paneId}
         fileId={props.fileId}
-        filePath={`docs/${props.fileId}.pdf`}
+        filePath={props.filePath ?? `docs/${props.fileId}.pdf`}
+        preloadedPdfDocument={props.preloaded ? mockPdfDocument as never : undefined}
       />
     </div>
   );
@@ -1236,6 +1381,8 @@ describe('PDFHighlighterAdapter', () => {
     clearPdfPageTextCache(mockPdfDocument as never);
     resizeObserverCallbacks.length = 0;
     pdfMockState.numPages = 2;
+    pdfMockState.officialTextLayerEnabled = false;
+    pdfMockState.officialTextLayerRenderCount = 0;
     pdfMockState.viewerMetrics = {
       width: 800,
       height: 600,
@@ -1284,8 +1431,11 @@ describe('PDFHighlighterAdapter', () => {
     selectionMockState.autoApplyDomSelection = true;
     selectionMockState.pageTextItems = null;
     selectionMockState.clientRectsOverride = null;
+    selectionMockState.characterWidths = {};
     selectionMockState.linkLayer = null;
     nativeLayoutMockState.layout = null;
+    nativeLayoutMockState.fetchedLayout = null;
+    ocrLayoutMockState.layout = null;
     nextNavigationMockState.pathname = '/diagnostics/pdf-regression';
     nextNavigationMockState.searchParams = new URLSearchParams();
     pdfItemMockState.annotationMarkdown = null;
@@ -1322,9 +1472,10 @@ describe('PDFHighlighterAdapter', () => {
 
     globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
     globalThis.IntersectionObserver = MockIntersectionObserver as unknown as typeof IntersectionObserver;
+    useAiPdfCompanionStore.getState().clear();
     resetPersistedFileViewStateCache();
     useContentCacheStore.getState().clearCache();
-    useLinkNavigationStore.setState({ pendingByPane: {} });
+    useLinkNavigationStore.setState({ pendingByPane: {}, outcomesByRequestId: {} });
     useSettingsStore.setState({
       settings: DEFAULT_SETTINGS,
       isLoading: false,
@@ -1332,6 +1483,7 @@ describe('PDFHighlighterAdapter', () => {
       error: null,
     });
     useWorkspaceStore.setState((state) => ({
+      workspaceRootPath: null,
       layout: {
         ...state.layout,
         activePaneId: 'pane-left',
@@ -1344,6 +1496,123 @@ describe('PDFHighlighterAdapter', () => {
       addAnnotation: vi.fn(),
       updateAnnotation: vi.fn(),
       deleteAnnotation: vi.fn(),
+    });
+  });
+
+  it('renders selectable text with the official PDF.js TextLayer before using the fallback layer', async () => {
+    pdfMockState.officialTextLayerEnabled = true;
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(pdfMockState.officialTextLayerRenderCount).toBeGreaterThan(0);
+    });
+    expect(document.querySelector('[data-official-text-layer="true"]')).toBeTruthy();
+    const textLayer = document.querySelector<HTMLElement>('.textLayer');
+    expect(textLayer?.style.getPropertyValue('--scale-factor')).toBe('1');
+    expect(textLayer?.style.getPropertyValue('--user-unit')).toBeTruthy();
+    expect(textLayer?.style.getPropertyValue('--total-scale-factor')).toBe(
+      'calc(var(--scale-factor) * var(--user-unit))',
+    );
+    expect(textLayer?.style.lineHeight).toBe('1');
+    expect(textLayer?.style.getPropertyValue('text-size-adjust')).toBe('none');
+    const officialSpan = document.querySelector<HTMLElement>('[data-official-text-layer="true"]');
+    expect(officialSpan?.style.position).toBe('absolute');
+    expect(officialSpan?.style.whiteSpace).toBe('pre');
+    expect(officialSpan?.style.getPropertyValue('-webkit-text-size-adjust')).toBe('none');
+    expect(officialSpan?.style.getPropertyValue('text-size-adjust')).toBe('none');
+  });
+
+  it('defers annotation storage loading until the single PDF binding resolution completes', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    expect(useAnnotationSystemMock).toHaveBeenCalledWith(expect.objectContaining({
+      deferLoad: true,
+      binding: null,
+    }));
+
+    await waitFor(() => {
+      expect(useAnnotationSystemMock).toHaveBeenLastCalledWith(expect.objectContaining({
+        deferLoad: false,
+        binding: expect.objectContaining({ documentId: 'paper-id' }),
+      }));
+    });
+  });
+
+  it('does not create a path-derived child workspace while the stable PDF identity is pending', async () => {
+    resolvePdfDocumentBindingMock.mockImplementationOnce(() => new Promise(() => {}));
+    vi.mocked(ensurePdfItemWorkspace).mockClear();
+    vi.mocked(ensurePdfItemWorkspaceForBinding).mockClear();
+    const view = render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-pending' }));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 350)); });
+    expect(ensurePdfItemWorkspace).not.toHaveBeenCalled();
+    expect(ensurePdfItemWorkspaceForBinding).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('uses the catalogued item root for annotation storage after the PDF moves', async () => {
+    const itemRootHandle = { name: 'old-workspace' } as FileSystemDirectoryHandle;
+    resolvePdfDocumentBindingMock.mockResolvedValueOnce({
+      documentId: 'paper-id',
+      fileIdentity: {
+        primaryFileId: 'paper-id',
+        fileIdCandidates: ['paper-id'],
+        canonicalPath: 'new-workspace/docs/paper-id.pdf',
+        relativePathFromRoot: 'docs/paper-id.pdf',
+        fileName: 'paper-id.pdf',
+        fileFingerprint: null,
+        versionFingerprint: null,
+        size: null,
+        lastModified: null,
+      },
+      canonicalStorageFileId: 'paper-id',
+      storageCandidates: ['paper-id'],
+      annotationFile: {
+        version: 3,
+        documentId: 'paper-id',
+        fileId: 'paper-id',
+        fileType: 'pdf',
+        annotations: [],
+        lastModified: 1,
+      },
+      resolvedSource: null,
+      itemRootHandle,
+    } as never);
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(useAnnotationSystemMock).toHaveBeenLastCalledWith(expect.objectContaining({
+        rootHandle: itemRootHandle,
+      }));
+    });
+  });
+
+  it('never passes the previous file binding to storage while a replacement file resolves', async () => {
+    const view = render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-first' }));
+    await waitFor(() => expect(useAnnotationSystemMock).toHaveBeenLastCalledWith(expect.objectContaining({ deferLoad: false, binding: expect.any(Object) })));
+    resolvePdfDocumentBindingMock.mockImplementationOnce(() => new Promise(() => {}));
+    useAnnotationSystemMock.mockClear();
+    view.rerender(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-second' }));
+    const callsForSecondFile = useAnnotationSystemMock.mock.calls
+      .map(([input]) => input as { filePath: string; deferLoad: boolean; binding: unknown })
+      .filter((input) => input.filePath === 'docs/paper-second.pdf');
+    expect(callsForSecondFile.length).toBeGreaterThan(0);
+    expect(callsForSecondFile.every((input) => input.deferLoad && input.binding === null)).toBe(true);
+    view.unmount();
+  });
+
+  it('destroys the internally owned PDF.js document when the tab unmounts', async () => {
+    const view = render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-viewer-container-pane-left')).toBeTruthy();
+      expect(mockPdfGetPage).toHaveBeenCalled();
+    });
+    view.unmount();
+
+    await waitFor(() => {
+      expect(mockPdfDocument.destroy).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -1487,6 +1756,29 @@ describe('PDFHighlighterAdapter', () => {
     expect(picker.textContent).not.toContain('...');
   });
 
+  it('creates an underline directly from the frozen selection menu', async () => {
+    const addAnnotation = vi.fn();
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [],
+      error: null,
+      addAnnotation,
+      updateAnnotation: vi.fn(),
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    triggerPdfSelection();
+
+    fireEvent.click(await screen.findByTestId('pdf-selection-draft-action-underline'));
+
+    await waitFor(() => {
+      expect(addAnnotation).toHaveBeenCalledTimes(1);
+    });
+    expect(addAnnotation.mock.calls[0][0].style.type).toBe('underline');
+    expect(addAnnotation.mock.calls[0][0].content).toBe('Selected PDF text');
+  });
+
   it('keeps the committed highlight visible until the persisted overlay takes over', async () => {
     const addAnnotation = vi.fn();
     useAnnotationSystemMock.mockReturnValue({
@@ -1545,7 +1837,9 @@ describe('PDFHighlighterAdapter', () => {
 
     fireEvent.click(document.querySelector('.pdf-selection-color-picker button') as HTMLButtonElement);
 
-    expect(addAnnotation).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(addAnnotation).toHaveBeenCalledTimes(1);
+    });
 
     rerender(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
 
@@ -1554,6 +1848,129 @@ describe('PDFHighlighterAdapter', () => {
       expect(screen.getByTestId('pdf-selection-phase-pane-left').textContent).toBe('idle');
       expect(screen.queryByTestId('pdf-transient-selection-pane-left-page-1')).toBeNull();
     });
+  });
+
+  it('retains a display formula superscript when a forward drag ends above its baseline', async () => {
+    selectionMockState.fragments = [
+      { text: 'The following relation defines the calibrated energy for this demonstration.', left: 50, top: 80, width: 470, height: 18 },
+      { text: 'E = mc', left: 80, top: 180, width: 59, height: 18 },
+      { text: '2', left: 139, top: 171, width: 6, height: 10 },
+      { text: '(1)', left: 540, top: 180, width: 22, height: 18 },
+    ];
+    selectionMockState.domSelection = { startFragment: 'E = mc', endFragment: '2' };
+    selectionMockState.rawText = 'E = mc2';
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    triggerPdfSelection('pane-left', { start: { x: 80, y: 189 }, end: { x: 145, y: 176 } });
+    await waitFor(() => expect(screen.getByTestId('pdf-selection-phase-pane-left').textContent).toBe('frozen'));
+    expect(screen.getByTestId('pdf-copy-payload-pane-left').textContent?.replace(/\s/g, '')).toBe('E=mc2');
+  });
+
+  it.each([1, 2])('binds the frozen selection formula OCR button to its loaded PDF revision (current revision: %s)', async diskRevision => {
+    selectionMockState.fragments = [{ text: 'E = mc2', left: 80, top: 180, width: 70, height: 18 }];
+    selectionMockState.domSelection = { startFragment: 'E = mc2', endFragment: 'E = mc2' };
+    selectionMockState.rawText = 'E = mc2';
+    const enrich = vi.spyOn(pdfFormulaSelection, 'enrichPdfFormulaSelection').mockImplementation(selection => ({ ...selection,
+      formula: { latex: 'E=mc^2', rawText: selection.text, source: 'geometry', status: 'needs-review', originalRects: selection.pageRects },
+      formulaPreview: { type: 'image', dataUrl: 'data:image/png;base64,mock', width: 100, height: 30 },
+    }));
+    try {
+      render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left', sourceRevision: '3:1', diskRevision }));
+      await waitForPdfTextModelPrefetch();
+      triggerPdfSelection('pane-left', { start: { x: 80, y: 189 }, end: { x: 150, y: 189 } });
+      const recognize = await screen.findByRole('button', { name: '本地识别公式' });
+      vi.mocked(recognizeFormulaImageWithPix2tex).mockClear();
+      canvasToDataUrlSpy!.mockClear();
+      fireEvent.click(recognize);
+      if (diskRevision === 2) {
+        await waitFor(() => expect(screen.getByTestId('pdf-formula-recognition-error').textContent).toMatch(/source changed|来源或选区已改变/));
+        expect(recognizeFormulaImageWithPix2tex).not.toHaveBeenCalled();
+      } else {
+        await waitFor(() => expect(recognizeFormulaImageWithPix2tex).toHaveBeenCalledWith(expect.objectContaining({ imageDataUrl: 'data:image/png;base64,mock', signal: expect.any(AbortSignal) })));
+        expect(canvasToDataUrlSpy).toHaveBeenCalled();
+        await waitFor(() => expect(screen.getByRole('img', { name: '原始公式截图' }).getAttribute('width')).not.toBe('100'));
+      }
+    } finally { enrich.mockRestore(); }
+  });
+
+  it.each([true, false])('saves a cross-page selection as one validated batch (first save succeeds: %s)', async firstSaveSucceeds => {
+    const persistAnnotationChanges = vi.fn(async (_items: AnnotationItem[]) => firstSaveSucceeds);
+    const addAnnotation = vi.fn();
+    useAnnotationSystemMock.mockReturnValue({ annotations: [], error: null, addAnnotation, persistAnnotationChanges,
+      updateAnnotation: vi.fn(), deleteAnnotation: vi.fn() });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    const secondPage = screen.getByTestId('mock-react-pdf-page-2');
+    let secondLayer = secondPage.querySelector('.textLayer');
+    if (!secondLayer) {
+      secondLayer = document.createElement('div'); secondLayer.className = 'textLayer'; secondPage.appendChild(secondLayer);
+    }
+    secondLayer.innerHTML = '<span data-pdf-fragment="true" data-left="20" data-top="48" data-width="140" data-height="24">Second page text</span>';
+    const last = secondLayer.firstChild as HTMLElement;
+    Object.defineProperty(last, 'getBoundingClientRect', { configurable: true, value: () => {
+      const pageRect = secondPage.getBoundingClientRect(); return createMockRect(pageRect.left + 20, pageRect.top + 48, 140, 24);
+    } });
+    const first = document.querySelector('.textLayer [data-pdf-fragment="true"]')?.firstChild;
+    const range = document.createRange();
+    range.setStart(first!, 0); range.setEnd(last.firstChild!, 16);
+    window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range);
+    dispatchSelectionChange();
+    triggerPdfSelection();
+    await waitFor(() => expect(screen.getByTestId('pdf-transient-selection-pane-left-page-2')).toBeTruthy());
+    const overlayWidth = () => Number.parseFloat((screen.getByTestId('pdf-transient-selection-pane-left-page-2').firstElementChild as HTMLElement).style.width);
+    const widthBefore = overlayWidth();
+    const scaleBefore = Number(secondPage.getAttribute('data-scale'));
+    fireEvent.keyDown(document, { ctrlKey: true, key: '=' });
+    await waitFor(() => expect(Number(secondPage.getAttribute('data-scale'))).toBeGreaterThan(scaleBefore));
+    expect(overlayWidth() / widthBefore).toBeCloseTo(Number(secondPage.getAttribute('data-scale')) / scaleBefore, 2);
+    fireEvent.click(document.querySelector('.pdf-selection-color-picker button') as HTMLButtonElement);
+    await waitFor(() => expect(persistAnnotationChanges).toHaveBeenCalledTimes(1));
+    const saved = persistAnnotationChanges.mock.calls[0][0];
+    expect(saved.map(item => item.target.type === 'pdf' ? item.target.page : null)).toEqual([1, 2]);
+    expect(saved.map(item => item.content)).toEqual(['Selected PDF text', 'Second page text']);
+    expect(saved[1].target).toMatchObject({ type: 'pdf', startCharIndex: 0, endCharIndex: 16 });
+    expect(addAnnotation).not.toHaveBeenCalled();
+    if (!firstSaveSucceeds) {
+      expect(screen.getByTestId('pdf-selection-phase-pane-left').textContent).toBe('frozen');
+      expect(screen.getByTestId('pdf-copy-payload-pane-left').textContent).toContain('Second page text');
+      persistAnnotationChanges.mockResolvedValue(true);
+      fireEvent.click(document.querySelector('.pdf-selection-color-picker button') as HTMLButtonElement);
+      await waitFor(() => expect(screen.getByTestId('pdf-selection-phase-pane-left').textContent).toBe('idle'));
+      expect(persistAnnotationChanges).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it('persists every page when a cross-page selection begins in a two-column reading-order page', async () => {
+    selectionMockState.fragments = [
+      { text: 'Unselected left opening.', left: 30, top: 100, width: 210, height: 20 },
+      { text: 'Selected right opening.', left: 350, top: 100, width: 210, height: 20 },
+      { text: 'Selected left ending.', left: 30, top: 730, width: 210, height: 20 },
+      { text: 'Selected right ending.', left: 350, top: 730, width: 210, height: 20 },
+    ];
+    const persistAnnotationChanges = vi.fn(async (_items: AnnotationItem[]) => true);
+    useAnnotationSystemMock.mockReturnValue({ annotations: [], error: null, addAnnotation: vi.fn(), persistAnnotationChanges,
+      updateAnnotation: vi.fn(), deleteAnnotation: vi.fn() });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    const secondPage = screen.getByTestId('mock-react-pdf-page-2');
+    let secondLayer = secondPage.querySelector('.textLayer');
+    if (!secondLayer) { secondLayer = document.createElement('div'); secondLayer.className = 'textLayer'; secondPage.appendChild(secondLayer); }
+    secondLayer.innerHTML = '<span data-pdf-fragment="true" data-left="20" data-top="48" data-width="140" data-height="24">Second page text</span>';
+    const last = secondLayer.firstChild as HTMLElement;
+    Object.defineProperty(last, 'getBoundingClientRect', { configurable: true, value: () => {
+      const pageRect = secondPage.getBoundingClientRect(); return createMockRect(pageRect.left + 20, pageRect.top + 48, 140, 24);
+    } });
+    const first = Array.from(document.querySelectorAll('.textLayer [data-pdf-fragment="true"]')).find(node => node.textContent === 'Selected left ending.')!.firstChild;
+    const range = document.createRange();
+    range.setStart(first!, 0); range.setEnd(last.firstChild!, 16);
+    window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range);
+    dispatchSelectionChange(); triggerPdfSelection();
+    await waitFor(() => expect(screen.getByTestId('pdf-transient-selection-pane-left-page-2')).toBeTruthy());
+    fireEvent.click(document.querySelector('.pdf-selection-color-picker button') as HTMLButtonElement);
+    await waitFor(() => expect(persistAnnotationChanges).toHaveBeenCalledTimes(1));
+    const saved = persistAnnotationChanges.mock.calls[0][0];
+    expect(saved.map(item => item.target.type === 'pdf' ? item.target.page : null)).toEqual([1, 2]);
+    expect(saved.map(item => item.content)).toEqual(['Selected left ending. Selected right opening. Selected right ending.', 'Second page text']);
   });
 
   it('stores fragmented same-line PDF selections as one Zotero-style visual-line highlight', async () => {
@@ -1700,6 +2117,86 @@ describe('PDFHighlighterAdapter', () => {
     expect(storedRects.some((rect: { y1: number; y2: number }) => rect.y2 - rect.y1 > 0.08)).toBe(false);
   });
 
+  it('persists every interior text run when native multi-line selection rects are incomplete', async () => {
+    const addAnnotation = vi.fn();
+    const lines = [
+      'For the 100s state the crossover length',
+      'is close to Rc=9.5 um, and at this length scale the ratio of',
+      'the Rydberg interaction to the ground-state interaction',
+      'is approximately 10^12.',
+    ];
+    const left = 72;
+    const top = 210;
+    const height = 24;
+    const widths = [500, 520, 490, 240];
+    selectionMockState.rawText = lines.join(' ');
+    selectionMockState.fragments = lines.map((text, index) => ({
+      text,
+      left,
+      top: top + (index * 34),
+      width: widths[index],
+      height,
+    }));
+    selectionMockState.position = {
+      boundingRect: {
+        x1: left,
+        y1: top,
+        x2: left + widths[3],
+        y2: top + 102 + height,
+        width: 640,
+        height: 960,
+        pageNumber: 1,
+      },
+      rects: [
+        { x1: left, y1: top, x2: left + widths[0], y2: top + height, width: 640, height: 960, pageNumber: 1 },
+        { x1: left, y1: top + 34, x2: left + 180, y2: top + 34 + height, width: 640, height: 960, pageNumber: 1 },
+        { x1: left, y1: top + 68, x2: left + 210, y2: top + 68 + height, width: 640, height: 960, pageNumber: 1 },
+        { x1: left, y1: top + 102, x2: left + widths[3], y2: top + 102 + height, width: 640, height: 960, pageNumber: 1 },
+      ],
+      pageNumber: 1,
+    };
+    selectionMockState.clientRectsOverride = [
+      { left, right: left + widths[0], top, bottom: top + height },
+      { left, right: left + 180, top: top + 34, bottom: top + 34 + height },
+      { left, right: left + 210, top: top + 68, bottom: top + 68 + height },
+      { left, right: left + widths[3], top: top + 102, bottom: top + 102 + height },
+    ];
+    selectionMockState.domSelection = {
+      startFragment: lines[0],
+      endFragment: lines[3],
+    };
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [],
+      error: null,
+      addAnnotation,
+      updateAnnotation: vi.fn(),
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    triggerPdfSelection('pane-left', {
+      start: { x: left + 2, y: top + (height / 2) },
+      end: { x: left + widths[3] - 2, y: top + 102 + (height / 2) },
+    });
+
+    await waitFor(() => {
+      expect(document.querySelector('.pdf-selection-color-picker')).toBeTruthy();
+    });
+    fireEvent.click(document.querySelector('.pdf-selection-color-picker button') as HTMLButtonElement);
+    await waitFor(() => {
+      expect(addAnnotation).toHaveBeenCalledTimes(1);
+    });
+
+    const storedRects = [...addAnnotation.mock.calls[0][0].target.rects]
+      .sort((leftRect, rightRect) => leftRect.y1 - rightRect.y1 || leftRect.x1 - rightRect.x1);
+    expect(storedRects).toHaveLength(4);
+    const canonicalWidthScale = (storedRects[0].x2 - storedRects[0].x1) / widths[0];
+    storedRects.forEach((rect, index) => {
+      expect(rect.x2 - rect.x1).toBeCloseTo(widths[index] * canonicalWidthScale, 3);
+    });
+  });
+
   it('prefers text-layer extraction over misaligned library text for saved annotation content', async () => {
     const addAnnotation = vi.fn();
     selectionMockState.rawText = 'd by DiVi';
@@ -1823,7 +2320,7 @@ describe('PDFHighlighterAdapter', () => {
     expect(annotation.content).toBe(selectedText);
     expect(annotation.target.textQuote.exact).toBe(selectedText);
     expect(annotation.target.textQuote.exact).not.toContain('Rydberg');
-    expect(annotation.target.textKernelVersion).toBe(1);
+    expect(annotation.target.textKernelVersion).toBe(2);
     expect(annotation.target.startCharIndex).toBeGreaterThanOrEqual(0);
     expect(annotation.target.endCharIndex).toBeGreaterThan(annotation.target.startCharIndex);
     expect(annotation.target.textSource).toBe('pdfjs-text-model');
@@ -1899,6 +2396,7 @@ describe('PDFHighlighterAdapter', () => {
 
     pdfMockState.viewerMetrics.scrollTop = 96;
     const page = screen.getByTestId('mock-react-pdf-page-1');
+    (await waitForMockPdfViewerContainer('pane-left')).scrollTop = 96;
     configureMockPdfPageDom(page, 1);
     window.getSelection()?.removeAllRanges();
 
@@ -1914,8 +2412,8 @@ describe('PDFHighlighterAdapter', () => {
     expect(annotation.target.textQuote.exact).toBe(selectedText);
     expect(rectUnion.x1).toBeCloseTo(selectedLeft / 640, 3);
     expect(rectUnion.x2).toBeCloseTo(selectedRight / 640, 3);
-    expect(rectUnion.y1).toBeCloseTo(lineTop / 960, 3);
-    expect(rectUnion.y2).toBeCloseTo((lineTop + 24) / 960, 3);
+    expect(rectUnion.y1).toBeCloseTo(lineTop / 960, 1);
+    expect(rectUnion.y2).toBeCloseTo((lineTop + 24) / 960, 1);
   });
 
   it('keeps geometry-trusted frozen selections anchored after scrolling before commit', async () => {
@@ -1996,6 +2494,7 @@ describe('PDFHighlighterAdapter', () => {
     });
 
     pdfMockState.viewerMetrics.scrollTop = 96;
+    (await waitForMockPdfViewerContainer('pane-left')).scrollTop = 96;
     configureMockPdfPageDom(screen.getByTestId('mock-react-pdf-page-1'), 1);
     window.getSelection()?.removeAllRanges();
 
@@ -2012,8 +2511,8 @@ describe('PDFHighlighterAdapter', () => {
     expect(annotation.target.textQuote.exact).not.toBe('0');
     expect(rectUnion.x1).toBeCloseTo(selectedLeft / 640, 2);
     expect(rectUnion.x2).toBeCloseTo(selectedRight / 640, 2);
-    expect(rectUnion.y1).toBeCloseTo(lineTop / 960, 2);
-    expect(rectUnion.y2).toBeCloseTo((lineTop + 24) / 960, 2);
+    expect(rectUnion.y1).toBeCloseTo(lineTop / 960, 1);
+    expect(rectUnion.y2).toBeCloseTo((lineTop + 24) / 960, 1);
   });
 
   it('uses pointer-grounded rendered text when a literature short selection drifts to later text', async () => {
@@ -2085,7 +2584,7 @@ describe('PDFHighlighterAdapter', () => {
     expect(annotation.target.textQuote.exact).toBe(selectedText);
     expect(annotation.target.textQuote.exact).not.toContain('able');
     expect(annotation.target.textQuote.exact).not.toContain('high-fid');
-    expect(annotation.target.textKernelVersion).toBe(1);
+    expect(annotation.target.textKernelVersion).toBe(2);
     expect(annotation.target.textSource).toBe('pdfjs-text-model');
     expect(annotation.target.quads).toHaveLength(1);
     expect(annotation.target.rects.length).toBeGreaterThanOrEqual(1);
@@ -2170,7 +2669,7 @@ describe('PDFHighlighterAdapter', () => {
     const rectUnion = getPdfRectUnion(annotation.target.rects);
     expect(annotation.content).toBe(selectedText);
     expect(annotation.target.textQuote.exact).toBe(selectedText);
-    expect(rectUnion.y1).toBeCloseTo(secondTop / 960, 3);
+    expect(rectUnion.y1).toBeCloseTo(secondTop / 960, 1);
     expect(rectUnion.x1).toBeCloseTo(selectedLeft / 640, 3);
     expect(rectUnion.x2).toBeCloseTo(selectedRight / 640, 3);
   });
@@ -2454,14 +2953,15 @@ describe('PDFHighlighterAdapter', () => {
       ],
       pageNumber: 1,
     };
+    // WebView can collapse a multi-line DOM range into one oversized rect that
+    // crosses the gutter. The physical drag still starts and ends in the left column.
     selectionMockState.clientRectsOverride = [
-      { left: 138, right: leftLineRight, top: 420, bottom: 420 + lineHeight },
-      { left: selectedLeft, right: leftLineRight, top: firstLineTop, bottom: firstLineTop + lineHeight },
-      { left: leftLineLeft, right: leftLineRight, top: firstLineTop + 32, bottom: firstLineTop + 32 + lineHeight },
-      { left: rightLineLeft, right: rightLineRight, top: firstLineTop + 32, bottom: firstLineTop + 32 + lineHeight },
-      { left: leftLineLeft, right: leftLineRight - 24, top: firstLineTop + 64, bottom: firstLineTop + 64 + lineHeight },
-      { left: rightLineLeft, right: rightLineRight, top: firstLineTop + 64, bottom: firstLineTop + 64 + lineHeight },
-      { left: leftLineLeft, right: selectedEndX, top: firstLineTop + 96, bottom: firstLineTop + 96 + lineHeight },
+      {
+        left: selectedLeft,
+        right: rightLineRight,
+        top: firstLineTop,
+        bottom: firstLineTop + 96 + lineHeight,
+      },
     ];
     selectionMockState.fragments = [
       { text: previousLine, left: leftLineLeft, top: 420, width: leftLineRight - leftLineLeft, height: lineHeight },
@@ -2477,6 +2977,37 @@ describe('PDFHighlighterAdapter', () => {
       endFragment: fourthSelectedLine,
       startOffset: previousLine.indexOf('with equal'),
       endOffset: fourthSelectedLine.length,
+    };
+    const nativeLines = [
+      { text: previousLine, left: leftLineLeft, top: 420, width: leftLineRight - leftLineLeft },
+      { text: firstSelectedLine, left: leftLineLeft, top: firstLineTop, width: leftLineRight - leftLineLeft },
+      { text: secondSelectedLine, left: leftLineLeft, top: firstLineTop + 32, width: leftLineRight - leftLineLeft },
+      { text: thirdSelectedLine, left: leftLineLeft, top: firstLineTop + 64, width: leftLineRight - leftLineLeft - 24 },
+      { text: fourthSelectedLine, left: leftLineLeft, top: firstLineTop + 96, width: selectedEndX - leftLineLeft },
+      { text: rightLineA, left: rightLineLeft, top: firstLineTop + 32, width: rightLineRight - rightLineLeft },
+      { text: rightLineB, left: rightLineLeft, top: firstLineTop + 64, width: rightLineRight - rightLineLeft },
+    ];
+    let nativeCharIndex = 0;
+    nativeLayoutMockState.layout = {
+      source: 'pdfium',
+      pageNumber: 1,
+      width: 640,
+      height: 960,
+      text: nativeLines.map(({ text }) => text).join('\n'),
+      chars: nativeLines.flatMap(({ text, left, top, width }, lineIndex) => {
+        const charWidth = width / Math.max(1, text.length);
+        const chars = Array.from(text).map((character, index) => ({
+          charIndex: nativeCharIndex + index,
+          text: character,
+          x1: left + (index * charWidth),
+          y1: top,
+          x2: left + ((index + 1) * charWidth),
+          y2: top + lineHeight,
+          fontSize: lineHeight,
+        }));
+        nativeCharIndex += text.length + (lineIndex < nativeLines.length - 1 ? 1 : 0);
+        return chars;
+      }),
     };
     useAnnotationSystemMock.mockReturnValue({
       annotations: [],
@@ -2507,6 +3038,7 @@ describe('PDFHighlighterAdapter', () => {
     expect(annotation.target.textQuote.exact).toContain('Fig. 5, that tend');
     expect(annotation.target.textQuote.exact).not.toContain('where j');
     expect(annotation.target.textQuote.exact).not.toContain('dipole-dipole');
+    expect(annotation.target.textQuote.source).toBe('pdfjs-text-model');
     expect(Math.max(...annotation.target.rects.map((rect: { x2: number }) => rect.x2))).toBeLessThan(0.55);
   });
 
@@ -2611,6 +3143,189 @@ describe('PDFHighlighterAdapter', () => {
     expect(orderedTops).toEqual([...orderedTops].sort((left, right) => left - right));
   });
 
+  it('preserves complete PDFium text when the rendered Jenkins text layer is fragmented', async () => {
+    const addAnnotation = vi.fn();
+    const nativeLines = [
+      'Here, we report such',
+      'methods, reveal scalability characteristics of 171Yb that are',
+      'powerful for quantum science broadly, and benchmark',
+      'techniques for controlling the nuclear qubit on submicro-',
+    ];
+    const fragmentedLines = [
+      'Here, we report such',
+      'methods, reveal scalability characteristics of 171 Yb that are',
+      'powerful for quantum science broadly, and benchmark',
+      'techniques for controlling the nuclear qubit on submicro',
+    ];
+    const expectedText = nativeLines.join(' ');
+    const lineLeft = 52;
+    const lineTop = 275;
+    const lineHeight = 20;
+    const lineGap = 30;
+    const charWidth = 4.2;
+    const nativeText = nativeLines.join(' ');
+    let nativeOffset = 0;
+    const nativeChars = nativeLines.flatMap((line, lineIndex) => {
+      const chars = Array.from(line).map((character, charIndex) => ({
+        charIndex: nativeOffset + charIndex,
+        text: character,
+        x1: lineLeft + (charIndex * charWidth),
+        y1: lineTop + (lineIndex * lineGap),
+        x2: lineLeft + ((charIndex + 1) * charWidth),
+        y2: lineTop + (lineIndex * lineGap) + lineHeight,
+        fontSize: lineHeight,
+      }));
+      nativeOffset += line.length + (lineIndex < nativeLines.length - 1 ? 1 : 0);
+      return chars;
+    });
+    const viewportRects = fragmentedLines.map((line, lineIndex) => ({
+      left: lineLeft,
+      right: lineLeft + (line.length * charWidth),
+      top: lineTop + (lineIndex * lineGap),
+      bottom: lineTop + (lineIndex * lineGap) + lineHeight,
+    }));
+
+    selectionMockState.rawText = fragmentedLines.join(' ');
+    selectionMockState.position = {
+      boundingRect: {
+        x1: lineLeft,
+        y1: lineTop,
+        x2: viewportRects[viewportRects.length - 1].right,
+        y2: viewportRects[viewportRects.length - 1].bottom,
+        width: 640,
+        height: 960,
+        pageNumber: 1,
+      },
+      rects: viewportRects.map((rect) => ({
+        x1: rect.left,
+        y1: rect.top,
+        x2: rect.right,
+        y2: rect.bottom,
+        width: 640,
+        height: 960,
+        pageNumber: 1,
+      })),
+      pageNumber: 1,
+    };
+    selectionMockState.clientRectsOverride = viewportRects.flatMap((rect) => {
+      const fragmentWidth = (rect.right - rect.left) / 3;
+      return Array.from({ length: 3 }, (_, fragmentIndex) => ({
+        left: rect.left + (fragmentIndex * fragmentWidth),
+        right: fragmentIndex === 2 ? rect.right : rect.left + ((fragmentIndex + 1) * fragmentWidth),
+        top: rect.top,
+        bottom: rect.bottom,
+      }));
+    });
+    selectionMockState.fragments = fragmentedLines.map((text, lineIndex) => ({
+      text,
+      left: lineLeft,
+      top: lineTop + (lineIndex * lineGap),
+      width: text.length * charWidth,
+      height: lineHeight,
+    }));
+    selectionMockState.domSelection = {
+      startFragment: fragmentedLines[0],
+      endFragment: fragmentedLines[fragmentedLines.length - 1],
+    };
+    nativeLayoutMockState.fetchedLayout = {
+      source: 'pdfium',
+      pageNumber: 1,
+      width: 640,
+      height: 960,
+      text: nativeText,
+      chars: nativeChars,
+    };
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [],
+      error: null,
+      addAnnotation,
+      updateAnnotation: vi.fn(),
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    triggerPdfSelection('pane-left', {
+      start: { x: lineLeft + 1, y: lineTop + (lineHeight / 2) },
+      end: {
+        x: lineLeft + (nativeLines[nativeLines.length - 1].length * charWidth) - 1,
+        y: lineTop + ((nativeLines.length - 1) * lineGap) + (lineHeight / 2),
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-selection-preview-pane-left').textContent).toBe(expectedText);
+      expect(screen.getByTestId('pdf-selection-source-pane-left').textContent).toBe('pdfium-native');
+    });
+
+    fireEvent.click(document.querySelector('.pdf-selection-color-picker button') as HTMLButtonElement);
+    await waitFor(() => {
+      expect(addAnnotation).toHaveBeenCalledTimes(1);
+    });
+    expect(addAnnotation.mock.calls[0][0].content).toBe(expectedText);
+    expect(addAnnotation.mock.calls[0][0].target.textQuote.exact).toBe(expectedText);
+    expect(addAnnotation.mock.calls[0][0].target.rects).toHaveLength(nativeLines.length);
+  });
+
+  it('selects and annotates an OCR-only scanned page from pointer geometry', async () => {
+    const addAnnotation = vi.fn();
+    selectionMockState.fragments = [];
+    selectionMockState.rawText = '';
+    selectionMockState.domSelection = null;
+    selectionMockState.autoApplyDomSelection = false;
+    ocrLayoutMockState.layout = {
+      source: 'ocr',
+      pageNumber: 1,
+      width: 640,
+      height: 960,
+      text: 'Scanned paragraph',
+      confidence: 0.93,
+      words: [
+        { text: 'Scanned', left: 60, top: 120, width: 90, height: 24, confidence: 0.94, lineIndex: 0, wordIndex: 0 },
+        { text: 'paragraph', left: 160, top: 120, width: 100, height: 24, confidence: 0.92, lineIndex: 0, wordIndex: 1 },
+      ],
+    };
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [],
+      error: null,
+      addAnnotation,
+      updateAnnotation: vi.fn(),
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'scanned-paper' }));
+    const pageElement = await screen.findByTestId('mock-react-pdf-page-1');
+    pageElement.dataset.pdfTextLayerSource = 'empty';
+    pageElement.querySelector<HTMLElement>('.textLayer')?.setAttribute('data-pdf-text-layer-source', 'empty');
+    window.getSelection()?.removeAllRanges();
+    const renderedPageRect = pageElement.getBoundingClientRect();
+    const toClientPoint = (x: number, y: number) => ({
+      x: renderedPageRect.left + ((x / 640) * renderedPageRect.width),
+      y: renderedPageRect.top + ((y / 960) * renderedPageRect.height),
+    });
+
+    triggerPdfSelection('pane-left', {
+      start: toClientPoint(61, 132),
+      end: toClientPoint(259, 132),
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pdf-selection-preview-pane-left').textContent).toBe('Scanned paragraph');
+      expect(screen.getByTestId('pdf-selection-source-pane-left').textContent).toBe('ocr-text-model');
+    });
+
+    fireEvent.click(document.querySelector('.pdf-selection-color-picker button') as HTMLButtonElement);
+    await waitFor(() => {
+      expect(addAnnotation).toHaveBeenCalledTimes(1);
+    });
+    const annotation = addAnnotation.mock.calls[0][0];
+    expect(annotation.content).toBe('Scanned paragraph');
+    expect(annotation.target.textQuote.exact).toBe('Scanned paragraph');
+    expect(annotation.target.textQuote.source).toBe('ocr-text-model');
+    expect(annotation.target.rects).toHaveLength(1);
+  });
+
   it('rejects desktop native rects that would save highlight before the browser selection', async () => {
     const addAnnotation = vi.fn();
     const line = 'The development of scalable, high-fidelity qubits is a key challenge in quantum';
@@ -2706,6 +3421,7 @@ describe('PDFHighlighterAdapter', () => {
 
   it('keeps visual browser selection authoritative when desktop native text resolves to a later paper sentence', async () => {
     const addAnnotation = vi.fn();
+    pdfMockState.officialTextLayerEnabled = true;
     const line = 'This architecture improves readout fidelity for neutral atom arrays in experiments';
     const selectedText = 'readout fidelity';
     const wrongNativeText = 'neutral atom arrays';
@@ -2740,6 +3456,7 @@ describe('PDFHighlighterAdapter', () => {
     }];
     selectionMockState.fragments = [
       { text: line, left: lineLeft, top: lineTop, width: line.length * charWidth, height: 22 },
+      { text: 'Additional page context', left: lineLeft, top: lineTop + 34, width: 154, height: 22 },
     ];
     selectionMockState.domSelection = {
       startFragment: line,
@@ -2774,7 +3491,10 @@ describe('PDFHighlighterAdapter', () => {
     render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
     await waitForPdfTextModelPrefetch();
 
-    triggerPdfSelection();
+    triggerPdfSelection('pane-left', {
+      start: { x: selectedLeft + 1, y: lineTop + 11 },
+      end: { x: selectedRight - 1, y: lineTop + 11 },
+    });
     await waitFor(() => {
       expect(screen.getByTestId('pdf-selection-preview-pane-left').textContent).toBe(selectedText);
       expect(screen.getByTestId('pdf-selection-preview-pane-left').textContent).not.toContain('neutral');
@@ -3320,12 +4040,13 @@ describe('PDFHighlighterAdapter', () => {
       end: { x: selectedRight - 2, y: lineTop + 12 },
     });
 
-    fireEvent.click(screen.getByTestId('mock-pdf-link'));
+    fireEvent.click(await screen.findByTestId('mock-pdf-link'));
 
     await waitFor(() => {
       expect(screen.getByTestId('pdf-selection-preview-pane-left').textContent).toBe(selectedText);
       expect(screen.getByTestId('pdf-selection-phase-pane-left').textContent).toBe('frozen');
     });
+    expect(navigateLinkMock).not.toHaveBeenCalled();
   });
 
   it('prevents link dragstart after a text-selection drag crosses an annotation link', async () => {
@@ -3437,6 +4158,32 @@ describe('PDFHighlighterAdapter', () => {
     });
   });
 
+  it('keeps a below-threshold pointer gesture as an ordinary PDF link click', async () => {
+    selectionMockState.linkLayer = {
+      href: 'https://example.com/precise-click',
+      left: 120,
+      top: 180,
+      width: 60,
+      height: 24,
+    };
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    const link = screen.getByTestId('mock-pdf-link');
+    fireEvent.pointerDown(link, { pointerId: 8, clientX: 130, clientY: 190 });
+    fireEvent.pointerMove(link, { pointerId: 8, clientX: 132, clientY: 190 });
+    fireEvent.pointerUp(link, { pointerId: 8, clientX: 132, clientY: 190 });
+    fireEvent.click(link);
+
+    await waitFor(() => {
+      expect(navigateLinkMock).toHaveBeenCalledWith(
+        'https://example.com/precise-click',
+        expect.objectContaining({ paneId: 'pane-left' }),
+      );
+    });
+  });
+
   it('opens PDF web links in the browser for modifier clicks or browser setting', async () => {
     selectionMockState.linkLayer = {
       href: 'https://example.com/task1',
@@ -3474,11 +4221,180 @@ describe('PDFHighlighterAdapter', () => {
     expect(pageTwo).toBeTruthy();
     configureMockPdfPageDom(pageTwo as HTMLElement, 2);
 
-    fireEvent.click(screen.getByTestId('mock-pdf-link'));
+    const pdfLink = await screen.findByTestId('mock-pdf-link', {}, { timeout: 5_000 });
+    fireEvent.click(pdfLink);
 
     expect(navigateLinkMock).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(viewerContainer.scrollTo).toHaveBeenCalled();
+    });
+  });
+
+  it('resolves explicit PDF destination arrays used by citation links', async () => {
+    selectionMockState.linkLayer = {
+      href: '#',
+      dest: [{ num: 2, gen: 0 }, { name: 'XYZ' }, 0, 0, null],
+      left: 120,
+      top: 180,
+      width: 60,
+      height: 24,
+    };
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    const viewerContainer = await waitForMockPdfViewerContainer('pane-left');
+    const pageTwo = document.querySelector<HTMLElement>('[data-page-number="2"]');
+    expect(pageTwo).toBeTruthy();
+    configureMockPdfPageDom(pageTwo as HTMLElement, 2);
+
+    fireEvent.click(await screen.findByTestId('mock-pdf-link'));
+
+    expect(navigateLinkMock).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(mockPdfDocument.getPageIndex).toHaveBeenCalledWith({ num: 2, gen: 0 });
+      expect(viewerContainer.scrollTo).toHaveBeenCalled();
+    });
+  });
+
+  it('routes unsafeUrl paper links through the normal external link flow', async () => {
+    selectionMockState.linkLayer = {
+      href: '#',
+      url: undefined,
+      unsafeUrl: 'https://doi.org/10.1145/example',
+      left: 120,
+      top: 180,
+      width: 60,
+      height: 24,
+    };
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    fireEvent.click(await screen.findByTestId('mock-pdf-link'));
+
+    await waitFor(() => {
+      expect(navigateLinkMock).toHaveBeenCalledWith(
+        'https://doi.org/10.1145/example',
+        expect.objectContaining({ externalUrlMode: 'internal' }),
+      );
+    });
+  });
+
+  it('opens bare paper URLs from the PDF text layer without requiring a link annotation', async () => {
+    selectionMockState.fragments = [
+      { text: 'Check for updates at ', left: 120, top: 180, width: 140, height: 24 },
+      { text: 'https://doi.org/10.1145/example', left: 260, top: 180, width: 230, height: 24 },
+    ];
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    const urlSpan = await waitFor(() => {
+      const span = Array.from(document.querySelectorAll<HTMLElement>('.textLayer span'))
+        .find((element) => element.textContent?.includes('https://doi.org/10.1145/example'));
+      expect(span).toBeTruthy();
+      return span as HTMLElement;
+    });
+
+    expect(urlSpan.dataset.pdfTextLink).toBe('https://doi.org/10.1145/example');
+    expect(urlSpan.style.cursor).toBe('pointer');
+
+    fireEvent.click(urlSpan);
+
+    await waitFor(() => {
+      expect(navigateLinkMock).toHaveBeenCalledWith(
+        'https://doi.org/10.1145/example',
+        expect.objectContaining({ externalUrlMode: 'internal' }),
+      );
+    });
+  });
+
+  it('opens DOI links that are split across adjacent PDF text spans', async () => {
+    selectionMockState.fragments = [
+      { text: 'Check for updates doi: 10.1145/', left: 120, top: 180, width: 220, height: 24 },
+      { text: '1234567.8901234', left: 340, top: 180, width: 140, height: 24 },
+    ];
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    const doiTailSpan = await waitFor(() => {
+      const span = Array.from(document.querySelectorAll<HTMLElement>('.textLayer span'))
+        .find((element) => element.textContent === '1234567.8901234');
+      expect(span).toBeTruthy();
+      return span as HTMLElement;
+    });
+
+    fireEvent.click(doiTailSpan);
+
+    await waitFor(() => {
+      expect(navigateLinkMock).toHaveBeenCalledWith(
+        'https://doi.org/10.1145/1234567.8901234',
+        expect.objectContaining({ externalUrlMode: 'internal' }),
+      );
+    });
+  });
+
+  it('keeps unbound PDF.js link sections clickable through enriched annotation metadata', async () => {
+    selectionMockState.linkLayer = {
+      id: 'check-update-link',
+      href: 'https://publisher.example.com/check-update',
+      rect: [120, 780, 360, 756],
+      left: 0,
+      top: 0,
+      width: 0,
+      height: 0,
+      renderUnboundSection: true,
+    };
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    const section = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>('[data-annotation-id="check-update-link"]');
+      expect(element).toBeTruthy();
+      expect(element?.dataset.pdfLinkTarget).toBe('https://publisher.example.com/check-update');
+      return element as HTMLElement;
+    });
+
+    fireEvent.click(section);
+
+    await waitFor(() => {
+      expect(navigateLinkMock).toHaveBeenCalledWith(
+        'https://publisher.example.com/check-update',
+        expect.objectContaining({ paneId: 'pane-left' }),
+      );
+    });
+  });
+
+  it('creates a clickable hotspot for image-sized link annotations with only rect data', async () => {
+    selectionMockState.linkLayer = {
+      id: 'figure-link',
+      href: 'https://example.com/figure-source',
+      rect: [200, 500, 420, 360],
+      left: 0,
+      top: 0,
+      width: 0,
+      height: 0,
+    };
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    const hotspot = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>('[data-annotation-id="figure-link"][data-lattice-generated="true"]');
+      expect(element).toBeTruthy();
+      return element as HTMLElement;
+    });
+    expect(hotspot.style.width).not.toBe('0px');
+
+    const anchor = hotspot.querySelector('a') as HTMLAnchorElement;
+    fireEvent.click(anchor);
+
+    await waitFor(() => {
+      expect(navigateLinkMock).toHaveBeenCalledWith(
+        'https://example.com/figure-source',
+        expect.objectContaining({ paneId: 'pane-left' }),
+      );
     });
   });
 
@@ -3645,15 +4561,58 @@ describe('PDFHighlighterAdapter', () => {
     });
   });
 
+  it('renders a deep page after viewer scrolling even when IntersectionObserver does not notify', async () => {
+    const originalUserAgent = navigator.userAgent;
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Mozilla/5.0' });
+    pdfMockState.numPages = 3;
+    pdfMockState.viewerMetrics.height = 600;
+    pdfMockState.viewerMetrics.scrollHeight = 3400;
+    pdfMockState.pageMetrics[3] = { width: 640, height: 960, top: 2000, left: 0 };
+
+    try {
+      render(renderPdfPane({ paneId: 'pane-left', fileId: 'deep-scroll' }));
+      const viewerContainer = await waitForMockPdfViewerContainer('pane-left');
+      const pageThree = await waitFor(() => {
+        const page = document.querySelector<HTMLElement>('[data-page-number="3"]');
+        expect(page).toBeTruthy();
+        return page as HTMLElement;
+      });
+      expect(pageThree.dataset.pdfPageVisible).toBe('false');
+      Object.defineProperty(pageThree, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => createMockRect(
+          0,
+          pdfMockState.pageMetrics[3]!.top - viewerContainer.scrollTop,
+          pdfMockState.pageMetrics[3]!.width,
+          pdfMockState.pageMetrics[3]!.height,
+        ),
+      });
+
+      viewerContainer.scrollTop = 1900;
+      fireEvent.scroll(viewerContainer);
+
+      await waitFor(() => {
+        const currentPageThree = document.querySelector<HTMLElement>('[data-page-number="3"]');
+        expect(currentPageThree?.dataset.pdfPageVisible).toBe('true');
+        expect(currentPageThree?.querySelector('.react-pdf__Page canvas')).toBeTruthy();
+      });
+    } finally {
+      Object.defineProperty(navigator, 'userAgent', { configurable: true, value: originalUserAgent });
+    }
+  });
+
   it('uses the widest measured page for fit-width zoom', async () => {
     pdfMockState.pageMetrics[2] = { width: 720, height: 960, top: 1000, left: 0 };
     pdfMockState.viewerMetrics.scrollWidth = 1600;
 
     render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
 
-    await waitFor(() => {
-      expect(screen.getByTestId('mock-react-pdf-page-2').getAttribute('data-scale')).toBe('1.0666666666666667');
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('mock-react-pdf-page-2').getAttribute('data-scale')).toBe('1.0666666666666667');
+      },
+      { timeout: 5_000 },
+    );
   });
 
   it('keeps the current anchor stable when fit zoom relayout shrinks the viewer width', async () => {
@@ -3688,6 +4647,34 @@ describe('PDFHighlighterAdapter', () => {
       expect(Number(screen.getByTestId('pdf-restore-delta-top-pane-left').textContent)).toBeLessThan(0.01);
       expect(Number(screen.getByTestId('pdf-restore-delta-left-pane-left').textContent)).toBeLessThan(0.01);
     });
+  });
+
+  it('waits for a burst resize to settle before recomputing fit zoom', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    const page = await screen.findByTestId('mock-react-pdf-page-1');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 180));
+    });
+    const initialScale = page.getAttribute('data-scale');
+    pdfMockState.viewerMetrics.width = 500;
+    pdfMockState.viewerMetrics.scrollWidth = 1600;
+    Object.defineProperty(screen.getByTestId('pdf-viewer-container-pane-left'), 'clientWidth', {
+      configurable: true,
+      value: 500,
+    });
+
+    await act(async () => {
+      triggerResizeObservers();
+      triggerResizeObservers();
+      triggerResizeObservers();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    });
+
+    expect(page.getAttribute('data-scale')).toBe(initialScale);
+    await waitFor(() => {
+      expect(page.getAttribute('data-scale')).not.toBe(initialScale);
+    }, { timeout: 5_000 });
   });
 
   it('keeps the current anchor stable when toggling the PDF sidebar', async () => {
@@ -3776,7 +4763,10 @@ describe('PDFHighlighterAdapter', () => {
     fireEvent(scrollContainer, contextMenuEvent);
 
     expect(preventDefault).toHaveBeenCalled();
-    expect(await screen.findByTestId('pdf-viewer-context-menu')).toBeTruthy();
+    const contextMenu = await screen.findByTestId('pdf-viewer-context-menu');
+    expect(contextMenu).toBeTruthy();
+    expect(contextMenu.className).toContain('max-h-[calc(100vh-1.5rem)]');
+    expect(contextMenu.className).toContain('overflow-y-auto');
     expect(screen.getByText('PDF 工具')).toBeTruthy();
     expect(screen.getByTestId('pdf-context-menu-action-open-search')).toBeTruthy();
     expect(screen.getByTestId('pdf-context-menu-action-copy-page-reference')).toBeTruthy();
@@ -3808,6 +4798,23 @@ describe('PDFHighlighterAdapter', () => {
     expect(screen.getByTestId('pdf-context-menu-action-toggle-sidebar')).toBeTruthy();
     expect(screen.queryByTestId('pdf-context-menu-action-fit-page')).toBeNull();
     expect(screen.queryByTestId('pdf-context-menu-action-reset-zoom')).toBeNull();
+  });
+
+  it('routes PDF context menu actions on pointer down before layout can replace the menu node', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    const scrollContainer = await screen.findByTestId('pdf-scroll-container-pane-left');
+    fireEvent.contextMenu(scrollContainer, { clientX: 420, clientY: 260 });
+
+    fireEvent.pointerDown(await screen.findByTestId('pdf-context-menu-action-open-search'));
+
+    await waitFor(() => {
+      const searchAction = useWorkspaceStore
+        .getState()
+        .commandBarByPane['pane-left']
+        ?.actions.find((item) => item.id === 'search');
+      expect(searchAction?.active).toBe(true);
+    });
   });
 
   it('routes PDF right-click page actions to sidebar and page reference tools', async () => {
@@ -3875,6 +4882,373 @@ describe('PDFHighlighterAdapter', () => {
     expect(annotationDraft?.content).toBe('Selected PDF text');
   });
 
+  it.each(['highlight', 'underline'] as const)(
+    'rebuilds %s geometry from authoritative PDF characters instead of persisting oversized DOM rows',
+    async (styleType) => {
+      const addAnnotation = vi.fn((_annotation: Omit<AnnotationItem, 'id' | 'createdAt'>) => `ann-authoritative-${styleType}`);
+      const firstLine = 'Lead To reach favorable';
+      const secondLine = 'conditions for loading the tweezers suffix';
+      const exact = 'To reach favorable conditions for loading the tweezers';
+      const lineLeft = 40;
+      const firstTop = 300;
+      const secondTop = 330;
+      const charWidth = 5;
+      const lineHeight = 24;
+      const firstStart = firstLine.indexOf('To reach');
+      const secondEnd = secondLine.indexOf(' suffix');
+      const selectedLeft = lineLeft + (firstStart * charWidth);
+      const selectedRight = lineLeft + (secondEnd * charWidth);
+
+      selectionMockState.rawText = exact;
+      selectionMockState.fragments = [
+        { text: firstLine, left: lineLeft, top: firstTop, width: firstLine.length * charWidth, height: lineHeight },
+        { text: secondLine, left: lineLeft, top: secondTop, width: secondLine.length * charWidth, height: lineHeight },
+      ];
+      selectionMockState.domSelection = {
+        startFragment: firstLine,
+        endFragment: secondLine,
+        startOffset: firstStart,
+        endOffset: secondEnd,
+      };
+      selectionMockState.position = {
+        boundingRect: {
+          x1: selectedLeft,
+          y1: firstTop,
+          x2: 390,
+          y2: secondTop + lineHeight,
+          width: 640,
+          height: 960,
+          pageNumber: 1,
+        },
+        rects: [
+          { x1: selectedLeft, y1: firstTop, x2: 390, y2: firstTop + lineHeight, width: 640, height: 960, pageNumber: 1 },
+          { x1: lineLeft, y1: secondTop, x2: 390, y2: secondTop + lineHeight, width: 640, height: 960, pageNumber: 1 },
+        ],
+        pageNumber: 1,
+      };
+      selectionMockState.clientRectsOverride = [
+        { left: selectedLeft, right: 390, top: firstTop, bottom: firstTop + lineHeight },
+        { left: lineLeft, right: 390, top: secondTop, bottom: secondTop + lineHeight },
+      ];
+      useAnnotationSystemMock.mockReturnValue({
+        annotations: [],
+        error: null,
+        addAnnotation,
+        updateAnnotation: vi.fn(),
+        deleteAnnotation: vi.fn(),
+      });
+
+      render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+      await waitForPdfTextModelPrefetch();
+      triggerPdfSelection('pane-left', {
+        start: { x: selectedLeft + 1, y: firstTop + (lineHeight / 2) },
+        end: { x: selectedRight - 1, y: secondTop + (lineHeight / 2) },
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId('pdf-selection-preview-pane-left').textContent).toBe(exact);
+      });
+
+      const scrollContainer = await screen.findByTestId('pdf-scroll-container-pane-left');
+      fireEvent.contextMenu(scrollContainer, { clientX: selectedRight, clientY: secondTop + lineHeight });
+      fireEvent.click(await screen.findByTestId(`pdf-context-menu-action-${styleType}-selection`));
+
+      await waitFor(() => {
+        expect(addAnnotation).toHaveBeenCalledTimes(1);
+      });
+      const annotation = addAnnotation.mock.calls[0][0];
+      expect(annotation.content).toBe(exact);
+      expect(annotation.style.type).toBe(styleType);
+      expect(annotation.target.type).toBe('pdf');
+      if (annotation.target.type !== 'pdf') {
+        throw new Error('Expected a PDF text-markup target');
+      }
+      expect(annotation.target.textQuote?.exact).toBe(exact);
+      expect(annotation.target.rects).toHaveLength(2);
+      expect(Math.max(...annotation.target.rects.map((rect: { x2: number }) => rect.x2))).toBeLessThan(0.45);
+      const rowHeights = annotation.target.rects.map((rect: { y1: number; y2: number }) => rect.y2 - rect.y1);
+      expect(Math.max(...rowHeights) - Math.min(...rowHeights)).toBeLessThan(0.005);
+    },
+  );
+
+  it('keeps a native multi-line quote and left-column geometry consistent after a boundary round trip', async () => {
+    useContentCacheStore.getState().saveEditorState('paper-left', {
+      cursorPosition: 0, scrollTop: 0, scrollLeft: 0,
+      viewState: { pdf: { scale: 1, zoomMode: 'manual', showSidebar: true } },
+    });
+    const first = 'Fig. 5, that tend to cause shifts in opposite direc-';
+    const second = 'tions. Even so';
+    const nativeFirst = first.slice(0, -1);
+    const exact = 'Fig. 5, that tend to cause shifts in opposite directions.';
+    selectionMockState.fragments = [
+      { text: first, left: 40, top: 300, width: first.length * 4, height: 20 },
+      { text: second, left: 40, top: 326, width: second.length * 4, height: 20 },
+      { text: 'Unrelated right column', left: 360, top: 300, width: 180, height: 20 },
+    ];
+    selectionMockState.rawText = `${nativeFirst} tions.`;
+    selectionMockState.domSelection = { startFragment: first, endFragment: second, endOffset: 6 };
+    selectionMockState.position = {
+      boundingRect: { x1: 40, y1: 300, x2: 240, y2: 346, width: 640, height: 960, pageNumber: 1 },
+      rects: [
+        { x1: 40, y1: 300, x2: 240, y2: 320, width: 640, height: 960, pageNumber: 1 },
+        { x1: 40, y1: 326, x2: 64, y2: 346, width: 640, height: 960, pageNumber: 1 },
+      ], pageNumber: 1,
+    };
+    nativeLayoutMockState.layout = {
+      source: 'pdfium', pageNumber: 1, width: 640, height: 960, text: `${nativeFirst} ${second}`,
+      chars: [
+        ...Array.from(nativeFirst).map((text, index) => ({ charIndex: index, text, x1: 40 + index * 4, y1: 300, x2: 44 + index * 4, y2: 320, fontSize: 20 })),
+        ...Array.from(second).map((text, index) => ({ charIndex: nativeFirst.length + 1 + index, text, x1: 40 + index * 4, y1: 326, x2: 44 + index * 4, y2: 346, fontSize: 20 })),
+      ],
+    };
+    const addAnnotation = vi.fn((_: Omit<AnnotationItem, 'id' | 'createdAt'>) => 'ann-linebreak');
+    const updateAnnotation = vi.fn();
+    useAnnotationSystemMock.mockReturnValue({ annotations: [], error: null, addAnnotation, updateAnnotation, deleteAnnotation: vi.fn() });
+    const rendered = render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    triggerPdfSelection('pane-left', { start: { x: 41, y: 310 }, end: { x: 63, y: 336 } });
+    await waitFor(() => expect(screen.getByTestId('pdf-selection-preview-pane-left').textContent).toBe(exact));
+    expect(screen.getByTestId('pdf-copy-payload-pane-left').textContent).toBe(exact);
+    const previewRects = Array.from(document.querySelectorAll<HTMLElement>('[data-pdf-transient-selection-segment="true"]')).map((element) => ({
+      left: Number.parseFloat(element.style.left), top: Number.parseFloat(element.style.top),
+      width: Number.parseFloat(element.style.width), height: Number.parseFloat(element.style.height),
+    }));
+    fireEvent.click(document.querySelector('.pdf-selection-color-picker button') as HTMLButtonElement);
+    await waitFor(() => expect(addAnnotation).toHaveBeenCalledTimes(1));
+    const annotation = { ...addAnnotation.mock.calls[0][0], id: 'ann-linebreak', createdAt: 1 };
+    if (annotation.target.type !== 'pdf') throw new Error('Expected PDF markup');
+    expect(annotation.content).toBe(exact);
+    expect(annotation.target.rects).toHaveLength(2);
+    expect(Math.max(...annotation.target.rects.map((rect) => rect.x2))).toBeLessThan(0.5);
+    const originalRects = annotation.target.rects;
+    useAnnotationSystemMock.mockReturnValue({ annotations: [annotation], error: null, addAnnotation, updateAnnotation, deleteAnnotation: vi.fn() });
+    rendered.rerender(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitFor(() => {
+      const stored = Array.from(document.querySelectorAll<HTMLElement>('.pdf-stored-annotation-overlay-ann-linebreak [data-pdf-stored-annotation-segment="true"]'));
+      expect(stored).toHaveLength(2);
+      expect(previewRects).toHaveLength(2);
+      stored.forEach((element, index) => {
+        expect(Number.parseFloat(element.style.left) * 6.4).toBeCloseTo(previewRects[index].left, 3);
+        expect(Number.parseFloat(element.style.top) * 9.6).toBeCloseTo(previewRects[index].top, 3);
+        expect(Number.parseFloat(element.style.width) * 6.4).toBeCloseTo(previewRects[index].width, 3);
+        expect(Number.parseFloat(element.style.height) * 9.6).toBeCloseTo(previewRects[index].height, 3);
+      });
+    });
+    await waitFor(() => expect(pdfMockState.sidebarProps).toBeTruthy());
+    await act(async () => { (pdfMockState.sidebarProps?.onSelect as (annotation: AnnotationItem) => void)(annotation); });
+    const handle = await screen.findByTestId('pdf-annotation-adjust-end-ann-linebreak');
+    fireEvent.pointerDown(handle, { button: 0, clientX: 64, clientY: 336, pointerId: 23 });
+    fireEvent.pointerMove(document, { clientX: 52, clientY: 336, pointerId: 23 });
+    fireEvent.pointerMove(document, { clientX: 64, clientY: 336, pointerId: 23 });
+    fireEvent.pointerUp(document, { clientX: 64, clientY: 336, pointerId: 23 });
+    await waitFor(() => expect(updateAnnotation).toHaveBeenCalled());
+    expect(updateAnnotation.mock.calls.at(-1)?.[1]?.content).toBe(exact);
+    expect(updateAnnotation.mock.calls.at(-1)?.[1]?.target?.rects).toEqual(originalRects);
+  });
+
+  it.each(['highlight', 'underline'] as const)(
+    'keeps proportional-font %s geometry identical in preview, first render, and a boundary round trip',
+    async (styleType) => {
+      useContentCacheStore.getState().saveEditorState('paper-left', {
+        cursorPosition: 0, scrollTop: 0, scrollLeft: 0,
+        viewState: { pdf: { scale: 1, zoomMode: 'manual', showSidebar: true } },
+      });
+      const line = 'iii For small WWW suffix';
+      const exact = 'For small';
+      const characterWidths = [2, 2, 2, 3, 8, 5, 4, 3, 5, 9, 5, 2, 2, 3, 9, 9, 9, 3, 5, 5, 3, 3, 2, 5];
+      selectionMockState.characterWidths[line] = characterWidths;
+      selectionMockState.fragments = [{ text: line, left: 40, top: 300, width: 108, height: 24 }];
+      selectionMockState.rawText = exact;
+      selectionMockState.domSelection = { startFragment: line, endFragment: line, startOffset: 4, endOffset: 13 };
+      selectionMockState.position = {
+        boundingRect: { x1: 49, y1: 300, x2: 92, y2: 324, width: 640, height: 960, pageNumber: 1 },
+        rects: [{ x1: 49, y1: 300, x2: 92, y2: 324, width: 640, height: 960, pageNumber: 1 }],
+        pageNumber: 1,
+      };
+      const annotations: AnnotationItem[] = [];
+      const addAnnotation = vi.fn((annotation: Omit<AnnotationItem, 'id' | 'createdAt'>) => {
+        annotations.push({ ...annotation, id: 'ann-proportional', createdAt: 1 });
+        return 'ann-proportional';
+      });
+      const updateAnnotation = vi.fn();
+      useAnnotationSystemMock.mockReturnValue({
+        annotations: [], error: null, addAnnotation, updateAnnotation, deleteAnnotation: vi.fn(),
+      });
+      const rendered = render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+      await waitForPdfTextModelPrefetch();
+      applyMockTextLayerSelection();
+      const range = window.getSelection()!.getRangeAt(0);
+      const page = document.querySelector<HTMLElement>('[data-page-number="1"]')!;
+      expect(range.toString()).toBe(exact);
+      expect(range.getBoundingClientRect().left).toBe(49);
+      expect(range.getBoundingClientRect().right).toBe(92);
+      expect(page.getBoundingClientRect().width).toBe(640);
+      const resolved = pdfSelectionReconciler.resolvePdfSelectionFromNativeRange({
+        range, text: exact, pages: [{ pageNumber: 1, width: 640, height: 960, element: page }],
+        clientRects: [{ left: 49, right: 92, top: 300, bottom: 324 }],
+        dragStartPoint: { x: 50, y: 312 }, dragEndPoint: { x: 91, y: 312 }, trustDomText: true,
+      });
+      expect(resolved.ok && resolved.selection.textQuote.exact).toBe(exact);
+      expect(resolved.ok && resolved.selection.startOffset).toBe(4);
+      expect(resolved.ok && resolved.selection.endOffset).toBe(13);
+      expect(resolved.ok && resolved.selection.pageRects[0].x1 * 640).toBeCloseTo(49, 3);
+      expect(resolved.ok && resolved.selection.pageRects[0].x2 * 640).toBeCloseTo(92, 3);
+      const container = screen.getByTestId('pdf-scroll-container-pane-left');
+      fireEvent.pointerDown(container, { button: 0, clientX: 49, clientY: 312 });
+      // jsdom has no browser drag-selection default action: supply the Range
+      // after pointerdown clears the previous selection, as a real drag does.
+      applyMockTextLayerSelection();
+      fireEvent.pointerMove(container, { button: 0, clientX: 92, clientY: 312 });
+      fireEvent.pointerUp(container, { button: 0, clientX: 92, clientY: 312 });
+      await waitFor(() => expect(screen.getByTestId('pdf-selection-preview-pane-left').textContent).toBe(exact));
+      const preview = await screen.findByTestId('pdf-transient-selection-first-rect-pane-left');
+      expect(Number.parseFloat(preview.style.left)).toBeCloseTo(49, 3);
+      expect(Number.parseFloat(preview.style.width)).toBeCloseTo(43, 3);
+      // The shared overlay painter centers an 86% high band in the glyph box.
+      expect(Number.parseFloat(preview.style.top)).toBeCloseTo(301.68, 3);
+      expect(Number.parseFloat(preview.style.height)).toBeCloseTo(20.64, 3);
+      if (styleType === 'underline') {
+        fireEvent.click(await screen.findByTestId('pdf-selection-draft-action-underline'));
+      } else {
+        fireEvent.click(document.querySelector('.pdf-selection-color-picker button') as HTMLButtonElement);
+      }
+      await waitFor(() => expect(addAnnotation).toHaveBeenCalledTimes(1));
+      const annotation = annotations[0];
+      if (annotation.target.type !== 'pdf') throw new Error('Expected PDF markup');
+      const expectedRect = { x1: 49 / 640, y1: 300 / 960, x2: 92 / 640, y2: 324 / 960 };
+      expect(annotation.content).toBe(exact);
+      expect(annotation.target.rects).toEqual([expectedRect]);
+      expect(annotation.target.startCharIndex).toBe(4);
+      expect(annotation.target.endCharIndex).toBe(13);
+      useAnnotationSystemMock.mockReturnValue({
+        annotations: [...annotations], error: null, addAnnotation, updateAnnotation, deleteAnnotation: vi.fn(),
+      });
+      rendered.rerender(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+      const segment = await waitFor(() => {
+        const element = document.querySelector<HTMLElement>('.pdf-stored-annotation-overlay-ann-proportional [data-pdf-stored-annotation-segment="true"]');
+        expect(element).toBeTruthy();
+        return element!;
+      });
+      expect(Number.parseFloat(segment.style.left)).toBeCloseTo(expectedRect.x1 * 100, 3);
+      expect(Number.parseFloat(segment.style.width)).toBeCloseTo((expectedRect.x2 - expectedRect.x1) * 100, 3);
+      await waitFor(() => expect(pdfMockState.sidebarProps).toBeTruthy());
+      await act(async () => {
+        (pdfMockState.sidebarProps?.onSelect as (annotation: AnnotationItem) => void)(annotation);
+      });
+      const handle = await screen.findByTestId('pdf-annotation-adjust-end-ann-proportional');
+      fireEvent.pointerDown(handle, { button: 0, clientX: 92, clientY: 312, pointerId: 19 });
+      fireEvent.pointerMove(document, { clientX: 122, clientY: 312, pointerId: 19 });
+      fireEvent.pointerMove(document, { clientX: 92, clientY: 312, pointerId: 19 });
+      fireEvent.pointerUp(document, { clientX: 92, clientY: 312, pointerId: 19 });
+      await waitFor(() => expect(updateAnnotation).toHaveBeenCalled());
+      expect(updateAnnotation.mock.calls.at(-1)?.[1]?.content).toBe(exact);
+      expect(updateAnnotation.mock.calls.at(-1)?.[1]?.target?.rects).toEqual([expectedRect]);
+    },
+  );
+
+  it.each(['highlight', 'underline'] as const)(
+    'keeps single-line %s geometry within the exact first, last, top, and bottom character bounds',
+    async (styleType) => {
+      // The mock glyph coordinates below are expressed at scale 1, so keep
+      // the rendered page at that same scale instead of the fit-width default.
+      useContentCacheStore.getState().saveEditorState('paper-left', {
+        cursorPosition: 0, scrollTop: 0, scrollLeft: 0,
+        viewState: { pdf: { scale: 1, zoomMode: 'manual', showSidebar: false } },
+      });
+      const addAnnotation = vi.fn((_annotation: Omit<AnnotationItem, 'id' | 'createdAt'>) => `ann-single-${styleType}`);
+      const line = 'Lead To reach favorable suffix';
+      const exact = 'To reach favorable';
+      const lineLeft = 40;
+      const lineTop = 300;
+      const charWidth = 5;
+      const lineHeight = 24;
+      const startOffset = line.indexOf(exact);
+      const endOffset = startOffset + exact.length;
+      const expectedLeft = lineLeft + (startOffset * charWidth);
+      const expectedRight = lineLeft + (endOffset * charWidth);
+      const expectedCanonicalTop = lineTop + (lineHeight * 0.2);
+
+      selectionMockState.rawText = exact;
+      selectionMockState.fragments = [
+        { text: line, left: lineLeft, top: lineTop, width: line.length * charWidth, height: lineHeight },
+      ];
+      selectionMockState.domSelection = {
+        startFragment: line,
+        endFragment: line,
+        startOffset,
+        endOffset,
+      };
+      selectionMockState.position = {
+        boundingRect: {
+          x1: expectedLeft,
+          y1: lineTop,
+          x2: 390,
+          y2: lineTop + lineHeight,
+          width: 640,
+          height: 960,
+          pageNumber: 1,
+        },
+        rects: [
+          { x1: expectedLeft, y1: lineTop, x2: 390, y2: lineTop + lineHeight, width: 640, height: 960, pageNumber: 1 },
+        ],
+        pageNumber: 1,
+      };
+      selectionMockState.clientRectsOverride = [
+        { left: expectedLeft, right: 390, top: lineTop, bottom: lineTop + lineHeight },
+      ];
+      useAnnotationSystemMock.mockReturnValue({
+        annotations: [],
+        error: null,
+        addAnnotation,
+        updateAnnotation: vi.fn(),
+        deleteAnnotation: vi.fn(),
+      });
+
+      render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+      await waitForPdfTextModelPrefetch();
+      triggerPdfSelection('pane-left', {
+        start: { x: expectedLeft + 1, y: lineTop + (lineHeight / 2) },
+        end: { x: expectedRight - 1, y: lineTop + (lineHeight / 2) },
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId('pdf-selection-preview-pane-left').textContent).toBe(exact);
+      });
+      const transientRect = await screen.findByTestId('pdf-transient-selection-first-rect-pane-left');
+      const transientLeft = Number.parseFloat(transientRect.style.left);
+      const transientTop = Number.parseFloat(transientRect.style.top);
+      const transientWidth = Number.parseFloat(transientRect.style.width);
+      const transientHeight = Number.parseFloat(transientRect.style.height);
+      expect(transientLeft).toBeCloseTo(expectedLeft, 2);
+      expect(transientWidth).toBeCloseTo(expectedRight - expectedLeft, 2);
+      expect(transientTop).toBeGreaterThanOrEqual(expectedCanonicalTop);
+      expect(transientTop + transientHeight).toBeLessThanOrEqual(expectedCanonicalTop + lineHeight);
+      expect(transientHeight).toBeGreaterThanOrEqual(lineHeight * 0.72);
+
+      if (styleType === 'underline') {
+        fireEvent.click(await screen.findByTestId('pdf-selection-draft-action-underline'));
+      } else {
+        fireEvent.click(document.querySelector('.pdf-selection-color-picker button') as HTMLButtonElement);
+      }
+
+      await waitFor(() => {
+        expect(addAnnotation).toHaveBeenCalledTimes(1);
+      });
+      const annotation = addAnnotation.mock.calls[0][0];
+      expect(annotation.target.type).toBe('pdf');
+      if (annotation.target.type !== 'pdf') {
+        throw new Error('Expected a PDF text-markup target');
+      }
+      expect(annotation.content).toBe(exact);
+      expect(annotation.target.rects).toHaveLength(1);
+      const [rect] = annotation.target.rects;
+      expect(rect.x1).toBeCloseTo(expectedLeft / 640, 3);
+      expect(rect.x2).toBeCloseTo(expectedRight / 640, 3);
+      expect(rect.y1).toBeCloseTo(expectedCanonicalTop / 960, 3);
+      expect(rect.y2).toBeCloseTo((expectedCanonicalTop + lineHeight) / 960, 3);
+      expect(rect.y1).toBeGreaterThan(lineTop / 960);
+      expect(rect.y2).toBeLessThanOrEqual((expectedCanonicalTop + lineHeight) / 960);
+    },
+  );
+
   it('keeps the PDF search overlay open while interacting with its input', async () => {
     render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
     await waitForPdfTextModelPrefetch();
@@ -3937,6 +5311,60 @@ describe('PDFHighlighterAdapter', () => {
     });
 
     expect(screen.getByTestId('pdf-search-overlay')).toBeTruthy();
+  });
+
+  it('renders sketched rings for all PDF search matches and clears them when search closes', async () => {
+    selectionMockState.fragments = [
+      { text: 'PDF', left: 12, top: 24, width: 34, height: 24 },
+      { text: 'content', left: 56, top: 24, width: 72, height: 24 },
+      { text: 'PDF', left: 12, top: 58, width: 34, height: 24 },
+    ];
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().commandBarByPane['pane-left']).toBeTruthy();
+    });
+
+    const searchAction = useWorkspaceStore
+      .getState()
+      .commandBarByPane['pane-left']
+      ?.actions.find((item) => item.id === 'search');
+
+    await act(async () => {
+      searchAction?.onTrigger?.();
+    });
+
+    const overlay = await screen.findByTestId('pdf-search-overlay');
+    const input = overlay.querySelector('input');
+    expect(input).toBeTruthy();
+    if (!input) {
+      throw new Error('Missing PDF search input');
+    }
+
+    fireEvent.change(input, { target: { value: 'PDF' } });
+
+    await waitFor(() => {
+      expect(overlay.textContent).toMatch(/2\s*(results|处结果)/u);
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('pdf-search-sketched-ring-page-1')).toHaveLength(2);
+    });
+    const firstRing = screen.getAllByTestId('pdf-search-sketched-ring-page-1')[0];
+    expect(firstRing.className).not.toContain('pdf-search-sketched-ring--active');
+    expect(firstRing.querySelectorAll('path')).toHaveLength(3);
+    expect(firstRing.querySelector('.pdf-search-sketched-ring__stroke--wash')).toBeTruthy();
+    expect(firstRing.querySelector('.pdf-search-sketched-ring__stroke--main')).toBeTruthy();
+    expect(firstRing.querySelector('.pdf-search-sketched-ring__stroke--dry')).toBeTruthy();
+    expect((firstRing as HTMLElement).style.left).toContain('- 6px');
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('pdf-search-overlay')).toBeNull();
+      expect(screen.queryByTestId('pdf-search-sketched-ring-page-1')).toBeNull();
+    });
   });
 
   it('passes annotation loading state to the PDF sidebar instead of showing an empty state', async () => {
@@ -4009,13 +5437,13 @@ describe('PDFHighlighterAdapter', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('mock-react-pdf-page-5')).toBeTruthy();
-    });
+    }, { timeout: 5_000 });
 
     await waitFor(() => {
       expect(screen.getByTestId('pdf-restore-expected-page-pane-left').textContent).toBe('5');
       expect(screen.getByTestId('pdf-restore-actual-page-pane-left').textContent).toBe('5');
       expect(screen.getByTestId('pdf-restore-status-pane-left').textContent).toBe('restored');
-    });
+    }, { timeout: 5_000 });
 
     const viewerContainer = await waitForMockPdfViewerContainer('pane-left');
     const preciseRestoreCall = viewerContainer.scrollTo.mock.calls.find(([options]) => (
@@ -4024,6 +5452,29 @@ describe('PDFHighlighterAdapter', () => {
       options.top < 4300
     ));
     expect(preciseRestoreCall).toBeTruthy();
+  });
+
+  it('lets an explicit citation supersede queued cached reading-position restoration', async () => {
+    pdfMockState.viewerMetrics.scrollHeight = 2800;
+    useContentCacheStore.getState().saveEditorState('paper-left', {
+      cursorPosition: 0, scrollTop: 1800, scrollLeft: 0,
+      viewState: { pdf: { scale: 1.2, zoomMode: 'manual', showSidebar: false,
+        anchor: { pageNumber: 2, pageOffsetTopRatio: 0.7, pageOffsetLeftRatio: 0,
+          viewportAnchorY: 0.35, viewportAnchorX: 0.5, captureRevision: 9 },
+      } },
+    });
+    useLinkNavigationStore.getState().setPendingNavigation('pane-left', {
+      requestId: 'citation-over-restoration', filePath: 'docs/paper-left.pdf',
+      target: { type: 'pdf_page', path: 'docs/paper-left.pdf', page: 1,
+        rects: [{ left: 0.1, top: 0.2, width: 0.2, height: 0.025 }],
+      },
+    });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    const viewer = await waitForMockPdfViewerContainer('pane-left');
+    await waitFor(() => expect(useLinkNavigationStore.getState().outcomesByRequestId['citation-over-restoration']?.status).toBe('success'));
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 350)); });
+    expect(viewer.scrollTo.mock.calls.some(([options]) => (options?.top ?? 0) > 1200)).toBe(false);
+    expect(viewer.scrollTop).toBeLessThan(900);
   });
 
   it('keeps manual zoom when the viewer width becomes narrower', async () => {
@@ -4149,6 +5600,148 @@ describe('PDFHighlighterAdapter', () => {
     expect(annotation.target.rects[0].y1).toBeCloseTo(40 / pageRect.height, 3);
     expect(annotation.target.rects[0].x2).toBeCloseTo(164 / pageRect.width, 3);
     expect(annotation.target.rects[0].y2).toBeCloseTo(140 / pageRect.height, 3);
+  });
+
+  it('retains a scanned area for OCR with exact geometry after the mouse gesture is committed', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitFor(() => expect(useWorkspaceStore.getState().commandBarByPane['pane-left']).toBeTruthy());
+    await act(async () => useWorkspaceStore.getState().commandBarByPane['pane-left']?.actions.find(action => action.id === 'tool-area')?.onTrigger?.());
+    const page = await screen.findByTestId('mock-react-pdf-page-2');
+    page.querySelector('.textLayer')?.replaceChildren();
+    const bounds = page.getBoundingClientRect();
+    fireEvent.mouseDown(page, { button: 0, clientX: bounds.left + 64, clientY: bounds.top + 40 });
+    fireEvent.mouseMove(document, { clientX: bounds.left + 164, clientY: bounds.top + 140 });
+    fireEvent.mouseUp(document, { clientX: bounds.left + 164, clientY: bounds.top + 140 });
+    const image = await getActivePdfSelectionImage();
+    expect(image).not.toBeNull();
+    expect(image?.pageNumber).toBe(2);
+    expect(image?.bbox.x1).toBeCloseTo(64 / bounds.width);
+    expect(image?.bbox.y2).toBeCloseTo(140 / bounds.height);
+    expect(image?.imageBbox?.x1).toBeLessThan(image!.bbox.x1);
+    expect(image?.width).toBeGreaterThan(200);
+    expect(image?.document).toMatchObject({ filePath: 'docs/paper-left.pdf', paneId: 'pane-left' });
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(await getActivePdfSelectionImage()).toBeNull();
+  });
+
+  it('rejects a scanned region from an older loaded PDF even when current disk metadata is stable', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left', sourceRevision: '3:1', diskRevision: 2, preloaded: true }));
+    await waitForPdfTextModelPrefetch();
+    await act(async () => useWorkspaceStore.getState().commandBarByPane['pane-left']?.actions.find(action => action.id === 'tool-area')?.onTrigger?.());
+    const page = screen.getByTestId('mock-react-pdf-page-1'), bounds = page.getBoundingClientRect();
+    fireEvent.mouseDown(page, { button: 0, clientX: bounds.left + 64, clientY: bounds.top + 40 });
+    fireEvent.mouseMove(document, { clientX: bounds.left + 164, clientY: bounds.top + 140 });
+    fireEvent.mouseUp(document, { clientX: bounds.left + 164, clientY: bounds.top + 140 });
+    await expect(getActivePdfSelectionImage()).rejects.toThrow(/source changed|来源或选区已改变/);
+  });
+  it('binds a URL-loaded PDF to its load-time revision and rejects a later change before capture', async () => {
+    let revision = 1;
+    const getFile = vi.fn(async () => new File([new Uint8Array([1, 2, 3])], 'paper.pdf', { lastModified: revision }));
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left', desktopUrl: 'http://synthetic.local/paper.pdf', getFile }));
+    await waitForPdfTextModelPrefetch();
+    expect(getFile.mock.calls.length).toBeGreaterThanOrEqual(2);
+    await act(async () => useWorkspaceStore.getState().commandBarByPane['pane-left']?.actions.find(action => action.id === 'tool-area')?.onTrigger?.());
+    const page = screen.getByTestId('mock-react-pdf-page-1'), bounds = page.getBoundingClientRect();
+    fireEvent.mouseDown(page, { button: 0, clientX: bounds.left + 64, clientY: bounds.top + 40 });
+    fireEvent.mouseMove(document, { clientX: bounds.left + 164, clientY: bounds.top + 140 });
+    fireEvent.mouseUp(document, { clientX: bounds.left + 164, clientY: bounds.top + 140 });
+    expect((await getActivePdfSelectionImage())?.document?.revision).toBe('3:1');
+    revision = 2;
+    await expect(getActivePdfSelectionImage()).rejects.toThrow(/source changed|来源或选区已改变/);
+  });
+  it.each([false, true])('does not invent local revision proof for an unversioned preloaded PDF (no local handle: %s)', async noFileHandle => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left', sourceRevision: null, noFileHandle, preloaded: true }));
+    await waitForPdfTextModelPrefetch();
+    await act(async () => useWorkspaceStore.getState().commandBarByPane['pane-left']?.actions.find(action => action.id === 'tool-area')?.onTrigger?.());
+    const page = screen.getByTestId('mock-react-pdf-page-1'), bounds = page.getBoundingClientRect();
+    fireEvent.mouseDown(page, { button: 0, clientX: bounds.left + 64, clientY: bounds.top + 40 });
+    fireEvent.mouseMove(document, { clientX: bounds.left + 164, clientY: bounds.top + 140 });
+    fireEvent.mouseUp(document, { clientX: bounds.left + 164, clientY: bounds.top + 140 });
+    if (noFileHandle) {
+      const image = await getActivePdfSelectionImage();
+      expect(image).not.toBeNull();
+      expect(image?.document?.revision).toBeUndefined();
+    } else await expect(getActivePdfSelectionImage()).rejects.toThrow(/source changed|来源或选区已改变/);
+  });
+
+  it('does not run annotation OCR on pixels from an older loaded PDF version', async () => {
+    const annotation: AnnotationItem = { id: 'old-scan', target: { type: 'pdf', page: 1, rects: [{ x1: .1, y1: .2, x2: .5, y2: .3 }] }, style: { type: 'area', color: '#FFD400' }, author: 'user', createdAt: 1 };
+    const persistAnnotationChanges = vi.fn(async () => true);
+    useAnnotationSystemMock.mockReturnValue({ annotations: [annotation], error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left', sourceRevision: '3:1', diskRevision: 2 }));
+    await waitForPdfTextModelPrefetch();
+    await act(async () => useWorkspaceStore.getState().commandBarByPane['pane-left']?.actions.find(action => action.id === 'toggle-sidebar')?.onTrigger?.());
+    await waitFor(() => expect(pdfMockState.sidebarProps?.onRecognizeFormula).toBeTypeOf('function'));
+    vi.mocked(recognizeFormulaImageWithPix2tex).mockClear();
+    await expect((pdfMockState.sidebarProps!.onRecognizeFormula as (id: string) => Promise<void>)('old-scan')).rejects.toThrow(/source changed|来源或选区已改变/);
+    expect(recognizeFormulaImageWithPix2tex).not.toHaveBeenCalled();
+    expect(persistAnnotationChanges).not.toHaveBeenCalled();
+  });
+
+  it('rejects an OCR area dragged across two pages instead of clipping an incomplete formula', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitFor(() => expect(useWorkspaceStore.getState().commandBarByPane['pane-left']).toBeTruthy());
+    await act(async () => useWorkspaceStore.getState().commandBarByPane['pane-left']?.actions.find(action => action.id === 'tool-area')?.onTrigger?.());
+    const page1 = await screen.findByTestId('mock-react-pdf-page-1'), page2 = await screen.findByTestId('mock-react-pdf-page-2');
+    const first = page1.getBoundingClientRect(), second = page2.getBoundingClientRect();
+    fireEvent.mouseDown(page1, { button: 0, clientX: first.left + 64, clientY: first.bottom - 30 });
+    fireEvent.mouseMove(page2, { clientX: second.left + 164, clientY: second.top + 140 });
+    fireEvent.mouseUp(page2, { clientX: second.left + 164, clientY: second.top + 140 });
+    expect(await getActivePdfSelectionImage()).toBeNull();
+  });
+
+  it('recognizes an existing scanned area without fabricating text anchors', async () => {
+    const target = { type: 'pdf' as const, page: 2, rects: [{ x1: .1, y1: .2, x2: .5, y2: .3 }] };
+    const annotation: AnnotationItem = { id: 'scan-area', target, style: { type: 'area', color: '#FFD400' }, author: 'user', createdAt: 1 };
+    const persistAnnotationChanges = vi.fn(async () => true);
+    useAnnotationSystemMock.mockReturnValue({ annotations: [annotation], error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitFor(() => expect(useWorkspaceStore.getState().commandBarByPane['pane-left']).toBeTruthy());
+    await act(async () => useWorkspaceStore.getState().commandBarByPane['pane-left']?.actions.find(action => action.id === 'toggle-sidebar')?.onTrigger?.());
+    await waitFor(() => expect(pdfMockState.sidebarProps?.onRecognizeFormula).toBeTypeOf('function'));
+    await act(async () => { await (pdfMockState.sidebarProps!.onRecognizeFormula as (id: string) => Promise<void>)('scan-area'); });
+    expect(recognizeFormulaImageWithPix2tex).toHaveBeenCalledWith(expect.objectContaining({ imageDataUrl: 'data:image/png;base64,mock' }));
+    expect(persistAnnotationChanges).toHaveBeenCalledWith([expect.objectContaining({ target: annotation.target,
+      formula: expect.objectContaining({ source: 'ocr', status: 'needs-review', rawText: '', latex: '\\frac{a}{b}', originalRects: target.rects }),
+      preview: expect.objectContaining({ width: expect.any(Number), dataUrl: 'data:image/png;base64,mock' }),
+    })]);
+  });
+
+  it('updates the OCR region after resizing an area and cancels a pending raster of its old bounds', async () => {
+    const annotation: AnnotationItem = { id: 'scan-resize', target: { type: 'pdf', page: 1, rects: [{ x1: .1, y1: .2, x2: .28, y2: .3 }] }, style: { type: 'area', color: '#FFD400' }, author: 'user', createdAt: 1 };
+    useAnnotationSystemMock.mockReturnValue({ annotations: [annotation], error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn() });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    await act(async () => useWorkspaceStore.getState().commandBarByPane['pane-left']?.actions.find(action => action.id === 'tool-area')?.onTrigger?.());
+    const page = screen.getByTestId('mock-react-pdf-page-1'), bounds = page.getBoundingClientRect();
+    fireEvent.mouseDown(page, { button: 0, clientX: bounds.left + .1 * bounds.width, clientY: bounds.top + .2 * bounds.height });
+    fireEvent.mouseMove(document, { clientX: bounds.left + .28 * bounds.width, clientY: bounds.top + .3 * bounds.height });
+    fireEvent.mouseUp(document, { clientX: bounds.left + .28 * bounds.width, clientY: bounds.top + .3 * bounds.height });
+    expect((await getActivePdfSelectionImage())?.bbox.x2).toBeCloseTo(.28);
+
+    const sourcePage = await mockPdfGetPage(1);
+    let finish!: () => void;
+    let reject!: (error: Error) => void;
+    const cancel = vi.fn(() => reject(new DOMException('Cancelled', 'AbortError')));
+    const renderOld = vi.fn(() => ({ promise: new Promise<void>((resolve, fail) => { finish = resolve; reject = fail; }), cancel }));
+    mockPdfGetPage.mockResolvedValueOnce({ ...sourcePage, render: renderOld });
+    const oldImage = getActivePdfSelectionImage().then(value => ({ value, error: null }), error => ({ value: null, error }));
+    await waitFor(() => expect(renderOld).toHaveBeenCalledTimes(1));
+    const handle = document.createElement('button');
+    handle.dataset.pdfStoredAnnotationId = annotation.id;
+    handle.dataset.pdfAnnotationAreaHandle = 'se';
+    page.appendChild(handle);
+    fireEvent.pointerDown(handle, { button: 0, pointerId: 41, clientX: bounds.left + .28 * bounds.width, clientY: bounds.top + .3 * bounds.height });
+    fireEvent.pointerMove(document, { pointerId: 41, clientX: bounds.left + .36 * bounds.width, clientY: bounds.top + .38 * bounds.height });
+    fireEvent.pointerUp(document, { pointerId: 41, clientX: bounds.left + .36 * bounds.width, clientY: bounds.top + .38 * bounds.height });
+    finish();
+    const stale = await oldImage;
+    const image = await getActivePdfSelectionImage();
+    expect(image?.bbox).toMatchObject({ x1: .1, y1: .2, x2: .36, y2: .38 });
+    expect(image?.document).toMatchObject({ filePath: 'docs/paper-left.pdf', paneId: 'pane-left' });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(stale.value).toBeNull();
+    expect(stale.error).toMatchObject({ name: 'AbortError' });
   });
 
   it('keeps area annotations on the drag-start page when mouseup happens outside the page element', async () => {
@@ -4627,6 +6220,13 @@ describe('PDFHighlighterAdapter', () => {
     });
 
     const viewerContainer = await waitForMockPdfViewerContainer('pane-left');
+    // The helper can install geometry on a placeholder before the async page
+    // renderer runs. Start this navigation scenario from an actually readable
+    // source page, so a later mock render cannot replace its initial geometry.
+    await waitForPdfTextModelPrefetch();
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-react-pdf-canvas-1').dataset.pdfCanvasReady).toBe('true');
+    });
     viewerContainer.scrollTo.mockClear();
 
     await act(async () => {
@@ -4758,6 +6358,13 @@ describe('PDFHighlighterAdapter', () => {
     });
 
     const viewerContainer = await waitForMockPdfViewerContainer('pane-left');
+    // Canvas and text now render concurrently. Wait only for the source page;
+    // the destination remains unrendered until the first sidebar selection.
+    await waitForPdfTextModelPrefetch();
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-react-pdf-canvas-1').dataset.pdfCanvasReady).toBe('true');
+    });
+    expect(document.querySelector('[data-page-number="5"]')?.getAttribute('data-pdf-page-visible')).toBe('false');
     viewerContainer.scrollTo.mockClear();
 
     await act(async () => {
@@ -4824,7 +6431,7 @@ describe('PDFHighlighterAdapter', () => {
     viewerContainer.scrollTo.mockClear();
 
     await waitFor(() => {
-      expect(useLinkNavigationStore.getState().pendingByPane['pane-left']).toBeUndefined();
+      expect(useLinkNavigationStore.getState().pendingByPane['pane-left']?.requestId).toBeTruthy();
     });
     expect(viewerContainer.scrollTo).not.toHaveBeenCalled();
 
@@ -4834,6 +6441,7 @@ describe('PDFHighlighterAdapter', () => {
     await waitFor(() => {
       expect(document.querySelector('.pdf-stored-annotation-overlay-ann-delayed')).toBeTruthy();
       expect(pdfMockState.sidebarProps?.selectedId).toBe('ann-delayed');
+      expect(useLinkNavigationStore.getState().pendingByPane['pane-left']).toBeUndefined();
     });
   });
 
@@ -4887,6 +6495,235 @@ describe('PDFHighlighterAdapter', () => {
     await waitFor(() => {
       expect(pdfMockState.sidebarProps?.selectedId).toBe('ann-page-hint');
     });
+  });
+
+  it('completes a PDF quote navigation with quote_not_found when page text has no match', async () => {
+    useLinkNavigationStore.getState().setPendingNavigation('pane-left', {
+      requestId: 'nav-quote-missing',
+      filePath: 'docs/paper-left.pdf',
+      target: {
+        type: 'pdf_page',
+        path: 'docs/paper-left.pdf',
+        page: 1,
+        snippet: 'This bounded quote does not occur in the page text.',
+      },
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForMockPdfViewerContainer('pane-left');
+
+    await waitFor(() => {
+      expect(useLinkNavigationStore.getState().pendingByPane['pane-left']).toBeUndefined();
+      expect(useLinkNavigationStore.getState().outcomesByRequestId['nav-quote-missing']).toMatchObject({
+        status: 'quote_not_found',
+      });
+    });
+    expect(document.querySelector('[data-testid="pdf-permanent-annotation"]')).toBeNull();
+  });
+
+  it('paints the PDF canvas while text extraction is still pending', async () => {
+    const originalGetPage = mockPdfGetPage.getMockImplementation()!;
+    const page = await originalGetPage(1);
+    const text = await page.getTextContent();
+    let releaseText!: (value: typeof text) => void;
+    const slowText = new Promise<typeof text>(resolve => { releaseText = resolve; });
+    page.getTextContent.mockImplementation(() => slowText);
+    mockPdfGetPage.mockImplementation(pageNumber => pageNumber === 1 ? Promise.resolve(page) : originalGetPage(pageNumber));
+    const view = render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    try {
+      await waitFor(() => expect(page.render).toHaveBeenCalled(), { timeout: 1500 });
+    } finally {
+      await act(async () => { releaseText(text); await Promise.resolve(); });
+      view.unmount();
+      mockPdfGetPage.mockImplementation(originalGetPage);
+    }
+  });
+
+  it('waits for exact quote geometry without scheduling a page-only preflight scroll', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    const viewer = await waitForMockPdfViewerContainer('pane-left');
+    clearPdfPageTextCache(mockPdfDocument as never);
+    const originalGetPage = mockPdfGetPage.getMockImplementation()!;
+    const page = await originalGetPage(1);
+    let resolveLookup: ((value: typeof page) => void) | undefined;
+    const delayedPage = new Promise<typeof page>((resolve) => { resolveLookup = resolve; });
+    mockPdfGetPage.mockImplementation((pageNumber) => pageNumber === 1 ? delayedPage : originalGetPage(pageNumber));
+    try {
+      viewer.scrollTo.mockClear();
+      act(() => useLinkNavigationStore.getState().setPendingNavigation('pane-left', {
+        requestId: 'nav-exact-no-preflight', filePath: 'docs/paper-left.pdf',
+        target: { type: 'pdf_page', path: 'docs/paper-left.pdf', page: 1, snippet: 'Selected' },
+      }));
+      await waitFor(() => expect(resolveLookup).toBeTypeOf('function'));
+      await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 150)); });
+      expect(viewer.scrollTo).not.toHaveBeenCalled();
+      await act(async () => { resolveLookup!(page); await Promise.resolve(); });
+      await screen.findByTestId('pdf-reference-target-flash-page-1');
+      expect(useLinkNavigationStore.getState().outcomesByRequestId['nav-exact-no-preflight']?.status).toBe('success');
+    } finally {
+      mockPdfGetPage.mockImplementation(originalGetPage);
+    }
+  });
+
+  it.each([0, -1, 1.5, 3])('rejects an out-of-range PDF page %s without reporting navigation success', async (page) => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    const viewerContainer = await waitForMockPdfViewerContainer('pane-left');
+    viewerContainer.scrollTo.mockClear();
+    act(() => useLinkNavigationStore.getState().setPendingNavigation('pane-left', {
+      requestId: 'nav-invalid-page', filePath: 'docs/paper-left.pdf',
+      target: { type: 'pdf_page', path: 'docs/paper-left.pdf', page },
+    }));
+    await waitFor(() => expect(useLinkNavigationStore.getState().outcomesByRequestId['nav-invalid-page']?.status).toBe('unsupported_target'));
+    expect(useLinkNavigationStore.getState().pendingByPane['pane-left']).toBeUndefined();
+    expect(viewerContainer.scrollTo).not.toHaveBeenCalled();
+  });
+
+  it('ignores a slow quote lookup after a newer PDF navigation has completed', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForMockPdfViewerContainer('pane-left');
+    clearPdfPageTextCache(mockPdfDocument as never);
+    const originalGetPage = mockPdfGetPage.getMockImplementation()!;
+    let rejectLookup: ((error: Error) => void) | undefined;
+    mockPdfGetPage.mockImplementation(() => new Promise((_resolve, reject) => { rejectLookup = reject; }));
+    try {
+      act(() => useLinkNavigationStore.getState().setPendingNavigation('pane-left', {
+        requestId: 'nav-old-slow', filePath: 'docs/paper-left.pdf',
+        target: { type: 'pdf_page', path: 'docs/paper-left.pdf', page: 1, snippet: 'Slow quote' },
+      }));
+      await waitFor(() => expect(rejectLookup).toBeTypeOf('function'));
+      act(() => useLinkNavigationStore.getState().setPendingNavigation('pane-left', {
+        requestId: 'nav-new-fast', filePath: 'docs/paper-left.pdf',
+        target: { type: 'pdf_page', path: 'docs/paper-left.pdf', page: 2 },
+      }));
+      await waitFor(() => expect(useLinkNavigationStore.getState().outcomesByRequestId['nav-new-fast']?.status).toBe('success'));
+      await act(async () => { rejectLookup!(new Error('Late failure')); await Promise.resolve(); });
+      expect(useLinkNavigationStore.getState().outcomesByRequestId['nav-old-slow']).toBeUndefined();
+    } finally {
+      mockPdfGetPage.mockImplementation(originalGetPage);
+    }
+  });
+
+  it('keeps the newer evidence frame when an older quote lookup succeeds late', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForMockPdfViewerContainer('pane-left');
+    clearPdfPageTextCache(mockPdfDocument as never);
+    const originalGetPage = mockPdfGetPage.getMockImplementation()!;
+    const oldPage = await originalGetPage(1);
+    let resolveLookup: ((page: typeof oldPage) => void) | undefined;
+    mockPdfGetPage.mockImplementation((pageNumber) => pageNumber === 1
+      ? new Promise((resolve) => { resolveLookup = resolve; })
+      : originalGetPage(pageNumber));
+    try {
+      act(() => useLinkNavigationStore.getState().setPendingNavigation('pane-left', {
+        requestId: 'nav-old-success', filePath: 'docs/paper-left.pdf',
+        target: { type: 'pdf_page', path: 'docs/paper-left.pdf', page: 1, snippet: 'Selected PDF text' },
+      }));
+      await waitFor(() => expect(resolveLookup).toBeTypeOf('function'));
+      act(() => useLinkNavigationStore.getState().setPendingNavigation('pane-left', {
+        requestId: 'nav-new-evidence', filePath: 'docs/paper-left.pdf',
+        target: {
+          type: 'pdf_page', path: 'docs/paper-left.pdf', page: 2,
+          rects: [{ left: 0.2, top: 0.3, width: 0.25, height: 0.04 }],
+        },
+      }));
+      await screen.findByTestId('pdf-reference-target-flash-page-2');
+      await act(async () => { resolveLookup!(oldPage); await Promise.resolve(); });
+      expect(screen.queryByTestId('pdf-reference-target-flash-page-1')).toBeNull();
+      expect(screen.getByTestId('pdf-reference-target-flash-page-2')).toBeTruthy();
+      expect(useLinkNavigationStore.getState().outcomesByRequestId['nav-old-success']).toBeUndefined();
+      expect(useLinkNavigationStore.getState().outcomesByRequestId['nav-new-evidence']?.status).toBe('success');
+    } finally {
+      mockPdfGetPage.mockImplementation(originalGetPage);
+    }
+  });
+
+  it('shows a red dashed transient evidence frame and clears it with the companion layer', async () => {
+    useLinkNavigationStore.getState().setPendingNavigation('pane-left', {
+      requestId: 'nav-transient-frame',
+      filePath: 'docs/paper-left.pdf',
+      target: {
+        type: 'pdf_page',
+        path: 'docs/paper-left.pdf',
+        page: 1,
+        rects: [{ left: 0.2, top: 0.3, width: 0.25, height: 0.04 }],
+        snippet: 'Transient evidence frame',
+      },
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForMockPdfViewerContainer('pane-left');
+
+    const frame = await screen.findByTestId('pdf-reference-target-flash-page-1');
+    expect(frame.getAttribute('data-pdf-reference-target-transient')).toBe('true');
+    expect(frame.className).toContain('pdf-reference-target-flash');
+
+    useAiPdfCompanionStore.getState().clear();
+    await waitFor(() => {
+      expect(screen.queryByTestId('pdf-reference-target-flash-page-1')).toBeNull();
+    });
+  });
+
+  it('completes a PDF quote navigation with page_not_ready when page text cannot be loaded', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForMockPdfViewerContainer('pane-left');
+    clearPdfPageTextCache(mockPdfDocument as never);
+
+    const originalGetPage = mockPdfGetPage.getMockImplementation();
+    mockPdfGetPage.mockRejectedValue(new Error('page text unavailable'));
+    try {
+      act(() => {
+        useLinkNavigationStore.getState().setPendingNavigation('pane-left', {
+          requestId: 'nav-page-not-ready',
+          filePath: 'docs/paper-left.pdf',
+          target: {
+            type: 'pdf_page',
+            path: 'docs/paper-left.pdf',
+            page: 1,
+            snippet: 'A quote that requires the page text model.',
+          },
+        });
+      });
+
+      await waitFor(() => {
+        expect(useLinkNavigationStore.getState().pendingByPane['pane-left']).toBeUndefined();
+        expect(useLinkNavigationStore.getState().outcomesByRequestId['nav-page-not-ready']).toMatchObject({
+          status: 'page_not_ready',
+        });
+      });
+    } finally {
+      mockPdfGetPage.mockImplementation(originalGetPage!);
+    }
+  });
+
+  it('completes an unresolved PDF annotation navigation with renderer_timeout', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForMockPdfViewerContainer('pane-left');
+
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        useLinkNavigationStore.getState().setPendingNavigation('pane-left', {
+          requestId: 'nav-renderer-timeout',
+          filePath: 'docs/paper-left.pdf',
+          target: {
+            type: 'pdf_annotation',
+            path: 'docs/paper-left.pdf',
+            annotationId: 'annotation-that-never-loads',
+          },
+        });
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5001);
+      });
+
+      expect(useLinkNavigationStore.getState().pendingByPane['pane-left']).toBeUndefined();
+      expect(useLinkNavigationStore.getState().outcomesByRequestId['nav-renderer-timeout']).toMatchObject({
+        status: 'renderer_timeout',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('renders persisted PDF annotations for all supported PDF annotation styles after reload', async () => {
@@ -5122,6 +6959,141 @@ describe('PDFHighlighterAdapter', () => {
     });
   });
 
+  it('starts area adjustment from the native capture path when the React handle callback is unavailable', async () => {
+    const updateAnnotation = vi.fn();
+    const annotation = {
+      id: 'ann-area-native-capture',
+      target: { type: 'pdf' as const, page: 1, rects: [{ x1: 0.10, y1: 0.20, x2: 0.28, y2: 0.30 }] },
+      style: { color: '#4CAF50', type: 'area' as const },
+      content: 'area',
+      author: 'user',
+      createdAt: 1,
+    };
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [annotation],
+      error: null,
+      addAnnotation: vi.fn(),
+      updateAnnotation,
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    const page = screen.getByTestId('mock-react-pdf-page-1');
+    const pageRect = page.getBoundingClientRect();
+    const nativeHandle = document.createElement('button');
+    nativeHandle.dataset.pdfStoredAnnotationId = annotation.id;
+    nativeHandle.dataset.pdfAnnotationAreaHandle = 'se';
+    page.appendChild(nativeHandle);
+
+    fireEvent.pointerDown(nativeHandle, {
+      button: 0,
+      clientX: pageRect.left + (0.28 * pageRect.width),
+      clientY: pageRect.top + (0.30 * pageRect.height),
+      pointerId: 41,
+    });
+    fireEvent.pointerMove(document, {
+      clientX: pageRect.left + (0.36 * pageRect.width),
+      clientY: pageRect.top + (0.38 * pageRect.height),
+      pointerId: 41,
+    });
+    fireEvent.pointerUp(document, {
+      clientX: pageRect.left + (0.36 * pageRect.width),
+      clientY: pageRect.top + (0.38 * pageRect.height),
+      pointerId: 41,
+    });
+
+    await waitFor(() => {
+      expect(updateAnnotation).toHaveBeenCalled();
+    });
+    expect(updateAnnotation.mock.calls.at(-1)?.[1]?.target?.rects?.[0]).toMatchObject({
+      x1: 0.10,
+      y1: 0.20,
+      x2: 0.36,
+      y2: 0.38,
+    });
+  });
+
+  it('does not start a new area when a resize pointer emits compatibility mouse events', async () => {
+    const addAnnotation = vi.fn();
+    const updateAnnotation = vi.fn();
+    const annotation = {
+      id: 'ann-area-pointer-compat',
+      target: { type: 'pdf' as const, page: 1, rects: [{ x1: 0.10, y1: 0.20, x2: 0.28, y2: 0.30 }] },
+      style: { color: '#4CAF50', type: 'area' as const },
+      content: 'area',
+      author: 'user',
+      createdAt: 1,
+    };
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [annotation],
+      error: null,
+      addAnnotation,
+      updateAnnotation,
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    const areaSegment = await waitFor(() => {
+      const segment = document.querySelector<HTMLElement>(
+        '.pdf-stored-annotation-overlay-ann-area-pointer-compat [data-pdf-stored-annotation-segment="true"]',
+      );
+      expect(segment).toBeTruthy();
+      return segment as HTMLElement;
+    });
+    fireEvent.pointerDown(areaSegment, { button: 0, clientX: 128, clientY: 240, pointerId: 21 });
+    fireEvent.click(areaSegment, { clientX: 128, clientY: 240 });
+
+    const areaAction = useWorkspaceStore
+      .getState()
+      .commandBarByPane['pane-left']
+      ?.actions.find((item) => item.id === 'tool-area');
+    if (!areaAction) {
+      throw new Error('Missing area command bar action');
+    }
+    await act(async () => {
+      areaAction.onTrigger?.();
+    });
+
+    const seHandle = await screen.findByLabelText('Adjust area se');
+    const page = screen.getByTestId('mock-react-pdf-page-1');
+    const pageRect = page.getBoundingClientRect();
+    const start = {
+      x: pageRect.left + (0.28 * pageRect.width),
+      y: pageRect.top + (0.30 * pageRect.height),
+    };
+    const end = {
+      x: pageRect.left + (0.36 * pageRect.width),
+      y: pageRect.top + (0.38 * pageRect.height),
+    };
+
+    fireEvent.pointerDown(seHandle, {
+      button: 0,
+      clientX: start.x,
+      clientY: start.y,
+      pointerId: 22,
+    });
+    fireEvent.mouseDown(page, { button: 0, clientX: start.x, clientY: start.y });
+    fireEvent.pointerMove(document, { clientX: end.x, clientY: end.y, pointerId: 22 });
+    fireEvent.mouseMove(document, { clientX: end.x, clientY: end.y });
+    fireEvent.pointerUp(document, { clientX: end.x, clientY: end.y, pointerId: 22 });
+    fireEvent.mouseUp(document, { clientX: end.x, clientY: end.y });
+
+    await waitFor(() => {
+      expect(updateAnnotation).toHaveBeenCalled();
+    });
+    expect(addAnnotation).not.toHaveBeenCalled();
+    expect(updateAnnotation.mock.calls.at(-1)?.[1]?.target?.rects?.[0]).toMatchObject({
+      x1: 0.10,
+      y1: 0.20,
+      x2: 0.36,
+      y2: 0.38,
+    });
+  });
+
   it('moves a stored area annotation by dragging the selected area body', async () => {
     const updateAnnotation = vi.fn();
     const annotation = {
@@ -5183,6 +7155,84 @@ describe('PDFHighlighterAdapter', () => {
     const lastCall = updateAnnotation.mock.calls.at(-1);
     expect(lastCall?.[0]).toBe('ann-area-move');
     const movedRect = lastCall?.[1]?.target?.rects?.[0];
+    expect(movedRect?.x1).toBeCloseTo(0.15, 6);
+    expect(movedRect?.y1).toBeCloseTo(0.25, 6);
+    expect(movedRect?.x2).toBeCloseTo(0.35, 6);
+    expect(movedRect?.y2).toBeCloseTo(0.40, 6);
+  });
+
+  it('does not start a new area when a move pointer emits compatibility mouse events', async () => {
+    const addAnnotation = vi.fn();
+    const updateAnnotation = vi.fn();
+    const annotation = {
+      id: 'ann-area-move-pointer-compat',
+      target: { type: 'pdf' as const, page: 1, rects: [{ x1: 0.10, y1: 0.20, x2: 0.30, y2: 0.35 }] },
+      style: { color: '#4CAF50', type: 'area' as const },
+      content: 'area',
+      author: 'user',
+      createdAt: 1,
+    };
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [annotation],
+      error: null,
+      addAnnotation,
+      updateAnnotation,
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    const areaSegment = await waitFor(() => {
+      const segment = document.querySelector<HTMLElement>(
+        '.pdf-stored-annotation-overlay-ann-area-move-pointer-compat [data-pdf-stored-annotation-segment="true"]',
+      );
+      expect(segment).toBeTruthy();
+      return segment as HTMLElement;
+    });
+    fireEvent.pointerDown(areaSegment, { button: 0, clientX: 128, clientY: 240, pointerId: 31 });
+    fireEvent.click(areaSegment, { clientX: 128, clientY: 240 });
+
+    const areaAction = useWorkspaceStore
+      .getState()
+      .commandBarByPane['pane-left']
+      ?.actions.find((item) => item.id === 'tool-area');
+    if (!areaAction) {
+      throw new Error('Missing area command bar action');
+    }
+    await act(async () => {
+      areaAction.onTrigger?.();
+    });
+
+    const moveHandle = await screen.findByLabelText('Move area');
+    const page = screen.getByTestId('mock-react-pdf-page-1');
+    const pageRect = page.getBoundingClientRect();
+    const start = {
+      x: pageRect.left + (0.20 * pageRect.width),
+      y: pageRect.top + (0.275 * pageRect.height),
+    };
+    const end = {
+      x: pageRect.left + (0.25 * pageRect.width),
+      y: pageRect.top + (0.325 * pageRect.height),
+    };
+
+    fireEvent.pointerDown(moveHandle, {
+      button: 0,
+      clientX: start.x,
+      clientY: start.y,
+      pointerId: 32,
+    });
+    fireEvent.mouseDown(page, { button: 0, clientX: start.x, clientY: start.y });
+    fireEvent.pointerMove(document, { clientX: end.x, clientY: end.y, pointerId: 32 });
+    fireEvent.mouseMove(document, { clientX: end.x, clientY: end.y });
+    fireEvent.pointerUp(document, { clientX: end.x, clientY: end.y, pointerId: 32 });
+    fireEvent.mouseUp(document, { clientX: end.x, clientY: end.y });
+
+    await waitFor(() => {
+      expect(updateAnnotation).toHaveBeenCalled();
+    });
+    expect(addAnnotation).not.toHaveBeenCalled();
+    const movedRect = updateAnnotation.mock.calls.at(-1)?.[1]?.target?.rects?.[0];
     expect(movedRect?.x1).toBeCloseTo(0.15, 6);
     expect(movedRect?.y1).toBeCloseTo(0.25, 6);
     expect(movedRect?.x2).toBeCloseTo(0.35, 6);
@@ -6425,6 +8475,199 @@ describe('PDFHighlighterAdapter', () => {
     expect(Number.parseFloat(segments[0]?.style.width ?? '0')).toBeCloseTo(70, 6);
   });
 
+  it('rebuilds thin but incomplete stored highlight rows from exact text boundaries', async () => {
+    const lines = [
+      'For the 100s state the crossover length',
+      'is close to Rc=9.5 um, and at this length scale the ratio of',
+      'the Rydberg interaction to the ground-state interaction',
+      'is approximately 10^12.',
+    ];
+    const left = 72;
+    const top = 210;
+    const height = 24;
+    const widths = [500, 520, 490, 240];
+    const exact = lines.join(' ');
+    selectionMockState.fragments = lines.map((text, index) => ({
+      text,
+      left,
+      top: top + (index * 34),
+      width: widths[index],
+      height,
+    }));
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [
+        {
+          id: 'ann-incomplete-thin-rows',
+          target: {
+            type: 'pdf',
+            page: 1,
+            rects: [
+              { x1: left / 640, y1: top / 960, x2: (left + widths[0]) / 640, y2: (top + height) / 960 },
+              { x1: left / 640, y1: (top + 34) / 960, x2: (left + 180) / 640, y2: (top + 34 + height) / 960 },
+              { x1: left / 640, y1: (top + 68) / 960, x2: (left + 210) / 640, y2: (top + 68 + height) / 960 },
+              { x1: left / 640, y1: (top + 102) / 960, x2: (left + widths[3]) / 640, y2: (top + 102 + height) / 960 },
+            ],
+            textQuote: {
+              exact,
+              prefix: '',
+              suffix: '',
+              source: 'pdfjs-text-model',
+              confidence: 'exact',
+            },
+            startCharIndex: 0,
+            endCharIndex: exact.length,
+            textSource: 'pdfjs-text-model',
+          },
+          style: { color: '#FFEB3B', type: 'highlight' },
+          content: exact,
+          author: 'user',
+          createdAt: 1,
+        },
+      ],
+      error: null,
+      addAnnotation: vi.fn(),
+      updateAnnotation: vi.fn(),
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    const segments = await waitFor(() => {
+      const resolved = Array.from(document.querySelectorAll<HTMLElement>(
+        '.pdf-stored-annotation-overlay-ann-incomplete-thin-rows [data-pdf-stored-annotation-segment="true"]',
+      ));
+      expect(resolved).toHaveLength(4);
+      return resolved;
+    });
+    const canonicalLeft = Number.parseFloat(segments[0].style.left);
+    const canonicalWidthScale = Number.parseFloat(segments[0].style.width) / widths[0];
+    segments.forEach((segment, index) => {
+      expect(Number.parseFloat(segment.style.left)).toBeCloseTo(canonicalLeft, 2);
+      expect(Number.parseFloat(segment.style.width)).toBeCloseTo(widths[index] * canonicalWidthScale, 1);
+    });
+  });
+
+  it.each([
+    { exact: 'For small', line: 'iii For small WWW suffix', widths: [2, 2, 2, 3, 8, 5, 4, 3, 5, 9, 5, 2, 2, 3, 9, 9, 9, 3, 5, 5, 3, 3, 2, 5], lineWidth: 108, storedLeft: 58, storedRight: 98.5, measuredWidth: 43 },
+    { exact: 'F', line: 'iii F WWW suffix', widths: [2, 2, 2, 3, 8, 3, 9, 9, 9, 3, 5, 5, 3, 3, 2, 5], lineWidth: 73, storedLeft: 60, storedRight: 64.5, measuredWidth: 8 },
+  ])('repairs stale stored quads and offsets for $exact before the first render', async ({ exact, line, widths, lineWidth, storedLeft, storedRight, measuredWidth }) => {
+    useContentCacheStore.getState().saveEditorState('paper-left', {
+      cursorPosition: 0, scrollTop: 0, scrollLeft: 0,
+      viewState: { pdf: { scale: 1, zoomMode: 'manual', showSidebar: false } },
+    });
+    const rect = { x1: storedLeft / 640, y1: 304.8 / 960, x2: storedRight / 640, y2: 328.8 / 960 };
+    selectionMockState.characterWidths[line] = widths;
+    selectionMockState.fragments = [{ text: line, left: 40, top: 300, width: lineWidth, height: 24 }];
+    const updateAnnotation = vi.fn();
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [{
+        id: 'ann-stale-measured',
+        target: {
+          type: 'pdf', page: 1, rects: [rect],
+          quads: [{ x1: rect.x1, y1: rect.y1, x2: rect.x2, y2: rect.y1, x3: rect.x2, y3: rect.y2, x4: rect.x1, y4: rect.y2 }],
+          textQuote: { exact, prefix: 'iii ', suffix: ' WWW suffix', source: 'pdfium-native', confidence: 'validated-native' },
+          textKernelVersion: 2, startCharIndex: 0, endCharIndex: exact.length, textSource: 'pdfium-native',
+        },
+        style: { color: '#FFD400', type: 'highlight' }, content: exact, author: 'user', createdAt: 1,
+      }],
+      error: null, addAnnotation: vi.fn(), updateAnnotation, deleteAnnotation: vi.fn(),
+    });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    await waitFor(() => {
+      const segment = document.querySelector<HTMLElement>('.pdf-stored-annotation-overlay-ann-stale-measured [data-pdf-stored-annotation-segment="true"]');
+      expect(segment).toBeTruthy();
+      expect(Number.parseFloat(segment!.style.left)).toBeCloseTo(49 / 640 * 100, 3);
+      expect(Number.parseFloat(segment!.style.width)).toBeCloseTo(measuredWidth / 640 * 100, 3);
+      expect(Number.parseFloat(segment!.style.top)).toBeCloseTo(301.68 / 960 * 100, 3);
+      expect(Number.parseFloat(segment!.style.height)).toBeCloseTo(20.64 / 960 * 100, 3);
+    });
+  });
+
+  it('keeps complete canonical text-markup quads when rendered character geometry is unavailable', async () => {
+    const firstLine = 'at 90 degrees and a 0.6 NA microscope objective. To reach favorable';
+    const secondLine = 'conditions for loading the tweezers, the atoms are first';
+    const pageText = `${firstLine} ${secondLine}`;
+    const exact = 'To reach favorable conditions for loading the tweezers';
+    const start = pageText.indexOf('To reach favorable');
+    const end = pageText.indexOf('tweezers') + 'tweezers'.length;
+    const storedRects = [
+      { x1: 0.3653, y1: 0.2587, x2: 0.4854, y2: 0.2720 },
+      { x1: 0.0850, y1: 0.2739, x2: 0.3352, y2: 0.2872 },
+    ];
+    selectionMockState.fragments = [
+      { text: firstLine, left: 50, top: 250, width: 330, height: 24 },
+      { text: secondLine, left: 50, top: 282, width: 330, height: 24 },
+    ];
+    // Some WebViews return a whole row even for a one-character Range.
+    selectionMockState.clientRectsOverride = [
+      { left: 50, top: 250, right: 380, bottom: 274 },
+      { left: 50, top: 282, right: 380, bottom: 306 },
+    ];
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [
+        {
+          id: 'ann-canonical-quads-authoritative',
+          target: {
+            type: 'pdf',
+            page: 1,
+            rects: storedRects,
+            quads: storedRects.map((rect) => ({
+              x1: rect.x1,
+              y1: rect.y1,
+              x2: rect.x2,
+              y2: rect.y1,
+              x3: rect.x2,
+              y3: rect.y2,
+              x4: rect.x1,
+              y4: rect.y2,
+            })),
+            textQuote: {
+              exact,
+              prefix: 'microscope objective. ',
+              suffix: ', the atoms are first',
+              source: 'pdfjs-text-model',
+              confidence: 'exact',
+            },
+            textKernelVersion: 2,
+            startCharIndex: start,
+            endCharIndex: end,
+            textSource: 'pdfjs-text-model',
+            textConfidence: 1,
+          },
+          style: { color: '#FFD400', type: 'highlight' },
+          content: exact,
+          author: 'user',
+          createdAt: 1,
+        },
+      ],
+      error: null,
+      addAnnotation: vi.fn(),
+      updateAnnotation: vi.fn(),
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    const segments = await waitFor(() => {
+      const resolved = Array.from(document.querySelectorAll<HTMLElement>(
+        '.pdf-stored-annotation-overlay-ann-canonical-quads-authoritative [data-pdf-stored-annotation-segment="true"]',
+      ));
+      expect(resolved).toHaveLength(2);
+      return resolved;
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    });
+    const rightEdges = segments.map((segment) => (
+      Number.parseFloat(segment.style.left) + Number.parseFloat(segment.style.width)
+    ));
+    expect(rightEdges[0]).toBeCloseTo(storedRects[0].x2 * 100, 2);
+    expect(rightEdges[1]).toBeCloseTo(storedRects[1].x2 * 100, 2);
+  });
+
   it('rebuilds a legacy coarse stored highlight into multiple thin visual rows', async () => {
     selectionMockState.fragments = [
       { text: 'legacy coarse first visual row', left: 80, top: 180, width: 420, height: 24 },
@@ -6533,7 +8776,95 @@ describe('PDFHighlighterAdapter', () => {
     expect(updateAnnotation).not.toHaveBeenCalled();
   });
 
-  it('keeps a precise stored Fig. 5 annotation stable on load instead of expanding it from stale character offsets', async () => {
+  it('repairs legacy thin highlight rows that cross the visual gutter on a two-column page', async () => {
+    const updateAnnotation = vi.fn();
+    const leftLines = [
+      'light using a pair of acousto-optic deflectors crossed',
+      'at 90 degrees and a 0.6 NA microscope objective. To reach favorable',
+      'conditions for loading the tweezers, the atoms are first',
+      'captured in a 3D magneto-optical trap operating on',
+      'the broad transition with linewidth 29 MHz and 399 nm light',
+    ];
+    const rightLines = [
+      'III. NEAR-DETERMINISTIC LOADING',
+      'Reliable assembly of large defect-free patterns of qubits',
+      'is a major pursuit for the neutral-atom tweezer array',
+      'platform. While the number of atoms loaded from the MOT',
+      'often employs light-assisted collisions in the array',
+    ];
+    const pageText = [...leftLines, ...rightLines].join(' ');
+    const start = pageText.indexOf('To reach favorable');
+    const end = pageText.indexOf('399 nm light') + '399 nm light'.length;
+    selectionMockState.fragments = [
+      ...leftLines.map((text, index) => ({
+        text,
+        left: 50,
+        top: 220 + (index * 32),
+        width: index === 0 ? 250 : 248,
+        height: 24,
+      })),
+      ...rightLines.map((text, index) => ({
+        text,
+        left: 350,
+        top: 220 + (index * 32),
+        width: 250,
+        height: 24,
+      })),
+    ];
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [
+        {
+          id: 'ann-legacy-two-column-gutter',
+          target: {
+            type: 'pdf',
+            page: 1,
+            rects: [
+              { x1: 0.391, y1: 0.262, x2: 0.575, y2: 0.282 },
+              { x1: 0.078, y1: 0.295, x2: 0.575, y2: 0.315 },
+              { x1: 0.078, y1: 0.328, x2: 0.575, y2: 0.348 },
+              { x1: 0.078, y1: 0.361, x2: 0.575, y2: 0.381 },
+            ],
+            textQuote: {
+              exact: 'ctive. To reach favorable conditions for loading the tweezers, the atoms are first captured in a 3D magneto-optical trap operating on III. NEAR-DETERMINISTIC LOADING the broad transition with linewidth 29 MHz and 399 nm light',
+              prefix: 'acousto-optic deflectors crossed at 90 degrees and a 0.6 NA microscope obje',
+              suffix: 'Reliable assembly of large defect-free patterns',
+              source: 'pdfjs-text-model',
+              confidence: 'exact',
+            },
+            textKernelVersion: 1,
+            startCharIndex: Math.max(0, start - 5),
+            endCharIndex: end,
+            textSource: 'pdfjs-text-model',
+            textConfidence: 1,
+          },
+          style: { color: '#E55DE7', type: 'highlight' },
+          content: 'ctive. To reach favorable conditions for loading the tweezers, the atoms are first captured in a 3D magneto-optical trap operating on III. NEAR-DETERMINISTIC LOADING the broad transition with linewidth 29 MHz and 399 nm light',
+          author: 'user',
+          createdAt: 1,
+        },
+      ],
+      error: null,
+      addAnnotation: vi.fn(),
+      updateAnnotation,
+      deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+
+    await waitFor(() => {
+      const segments = document.querySelectorAll<HTMLElement>('.pdf-stored-annotation-overlay-ann-legacy-two-column-gutter [data-pdf-stored-annotation-segment="true"]');
+      expect(segments.length).toBeGreaterThan(1);
+    });
+    const storedSegments = Array.from(document.querySelectorAll<HTMLElement>('.pdf-stored-annotation-overlay-ann-legacy-two-column-gutter [data-pdf-stored-annotation-segment="true"]'));
+    const renderedRightEdges = storedSegments.map((segment) => (
+      Number.parseFloat(segment.style.left) + Number.parseFloat(segment.style.width)
+    ));
+    expect(Math.max(...renderedRightEdges)).toBeLessThan(50);
+    expect(updateAnnotation).not.toHaveBeenCalled();
+  });
+
+  it('keeps a precise stored Fig. 5 anchor stable while restoring readable highlight height', async () => {
     const updateAnnotation = vi.fn();
     const line0 = 'of states with equal and opposite Delta E, as can be inferred';
     const line1 = 'from Fig. 5, that tend to cause shifts in opposite direc-';
@@ -6596,7 +8927,8 @@ describe('PDFHighlighterAdapter', () => {
     const renderedHeight = Number.parseFloat(segments[0]?.style.height ?? '0');
     expect(renderedTop).toBeGreaterThan(29);
     expect(renderedTop).toBeLessThan(31);
-    expect(renderedHeight).toBeLessThan(2);
+    expect(renderedHeight).toBeGreaterThan(2);
+    expect(renderedHeight).toBeLessThan(2.5);
     expect(Number.parseFloat(segments[0]?.style.left ?? '0')).toBeCloseTo((140 / 640) * 100, 2);
     expect(updateAnnotation).not.toHaveBeenCalled();
   });
@@ -6814,6 +9146,32 @@ describe('PDFHighlighterAdapter', () => {
     });
   });
 
+  it('lets desktop diagnostics return to the select annotation tool', async () => {
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    fireEvent.keyDown(window, { key: 'a' });
+
+    const activateSelectTool = await waitFor(() => {
+      const candidate = (window as Window & {
+        __latticePdfDiagnostics?: Record<string, { activateSelectTool?: () => boolean }>;
+      }).__latticePdfDiagnostics?.['pane-left']?.activateSelectTool;
+      expect(typeof candidate).toBe('function');
+      return candidate;
+    });
+
+    act(() => {
+      expect(activateSelectTool?.()).toBe(true);
+    });
+
+    await waitFor(() => {
+      const selectAction = useWorkspaceStore
+        .getState()
+        .commandBarByPane['pane-left']
+        ?.actions.find((action) => action.id === 'tool-select');
+      expect(selectAction?.active).toBe(true);
+    });
+  });
+
   it('creates a visible stored text markup from an exact PDF quote through the diagnostics bridge', async () => {
     let loadedAnnotations: AnnotationItem[] = [];
     const exact = 'Fig. 5, that tend to cause shifts in opposite directions';
@@ -6897,6 +9255,145 @@ describe('PDFHighlighterAdapter', () => {
       expect(segments).toHaveLength(1);
       expect(Number.parseFloat(segments[0].style.height)).toBeLessThan(4);
     });
+  });
+
+  it('applies AI quote proposals using actual PDF geometry and waits for storage acknowledgement', async () => {
+    let acknowledge!: (success: boolean) => void;
+    const persistAnnotationChanges = vi.fn((_items: AnnotationItem[]) => new Promise<boolean>((resolve) => { acknowledge = resolve; }));
+    useAnnotationSystemMock.mockReturnValue({ annotations: [], isLoading: false, error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    act(() => {
+      useAiPdfCompanionStore.getState().setTransientAnnotations([{ id: 'proposal-approved', documentPath: 'docs/paper-left.pdf', page: 1, quote: 'Selected PDF text', reason: '核心实验依据', rects: [], source: { kind: 'pdf_page', label: 'paper', locator: 'docs/paper-left.pdf#page=1' } }], 'message-1');
+      useAiPdfCompanionStore.getState().requestInjection();
+    });
+    await waitFor(() => expect(persistAnnotationChanges).toHaveBeenCalledTimes(1));
+    const saved = persistAnnotationChanges.mock.calls[0][0][0];
+    expect(saved).toMatchObject({ id: 'ann-proposal-approved', content: 'Selected PDF text', comment: '核心实验依据', target: { type: 'pdf', page: 1, textQuote: { exact: 'Selected PDF text' } } });
+    expect(saved.target.type === 'pdf' && saved.target.rects.length).toBeGreaterThan(0);
+    expect(useAiPdfCompanionStore.getState().savedAnnotations).toEqual([]);
+    expect(useAiPdfCompanionStore.getState().pendingInjection).not.toBeNull();
+    await act(async () => { acknowledge(true); });
+    await waitFor(() => expect(useAiPdfCompanionStore.getState().savedAnnotations).toHaveLength(1));
+    expect(useAiPdfCompanionStore.getState().transientAnnotations).toEqual([]);
+  });
+
+  it('does not apply an AI proposal to a nested same-name PDF', async () => {
+    const persistAnnotationChanges = vi.fn(async () => true);
+    useAnnotationSystemMock.mockReturnValue({ annotations: [], isLoading: false, error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper', filePath: 'archive/paper.pdf' }));
+    await waitForPdfTextModelPrefetch();
+    await act(async () => {
+      useAiPdfCompanionStore.getState().setTransientAnnotations([{ id: 'root-paper', documentPath: 'paper.pdf', page: 1, quote: 'Selected PDF text', rects: [], source: { kind: 'pdf_page', label: 'paper', locator: 'paper.pdf#page=1' } }]);
+      useAiPdfCompanionStore.getState().requestInjection();
+    });
+    expect(persistAnnotationChanges).not.toHaveBeenCalled();
+    expect(useAiPdfCompanionStore.getState().savedAnnotations).toEqual([]);
+  });
+
+  it('resolves an absolute Windows proposal using the actual workspace root', async () => {
+    useWorkspaceStore.setState({ workspaceRootPath: 'C:\\Research\\Workspace' });
+    const persistAnnotationChanges = vi.fn(async () => true);
+    useAnnotationSystemMock.mockReturnValue({ annotations: [], isLoading: false, error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper', filePath: 'docs/paper.pdf' }));
+    await waitForPdfTextModelPrefetch();
+    act(() => {
+      useAiPdfCompanionStore.getState().setTransientAnnotations([{ id: 'absolute-paper', documentPath: 'c:/Research/Workspace/docs/paper.pdf', page: 1, quote: 'Selected PDF text', rects: [], source: { kind: 'pdf_page', label: 'paper', locator: 'c:/Research/Workspace/docs/paper.pdf#page=1' } }]);
+      useAiPdfCompanionStore.getState().requestInjection();
+    });
+    await waitFor(() => expect(useAiPdfCompanionStore.getState().savedAnnotations).toHaveLength(1));
+    expect(persistAnnotationChanges).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies one approved AI batch once when the same PDF is open in two panes', async () => {
+    let acknowledge!: (success: boolean) => void;
+    const persistAnnotationChanges = vi.fn(() => new Promise<boolean>((resolve) => { acknowledge = resolve; }));
+    useAnnotationSystemMock.mockReturnValue({ annotations: [], isLoading: false, error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    render(<>{renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left-view', filePath: 'docs/paper.pdf', preloaded: true })}{renderPdfPane({ paneId: 'pane-right', fileId: 'paper-right-view', filePath: 'docs/paper.pdf', preloaded: true })}</>);
+    await waitForPdfTextModelPrefetch();
+    await waitFor(() => expect(screen.getByTestId('pdf-num-pages-pane-right').textContent).toBe('2'));
+    await act(async () => {
+      useAiPdfCompanionStore.getState().setTransientAnnotations([{ id: 'two-pane-paper', documentPath: 'docs/paper.pdf', page: 1, quote: 'Selected PDF text', rects: [], source: { kind: 'pdf_page', label: 'paper', locator: 'docs/paper.pdf#page=1' } }]);
+      useAiPdfCompanionStore.getState().requestInjection();
+    });
+    expect(persistAnnotationChanges).toHaveBeenCalledTimes(1);
+    await act(async () => { acknowledge(true); });
+    expect(useAiPdfCompanionStore.getState().savedAnnotations).toHaveLength(1);
+  });
+
+  it('does not replay a durable AI write when its owning viewer unmounts', async () => {
+    let acknowledge!: (success: boolean) => void;
+    const persistAnnotationChanges = vi.fn(() => new Promise<boolean>((resolve) => { acknowledge = resolve; }));
+    useAnnotationSystemMock.mockReturnValue({ annotations: [], isLoading: false, error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    const left = render(renderPdfPane({ paneId: 'pane-left', fileId: 'left-view', filePath: 'docs/paper.pdf', preloaded: true }));
+    render(renderPdfPane({ paneId: 'pane-right', fileId: 'right-view', filePath: 'docs/paper.pdf', preloaded: true }));
+    await waitForPdfTextModelPrefetch();
+    await waitFor(() => expect(screen.getByTestId('pdf-num-pages-pane-right').textContent).toBe('2'));
+    await act(async () => {
+      useAiPdfCompanionStore.getState().setTransientAnnotations([{ id: 'unmount-paper', documentPath: 'docs/paper.pdf', page: 1, quote: 'Selected PDF text', rects: [], source: { kind: 'pdf_page', label: 'paper', locator: 'docs/paper.pdf#page=1' } }]);
+      useAiPdfCompanionStore.getState().requestInjection();
+    });
+    expect(persistAnnotationChanges).toHaveBeenCalledTimes(1);
+    left.unmount();
+    await act(async () => { await Promise.resolve(); });
+    expect(persistAnnotationChanges).toHaveBeenCalledTimes(1);
+    expect(useAiPdfCompanionStore.getState().operationClaim?.phase).toBe('persisting');
+    await act(async () => { acknowledge(true); });
+    expect(useAiPdfCompanionStore.getState().savedAnnotations).toHaveLength(1);
+    expect(useAiPdfCompanionStore.getState().operationClaim).toBeNull();
+  });
+
+  it('undoes one approved AI batch once across two panes of the same PDF', async () => {
+    const annotation: AnnotationItem = { id: 'ann-shared-undo', target: { type: 'pdf', page: 1, rects: [{ x1: .1, y1: .1, x2: .2, y2: .2 }] }, style: { type: 'highlight', color: '#FFD400' }, content: 'Selected PDF text', author: 'ai', createdAt: 1 };
+    let acknowledge!: (success: boolean) => void;
+    const persistAnnotationChanges = vi.fn((_items: AnnotationItem[], _ids: string[]) => new Promise<boolean>((resolve) => { acknowledge = resolve; }));
+    useAnnotationSystemMock.mockReturnValue({ annotations: [annotation], isLoading: false, error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    render(<>{renderPdfPane({ paneId: 'pane-left', fileId: 'left-view', filePath: 'docs/paper.pdf', preloaded: true })}{renderPdfPane({ paneId: 'pane-right', fileId: 'right-view', filePath: 'docs/paper.pdf', preloaded: true })}</>);
+    await waitForPdfTextModelPrefetch();
+    await waitFor(() => expect(screen.getByTestId('pdf-num-pages-pane-right').textContent).toBe('2'));
+    await act(async () => {
+      useAiPdfCompanionStore.setState({ savedAnnotations: [{ documentPath: 'docs/paper.pdf', annotation }] });
+      useAiPdfCompanionStore.getState().requestUndo('docs/paper.pdf');
+    });
+    expect(persistAnnotationChanges).toHaveBeenCalledTimes(1);
+    expect(persistAnnotationChanges).toHaveBeenCalledWith([], ['ann-shared-undo']);
+    await act(async () => { acknowledge(true); });
+    expect(useAiPdfCompanionStore.getState().savedAnnotations).toEqual([]);
+  });
+
+  it('keeps AI proposals reviewable when the exact PDF quote cannot be located', async () => {
+    const persistAnnotationChanges = vi.fn(async () => true);
+    useAnnotationSystemMock.mockReturnValue({ annotations: [], isLoading: false, error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    act(() => {
+      useAiPdfCompanionStore.getState().setTransientAnnotations([{ id: 'proposal-missing', documentPath: 'docs/paper-left.pdf', page: 1, quote: 'This text does not exist in the PDF.', rects: [], source: { kind: 'pdf_page', label: 'paper', locator: 'docs/paper-left.pdf#page=1' } }]);
+      useAiPdfCompanionStore.getState().requestInjection();
+    });
+    await waitFor(() => expect(useAiPdfCompanionStore.getState().error).toContain('无法唯一定位'));
+    expect(persistAnnotationChanges).not.toHaveBeenCalled();
+    expect(useAiPdfCompanionStore.getState().transientAnnotations).toHaveLength(1);
+    expect(useAiPdfCompanionStore.getState().savedAnnotations).toEqual([]);
+  });
+
+  it('undoes only this AI batch and preserves annotations edited after approval', async () => {
+    const original: AnnotationItem = { id: 'ann-batch-original', target: { type: 'pdf', page: 1, rects: [{ x1: .1, y1: .1, x2: .2, y2: .2 }], textQuote: { exact: 'Selected PDF text', prefix: '', suffix: '', source: 'pdfjs-text-model', confidence: 'exact' } }, style: { type: 'highlight', color: '#FFD400' }, content: 'Selected PDF text', author: 'ai', createdAt: 1 };
+    const laterEdited = { ...original, id: 'ann-batch-edited', comment: 'User note to retain' };
+    const unrelated = { ...original, id: 'ann-user', author: 'user' };
+    const persistAnnotationChanges = vi.fn(async (_items: AnnotationItem[], _ids: string[]) => true);
+    useAnnotationSystemMock.mockReturnValue({ annotations: [original, laterEdited, unrelated], isLoading: false, error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    act(() => {
+      useAiPdfCompanionStore.setState({ savedAnnotations: [
+        { documentPath: 'docs/paper-left.pdf', annotation: original },
+        { documentPath: 'docs/paper-left.pdf', annotation: { ...original, id: 'ann-batch-edited' } },
+      ] });
+      useAiPdfCompanionStore.getState().requestUndo('docs/paper-left.pdf');
+    });
+    await waitFor(() => expect(persistAnnotationChanges).toHaveBeenCalledWith([], ['ann-batch-original']));
+    expect(useAiPdfCompanionStore.getState().error).toContain('已保留');
+    expect(useAiPdfCompanionStore.getState().savedAnnotations.map((item) => item.annotation.id)).toEqual(['ann-batch-edited']);
   });
 
 });

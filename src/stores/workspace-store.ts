@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { FileTree, DirectoryNode, TreeNode } from "@/types/file-system";
 import type { WorkspaceRunnerPreferences } from "@/lib/runner/types";
+import type { VSCodeWorkbenchSettings, VSCodeKeybinding, VSCodeSnippetDefinition, VSCodeTask, VSCodeExtensionInventoryEntry } from "@/lib/vscode-compat/types";
 import type {
   LayoutState,
   LayoutNode,
@@ -42,6 +43,9 @@ import type { WorkspaceIdentity } from "@/types/workspace-identity";
 import { setDesktopPreviewRoot } from "@/lib/desktop-preview";
 import { isFileTabState, isWebTabState } from "@/types/layout";
 import { destroyDesktopWebview, getDesktopWebviewLabelForTab } from "@/lib/desktop-webview";
+import { createCloudFileTab } from "@/lib/shared-library/workbench-source";
+import type { CloudLibraryResource } from "@/lib/shared-library/source-provider";
+import type { CloudFileTabState } from "@/types/layout";
 
 /**
  * Create initial layout with a single empty pane
@@ -83,30 +87,18 @@ function toggleNodeExpansion(
         isExpanded: !node.isExpanded,
       };
     }
-    if (node.children?.length) {
-      return {
-        ...node,
-        children: node.children.map((child) =>
-          toggleNodeExpansion(child, targetPath)
-        ),
-      };
-    }
-    return node;
-  }
-
-  if (node.path === targetPath) {
+  } else if (node.path === targetPath) {
     return {
       ...node,
       isExpanded: !node.isExpanded,
     };
   }
 
-  return {
-    ...node,
-    children: node.children.map((child) =>
-      toggleNodeExpansion(child, targetPath)
-    ),
-  };
+  if (!node.children?.length) return node;
+  const children = node.children.map((child) => toggleNodeExpansion(child, targetPath));
+  return children.every((child, index) => child === node.children![index])
+    ? node
+    : { ...node, children };
 }
 
 function collectExecutionScopeIds(root: LayoutNode): string[] {
@@ -160,6 +152,14 @@ interface WorkspaceState {
   error: string | null;
   selectedDirectoryPath: string | null; // 新增：当前选中的文件夹路径
   runnerPreferences: WorkspaceRunnerPreferences;
+  vscodeCompatSettings: VSCodeWorkbenchSettings;
+  vscodeCompatKeybindings: VSCodeKeybinding[];
+  vscodeCompatSnippets: VSCodeSnippetDefinition[];
+  vscodeCompatTasks: VSCodeTask[];
+  vscodeCompatExtensions: VSCodeExtensionInventoryEntry[];
+  vscodeCompatSourceLabel: string | null;
+  vscodeCompatImportedAt: number | null;
+  vscodeCompatWarnings: string[];
   // Workspace root history for nested workspace detection
   workspaceRootHistory: Map<string, FileSystemDirectoryHandle>; // path → rootHandle
 
@@ -167,6 +167,7 @@ interface WorkspaceState {
   layout: LayoutState;
   sidebarCollapsed: boolean;
   commandBarByPane: Record<PaneId, CommandBarState>;
+  paneTabFilterRequests: Record<PaneId, { filter: "web"; token: number }>;
 
   // File system actions
   setRootHandle: (handle: FileSystemDirectoryHandle | null) => void;
@@ -177,6 +178,7 @@ interface WorkspaceState {
   clearWorkspaceRootHistory: () => void;
   setWorkspaceIdentity: (identity: WorkspaceIdentity | null) => void;
   setFileTree: (tree: FileTree) => void;
+  updateFileTree: (updater: (tree: FileTree) => FileTree) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   clearWorkspace: () => void;
@@ -184,6 +186,17 @@ interface WorkspaceState {
   setSelectedDirectoryPath: (path: string | null) => void; // 新增：设置选中的文件夹
   setRunnerPreferences: (preferences: Partial<WorkspaceRunnerPreferences>) => void;
   replaceRunnerPreferences: (preferences: WorkspaceRunnerPreferences) => void;
+  setVSCodeCompatConfig: (config: {
+    settings: VSCodeWorkbenchSettings;
+    keybindings: VSCodeKeybinding[];
+    snippets: VSCodeSnippetDefinition[];
+    tasks: VSCodeTask[];
+    extensions?: VSCodeExtensionInventoryEntry[];
+    sourceLabel?: string | null;
+    importedAt?: number | null;
+    warnings?: string[];
+  }) => void;
+  resetVSCodeCompatConfig: () => void;
   setRecentRunConfig: (
     filePath: string,
     config: WorkspaceRunnerPreferences["recentRunByFile"][string],
@@ -199,10 +212,15 @@ interface WorkspaceState {
   clearCommandBarState: (paneId: PaneId, scopeId?: string | null) => void;
   restoreWorkbenchState: (layout: LayoutState, sidebarCollapsed?: boolean) => void;
   resetWorkbenchState: (sidebarCollapsed?: boolean) => void;
+  requestPaneTabFilter: (paneId: PaneId, filter: "web") => void;
 
   // Tab actions
+  openFileInLatticePane: (paneId: PaneId, handle: FileSystemFileHandle, path: string) => void;
   openFileInPane: (paneId: PaneId, handle: FileSystemFileHandle, path: string) => void;
   openFileInActivePane: (handle: FileSystemFileHandle, path: string) => void;
+  openCloudFileInPane: (paneId: PaneId, resource: CloudLibraryResource, scope: string) => void;
+  openCloudFileInActivePane: (resource: CloudLibraryResource, scope: string) => void;
+  updateCloudTab: (tabId: string, update: Partial<Pick<CloudFileTabState, "fileName" | "cloud">>) => void;
   openWebUrlInPane: (paneId: PaneId, url: string, options?: { fileName?: string; pageTitle?: string | null }) => void;
   openWebUrlInActivePane: (url: string, options?: { fileName?: string; pageTitle?: string | null }) => void;
   updateWebTab: (paneId: PaneId, tabId: string, update: { url?: string; fileName?: string; pageTitle?: string | null }) => void;
@@ -250,29 +268,67 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   error: null,
   selectedDirectoryPath: null,
   runnerPreferences: createInitialRunnerPreferences(),
+  vscodeCompatSettings: {
+    tabSize: 2,
+    insertSpaces: true,
+    wordWrap: "off",
+    fontFamily: null,
+    fontSize: null,
+    lineNumbers: "on",
+    rulers: [],
+    formatOnSave: false,
+    formatOnType: false,
+    minimapEnabled: true,
+    quickSuggestions: true,
+    suggestOnTriggerCharacters: true,
+    autoClosingBrackets: true,
+    autoClosingQuotes: true,
+    autoIndent: "full",
+    smoothScrolling: false,
+    cursorBlinking: null,
+    renderWhitespace: "none",
+    snippetSuggestions: "inline",
+    filesExclude: {},
+    searchExclude: {},
+    filesAssociations: {},
+    defaultFormatter: null,
+    colorTheme: null,
+  },
+  vscodeCompatKeybindings: [],
+  vscodeCompatSnippets: [],
+  vscodeCompatTasks: [],
+  vscodeCompatExtensions: [],
+  vscodeCompatSourceLabel: null,
+  vscodeCompatImportedAt: null,
+  vscodeCompatWarnings: [],
   workspaceRootHistory: new Map(),
 
   // Initial layout state
   layout: createInitialLayout(),
   sidebarCollapsed: false,
   commandBarByPane: {},
+  paneTabFilterRequests: {},
 
   // File system actions
   setRootHandle: (handle) => {
     set({ rootHandle: handle });
-    if (handle) {
-      emitWorkspaceOpen(handle.name);
-      // Trigger workspace indexing for AI context
-      import('@/lib/ai/workspace-indexer').then(({ indexWorkspace }) => {
-        indexWorkspace(handle).catch(() => {});
-      }).catch(() => {});
-      import('@/lib/markdown/workspace-link-index').then(({ scanWorkspaceMarkdownLinkIndex }) => {
-        scanWorkspaceMarkdownLinkIndex(handle).catch(() => {});
-      }).catch(() => {});
-    }
+    void import('@/lib/ai/workspace-indexer').then(({ clearWorkspaceIndex }) => {
+      clearWorkspaceIndex();
+    }).catch(() => {});
+    void import('@/lib/markdown/workspace-link-index').then(({ clearWorkspaceMarkdownLinkIndex }) => {
+      clearWorkspaceMarkdownLinkIndex();
+    }).catch(() => {});
+    if (!handle) return;
+
+    emitWorkspaceOpen(handle.name);
   },
   setWorkspaceRootHandle: (handle) => set({ workspaceRootHandle: handle }),
-  setWorkspaceRootPath: (path) => set({ workspaceRootPath: path }),
+  setWorkspaceRootPath: (path) => {
+    if (get().workspaceRootPath !== path) {
+      void setDesktopPreviewRoot(path);
+    }
+    set({ workspaceRootPath: path });
+  },
   registerWorkspaceRoot: (path, handle) =>
     set((state) => {
       const next = new Map(state.workspaceRootHistory);
@@ -281,14 +337,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }),
   findWorkspaceRootForPath: (path) => {
     const state = get();
+    const canonicalPath = path
+      .split("#", 1)[0]
+      ?.split("?", 1)[0]
+      ?.replaceAll("\\", "/") ?? path;
     // First check if path is under workspaceRootHandle's name
     const rootName = state.workspaceRootHandle?.name;
-    if (rootName && (path === rootName || path.startsWith(`${rootName}/`))) {
+    if (rootName && (canonicalPath === rootName || canonicalPath.startsWith(`${rootName}/`))) {
       return state.workspaceRootHandle;
     }
     // Check history for a matching ancestor path
     for (const [historyPath, historyHandle] of state.workspaceRootHistory) {
-      if (path === historyPath || path.startsWith(`${historyPath}/`)) {
+      const canonicalHistoryPath = historyPath
+        .split("#", 1)[0]
+        ?.split("?", 1)[0]
+        ?.replaceAll("\\", "/") ?? historyPath;
+      if (canonicalPath === canonicalHistoryPath || canonicalPath.startsWith(`${canonicalHistoryPath}/`)) {
         return historyHandle;
       }
     }
@@ -298,6 +362,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   clearWorkspaceRootHistory: () => set({ workspaceRootHistory: new Map() }),
   setWorkspaceIdentity: (identity) => set({ workspaceIdentity: identity }),
   setFileTree: (tree) => set({ fileTree: tree }),
+  updateFileTree: (updater) => set((state) => ({ fileTree: updater(state.fileTree) })),
   setLoading: (loading) => set({ isLoading: loading }),
   setError: (error) => set({ error }),
 
@@ -315,8 +380,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       layout: createInitialLayout(),
       runnerPreferences: createInitialRunnerPreferences(),
       commandBarByPane: {},
+      paneTabFilterRequests: {},
       workspaceRootHistory: new Map(),
     });
+    void import('@/lib/ai/workspace-indexer').then(({ clearWorkspaceIndex }) => {
+      clearWorkspaceIndex();
+    }).catch(() => {});
+    void import('@/lib/markdown/workspace-link-index').then(({ clearWorkspaceMarkdownLinkIndex }) => {
+      clearWorkspaceMarkdownLinkIndex();
+    }).catch(() => {});
     void setDesktopPreviewRoot(null);
     void destroyExecutionScopes(scopeIds);
     void destroyDesktopWebviewsByLabels(desktopWebviewLabels);
@@ -326,6 +398,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set((state) => {
       if (!state.fileTree.root) return state;
       const newRoot = toggleNodeExpansion(state.fileTree.root, path) as DirectoryNode;
+      if (newRoot === state.fileTree.root) return state;
       return { fileTree: { root: newRoot } };
     }),
 
@@ -352,6 +425,53 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         defaultLanguageRunners: { ...(preferences.defaultLanguageRunners ?? {}) },
         recentRunByFile: { ...(preferences.recentRunByFile ?? {}) },
       },
+    }),
+  setVSCodeCompatConfig: (config) =>
+    set({
+      vscodeCompatSettings: config.settings,
+      vscodeCompatKeybindings: [...config.keybindings],
+      vscodeCompatSnippets: [...config.snippets],
+      vscodeCompatTasks: [...config.tasks],
+      vscodeCompatExtensions: [...(config.extensions ?? [])],
+      vscodeCompatSourceLabel: config.sourceLabel ?? null,
+      vscodeCompatImportedAt: config.importedAt ?? Date.now(),
+      vscodeCompatWarnings: [...(config.warnings ?? [])],
+    }),
+  resetVSCodeCompatConfig: () =>
+    set({
+      vscodeCompatSettings: {
+        tabSize: 2,
+        insertSpaces: true,
+        wordWrap: "off",
+        fontFamily: null,
+        fontSize: null,
+        lineNumbers: "on",
+        rulers: [],
+        formatOnSave: false,
+        formatOnType: false,
+        minimapEnabled: true,
+        quickSuggestions: true,
+        suggestOnTriggerCharacters: true,
+        autoClosingBrackets: true,
+        autoClosingQuotes: true,
+        autoIndent: "full",
+        smoothScrolling: false,
+        cursorBlinking: null,
+        renderWhitespace: "none",
+        snippetSuggestions: "inline",
+        filesExclude: {},
+        searchExclude: {},
+        filesAssociations: {},
+        defaultFormatter: null,
+        colorTheme: null,
+      },
+      vscodeCompatKeybindings: [],
+      vscodeCompatSnippets: [],
+      vscodeCompatTasks: [],
+      vscodeCompatExtensions: [],
+      vscodeCompatSourceLabel: null,
+      vscodeCompatImportedAt: null,
+      vscodeCompatWarnings: [],
     }),
   setRecentRunConfig: (filePath, config) =>
     set((state) => ({
@@ -483,6 +603,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         layout,
         sidebarCollapsed,
         commandBarByPane: {},
+        paneTabFilterRequests: {},
       });
       void destroyExecutionScopes(scopeIds);
       void destroyDesktopWebviewsByLabels(desktopWebviewLabels);
@@ -496,19 +617,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         layout: createInitialLayout(),
         sidebarCollapsed,
         commandBarByPane: {},
+        paneTabFilterRequests: {},
       });
       void destroyExecutionScopes(scopeIds);
       void destroyDesktopWebviewsByLabels(desktopWebviewLabels);
     },
 
+  requestPaneTabFilter: (paneId, filter) =>
+    set((state) => ({
+      paneTabFilterRequests: {
+        ...state.paneTabFilterRequests,
+        [paneId]: {
+          filter,
+          token: Date.now(),
+        },
+      },
+    })),
+
   // Tab actions
-  openFileInPane: (paneId, handle, path) => {
+  openFileInLatticePane: (paneId, handle, path) => {
     set((state) => {
       const tab = createTab(handle, path);
       const newRoot = addTabToPane(state.layout.root, paneId, tab);
       return {
         layout: {
           ...state.layout,
+          activePaneId: paneId,
           root: newRoot,
         },
       };
@@ -516,10 +650,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     emitFileOpen(path);
   },
 
+  openFileInPane: (paneId, handle, path) => {
+    get().openFileInLatticePane(paneId, handle, path);
+  },
+
   openFileInActivePane: (handle, path) => {
     const { layout, openFileInPane } = get();
     openFileInPane(layout.activePaneId, handle, path);
   },
+
+  openCloudFileInPane: (paneId, resource, scope) => {
+    set((state) => ({ layout: {
+      ...state.layout, activePaneId: paneId,
+      root: addTabToPane(state.layout.root, paneId, createCloudFileTab(resource, scope)),
+    } }));
+  },
+  openCloudFileInActivePane: (resource, scope) => {
+    get().openCloudFileInPane(get().layout.activePaneId, resource, scope);
+  },
+  updateCloudTab: (tabId, update) => set((state) => {
+    const visit = (node: LayoutNode): LayoutNode => node.type === "split"
+      ? { ...node, children: node.children.map(visit) }
+      : { ...node, tabs: node.tabs.map(tab => tab.id === tabId && tab.kind === "cloud-file" ? { ...tab, ...update } : tab) };
+    return { layout: { ...state.layout, root: visit(state.layout.root) } };
+  }),
 
   openWebUrlInPane: (paneId, url, options) => {
     set((state) => {
@@ -553,12 +707,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
         const nextUrl = update.url?.trim() || tab.url;
         const nextFileName = update.fileName?.trim() || update.pageTitle?.trim() || tab.fileName;
+        const nextPageTitle = update.pageTitle === undefined ? tab.pageTitle : update.pageTitle;
+        if (nextUrl === tab.url && nextFileName === tab.fileName && nextPageTitle === tab.pageTitle) return tab;
         return {
           ...tab,
           url: nextUrl,
           filePath: nextUrl,
           fileName: nextFileName,
-          pageTitle: update.pageTitle === undefined ? tab.pageTitle : update.pageTitle,
+          pageTitle: nextPageTitle,
         };
       });
 

@@ -25,9 +25,13 @@ interface WorkspaceFileEntry {
   name: string;
 }
 
+let cachedTreeRoot: TreeNode | null = null;
+let cachedTreeFiles: WorkspaceFileEntry[] = [];
+
 export interface MentionSuggestion {
   type:
     | 'selection'
+    | 'folder'
     | 'file'
     | 'heading'
     | 'code_line'
@@ -66,23 +70,26 @@ function dedupeFiles(files: WorkspaceFileEntry[]): WorkspaceFileEntry[] {
   });
 }
 
-function splitMentionTarget(target: string): { path: string; fragment?: string } {
+function splitMentionTarget(target: string): { path: string; fragment?: string } | null {
   const [rawPath, rawFragment] = target.split('#', 2);
-  return {
-    path: decodeURI(rawPath),
-    fragment: rawFragment ? decodeURIComponent(rawFragment) : undefined,
-  };
+  try {
+    return {
+      path: decodeURIComponent(rawPath),
+      fragment: rawFragment ? decodeURIComponent(rawFragment) : undefined,
+    };
+  } catch { return null; }
 }
 
 function buildMentionValue(path: string, fragment?: string): string {
+  const encodedPath = path.split('/').map(encodeURIComponent).join('/');
   if (!fragment) {
-    return `@${encodeURI(path)}`;
+    return `@${encodedPath}`;
   }
-  return `@${encodeURI(path)}#${encodeURIComponent(fragment)}`;
+  return `@${encodedPath}#${encodeURIComponent(fragment)}`;
 }
 
 function normalizeHeadingToken(value: string): string {
-  return decodeURIComponent(value)
+  return value
     .trim()
     .replace(/^#+/, '')
     .toLowerCase()
@@ -356,7 +363,7 @@ function buildTextReference(path: string, content: string, fragment?: string): {
 
   const section = extractMarkdownHeadingSection(content, fragment);
   if (section) {
-    const normalizedFragment = decodeURIComponent(fragment).replace(/^#+/, '').trim();
+    const normalizedFragment = fragment.replace(/^#+/, '').trim();
     return {
       content: section,
       evidenceRef: {
@@ -379,6 +386,7 @@ function buildTextReference(path: string, content: string, fragment?: string): {
   };
 }
 
+/** Accepts an already decoded path; decoding again changes literal percent filenames. */
 export function resolveWorkspaceFilePath(targetPath: string): string {
   const state = useWorkspaceStore.getState();
   const files = getAvailableFiles();
@@ -388,20 +396,14 @@ export function resolveWorkspaceFilePath(targetPath: string): string {
     return exactMatch.path;
   }
 
-  const decodedTarget = decodeURI(targetPath);
-  const exactDecodedMatch = files.find((file) => file.path === decodedTarget);
-  if (exactDecodedMatch) {
-    return exactDecodedMatch.path;
-  }
-
-  const suffixMatches = files.filter((file) => file.path.endsWith(decodedTarget));
+  const suffixMatches = files.filter((file) => file.path.endsWith(`/${targetPath}`));
   if (suffixMatches.length === 1) {
     return suffixMatches[0].path;
   }
 
   const tabs = collectAllTabs(state.layout.root);
-  const tabMatch = tabs.find((tab) => tab.filePath === decodedTarget || tab.filePath.endsWith(decodedTarget));
-  return tabMatch?.filePath ?? decodedTarget;
+  const tabMatches = tabs.filter((tab) => tab.filePath === targetPath || tab.filePath.endsWith(`/${targetPath}`));
+  return tabMatches.length === 1 ? tabMatches[0].filePath : targetPath;
 }
 
 export async function getMentionFragmentSuggestions(
@@ -476,6 +478,7 @@ export function parseMentions(text: string): Mention[] {
     }
 
     const split = splitMentionTarget(target);
+    if (!split) continue;
     mentions.push({
       type: 'file',
       raw: match[0],
@@ -506,7 +509,7 @@ export async function resolveMentions(
       continue;
     }
 
-    const resolvedPath = resolveWorkspaceFilePath(mention.path ?? mention.target);
+    const resolvedPath = resolveWorkspaceFilePath(mention.path ?? splitMentionTarget(mention.target)?.path ?? mention.target);
     const extension = getFileExtension(resolvedPath).toLowerCase();
 
     if (isBinaryFile(extension) || extension === 'pdf') {
@@ -564,7 +567,18 @@ export function stripMentions(text: string): string {
 export function getAvailableFiles(): WorkspaceFileEntry[] {
   try {
     const state = useWorkspaceStore.getState();
-    const treeFiles = state.fileTree.root ? collectTreeFiles(state.fileTree.root as DirectoryNode) : [];
+    const treeRoot = state.fileTree.root as DirectoryNode | null;
+    let treeFiles: WorkspaceFileEntry[] = [];
+    if (treeRoot) {
+      if (treeRoot !== cachedTreeRoot) {
+        cachedTreeRoot = treeRoot;
+        cachedTreeFiles = collectTreeFiles(treeRoot);
+      }
+      treeFiles = cachedTreeFiles;
+    } else {
+      cachedTreeRoot = null;
+      cachedTreeFiles = [];
+    }
     const fallbackFiles = collectAllTabs(state.layout.root).map((tab) => ({
       path: tab.filePath,
       name: tab.filePath.split('/').pop() ?? tab.filePath,
@@ -576,3 +590,4 @@ export function getAvailableFiles(): WorkspaceFileEntry[] {
     return [];
   }
 }
+

@@ -53,8 +53,12 @@ export function groupAnnotationsByPage(annotations: LatticeAnnotation[]): Annota
   const groups = new Map<number, LatticeAnnotation[]>();
 
   for (const annotation of annotations) {
-    const existing = groups.get(annotation.page) ?? [];
-    groups.set(annotation.page, [...existing, annotation]);
+    const existing = groups.get(annotation.page);
+    if (existing) {
+      existing.push(annotation);
+    } else {
+      groups.set(annotation.page, [annotation]);
+    }
   }
 
   // Sort groups by page number and annotations within each group by timestamp

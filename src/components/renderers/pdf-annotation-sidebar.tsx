@@ -13,8 +13,14 @@
  * - Multi-select and batch operations
  */
 
-import { useMemo, useState, useCallback, useRef, useEffect } from "react";
-import { AnnotationMarkdownRenderer } from "./annotation-markdown-renderer";
+import { memo, useMemo, useState, useCallback, useRef, useEffect, useLayoutEffect, useDeferredValue } from "react";
+import { createPortal } from "react-dom";
+import { PdfFormulaContent } from "./pdf-formula-content";
+import type { PdfFormulaAnnotation } from "@/types/universal-annotation";
+import { LivePreviewEditor } from "@/components/editor/codemirror/live-preview";
+import type { LivePreviewEditorRef } from "@/components/editor/codemirror/live-preview/live-preview-editor";
+import { handleAnnotationSidebarKeyDown, scrollToSidebarAnnotation, useAnnotationSidebarCallback } from "./annotation-sidebar-interactions";
+import { DeferredAnnotationMarkdown, useAnnotationCommentObserver, type AnnotationCommentObserver } from "./deferred-annotation-markdown";
 import { 
   Highlighter, 
   StickyNote, 
@@ -111,7 +117,9 @@ function exportAnnotationsToMarkdown(annotations: AnnotationItem[]): string {
 
       lines.push(`### ${typeLabel}`);
       
-      if (quoteText) {
+      if (ann.formula?.status === 'ready' && ann.formula.latex) {
+        lines.push('', '$$', ann.formula.latex, '$$');
+      } else if (quoteText) {
         lines.push('');
         lines.push(`> ${quoteText}`);
       }
@@ -129,6 +137,7 @@ function exportAnnotationsToMarkdown(annotations: AnnotationItem[]): string {
 }
 
 interface PdfAnnotationSidebarProps {
+  authorNames?: Record<string, string>;
   annotations: AnnotationItem[];
   isLoading?: boolean;
   selectedId: string | null;
@@ -142,6 +151,8 @@ interface PdfAnnotationSidebarProps {
   onDelete: (id: string) => void;
   onUpdateColor?: (id: string, color: string) => void;
   onUpdateComment?: (id: string, comment: string) => void;
+  onUpdateFormula?: (id: string, formula: PdfFormulaAnnotation) => void | Promise<void>;
+  onRecognizeFormula?: (id: string) => Promise<void>;
   onConvertToUnderline?: (id: string) => void;
   onUpdateTextStyle?: (id: string, textColor: string, fontSize: number, bgColor: string) => void;
   onBatchDelete?: (ids: string[]) => void;
@@ -587,6 +598,7 @@ function AnnotationContextMenu({
   onAddComment,
   onConvertToUnderline,
   onCopyText,
+  onRecognizeFormula,
   onUpdateTextStyle,
 }: {
   x: number;
@@ -598,12 +610,16 @@ function AnnotationContextMenu({
   onAddComment?: () => void;
   onConvertToUnderline?: () => void;
   onCopyText?: () => void;
+  onRecognizeFormula?: () => Promise<void>;
   onUpdateTextStyle?: (textColor: string, fontSize: number, bgColor: string) => void;
 }) {
   const { t } = useI18n();
   const quoteText = getCanonicalPdfAnnotationText(annotation);
   const menuRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef(document.activeElement);
   const [showTextStyleEditor, setShowTextStyleEditor] = useState(false);
+  const [formulaBusy, setFormulaBusy] = useState(false);
+  const [formulaError, setFormulaError] = useState<string | null>(null);
   const [textColor, setTextColor] = useState(annotation.style.textStyle?.textColor || DEFAULT_TEXT_STYLE.textColor);
   const [fontSize, setFontSize] = useState(annotation.style.textStyle?.fontSize || DEFAULT_TEXT_STYLE.fontSize);
   const [bgColor, setBgColor] = useState(annotation.style.color || 'transparent');
@@ -612,7 +628,7 @@ function AnnotationContextMenu({
   // Use coordinate adapter to adjust menu position
   const [adjustedPosition, setAdjustedPosition] = useState({ x, y });
   
-  useEffect(() => {
+  useLayoutEffect(() => {
     // Measure menu size and adjust position
     if (menuRef.current) {
       const rect = menuRef.current.getBoundingClientRect();
@@ -635,7 +651,6 @@ function AnnotationContextMenu({
       }
       if (newY < padding) newY = padding;
       
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAdjustedPosition((prev) => {
         if (newX === prev.x && newY === prev.y) {
           return prev;
@@ -651,16 +666,44 @@ function AnnotationContextMenu({
         onClose();
       }
     };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+      if (returnFocusRef.current instanceof HTMLElement) returnFocusRef.current.focus();
+    };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape, true);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape, true);
+    };
   }, [onClose]);
+
+  useEffect(() => {
+    menuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+  }, [showTextStyleEditor]);
+
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+      : (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+    items[next]?.focus();
+  };
 
   // Text style editor for text annotations
   if (showTextStyleEditor && isTextAnnotation && onUpdateTextStyle) {
     return (
       <div
         ref={menuRef}
-        className="fixed z-50 bg-popover border border-border rounded-lg shadow-xl p-3 min-w-[240px]"
+        className="fixed z-[100] bg-popover border border-border rounded-lg shadow-xl p-3 min-w-[240px]"
+        role="dialog"
+        aria-label={t("pdf.sidebar.textStyle.title")}
         style={{ left: adjustedPosition.x, top: adjustedPosition.y }}
       >
         <div className="text-sm font-medium mb-2">{t("pdf.sidebar.textStyle.title")}</div>
@@ -751,7 +794,10 @@ function AnnotationContextMenu({
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[180px]"
+      className="fixed z-[100] bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[180px]"
+      role="menu"
+      aria-label={t("workbench.commandBar.more")}
+      onKeyDown={handleMenuKeyDown}
       style={{ left: adjustedPosition.x, top: adjustedPosition.y }}
     >
       {/* Color picker row - for non-text annotations */}
@@ -761,6 +807,8 @@ function AnnotationContextMenu({
             {HIGHLIGHT_COLORS.map((color) => (
               <button
                 key={color.value}
+                role="menuitemradio"
+                aria-checked={resolveHighlightColor(annotation.style.color) === resolveHighlightColor(color.hex)}
                 onClick={() => {
                   onUpdateColor(color.hex);
                   onClose();
@@ -788,6 +836,7 @@ function AnnotationContextMenu({
         <>
           <button
             className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2"
+            role="menuitem"
             onClick={() => setShowTextStyleEditor(true)}
           >
             <Palette className="h-4 w-4" />
@@ -802,6 +851,7 @@ function AnnotationContextMenu({
         <>
           <button
             className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2"
+            role="menuitem"
             onClick={() => {
               onAddComment?.();
               onClose();
@@ -813,6 +863,7 @@ function AnnotationContextMenu({
 
           <button
             className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2"
+            role="menuitem"
             onClick={() => {
               onAddComment?.();
               onClose();
@@ -824,6 +875,7 @@ function AnnotationContextMenu({
 
           <button
             className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2"
+            role="menuitem"
             onClick={onClose}
           >
             <Tag className="h-4 w-4" />
@@ -837,6 +889,7 @@ function AnnotationContextMenu({
       {annotation.style.type === 'highlight' && onConvertToUnderline && (
         <button
           className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2"
+          role="menuitem"
           onClick={() => {
             onConvertToUnderline();
             onClose();
@@ -850,6 +903,7 @@ function AnnotationContextMenu({
       {annotation.style.type === 'underline' && onConvertToUnderline && (
         <button
           className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2"
+          role="menuitem"
           onClick={() => {
             onConvertToUnderline();
             onClose();
@@ -860,9 +914,18 @@ function AnnotationContextMenu({
         </button>
       )}
 
+      {onRecognizeFormula && (quoteText || annotation.target.type === 'pdf' && annotation.style.type === 'area') && (
+        <button type="button" role="menuitem" disabled={formulaBusy}
+          className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted disabled:opacity-50"
+          onClick={async () => { setFormulaBusy(true); setFormulaError(null); try { await onRecognizeFormula(); onClose(); } catch(error) { setFormulaError(error instanceof Error ? error.message : String(error)); } finally { setFormulaBusy(false); } }}>
+          {t(formulaBusy ? 'pdf.formula.recognizing' : 'pdf.formula.convert')}
+        </button>
+      )}
+      {formulaError && <p role="alert" className="max-w-64 px-3 py-1 text-xs text-destructive">{formulaError}</p>}
       {quoteText && (
         <button
           className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2"
+          role="menuitem"
           onClick={() => {
             onCopyText?.();
             onClose();
@@ -877,6 +940,7 @@ function AnnotationContextMenu({
 
       <button
         className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted text-destructive flex items-center gap-2"
+        role="menuitem"
         onClick={() => {
           onDelete();
           onClose();
@@ -947,6 +1011,9 @@ function PdfInkSidebarPreview({
 
 // Zotero-style annotation card
 function AnnotationCard({
+  authorLabel,
+  commentObserver,
+  eagerComment,
   annotation,
   isSelected,
   isMultiSelected,
@@ -962,10 +1029,15 @@ function AnnotationCard({
   onDelete,
   onUpdateColor,
   onUpdateComment,
+  onUpdateFormula,
+  onRecognizeFormula,
   onConvertToUnderline,
   onUpdateTextStyle,
 }: {
   annotation: AnnotationItem;
+  authorLabel?: string;
+  commentObserver: AnnotationCommentObserver;
+  eagerComment: boolean;
   isSelected: boolean;
   isMultiSelected: boolean;
   isMultiSelectMode: boolean;
@@ -980,16 +1052,34 @@ function AnnotationCard({
   onDelete: () => void;
   onUpdateColor?: (color: string) => void;
   onUpdateComment?: (comment: string) => void;
+  onUpdateFormula?: (formula: PdfFormulaAnnotation) => void | Promise<void>;
+  onRecognizeFormula?: () => Promise<void>;
   onConvertToUnderline?: () => void;
   onUpdateTextStyle?: (textColor: string, fontSize: number, bgColor: string) => void;
 }) {
   const { t } = useI18n();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isEditing, setIsEditing] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
   const [showBacklinks, setShowBacklinks] = useState(false);
+  const [commentFocused, setCommentFocused] = useState(false);
   const [editComment, setEditComment] = useState(annotation.comment || '');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [savedComment, setSavedComment] = useState(annotation.comment || '');
+  const [sourceComment, setSourceComment] = useState(annotation.comment);
+  const commentEditorRef = useRef<LivePreviewEditorRef>(null);
+  if (sourceComment !== annotation.comment) {
+    setSourceComment(annotation.comment);
+    setSavedComment(annotation.comment || '');
+  }
+  const displayComment = savedComment;
+  const startEditingComment = useCallback(() => {
+    setEditComment(displayComment);
+    setIsEditing(true);
+  }, [displayComment]);
+  const focusCommentEditor = useCallback(() => {
+    // The shared editor suppresses mount focus in its first animation frame.
+    // This editor was explicitly opened by the user, so focus after that reset.
+    requestAnimationFrame(() => commentEditorRef.current?.focus());
+  }, []);
 
   const target = annotation.target as PdfTarget;
   const page = target.page;
@@ -1013,6 +1103,7 @@ function AnnotationCard({
   }, []);
 
   const handleSaveComment = useCallback(() => {
+    setSavedComment(editComment);
     onUpdateComment?.(editComment);
     setIsEditing(false);
   }, [editComment, onUpdateComment]);
@@ -1034,30 +1125,6 @@ function AnnotationCard({
       onSelect();
     }
   }, [isMultiSelectMode, onSelect, onToggleMultiSelect]);
-
-  const syncTextareaHeight = useCallback(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-
-    textarea.style.height = 'auto';
-    textarea.style.height = `${Math.max(120, textarea.scrollHeight)}px`;
-  }, []);
-
-  useEffect(() => {
-    if (isEditing && textareaRef.current) {
-      textareaRef.current.focus();
-      textareaRef.current.select();
-      syncTextareaHeight();
-    }
-  }, [isEditing, syncTextareaHeight]);
-
-  useEffect(() => {
-    if (isEditing && !showPreview) {
-      syncTextareaHeight();
-    }
-  }, [editComment, isEditing, showPreview, syncTextareaHeight]);
 
   const getTypeIcon = () => {
     switch (annotation.style.type) {
@@ -1083,7 +1150,7 @@ function AnnotationCard({
   const getPreviewText = () => {
     if (annotation.style.type === 'ink') return t("pdf.sidebar.preview.ink");
     if (quoteText) return quoteText;
-    if (annotation.comment) return annotation.comment;
+    if (displayComment) return displayComment;
     return annotation.style.type === 'area' ? t("pdf.sidebar.preview.area") : t("workbench.annotations.panelTitle");
   };
 
@@ -1111,6 +1178,16 @@ function AnnotationCard({
         onMouseLeave={() => onHoverChange?.(null)}
         onContextMenu={handleContextMenu}
         data-annotation-id={annotation.id}
+        onFocusCapture={() => setCommentFocused(true)}
+        role="button"
+        tabIndex={0}
+        aria-pressed={isSelected || isMultiSelected}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget || !['Enter', ' '].includes(event.key)) return;
+          event.preventDefault();
+          if (event.ctrlKey || event.metaKey || isMultiSelectMode) onToggleMultiSelect();
+          else onSelect();
+        }}
       >
         {/* Color bar (Zotero style) */}
         <div 
@@ -1149,19 +1226,28 @@ function AnnotationCard({
               {getTypeIcon()}
               <span>{t("pdf.sidebar.page", { page })}</span>
             </span>
+            {authorLabel ? <span className="max-w-28 truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={t('pdf.annotation.author', { name: authorLabel })} data-annotation-author>{authorLabel}</span> : null}
             
+            <div className="ml-auto flex items-center gap-1">
             {/* More button */}
             <Button
+              type="button"
               variant="ghost"
               size="icon"
-              className="h-5 w-5 ml-auto opacity-0 group-hover:opacity-100 transition-opacity"
+              aria-label={t("workbench.commandBar.more")}
+              title={t("workbench.commandBar.more")}
+              aria-haspopup="menu"
+              aria-expanded={contextMenu !== null}
+              className="h-5 w-5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
               onClick={(e) => {
                 e.stopPropagation();
-                handleContextMenu(e);
+                const rect = e.currentTarget.getBoundingClientRect();
+                setContextMenu({ x: rect.left, y: rect.bottom });
               }}
             >
               <MoreHorizontal className="h-3.5 w-3.5" />
             </Button>
+            </div>
           </div>
 
           {annotationTags.length > 0 ? (
@@ -1212,7 +1298,8 @@ function AnnotationCard({
           )}
 
           {/* Highlighted text with background (Zotero style) - for non-text annotations */}
-          {!isTextAnnotation && quoteText && annotation.style.type !== 'ink' && (
+          {annotation.formula && <PdfFormulaContent formula={annotation.formula} preview={annotation.preview} onChange={onUpdateFormula} onRecognize={onRecognizeFormula} />}
+          {!annotation.formula && !isTextAnnotation && quoteText && annotation.style.type !== 'ink' && (
             <div 
               className="text-sm leading-relaxed mb-2 px-1.5 py-1 rounded"
               style={{ 
@@ -1246,60 +1333,20 @@ function AnnotationCard({
             <>
               {isEditing ? (
                 <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-                  {/* Edit / Preview tabs */}
-                  <div className="flex gap-1 mb-1">
-                    <button
-                      onClick={() => setShowPreview(false)}
-                      className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
-                        !showPreview ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      {t("common.edit")}
-                    </button>
-                    <button
-                      onClick={() => setShowPreview(true)}
-                      className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
-                        showPreview ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      {t("export.markdown.previewTitle")}
-                    </button>
-                  </div>
-
-                  {showPreview ? (
-                    <div className="min-h-[48px] overflow-x-auto rounded border border-border bg-background px-2 py-1.5">
-                      {editComment.trim() ? (
-                        <AnnotationMarkdownRenderer
-                          content={editComment}
-                          paneId={paneId}
-                          rootHandle={rootHandle}
-                          currentFilePath={currentFilePath}
-                        />
-                      ) : (
-                        <span className="text-xs text-muted-foreground italic">{t("pdf.sidebar.emptyComment")}</span>
-                      )}
-                    </div>
-                  ) : (
-                    <textarea
-                      ref={textareaRef}
-                      data-testid={`pdf-annotation-comment-editor-${annotation.id}`}
-                      value={editComment}
-                      onChange={(e) => setEditComment(e.target.value)}
-                      className="w-full min-h-[120px] p-2 text-xs leading-relaxed border border-border rounded bg-background resize-y overflow-hidden focus:outline-none focus:ring-1 focus:ring-primary font-mono"
-                      rows={6}
-                      placeholder={t("pdf.sidebar.commentPlaceholder")}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                          handleSaveComment();
-                        }
-                        if (e.key === 'Escape') {
-                          setIsEditing(false);
-                          setShowPreview(false);
-                          setEditComment(annotation.comment || '');
-                        }
-                      }}
-                    />
-                  )}
+                  <LivePreviewEditor
+                    ref={commentEditorRef}
+                    content={editComment}
+                    onChange={setEditComment}
+                    onSave={handleSaveComment}
+                    onReady={focusCommentEditor}
+                    autoHeight
+                    showLineNumbers={false}
+                    showFoldGutter={false}
+                    fileId={`pdf-comment-${annotation.id}`}
+                    rootHandle={rootHandle}
+                    filePath={currentFilePath}
+                    className="pdf-annotation-comment-editor min-h-[96px] rounded border border-border bg-background text-xs"
+                  />
 
                   <div className="flex justify-end gap-1 mt-1">
                     <Button
@@ -1308,8 +1355,7 @@ function AnnotationCard({
                       className="h-6 text-xs"
                       onClick={() => {
                         setIsEditing(false);
-                        setShowPreview(false);
-                        setEditComment(annotation.comment || '');
+                        setEditComment(displayComment);
                       }}
                     >
                       {t("common.cancel")}
@@ -1323,22 +1369,24 @@ function AnnotationCard({
                     </Button>
                   </div>
                 </div>
-              ) : annotation.comment ? (
+              ) : displayComment ? (
                 <div
                   className="mt-1 flex items-start gap-1.5 cursor-text group/comment"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setShowPreview(false);
-                    setIsEditing(true);
+                    startEditingComment();
                   }}
                 >
                   <MessageSquare className="h-3 w-3 mt-0.5 flex-shrink-0 text-muted-foreground" />
-                  <div data-testid={`pdf-annotation-comment-${annotation.id}`} className="min-w-0 flex-1 overflow-x-auto">
-                    <AnnotationMarkdownRenderer
-                      content={annotation.comment}
+                  <div data-testid={`pdf-annotation-comment-${annotation.id}`} className="min-w-0 flex-1 overflow-x-auto text-[11px] leading-relaxed">
+                    <DeferredAnnotationMarkdown
+                      observe={commentObserver}
+                      eager={eagerComment || isSelected || commentFocused}
+                      content={displayComment}
                       paneId={paneId}
                       rootHandle={rootHandle}
                       currentFilePath={currentFilePath}
+                      className="pdf-annotation-comment-rendered text-[11px]"
                     />
                   </div>
                 </div>
@@ -1347,8 +1395,7 @@ function AnnotationCard({
                   className="text-xs text-muted-foreground/60 hover:text-muted-foreground mt-1 flex items-center gap-1"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setShowPreview(false);
-                    setIsEditing(true);
+                    startEditingComment();
                   }}
                 >
                   <MessageSquare className="h-3 w-3" />
@@ -1396,8 +1443,8 @@ function AnnotationCard({
         </div>
       </div>
 
-      {/* Context menu */}
-      {contextMenu && (
+      {/* Escape the row's content-visibility containing block and scroll clipping. */}
+      {contextMenu && createPortal(
         <AnnotationContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
@@ -1405,17 +1452,60 @@ function AnnotationCard({
           onClose={() => setContextMenu(null)}
           onDelete={onDelete}
           onUpdateColor={onUpdateColor}
-          onAddComment={() => setIsEditing(true)}
+          onAddComment={startEditingComment}
           onConvertToUnderline={onConvertToUnderline}
           onCopyText={handleCopyText}
+          onRecognizeFormula={onRecognizeFormula}
           onUpdateTextStyle={onUpdateTextStyle}
-        />
+        />,
+        document.body,
       )}
     </>
   );
 }
 
+// Stable row props keep unrelated selection, hover and resize updates out of Markdown/KaTeX.
+const PdfAnnotationRow = memo(function PdfAnnotationRow({
+  annotation, isSelected, isMultiSelected, isMultiSelectMode, onToggleMultiSelect,
+  onSelect, onDelete, onUpdateColor, onUpdateComment, onUpdateFormula, onRecognizeFormula, onConvertToUnderline,
+  onUpdateTextStyle, ...props
+}: Pick<PdfAnnotationSidebarProps,
+  'paneId' | 'rootHandle' | 'currentFilePath' | 'onNavigateBacklink' | 'onHoverChange' |
+  'onSelect' | 'onDelete' | 'onUpdateColor' | 'onUpdateComment' | 'onUpdateFormula' | 'onRecognizeFormula' | 'onConvertToUnderline' | 'onUpdateTextStyle'> & {
+  annotation: AnnotationItem;
+  authorLabel?: string;
+  isSelected: boolean;
+  isMultiSelected: boolean;
+  isMultiSelectMode: boolean;
+  backlinks?: AnnotationBacklink[];
+  onToggleMultiSelect: (id: string) => void;
+  commentObserver: AnnotationCommentObserver;
+  eagerComment: boolean;
+}) {
+  return (
+    <div style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 152px' }}>
+      <AnnotationCard
+        {...props}
+        annotation={annotation}
+        isSelected={isSelected}
+        isMultiSelected={isMultiSelected}
+        isMultiSelectMode={isMultiSelectMode}
+        onSelect={() => onSelect(annotation)}
+        onToggleMultiSelect={() => onToggleMultiSelect(annotation.id)}
+        onDelete={() => onDelete(annotation.id)}
+        onUpdateColor={onUpdateColor ? (color) => onUpdateColor(annotation.id, color) : undefined}
+        onUpdateComment={onUpdateComment ? (comment) => onUpdateComment(annotation.id, comment) : undefined}
+        onUpdateFormula={onUpdateFormula ? (formula) => onUpdateFormula(annotation.id, formula) : undefined}
+        onRecognizeFormula={onRecognizeFormula ? () => onRecognizeFormula(annotation.id) : undefined}
+        onConvertToUnderline={onConvertToUnderline ? () => onConvertToUnderline(annotation.id) : undefined}
+        onUpdateTextStyle={onUpdateTextStyle ? (color, size, background) => onUpdateTextStyle(annotation.id, color, size, background) : undefined}
+      />
+    </div>
+  );
+});
+
 export function PdfAnnotationSidebar({
+  authorNames,
   annotations,
   isLoading = false,
   selectedId,
@@ -1429,6 +1519,8 @@ export function PdfAnnotationSidebar({
   onDelete,
   onUpdateColor,
   onUpdateComment,
+  onUpdateFormula,
+  onRecognizeFormula,
   onConvertToUnderline,
   onUpdateTextStyle,
   onBatchDelete,
@@ -1438,6 +1530,17 @@ export function PdfAnnotationSidebar({
   onViewStateChange,
 }: PdfAnnotationSidebarProps) {
   const { t } = useI18n();
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const commentObserver = useAnnotationCommentObserver(scrollRef);
+  const handleSelect = useAnnotationSidebarCallback(onSelect);
+  const handleDelete = useAnnotationSidebarCallback(onDelete);
+  const handleHover = useAnnotationSidebarCallback((annotation: AnnotationItem | null) => onHoverChange?.(annotation));
+  const handleNavigateBacklink = useAnnotationSidebarCallback((backlink: AnnotationBacklink) => onNavigateBacklink?.(backlink));
+  const handleUpdateColor = useAnnotationSidebarCallback((id: string, color: string) => onUpdateColor?.(id, color));
+  const handleUpdateComment = useAnnotationSidebarCallback((id: string, comment: string) => onUpdateComment?.(id, comment));
+  const handleConvertToUnderline = useAnnotationSidebarCallback((id: string) => onConvertToUnderline?.(id));
+  const handleUpdateTextStyle = useAnnotationSidebarCallback((id: string, color: string, size: number, background: string) => onUpdateTextStyle?.(id, color, size, background));
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const isMultiSelectMode = selectedIds.size > 0;
@@ -1450,6 +1553,7 @@ export function PdfAnnotationSidebar({
     [],
   );
   const [searchQuery, setSearchQuery] = useState(initialViewState.searchQuery);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [typeFilter, setTypeFilter] = useState<AnnotationTypeFilter>(initialViewState.typeFilter);
   const [colorFilter, setColorFilter] = useState<ColorFilter>(initialViewState.colorFilter);
   const [tagFilter, setTagFilter] = useState<TagFilter>(initialViewState.tagFilter);
@@ -1498,39 +1602,9 @@ export function PdfAnnotationSidebar({
     [annotations],
   );
 
-  // Filter and sort annotations
-  const filteredAnnotations = useMemo(() => {
-    return pdfAnnotations
-      .filter(a => {
-        // Type filter
-        if (typeFilter !== 'all' && a.style.type !== typeFilter) {
-          return false;
-        }
-        // Color filter
-        if (colorFilter !== 'all' && resolveHighlightColor(a.style.color) !== normalizeColorFilter(colorFilter)) {
-          return false;
-        }
-        // Tag filter
-        if (tagFilter !== 'all' && !getAnnotationTags(a).includes(tagFilter)) {
-          return false;
-        }
-        // Search filter
-        if (searchQuery.trim()) {
-          const query = searchQuery.toLowerCase();
-          const content = (getCanonicalPdfAnnotationText(a) || '').toLowerCase();
-          const comment = (a.comment || '').toLowerCase();
-          const tags = getAnnotationTags(a).join(' ').toLowerCase();
-          if (!content.includes(query) && !comment.includes(query) && !tags.includes(query)) {
-            return false;
-          }
-        }
-        return true;
-      });
-  }, [pdfAnnotations, typeFilter, colorFilter, tagFilter, searchQuery]);
-
-  // Sort annotations by page, then by position (top to bottom)
-  const sortedAnnotations = useMemo(() => {
-    return [...filteredAnnotations]
+  // Sort and normalize once per data change, not on every search keystroke.
+  const annotationIndex = useMemo(() => {
+    return [...pdfAnnotations]
       .sort((a, b) => {
         const pageA = (a.target as PdfTarget).page;
         const pageB = (b.target as PdfTarget).page;
@@ -1546,8 +1620,39 @@ export function PdfAnnotationSidebar({
           if (Math.abs(byLeft) > 0.0005) return byLeft;
         }
         return a.createdAt - b.createdAt || a.id.localeCompare(b.id);
+      })
+      .map((annotation) => {
+        const tags = getAnnotationTags(annotation);
+        return {
+          annotation,
+          color: resolveHighlightColor(annotation.style.color),
+          tags,
+          searchText: [getCanonicalPdfAnnotationText(annotation), annotation.comment, tags.join(' ')].filter(Boolean).join('\n').toLowerCase(),
+        };
       });
-  }, [filteredAnnotations]);
+  }, [pdfAnnotations]);
+
+  const sortedAnnotations = useMemo(() => {
+    const query = deferredSearchQuery.trim().toLowerCase();
+    const color = normalizeColorFilter(colorFilter);
+    return annotationIndex.filter((entry) =>
+      (typeFilter === 'all' || entry.annotation.style.type === typeFilter) &&
+      (color === 'all' || entry.color === color) &&
+      (tagFilter === 'all' || entry.tags.includes(tagFilter)) &&
+      (!query || entry.searchText.includes(query)),
+    ).map((entry) => entry.annotation);
+  }, [annotationIndex, typeFilter, colorFilter, tagFilter, deferredSearchQuery]);
+
+  const [previousSelectedId, setPreviousSelectedId] = useState<string | null>(null);
+  if (previousSelectedId !== selectedId && (!selectedId || pdfAnnotations.some((annotation) => annotation.id === selectedId))) {
+    setPreviousSelectedId(selectedId);
+    if (selectedId && !sortedAnnotations.some((annotation) => annotation.id === selectedId)) {
+      setSearchQuery('');
+      setTypeFilter('all');
+      setColorFilter('all');
+      setTagFilter('all');
+    }
+  }
 
   // Multi-select handlers
   const toggleSelection = useCallback((id: string) => {
@@ -1611,13 +1716,8 @@ export function PdfAnnotationSidebar({
   }, [selectedIds, sortedAnnotations, onBatchExport]);
 
   useEffect(() => {
-    if (!selectedId) {
-      return;
-    }
-
-    const card = document.querySelector<HTMLElement>(`[data-annotation-id="${selectedId}"]`);
-    card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [selectedId]);
+    scrollToSidebarAnnotation(sidebarRef.current, selectedId);
+  }, [selectedId, sortedAnnotations, isLoading]);
 
   if (isLoading) {
     return (
@@ -1648,7 +1748,7 @@ export function PdfAnnotationSidebar({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div ref={sidebarRef} className="flex h-full min-h-0 flex-col">
       <div className="border-b border-border bg-background/95">
         <div className="px-3 py-2 border-b border-border flex items-center justify-between">
           <h3 className="text-sm font-medium">{t("workbench.annotations.panelTitle")}</h3>
@@ -1694,7 +1794,7 @@ export function PdfAnnotationSidebar({
         />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto" onKeyDown={handleAnnotationSidebarKeyDown}>
         {sortedAnnotations.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32 p-4 text-center">
             <Search className="h-6 w-6 text-muted-foreground mb-2" />
@@ -1706,26 +1806,31 @@ export function PdfAnnotationSidebar({
           </div>
         ) : (
           <div className="divide-y divide-border">
-            {sortedAnnotations.map(ann => (
-              <AnnotationCard
+            {sortedAnnotations.map((ann, index) => (
+              <PdfAnnotationRow
                 key={ann.id}
                 annotation={ann}
+                authorLabel={authorNames ? authorNames[ann.author] || ann.authorDisplayName || "小组成员" : ann.authorDisplayName}
+                commentObserver={commentObserver}
+                eagerComment={index < 12}
                 isSelected={selectedId === ann.id}
                 isMultiSelected={selectedIds.has(ann.id)}
                 isMultiSelectMode={isMultiSelectMode}
                 paneId={paneId}
                 rootHandle={rootHandle}
                 currentFilePath={currentFilePath}
-                backlinks={backlinksById?.[ann.id] ?? []}
-                onNavigateBacklink={onNavigateBacklink}
-                onSelect={() => onSelect(ann)}
-                onHoverChange={onHoverChange}
-                onToggleMultiSelect={() => toggleSelection(ann.id)}
-                onDelete={() => onDelete(ann.id)}
-                onUpdateColor={onUpdateColor ? (color) => onUpdateColor(ann.id, color) : undefined}
-                onUpdateComment={onUpdateComment ? (comment) => onUpdateComment(ann.id, comment) : undefined}
-                onConvertToUnderline={onConvertToUnderline ? () => onConvertToUnderline(ann.id) : undefined}
-                onUpdateTextStyle={onUpdateTextStyle ? (textColor, fontSize, bgColor) => onUpdateTextStyle(ann.id, textColor, fontSize, bgColor) : undefined}
+                backlinks={backlinksById?.[ann.id]}
+                onNavigateBacklink={onNavigateBacklink ? handleNavigateBacklink : undefined}
+                onSelect={handleSelect}
+                onHoverChange={onHoverChange ? handleHover : undefined}
+                onToggleMultiSelect={toggleSelection}
+                onDelete={handleDelete}
+                onUpdateColor={onUpdateColor ? handleUpdateColor : undefined}
+                onUpdateComment={onUpdateComment ? handleUpdateComment : undefined}
+                onUpdateFormula={onUpdateFormula}
+                onRecognizeFormula={onRecognizeFormula}
+                onConvertToUnderline={onConvertToUnderline ? handleConvertToUnderline : undefined}
+                onUpdateTextStyle={onUpdateTextStyle ? handleUpdateTextStyle : undefined}
               />
             ))}
           </div>

@@ -1,5 +1,14 @@
 import { aiContextGraph } from './context-graph';
+import { buildCitationPromptReferences, TARGETED_CITATION_INSTRUCTIONS } from './citation-prompt';
 import { routeModel } from './model-router';
+import { executeAnswer, retainAnswerOnFailure } from './answer-execution';
+import { needsAnswerExpansion, taskDeliveryInstructions } from './task-outcome';
+import { assertRepairedAnswerCitations, buildCitationRepairInstructions, validateAnswerCitations } from './citation-validation';
+import { CITATION_HISTORY_INSTRUCTIONS, boundedCitationHistory as trimHistory } from './citation-history';
+import { availableDocumentNotice } from './conversation-documents';
+import { requestProgressReporter } from './request-lifecycle';
+import { chatOutputBudget, effectiveOutputTokenCeiling } from './output-budget';
+import { withRequestImages } from './request-images';
 import type {
   AiChatRequest,
   AiDraftArtifactType,
@@ -14,6 +23,9 @@ import type {
   AiTaskProposalStep,
   AiTaskType,
   EvidenceRef,
+  AiGenerateResult,
+  AiGenerateOptions,
+  AiProvider,
 } from './types';
 import {
   buildLatticeProposalPlannedWrites,
@@ -65,24 +77,81 @@ function buildSystemPrompt(
   basePrompt: string,
   evidenceRefs: EvidenceRef[],
   evidenceRequired: boolean,
+  userPrompt: string,
 ): string {
+  const explanatory = /(?:详细|深入|解释|讲解|展开|为什么|how|why|explain|derive|proof|公式|代码|论文|paper|formula|code)/iu.test(userPrompt);
+  const effectiveBasePrompt = explanatory
+    ? basePrompt.replace(/\bBe concise(?: and precise)?\.?/giu, '').trim()
+    : basePrompt;
   return [
-    basePrompt,
+    effectiveBasePrompt,
     'You are Lattice AI, an evidence-first research copilot for a scientific workbench.',
-    'Answer for a personal researcher. Be concise, precise, and practical.',
+    CITATION_HISTORY_INSTRUCTIONS,
+    taskDeliveryInstructions(userPrompt),
+    'Answer for a personal researcher. Be precise, practical, and proportionate to the request.',
+    'Keep greetings and simple questions brief. Do not add empty sections or generic filler.',
+    explanatory
+      ? [
+          'This is an explanatory request. Start with a direct answer, but do not stop after a summary or repeat the previous short answer.',
+          'Explain the core idea, the mechanism, and why it works, not only what it is. Use the following headings when the corresponding content is supported:',
+          '## Conclusion',
+          '## Core idea',
+          '## Steps',
+          '## Example',
+          'Include a minimal verifiable example and connect citations to the claims they support.',
+        ].join('\n')
+      : 'Start with the direct answer and expand only as much as the question requires.',
     evidenceRequired
       ? 'Default to evidence-first reasoning. Ground your answer in the provided context and reference the most relevant evidence explicitly.'
       : 'Use the provided context carefully.',
-    'Prefer structured output with three sections when appropriate: Conclusion, Evidence, Next Actions.',
+    explanatory
+      ? 'For this request, completeness and teaching clarity take priority over brevity.'
+      : 'Use sections only when they help the answer. Keep supporting facts and inline citations in the answer body beside the claims they support.',
     evidenceRefs.length > 0
-      ? `Available evidence references:\n${evidenceRefs.map((ref) => `- ${ref.label} -> ${ref.locator}`).join('\n')}`
+      ? [
+          TARGETED_CITATION_INSTRUCTIONS,
+          `Available evidence references:\n${buildCitationPromptReferences(evidenceRefs)}`,
+        ].join('\n\n')
       : 'No explicit evidence references were provided.',
   ].join('\n\n');
 }
 
-function trimHistory(history: AiMessage[] | undefined): AiMessage[] {
-  if (!history?.length) return [];
-  return history.slice(-8);
+/** One bounded repair using the exact context that will accompany this answer. */
+async function repairAnswerCitations(
+  result: AiGenerateResult,
+  refs: EvidenceRef[],
+  messages: AiMessage[],
+  provider: AiProvider,
+  options: AiGenerateOptions,
+): Promise<AiGenerateResult> {
+  options.signal?.throwIfAborted();
+  const validation = validateAnswerCitations(result.text, refs);
+  if (!validation.issues.length) return result;
+  options.signal?.throwIfAborted();
+  const repaired = await executeAnswer({ generate: provider.generate.bind(provider), messages: [
+    ...messages,
+    { role: 'assistant', content: result.text },
+    { role: 'user', content: `引文校验失败，请核对原文后修复回答。\n${buildCitationRepairInstructions(validation)}` },
+  ], options: { ...options, temperature: Math.min(options.temperature ?? 0.2, 0.2) } }).catch(error => { throw retainAnswerOnFailure(error, result.text); });
+  options.signal?.throwIfAborted();
+  if (!repaired.text.trim()) throw new Error('引文修复未返回有效回答，请重试。');
+  assertRepairedAnswerCitations(result.text, repaired.text, refs);
+  return repaired;
+}
+
+
+
+async function expandUnderAnsweredRequest(result: AiGenerateResult, prompt: string, messages: AiMessage[], provider: AiProvider, options: AiGenerateOptions): Promise<AiGenerateResult> {
+  if (!needsAnswerExpansion(prompt, result.text)) return result;
+  const expanded = await executeAnswer({ generate: provider.generate.bind(provider), messages: [
+    ...messages,
+    { role: 'assistant', content: result.text },
+    { role: 'user', content: 'The previous answer did not meet the requested depth. Deliver the complete explanation with supported causal reasoning, necessary definitions, relevant examples and limitations. Preserve evidence ids. State missing evidence honestly; do not pad or invent details.' },
+  ], options }).catch(error => { throw retainAnswerOnFailure(error, result.text); });
+  const answer = expanded.text.trim().length > result.text.trim().length ? expanded : result;
+  // Length can suggest a refinement, but cannot prove that a concise derivation
+  // or evidence-gap explanation is incomplete.
+  return answer;
 }
 
 function promptForInlineAction(request: AiInlineActionRequest): { prompt: string; taskType: AiTaskType } {
@@ -122,8 +191,10 @@ async function runGeneric(
   prompt: string,
   settings: AiChatRequest['settings'],
   history: AiMessage[] | undefined,
-  contextInput: Omit<AiChatRequest, 'prompt' | 'history' | 'settings'>,
+  contextInput: Omit<AiChatRequest, 'prompt' | 'history' | 'settings' | 'signal'>,
+  signal: AbortSignal | undefined,
 ): Promise<AiRunResult> {
+  const explanatory = /(?:详细|深入|解释|讲解|展开|为什么|how|why|explain|derive|proof|公式|代码|论文|paper|formula|code)/iu.test(prompt);
   const selection = routeModel(taskType, settings);
   const promptContext = aiContextGraph.buildPromptContext(contextInput, selection.policy.maxContextTokens);
 
@@ -134,30 +205,109 @@ async function runGeneric(
         settings.systemPrompt,
         promptContext.evidenceRefs,
         selection.policy.evidenceRequired,
+        prompt,
       ),
     },
-    ...trimHistory(history),
+    ...trimHistory(history, promptContext.evidenceRefs, Math.max(1500, Math.min(12000, selection.policy.maxContextTokens))),
     {
       role: 'user',
       content: [
         `User request:\n${prompt}`,
+        availableDocumentNotice(contextInput.availableDocuments),
         'Use the supplied context. If evidence exists, cite it in the answer body.',
         `Context:\n${promptContext.prompt || '[no additional context]'}`,
       ].join('\n\n'),
     },
   ];
 
-  const result = await selection.provider.generate(messages, {
-    model: settings.model ?? undefined,
+  const generationOptions = {
+    model: selection.modelInfo.model ?? undefined,
     temperature: settings.temperature,
-    maxTokens: settings.maxTokens,
-  });
+    maxTokens: chatOutputBudget(effectiveOutputTokenCeiling(settings.maxTokens, selection.provider.getMaxOutputTokens?.(selection.modelInfo.model)), prompt, explanatory),
+    recoveryMaxTokens: effectiveOutputTokenCeiling(settings.maxTokens, selection.provider.getMaxOutputTokens?.(selection.modelInfo.model)),
+    deadlineAt: selection.provider.requestTimeouts ? Date.now() + selection.provider.requestTimeouts.totalMs : undefined,
+    signal,
+    onProgress: contextInput.onProgress,
+  };
 
+  const requestMessages = withRequestImages(messages, contextInput.images);
+
+  let result: AiGenerateResult = await executeAnswer({ generate: selection.provider.generate.bind(selection.provider), messages: requestMessages, options: generationOptions });
+
+  result = await expandUnderAnsweredRequest(result, prompt, requestMessages, selection.provider, generationOptions);
+
+  requestProgressReporter(contextInput.onProgress, Date.now(), 1).report('validating');
+  result = await repairAnswerCitations(result, promptContext.evidenceRefs, requestMessages, selection.provider, generationOptions);
   return {
     text: result.text,
     evidenceRefs: promptContext.evidenceRefs,
     context: promptContext,
     model: selection.modelInfo,
+    followUpActions: createFollowUpActions(),
+    draftSuggestion: {
+      type: draftTypeForTask(taskType),
+      templateId: draftTemplateForTask(taskType),
+      title: prompt.length > 64 ? `${prompt.slice(0, 64)}...` : prompt,
+    },
+  };
+}
+
+async function runGenericStreaming(
+  taskType: AiTaskType,
+  prompt: string,
+  settings: AiChatRequest['settings'],
+  history: AiMessage[] | undefined,
+  contextInput: Omit<AiChatRequest, 'prompt' | 'history' | 'settings' | 'signal'>,
+  signal: AbortSignal | undefined,
+  onDelta: (text: string) => void,
+): Promise<AiRunResult> {
+  const explanatory = /(?:详细|深入|解释|讲解|展开|为什么|how|why|explain|derive|proof|公式|代码|论文|paper|formula|code)/iu.test(prompt);
+  const selection = routeModel(taskType, settings);
+  const promptContext = aiContextGraph.buildPromptContext(contextInput, selection.policy.maxContextTokens);
+  const messages: AiMessage[] = [
+    {
+      role: 'system',
+      content: buildSystemPrompt(
+        settings.systemPrompt,
+        promptContext.evidenceRefs,
+        selection.policy.evidenceRequired,
+        prompt,
+      ),
+    },
+    ...trimHistory(history, promptContext.evidenceRefs, Math.max(1500, Math.min(12000, selection.policy.maxContextTokens))),
+    {
+      role: 'user',
+      content: [
+        `User request:\n${prompt}`,
+        availableDocumentNotice(contextInput.availableDocuments),
+        'Use the supplied context. If evidence exists, cite it in the answer body.',
+        `Context:\n${promptContext.prompt || '[no additional context]'}`,
+      ].join('\n\n'),
+    },
+  ];
+  const generationOptions = {
+    model: selection.modelInfo.model ?? undefined,
+    temperature: settings.temperature,
+    maxTokens: chatOutputBudget(effectiveOutputTokenCeiling(settings.maxTokens, selection.provider.getMaxOutputTokens?.(selection.modelInfo.model)), prompt, explanatory),
+    recoveryMaxTokens: effectiveOutputTokenCeiling(settings.maxTokens, selection.provider.getMaxOutputTokens?.(selection.modelInfo.model)),
+    deadlineAt: selection.provider.requestTimeouts ? Date.now() + selection.provider.requestTimeouts.totalMs : undefined,
+    signal,
+    onProgress: contextInput.onProgress,
+  };
+  const requestMessages = withRequestImages(messages, contextInput.images);
+  const streamed = await executeAnswer({ messages: requestMessages, options: generationOptions, generate: selection.provider.generate.bind(selection.provider), stream: selection.provider.stream.bind(selection.provider), onDelta });
+  let text = streamed.text;
+  const model = { ...selection.modelInfo, model: streamed.model || selection.modelInfo.model };
+
+  const expanded = await expandUnderAnsweredRequest({ text, model: model.model ?? '' }, prompt, requestMessages, selection.provider, generationOptions);
+  requestProgressReporter(contextInput.onProgress, Date.now(), 1).report('validating');
+  const verified = await repairAnswerCitations(expanded, promptContext.evidenceRefs, requestMessages, selection.provider, generationOptions);
+  text = verified.text;
+  return {
+    text,
+    evidenceRefs: promptContext.evidenceRefs,
+    context: promptContext,
+    model,
     followUpActions: createFollowUpActions(),
     draftSuggestion: {
       type: draftTypeForTask(taskType),
@@ -188,9 +338,39 @@ export class AiOrchestrator {
         selection: request.selection,
         references: request.references,
         annotations: request.annotations,
-        query: request.query,
+        query: request.query ?? request.prompt,
         explicitEvidenceRefs: request.explicitEvidenceRefs,
+        availableDocuments: request.availableDocuments,
+        images: request.images,
+        onProgress: request.onProgress,
       },
+      request.signal,
+    );
+  }
+
+  async runChatStreaming(
+    request: AiChatRequest,
+    onDelta: (text: string) => void,
+  ): Promise<AiRunResult> {
+    return runGenericStreaming(
+      'chat',
+      request.prompt,
+      request.settings,
+      request.history,
+      {
+        filePath: request.filePath,
+        content: request.content,
+        selection: request.selection,
+        references: request.references,
+        annotations: request.annotations,
+        query: request.query ?? request.prompt,
+        explicitEvidenceRefs: request.explicitEvidenceRefs,
+        availableDocuments: request.availableDocuments,
+        images: request.images,
+        onProgress: request.onProgress,
+      },
+      request.signal,
+      onDelta,
     );
   }
 
@@ -204,7 +384,7 @@ export class AiOrchestrator {
       annotations: request.annotations,
       query: request.input,
       explicitEvidenceRefs: request.explicitEvidenceRefs,
-    });
+    }, undefined);
   }
 
   async runResearchAction(request: AiResearchActionRequest): Promise<AiRunResult> {
@@ -217,7 +397,7 @@ export class AiOrchestrator {
       annotations: request.annotations,
       query: request.prompt,
       explicitEvidenceRefs: request.explicitEvidenceRefs,
-    });
+    }, undefined);
   }
 
   async proposeTask(request: AiTaskProposalRequest): Promise<AiTaskProposal> {

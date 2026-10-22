@@ -4,6 +4,40 @@ import type { PdfSelectionSnapshot } from "@/lib/pdf-selection-session";
 import type { AnnotationItem, BoundingBox, PdfTarget, PdfTextQuote, PdfTextQuoteSource } from "@/types/universal-annotation";
 import type { PdfCanonicalSelection } from "@/lib/pdf-selection-session";
 
+export function computePdfTextLayerGlyphCalibration(input: {
+  actualWidth: number;
+  actualHeight: number;
+  expectedWidth: number;
+  expectedHeight: number;
+}): { scaleX: number; scaleY: number } | null {
+  if (
+    !Number.isFinite(input.actualWidth) ||
+    !Number.isFinite(input.actualHeight) ||
+    !Number.isFinite(input.expectedWidth) ||
+    !Number.isFinite(input.expectedHeight) ||
+    input.actualWidth <= 0 ||
+    input.actualHeight <= 0 ||
+    input.expectedWidth <= 0 ||
+    input.expectedHeight <= 0
+  ) {
+    return null;
+  }
+
+  const scaleX = input.expectedWidth / input.actualWidth;
+  const scaleY = input.expectedHeight / input.actualHeight;
+  if (scaleX < 0.45 || scaleX > 2.2 || scaleY < 0.45 || scaleY > 2.2) {
+    return null;
+  }
+
+  return { scaleX, scaleY };
+}
+
+export function shouldSchedulePdfFontRecalibration(
+  fontStatus: "loading" | "loaded" | undefined,
+): boolean {
+  return fontStatus === "loading";
+}
+
 export function dedupeAnnotationsById<T extends AnnotationItem>(annotations: T[]): T[] {
   const seen = new Set<string>();
   const deduped: T[] = [];

@@ -1,3 +1,7 @@
+> ⚠️ **本文档已于 2026-10-22 标记为历史参考，不再作为当前执行依据。**
+> 当前唯一有效的经营基线与 90 天验证计划见 [`docs/business/LATTICE_COMMERCIAL_STRATEGY_1.0.0.md`](docs/business/LATTICE_COMMERCIAL_STRATEGY_1.0.0.md)（2026-10-21，v1.5.0）。
+> 本文中的域名、版本号（如 v0.3.0）与部署地址已过期；技术方向仍可参考。
+
 # Lattice 产品策略
 
 > 更新时间：2026-03-26

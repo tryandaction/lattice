@@ -151,7 +151,7 @@ export const LATTICE_SKILL_REGISTRY: LatticeSkillDescriptor[] = [
     scope: 'workspace',
     approvalMode: 'approval-gated',
     workflows: ['knowledge-organization'],
-    allowedTools: ['workspace.search', 'workspace.readIndexedContext', 'evidence.resolve', 'workbench.createProposal'],
+    allowedTools: ['lattice.sources.list', 'lattice.sources.search', 'lattice.sources.read', 'lattice.pdf.proposeChild', 'evidence.resolve', 'workbench.createProposal'],
     requiredCapabilities: [
       'search_workspace',
       'read_workspace',
@@ -170,12 +170,12 @@ export const LATTICE_SKILL_REGISTRY: LatticeSkillDescriptor[] = [
   {
     id: 'pdf-item-workspace',
     title: 'PDF Item Workspace',
-    owner: 'pdf-thread',
-    status: 'reserved',
+    owner: 'ai-agent-thread',
+    status: 'ready',
     scope: 'pdf',
-    approvalMode: 'reserved',
+    approvalMode: 'approval-gated',
     workflows: ['paper-reading', 'notebook-from-paper'],
-    allowedTools: ['workspace.search', 'workspace.readIndexedContext', 'evidence.resolve'],
+    allowedTools: ['workspace.search', 'workspace.readIndexedContext', 'evidence.resolve', 'workbench.createProposal'],
     requiredCapabilities: [
       'search_workspace',
       'read_workspace',
@@ -186,8 +186,8 @@ export const LATTICE_SKILL_REGISTRY: LatticeSkillDescriptor[] = [
     writesWorkspace: true,
     pdfScoped: true,
     notes: [
-      'Reserved for the PDF implementation window.',
-      'Must reuse PDF item workspace services and avoid overwriting existing notes/notebooks.',
+      'Executable source/PDF tool declarations are exported by lattice-skills/source-pdf-tool-runtime.ts for API and local runtime bridges.',
+      'PDF child proposals support Markdown, code, Notebook and text data, bind stable manifest identity and parent/child revisions, and require concrete Workbench review through pdf-child-skill.ts.',
     ],
   },
   {

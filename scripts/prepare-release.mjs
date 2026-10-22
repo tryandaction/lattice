@@ -178,7 +178,8 @@ function isReleaseArtifact(root, filePath, expectedVersion) {
     return relativePath === "lattice.exe" || relativePath.endsWith("/lattice.exe");
   }
 
-  if (expectedVersion && !fileName.includes(expectedVersion)) {
+  const escapedVersion = expectedVersion?.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (expectedVersion && !new RegExp(`^Lattice_${escapedVersion}_`, "i").test(fileName)) {
     return false;
   }
 
@@ -241,6 +242,38 @@ async function prepareOutputDirectory(outputDir, sourceDirectory, dryRun) {
     await fs.rm(outputDir, { recursive: true, force: true });
   }
   await fs.mkdir(outputDir, { recursive: true });
+}
+
+async function validateArtifacts(artifacts, version, dryRun) {
+  if (dryRun) return "not-verified-dry-run";
+  const executables = artifacts.filter((file) => path.basename(file).toLowerCase() === "lattice.exe");
+  if (!artifacts.some((file) => path.basename(file).toLowerCase() !== "lattice.exe")) {
+    throw new Error(`No installer matching version ${version}; refusing to publish incomplete artifacts.`);
+  }
+  for (const executable of executables) {
+    if (process.platform !== "win32") {
+      throw new Error("Windows lattice.exe version verification requires Windows.");
+    }
+    const actualVersion = await new Promise((resolve, reject) => {
+      const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+        "$ErrorActionPreference = 'Stop'; (Get-Item -LiteralPath $env:LATTICE_RELEASE_VERIFY_EXE).VersionInfo.ProductVersion"], {
+        shell: false,
+        windowsHide: true,
+        env: { ...process.env, LATTICE_RELEASE_VERIFY_EXE: executable },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.on("error", reject);
+      child.on("exit", (code) => code === 0 ? resolve(stdout.trim()) : reject(new Error(`PE version verification failed: ${stderr.trim()}`)));
+    });
+    if (actualVersion !== version) {
+      throw new Error(`lattice.exe ProductVersion mismatch: expected ${version}, got ${actualVersion || "missing"}.`);
+    }
+  }
+  return "verified";
 }
 
 async function sha256(filePath) {
@@ -362,6 +395,8 @@ async function main() {
     throw new Error(`No release artifacts found in ${artifactsRoot}`);
   }
 
+  const verification = await validateArtifacts(discoveredArtifacts, version, options.dryRun);
+
   const outputDir = options.outputDir
     ? path.resolve(ROOT_DIR, options.outputDir)
     : path.join(DEFAULT_RELEASES_DIR, `v${version}`);
@@ -389,6 +424,7 @@ async function main() {
           sha256: artifact.sha256,
         })),
         dryRun: options.dryRun,
+        verification,
         metadata: options.dryRun
           ? metadata
           : {

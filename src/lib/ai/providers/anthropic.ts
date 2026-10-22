@@ -1,5 +1,6 @@
 import type { AiProvider, AiModel, AiMessage, AiGenerateOptions, AiGenerateResult, AiStreamChunk } from '../types';
 import { getMessageText } from '../types';
+import { parseSseJson, extractProviderText } from '../provider-response';
 import { getApiKey as getKey, getBaseUrl as getUrl } from '../key-storage';
 
 const MODELS: AiModel[] = [
@@ -30,14 +31,18 @@ function buildAnthropicBody(messages: AiMessage[], options?: AiGenerateOptions, 
     }
   }
 
-  // Ensure messages alternate user/assistant; Anthropic requires first message to be user
-  if (filtered.length === 0) {
-    filtered.push({ role: 'user', content: '(empty)' });
-  }
+  // Anthropic requires the first non-system message to be from the user.
+  if (filtered[0]?.role !== 'user') filtered.unshift({ role: 'user', content: '' });
+  const normalized = filtered.reduce<Array<{ role: string; content: string }>>((result, message) => {
+    const previous = result[result.length - 1];
+    if (previous?.role === message.role) previous.content = `${previous.content}\n\n${message.content}`;
+    else result.push(message);
+    return result;
+  }, []);
 
   const body: Record<string, unknown> = {
     model: options?.model ?? 'claude-sonnet-4-5-20250929',
-    messages: filtered,
+    messages: normalized,
     max_tokens: options?.maxTokens ?? 4096,
     temperature: options?.temperature ?? 0.7,
   };
@@ -48,39 +53,24 @@ function buildAnthropicBody(messages: AiMessage[], options?: AiGenerateOptions, 
 }
 
 async function* parseAnthropicSSE(response: Response): AsyncIterable<AiStreamChunk> {
-  const reader = response.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('data: ')) continue;
-        const data = trimmed.slice(6);
-        try {
-          const event = JSON.parse(data);
-          if (event.type === 'content_block_delta' && event.delta?.text) {
-            yield { type: 'text', text: event.delta.text };
-          } else if (event.type === 'message_stop') {
-            yield { type: 'done' };
-            return;
-          } else if (event.type === 'error') {
-            yield { type: 'error', error: event.error?.message ?? 'Unknown error' };
-            return;
-          }
-        } catch { /* skip */ }
+    for await (const event of parseSseJson(response)) {
+      const type = (event as { type?: unknown }).type;
+      if (type === 'content_block_delta') {
+        const text = extractProviderText((event as { delta?: { text?: unknown } }).delta?.text);
+        if (text) yield { type: 'text', text };
+      } else if (type === 'message_stop') {
+        yield { type: 'done' };
+        return;
+      } else if (type === 'error') {
+        const message = (event as { error?: { message?: unknown } }).error?.message;
+        yield { type: 'error', error: typeof message === 'string' ? message : 'Unknown provider error' };
+        return;
       }
     }
-  } finally {
-    reader.releaseLock();
+  } catch (error) {
+    yield { type: 'error', error: error instanceof Error ? error.message : String(error) };
+    return;
   }
   yield { type: 'done' };
 }

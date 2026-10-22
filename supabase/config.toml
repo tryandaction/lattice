@@ -1,0 +1,5 @@
+project_id = "lattice-cloud"
+
+[functions.shared-library-api]
+verify_jwt = true
+entrypoint = "./functions/shared-library-api/index.js"

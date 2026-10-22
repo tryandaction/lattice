@@ -1,0 +1,569 @@
+{
+  "source": "Optimizing Rydberg Gates for Logical-Qubit Performance",
+  "notes": [
+    "Small text-item excerpts extracted by PDF.js from pages 3, 4, 8, and 9; original transforms retained.",
+    "The trade-off sentence crosses pages 8 and 9. The page-4 delta glyph extracts as U+0006."
+  ],
+  "viewport": {
+    "width": 612,
+    "height": 792,
+    "transform": [
+      1,
+      0,
+      0,
+      -1,
+      0,
+      792
+    ]
+  },
+  "pages": [
+    {
+      "page": 3,
+      "items": [
+        {
+          "str": "We say that the pulse is robust against amplitude devi-",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            325.2700500000001,
+            618.70855
+          ],
+          "width": 234.5174999999999,
+          "height": 10.5,
+          "hasEOL": true,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": "ations if",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            314.7763500000001,
+            606.559
+          ],
+          "width": 34.40744999999998,
+          "height": 10.5,
+          "hasEOL": false,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": " ",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            349.1838,
+            606.559
+          ],
+          "width": 0.2777000000000087,
+          "height": 0,
+          "hasEOL": false,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": "|",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            352.0996500000001,
+            606.559
+          ],
+          "width": 3.003,
+          "height": 10.5,
+          "hasEOL": false,
+          "fontName": "g_d0_f4",
+          "dir": "ltr"
+        },
+        {
+          "str": "ψ",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            355.1058000000001,
+            606.559
+          ],
+          "width": 7.3919999999999995,
+          "height": 10.5,
+          "hasEOL": false,
+          "fontName": "g_d0_f6",
+          "dir": "ltr"
+        },
+        {
+          "str": " ",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            362.4978000000001,
+            606.559
+          ],
+          "width": 0.1279183673469239,
+          "height": 0,
+          "hasEOL": false,
+          "fontName": "g_d0_f6",
+          "dir": "ltr"
+        },
+        {
+          "str": "(",
+          "transform": [
+            7.35,
+            0,
+            0,
+            7.35,
+            363.438,
+            610.365
+          ],
+          "width": 2.7415499999999997,
+          "height": 7.35,
+          "hasEOL": false,
+          "fontName": "g_d0_f6",
+          "dir": "ltr"
+        },
+        {
+          "str": "1",
+          "transform": [
+            7.35,
+            0,
+            0,
+            7.35,
+            366.183225,
+            610.365
+          ],
+          "width": 3.675,
+          "height": 7.35,
+          "hasEOL": false,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": ")",
+          "transform": [
+            7.35,
+            0,
+            0,
+            7.35,
+            369.855285,
+            610.365
+          ],
+          "width": 2.7415499999999997,
+          "height": 7.35,
+          "hasEOL": false,
+          "fontName": "g_d0_f6",
+          "dir": "ltr"
+        },
+        {
+          "str": "",
+          "transform": [
+            7.35,
+            0,
+            0,
+            7.35,
+            362.493525,
+            603.731625
+          ],
+          "width": 0,
+          "height": 0,
+          "hasEOL": true,
+          "fontName": "g_d0_f5",
+          "dir": "ltr"
+        },
+        {
+          "str": "q",
+          "transform": [
+            7.35,
+            0,
+            0,
+            7.35,
+            362.493525,
+            603.731625
+          ],
+          "width": 3.675,
+          "height": 7.35,
+          "hasEOL": false,
+          "fontName": "g_d0_f5",
+          "dir": "ltr"
+        },
+        {
+          "str": " ",
+          "transform": [
+            7.35,
+            0,
+            0,
+            7.35,
+            366.168525,
+            603.731625
+          ],
+          "width": 0.9423775510204135,
+          "height": 0,
+          "hasEOL": false,
+          "fontName": "g_d0_f5",
+          "dir": "ltr"
+        },
+        {
+          "str": "〉 =",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            373.095,
+            606.558
+          ],
+          "width": 14.958300000000012,
+          "height": 10.5,
+          "hasEOL": false,
+          "fontName": "g_d0_f4",
+          "dir": "ltr"
+        },
+        {
+          "str": " ",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            388.05330000000004,
+            606.558
+          ],
+          "width": 0.27859999999999935,
+          "height": 0,
+          "hasEOL": false,
+          "fontName": "g_d0_f4",
+          "dir": "ltr"
+        },
+        {
+          "str": "0 for all",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            390.97860000000003,
+            606.558
+          ],
+          "width": 33.81524999999999,
+          "height": 10.5,
+          "hasEOL": false,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": " ",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            424.79385,
+            606.558
+          ],
+          "width": 0.27749999999999936,
+          "height": 0,
+          "hasEOL": false,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": "q",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            427.7076,
+            606.558
+          ],
+          "width": 5.25,
+          "height": 10.5,
+          "hasEOL": false,
+          "fontName": "g_d0_f5",
+          "dir": "ltr"
+        },
+        {
+          "str": ", such that the leading term of",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            432.95445,
+            606.558
+          ],
+          "width": 126.85259999999985,
+          "height": 10.5,
+          "hasEOL": true,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        }
+      ]
+    },
+    {
+      "page": 4,
+      "items": [
+        {
+          "str": "we demonstrate analytically that no pulse exists for which",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            52.191299999999984,
+            441.12955000000005
+          ],
+          "width": 245.02484999999976,
+          "height": 10.5,
+          "hasEOL": true,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": "the implemented gate is first-order insensitive to",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            52.191299999999984,
+            428.97055000000006
+          ],
+          "width": 209.72804999999985,
+          "height": 10.5,
+          "hasEOL": false,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": " ",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            261.9193499999998,
+            428.97055000000006
+          ],
+          "width": 0.35920000000001956,
+          "height": 0,
+          "hasEOL": false,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": "\u0006",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            265.69095,
+            428.97055000000006
+          ],
+          "width": 8.442,
+          "height": 10.5,
+          "hasEOL": false,
+          "fontName": "g_d0_f6",
+          "dir": "ltr"
+        },
+        {
+          "str": "1",
+          "transform": [
+            7.35,
+            0,
+            0,
+            7.35,
+            274.131,
+            427.3951
+          ],
+          "width": 3.675,
+          "height": 7.35,
+          "hasEOL": false,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": " ",
+          "transform": [
+            7.35,
+            0,
+            0,
+            7.35,
+            277.806,
+            427.3951
+          ],
+          "width": 0.4060000000000032,
+          "height": 0,
+          "hasEOL": false,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": "and",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            282.069,
+            428.97
+          ],
+          "width": 15.157800000000032,
+          "height": 10.5,
+          "hasEOL": false,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": "",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            52.19145,
+            416.82045000000005
+          ],
+          "width": 0,
+          "height": 0,
+          "hasEOL": true,
+          "fontName": "g_d0_f6",
+          "dir": "ltr"
+        },
+        {
+          "str": "\u0006",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            52.19145,
+            416.82045000000005
+          ],
+          "width": 8.442,
+          "height": 10.5,
+          "hasEOL": false,
+          "fontName": "g_d0_f6",
+          "dir": "ltr"
+        },
+        {
+          "str": "2",
+          "transform": [
+            7.35,
+            0,
+            0,
+            7.35,
+            60.633,
+            415.2451
+          ],
+          "width": 3.675,
+          "height": 7.35,
+          "hasEOL": false,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": " ",
+          "transform": [
+            7.35,
+            0,
+            0,
+            7.35,
+            64.308,
+            415.2451
+          ],
+          "width": 0.047714285714284814,
+          "height": 0,
+          "hasEOL": false,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        }
+      ]
+    },
+    {
+      "page": 8,
+      "items": [
+        {
+          "str": "tional subspace. This is expected because the robust pulses",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            315.1629000000002,
+            88.89699999999999
+          ],
+          "width": 245.00070000000028,
+          "height": 10.5,
+          "hasEOL": true,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": "effectively trade sensitivity to imperfections for Rydberg",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            315.1629000000002,
+            76.738
+          ],
+          "width": 244.99124999999992,
+          "height": 10.5,
+          "hasEOL": true,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        }
+      ]
+    },
+    {
+      "page": 9,
+      "items": [
+        {
+          "str": "decay. Note that, again, the switch and the wait method",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            51.804,
+            405.534
+          ],
+          "width": 245.0227499999999,
+          "height": 10.5,
+          "hasEOL": true,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        },
+        {
+          "str": "give identical results in Figs. 6(a) and 6(b). For the rest of",
+          "transform": [
+            10.5,
+            0,
+            0,
+            10.5,
+            51.804,
+            393.38445
+          ],
+          "width": 245.02904999999984,
+          "height": 10.5,
+          "hasEOL": true,
+          "fontName": "g_d0_f1",
+          "dir": "ltr"
+        }
+      ]
+    }
+  ]
+}

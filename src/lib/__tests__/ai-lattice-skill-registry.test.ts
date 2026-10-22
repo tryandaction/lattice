@@ -12,7 +12,7 @@ import {
 } from '@/lib/ai/lattice-skills/operation-contract';
 
 describe('lattice skill registry', () => {
-  it('lists current-thread skills without exposing PDF-reserved skills by default', () => {
+  it('lists current-thread skills including the executable reviewed PDF child skill', () => {
     const skills = listLatticeSkills();
 
     expect(skills.map((skill) => skill.id)).toEqual([
@@ -21,9 +21,10 @@ describe('lattice skill registry', () => {
       'notebook-analysis',
       'coding-change-review',
       'knowledge-organization',
+      'pdf-item-workspace',
       'pdf-annotation',
     ]);
-    expect(skills.filter((skill) => skill.pdfScoped).map((skill) => skill.id)).toEqual(['pdf-annotation']);
+    expect(skills.filter((skill) => skill.pdfScoped).map((skill) => skill.id)).toEqual(['pdf-item-workspace', 'pdf-annotation']);
   });
 
   it('maps workflows to the relevant Lattice skills and owners', () => {
@@ -77,8 +78,8 @@ describe('lattice skill registry', () => {
       writesWorkspace: true,
     });
     expect(getLatticeSkill('pdf-item-workspace')).toMatchObject({
-      owner: 'pdf-thread',
-      status: 'reserved',
+      owner: 'ai-agent-thread',
+      status: 'ready',
       pdfScoped: true,
       requiredCapabilities: expect.arrayContaining(['lattice_create_pdf_item']),
       operationContractIds: ['path-identity', 'pdf-item-workspace'],
@@ -96,8 +97,8 @@ describe('lattice skill registry', () => {
       'Explicit create-mode writeback must not overwrite an existing file',
     );
     expect(getLatticeOperationContract('pdf-item-workspace')).toMatchObject({
-      owner: 'pdf-thread',
-      status: 'reserved',
+      owner: 'ai-agent-thread',
+      status: 'approval-gated',
       requiredCapabilities: expect.arrayContaining(['lattice_create_pdf_item']),
     });
     expect(getLatticeOperationContract('pdf-item-workspace').rules.join('\n')).toContain(
@@ -135,12 +136,13 @@ describe('lattice skill registry', () => {
   it('summarizes readiness for P6 planning without enabling silent writes', () => {
     const readiness = buildLatticeSkillReadiness();
 
-    expect(readiness.summary).toBe('6 current-thread skills / 1 PDF-reserved skills / 5 approval-gated skills');
+    expect(readiness.summary).toBe('7 current-thread skills / 0 PDF-reserved skills / 6 approval-gated skills');
     expect(readiness.approvalGated.map((skill) => skill.id)).toEqual([
       'note-taking',
       'notebook-analysis',
       'coding-change-review',
       'knowledge-organization',
+      'pdf-item-workspace',
       'pdf-annotation',
     ]);
     expect(readiness.readOnly.map((skill) => skill.id)).toEqual(['path-identity']);

@@ -166,13 +166,18 @@ async function generateUniqueCopyName(
   originalName: string,
   kind: EntryKind
 ): Promise<string> {
+  const sanitizedOriginal = sanitizeFileName(originalName) || (kind === "file" ? "Untitled" : "New Folder");
+  if (!(await entryExists(parentHandle, sanitizedOriginal, kind))) {
+    return sanitizedOriginal;
+  }
+
   if (kind === "file") {
-    const { baseName, extension } = splitFileName(originalName);
+    const { baseName, extension } = splitFileName(sanitizedOriginal);
     const copyBaseName = `${baseName || "Untitled"} copy`;
     return generateUniqueName(parentHandle, copyBaseName, extension);
   }
 
-  return generateUniqueDirectoryName(parentHandle, `${originalName || "New Folder"} copy`);
+  return generateUniqueDirectoryName(parentHandle, `${sanitizedOriginal} copy`);
 }
 
 async function entryExists(

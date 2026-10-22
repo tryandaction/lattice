@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAiResultViewModel } from "@/lib/ai/result-view-model";
+import { buildAiResultViewModel, evidenceDisplayLabel } from "@/lib/ai/result-view-model";
 import type { ChatMessage } from "@/stores/ai-chat-store";
 
 function createAssistantMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -30,6 +30,20 @@ function createAssistantMessage(overrides: Partial<ChatMessage> = {}): ChatMessa
 }
 
 describe("AiResultViewModel", () => {
+  it("renders the entire edited Markdown instead of reconstructing old Agent sections", () => {
+    const content = "## Conclusion\n\nEdited **answer**.\n---\n## Evidence\n\nThe user's extra paragraph.";
+    const message = createAssistantMessage({
+      content,
+      editedAt: 10,
+      agentResult: { sessionId: "session-original", planSteps: [{ title: "Original plan", status: "done" }] },
+    });
+    const model = buildAiResultViewModel(message);
+    expect(model.sections[0].content).toBe(content);
+    expect(model.hasStructuredSections).toBe(false);
+    expect(model.citationContracts).toHaveLength(1);
+    expect(message.agentResult?.sessionId).toBe("session-original");
+  });
+
   it("creates fallback sections when response is not structured", () => {
     const model = buildAiResultViewModel(createAssistantMessage({
       content: "A plain assistant answer",
@@ -63,6 +77,109 @@ describe("AiResultViewModel", () => {
       "evidence",
       "next_actions",
     ]);
+  });
+
+  it("keeps the direct answer before teaching sections", () => {
+    const model = buildAiResultViewModel(createAssistantMessage({
+      content: [
+        "The two cameras provide independent measurements.",
+        "",
+        "## Core idea",
+        "The comparison separates systematic drift from random noise.",
+        "",
+        "## Steps",
+        "1. Calibrate each camera.",
+        "2. Compare their shared observations.",
+        "",
+        "## Example",
+        "If one camera changes while the other remains stable, inspect its calibration.",
+      ].join("\n"),
+    }));
+
+    expect(model.sections.map((section) => section.kind)).toEqual([
+      "conclusion",
+      "concept",
+      "steps",
+      "example",
+      "evidence",
+      "next_actions",
+    ]);
+    expect(model.sections[0]?.content).toContain("independent measurements");
+  });
+
+  it("deduplicates evidence and uses a basename label for the chat entry point", () => {
+    const model = buildAiResultViewModel(createAssistantMessage({
+      evidenceRefs: [
+        { kind: "heading", label: "notes/physics/experiment.md#Methods", locator: "notes/physics/experiment.md#Methods" },
+        { kind: "heading", label: "notes/physics/experiment.md#Methods", locator: "notes/physics/experiment.md#Methods" },
+      ],
+    }));
+
+    expect(model.evidenceRefs).toHaveLength(1);
+    expect(evidenceDisplayLabel(model.evidenceRefs[0]!)).toBe("experiment.md#Methods");
+    expect(model.sections.find((section) => section.kind === "evidence")?.content).not.toContain("notes/physics");
+  });
+
+  it("shows PDF page and quote text in the compact evidence label", () => {
+    expect(evidenceDisplayLabel({
+      kind: "pdf_page",
+      label: "papers/logical-qubits.pdf page 2",
+      locator: "papers/logical-qubits.pdf#page=2",
+      preview: "The 4,2,2 code detects a single erasure at a known location.",
+      anchor: {
+        page: 2,
+        snippet: "The 4,2,2 code detects a single erasure at a known location.",
+      },
+    })).toBe("logical-qubits.pdf · p.2 · The 4,2,2 code detects a single erasure at a known location.");
+  });
+
+  it("keeps distinct PDF page citations while deduplicating exact repeats", () => {
+    const pageTwo = {
+      kind: "pdf_page" as const,
+      label: "paper.pdf",
+      locator: "papers/paper.pdf",
+      anchor: { page: 2, snippet: "Page two evidence." },
+    };
+    const model = buildAiResultViewModel(createAssistantMessage({
+      evidenceRefs: [
+        pageTwo,
+        { ...pageTwo },
+        { ...pageTwo, anchor: { page: 3, snippet: "Page three evidence." } },
+      ],
+    }));
+
+    expect(model.evidenceRefs).toHaveLength(2);
+    expect(model.evidenceRefs.map((ref) => ref.anchor?.page)).toEqual([2, 3]);
+  });
+
+  it("exposes one source group for twelve PDF passages", () => {
+    const model = buildAiResultViewModel(createAssistantMessage({
+      evidenceRefs: Array.from({ length: 12 }, (_, index) => ({
+        kind: "pdf_page" as const,
+        label: "papers/quantum.pdf",
+        locator: `papers/quantum.pdf#page=${index + 1}`,
+        preview: `Passage ${index + 1}`,
+        anchor: { page: index + 1, snippet: `Passage ${index + 1}` },
+      })),
+    }));
+
+    expect(model.sourceCount).toBe(1);
+    expect(model.citationContracts).toHaveLength(12);
+    expect(model.sections.find((section) => section.kind === "evidence")?.content)
+      .toContain("1 source");
+    expect(model.sections.find((section) => section.kind === "evidence")?.content)
+      .toContain("12 passages");
+  });
+
+  it("shows an explicit retry message when a structured payload has no answer", () => {
+    const model = buildAiResultViewModel(createAssistantMessage({
+      content: "## Evidence\n\n- Source only\n\n## Next Actions\n\n- Save draft",
+    }));
+
+    expect(model.sections[0]).toMatchObject({
+      kind: "conclusion",
+      content: expect.stringContaining("未返回可展示的直接回答"),
+    });
   });
 
   it("surfaces agent recovery summary in the run section", () => {

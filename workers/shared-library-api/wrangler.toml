@@ -1,0 +1,12 @@
+name = "lattice-shared-library-api"
+main = "src/index.ts"
+compatibility_date = "2026-08-30"
+
+[vars]
+# Set ALLOWED_ORIGINS in the dashboard or an environment-specific vars file.
+# SUPABASE_URL and SUPABASE_ANON_KEY must be configured as secrets/vars.
+
+# Enable only after the production bucket policy and lifecycle rules are ready:
+# [[r2_buckets]]
+# binding = "LIBRARY_BLOBS"
+# bucket_name = "lattice-shared-library"

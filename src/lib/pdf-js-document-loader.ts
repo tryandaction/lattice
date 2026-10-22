@@ -41,14 +41,30 @@ export async function loadPdfJsDocument(input: LoadPdfJsDocumentInput): Promise<
       loadingTask.onProgress = input.onProgress;
     }
 
-    return await withTimeout(
+    const document = await withTimeout(
       loadingTask.promise,
       input.timeoutMs ?? 20000,
       input.label,
     );
+    // PDF.js only destroys workers it creates itself. This named worker is
+    // explicitly supplied, so the returned document must release it as well.
+    const destroyDocument = document.destroy.bind(document);
+    let destroyPromise: Promise<void> | null = null;
+    document.destroy = () => {
+      if (!destroyPromise) {
+        destroyPromise = destroyDocument().finally(() => worker.destroy());
+      }
+      return destroyPromise;
+    };
+    return document;
   } catch (error) {
-    void loadingTask?.destroy();
-    worker.destroy();
+    try {
+      await loadingTask?.destroy();
+    } catch {
+      // Preserve the original load failure if teardown also fails.
+    } finally {
+      worker.destroy();
+    }
     throw error;
   }
 }

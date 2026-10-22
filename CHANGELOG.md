@@ -5,33 +5,239 @@ All notable changes to Lattice will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.1.4] - 2026-10-22
+
+### Fixed
+- Local whole-directory requests use durable file discovery and per-document checkpoints instead of capturing the entire folder within one 100-file/32MB aggregate budget. Failed, unsupported and empty files remain visible as gaps; remaining readable files continue.
+- Whole-collection requests and natural continuations preserve the original folder scope across file changes, cancellation and reopening. Path-based verification queues prevent budgeted resumes from repeatedly processing an old prefix.
+- Hierarchical summaries retain all completed batches while respecting input budgets; cached summaries validate their dependencies and coverage. Multi-PDF summaries cannot be attached to a single PDF inferred from the final citation subset.
+- Browser Agent checkpoints use transactional IndexedDB with safe legacy migration. Unfinished sessions survive history trimming, and delayed saves cannot overwrite newly hydrated history.
+- Directory progress distinguishes discovered, analyzed, pending, failed and empty files. Narrow AI controls and local-assistant connection labels follow the selected language.
+
+Delivery validation is recorded separately; this entry does not claim production cloud recovery or real-model quality acceptance.
+
+## [3.1.3] - 2026-10-21
+
+### Fixed
+- AI whole-file references finish without requiring a page or heading. The caret is restored synchronously after insertion, and whitespace ends mention editing so typing a question does not reopen the picker or consume Enter.
+- Reserved characters and literal percent filenames decode once; incomplete escape input remains editable without crashing the chat.
+- Folder filtering, root navigation and typed subpaths remain consistent. Missing explicit relative directories, including quoted paths, report the missing folder before scanning the workspace or substituting an earlier paper.
+
+## [3.1.2] - 2026-10-21
+
+### Fixed
+- Local relative folder paths with spaces and Chinese request suffixes resolve directly through the authorized directory handle. Explicit `@folder` selections remain limited to the chosen subtree, reject traversal, and avoid scanning unrelated workspace files.
+- The AI `@` browser anchors to the composer, adapts to resize and scroll, and supports nested folder browsing. Choosing a folder opens it; a separate action references the current folder. Enter/Tab is handled before composer submission, and picker labels follow the app language.
+- Folder discovery hides workspace rules, credentials, private keys, and unsupported file types.
+- All three PDF formula OCR entry points verify that captured pixels match the loaded file revision before and after inference; stale screenshots cannot be saved against a newer PDF.
+- Desktop file snapshots preserve the filesystem modification time, so repeated reads of an unchanged PDF keep a stable revision while files changed during a read are rejected.
+- Cloud operations validate versioned identity reauthorization, current UTC vendor periods, complete vendor coverage, and per-vendor freshness. The offline preflight does not equate configuration presence with production deployment.
+
+## [3.1.1] - 2026-10-21
+
+### Improved
+- Formula extraction now uses the pinned Pix2Text-MFR-1.5 ONNX model on CPU, with a verified managed runtime, preserved source image, original prediction and editable LaTeX. Synthetic structural evaluation improved root, matrix and multi-line recognition, while ambiguous typography and malformed 3x3 output remain visible for user review.
+- PDF formula capture supports an independent high-resolution page-region render, survives zoom/device scale changes, and keeps OCR crops separate from exact annotation geometry. Truncated recognition cannot be silently accepted after editing and undo.
+- Formula markup and PDF formula previews share strict KaTeX safety limits and reject untrusted external resources.
+
+### Fixed
+- Desktop file snapshots retain the filesystem's actual modification time. Plugin revision checks no longer reload entire PDFs or reject unchanged files as changed, while files altered during a read are still rejected.
+- Switching files during formula OCR no longer lets a stale scan lock the new document's action. Managed runtime install/cancel acknowledgements remain bound to the active request.
+- Localized formula-selection diagnostics no longer mix English with Chinese UI.
+- PDF region resizing, rotation and device-scale handling now retain the expected crop and do not mutate the displayed page canvas.
+
+## [3.1.0] - 2026-10-05
+
+### Local desktop refresh — 2026-10-20
+- Web pages remain outside the local-file tab rail and open from a separate Web sources index; local `.html` files remain previewable and editable.
+- A committed address-bar draft now follows the browser's final URL after HTTP redirects. Native desktop navigation keeps the WebView2 address state synchronized without re-request loops, and closing a web source returns cleanly to the workbench.
+- Desktop and web-view transitions are covered with a synthetic localhost site; local HTML preview/source/save, redirects, back/forward, source-index restore, HTTP errors and close cleanup passed. Existing settings were preserved during desktop installation.
+- Delivery evidence: `docs/tests/2026-10-20-web-navigation-quality.md`.
+
+### Local desktop refresh — 2026-10-12
+- Shared libraries use the same Explorer, tabs, split panes, document viewers and save workflow as local folders. Source controls remain in the sidebar; connection and membership settings open on demand.
+- Local files and folders can be uploaded from their context menu. PDF uploads include associated annotations and research children, preserving source provenance and binding annotations to the new cloud version.
+- Shared-library nicknames appear on PDF annotations. Cloud PDF children can be opened and created from the existing PDF item panel; Markdown and HTML resolve relative cloud assets.
+- Cloud cancellation no longer marks the connection offline. Permission changes disable stale editors; asynchronous saves preserve newer edits, and session restoration cannot overwrite an edited draft.
+- Conversation source selection retains prior documents after tab switches and resolves named files across authorized folders. Native Codex and Claude bridges use persistent sessions and bounded Lattice source tools; actual Codex tool execution and memory were verified. Claude's configured upstream model remains unavailable.
+
+### Added
+- Five workspace skins with light/dark variants, persistent appearance preferences, reversible previews, editable user themes, validated JSON import/export and AI design templates.
+- A unified plugin center with runtime status, installation, permissions, settings, context commands and diagnostics.
+
+### Improved
+- Formula extraction uses original PDF glyph geometry and painted fraction rules, with complete rendering, source location, editable LaTeX, copying and export. Scans support scope, progress, cancellation and stale-source protection.
+- Plugin activation failures roll back registered resources, and disabling cleans commands, panels and listeners. Package replacement requires fresh authorization and validates storage commit boundaries.
+- Appearance applies through shared semantic tokens across document, code, AI and plugin surfaces. Settings support narrow windows and reliable dismissal; saved skins are restored at startup.
+
+### Fixed
+- Plugin Markdown panels display their own live packaged images without permitting unrelated Blob resources or Blob links; unload revokes image authorization.
+- Combined PDF annotation and Markdown requests retain an independent explanation draft when annotation validation fails, with explicit partial/review status and an inline document-save entry point. Typed JSON envelopes are parsed without weakening source verification.
+- Document retries retain the original session, workspace and source after tab switches. Root-prefixed explorer paths resolve against authorized workspace handles; ambiguous same-name folders and permission errors are rejected.
+- Provider 429 handling honors Retry-After/reset headers and shared cooldowns across retries; explicit quota/spend exhaustion stops retrying. Error-body inspection is bounded and cancellable.
+- PDF sidebar comment editing receives focus after editor initialization, exposes a keyboard-accessible edit action, and opens the latest saved comment.
+- PDF text selection preserves superscripts at PDF.js whitespace boundaries and keeps formula numbers, columns and separated paragraphs in distinct highlight rectangles. Cross-page selections are validated per page, saved as one durable batch, and preserve normalized preview coordinates while zooming.
+- Explicit Markdown child-document requests save through the original PDF item manifest, retain moved-item associations and refresh virtual child nodes. A post-write tree refresh failure cannot reclassify a saved file as unsaved.
+- Long AI requests use separate first-response, idle and overall deadlines in browser and desktop transport. Live output is no longer cut off by the former 30-second total timeout; phase, elapsed time and retry progress remain visible.
+- Detailed document Chat automatically reads the full authorized source in checkpointed batches. Follow-up questions reuse verified reading for the same file versions, and closing a source tab retains its conversation identity.
+- Failed and stopped turns do not contaminate subsequent model history. Partial drafts remain visible with a working retry action; task status follows the current conversation and request.
+- Streaming drafts are periodically checkpointed and restored as interrupted after a crash. Missing completion events or malformed stream frames cannot silently finalize partial answers. Explicit document mentions participate in full-document Chat routing.
+- Per-task output budgets and configured model output ceilings prevent oversized generation requests. Truncated final synthesis is repaired or reported as incomplete, and conversational answers keep internal execution traces in the inspector.
+- PDF/Markdown citations retain exact source text, support .mdx and .markdown, and report success only when the quoted text has drawable highlight geometry. Chat and Agent repair invalid citations once before finalizing an answer.
+- Agent generation retries receive independent deadlines; cancelled desktop JSON requests release their native connection immediately. Retryable gateway error bodies cannot hold up a retry indefinitely.
+- Document reading accepts one explicitly fenced JSON result with surrounding commentary while retaining source and quote checks. Truncated responses trigger a compact regeneration; repeated invalid batches are not presented as successful zero-progress pauses.
+- Responses and Gemini standard text blocks are decoded without exposing reasoning blocks. Output-limit termination is retained for document validation and reported for incomplete streaming answers.
+- Stopping an Agent before its first answer now persists a visible stopped status. Late results remain blocked and cancelled drafts stay out of subsequent model context.
+
+## [3.0.0] - 2026-09-20
 
 ### Changed
+- Targeted inline citations open the actual quoted passage while preserving the conversation. Supplied context pages are no longer automatically presented as cited sources.
+- Research workflows are selectable in the Agent composer, with persistent note language, style, sections, quotation policy, and custom templates passed to the existing runner.
+- Local HTML previews resolve workspace images and stylesheets. Web previews offer an isolated direct frame and external-browser action when snapshot fetching fails.
+
+### Fixed
+- AI citations support cross-file PDF/Markdown original passages and keyword-sized or wrapped-sentence red dashed frames. Bare page/file links cannot borrow an unrelated first quote. Unresolved or ambiguous quotes are reported instead of using partial matches.
+- Agent requests use the raw configured model ID. Failed generation, empty/echoed output, and invalid annotation proposals cannot become completed answers or writes. Cross-file material and note configuration feed actual synthesis.
+- PDF annotation proposals now support review, durable save confirmation and protected undo. Same-name paths and multiple panes cannot consume the same AI operation; failed AI writes retain earlier pending manual edits.
+- Saving a PDF reading position no longer creates an empty text content cache; Markdown-to-PDF round trips and asynchronously initialized Markdown links work correctly.
+- PDF evidence keeps page, quote and geometry through the shared citation/navigation contract, including absolute Windows workspace paths.
+- Encoded path and quote delimiters are decoded exactly once; invalid numeric locators are rejected. Markdown quotes can span source lines.
+- Superseded PDF quote lookups and search retries cannot overwrite newer navigation.
+- PDF mouse previews, saved highlights and boundary adjustments now share measured text ranges and normalized line geometry. Repeated boundary events cannot restore old rectangles after a multi-line selection is shortened.
+- Markdown renderer component identities and code block keys stay stable through asynchronous math loading.
+- Unavailable scheduled execution is explicitly disabled instead of accepting tasks that cannot run.
+
+### Release verification
+- Local candidate validation and packaging are tracked in `docs/superpowers/plans/2026-09-18-v3-research-workbench.md`.
+- Live provider calls, installation on another Windows machine, and unrestricted browser/VS Code parity are not implied by local checks.
+
+## [2.3.2] - 2026-08-31
+
+### Changed
+- Added profile-based AI provider configuration with independently stored
+  credentials, endpoint, protocol, model, timeout, retry, and privacy
+  settings. Presets now cover OpenAI Chat Completions and Responses,
+  Anthropic Messages, Google Gemini, Ollama, OpenRouter, Groq, Together AI,
+  Fireworks AI, SiliconFlow, Azure OpenAI, and custom OpenAI-compatible APIs.
+- Added an explicit Anthropic Messages protocol selector and custom
+  Anthropic-compatible connection preset, including `/v1/messages` routing
+  for gateways whose base URL already contains `/v1`.
+- Added persistent multi-model catalogs per AI connection. Users can fetch
+  provider models, add or remove model IDs, edit display names and token
+  limits, and choose a default model; existing single-model connections are
+  migrated without losing their configured model.
+- Added protocol-aware request, streaming, model-list, timeout, and structured
+  connection-diagnostic handling so a profile can be selected without
+  changing legacy provider settings. MCP settings now validate local stdio and
+  HTTPS Streamable HTTP server configurations with explicit per-server tool
+  approval modes; remote MCP tools are not auto-executed.
+- Made the Windows Code OSS Workbench self-contained by packaging pinned
+  code-server 4.128.0, Code OSS 1.128.0, and Node 22.18.0 in both NSIS and MSI.
+  Production no longer depends on a developer build directory, a separately
+  installed VS Code, or a first-use Server download.
+- Import local VS Code extensions into the isolated Lattice profile before the
+  Workbench starts, so Code OSS discovers them during normal Extension Host
+  initialization instead of after startup.
+- Use Node's built-in Windows system certificate store for new Workbench
+  profiles and avoid the native certificate addon that can stall the bundled
+  Node runtime. Existing profile settings remain untouched.
+- Made TypeScript desktop-resource preparation content-aware so unchanged
+  files keep their timestamps and do not invalidate every Tauri release build.
+- Reworked editable notebooks into a flatter VS Code-style surface with a
+  fixed Run All/stop/restart/runtime/kernel toolbar, visible interpreter state,
+  run gutters and execution counts, and aligned editor/problem/output regions.
+  Active notebook code cells now synchronize as versioned virtual documents so
+  supported imported language providers can supply completion, hover, and
+  diagnostics in notebooks.
+- Replaced misleading extension `skipped` rows with runnable, on-demand,
+  active, failed, and metadata-only presentation. Runnable extensions can be
+  activated or retried directly, while an individual activation failure stays
+  scoped to that extension instead of poisoning the whole Host status.
+- Added a versioned VS Code extension language-provider bridge for Completion,
+  Hover, Definition, Diagnostics, References, Formatting, current-file Rename,
+  and current-file CodeAction/Quick Fix in Lattice's native CodeMirror editor.
+  Matching language extensions warm asynchronously so opening code does not
+  wait for plugin activation; stale, timed-out, failing, cross-workspace, and
+  cross-file edit results are rejected safely.
+- Added native local Node program debugging for imported `node` / `pwa-node`
+  launch configurations through pinned Microsoft vscode-js-debug 1.117.0,
+  including breakpoints, stepping, stack/scopes, variables, evaluation, output,
+  and controlled root-target session binding.
+- Replaced the simulated VS Code extension surface with the real bundled Code OSS Web Workbench.
+- The VS Code activity panel now manages a loopback-only, token-protected Workbench process and opens the authenticated Workbench in Lattice's main native WebView tab.
+- Code OSS now opens the active Lattice workspace and imports the user's standard `.vscode/extensions` inventory before startup.
+- Explorer, source editing, language services, integrated terminals, tasks, Run and Debug, extension views, and extension webviews are now provided by VS Code itself rather than emulated by Lattice.
+- First launch now uses the installer-bundled runtime and does not download VS Code Server.
+- Added VS Code compatibility for code workbench imports: `settings.json`, `keybindings.json`, `snippets`, `tasks.json`, recommended extensions, installed extension inventory, plus file associations, file/search excludes, and editor option mapping.
+- VS Code compatibility import is now a true one-click desktop flow: Lattice automatically scans the local VS Code profile without asking users to choose JSON files or folders.
+- One-click VS Code import now reads installed extension `package.json` contribution points, including `contributes.languages`, `contributes.snippets`, command counts, debugger counts, display names, versions, and categories.
+- Installed extension language contributions now generate Lattice file associations, and extension snippet JSON files are imported into CodeMirror snippet completion where Lattice can map the language.
+- Code files now honor imported associations for language resolution, explorer filtering, workspace search exclusion, and snippet completion.
+- Imported VS Code tasks now run through Lattice's execution panel with stdout/stderr output instead of only opening a terminal.
+- The Settings UI now exposes one primary `Import VS Code / 一键导入` action, visible import statistics, extension names, contributed language/command/debugger counts, mapped capability status, and automatic enablement after import.
+- Code files now show a VS Code compatibility status strip with imported formatter, tab size, extension/language/task/snippet counts, and runtime readiness.
+- Imported VS Code profiles now change the actual code browsing surface: executable code files and editable `.ipynb` notebooks are wrapped in a VS Code Workbench Surface with an activity bar, extension panel, run/task panel, notebook panel, search/source-control placeholders, runtime signals, and imported task actions.
+- `.ipynb` notebooks now expose VS Code-style notebook context next to the document, including kernel/runtime status, cell count, imported Python extension state, problems count, and a Run All Cells action when the current notebook can execute.
+- Read-only code browsing and read-only `.ipynb` rendering now also enter the VS Code Workbench Surface after import, so browsing code is no longer visually disconnected from editing code.
+- VS Code extension contribution scanning now covers commands, views, view containers, menus, notebooks, notebook renderers, grammars, themes, debuggers, and configuration in addition to languages and snippets.
+- VS Code `workbench.colorTheme` is now imported into the compatibility model, and installed extension theme contributions keep their `label`, `id`, `uiTheme`, and `path` metadata for Settings and Workbench display.
+- Supported imported VS Code workbench commands now route to matching Lattice Workbench Surface panels, while extension-private commands are explicitly marked as requiring the future Extension Host Bridge.
+- VS Code Workbench Surface now filters imported extension capabilities by mapped, detected, and external status.
+- VS Code Workbench Surface now shows compatibility diagnostics explaining mapped, detected, and external capability boundaries.
+- Imported VS Code tasks now render as default, build, test, and other task groups, with default tasks marked in the Run & Tasks panel.
+- Code and notebook files now show a visible `VS Code Takeover / VS Code 接管` banner after import, plus `Open in VS Code / 用 VS Code 打开` for handing the current file to the user's installed VS Code.
+- Added `docs/VS_CODE_COMPATIBILITY_PLAN.md` to define shipped compatibility, near-term hardening, and the future Extension Host Bridge boundary.
+- Added a desktop P0 VS Code Extension Host Bridge that can start a constrained local host for imported extensions with runnable `main` entries and surface their commands inside the workbench.
+- Extended the constrained VS Code host bridge with `workspace.getConfiguration`, `workspace.fs`, `workspace.openTextDocument`, `workspace.findFiles`, `window.showTextDocument`, `extensions.getExtension/all`, `Disposable`, `EventEmitter`, and `onStartupFinished` activation support.
+- Added VS Code `launch.json` import and surfaced launch configurations in the code workbench `Run & Tasks` panel for supported local launch types.
+- The code workbench remains secondary to Lattice's document-first flows for PDF, Markdown, HTML, formulas, links, annotations, and AI evidence.
 - PDF item workspaces now accept folders and arbitrary file types, not only Markdown notes and notebooks.
 - PDF item folders can now be expanded in both Explorer and the PDF Item panel, including nested arbitrary files such as images, CSVs, and unknown extensions.
 - Explorer drag-and-drop can move files or folders directly onto a PDF to attach them to that PDF's item workspace.
 - PDF item workspace routing now uses manifest/fingerprint recovery so moved, renamed, or copied PDFs can reopen their annotations and related files from any workspace root.
+- Copied PDF item routing now matches root-aware path aliases, so a manifest recorded as `atom/...` still routes correctly when `atom/` is opened as the workspace root.
 - Quantum Keyboard now follows the physical-keyboard model: the HUD shows only the 26 QWERTY letter keys, while number keys keep their native keyboard behavior.
 - Letter candidates now support `Shift+number+letter` one-based selection, e.g. `Shift+2+I` inserts the second `I` candidate.
 - Bracket and structure entry is more direct: `B` prioritizes parentheses, brackets, braces, cases, and beta.
 - Rendered Markdown formulas now expose a right-click menu for copying either Markdown formula source or pure LaTeX.
 
 ### Fixed
+- Research Agent answer synthesis failures now retain the bounded fallback answer
+  without incorrectly terminating the session or surfacing an internal Trace
+  append error. Agent-mode user messages also no longer expose the internal
+  `[Research Agent]` routing prefix.
+- The constrained extension host now recovers when a VS Code extension was
+  upgraded after import. If the recorded entry directory no longer exists, it
+  locates the newest installed package with the same publisher/name identity,
+  refreshes its entry metadata, and activates the current version instead of
+  surfacing a stale `Extension entry not found` error.
+- TypeScript validation now excludes generated `.lattice-build` and bundled
+  `src-tauri/code-oss-runtime` trees. This preserves full application-source
+  checking while avoiding more than 32,000 generated TypeScript inputs that
+  previously made the release gate appear hung.
+- Native Workbench readiness now recognizes VS Code's token-authentication `302` response without following the redirect and losing its authentication cookie, eliminating the permanent `preparing` state after the Server is already running.
+- VS Code startup now shows a staged progress indicator, cached-start expectation, and a recoverable warning with restart controls after 10 minutes instead of leaving users with an indefinite spinner.
+- Claude Code and Codex VS Code webviews now render through the official VS Code Webview Host instead of the incomplete Lattice manifest/webview shim.
+- VS Code Workbench process reuse, workspace switching, retry, stop, and application-shutdown cleanup are now managed as one owned Tauri child process.
+- VS Code compatibility settings now stay inactive unless the user explicitly enables/imports them from Settings, so opening a folder no longer triggers compatibility-driven file tree refreshes by default.
+- Removed the startup VS Code compatibility refresh subscription that could rescan the entire workspace and make folder opening appear frozen.
 - Double-Tab opening the Quantum Keyboard from Markdown/CodeMirror no longer leaves an unwanted tab/blank indentation in the document.
 - MathLive formula insertion now converts empty structures into placeholders and moves into the first placeholder after insertion.
 
 ### Documentation
 - Rewrote `docs/guides/quantum-keyboard.md` to match the current 26-letter HUD and formula-copy model.
+- Documented the VS Code compatibility layer and its current scope in the desktop and release readiness guides.
+- Documented the refreshed local `releases/v2.3.1` desktop artifacts and validation results.
 
 ## [2.3.1] - 2026-06-27
 
 ### 发布收口
 - �?Web 端生产构建已刷新到最�?`web-dist`，Tauri 桌面构建继续通过 `frontendDist: "../web-dist"` 打包同一套静态前端�?- �?桌面版本已同步到 `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` �?`2.3.1`�?- �?本地桌面 release 已生成到 `releases/v2.3.1/`，包含安装包、裸可执行文件、manifest、checksum �?summary�?- �?量子键盘 HUD 的结构键与符号键源码已按 UTF-8 code point 核验，PowerShell 乱码为终端显示问题，实际 UI 映射保持 `上标/下标/...` �?`θ/π/α/γ/δ/η`�?
 ### 桌面产物
-- `releases/v2.3.1/Lattice_2.3.1_x64_en-US.msi` SHA256 `a058fed7fd4b1a3c2305e302b2b0f58971863acdeefa7e9d9b1737aa4f7bd5d5`
-- `releases/v2.3.1/Lattice_2.3.1_x64-setup.exe` SHA256 `8ffe0b7f053a5476043b21fff1e6a46f838e591ae9f03e18cfcfab0c65198ef6`
-- `releases/v2.3.1/lattice.exe` SHA256 `6b2039593ab01d6e89ed0b48f437619de6c3451589fcf5041f57feade2901dfc`
+- `releases/v2.3.1/Lattice_2.3.1_x64_en-US.msi` SHA256 `2284161f8316d8697b11874d0803ba6d18d79b5f1fac57c4792df3f6f93ea3fe`
+- `releases/v2.3.1/Lattice_2.3.1_x64-setup.exe` SHA256 `32b7e4ef406ccaaa7d8ae5d44cc2034e42cb1aac9952781efc0a303622340812`
+- `releases/v2.3.1/lattice.exe` SHA256 `d30fd85d46c1d308893ecea326004507df21e716876511be4b461a6d658f5495`
 
 ### 验证
 - `npm run test:run -- src/__tests__/prepare-release-script.test.ts src/lib/__tests__/formula-composer.test.ts src/stores/__tests__/quantum-formula-library-store.test.ts src/config/__tests__/quantum-keymap.test.ts`�? files / 34 tests passed�?- `npm run typecheck`：通过�?- `npm run build`：通过，Next static export 成功�?- `npm run tauri:build`：通过，生�?Windows MSI �?NSIS 安装包�?- `npm run release:prepare -- --version 2.3.1 --artifacts-dir src-tauri/target/release`：通过�?

@@ -13,12 +13,15 @@ import { cn } from "@/lib/utils";
 import { HorizontalScrollStrip } from "@/components/ui/horizontal-scroll-strip";
 import { useI18n } from "@/hooks/use-i18n";
 import { WorkbenchContextMenu, type WorkbenchMenuAction } from "@/components/ui/workbench-context-menu";
+import { WebSourceMenu } from "./web-source-menu";
 
 export interface TabBarProps {
   paneId: PaneId;
   tabs: TabState[];
   activeTabIndex: number;
   isPaneActive: boolean;
+  tabIndexMap?: number[];
+  totalTabCount?: number;
   onTabClick: (index: number) => void;
   onTabClose: (index: number) => void;
   onCloseOtherTabs?: (index: number) => void;
@@ -33,6 +36,8 @@ export function TabBar({
   tabs,
   activeTabIndex,
   isPaneActive,
+  tabIndexMap,
+  totalTabCount,
   onTabClick,
   onTabClose,
   onCloseOtherTabs,
@@ -44,8 +49,12 @@ export function TabBar({
   const { t } = useI18n();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [menuState, setMenuState] = useState<{ x: number; y: number; tabIndex: number } | null>(null);
-  const safeActiveIndex =
-    activeTabIndex >= 0 && activeTabIndex < tabs.length ? activeTabIndex : -1;
+  const resolveTabIndex = useCallback((displayIndex: number) => {
+    return tabIndexMap?.[displayIndex] ?? displayIndex;
+  }, [tabIndexMap]);
+  const activeDisplayIndex = tabs.findIndex((_, index) => resolveTabIndex(index) === activeTabIndex);
+  const safeActiveIndex = activeDisplayIndex >= 0 ? activeDisplayIndex : -1;
+  const fullTabCount = totalTabCount ?? tabs.length;
 
   const { setNodeRef, isOver } = useDroppable({
     id: `tab-bar-${paneId}`,
@@ -72,12 +81,15 @@ export function TabBar({
     scrollContainerRef.current = node;
   }, [setNodeRef]);
 
-  const tabIds = tabs.map((tab) => tab.id);
-  const menuTab = menuState ? tabs[menuState.tabIndex] : null;
+  const tabIds = tabs.filter(tab => tab.kind !== "web").map((tab) => tab.id);
+  const activeTabId = tabs[safeActiveIndex]?.id;
+  const menuTab = menuState
+    ? tabs.find((_, index) => resolveTabIndex(index) === menuState.tabIndex) ?? null
+    : null;
   const hasSavedTabs = tabs.some((tab) => !tab.isDirty);
   const menuActions = useMemo<WorkbenchMenuAction[]>(() => {
     if (!menuState || !menuTab) return [];
-    const tabsToRight = Math.max(0, tabs.length - menuState.tabIndex - 1);
+    const tabsToRight = Math.max(0, fullTabCount - menuState.tabIndex - 1);
     return [
       {
         id: "close",
@@ -90,7 +102,7 @@ export function TabBar({
         id: "close-others",
         label: t("tab.context.closeOthers"),
         icon: <Files className="h-4 w-4" />,
-        disabled: tabs.length <= 1 || !onCloseOtherTabs,
+        disabled: fullTabCount <= 1 || !onCloseOtherTabs,
         onSelect: () => onCloseOtherTabs?.(menuState.tabIndex),
       },
       {
@@ -112,7 +124,7 @@ export function TabBar({
         id: "close-all",
         label: t("tab.context.closeAll"),
         icon: <X className="h-4 w-4" />,
-        disabled: tabs.length === 0 || !onCloseAllTabs,
+        disabled: fullTabCount === 0 || !onCloseAllTabs,
         onSelect: () => onCloseAllTabs?.(),
       },
       {
@@ -135,10 +147,10 @@ export function TabBar({
     onCopyTabPath,
     onTabClose,
     t,
-    tabs.length,
+    fullTabCount,
   ]);
 
-  if (tabs.length === 0) {
+  if (tabIds.length === 0) {
     return (
       <div
         ref={setNodeRef}
@@ -148,15 +160,18 @@ export function TabBar({
         )}
         data-desktop-webview-safe-zone="true"
       >
-        <span className="text-xs text-muted-foreground">
+        <span className="min-w-0 flex-1 text-xs text-muted-foreground">
           {isOver ? t("tab.dropHere") : t("tab.empty")}
         </span>
+        <WebSourceMenu paneId={paneId} tabs={tabs} activeTabId={activeTabId} onSelect={index => onTabClick(resolveTabIndex(index))} onClose={index => onTabClose(resolveTabIndex(index))} />
       </div>
     );
   }
 
   return (
     <>
+      <div className="flex min-w-0 items-center">
+      <div className="min-w-0 flex-1">
       <HorizontalScrollStrip
         viewportRef={handleViewportRef}
         className={cn("h-10", isOver && "bg-blue-500/10")}
@@ -166,21 +181,28 @@ export function TabBar({
         ariaLabel={t("tab.openTabs")}
       >
         <SortableContext items={tabIds} strategy={horizontalListSortingStrategy}>
-          {tabs.map((tab, index) => (
-            <Tab
-              key={tab.id}
-              tab={tab}
-              isActive={index === safeActiveIndex}
-              isPaneActive={isPaneActive}
-              index={index}
-              paneId={paneId}
-              onClick={() => onTabClick(index)}
-              onClose={() => onTabClose(index)}
-              onContextMenu={(event) => setMenuState({ x: event.clientX, y: event.clientY, tabIndex: index })}
-            />
-          ))}
+          {tabs.map((tab, index) => {
+            if (tab.kind === "web") return null;
+            const originalIndex = resolveTabIndex(index);
+            return (
+              <Tab
+                key={tab.id}
+                tab={tab}
+                isActive={index === safeActiveIndex}
+                isPaneActive={isPaneActive}
+                index={originalIndex}
+                paneId={paneId}
+                onClick={() => onTabClick(originalIndex)}
+                onClose={() => onTabClose(originalIndex)}
+                onContextMenu={(event) => setMenuState({ x: event.clientX, y: event.clientY, tabIndex: originalIndex })}
+              />
+            );
+          })}
         </SortableContext>
       </HorizontalScrollStrip>
+      </div>
+      <WebSourceMenu paneId={paneId} tabs={tabs} activeTabId={activeTabId} onSelect={index => onTabClick(resolveTabIndex(index))} onClose={index => onTabClose(resolveTabIndex(index))} />
+      </div>
       {menuState && (
         <WorkbenchContextMenu
           x={menuState.x}

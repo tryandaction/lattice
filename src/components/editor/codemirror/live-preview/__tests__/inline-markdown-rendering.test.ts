@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderInlineMarkdownHtml } from '../widgets';
+import { LinkWidget } from '../widgets';
 
 function mountRenderedHtml(html: string): HTMLDivElement {
   const container = document.createElement('div');
@@ -48,5 +49,30 @@ describe('inline markdown rendering for live preview table cells', () => {
 
     const container = mountRenderedHtml(html);
     expect(container.querySelector('.cm-link-table')?.textContent).toBe('safe');
+  });
+
+  it('navigates on the first click and only enters source editing on a double click', () => {
+    const dispatched: string[] = [];
+    const dom = document.createElement('div');
+    dom.addEventListener('workspace-link-click', (event) => {
+      dispatched.push((event as CustomEvent<{ target: string }>).detail.target);
+    });
+    const dispatch = vi.fn();
+    const view = {
+      dom,
+      posAtCoords: () => 0,
+      dispatch,
+      focus: vi.fn(),
+    } as never;
+    const link = new LinkWidget('Guide', 'notes/guide.md#Intro', false, 0, 20, 0, 20).toDOM(view);
+
+    dom.appendChild(link);
+    link.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1, button: 0 }));
+    expect(dispatched).toEqual(['notes/guide.md#Intro']);
+
+    link.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 2, button: 0 }));
+    link.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, detail: 2, button: 0 }));
+    expect(dispatched).toEqual(['notes/guide.md#Intro']);
+    expect(dispatch).toHaveBeenCalled();
   });
 });

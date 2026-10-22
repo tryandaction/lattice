@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSettingsStore } from "@/stores/settings-store";
 import type { ExecutionDockLayout } from "@/types/settings";
 
-export type ExecutionDockTab = "run" | "problems";
+export type ExecutionDockTab = "run" | "problems" | "references";
 
 const MIN_DOCK_SIZE = 18;
 const MAX_DOCK_SIZE = 70;

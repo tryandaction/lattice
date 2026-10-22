@@ -26,6 +26,30 @@ export interface DesktopFileMetadata {
   modifiedMs: number | null;
 }
 
+/** Opaque staging token: only Rust owns its temporary path and cleanup. */
+export interface DesktopDropImport {
+  write(path: string[], kind: FileSystemHandleKind, data?: Uint8Array, append?: boolean): Promise<void>;
+  commit(name: string): Promise<string>;
+  abort(): Promise<void>;
+}
+
+export async function beginDesktopDropImport(target: FileSystemDirectoryHandle, kind: FileSystemHandleKind): Promise<DesktopDropImport> {
+  const fullPath = getDesktopHandlePath(target);
+  if (!fullPath) throw new Error('Desktop import requires a desktop target');
+  const token = await invokeDesktopFs<string>('desktop_begin_drop_import', { target: fullPath, kind });
+  return {
+    write: (path, entryKind, data = new Uint8Array(), append = false) => invokeDesktopFs('desktop_write_drop_import', {
+      token, path, kind: entryKind, data: Array.from(data), append,
+    }),
+    commit: async name => {
+      const actualName = await invokeDesktopFs<string>('desktop_commit_drop_import', { token, name });
+      invalidateDesktopDirCache(fullPath);
+      return actualName;
+    },
+    abort: () => invokeDesktopFs('desktop_abort_drop_import', { token }),
+  };
+}
+
 const DESKTOP_DIR_CACHE_TTL_MS = 10_000;
 const desktopDirCache = new Map<string, { entries: DesktopDirEntry[]; cachedAt: number }>();
 
@@ -92,12 +116,19 @@ async function readDesktopDirCached(path: string, options?: { force?: boolean })
   }
 }
 
-function invalidateDesktopDirCache(path: string): void {
+export function invalidateDesktopDirCache(path: string): void {
   const normalizedPath = normalizeDesktopPath(path);
   desktopDirCache.delete(normalizedPath);
   const parentPath = getDesktopParentPath(normalizedPath);
   if (parentPath) {
     desktopDirCache.delete(parentPath);
+  }
+}
+
+export function invalidateDesktopDirectoryTreeCache(rootPath: string): void {
+  const root = normalizeDesktopPath(rootPath).toLowerCase();
+  for (const path of desktopDirCache.keys()) {
+    if (path.toLowerCase() === root || path.toLowerCase().startsWith(root + "/")) desktopDirCache.delete(path);
   }
 }
 
@@ -125,6 +156,16 @@ export async function readDesktopFileMetadata(path: string): Promise<DesktopFile
   return invokeDesktopFs<DesktopFileMetadata>("desktop_file_metadata", {
     path: normalizeDesktopPath(path),
   });
+}
+
+/** A revision must come from the filesystem, never the time a JS File was constructed. */
+export async function readDesktopFileRevision(path: string): Promise<DesktopFileMetadata & { modifiedMs: number }> {
+  const metadata = await readDesktopFileMetadata(path);
+  if (!Number.isSafeInteger(metadata.size) || metadata.size < 0 || metadata.modifiedMs === null
+    || !Number.isSafeInteger(metadata.modifiedMs) || metadata.modifiedMs < 0 || metadata.modifiedMs > 8_640_000_000_000_000) {
+    throw new DOMException('The file modification time or size is unavailable.', 'NotReadableError');
+  }
+  return { size: metadata.size, modifiedMs: metadata.modifiedMs };
 }
 
 export async function readDesktopTextFile(path: string): Promise<string> {
@@ -276,9 +317,14 @@ export class DesktopFileHandle implements FileSystemFileHandle, DesktopHandleMar
   ) {}
 
   async getFile(): Promise<File> {
+    const before = await readDesktopFileRevision(this.fullPath);
     const bytes = await readDesktopFileBytes(this.fullPath);
+    const after = await readDesktopFileRevision(this.fullPath);
+    if (before.size !== after.size || before.modifiedMs !== after.modifiedMs || bytes.byteLength !== before.size) {
+      throw new DOMException('The file changed while reading; reopen it and retry.', 'NotReadableError');
+    }
     const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-    return new File([arrayBuffer], this.name);
+    return new File([arrayBuffer], this.name, { lastModified: before.modifiedMs });
   }
 
   async createWritable(): Promise<FileSystemWritableFileStream> {
@@ -310,6 +356,7 @@ export class DesktopDirectoryHandle implements FileSystemDirectoryHandle, Deskto
   async *values(): AsyncGenerator<FileSystemDirectoryHandle | FileSystemFileHandle> {
     const entries = await readDesktopDirCached(this.fullPath);
     for (const entry of entries) {
+      if (entry.isSymlink) continue;
       const entryPath = joinDesktopPath(this.fullPath, entry.name);
       if (entry.isDirectory) {
         yield new DesktopDirectoryHandle(entry.name, entryPath) as unknown as FileSystemDirectoryHandle;
@@ -326,6 +373,9 @@ export class DesktopDirectoryHandle implements FileSystemDirectoryHandle, Deskto
     const nextPath = joinDesktopPath(this.fullPath, name);
     const entries = await readDesktopDirCached(this.fullPath, { force: Boolean(options?.create) });
     const matchedEntry = entries.find((entry) => entry.name === name);
+    if (matchedEntry?.isSymlink) {
+      throw new DOMException(`Directory symlink is outside the selected workspace boundary: ${name}`, "NotAllowedError");
+    }
     if (!matchedEntry || !matchedEntry.isDirectory) {
       if (!options?.create) {
         throw new DOMException(`Directory not found: ${name}`, "NotFoundError");
@@ -340,6 +390,9 @@ export class DesktopDirectoryHandle implements FileSystemDirectoryHandle, Deskto
     const nextPath = joinDesktopPath(this.fullPath, name);
     const entries = await readDesktopDirCached(this.fullPath, { force: Boolean(options?.create) });
     const matchedEntry = entries.find((entry) => entry.name === name);
+    if (matchedEntry?.isSymlink) {
+      throw new DOMException(`File symlink is outside the selected workspace boundary: ${name}`, "NotAllowedError");
+    }
     if (!matchedEntry || !matchedEntry.isFile) {
       if (!options?.create) {
         throw new DOMException(`File not found: ${name}`, "NotFoundError");

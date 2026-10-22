@@ -1,0 +1,75 @@
+import { expect, it, vi } from 'vitest';
+import { createLatticeSourcePdfToolRuntime, createLatticeCloudPdfToolRuntime, LATTICE_SOURCE_PDF_TOOLS, validateLatticeSourcePdfToolArgs } from '../lattice-skills/source-pdf-tool-runtime';
+import { validateLatticeHarnessArgs } from '../harness/lattice-tool-definitions';
+import { createAuthorizedSourceIndex } from '../source-index';
+import { SourceTestDirectory, SourceTestFile } from './fixtures/source-workspace';
+import type { PdfChildProposal } from '../lattice-skills/pdf-child-skill';
+import type { CloudLibraryResource, CloudLibrarySourceProvider } from '@/lib/shared-library/source-provider';
+
+vi.mock('@/lib/pdf-js-document-loader', () => ({ loadPdfJsDocument: async () => ({ numPages: 1, destroy: async () => {} }) }));
+vi.mock('@/lib/pdf-page-text-cache', () => ({ getPdfPageSearchText: async () => 'Verified PDF content' }));
+it('makes metadata discovery and real versioned reads executable for API and local tool bridges', async () => {
+  const root = new SourceTestDirectory('workspace'); root.add(new SourceTestFile('note.txt', 'Verified content.'));
+  const runtime = createLatticeSourcePdfToolRuntime({ index: createAuthorizedSourceIndex({ rootHandle: root.handle(), workspaceKey: 'A', selections: [{ kind: 'folder', path: '' }] }), root: root.handle(), workspaceKey: 'A' });
+  expect(LATTICE_SOURCE_PDF_TOOLS.map(tool => tool.name)).toContain('lattice.sources.read');
+  const result = await runtime.execute('lattice.sources.read', { path: 'note.txt' }) as { chunks: Array<{ text: string }>; snapshot: { version: string } };
+  expect(result.chunks[0].text).toBe('Verified content.');
+  expect(result.snapshot.version).toBeTruthy();
+  await expect(runtime.execute('lattice.pdf.applyChild', {})).rejects.toThrow(/review|审查|Unknown/);
+});
+it('proposes only a selected PDF without writing, and cannot reuse another workspace index', async () => {
+  const root = new SourceTestDirectory('workspace');
+  root.add(new SourceTestFile('selected.pdf', '%PDF selected'));
+  root.add(new SourceTestFile('other.pdf', '%PDF other'));
+  const proposals: PdfChildProposal[] = [];
+  const index = createAuthorizedSourceIndex({ rootHandle: root.handle(), workspaceKey: 'A', selections: [{ kind: 'file', path: 'selected.pdf' }] });
+  const runtime = createLatticeSourcePdfToolRuntime({ index, root: root.handle(), workspaceKey: 'A', onProposal: proposal => { proposals.push(proposal); } });
+  const args = { parentPath: 'selected.pdf', fileName: 'note.md', content: '# Real content', mode: 'create' };
+  await expect(runtime.execute('lattice.pdf.proposeChild', args)).rejects.toThrow(/读取/);
+  await runtime.execute('lattice.sources.read', { path: 'selected.pdf' });
+  await runtime.execute('lattice.pdf.proposeChild', args);
+  expect(proposals).toHaveLength(1);
+  expect(root.entries.has('.lattice')).toBe(false);
+  await expect(runtime.execute('lattice.pdf.proposeChild', { ...args, parentPath: 'other.pdf' })).rejects.toThrow(/selection|读取/);
+  const otherRoot = new SourceTestDirectory('workspace'); otherRoot.add(new SourceTestFile('selected.pdf', '%PDF selected'));
+  await expect(createLatticeSourcePdfToolRuntime({ index, root: otherRoot.handle(), workspaceKey: 'A' }).execute('lattice.pdf.proposeChild', args)).rejects.toThrow(/scope/);
+  await expect(createLatticeSourcePdfToolRuntime({ index, root: root.handle(), workspaceKey: 'B' }).execute('lattice.pdf.proposeChild', args)).rejects.toThrow(/scope/);
+  expect(proposals).toHaveLength(1);
+});
+it('rejects parent revision changes during PDF proposal preparation', async () => {
+  const root = new SourceTestDirectory('workspace'), pdf = root.add(new SourceTestFile('paper.pdf', '%PDF read'));
+  const index = createAuthorizedSourceIndex({ rootHandle: root.handle(), workspaceKey: 'A', selections: [{ kind: 'file', path: 'paper.pdf' }] });
+  const read = index.read.bind(index);
+  index.read = async options => { const value = await read(options); pdf.content = '%PDF changed'; return value; };
+  const onProposal = vi.fn();
+  const runtime = createLatticeSourcePdfToolRuntime({ index, root: root.handle(), workspaceKey: 'A', onProposal });
+  await runtime.execute('lattice.sources.read', { path: 'paper.pdf' });
+  await expect(runtime.execute('lattice.pdf.proposeChild', { parentPath: 'paper.pdf', fileName: 'note.md', content: '# Content', mode: 'create' })).rejects.toThrow(/源.*改变|version|changed/i);
+  expect(onProposal).not.toHaveBeenCalled();
+  expect(root.entries.has('.lattice')).toBe(false);
+});
+it('keeps cloud tools proposal-only and cancels before the review callback', async () => {
+  const parent: CloudLibraryResource = { id: 'cloud:parent', libraryId: 'lib', itemId: 'parent', name: 'paper.pdf', path: 'cloud://display', kind: 'pdf', role: 'editor', versionId: 'v1', content: { kind: 'text', text: '%PDF fixture', mimeType: 'application/pdf', updatedAt: 'now' } };
+  const abort = new AbortController(), onProposal = vi.fn(), createChild = vi.fn();
+  const provider: CloudLibrarySourceProvider = { scope: 'account', read: async () => parent, list: async () => { abort.abort(); return []; }, search: async () => ({ results: [] }), save: async () => {}, createChild };
+  const runtime = createLatticeCloudPdfToolRuntime({ getProvider: () => provider, getParent: () => parent, onProposal });
+  await expect(runtime.execute('lattice.cloud.pdf.proposeChild', { fileName: 'data.csv', content: 'value\n1', mode: 'create' }, abort.signal)).rejects.toMatchObject({ name: 'AbortError' });
+  expect(onProposal).not.toHaveBeenCalled();
+  expect(createChild).not.toHaveBeenCalled();
+  await expect(runtime.execute('lattice.cloud.pdf.applyChild', {})).rejects.toThrow(/review/);
+});
+it('keeps exact target paths, scan/result budgets and opaque continuation executable through both schemas', async () => {
+  const root = new SourceTestDirectory('workspace'); root.add(new SourceTestFile('other.txt', 'unrelated'));
+  root.add(new SourceTestFile('paper.txt', 'x'.repeat(2500) + 'DEEP_TOOL_HIT_31'));
+  const runtime = createLatticeSourcePdfToolRuntime({ index: createAuthorizedSourceIndex({ rootHandle: root.handle(), workspaceKey: 'A', selections: [{ kind: 'folder', path: '.' }] }), root: root.handle(), workspaceKey: 'A' });
+  const args = { query: 'DEEP_TOOL_HIT_31', paths: ['paper.txt'], maxChars: 1000, maxScanChars: 3000, maxFiles: 1, maxUnits: 1, maxResults: 2, snippetChars: 100 };
+  expect(validateLatticeHarnessArgs('lattice.sources.search',args)).toEqual(args);
+  const first = await runtime.execute('lattice.sources.search',args) as Awaited<ReturnType<ReturnType<typeof createAuthorizedSourceIndex>['search']>>;
+  expect(first.nextCursor).toBeGreaterThan(0); expect(first.hits).toEqual([]); expect(first.coverage[0].partialUnit?.endOffset).toBe(1000);
+  const second = await runtime.execute('lattice.sources.search',{...args,cursor:first.nextCursor}) as typeof first;
+  const third = await runtime.execute('lattice.sources.search',{...args,cursor:second.nextCursor}) as typeof first;
+  expect(third.hits[0].text).toContain('DEEP_TOOL_HIT_31');expect(third.hits[0].path).toBe('paper.txt');expect(third.reads[0].readUnits).toEqual([]);
+  expect(()=>validateLatticeSourcePdfToolArgs('lattice.sources.search',{...args,paths:['../private.txt']})).not.toThrow();
+  await expect(runtime.execute('lattice.sources.search',{...args,paths:['../private.txt']})).rejects.toThrow(/path|outside/i);
+  for(const invalid of [{...args,maxScanChars:-1},{...args,snippetChars:0},{...args,paths:['']},{...args,paths:[]}]) expect(()=>validateLatticeSourcePdfToolArgs('lattice.sources.search',invalid)).toThrow();
+});

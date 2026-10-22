@@ -9,6 +9,7 @@ import { usePaneCommandBar } from "@/hooks/use-pane-command-bar";
 import { useI18n } from "@/hooks/use-i18n";
 import { openExternalUrl } from "@/lib/link-router/open-external";
 import { copyToClipboard } from "@/lib/clipboard";
+import { WebAddressBar } from "./web-address-bar";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import {
   ensureDesktopWebview,
@@ -76,58 +77,28 @@ export function DesktopNativeWebviewPane({
   const { t } = useI18n();
   const anchorRef = useRef<HTMLDivElement>(null);
   const requestVersionRef = useRef(0);
-  const reloadWebTab = useWorkspaceStore((state) => state.reloadWebTab);
+  const lastRequestedUrlRef = useRef<string | null>(null);
+  const observedUrlRef = useRef<string | null>(null);
+  const mountingRef = useRef(false);
+  const mountedRef = useRef(true);
   const updateWebTab = useWorkspaceStore((state) => state.updateWebTab);
   const openWebUrlInPane = useWorkspaceStore((state) => state.openWebUrlInPane);
   const [rect, setRect] = useState<DesktopWebviewRect | null>(null);
   const [snapshot, setSnapshot] = useState<DesktopNativeWebviewSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const label = useMemo(() => getDesktopWebviewLabelForTab(tabId), [tabId]);
-  const activeUrl = snapshot?.currentUrl || url;
+  const activeUrl = url;
   const activeTitle = snapshot?.title ?? null;
   const status = snapshot?.status ?? "idle";
   const displayUrl = buildDisplayUrl(activeUrl);
+  const retryMount = () => {
+    lastRequestedUrlRef.current = null; observedUrlRef.current = null;
+    setError(null); setSnapshot(null); setRect(current => current ? { ...current } : current);
+  };
 
   const commandBarState = useMemo<CommandBarState>(() => ({
     breadcrumbs: buildBreadcrumbs(fileName, activeUrl),
     actions: [
-      {
-        id: "back",
-        label: t("viewer.web.command.back"),
-        tooltip: t("viewer.web.command.back"),
-        icon: "arrow-left",
-        priority: 5,
-        group: "primary",
-        disabled: status !== "ready",
-        onTrigger: () => {
-          void goBackDesktopWebview(label);
-        },
-      },
-      {
-        id: "forward",
-        label: t("viewer.web.command.forward"),
-        tooltip: t("viewer.web.command.forward"),
-        icon: "arrow-right",
-        priority: 6,
-        group: "primary",
-        disabled: status !== "ready",
-        onTrigger: () => {
-          void goForwardDesktopWebview(label);
-        },
-      },
-      {
-        id: "reload",
-        label: t("viewer.web.command.reload"),
-        tooltip: t("viewer.web.command.reload"),
-        icon: "rotate-cw",
-        priority: 10,
-        group: "primary",
-        onTrigger: () => {
-          void reloadDesktopWebview(label).catch(() => {
-            reloadWebTab(paneId, tabId);
-          });
-        },
-      },
       {
         id: "copy-url",
         label: t("viewer.web.command.copyUrl"),
@@ -151,19 +122,8 @@ export function DesktopNativeWebviewPane({
           });
         },
       },
-      {
-        id: "open-external",
-        label: t("viewer.web.command.openExternal"),
-        tooltip: t("viewer.web.command.openExternal"),
-        icon: "external-link",
-        priority: 20,
-        group: "secondary",
-        onTrigger: () => {
-          void openExternalUrl(activeUrl);
-        },
-      },
     ],
-  }), [activeUrl, displayUrl, fileName, label, paneId, reloadWebTab, status, t, tabId]);
+  }), [activeUrl, displayUrl, fileName, status, t]);
 
   usePaneCommandBar({
     paneId,
@@ -219,8 +179,13 @@ export function DesktopNativeWebviewPane({
     if (!isTauriHost() || !rect || rect.width < 2 || rect.height < 2 || !isActive) {
       return;
     }
+    // Bounds/title/polling updates are not navigation requests. A redirect echo
+    // must not send the child back to the address preceding its own navigation.
+    if (observedUrlRef.current === url || (mountingRef.current && lastRequestedUrlRef.current === url)) return;
 
     const requestVersion = ++requestVersionRef.current;
+    lastRequestedUrlRef.current = url;
+    mountingRef.current = true;
 
     void ensureDesktopWebview({
       label,
@@ -231,10 +196,15 @@ export function DesktopNativeWebviewPane({
       focus: true,
     })
       .then((nextSnapshot) => {
-        if (requestVersionRef.current !== requestVersion || !nextSnapshot) {
+        if (requestVersionRef.current !== requestVersion) {
+          if (!mountedRef.current) void hideDesktopWebview(label).catch(() => {});
+          return;
+        }
+        if (!nextSnapshot) {
           return;
         }
         setSnapshot(nextSnapshot);
+        observedUrlRef.current = nextSnapshot.currentUrl || url;
         if (nextSnapshot.status === "error") {
           setError(nextSnapshot.lastError || "Failed to create desktop webview.");
           return;
@@ -242,7 +212,7 @@ export function DesktopNativeWebviewPane({
         setError(null);
         updateWebTab(paneId, tabId, {
           url: nextSnapshot.currentUrl || url,
-          fileName: nextSnapshot.title?.trim() || fileName,
+          ...(nextSnapshot.title?.trim() ? { fileName: nextSnapshot.title.trim() } : {}),
           pageTitle: nextSnapshot.title,
         });
       })
@@ -251,15 +221,18 @@ export function DesktopNativeWebviewPane({
           return;
         }
         setError(nextError instanceof Error ? nextError.message : "Failed to create desktop webview.");
+        lastRequestedUrlRef.current = null;
+      }).finally(() => {
+        if (requestVersionRef.current === requestVersion) mountingRef.current = false;
       });
-  }, [fileName, isActive, label, paneId, rect, tabId, updateWebTab, url]);
+  }, [isActive, label, paneId, rect, tabId, updateWebTab, url]);
 
   useEffect(() => {
     if (!isTauriHost() || !rect || status !== "ready") {
       return;
     }
 
-    void updateDesktopWebviewRect(label, rect);
+    void updateDesktopWebviewRect(label, rect).catch(() => {});
   }, [label, rect, status]);
 
   useEffect(() => {
@@ -268,11 +241,11 @@ export function DesktopNativeWebviewPane({
     }
 
     if (isActive) {
-      void showDesktopWebview(label);
+      void showDesktopWebview(label).catch(() => {});
       return;
     }
 
-    void hideDesktopWebview(label);
+    void hideDesktopWebview(label).catch(() => {});
   }, [isActive, label, status]);
 
   useEffect(() => {
@@ -280,9 +253,11 @@ export function DesktopNativeWebviewPane({
       return;
     }
 
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       requestVersionRef.current += 1;
-      void hideDesktopWebview(label);
+      void hideDesktopWebview(label).catch(() => {});
     };
   }, [label]);
 
@@ -298,9 +273,9 @@ export function DesktopNativeWebviewPane({
       }
       occluded = nextOccluded;
       if (nextOccluded) {
-        void hideDesktopWebview(label);
+        void hideDesktopWebview(label).catch(() => {});
       } else {
-        void showDesktopWebview(label);
+        void showDesktopWebview(label).catch(() => {});
       }
     };
 
@@ -326,7 +301,7 @@ export function DesktopNativeWebviewPane({
       document.removeEventListener("pointerdown", handlePointerMove, true);
       document.removeEventListener("focusin", handleFocusIn, true);
       if (occluded && isActive) {
-        void showDesktopWebview(label);
+        void showDesktopWebview(label).catch(() => {});
       }
     };
   }, [isActive, label, status]);
@@ -336,6 +311,7 @@ export function DesktopNativeWebviewPane({
       return;
     }
 
+    let disposed = false;
     let disposeNewWindow: (() => void) | null = null;
     let disposeDownload: (() => void) | null = null;
 
@@ -345,7 +321,7 @@ export function DesktopNativeWebviewPane({
       }
       openWebUrlInPane(paneId, event.url);
     }).then((unlisten) => {
-      disposeNewWindow = unlisten;
+      if (disposed) unlisten(); else disposeNewWindow = unlisten;
     });
 
     void listenDesktopWebviewDownload((event) => {
@@ -366,10 +342,11 @@ export function DesktopNativeWebviewPane({
         },
       );
     }).then((unlisten) => {
-      disposeDownload = unlisten;
+      if (disposed) unlisten(); else disposeDownload = unlisten;
     });
 
     return () => {
+      disposed = true;
       disposeNewWindow?.();
       disposeDownload?.();
     };
@@ -381,10 +358,14 @@ export function DesktopNativeWebviewPane({
     }
 
     let cancelled = false;
+    let syncing = false;
     const syncState = async () => {
+      if (syncing || mountingRef.current || !lastRequestedUrlRef.current) return;
+      syncing = true;
+      const requestVersion = requestVersionRef.current;
       try {
         const nextSnapshot = await getDesktopWebviewState(label);
-        if (cancelled || !nextSnapshot) {
+        if (cancelled || requestVersionRef.current !== requestVersion || !nextSnapshot) {
           return;
         }
         setSnapshot((current) => {
@@ -404,15 +385,16 @@ export function DesktopNativeWebviewPane({
         }
         if (nextSnapshot.status === "ready") {
           setError(null);
+          observedUrlRef.current = nextSnapshot.currentUrl || url;
           updateWebTab(paneId, tabId, {
             url: nextSnapshot.currentUrl || url,
-            fileName: nextSnapshot.title?.trim() || fileName,
+            ...(nextSnapshot.title?.trim() ? { fileName: nextSnapshot.title.trim() } : {}),
             pageTitle: nextSnapshot.title,
           });
         }
       } catch {
         // Ignore transient polling failures while navigating.
-      }
+      } finally { syncing = false; }
     };
 
     void syncState();
@@ -423,10 +405,12 @@ export function DesktopNativeWebviewPane({
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [fileName, isActive, label, paneId, tabId, updateWebTab, url]);
+  }, [isActive, label, paneId, tabId, updateWebTab, url]);
 
   return (
-    <div ref={anchorRef} className="relative h-full w-full overflow-hidden bg-background">
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      <WebAddressBar url={url} onNavigate={nextUrl => updateWebTab(paneId, tabId, { url: nextUrl, pageTitle: null })} onBack={() => { void goBackDesktopWebview(label).catch(() => {}); }} onForward={() => { void goForwardDesktopWebview(label).catch(() => {}); }} onReload={() => { void reloadDesktopWebview(label).catch(retryMount); }} onExternal={() => void openExternalUrl(url)} canGoBack={status === "ready"} canGoForward={status === "ready"} />
+      <div ref={anchorRef} className="relative min-h-0 w-full flex-1 overflow-hidden bg-background">
       {status !== "ready" && !error ? (
         <div className="flex h-full items-center justify-center bg-background">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -447,6 +431,7 @@ export function DesktopNativeWebviewPane({
       {status === "ready" && activeTitle ? (
         <div className="sr-only" aria-hidden="true">{activeTitle}</div>
       ) : null}
+      </div>
     </div>
   );
 }

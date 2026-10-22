@@ -5,6 +5,12 @@ import {
   buildPdfTextAnchorFromOffsets,
 } from "@/lib/pdf-canonical-text-anchoring";
 import type { PdfPageTextModel } from "@/lib/pdf-page-text-cache";
+import type { PdfNativePageTextLayout } from "@/lib/pdf-native-text-engine";
+import {
+  buildPdfNativeNormalizedModel,
+  buildPdfNativeNormalizedRect,
+  type PdfNativeNormalizedChar,
+} from "@/lib/pdf-native-text-model";
 
 export const PDF_TEXT_KERNEL_MODEL_VERSION = 1;
 
@@ -81,6 +87,7 @@ interface PdfTextKernelPageCacheEntry {
 }
 
 let pdfTextKernelPageCache = new WeakMap<PdfPageTextModel, PdfTextKernelPageCacheEntry>();
+let pdfNativeTextKernelPageCache = new WeakMap<PdfNativePageTextLayout, PdfTextKernelPage>();
 
 function clampOffset(value: number, max: number): number {
   return Math.max(0, Math.min(max, value));
@@ -179,7 +186,12 @@ function groupKernelCharsByVisualLine(chars: PdfTextKernelChar[]): PdfTextKernel
   for (const char of visibleChars) {
     const lastGroup = groups[groups.length - 1] ?? null;
     const lastChar = lastGroup?.[lastGroup.length - 1] ?? null;
-    if (lastGroup && lastChar && areKernelCharsOnSameVisualLine(lastChar, char)) {
+    const horizontalGap = lastChar ? Math.max(0,
+      char.viewportRect.left - (lastChar.viewportRect.left + lastChar.viewportRect.width),
+      lastChar.viewportRect.left - (char.viewportRect.left + char.viewportRect.width),
+    ) : 0;
+    const maxInlineGap = lastChar ? Math.max(3, Math.min(lastChar.viewportRect.height, char.viewportRect.height) * 1.5) : 0;
+    if (lastGroup && lastChar && areKernelCharsOnSameVisualLine(lastChar, char) && horizontalGap <= maxInlineGap) {
       lastGroup.push(char);
       continue;
     }
@@ -339,12 +351,109 @@ export function buildPdfTextKernelPage(input: {
   return page;
 }
 
+function nativeCharsShareLine(left: PdfNativeNormalizedChar, right: PdfNativeNormalizedChar): boolean {
+  const leftHeight = Math.max(1, Math.abs(left.sourceChar.y2 - left.sourceChar.y1));
+  const rightHeight = Math.max(1, Math.abs(right.sourceChar.y2 - right.sourceChar.y1));
+  const minimumHeight = Math.min(leftHeight, rightHeight);
+  const leftCenter = (left.sourceChar.y1 + left.sourceChar.y2) / 2;
+  const rightCenter = (right.sourceChar.y1 + right.sourceChar.y2) / 2;
+  const overlap = Math.min(left.sourceChar.y2, right.sourceChar.y2) - Math.max(left.sourceChar.y1, right.sourceChar.y1);
+  return overlap >= minimumHeight * 0.45 || Math.abs(leftCenter - rightCenter) <= minimumHeight * 0.6;
+}
+
+export function buildPdfTextKernelPageFromNativeLayout(input: {
+  layout: PdfNativePageTextLayout;
+  confidence?: number;
+}): PdfTextKernelPage {
+  const confidence = input.confidence ?? 0.98;
+  const cached = pdfNativeTextKernelPageCache.get(input.layout);
+  if (cached && cached.confidence === confidence) {
+    return cached;
+  }
+
+  const model = buildPdfNativeNormalizedModel(input.layout);
+  const visibleChars = model.chars.filter((char) => (
+    buildPdfNativeNormalizedRect({ layout: input.layout, char: char.sourceChar }) !== null
+  ));
+  const chars: PdfTextKernelChar[] = [];
+  let lineIndex = 0;
+  let wordIndex = 0;
+
+  visibleChars.forEach((char, index) => {
+    const previous = visibleChars[index - 1] ?? null;
+    const next = visibleChars[index + 1] ?? null;
+    const lineBreakBefore = Boolean(previous && !nativeCharsShareLine(previous, char));
+    if (lineBreakBefore) {
+      lineIndex += 1;
+    }
+
+    const gapBefore = previous
+      ? model.normalizedText.slice(previous.normalizedEnd, char.normalizedStart)
+      : "";
+    if (previous && (/\s/.test(gapBefore) || lineBreakBefore)) {
+      wordIndex += 1;
+    }
+
+    const gapAfter = next
+      ? model.normalizedText.slice(char.normalizedEnd, next.normalizedStart)
+      : "";
+    const lineBreakAfter = Boolean(next && !nativeCharsShareLine(char, next));
+    const pdfRect = buildPdfNativeNormalizedRect({
+      layout: input.layout,
+      char: char.sourceChar,
+    });
+    if (!pdfRect) {
+      return;
+    }
+
+    chars.push({
+      charIndex: char.normalizedStart,
+      text: char.text,
+      normalizedText: char.text,
+      pdfRect,
+      pdfQuad: rectToPdfQuad(pdfRect),
+      viewportRect: {
+        left: Math.min(char.sourceChar.x1, char.sourceChar.x2),
+        top: Math.min(char.sourceChar.y1, char.sourceChar.y2),
+        width: Math.abs(char.sourceChar.x2 - char.sourceChar.x1),
+        height: Math.abs(char.sourceChar.y2 - char.sourceChar.y1),
+      },
+      source: "pdfium",
+      confidence,
+      itemIndex: index,
+      lineIndex,
+      wordIndex,
+      spaceAfter: /\s/.test(gapAfter),
+      lineBreakAfter,
+      wordBreakAfter: /\s/.test(gapAfter) || lineBreakAfter,
+      paragraphBreakAfter: false,
+      fontSize: char.sourceChar.fontSize,
+      baseline: Math.max(char.sourceChar.y1, char.sourceChar.y2),
+    });
+  });
+
+  const page: PdfTextKernelPage = {
+    modelVersion: PDF_TEXT_KERNEL_MODEL_VERSION,
+    pageNumber: input.layout.pageNumber,
+    pageText: model.normalizedText,
+    normalizedText: model.normalizedText,
+    viewportWidth: input.layout.width,
+    viewportHeight: input.layout.height,
+    source: "pdfium",
+    confidence,
+    chars,
+  };
+  pdfNativeTextKernelPageCache.set(input.layout, page);
+  return page;
+}
+
 export function clearPdfTextKernelPageCache(model?: PdfPageTextModel): void {
   if (model) {
     pdfTextKernelPageCache.delete(model);
     return;
   }
   pdfTextKernelPageCache = new WeakMap<PdfPageTextModel, PdfTextKernelPageCacheEntry>();
+  pdfNativeTextKernelPageCache = new WeakMap<PdfNativePageTextLayout, PdfTextKernelPage>();
 }
 
 export function getPdfTextKernelRangeText(

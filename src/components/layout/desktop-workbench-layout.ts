@@ -1,9 +1,12 @@
 export const DESKTOP_PANEL_MIN = 16;
+export const DESKTOP_SIDEBAR_MIN = 0;
 export const DESKTOP_PANEL_MAX = 45;
-export const DESKTOP_AI_PANEL_DEFAULT = 28;
-export const DESKTOP_AI_PANEL_MIN = 18;
-export const DESKTOP_AI_PANEL_MAX = 42;
-export const DESKTOP_AI_PANEL_RESET_THRESHOLD = 52;
+const DESKTOP_AI_PANEL_LEGACY_DEFAULT = 28;
+
+export const DESKTOP_AI_PANEL_DEFAULT = 38;
+export const DESKTOP_AI_PANEL_MIN = 8;
+export const DESKTOP_AI_PANEL_MAX = 52;
+export const DESKTOP_AI_PANEL_RESET_THRESHOLD = 60;
 export const DESKTOP_MAIN_PANEL_MIN = 24;
 
 export const clampDesktopPluginPanelSize = (value: number) =>
@@ -18,6 +21,10 @@ export const normalizePersistedDesktopAiPanelSize = (value: unknown) => {
   }
 
   if (value > DESKTOP_AI_PANEL_RESET_THRESHOLD) {
+    return DESKTOP_AI_PANEL_DEFAULT;
+  }
+
+  if (value === DESKTOP_AI_PANEL_LEGACY_DEFAULT) {
     return DESKTOP_AI_PANEL_DEFAULT;
   }
 
@@ -47,7 +54,7 @@ export interface DesktopWorkbenchResizeState {
 
 export function getDesktopSidebarMaxSize(rightPanels: DesktopWorkbenchPanel[]): number {
   const reservedRightMin = rightPanels.reduce((sum, panel) => sum + panel.minSize, 0);
-  return Math.min(42, Math.max(14, 100 - DESKTOP_MAIN_PANEL_MIN - reservedRightMin));
+  return Math.min(42, Math.max(DESKTOP_SIDEBAR_MIN, 100 - DESKTOP_MAIN_PANEL_MIN - reservedRightMin));
 }
 
 export function getDesktopPluginPanelIndex(sidebarCollapsed: boolean): number {
@@ -80,19 +87,27 @@ function fitRightPanelsToAvailableSpace(
     return panels.map((panel) => ({ ...panel, size: panel.minSize }));
   }
 
+  const requestedPanels = panels.map((panel) => ({
+    ...panel,
+    size: Math.max(panel.minSize, Math.min(panel.maxSize, panel.size)),
+  }));
+  const requestedTotal = requestedPanels.reduce((sum, panel) => sum + panel.size, 0);
+  if (requestedTotal <= maxTotal) {
+    return requestedPanels;
+  }
+
   const extraCapacity = maxTotal - minTotal;
-  const requestedExtraTotal = panels.reduce(
-    (sum, panel) => sum + Math.max(0, Math.min(panel.maxSize, panel.size) - panel.minSize),
+  const requestedExtraTotal = requestedPanels.reduce(
+    (sum, panel) => sum + (panel.size - panel.minSize),
     0,
   );
 
-  return panels.map((panel) => {
-    const requested = Math.max(panel.minSize, Math.min(panel.maxSize, panel.size));
+  return requestedPanels.map((panel) => {
     if (requestedExtraTotal <= 0) {
       return { ...panel, size: panel.minSize };
     }
 
-    const requestedExtra = Math.max(0, requested - panel.minSize);
+    const requestedExtra = panel.size - panel.minSize;
     return {
       ...panel,
       size: Math.min(
@@ -143,7 +158,7 @@ export function buildDesktopWorkbenchLayout(options: {
   }
 
   const sidebarSize = Math.min(
-    Math.max(14, options.requestedSidebarSize),
+    Math.max(DESKTOP_SIDEBAR_MIN, options.requestedSidebarSize),
     getDesktopSidebarMaxSize(rightPanels),
   );
   const fittedRightPanels = fitRightPanelsToAvailableSpace(
@@ -169,7 +184,7 @@ export function resolveDesktopWorkbenchResize(options: {
   if (!options.sidebarCollapsed && typeof options.sizes[0] === "number") {
     next.sidebarSize = Math.min(
       getDesktopSidebarMaxSize(options.rightPanels),
-      Math.max(14, options.sizes[0]),
+      Math.max(DESKTOP_SIDEBAR_MIN, options.sizes[0]),
     );
   }
 

@@ -2,6 +2,36 @@ import { describe, expect, it } from "vitest";
 import { parseLinkTarget } from "../parse-link-target";
 
 describe("parseLinkTarget", () => {
+  it("preserves encoded external URLs without decoding their query delimiters", () => {
+    const url = "https://example.com/?q=A%2BB%26C%23D";
+    expect(parseLinkTarget(url).target).toEqual({ type: "external_url", url });
+  });
+
+  it("keeps a PDF page and exact encoded quote in a single navigation target", () => {
+    expect(parseLinkTarget("papers/figure%231.pdf#page=3&text=Energy%20A%2BB%20%26%20C%20%2520").target).toEqual({
+      type: "pdf_page", path: "papers/figure#1.pdf", page: 3, snippet: "Energy A+B & C %20",
+    });
+  });
+
+  it("decodes fragment values exactly once", () => {
+    expect(parseLinkTarget("notes.md#text=A%2BB%20%26%20C%20%23D").target).toEqual({
+      type: "workspace_text", path: "notes.md", snippet: "A+B & C #D",
+    });
+    expect(parseLinkTarget("paper.pdf#annotation=ann%2B1%26x%2520&page=2").target).toEqual({
+      type: "pdf_annotation", path: "paper.pdf", annotationId: "ann+1&x%20", page: 2,
+    });
+  });
+
+  it.each(["3oops", "2.5", "0", "-1", "Infinity"])("rejects malformed page locators: %s", (page) => {
+    expect(parseLinkTarget(`paper.pdf#page=${page}`).target).toBeNull();
+  });
+
+  it("navigates a validated multi-line selection to its first line", () => {
+    expect(parseLinkTarget("main.py#line=10-12").target).toEqual({ type: "code_line", path: "main.py", line: 10 });
+    expect(parseLinkTarget("main.py#line=12-10").target).toBeNull();
+    expect(parseLinkTarget("main.py#line=10-garbage").target).toBeNull();
+  });
+
   it("parses external urls without converting them into in-app routes", () => {
     expect(parseLinkTarget("https://example.com/docs").target).toEqual({
       type: "external_url",

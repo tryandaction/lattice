@@ -37,6 +37,10 @@ vi.mock('@/hooks/use-i18n', () => ({
         'chat.agentMemory.disabledCount': '{count} disabled',
         'chat.agentMemory.empty': 'No memory entries yet.',
         'chat.agentMemory.noSaved': 'No saved memories yet.',
+        'chat.agentMemory.description': 'Saved preferences are separate from conversation and document context.',
+        'chat.agentMemory.loadFailed': 'Saved memory could not be loaded. Existing data has been preserved.',
+        'chat.agentMemory.saveFailed': 'The latest memory changes have not been saved. Please retry.',
+        'chat.agentMemory.retry': 'Retry',
         'chat.agentMemory.pendingCount': '{count} pending',
         'chat.agentMemory.suggestions': 'Memory suggestions',
         'chat.agentMemory.activeSessionFocus': 'Reviewing {count} from the current run. {otherCount} from other runs remain visible.',
@@ -54,6 +58,11 @@ vi.mock('@/hooks/use-i18n', () => ({
         'chat.agentMemory.disable': 'Disable memory',
         'chat.agentMemory.restore': 'Restore memory',
         'chat.agentMemory.delete': 'Delete memory',
+        'chat.agentMemory.edit': 'Edit memory',
+        'chat.agentMemory.editTitle': 'Memory title',
+        'chat.agentMemory.editContent': 'Memory content',
+        'chat.agentMemory.save': 'Save memory',
+        'chat.agentMemory.cancelEdit': 'Cancel edit',
         'chat.agentMemory.source': 'Source',
         'chat.agentMemory.sourceFingerprint': 'Source fingerprint',
         'chat.agentMemory.updated': 'Updated',
@@ -114,12 +123,29 @@ describe('AgentMemoryPanel', () => {
     useAgentMemoryStore.setState({
       entries: [],
       loaded: true,
+      persistenceError: null,
     });
     useAgentSessionStore.setState({
       sessions: [],
       activeSessionId: null,
       focusTarget: null,
     });
+  });
+
+  it('distinguishes empty saved memory from ongoing conversation context', () => {
+    render(<AgentMemoryPanel />);
+    fireEvent.click(screen.getByRole('button', { name: /Agent Memory/ }));
+    expect(screen.getByText('Saved preferences are separate from conversation and document context.')).toBeTruthy();
+    expect(useAgentMemoryStore.getState().entries).toEqual([]);
+  });
+
+  it('shows a recoverable load error instead of hiding the memory panel', async () => {
+    useAgentMemoryStore.setState({ loaded: false, persistenceError: 'load' });
+    render(<AgentMemoryPanel loadPersisted={false} />);
+    expect(screen.getByRole('alert').textContent).toContain('Existing data has been preserved.');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(useAgentMemoryStore.getState().loaded).toBe(true);
   });
 
   it('inspects, pins, cites, disables, restores, and deletes memory entries', async () => {
@@ -171,6 +197,25 @@ describe('AgentMemoryPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete memory' }));
     expect(useAgentMemoryStore.getState().getMemory('memory-1')?.status).toBe('deleted');
     expect(screen.queryByText('Citation rule')).toBeNull();
+  });
+
+  it('edits memory title and content with an explicit save action', () => {
+    useAgentMemoryStore.getState().addMemory({
+      id: 'memory-edit',
+      scope: 'project',
+      title: 'Old title',
+      content: 'Old content',
+      source: { label: 'Project rule', locator: 'project://rule' },
+      now: 100,
+    });
+
+    render(<AgentMemoryPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit memory' }));
+    fireEvent.change(screen.getByTestId('agent-memory-edit-title'), { target: { value: 'New title' } });
+    fireEvent.change(screen.getByTestId('agent-memory-edit-content'), { target: { value: 'New content' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save memory' }));
+
+    expect(useAgentMemoryStore.getState().getMemory('memory-edit')).toMatchObject({ title: 'New title', content: 'New content' });
   });
 
   it('shows pending memory suggestions and approves them through the broker', async () => {

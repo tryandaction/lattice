@@ -1,23 +1,33 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import type { DirectoryNode } from "@/types/file-system";
 import { useExplorerStore } from "@/stores/explorer-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useFileSystem } from "@/hooks/use-file-system";
 import { getParentPath } from "@/lib/file-operations";
-import { TreeNodeComponent } from "./tree-node";
+import { SourceTreeNode } from "./source-tree-node";
+import type { ExplorerSourceAdapter } from "./explorer-source";
+import { handleTreeNavigation } from "./tree-row";
+import { collectVisibleLocalTreeRows, LOCAL_TREE_WINDOW_THRESHOLD, WindowedLocalTree, type WindowedLocalTreeHandle } from './windowed-local-tree';
 
-interface TreeViewProps {
-  root: DirectoryNode;
-}
+type TreeViewProps = { root: DirectoryNode; source?: never } | { source: ExplorerSourceAdapter; root?: never };
 
 /**
  * Tree View component that renders the file tree
  * Starts from the root directory node
  */
-export function TreeView({ root }: TreeViewProps) {
-  const { copyEntry, moveEntry } = useFileSystem();
+export function TreeView(props: TreeViewProps) {
+  if (props.source) return <div role="tree" aria-label={props.source.label} className="py-2 focus:outline-none" tabIndex={0} onKeyDown={handleTreeNavigation}>
+    {props.source.root ? <SourceTreeNode node={props.source.root} source={props.source} depth={0} /> : null}
+  </div>;
+  return <LocalTreeView root={props.root} />;
+}
+
+function LocalTreeView({ root }: { root: DirectoryNode }) {
+  const visibleRows = useMemo(() => collectVisibleLocalTreeRows(root), [root]);
+  const windowedTree = useRef<WindowedLocalTreeHandle>(null);
+  const { copyEntry, moveEntry } = useFileSystem({ subscribeToTree: false });
   const setSelectedDirectoryPath = useWorkspaceStore((state) => state.setSelectedDirectoryPath);
   const updateTabPath = useWorkspaceStore((state) => state.updateTabPath);
   const updateTabFile = useWorkspaceStore((state) => state.updateTabFile);
@@ -86,9 +96,20 @@ export function TreeView({ root }: TreeViewProps) {
 
   return (
     <div
+      role="tree"
+      aria-label={root.name}
       className="py-2 focus:outline-none"
       tabIndex={0}
       onKeyDown={(event) => {
+        // A virtual tree navigates the complete logical list, including rows not mounted yet.
+        if (visibleRows.length > LOCAL_TREE_WINDOW_THRESHOLD && event.target === event.currentTarget) {
+          if (["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
+            event.preventDefault();
+            windowedTree.current?.navigate(event.key);
+            return;
+          }
+        }
+        if (handleTreeNavigation(event)) return;
         const target = event.target as HTMLElement | null;
         if (
           target instanceof HTMLInputElement ||
@@ -126,7 +147,7 @@ export function TreeView({ root }: TreeViewProps) {
         }
       }}
     >
-      <TreeNodeComponent node={root} depth={0} />
+      <WindowedLocalTree ref={windowedTree} rows={visibleRows}/>
     </div>
   );
 }

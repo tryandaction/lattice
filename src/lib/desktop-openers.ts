@@ -18,3 +18,11 @@ export async function revealDesktopPath(path: string): Promise<void> {
 export async function openDesktopTerminalAtPath(path: string): Promise<void> {
   await invokeTauriCommand("desktop_open_terminal_at_path", { path }, { timeoutMs: 4000 });
 }
+
+export async function openDesktopVSCode(filePath: string, workspacePath?: string | null): Promise<void> {
+  await invokeTauriCommand(
+    "desktop_open_in_vscode",
+    { filePath, workspacePath: workspacePath ?? null },
+    { timeoutMs: 4000 },
+  );
+}

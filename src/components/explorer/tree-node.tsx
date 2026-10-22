@@ -1,18 +1,13 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { memo, useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   ChevronRight,
   ChevronDown,
   Folder,
   FolderOpen,
-  FileText,
-  FileCode,
-  Code,
-  Image as ImageIcon,
-  File,
-  Presentation,
-  BookOpen,
+  CircleAlert,
   Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -20,9 +15,10 @@ import type { TreeNode, FileNode, DirectoryNode } from "@/types/file-system";
 import { isFileNode, isDirectoryNode } from "@/types/file-system";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useExplorerStore } from "@/stores/explorer-store";
-import { useFileSystem } from "@/hooks/use-file-system";
+import { resolvePathFromLatticeRoot, useFileSystem } from "@/hooks/use-file-system";
 import { getAllPaneIds, findPane } from "@/lib/layout-utils";
 import { cn } from "@/lib/utils";
+import { ExplorerTreeRow, ExplorerFileIcon as FileIcon } from "./tree-row";
 import { FileCompareDialog, type FileCompareDialogInput } from "./file-compare-dialog";
 import { FileContextMenu, DeleteConfirmDialog, type FileContextMenuAction } from "./file-context-menu";
 import type { EntryKind } from "@/lib/file-operations";
@@ -34,6 +30,7 @@ import { generateFileId } from "@/lib/universal-annotation-storage";
 import { buildFileFingerprint } from "@/lib/file-identity";
 import { useI18n } from "@/hooks/use-i18n";
 import { copyToClipboard } from "@/lib/clipboard";
+import { EXPLORER_ENTRY_MIME, hasInternalEntryDrop, parseExplorerEntryDrop } from '@/lib/explorer-file-drop';
 import { getDesktopHandlePath } from "@/lib/desktop-file-system";
 import {
   canUseDesktopOpeners,
@@ -45,6 +42,7 @@ import {
 interface TreeNodeProps {
   node: TreeNode;
   depth: number;
+  renderChildren?: boolean;
 }
 
 interface DragPayload {
@@ -52,7 +50,7 @@ interface DragPayload {
   kind: EntryKind;
 }
 
-const EXPLORER_DRAG_MIME = "application/x-lattice-explorer-entry";
+const EXPLORER_DRAG_MIME = EXPLORER_ENTRY_MIME;
 
 function hasPathPrefix(path: string | null, prefix: string): boolean {
   if (!path) {
@@ -78,20 +76,7 @@ function selectFileName(input: HTMLInputElement, fileName: string): void {
 }
 
 function parseDraggedEntry(event: React.DragEvent): DragPayload | null {
-  const raw = event.dataTransfer.getData(EXPLORER_DRAG_MIME);
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as DragPayload;
-    if (!parsed.path || (parsed.kind !== "file" && parsed.kind !== "directory")) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
+  return parseExplorerEntryDrop(event.dataTransfer);
 }
 
 function setExplorerClipboardForPath(path: string, kind: EntryKind, mode: "copy" | "cut"): void {
@@ -128,6 +113,14 @@ async function runDesktopAction(action: () => Promise<void>, failureMessage: str
     console.error(failureMessage, error);
     toast.error(failureMessage);
   }
+}
+
+async function requestCloudUpload(node: TreeNode, rootHandle: FileSystemDirectoryHandle | null): Promise<void> {
+  if (!rootHandle) { toast.error("请先打开本地工作区。"); return; }
+  try {
+    const { useCloudWorkbenchStore } = await import("@/stores/cloud-workbench-store");
+    useCloudWorkbenchStore.getState().requestLocalUpload({ name: node.name, path: node.path, storagePath: resolvePathFromLatticeRoot(node.path), kind: node.kind, handle: node.handle, rootHandle });
+  } catch (error) { toast.error(error instanceof Error ? error.message : "无法打开云端上传窗口。"); }
 }
 
 function syncExplorerSelectionAfterPathChange(
@@ -169,83 +162,66 @@ function clearExplorerSelectionForDeletedPath(deletedPath: string): void {
   }
 }
 
-function FileIcon({
-  extension,
-  className,
-}: {
-  extension: string;
-  className?: string;
-}) {
-  const normalizedExt = extension.toLowerCase();
-
-  if (normalizedExt === "pdf" || normalizedExt === "txt") {
-    return <FileText className={className} />;
-  }
-  if (normalizedExt === "ppt" || normalizedExt === "pptx") {
-    return <Presentation className={className} />;
-  }
-  if (normalizedExt === "md") {
-    return <FileCode className={className} />;
-  }
-  if (normalizedExt === "py") {
-    return <Code className={className} />;
-  }
-  if (normalizedExt === "ipynb") {
-    return <BookOpen className={className} />;
-  }
-  if (normalizedExt === "png" || normalizedExt === "jpg" || normalizedExt === "jpeg") {
-    return <ImageIcon className={className} />;
-  }
-  return <File className={className} />;
-}
-
-export function TreeNodeComponent({ node, depth }: TreeNodeProps) {
+export const TreeNodeComponent = memo(function TreeNodeComponent({ node, depth, renderChildren = true }: TreeNodeProps) {
   if (isFileNode(node)) {
-    return <FileNodeComponent node={node} depth={depth} />;
+    return <FileNodeComponent node={node} depth={depth} renderChildren={renderChildren} />;
   }
 
   if (isDirectoryNode(node)) {
-    return <DirectoryNodeComponent node={node} depth={depth} />;
+    return <DirectoryNodeComponent node={node} depth={depth} renderChildren={renderChildren} />;
   }
 
   return null;
-}
+});
 
 interface FileNodeProps {
   node: FileNode;
   depth: number;
+  renderChildren?: boolean;
 }
 
-function FileNodeComponent({ node, depth }: FileNodeProps) {
+function FileNodeComponent({ node, depth, renderChildren = true }: FileNodeProps) {
   const { t } = useI18n();
   const toggleDirectory = useWorkspaceStore((state) => state.toggleDirectory);
   const openFileInPane = useWorkspaceStore((state) => state.openFileInPane);
+  const openFileInLatticePane = useWorkspaceStore((state) => state.openFileInLatticePane);
   const splitPane = useWorkspaceStore((state) => state.splitPane);
   const closeTabsByPath = useWorkspaceStore((state) => state.closeTabsByPath);
   const updateTabPath = useWorkspaceStore((state) => state.updateTabPath);
   const updateTabFile = useWorkspaceStore((state) => state.updateTabFile);
   const updateTabPathPrefix = useWorkspaceStore((state) => state.updateTabPathPrefix);
   const setSelectedDirectoryPath = useWorkspaceStore((state) => state.setSelectedDirectoryPath);
-  const layout = useWorkspaceStore((state) => state.layout);
+  const workspaceRootHandle = useWorkspaceStore((state) => state.workspaceRootHandle);
+  const { openCount, isActiveFile } = useWorkspaceStore(useShallow((state) => {
+    const { layout } = state;
+    const activePane = findPane(layout.root, layout.activePaneId);
+    const activeFilePath = activePane?.tabs[activePane.activeTabIndex]?.filePath;
+    const openCount = getAllPaneIds(layout.root).reduce((count, paneId) => {
+      const pane = findPane(layout.root, paneId);
+      return count + (pane?.tabs.some((tab) => tab.filePath === node.path) ? 1 : 0);
+    }, 0);
+    return { openCount, isActiveFile: activeFilePath === node.path };
+  }));
   const {
     deleteFile,
     renameFile,
-    refreshDirectory,
     rootHandle,
     hydratePdfVirtualChildren,
     moveEntryIntoPdfItemWorkspace,
-  } = useFileSystem();
-  const selectedPath = useExplorerStore((state) => state.selectedPath);
-  const renamingPath = useExplorerStore((state) => state.renamingPath);
-  const clipboard = useExplorerStore((state) => state.clipboard);
+  } = useFileSystem({ subscribeToTree: false });
+  const isSelected = useExplorerStore((state) => state.selectedPath === node.path);
+  const isRenaming = useExplorerStore((state) => state.renamingPath === node.path);
+  const isCutItem = useExplorerStore((state) => state.clipboard?.mode === "cut" && state.clipboard.path === node.path);
   const compareSelection = useExplorerStore((state) => state.compareSelection);
   const setSelection = useExplorerStore((state) => state.setSelection);
   const startRenaming = useExplorerStore((state) => state.startRenaming);
   const stopRenaming = useExplorerStore((state) => state.stopRenaming);
   const setCompareSelection = useExplorerStore((state) => state.setCompareSelection);
   const clearCompareSelection = useExplorerStore((state) => state.clearCompareSelection);
-  const dragOverPath = useExplorerStore((state) => state.dragOverPath);
+  const isDragOver = useExplorerStore((state) => state.dragOverPath === node.path);
+  const isDropPending = useExplorerStore((state) => state.dropPendingPath === node.path);
   const setDragOverPath = useExplorerStore((state) => state.setDragOverPath);
+  const setDropPendingPath = useExplorerStore((state) => state.setDropPendingPath);
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -254,36 +230,14 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   const [renameError, setRenameError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const isRenaming = renamingPath === node.path;
-  const isSelected = selectedPath === node.path;
-  const isCutItem = clipboard?.mode === "cut" && clipboard.path === node.path;
   const hasChildren = Boolean(node.children?.length || node.canExpandVirtualChildren);
   const childNodes = node.children ?? [];
-  const ChevronIcon = node.virtualChildrenState === "loading" ? Loader2 : node.isExpanded ? ChevronDown : ChevronRight;
+  const ChevronIcon = node.virtualChildrenState === "loading"
+    ? Loader2
+    : node.virtualChildrenState === "unavailable"
+      ? CircleAlert
+      : node.isExpanded ? ChevronDown : ChevronRight;
   const canAcceptPdfItemDrop = node.extension === "pdf" && !node.isVirtual;
-
-  const { openCount, isActiveFile } = useMemo(() => {
-    const paneIds = getAllPaneIds(layout.root);
-    let count = 0;
-    let activeFilePath: string | null = null;
-
-    const activePane = findPane(layout.root, layout.activePaneId);
-    if (activePane && activePane.activeTabIndex >= 0 && activePane.activeTabIndex < activePane.tabs.length) {
-      activeFilePath = activePane.tabs[activePane.activeTabIndex]?.filePath ?? null;
-    }
-
-    for (const paneId of paneIds) {
-      const pane = findPane(layout.root, paneId);
-      if (pane?.tabs.some((tab) => tab.filePath === node.path)) {
-        count += 1;
-      }
-    }
-
-    return {
-      openCount: count,
-      isActiveFile: activeFilePath === node.path,
-    };
-  }, [layout.activePaneId, layout.root, node.path]);
 
   useEffect(() => {
     if (isRenaming && inputRef.current) {
@@ -327,16 +281,18 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   }, [closeTabsByPath, deleteFile, node.path]);
 
   const ensurePdfWorkspace = useCallback(async () => {
-    if (!rootHandle || node.extension !== "pdf" || node.isVirtual) {
+    const latticeRootHandle = workspaceRootHandle ?? rootHandle;
+    if (!latticeRootHandle || node.extension !== "pdf" || node.isVirtual) {
       return null;
     }
 
+    const storagePdfPath = resolvePathFromLatticeRoot(node.path);
     const fingerprint = await buildFileFingerprint(node.handle);
-    const manifest = await ensurePdfItemWorkspace(rootHandle, generateFileId(node.path), node.path, {
+    const manifest = await ensurePdfItemWorkspace(latticeRootHandle, generateFileId(storagePdfPath), storagePdfPath, {
       fileFingerprint: fingerprint.fingerprint,
       versionFingerprint: fingerprint.versionFingerprint,
     });
-    await refreshDirectory({ silent: true });
+    await hydratePdfVirtualChildren(node.path, { force: true, expand: true });
     const latestTree = useWorkspaceStore.getState().fileTree;
     const latestNode = (function findPdfEntry(current: TreeNode | null): FileNode | null {
       if (!current) return null;
@@ -362,10 +318,11 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
     }
 
     return manifest;
-  }, [node.extension, node.isVirtual, node.path, refreshDirectory, rootHandle, toggleDirectory]);
+  }, [hydratePdfVirtualChildren, node.extension, node.handle, node.isVirtual, node.path, rootHandle, toggleDirectory, workspaceRootHandle]);
 
   const handleCreatePdfNote = useCallback(async (type: "note" | "notebook") => {
-    if (!rootHandle) {
+    const latticeRootHandle = workspaceRootHandle ?? rootHandle;
+    if (!latticeRootHandle) {
       return;
     }
 
@@ -375,37 +332,45 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
     }
 
     const baseName = type === "note" ? "Untitled" : "Lab Notebook";
-    const created = await createPdfItemNote(rootHandle, manifest, type, baseName);
-    await refreshDirectory({ silent: true });
+    const created = await createPdfItemNote(latticeRootHandle, manifest, type, baseName);
     await hydratePdfVirtualChildren(node.path, { force: true, expand: true });
-    openFileInPane(layout.activePaneId, created.handle, created.path);
-  }, [ensurePdfWorkspace, hydratePdfVirtualChildren, layout.activePaneId, openFileInPane, refreshDirectory, rootHandle, node.path]);
+    openFileInPane(useWorkspaceStore.getState().layout.activePaneId, created.handle, created.path);
+  }, [ensurePdfWorkspace, hydratePdfVirtualChildren, openFileInPane, rootHandle, node.path, workspaceRootHandle]);
 
   const handleDropIntoPdfItemWorkspace = useCallback(async (dragged: DragPayload) => {
-    const result = await moveEntryIntoPdfItemWorkspace(dragged.path, node.path);
-    if (!result.success || !result.path) {
-      console.error("Failed to move entry into PDF item workspace:", result.error);
-      return;
-    }
-
-    if (dragged.kind === "file") {
-      if (result.handle?.kind === "file") {
-        useWorkspaceStore.getState().updateTabFile(dragged.path, result.path, result.handle as FileSystemFileHandle);
-      } else {
-        useWorkspaceStore.getState().updateTabPath(dragged.path, result.path);
+    setDropPendingPath(node.path);
+    try {
+      const result = await moveEntryIntoPdfItemWorkspace(dragged.path, node.path);
+      if (!result.success || !result.path) {
+        console.error("Failed to move entry into PDF item workspace:", result.error);
+        toast.error(result.error || t("explorer.move.failed"));
+        return;
       }
-    } else {
-      updateTabPathPrefix(dragged.path, result.path);
-    }
 
-    syncExplorerSelectionAfterPathChange(dragged.path, result.path, dragged.kind);
-    setSelection(result.path, dragged.kind);
-    if (dragged.kind === "directory") {
-      setSelectedDirectoryPath(result.path);
+      if (dragged.kind === "file") {
+        if (result.handle?.kind === "file") {
+          useWorkspaceStore.getState().updateTabFile(dragged.path, result.path, result.handle as FileSystemFileHandle);
+        } else {
+          useWorkspaceStore.getState().updateTabPath(dragged.path, result.path);
+        }
+      } else {
+        updateTabPathPrefix(dragged.path, result.path);
+      }
+
+      syncExplorerSelectionAfterPathChange(dragged.path, result.path, dragged.kind);
+      setSelection(result.path, dragged.kind);
+      if (dragged.kind === "directory") {
+        setSelectedDirectoryPath(result.path);
+      }
+    } finally {
+      if (useExplorerStore.getState().dropPendingPath === node.path) {
+        setDropPendingPath(null);
+      }
     }
-  }, [moveEntryIntoPdfItemWorkspace, node.path, setSelectedDirectoryPath, setSelection, updateTabPathPrefix]);
+  }, [moveEntryIntoPdfItemWorkspace, node.path, setDropPendingPath, setSelectedDirectoryPath, setSelection, t, updateTabPathPrefix]);
 
   const handleOpenToSide = useCallback(() => {
+    const { layout } = useWorkspaceStore.getState();
     const sidePaneId = getSidePaneId(layout.root, layout.activePaneId);
     const targetPaneId = sidePaneId ?? splitPane(layout.activePaneId, "horizontal");
     if (!targetPaneId) {
@@ -413,7 +378,11 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
       return;
     }
     openFileInPane(targetPaneId, node.handle, node.path);
-  }, [layout.activePaneId, layout.root, node.handle, node.path, openFileInPane, splitPane]);
+  }, [node.handle, node.path, openFileInPane, splitPane]);
+
+  const handleOpenInLattice = useCallback(() => {
+    openFileInLatticePane(useWorkspaceStore.getState().layout.activePaneId, node.handle, node.path);
+  }, [node.handle, node.path, openFileInLatticePane]);
 
   const handleCopyPath = useCallback(async () => {
     const path = getDesktopHandlePath(node.handle) ?? node.path;
@@ -478,6 +447,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
       return;
     }
 
+    const { layout } = useWorkspaceStore.getState();
     const sidePaneId = getSidePaneId(layout.root, layout.activePaneId);
     const targetPaneId = sidePaneId ?? splitPane(layout.activePaneId, "horizontal");
     openFileInPane(layout.activePaneId, compareSelection.handle, compareSelection.path);
@@ -511,8 +481,6 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
     compareSelection,
     handleSelectForCompare,
     node.displayName,
-    layout.activePaneId,
-    layout.root,
     node.handle,
     node.name,
     node.path,
@@ -525,9 +493,17 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
     const desktopActionsDisabled = !canUseDesktopOpeners() || !getDesktopHandlePath(node.handle);
     const actions: FileContextMenuAction[] = [
       {
+        label: "上传到云端库…",
+        onSelect: () => void requestCloudUpload(node, workspaceRootHandle ?? rootHandle),
+      },
+      {
         label: t("explorer.context.openToSide"),
         shortcut: "Ctrl+Enter",
         onSelect: handleOpenToSide,
+      },
+      {
+        label: t("explorer.context.openInLattice"),
+        onSelect: handleOpenInLattice,
       },
       {
         label: t("explorer.context.openWith"),
@@ -581,19 +557,19 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
 
     return actions;
   }, [
+    node,
     compareSelection,
     handleCompareWithSelected,
     handleCopyPath,
     handleCopyRelativePath,
     handleCreatePdfNote,
+    handleOpenInLattice,
     handleOpenTerminalHere,
     handleOpenToSide,
     handleOpenWithDefaultApp,
     handleRevealInFileExplorer,
-    node.extension,
-    node.handle,
-    node.isVirtual,
-    node.path,
+    rootHandle,
+    workspaceRootHandle,
     t,
   ]);
 
@@ -617,8 +593,10 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
   }, [node.path, setSelection]);
 
   const handleDragStart = useCallback((event: React.DragEvent<HTMLButtonElement>) => {
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData(EXPLORER_DRAG_MIME, JSON.stringify({ path: node.path, kind: "file" }));
+    const payload = JSON.stringify({ path: node.path, kind: "file" });
+    event.dataTransfer.effectAllowed = "copyMove";
+    event.dataTransfer.setData(EXPLORER_DRAG_MIME, payload);
+    event.dataTransfer.setData("text/plain", payload);
     setSelection(node.path, "file");
   }, [node.path, setSelection]);
 
@@ -661,24 +639,29 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
           )}
         </div>
       ) : (
-        <div
-          data-explorer-node="true"
+        <ExplorerTreeRow
+          as="div"
+          depth={depth}
+          selected={isSelected || isActiveFile}
+          data-explorer-drop-directory={getPathParent(node.path)}
+          aria-busy={isDropPending}
           onDragOver={(event) => {
             if (!canAcceptPdfItemDrop) {
               return;
             }
 
             const dragged = parseDraggedEntry(event);
-            if (!dragged || dragged.path === node.path || hasPathPrefix(node.path, dragged.path)) {
+            if ((!dragged && !hasInternalEntryDrop(event.dataTransfer)) || dragged?.path === node.path || (dragged && hasPathPrefix(node.path, dragged.path))) {
               return;
             }
 
             event.preventDefault();
+            event.stopPropagation();
             event.dataTransfer.dropEffect = "move";
             setDragOverPath(node.path);
           }}
           onDragLeave={() => {
-            if (dragOverPath === node.path) {
+            if (isDragOver) {
               setDragOverPath(null);
             }
           }}
@@ -688,6 +671,7 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
             }
 
             event.preventDefault();
+            event.stopPropagation();
             const dragged = parseDraggedEntry(event);
             setDragOverPath(null);
             if (!dragged || dragged.path === node.path || hasPathPrefix(node.path, dragged.path)) {
@@ -697,12 +681,10 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
             void handleDropIntoPdfItemWorkspace(dragged);
           }}
           className={cn(
-            "flex w-full items-center gap-2 px-2 py-1 text-left text-sm transition-colors",
-            (isSelected || isActiveFile) && "bg-accent",
-            dragOverPath === node.path && "bg-primary/10 ring-1 ring-primary/50",
+            isDragOver && "bg-primary/10 ring-1 ring-primary/50",
+            isDropPending && "animate-pulse bg-primary/15 ring-1 ring-primary/60",
             isCutItem && "opacity-55"
           )}
-          style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
           {hasChildren ? (
             <button
@@ -723,19 +705,23 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
                 toggleDirectory(node.path);
               }}
               className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
-              title={node.isExpanded ? t("explorer.pdf.collapseChildren") : t("explorer.pdf.expandChildren")}
+              title={node.virtualChildrenState === "unavailable"
+                ? t("explorer.pdf.itemWorkspaceUnavailable")
+                : node.isExpanded ? t("explorer.pdf.collapseChildren") : t("explorer.pdf.expandChildren")}
             >
-              <ChevronIcon className={`h-4 w-4 shrink-0${node.virtualChildrenState === "loading" ? " animate-spin" : ""}`} />
+              <ChevronIcon className={`h-4 w-4 shrink-0${node.virtualChildrenState === "loading" ? " animate-spin" : ""}${node.virtualChildrenState === "unavailable" ? " text-amber-600" : ""}`} />
             </button>
           ) : (
             <span className="w-4 shrink-0" />
           )}
           <button
             data-explorer-node="true"
+            data-explorer-focus="true"
+            onFocus={() => setSelection(node.path, "file")}
             draggable
             onClick={() => {
               setSelection(node.path, "file");
-              openFileInPane(layout.activePaneId, node.handle, node.path);
+              openFileInPane(useWorkspaceStore.getState().layout.activePaneId, node.handle, node.path);
             }}
             onContextMenu={handleContextMenu}
             onDragStart={handleDragStart}
@@ -754,10 +740,10 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
               <span className="ml-auto text-xs text-muted-foreground">{openCount}</span>
             )}
           </button>
-        </div>
+        </ExplorerTreeRow>
       )}
 
-      {hasChildren && node.isExpanded ? (
+      {renderChildren && hasChildren && node.isExpanded ? (
         <div className="animate-in fade-in-0 slide-in-from-top-1 duration-150">
           {childNodes.map((child) => (
             <TreeNodeComponent
@@ -810,12 +796,14 @@ function FileNodeComponent({ node, depth }: FileNodeProps) {
 interface DirectoryNodeProps {
   node: DirectoryNode;
   depth: number;
+  renderChildren?: boolean;
 }
 
-function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
+function DirectoryNodeComponent({ node, depth, renderChildren = true }: DirectoryNodeProps) {
   const { t } = useI18n();
   const toggleDirectory = useWorkspaceStore((state) => state.toggleDirectory);
   const setSelectedDirectoryPath = useWorkspaceStore((state) => state.setSelectedDirectoryPath);
+  const workspaceRootHandle = useWorkspaceStore((state) => state.workspaceRootHandle);
   const openFileInActivePane = useWorkspaceStore((state) => state.openFileInActivePane);
   const closeTabsByPrefix = useWorkspaceStore((state) => state.closeTabsByPrefix);
   const updateTabPathPrefix = useWorkspaceStore((state) => state.updateTabPathPrefix);
@@ -827,19 +815,21 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
     copyEntry,
     moveEntry,
     openDirectoryAsWorkspace,
+    ensureDirectoryExpanded,
     rootHandle,
-  } = useFileSystem();
-  const selectedPath = useExplorerStore((state) => state.selectedPath);
-  const selectedKind = useExplorerStore((state) => state.selectedKind);
-  const renamingPath = useExplorerStore((state) => state.renamingPath);
+  } = useFileSystem({ subscribeToTree: false });
+  const isSelected = useExplorerStore((state) => state.selectedPath === node.path && state.selectedKind === "directory");
+  const isRenaming = useExplorerStore((state) => state.renamingPath === node.path);
   const clipboard = useExplorerStore((state) => state.clipboard);
-  const dragOverPath = useExplorerStore((state) => state.dragOverPath);
+  const isDragOver = useExplorerStore((state) => state.dragOverPath === node.path);
+  const isDropPending = useExplorerStore((state) => state.dropPendingPath === node.path);
   const setSelection = useExplorerStore((state) => state.setSelection);
   const startRenaming = useExplorerStore((state) => state.startRenaming);
   const stopRenaming = useExplorerStore((state) => state.stopRenaming);
   const setClipboard = useExplorerStore((state) => state.setClipboard);
   const clearClipboard = useExplorerStore((state) => state.clearClipboard);
   const setDragOverPath = useExplorerStore((state) => state.setDragOverPath);
+  const setDropPendingPath = useExplorerStore((state) => state.setDropPendingPath);
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -847,10 +837,7 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
   const [renameError, setRenameError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const isRenaming = renamingPath === node.path;
-  const isSelected = selectedPath === node.path && selectedKind === "directory";
   const isCutItem = clipboard?.mode === "cut" && clipboard.path === node.path;
-  const isDragOver = dragOverPath === node.path;
 
   useEffect(() => {
     if (isRenaming && inputRef.current) {
@@ -969,29 +956,37 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
     updateTabPathPrefix,
   ]);
 
-  const handleDropMove = useCallback(async (dragged: DragPayload) => {
-    const result = await moveEntry(dragged.path, node.path);
-    if (!result.success || !result.path) {
-      console.error("Failed to move entry:", result.error);
-      return;
-    }
-
-    if (dragged.kind === "file") {
-      if (result.handle?.kind === "file") {
-        useWorkspaceStore.getState().updateTabFile(dragged.path, result.path, result.handle as FileSystemFileHandle);
-      } else {
-        useWorkspaceStore.getState().updateTabPath(dragged.path, result.path);
+  const handleDropMove = useCallback(async (dragged: DragPayload, copy = false) => {
+    setDropPendingPath(node.path);
+    try {
+      const result = await (copy ? copyEntry : moveEntry)(dragged.path, node.path);
+      if (!result.success || !result.path) {
+        console.error("Failed to move entry:", result.error);
+        toast.error(result.error || t("explorer.move.failed"));
+        return;
       }
-    } else {
-      updateTabPathPrefix(dragged.path, result.path);
-    }
 
-    syncExplorerSelectionAfterPathChange(dragged.path, result.path, dragged.kind);
-    setSelection(result.path, dragged.kind);
-    if (dragged.kind === "directory") {
-      setSelectedDirectoryPath(result.path);
+      if (!copy && dragged.kind === "file") {
+        if (result.handle?.kind === "file") {
+          useWorkspaceStore.getState().updateTabFile(dragged.path, result.path, result.handle as FileSystemFileHandle);
+        } else {
+          useWorkspaceStore.getState().updateTabPath(dragged.path, result.path);
+        }
+      } else if (!copy) {
+        updateTabPathPrefix(dragged.path, result.path);
+      }
+
+      if (!copy) syncExplorerSelectionAfterPathChange(dragged.path, result.path, dragged.kind);
+      setSelection(result.path, dragged.kind);
+      if (dragged.kind === "directory") {
+        setSelectedDirectoryPath(result.path);
+      }
+    } finally {
+      if (useExplorerStore.getState().dropPendingPath === node.path) {
+        setDropPendingPath(null);
+      }
     }
-  }, [moveEntry, node.path, setSelectedDirectoryPath, setSelection, updateTabPathPrefix]);
+  }, [copyEntry, moveEntry, node.path, setDropPendingPath, setSelectedDirectoryPath, setSelection, t, updateTabPathPrefix]);
 
   const handleCopyDirectoryPath = useCallback(async () => {
     const path = getDesktopHandlePath(node.handle) ?? node.path;
@@ -1045,6 +1040,10 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
     const desktopActionsDisabled = !canUseDesktopOpeners() || !getDesktopHandlePath(node.handle);
     return [
       {
+        label: "上传到云端库…",
+        onSelect: () => void requestCloudUpload(node, workspaceRootHandle ?? rootHandle),
+      },
+      {
         label: t("explorer.context.openWith"),
         disabled: desktopActionsDisabled,
         onSelect: handleOpenDirectoryWithDefaultApp,
@@ -1078,14 +1077,15 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
       },
     ];
   }, [
+    node,
     handleCopyDirectoryPath,
     handleCopyDirectoryRelativePath,
     handleOpenDirectoryTerminal,
     handleOpenDirectoryWithDefaultApp,
     handleRevealDirectory,
-    node.handle,
-    node.path,
     openDirectoryAsWorkspace,
+    rootHandle,
+    workspaceRootHandle,
     t,
   ]);
 
@@ -1141,13 +1141,23 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
             )}
           </div>
         ) : (
-          <button
-            data-explorer-node="true"
+          <ExplorerTreeRow
+            depth={depth}
+            directory
+            data-explorer-drop-directory={node.path}
+            selected={isSelected}
+            aria-expanded={node.isExpanded}
+            onFocus={() => setSelection(node.path, "directory")}
+            aria-busy={isDropPending}
             draggable
             onClick={() => {
               setSelection(node.path, "directory");
               setSelectedDirectoryPath(node.path);
-              toggleDirectory(node.path);
+              if (node.childrenState !== "ready") {
+                void ensureDirectoryExpanded(node.path);
+              } else {
+                toggleDirectory(node.path);
+              }
             }}
             onContextMenu={(event) => {
               event.preventDefault();
@@ -1157,28 +1167,32 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
               setContextMenu({ x: event.clientX, y: event.clientY });
             }}
             onDragStart={(event) => {
-              event.dataTransfer.effectAllowed = "move";
-              event.dataTransfer.setData(EXPLORER_DRAG_MIME, JSON.stringify({ path: node.path, kind: "directory" }));
+              const payload = JSON.stringify({ path: node.path, kind: "directory" });
+              event.dataTransfer.effectAllowed = "copyMove";
+              event.dataTransfer.setData(EXPLORER_DRAG_MIME, payload);
+              event.dataTransfer.setData("text/plain", payload);
               setSelection(node.path, "directory");
               setSelectedDirectoryPath(node.path);
             }}
             onDragOver={(event) => {
               const dragged = parseDraggedEntry(event);
-              if (!dragged || dragged.path === node.path || hasPathPrefix(node.path, dragged.path)) {
+              if ((!dragged && !hasInternalEntryDrop(event.dataTransfer)) || dragged && (dragged.path === node.path || hasPathPrefix(node.path, dragged.path))) {
                 return;
               }
 
               event.preventDefault();
-              event.dataTransfer.dropEffect = "move";
+              event.stopPropagation();
+              event.dataTransfer.dropEffect = event.ctrlKey || event.metaKey ? 'copy' : 'move';
               setDragOverPath(node.path);
             }}
             onDragLeave={() => {
-              if (dragOverPath === node.path) {
+              if (isDragOver) {
                 setDragOverPath(null);
               }
             }}
             onDrop={(event) => {
               event.preventDefault();
+              event.stopPropagation();
               const dragged = parseDraggedEntry(event);
               setDragOverPath(null);
               if (!dragged || dragged.path === node.path || hasPathPrefix(node.path, dragged.path)) {
@@ -1186,28 +1200,32 @@ function DirectoryNodeComponent({ node, depth }: DirectoryNodeProps) {
               }
 
               ensureExpanded();
-              void handleDropMove(dragged);
+              void handleDropMove(dragged, event.ctrlKey || event.metaKey);
             }}
             onDragEnd={() => setDragOverPath(null)}
             className={cn(
-              "flex w-full items-center gap-1 px-2 py-1 text-left text-sm transition-colors",
               "hover:bg-accent/50 focus:bg-accent focus:outline-none",
-              isSelected && "bg-accent/70",
               isDragOver && "bg-primary/10 ring-1 ring-primary/50",
+              isDropPending && "animate-pulse bg-primary/15 ring-1 ring-primary/60",
               isCutItem && "opacity-55"
             )}
-            style={{ paddingLeft: `${depth * 12 + 4}px` }}
           >
             <ChevronIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
             <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="truncate font-medium">{node.name}</span>
-            <span className="ml-auto font-scientific text-muted-foreground">
-              {node.children.length}
-            </span>
-          </button>
+            {node.childrenState === "loading" ? (
+              <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin text-muted-foreground" />
+            ) : node.childrenState === "error" ? (
+              <CircleAlert className="ml-auto h-3.5 w-3.5 text-destructive" />
+            ) : (
+              <span className="ml-auto font-scientific text-muted-foreground">
+                {node.children.length}
+              </span>
+            )}
+          </ExplorerTreeRow>
         )}
 
-        {node.isExpanded && (
+        {renderChildren && node.isExpanded && (
           <div className="animate-in fade-in-0 slide-in-from-top-1 duration-150">
             {node.children.map((child) => (
               <TreeNodeComponent

@@ -5,6 +5,7 @@ import {
   buildPdfTextAnchorFromOffsets,
   resolvePdfExactQuoteOffsets,
   resolvePdfPointerBoundary,
+  resolvePdfVisualColumnScope,
 } from "@/lib/pdf-canonical-text-anchoring";
 import { isLikelyCoarseTextMarkupGeometry, isPlausibleTextMarkupBox } from "@/lib/pdf-text-rects";
 
@@ -28,12 +29,39 @@ function resolveAnchorByRects(model: PdfPageTextModel, rects: BoundingBox[]): Pd
   }
 
   const chars = buildPdfCanonicalChars(model);
-  const intersected = chars.filter((char) => rects.some((rect) => computeRectOverlap(rect, {
+  const pageRects = rects.map((rect) => ({
+    left: rect.x1 * model.viewportWidth,
+    top: rect.y1 * model.viewportHeight,
+    right: rect.x2 * model.viewportWidth,
+    bottom: rect.y2 * model.viewportHeight,
+  }));
+  const medianStartX = [...pageRects.map((rect) => rect.left)].sort((left, right) => left - right)[Math.floor(pageRects.length / 2)] ?? 0;
+  const visualColumnScope = resolvePdfVisualColumnScope({
+    chars,
+    viewportWidth: model.viewportWidth,
+    verticalRange: {
+      top: Math.min(...pageRects.map((rect) => rect.top)),
+      bottom: Math.max(...pageRects.map((rect) => rect.bottom)),
+    },
+    startX: medianStartX,
+    endX: medianStartX,
+  });
+  const intersected = chars.filter((char) => {
+    if (visualColumnScope) {
+      const onSameVisualSide = visualColumnScope.side === "left"
+        ? char.centerX < visualColumnScope.boundaryX
+        : char.centerX > visualColumnScope.boundaryX;
+      if (!onSameVisualSide) {
+        return false;
+      }
+    }
+    return rects.some((rect) => computeRectOverlap(rect, {
     x1: char.left / model.viewportWidth,
     y1: char.top / model.viewportHeight,
     x2: char.right / model.viewportWidth,
     y2: char.bottom / model.viewportHeight,
-  }) > 0));
+    }) > 0);
+  });
   if (intersected.length === 0) {
     return null;
   }
@@ -122,6 +150,12 @@ function arePdfTextMarkupRectsEquivalent(leftRects: BoundingBox[], rightRects: B
 }
 
 function withOriginalTargetRects(anchor: PdfAnnotationTextAnchor, target: PdfTarget): PdfAnnotationTextAnchor {
+  // Repeated move/up events may resolve to the already-adjusted offsets.
+  // Similar outer bounds do not mean a shortened last line is still the
+  // original selection; never restore its old rectangles for different text.
+  if (target.textQuote?.exact && normalizeAnchorText(target.textQuote.exact) !== normalizeAnchorText(anchor.textQuote.exact)) {
+    return anchor;
+  }
   return canReuseTargetRectsForTextMarkup(target) &&
     arePdfTextMarkupRectsEquivalent(anchor.rects, target.rects)
     ? { ...anchor, rects: target.rects }
@@ -166,6 +200,37 @@ function resolveAnchorByCharRange(model: PdfPageTextModel, target: PdfTarget): P
 }
 
 export function resolvePdfAnnotationTextAnchor(model: PdfPageTextModel, target: PdfTarget): PdfAnnotationTextAnchor | null {
+  const geometryAnchor = resolveAnchorByRects(model, target.rects);
+  const chars = buildPdfCanonicalChars(model);
+  const pageRects = target.rects.map((rect) => ({
+    left: rect.x1 * model.viewportWidth,
+    top: rect.y1 * model.viewportHeight,
+    right: rect.x2 * model.viewportWidth,
+    bottom: rect.y2 * model.viewportHeight,
+  }));
+  const medianStartX = [...pageRects.map((rect) => rect.left)].sort((left, right) => left - right)[Math.floor(pageRects.length / 2)] ?? 0;
+  const visualColumnScope = resolvePdfVisualColumnScope({
+    chars,
+    viewportWidth: model.viewportWidth,
+    verticalRange: {
+      top: Math.min(...pageRects.map((rect) => rect.top)),
+      bottom: Math.max(...pageRects.map((rect) => rect.bottom)),
+    },
+    startX: medianStartX,
+    endX: medianStartX,
+  });
+  const hasCrossColumnStoredRect = Boolean(
+    visualColumnScope &&
+    target.rects.some((rect) => {
+      const left = rect.x1 * model.viewportWidth;
+      const right = rect.x2 * model.viewportWidth;
+      return left < visualColumnScope.boundaryX && right > visualColumnScope.boundaryX;
+    }),
+  );
+  if (hasCrossColumnStoredRect && geometryAnchor && geometryAnchor.textQuote.exact.length >= 8) {
+    return geometryAnchor;
+  }
+
   const charRangeAnchor = resolveAnchorByCharRange(model, target);
   if (charRangeAnchor) {
     return charRangeAnchor;
@@ -185,7 +250,35 @@ export function resolvePdfAnnotationTextAnchor(model: PdfPageTextModel, target: 
     });
   }
 
-  return resolveAnchorByRects(model, target.rects);
+  return geometryAnchor;
+}
+
+export function hasPdfAnnotationCrossColumnGeometry(model: PdfPageTextModel, target: PdfTarget): boolean {
+  if (target.rects.length === 0) {
+    return false;
+  }
+  const chars = buildPdfCanonicalChars(model);
+  const pageRects = target.rects.map((rect) => ({
+    left: rect.x1 * model.viewportWidth,
+    top: rect.y1 * model.viewportHeight,
+    right: rect.x2 * model.viewportWidth,
+    bottom: rect.y2 * model.viewportHeight,
+  }));
+  const medianStartX = [...pageRects.map((rect) => rect.left)].sort((left, right) => left - right)[Math.floor(pageRects.length / 2)] ?? 0;
+  const scope = resolvePdfVisualColumnScope({
+    chars,
+    viewportWidth: model.viewportWidth,
+    verticalRange: {
+      top: Math.min(...pageRects.map((rect) => rect.top)),
+      bottom: Math.max(...pageRects.map((rect) => rect.bottom)),
+    },
+    startX: medianStartX,
+    endX: medianStartX,
+  });
+  return Boolean(scope && target.rects.some((rect) => (
+    rect.x1 * model.viewportWidth < scope.boundaryX &&
+    rect.x2 * model.viewportWidth > scope.boundaryX
+  )));
 }
 
 export function adjustPdfAnnotationAnchor(input: {

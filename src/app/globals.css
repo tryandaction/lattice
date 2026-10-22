@@ -184,6 +184,108 @@
   * {
     scrollbar-color: hsl(var(--muted-foreground) / 0.38) transparent;
   }
+
+  /* Appearance chrome tokens. Content renderers keep their own typography so
+     PDF text layers, canvases, KaTeX internals, and user-authored content do
+     not change shape when a skin is previewed. */
+  [data-appearance-theme] body {
+    font-family: var(--appearance-font-ui, var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif);
+  }
+
+  [data-appearance-theme] button,
+  [data-appearance-theme] input,
+  [data-appearance-theme] select,
+  [data-appearance-theme] textarea,
+  [data-appearance-theme] [role='button'],
+  [data-appearance-theme] [role='tab'],
+  [data-appearance-theme] [role='menuitem'] {
+    font-family: var(--appearance-font-ui, var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif);
+    border-radius: var(--appearance-radius, 6px);
+    transition-duration: var(--appearance-motion, 120ms);
+  }
+
+  [data-appearance-theme] .workbench-shell,
+  [data-appearance-theme] .workbench-panel,
+  [data-appearance-theme] [role='dialog'],
+  [data-appearance-theme] [role='menu'] {
+    box-shadow: var(--appearance-shadow, none);
+  }
+
+  [data-appearance-theme] .prose-lattice,
+  [data-appearance-theme] .prose-system-index,
+  [data-appearance-theme] .annotation-md {
+    font-family: var(--appearance-font-reading, ui-serif, Georgia, serif);
+  }
+
+  [data-appearance-theme] .cm-editor,
+  [data-appearance-theme] .cm-content,
+  [data-appearance-theme] .cm-scroller,
+  [data-appearance-theme] .code-editor,
+  [data-appearance-theme] .code-editor .cm-content {
+    font-family: var(--appearance-font-code, var(--font-geist-mono), ui-monospace, monospace);
+  }
+
+  [data-appearance-theme] .cm-editor,
+  [data-appearance-theme] .code-editor {
+    border-radius: var(--appearance-radius, 6px);
+    box-shadow: var(--appearance-shadow, none);
+    transition-duration: var(--appearance-motion, 120ms);
+  }
+
+  [data-appearance-theme] .pdf-viewer-container,
+  [data-appearance-theme] .pdf-toolbar,
+  [data-appearance-theme] .pdf-page-container {
+    font-family: var(--appearance-font-ui, var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif);
+    transition-duration: var(--appearance-motion, 120ms);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-appearance-theme] *,
+    [data-appearance-theme] *::before,
+    [data-appearance-theme] *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* Unlayered renderer bindings take precedence over existing local utility
+   fonts, without selecting textLayer, canvas, MathLive or KaTeX children. */
+html[data-appearance-theme] :is(.prose-lattice, .prose-system-index, .annotation-md, .prose-academic) {
+  font-family: var(--appearance-font-reading);
+  --tw-prose-body: hsl(var(--foreground));
+  --tw-prose-headings: hsl(var(--foreground));
+  --tw-prose-quotes: hsl(var(--foreground));
+  --tw-prose-links: hsl(var(--primary));
+}
+html[data-appearance-theme] :is(.prose-lattice, .prose-academic) > :is(p, h1, h2, h3, li, blockquote) {
+  font-family: var(--appearance-font-reading);
+}
+html[data-appearance-theme] :is(.code-editor, .cm-editor):not(.live-preview-editor) :is(.cm-content, .cm-scroller) {
+  font-family: var(--appearance-font-code);
+}
+html[data-appearance-theme] .live-preview-editor .cm-content {
+  font-family: var(--appearance-font-reading);
+}
+html[data-appearance-theme] :is([role='menu'], [role='dialog'], .cm-math-copy-menu, .cm-tooltip) {
+  border-radius: var(--appearance-radius);
+  box-shadow: var(--appearance-shadow);
+}
+html[data-appearance-theme] :is([role='menuitem'], [role='tab'], .pdf-toolbar button, .appearance-actions button) {
+  min-height: var(--appearance-control-height);
+}
+html[data-appearance-theme] :is(button, input, select, textarea, [role='tab'], [role='menuitem']):focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+html[data-appearance-theme] :is(input:not([type='color']):not([type='checkbox']), select, textarea) {
+  border-color: var(--appearance-control-border);
+}
+html[data-appearance-theme] :is(button, [role='button']):disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 /* Scientific Minimalist Utilities */
@@ -254,6 +356,31 @@
 
   .pdf-target-flash-fallback {
     animation: pdf-target-flash-fallback 1.8s ease-out;
+  }
+
+  .lattice-reference-target-flash {
+    outline: 2px dashed #dc2626;
+    outline-offset: 2px;
+    background-color: rgb(248 113 113 / 0.08);
+    animation: lattice-reference-target-flash 1.8s ease-out;
+  }
+
+  @keyframes lattice-reference-target-flash {
+    0%,
+    100% {
+      outline-color: rgb(220 38 38 / 0);
+      background-color: rgb(248 113 113 / 0);
+    }
+    35%,
+    75% {
+      outline-color: #dc2626;
+      background-color: rgb(248 113 113 / 0.08);
+    }
+  }
+
+  .dark .lattice-reference-target-flash {
+    outline-color: #f87171;
+    background-color: rgb(248 113 113 / 0.12);
   }
 
   @keyframes pdf-target-flash-fallback {
@@ -518,6 +645,35 @@
   border-color: color-mix(in srgb, var(--annotation-color) 76%, hsl(var(--border)));
   background: color-mix(in srgb, var(--annotation-color) 24%, transparent);
   color: color-mix(in srgb, var(--annotation-color) 72%, hsl(var(--foreground)));
+}
+
+.prose-lattice .lattice-pdf-annotation-quote,
+.prose-system-index .lattice-pdf-annotation-quote,
+.annotation-md .lattice-pdf-annotation-quote {
+  --annotation-color: hsl(var(--primary));
+  margin: 0.55rem 0;
+  border-left: 4px solid var(--annotation-color);
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--annotation-color) 14%, transparent);
+  color: hsl(var(--foreground));
+  font-style: normal;
+  line-height: 1.55;
+  padding: 0.65rem 0.85rem;
+}
+
+.prose-lattice .lattice-pdf-annotation-preview,
+.prose-system-index .lattice-pdf-annotation-preview,
+.annotation-md .lattice-pdf-annotation-preview {
+  --annotation-color: hsl(var(--primary));
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.6rem 0;
+  padding: 3px;
+  border: 2px solid color-mix(in srgb, var(--annotation-color) 82%, hsl(var(--border)));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--annotation-color) 10%, hsl(var(--background)));
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--annotation-color) 20%, transparent);
 }
 
 /* Table styles for prose-lattice */
@@ -5700,4 +5856,40 @@ math-field.quantum-keyboard-active {
 
 .dark .live-preview-editor .cm-details-summary {
   background-color: hsl(var(--muted) / 0.5);
+}
+
+.agent-runtime-selector {
+  display: flex;
+  flex: 1 1 15rem;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.agent-runtime-source-field,
+.agent-runtime-model-field {
+  flex: 1 1 6rem;
+  min-width: 0;
+}
+
+.agent-runtime-source-field {
+  max-width: 11rem;
+}
+
+.agent-runtime-model-field {
+  max-width: 12rem;
+}
+
+/* Measure the composer column itself so split panes and mobile layouts adapt. */
+@container (max-width: 420px) {
+  .agent-runtime-selector {
+    flex: 1 0 100%;
+    order: -1;
+  }
+
+  .agent-runtime-source-field,
+  .agent-runtime-model-field {
+    max-width: none;
+  }
 }

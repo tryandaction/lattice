@@ -77,7 +77,20 @@ export interface AgentPendingApprovalRequest {
   args: unknown;
 }
 
+export interface AgentCodeExecutionReceipt {
+  sessionId: string;
+  approvalRequestId: string;
+  requestSignature: string;
+  status: 'completed' | 'failed';
+  /** Untrusted runner output, retained verbatim up to the receipt limit. */
+  output: string;
+  outputLength: number;
+  truncated: boolean;
+}
+
 export interface AgentPendingApproval {
+  executionReceipt?: AgentCodeExecutionReceipt;
+  planStepId?: string;
   id: string;
   capability: AgentToolCapability;
   toolName: string;
@@ -97,6 +110,21 @@ export interface AgentPendingApproval {
 }
 
 export interface AgentSession {
+  executionContinuation?: {
+    synthesisContext?: import('./types').AiPromptContext;
+    planSteps: import('./research-agent-planner').ResearchAgentPlanStep[];
+    request: Pick<import('./research-agent').ResearchAgentRunInput,
+      'task' | 'query' | 'sourceIntentQuery' | 'workspaceKey' | 'filePath' | 'content' | 'selection' | 'references' | 'explicitEvidenceRefs' |
+      'workflowId' | 'workflowTitle' | 'workflowInferred' | 'answerInstructions' | 'plannerHints' | 'artifacts'>;
+  };
+  documentResearch?: {
+    checkpoint: import('./document-research').DocumentResearchCheckpoint;
+    directory?: import('./directory-research').DirectoryResearchCheckpoint;
+    workflowId?: string;
+    workspaceKey?: string;
+    status: 'reading' | 'paused' | 'ready' | 'failed';
+    error?: string;
+  };
   id: string;
   profile: AgentSafetyProfile;
   title: string;
@@ -135,6 +163,7 @@ export interface AppendAgentTraceInput extends Omit<AgentTraceEvent, 'id' | 'tim
 }
 
 export interface CreateAgentPendingApprovalInput {
+  planStepId?: string;
   id: string;
   capability: AgentToolCapability;
   toolName: string;
@@ -150,6 +179,7 @@ export interface CreateAgentPendingApprovalInput {
 }
 
 export interface ResolveAgentPendingApprovalInput {
+  executionReceipt?: AgentCodeExecutionReceipt;
   id: string;
   status: Exclude<AgentPendingApprovalStatus, 'pending'>;
   approvalNote?: string;
@@ -318,6 +348,7 @@ export function addAgentPendingApproval(
     toolResultSummary: input.toolResultSummary,
     argumentsPreview: input.argumentsPreview,
     request: input.request,
+    planStepId: input.planStepId,
     decision: input.decision,
     status: 'pending',
     createdAt: timestamp,
@@ -358,6 +389,7 @@ export function resolveAgentPendingApproval(
       updatedAt: timestamp,
       approvalNote: input.approvalNote ?? approval.approvalNote,
       resultPreview: input.resultPreview ?? approval.resultPreview,
+      executionReceipt: input.executionReceipt ?? approval.executionReceipt,
       error: input.error ?? approval.error,
     };
   });

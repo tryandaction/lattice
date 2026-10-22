@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "distribution": "code-server",
+  "runtimeVersion": "4.128.0",
+  "codeOssVersion": "1.128.0",
+  "nodeMajor": 22,
+  "packageUrl": "https://github.com/coder/code-server/releases/download/v4.128.0/package.tar.gz",
+  "packageSha256": "d0da733a6e6f83f0af026303c40caa6906f5ff27e37a4f7eabe91e7b5015ec93",
+  "entrypoint": "node_modules/code-server/out/node/entry.js"
+}

@@ -38,6 +38,7 @@ import {
   Table2,
   Tags,
   Trash2,
+  X,
 } from "lucide-react";
 import { SelectionContextMenu } from "@/components/ai/selection-context-menu";
 import { SelectionAiHub } from "@/components/ai/selection-ai-hub";
@@ -47,12 +48,17 @@ import type {
   OutlineItem,
   LivePreviewCodeBlockRunRequest,
 } from "./codemirror/live-preview/types";
-import type { LivePreviewEditorRef } from "./codemirror/live-preview/live-preview-editor";
+import type { LivePreviewEditorRef, MarkdownImageEditRequest } from "./codemirror/live-preview/live-preview-editor";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { clearDecorationCache } from "./codemirror/live-preview/decoration-coordinator";
 import { emitFileSave, emitVaultChange } from "@/lib/plugins/runtime";
 import { navigateLinkWithFeedback } from "@/lib/link-router/navigate-link-with-feedback";
 import { useLinkNavigationStore } from "@/stores/link-navigation-store";
+import { resolveMarkdownReference } from "@/lib/reference-navigation";
+import { findRenderedReferenceRange } from "@/lib/reference-text-range";
+import { flashReferenceRange } from "@/lib/reference-target-flash";
+import { scheduleMarkdownReferenceReveal } from "@/lib/markdown-reference-reveal";
+import { normalizeScientificText } from "@/lib/markdown-converter";
 import { parseHeadings, buildOutlineTree } from "./codemirror/live-preview/markdown-parser";
 import type { CommandBarState, PaneId } from "@/types/layout";
 import { MarkdownExportDialog } from "./markdown-export-dialog";
@@ -83,9 +89,11 @@ import { findUnreferencedMarkdownAttachments } from "@/lib/markdown/attachment-c
 import { ignoreWorkspaceMarkdownUnlinkedMention, getWorkspaceMarkdownLinkIndex, upsertWorkspaceMarkdownFile } from "@/lib/markdown/workspace-link-index";
 import { convertMarkdownLinkToWikiInContent, linkUnlinkedMentionInContent, linkUnlinkedMentionsInContent, repairMarkdownLinkTargetInContent } from "@/lib/markdown/link-maintenance";
 import { normalizeWorkspacePath } from "@/lib/link-router/path-utils";
-import { findMarkdownHeadingLine, isPendingNavigationForFile } from "@/lib/markdown-navigation";
+import { isPendingNavigationForFile } from "@/lib/markdown-navigation";
 import { useI18n } from "@/hooks/use-i18n";
 import { buildPersistedFileViewStateKey, loadPersistedFileViewState, savePersistedFileViewState } from "@/lib/file-view-state";
+import { getImageMimeType } from "@/lib/file-utils";
+import type { BinaryViewerContent } from "@/types/viewer-content";
 import type {
   MarkdownCommandPayload,
   MarkdownEditingCommandId,
@@ -108,12 +116,25 @@ const MarkdownRenderer = dynamic(
   { ssr: false }
 );
 
+const ImageViewer = dynamic(
+  () => import("@/components/renderers/image-viewer").then((mod) => mod.ImageViewer),
+  { ssr: false }
+);
+
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
 type MarkdownMenuState = {
   x: number;
   y: number;
   context: MarkdownEditorContext;
+};
+
+type MarkdownImageEditState = {
+  source: BinaryViewerContent;
+  fileName: string;
+  mimeType: string;
+  imageUrl: string;
+  filePath?: string;
 };
 
 type SpeechRecognitionLike = {
@@ -214,6 +235,40 @@ async function createWorkspaceMarkdownFile(
   await writable.close();
 }
 
+function resolveMarkdownImagePath(currentFilePath: string | undefined, imageUrl: string): string {
+  const withoutWrapper = imageUrl.trim().replace(/^<(.+)>$/, "$1").split(/[?#]/)[0] ?? imageUrl;
+  let decodedUrl = withoutWrapper;
+  try {
+    decodedUrl = decodeURIComponent(withoutWrapper);
+  } catch {
+    decodedUrl = withoutWrapper;
+  }
+  const normalizedUrl = decodedUrl.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!currentFilePath || normalizedUrl.startsWith("/")) {
+    return normalizedUrl.replace(/^\/+/, "");
+  }
+  const directory = currentFilePath.split("/").slice(0, -1).join("/");
+  return normalizeWorkspacePath(directory ? `${directory}/${normalizedUrl}` : normalizedUrl);
+}
+
+function getImageFileName(imageUrl: string, fallback = "markdown-image"): string {
+  if (imageUrl.startsWith("data:")) return fallback;
+  try {
+    const parsed = new URL(imageUrl);
+    return parsed.pathname.split("/").filter(Boolean).pop() || fallback;
+  } catch {
+    return imageUrl.split(/[\\/]/).filter(Boolean).pop()?.split(/[?#]/)[0] || fallback;
+  }
+}
+
+function getImageMimeTypeFromUrl(imageUrl: string): string {
+  const dataMatch = /^data:([^;,]+)/i.exec(imageUrl);
+  if (dataMatch?.[1]) return dataMatch[1];
+  const cleanPath = imageUrl.split(/[?#]/)[0] ?? "";
+  const extension = cleanPath.includes(".") ? cleanPath.split(".").pop() ?? "" : "";
+  return extension ? getImageMimeType(extension) : "image/png";
+}
+
 /**
  * ObsidianMarkdownViewer - Obsidian-like Markdown editing experience
  */
@@ -241,6 +296,7 @@ export function ObsidianMarkdownViewer({
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [markdownMenuState, setMarkdownMenuState] = useState<MarkdownMenuState | null>(null);
   const [markdownToolsMenuState, setMarkdownToolsMenuState] = useState<{ x: number; y: number } | null>(null);
+  const [markdownImageEditState, setMarkdownImageEditState] = useState<MarkdownImageEditState | null>(null);
   const [recentEmoji, setRecentEmoji] = useState<string[]>([]);
   const [selectionHubState, setSelectionHubState] = useState<{
     context: SelectionContext;
@@ -251,6 +307,13 @@ export function ObsidianMarkdownViewer({
   const deferredLocalContent = useDeferredValue(localContent);
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<LivePreviewEditorRef>(null);
+  const [editorRevision, setEditorRevision] = useState(0);
+  const handleEditorReady = useCallback(() => setEditorRevision((revision) => revision + 1), []);
+  const readingContentRef = useRef<HTMLDivElement>(null);
+  const referenceFlashCleanup = useRef<(() => void) | undefined>(undefined);
+  useEffect(() => () => {
+    referenceFlashCleanup.current?.();
+  }, [filePath]);
   const markdownToolsActionsRef = useRef<WorkbenchMenuAction[]>([]);
   const resolvedFileId = fileId || fileName;
   const prevFileIdRef = useRef(resolvedFileId);
@@ -288,7 +351,7 @@ export function ObsidianMarkdownViewer({
   const saveEditorState = useContentCacheStore((state) => state.saveEditorState);
   const getEditorState = useContentCacheStore((state) => state.getEditorState);
   const pendingNavigation = useLinkNavigationStore((state) => state.pendingByPane[paneId]);
-  const consumePendingNavigation = useLinkNavigationStore((state) => state.consumePendingNavigation);
+  const completePendingNavigation = useLinkNavigationStore((state) => state.completePendingNavigation);
   const runnerPreferences = useWorkspaceStore((state) => state.runnerPreferences);
   const setRecentRunConfig = useWorkspaceStore((state) => state.setRecentRunConfig);
   const setRunnerPreferences = useWorkspaceStore((state) => state.setRunnerPreferences);
@@ -406,6 +469,51 @@ export function ObsidianMarkdownViewer({
     toast.success(successMessage);
     return true;
   }, []);
+
+  const openMarkdownImageEditor = useCallback(async (
+    image: Pick<MarkdownEditorContext, "imageUrl" | "imageAlt" | "range"> | MarkdownImageEditRequest,
+  ) => {
+    const imageUrl = "url" in image ? image.url : image.imageUrl ?? "";
+    if (!imageUrl) {
+      toast.error("Image path is empty");
+      return;
+    }
+
+    const fallbackName = ("alt" in image ? image.alt : image.imageAlt) || "markdown-image";
+    const displayName = getImageFileName(imageUrl, fallbackName);
+    const mimeType = getImageMimeTypeFromUrl(imageUrl);
+
+    try {
+      if (/^(https?:|data:|blob:)/i.test(imageUrl)) {
+        setMarkdownImageEditState({
+          source: { kind: "desktop-url", url: imageUrl, mimeType },
+          fileName: displayName,
+          mimeType,
+          imageUrl,
+        });
+        return;
+      }
+
+      if (!rootHandle) {
+        toast.error("Workspace root is not available for this local image");
+        return;
+      }
+
+      const resolvedPath = resolveMarkdownImagePath(filePath, imageUrl);
+      const imageHandle = await resolveWorkspaceFileHandle(rootHandle, resolvedPath);
+      const file = await imageHandle.getFile();
+      setMarkdownImageEditState({
+        source: { kind: "buffer", data: await file.arrayBuffer() },
+        fileName: file.name || displayName,
+        mimeType: file.type || mimeType,
+        imageUrl,
+        filePath: resolvedPath,
+      });
+    } catch (error) {
+      console.error("Failed to open markdown image editor", error);
+      toast.error("Unable to open this image");
+    }
+  }, [filePath, rootHandle]);
 
   const insertPromptedImage = useCallback((kind: "image" | "gif") => {
     const url = promptText(kind === "gif" ? "GIF URL" : "Image URL", kind === "gif" ? "https://example.com/animation.gif" : "");
@@ -667,25 +775,57 @@ export function ObsidianMarkdownViewer({
   useEffect(() => {
     if (!filePath || !pendingNavigation) return;
     if (!isPendingNavigationForFile(pendingNavigation.filePath, filePath, rootHandle?.name)) return;
-    let line: number | undefined;
-    if (pendingNavigation.target.type === "workspace_heading") {
-      const headingOutline = outline.length > 0
-        ? outline
-        : buildOutlineTree(parseHeadings(localContent));
-      line = findMarkdownHeadingLine(headingOutline, pendingNavigation.target.heading);
-    } else if (pendingNavigation.target.type === "code_line") {
-      line = pendingNavigation.target.line;
-    } else {
+    if (pendingNavigation.target.type !== "workspace_heading" && pendingNavigation.target.type !== "code_line" && pendingNavigation.target.type !== "workspace_text") {
       return;
     }
 
-    if (!line) return;
-    editorRef.current?.scrollToLine(line);
-    window.setTimeout(() => {
-      editorRef.current?.flashLine(line);
-    }, 120);
-    consumePendingNavigation(paneId, filePath);
-  }, [consumePendingNavigation, filePath, localContent, outline, paneId, pendingNavigation, rootHandle?.name]);
+    const headingOutline = outline.length > 0
+      ? outline
+      : buildOutlineTree(parseHeadings(localContent));
+    const isReading = mode === "reading" || (variant === "system-index" && mode !== "source");
+    const editor = editorRef.current;
+    const sourceContent = isReading ? localContent.replace(/\r\n?/g, "\n") : editor?.getContent();
+    if (sourceContent == null) return;
+    const resolution = resolveMarkdownReference(
+      pendingNavigation.target,
+      headingOutline,
+      sourceContent.split("\n").length,
+      sourceContent,
+    );
+    if (!resolution) return;
+    if (resolution.status !== "success") {
+      completePendingNavigation(paneId, pendingNavigation.requestId, { status: resolution.status });
+      return;
+    }
+    const line = resolution.line;
+    referenceFlashCleanup.current?.();
+    if (isReading) {
+      const quote = pendingNavigation.target.type === "workspace_text" ? pendingNavigation.target.snippet : undefined;
+      const range = quote && readingContentRef.current ? findRenderedReferenceRange(readingContentRef.current, quote) : null;
+      if (range) {
+        const target = range.startContainer.parentElement;
+        target?.scrollIntoView({ block: "center" });
+        const cleanup = flashReferenceRange(range);
+        if (cleanup) {
+          referenceFlashCleanup.current = cleanup;
+          completePendingNavigation(paneId, pendingNavigation.requestId, { status: "success" });
+        } else {
+          setMode("source");
+        }
+      } else {
+        // Source-only syntax may not survive rendering; reveal the exact source instead.
+        setMode("source");
+      }
+      return;
+    }
+    if (!line || !editor) return;
+    return scheduleMarkdownReferenceReveal({
+      editor, content: sourceContent, line, range: resolution.range,
+      isCurrent: () => editorRef.current === editor && useLinkNavigationStore.getState().pendingByPane[paneId]?.requestId === pendingNavigation.requestId,
+      onFlash: (cleanup) => { referenceFlashCleanup.current = cleanup; },
+      onComplete: (status) => completePendingNavigation(paneId, pendingNavigation.requestId, { status }),
+    });
+  }, [completePendingNavigation, editorRevision, filePath, localContent, mode, outline, paneId, pendingNavigation, rootHandle?.name, variant]);
 
   const handleLinkNavigate = useCallback((target: string) => {
     void navigateLinkWithFeedback(target, {
@@ -1051,10 +1191,16 @@ export function ObsidianMarkdownViewer({
     if (context.kind === "image" && context.imageUrl) {
       actions.push(
         {
+          id: "image-edit",
+          label: "Image: Edit",
+          icon: <ImageIcon className="h-4 w-4" />,
+          separatorBefore: true,
+          onSelect: () => void openMarkdownImageEditor(context),
+        },
+        {
           id: "copy-image-target",
           label: "Image: Copy path",
           icon: <ImageIcon className="h-4 w-4" />,
-          separatorBefore: true,
           onSelect: () => void copyText(context.imageUrl ?? "", "Copied image path"),
         },
         {
@@ -1197,6 +1343,7 @@ export function ObsidianMarkdownViewer({
     insertPromptedWikiLink,
     insertProperties,
     openQuantumKeyboard,
+    openMarkdownImageEditor,
     pastePlainText,
     replacePromptedImagePath,
     runMarkdownCommand,
@@ -1442,8 +1589,16 @@ export function ObsidianMarkdownViewer({
     event.preventDefault();
     event.stopPropagation();
 
+    const imageContainer = target.closest(".cm-image-container") as HTMLElement | null;
+    if (imageContainer?.dataset.elementFrom) {
+      const imagePosition = Number(imageContainer.dataset.elementFrom) + 1;
+      if (Number.isFinite(imagePosition)) {
+        editorRef.current?.setCursorToPosition(imagePosition);
+      }
+    }
+
     const currentContext = editorRef.current?.getMarkdownContext();
-    if (!currentContext?.selectedText) {
+    if (!imageContainer && !currentContext?.selectedText) {
       editorRef.current?.setCursorFromPoint(event.clientX, event.clientY);
     }
 
@@ -1671,7 +1826,8 @@ export function ObsidianMarkdownViewer({
     }
   }, []);
 
-  const readingModeContent = useMemo(() => prepareMarkdownForReading(deferredLocalContent), [deferredLocalContent]);
+  // Display normalization must never replace the editable source or its offsets.
+  const readingModeContent = useMemo(() => prepareMarkdownForReading(normalizeScientificText(deferredLocalContent)), [deferredLocalContent]);
   const attachmentCleanupCandidates = useMemo(
     () => {
       if (!showLinks) {
@@ -1719,7 +1875,7 @@ export function ObsidianMarkdownViewer({
 
       <div className="flex-1 min-h-0 overflow-auto" onContextMenu={handleMarkdownContextMenu}>
         {mode === "reading" || (variant === "system-index" && mode !== "source") ? (
-          <div className="h-full overflow-auto px-6 py-4">
+          <div ref={readingContentRef} className="h-full overflow-auto px-6 py-4">
             <MarkdownRenderer
               content={readingModeContent}
               fileName={fileName}
@@ -1741,6 +1897,7 @@ export function ObsidianMarkdownViewer({
             showFoldGutter={mode === 'live'}
             readOnly={variant === "system-index" && mode === "live"}
             onOutlineChange={handleOutlineChange}
+            onReady={handleEditorReady}
             onWikiLinkClick={handleLinkNavigate}
             onLinkNavigate={handleLinkNavigate}
             onSave={handleSave}
@@ -1749,6 +1906,7 @@ export function ObsidianMarkdownViewer({
             rootHandle={rootHandle}
             filePath={filePath}
             onCodeBlockRun={handleCodeBlockRun}
+            onMarkdownImageEdit={(request) => void openMarkdownImageEditor(request)}
           />
         )}
       </div>
@@ -1773,10 +1931,12 @@ export function ObsidianMarkdownViewer({
     handleRepairBrokenLink,
     handleReviewUnreferencedAttachment,
     handleSourceLinkNavigate,
+    handleEditorReady,
     handleSave,
     handleMarkdownContextMenu,
     localContent,
     mode,
+    openMarkdownImageEditor,
     outline,
     paneId,
     readingModeContent,
@@ -1957,6 +2117,51 @@ export function ObsidianMarkdownViewer({
         filePath={filePath}
         rootHandle={rootHandle}
       />
+
+      {markdownImageEditState ? (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Edit Markdown image"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setMarkdownImageEditState(null);
+            }
+          }}
+        >
+          <div
+            className="flex h-[min(860px,92vh)] w-[min(1180px,94vw)] flex-col overflow-hidden rounded-lg border border-border bg-background shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.stopPropagation()}
+          >
+            <div className="flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium">{markdownImageEditState.fileName}</div>
+                <div className="truncate text-[11px] text-muted-foreground">{markdownImageEditState.imageUrl}</div>
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Close image editor"
+                onClick={() => setMarkdownImageEditState(null)}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1">
+              <ImageViewer
+                source={markdownImageEditState.source}
+                fileName={markdownImageEditState.fileName}
+                mimeType={markdownImageEditState.mimeType}
+                paneId={paneId}
+                filePath={markdownImageEditState.filePath}
+                rootHandle={rootHandle}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {markdownMenuState ? (
         <WorkbenchContextMenu

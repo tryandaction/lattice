@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useCallback, useEffect, useState } from "react";
+import { useMemo, useCallback } from "react";
 import { Loader2, AlertCircle, FileQuestion } from "lucide-react";
 import { getRendererForExtension, getFileExtension, getImageMimeType, RendererType, isEditableCodeFile, isEditableFile } from "@/lib/file-utils";
 import dynamic from "next/dynamic";
@@ -11,12 +11,11 @@ import { navigateLinkWithFeedback } from "@/lib/link-router/navigate-link-with-f
 import { findClosestAnchorHref, shouldOpenLinkExternally } from "@/lib/link-router/link-click";
 import { t } from "@/lib/i18n";
 import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
-import { isTauriHost } from "@/lib/storage-adapter";
-import { resolvePdfDocumentBinding } from "@/lib/pdf-document-binding";
-import type { ResolvedPdfDocumentBinding } from "@/lib/pdf-document-binding";
 import type { BinaryViewerContent, BufferViewerContent, ViewerContent } from "@/types/viewer-content";
 import type { TabState } from "@/types/layout";
 import { isFileTabState } from "@/types/layout";
+import type { CloudPdfDocument } from "@/lib/shared-library/cloud-pdf";
+import { CloudFileViewer } from "./cloud-file-viewer";
 
 /**
  * LRU cache for normalizeScientificText results.
@@ -55,6 +54,7 @@ interface AdaptivePDFRendererProps {
   paneId: PaneId;
   fileId: string;
   filePath: string;
+  sharedDocument?: CloudPdfDocument;
 }
 
 function AdaptivePDFRenderer({
@@ -65,68 +65,18 @@ function AdaptivePDFRenderer({
   paneId,
   fileId,
   filePath,
+  sharedDocument,
 }: AdaptivePDFRendererProps) {
-  const workspaceIdentity = useWorkspaceStore((state) => state.workspaceIdentity);
   // Use workspaceRootHandle if available, otherwise fall back to prop rootHandle
   // This ensures .lattice data is always read from the true workspace root
   const workspaceRootHandle = useWorkspaceStore((state) => state.workspaceRootHandle);
   const effectiveRootHandle = workspaceRootHandle ?? propRootHandle;
   const hasAnnotationContext = Boolean(fileHandle && effectiveRootHandle);
-  const isDesktopRuntime = isTauriHost();
   const activePdfKey = `${fileId}:${filePath}`;
 
-  const [bindingByKey, setBindingByKey] = useState<Record<string, ResolvedPdfDocumentBinding | null>>({});
-  const [annotationPresenceByKey, setAnnotationPresenceByKey] = useState<Record<string, boolean>>({});
-  const resolvedBinding = bindingByKey[activePdfKey] ?? null;
-  const hasPersistedAnnotations = annotationPresenceByKey[activePdfKey] ?? false;
-  const renderMode: "viewer" | "highlighter" = hasAnnotationContext ? "highlighter" : "viewer";
+  if (sharedDocument) return <PDFHighlighterAdapter source={source} fileName={fileName} paneId={paneId} fileId={fileId} filePath={filePath} sharedDocument={sharedDocument} />;
 
-  useEffect(() => {
-    if (!effectiveRootHandle || !fileHandle) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const detectPersistedAnnotations = async () => {
-      try {
-        const binding = await resolvePdfDocumentBinding({
-          rootHandle: effectiveRootHandle,
-          fileHandle,
-          filePath,
-          fileName,
-          workspaceIdentity,
-          fileType: "pdf",
-        });
-        const pdfAnnotations = binding.annotationFile.annotations.filter((annotation) => annotation.target.type === "pdf");
-        const detected = pdfAnnotations.length > 0;
-        if (!cancelled) {
-          setBindingByKey((current) => ({
-            ...current,
-            [activePdfKey]: binding,
-          }));
-          setAnnotationPresenceByKey((current) => (
-            current[activePdfKey] === detected
-              ? current
-              : {
-                  ...current,
-                  [activePdfKey]: detected,
-                }
-          ));
-        }
-      } catch {
-        // Detection failure falls back to the lightweight viewer path.
-      }
-    };
-
-    void detectPersistedAnnotations();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activePdfKey, fileHandle, fileName, filePath, hasAnnotationContext, isDesktopRuntime, effectiveRootHandle, workspaceIdentity]);
-
-  if (renderMode === "highlighter" && fileHandle && effectiveRootHandle) {
+  if (hasAnnotationContext && fileHandle && effectiveRootHandle) {
     return (
       <PDFHighlighterAdapter
         source={source}
@@ -136,7 +86,6 @@ function AdaptivePDFRenderer({
         paneId={paneId}
         fileId={fileId}
         filePath={filePath}
-        binding={resolvedBinding}
       />
     );
   }
@@ -149,7 +98,7 @@ function AdaptivePDFRenderer({
       fileHandle={fileHandle}
       paneId={paneId}
       canAnnotate={hasAnnotationContext}
-      hasPersistedAnnotations={hasPersistedAnnotations}
+      hasPersistedAnnotations={false}
     />
   );
 }
@@ -280,7 +229,7 @@ const HandwritingViewer = dynamic(
 /**
  * File viewer router - renders appropriate component based on file type
  */
-function FileViewer({
+export function FileViewer({
   tab,
   content,
   fileName,
@@ -295,8 +244,10 @@ function FileViewer({
   paneId,
   executionScopeId,
   isActive,
+  workspaceRootPath,
+  sharedDocument,
 }: {
-  tab: TabState;
+  tab: Pick<TabState, "id">;
   content: ViewerContent;
   fileName: string;
   rendererType: RendererType;
@@ -310,6 +261,8 @@ function FileViewer({
   paneId: PaneId;
   executionScopeId: string;
   isActive: boolean;
+  workspaceRootPath?: string | null;
+  sharedDocument?: CloudPdfDocument;
 }) {
   const extension = getFileExtension(fileName);
   const viewerKey = fileId || fileName;
@@ -366,16 +319,12 @@ function FileViewer({
 
       // System-generated index files are already Markdown. Running the full
       // scientific normalizer over large annotation indexes is pure startup cost.
-      const normalizedContent = isSystemIndexFile
-        ? textContent
-        : cachedNormalizeScientificText(textContent);
-
       if (isSystemIndexFile) {
         return (
           <div className="h-full overflow-auto px-6 py-4">
             <MarkdownRenderer
               key={viewerKey}
-              content={normalizedContent}
+              content={textContent}
               fileName={fileName}
               paneId={paneId}
               filePath={filePath}
@@ -395,7 +344,7 @@ function FileViewer({
         return (
           <ObsidianMarkdownViewer
             key={viewerKey} // Force re-mount on file change
-            content={normalizedContent}
+            content={textContent}
             onChange={onContentChange}
             fileName={fileName}
             fileId={fileId} // Pass fileId for internal tracking
@@ -413,7 +362,7 @@ function FileViewer({
       return (
         <MarkdownRenderer
           key={viewerKey}
-          content={normalizedContent}
+          content={cachedNormalizeScientificText(textContent)}
           fileName={fileName}
           paneId={paneId}
           filePath={filePath}
@@ -437,6 +386,7 @@ function FileViewer({
           paneId={paneId}
           fileId={fileId ?? fileName}
           filePath={filePath ?? fileName}
+          sharedDocument={sharedDocument}
         />
       );
     case "jupyter": {
@@ -455,6 +405,7 @@ function FileViewer({
             tabId={fileId || fileName}
             filePath={filePath ?? fileName}
             executionScopeId={executionScopeId}
+            executionMode={filePath?.startsWith("cloud://") ? "inline-only" : "workspace-file"}
           />
         );
       }
@@ -485,10 +436,10 @@ function FileViewer({
             tabId={fileId || fileName}
             filePath={filePath ?? fileName}
             executionScopeId={executionScopeId}
+            executionMode={filePath?.startsWith("cloud://") ? "inline-only" : "workspace-file"}
           />
         );
       }
-      // Fallback to read-only CodeReader for non-editable code files
       return <CodeReader content={codeContent} fileName={fileName} paneId={paneId} filePath={filePath ?? fileName} />;
     }
     case "word":
@@ -628,6 +579,7 @@ export function UniversalFileViewer({
   fileId, // Unique identifier for the file
   filePath,
 }: UniversalFileViewerProps) {
+  const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const handleNavigateToFile = useCallback(async (target: string) => {
     const success = await navigateLinkWithFeedback(target, {
       paneId,
@@ -702,6 +654,10 @@ export function UniversalFileViewer({
     : getRendererForExtension(getFileExtension(fileName));
   const fileHandle = isFileTabState(effectiveTab) ? effectiveTab.fileHandle : undefined;
 
+  if (effectiveTab.kind === "cloud-file") {
+    return <CloudFileViewer tab={effectiveTab} content={content} paneId={paneId} isActive={isActive} onContentChange={onContentChange} onSave={onSave} />;
+  }
+
   return (
     <div
       className="h-full min-h-0 min-w-0 overflow-hidden bg-background"
@@ -723,6 +679,7 @@ export function UniversalFileViewer({
         paneId={paneId}
         executionScopeId={executionScopeId}
         isActive={isActive}
+        workspaceRootPath={workspaceRootPath}
       />
     </div>
   );

@@ -17,7 +17,7 @@ export interface FormulaExtractionSource {
 export interface ExtractedFormula {
   id: string;
   source: PluginViewerType;
-  kind: "explicit" | "text-layer" | "omml" | "mathml" | "ocr";
+  kind: "explicit" | "text-layer" | "geometry" | "omml" | "mathml" | "ocr";
   page?: number;
   location?: string;
   confidence: number;
@@ -25,6 +25,11 @@ export interface ExtractedFormula {
   target?: PluginDocumentRevealTarget;
   latex: string;
   rawText: string;
+  /** Captured source pixels and the recognizer's untouched prediction. */
+  sourceImage?: { dataUrl: string; width: number; height: number; imageBbox?: { x1:number;y1:number;x2:number;y2:number } };
+  originalLatex?: string;
+  initialLatex?: string;
+  recognitionTruncated?: boolean;
   displayMode: boolean;
   context?: string;
   needsReview?: boolean;
@@ -55,4 +60,6 @@ export interface FormulaExtractionResult {
   hiddenCandidates?: HiddenFormulaCandidate[];
   scannedAt: number;
   warnings: string[];
+  documentKey?: string;
+  sourceRevision?: string;
 }

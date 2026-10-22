@@ -3,7 +3,11 @@ import {
   extractSearchableTextForFile,
   isLineNavigableSearchExtension,
   isSearchableTextExtension,
+  normalizeSearchText,
+  shouldExcludeFromWorkspaceSearch,
 } from "../searchable-text";
+import { useSettingsStore } from "@/stores/settings-store";
+import { useVSCodeCompatStore } from "@/stores/vscode-compat-store";
 
 const extractRawTextMock = vi.fn();
 
@@ -22,6 +26,19 @@ vi.mock("@/lib/pptx-formula-extractor", () => ({
 describe("searchable text extraction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useSettingsStore.setState({
+      settings: {
+        ...useSettingsStore.getState().settings,
+        vscodeCompatEnabled: false,
+      },
+    });
+    useVSCodeCompatStore.setState({
+      ...useVSCodeCompatStore.getState(),
+      settings: {
+        ...useVSCodeCompatStore.getState().settings,
+        searchExclude: {},
+      },
+    });
   });
 
   it("extracts notebook cell text", async () => {
@@ -105,5 +122,45 @@ describe("searchable text extraction", () => {
     expect(isLineNavigableSearchExtension("ipynb")).toBe(false);
     expect(isLineNavigableSearchExtension("docx")).toBe(false);
     expect(isLineNavigableSearchExtension("pptx")).toBe(false);
+  });
+
+  it("ignores imported VS Code search excludes until compatibility is enabled", () => {
+    useVSCodeCompatStore.setState({
+      ...useVSCodeCompatStore.getState(),
+      settings: {
+        ...useVSCodeCompatStore.getState().settings,
+        searchExclude: {
+          "**/dist/**": true,
+        },
+      },
+    });
+
+    expect(shouldExcludeFromWorkspaceSearch("project/dist/index.js")).toBe(false);
+
+    useSettingsStore.setState({
+      settings: {
+        ...useSettingsStore.getState().settings,
+        vscodeCompatEnabled: true,
+      },
+    });
+
+    expect(shouldExcludeFromWorkspaceSearch("project/dist/index.js")).toBe(true);
+  });
+});
+
+describe("normalizeSearchText", () => {
+  it("lowercases and collapses whitespace", () => {
+    expect(normalizeSearchText("  Hello   World\nsecond line  ")).toBe(
+      "hello world second line",
+    );
+  });
+
+  it("strips control characters", () => {
+    expect(normalizeSearchText("a\u0000b\u0007c")).toBe("a b c");
+  });
+
+  it("handles empty and blank input", () => {
+    expect(normalizeSearchText("")).toBe("");
+    expect(normalizeSearchText("   \n ")).toBe("");
   });
 });

@@ -63,9 +63,29 @@ export interface PdfPageTextOffsetResolutionInput {
   affinity: "start" | "end";
 }
 
-const pdfPageTextCache = new WeakMap<PDFDocumentProxy, Map<number, PdfPageTextCacheEntry>>();
+let pdfPageTextCache = new WeakMap<PDFDocumentProxy, Map<number, PdfPageTextCacheEntry>>();
+let pendingPdfTextContent = new WeakMap<PDFDocumentProxy, Map<number, Promise<TextContent>>>();
 let renderedPdfPageTextCache = new WeakMap<HTMLElement, RenderedPdfPageTextCacheEntry>();
 let pdfPageTextNodeIndex = new WeakMap<PdfPageTextModel, Map<Text, PdfPageTextSegment>>();
+const MAX_RESOLVED_PDF_PAGE_MODELS_PER_DOCUMENT = 24;
+
+function touchPdfPageTextCacheEntry(
+  pageCache: Map<number, PdfPageTextCacheEntry>,
+  pageNumber: number,
+  entry: PdfPageTextCacheEntry,
+): void {
+  pageCache.delete(pageNumber);
+  pageCache.set(pageNumber, entry);
+
+  while (pageCache.size > MAX_RESOLVED_PDF_PAGE_MODELS_PER_DOCUMENT) {
+    const oldest = pageCache.entries().next().value as [number, PdfPageTextCacheEntry] | undefined;
+    if (!oldest) return;
+    pageCache.delete(oldest[0]);
+    if (oldest[1].value) {
+      pdfPageTextNodeIndex.delete(oldest[1].value);
+    }
+  }
+}
 
 interface PdfVisualItemMetadata {
   lineIndex: number;
@@ -766,7 +786,11 @@ function assignPdfSegmentLayoutClasses(input: {
 
     const normalizedText = normalizePdfText(segment.normalizedText);
     const compactText = normalizedText.replace(/\s+/g, "");
-    const isTinyFragment = itemRect.height <= Math.max(18, medianHeight * 0.82);
+    // Rendered text layers use CSS pixels; PDF.js page models use PDF points.
+    // Keep the pixel floor out of the point-space model so inline numbers do
+    // not become auxiliary blocks merely because the page is unscaled.
+    const tinyFragmentFloor = input.viewportHeight > 900 ? 18 : 3;
+    const isTinyFragment = itemRect.height <= Math.max(tinyFragmentFloor, medianHeight * 0.82);
     const isNarrowFragment = itemRect.width <= input.viewportWidth * 0.12;
     const isCitationMarker = /^\[?\d+[a-z]?\]?$/.test(compactText);
     const isYearLike = /^\d{4}[a-z]?$/.test(compactText);
@@ -1076,14 +1100,10 @@ function getRenderedTextNodeRect(textNode: Text, parentRect?: DOMRect | null): D
     }
     if (parentRect && isUsableRenderedTextRect(parentRect)) {
       const startsAtParentTextOrigin = Math.abs(rect.left - parentRect.left) <= Math.max(1, parentRect.width * 0.01);
-      const insideParent =
-        rect.left >= parentRect.left - 1 &&
-        rect.right <= parentRect.right + 1 &&
-        rect.top >= parentRect.top - Math.max(2, parentRect.height * 0.4) &&
-        rect.bottom <= parentRect.bottom + Math.max(2, parentRect.height * 0.4);
+      const staysOnParentVisualLine = rect.height <= Math.max(parentRect.height + 2, parentRect.height * 1.6);
       const verticalOverlap = Math.max(0, Math.min(rect.bottom, parentRect.bottom) - Math.max(rect.top, parentRect.top));
       const minimumHeight = Math.max(1, Math.min(rect.height, parentRect.height));
-      if (!startsAtParentTextOrigin || !insideParent || verticalOverlap < minimumHeight * 0.35) {
+      if (!startsAtParentTextOrigin || !staysOnParentVisualLine || verticalOverlap < minimumHeight * 0.35) {
         return null;
       }
     }
@@ -1408,6 +1428,21 @@ export function resolvePdfPageTextOffset(input: PdfPageTextOffsetResolutionInput
 
   const segment = nodeIndex.get(resolvedContainer);
   if (!segment) {
+    // PDF.js inserts whitespace directly between glyph spans. Native ranges
+    // may end at offset zero of that unindexed node, just after a superscript.
+    // Resolve only such separators inside this text layer; unknown text must
+    // remain unresolved instead of silently attaching to an unrelated glyph.
+    const layer = input.model.textLayerElement;
+    if (resolvedContainer.textContent?.trim() || !layer?.contains(resolvedContainer)) return null;
+    const walker = layer.ownerDocument.createTreeWalker(layer, NodeFilter.SHOW_TEXT);
+    walker.currentNode = resolvedContainer;
+    let neighbor = input.affinity === 'end' ? walker.previousNode() : walker.nextNode();
+    while (neighbor) {
+      const neighborSegment = nodeIndex.get(neighbor as Text);
+      if (neighborSegment) return input.affinity === 'end' ? neighborSegment.pageTextEnd : neighborSegment.pageTextStart;
+      if (neighbor.textContent?.trim()) return null;
+      neighbor = input.affinity === 'end' ? walker.previousNode() : walker.nextNode();
+    }
     return null;
   }
 
@@ -1416,6 +1451,30 @@ export function resolvePdfPageTextOffset(input: PdfPageTextOffsetResolutionInput
   const rawToNormalizedOffsets = segment.rawToNormalizedOffsets ?? buildNormalizedOffsetMap(segment.text).rawToNormalizedOffsets;
 
   return segment.pageTextStart + (rawToNormalizedOffsets[clampedOffset] ?? 0);
+}
+
+/** Share extraction between painting, exact navigation, and search. Settled text
+ * is owned by the bounded page-model cache; pending work is never kept forever. */
+export function getPdfPageTextContent(
+  pdfDocument: PDFDocumentProxy,
+  pageNumber: number,
+  page?: Pick<Awaited<ReturnType<PDFDocumentProxy['getPage']>>, 'getTextContent'>,
+): Promise<TextContent> {
+  const ready = pdfPageTextCache.get(pdfDocument)?.get(pageNumber)?.value;
+  if (ready) return Promise.resolve(ready.textContent);
+  let pending = pendingPdfTextContent.get(pdfDocument);
+  if (!pending) { pending = new Map(); pendingPdfTextContent.set(pdfDocument, pending); }
+  const existing = pending.get(pageNumber);
+  if (existing) return existing;
+  const requests = pending;
+  const operation = Promise.resolve().then(async () => {
+    const source = page ?? await pdfDocument.getPage(pageNumber);
+    return source.getTextContent({ includeMarkedContent: false });
+  }).finally(() => {
+    if (requests.get(pageNumber) === operation) requests.delete(pageNumber);
+  });
+  requests.set(pageNumber, operation);
+  return operation;
 }
 
 export async function getPdfPageTextModel(
@@ -1431,6 +1490,7 @@ export async function getPdfPageTextModel(
 
   const cached = resolvedPageCache.get(pageNumber);
   if (cached) {
+    touchPdfPageTextCacheEntry(resolvedPageCache, pageNumber, cached);
     return cached.promise;
   }
 
@@ -1442,9 +1502,7 @@ export async function getPdfPageTextModel(
   entry.promise = (async () => {
     const page = await pdfDocument.getPage(pageNumber);
     const viewport = page.getViewport({ scale: 1 });
-    const textContent = await page.getTextContent({
-      includeMarkedContent: false,
-    });
+    const textContent = await getPdfPageTextContent(pdfDocument, pageNumber, page);
 
     const model = buildPdfPageTextModel({
       pageNumber,
@@ -1454,6 +1512,7 @@ export async function getPdfPageTextModel(
       viewportTransform: normalizeTransform(viewport.transform as number[] | undefined),
     });
     entry.value = model;
+    touchPdfPageTextCacheEntry(resolvedPageCache, pageNumber, entry);
     return model;
   })();
 
@@ -1478,9 +1537,12 @@ export async function getPdfPageSearchText(
 export function clearPdfPageTextCache(pdfDocument?: PDFDocumentProxy): void {
   if (pdfDocument) {
     pdfPageTextCache.delete(pdfDocument);
+    pendingPdfTextContent.delete(pdfDocument);
     return;
   }
 
+  pdfPageTextCache = new WeakMap<PDFDocumentProxy, Map<number, PdfPageTextCacheEntry>>();
+  pendingPdfTextContent = new WeakMap<PDFDocumentProxy, Map<number, Promise<TextContent>>>();
   renderedPdfPageTextCache = new WeakMap<HTMLElement, RenderedPdfPageTextCacheEntry>();
   pdfPageTextNodeIndex = new WeakMap<PdfPageTextModel, Map<Text, PdfPageTextSegment>>();
 }

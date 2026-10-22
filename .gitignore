@@ -1,5 +1,8 @@
 # dependencies
 /node_modules
+/src-tauri/code-oss-runtime/node_modules/
+/src-tauri/code-oss-runtime/bin/node.exe
+/src-tauri/code-oss-runtime/provision-manifest.json
 /.pnp
 .pnp.*
 .yarn/*
@@ -53,8 +56,30 @@ app-icon.png
 # releases (too large for git)
 /releases/
 
+# generated from the shared cloud API by prepare-supabase-cloud-function.mjs
+/supabase/functions/shared-library-api/index.js
+/supabase/.temp/
+
+# generated Code OSS desktop source and build output
+/.lattice-build/code-oss/
+/desktop/code-oss/dist/
+
 # local QA artifacts
 /output/
 /test-results/
 /.playwright-cli/
 lattice-*.log
+
+# large local build / runtime artifacts (added 2026-10-22)
+/.lattice-build/
+/web-dist-dev-plugins/
+/.codex/
+/.wrangler/
+/tmp/
+debug.log
+lattice-*.log
+
+# regenerable desktop resources (fetched/copied by prepare:* scripts)
+/src-tauri/resources/vscode-typescript/
+/src-tauri/resources/vscode-js-debug/
+/src-tauri/resources/vscode-lattice-bridge.vsix

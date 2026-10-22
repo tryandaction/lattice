@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AiChatPanel } from "@/components/ai/ai-chat-panel";
 import { AgentTracePanel } from "@/components/ai/agent-trace-panel";
 import { executeAgentTool } from "@/lib/ai/agent-tool-broker";
@@ -34,6 +34,28 @@ const DIAGNOSTICS_CONTENT = [
   "",
   "The agent should collect current file context, resolve evidence, write an evidence-backed answer into chat, and keep planner audit metadata visible after compaction.",
 ].join("\n");
+
+export function buildDiagnosticsSynthesisAnswer(userPrompt: string): string {
+  const task = userPrompt.match(/^Task:\s*(.+)$/m)?.[1]?.trim() || "Review the current diagnostics source";
+  return [
+    `Task: ${task}`,
+    "",
+    `Direct answer: The current diagnostics source supports completing \"${task}\" through the evidence-backed Research Agent flow. [1]`,
+    "",
+    "Core idea: use the active document as bounded context, resolve its source reference, and keep generated artifacts behind explicit Review actions.",
+    "",
+    "Steps:",
+    "1. Read the active diagnostics note.",
+    "2. Resolve the cited workspace source.",
+    "3. Return a concise answer and expose optional Draft or Proposal actions in Workbench Review.",
+    "",
+    `Example: this run treats \"${task}\" as the current task instead of reusing an answer from another conversation.`,
+    "",
+    `Evidence: [1] ${DIAGNOSTICS_FILE_NAME}`,
+    "",
+    "Next question: should this result remain an answer, or be reviewed as a Draft or Proposal?",
+  ].join("\n");
+}
 
 const diagnosticsProvider: AiProvider = {
   id: "openai",
@@ -69,6 +91,13 @@ const diagnosticsProvider: AiProvider = {
             },
           ],
         }),
+      };
+    }
+
+    if (system.includes("direct-answer synthesis module")) {
+      return {
+        model: DIAGNOSTICS_MODEL.id,
+        text: buildDiagnosticsSynthesisAnswer(user),
       };
     }
 
@@ -125,6 +154,7 @@ function resetDiagnosticsStores() {
     isOpen: true,
     isGenerating: false,
     abortController: null,
+    composerMode: "chat",
   });
   useAiWorkbenchStore.setState({
     drafts: [],
@@ -155,6 +185,7 @@ function resetDiagnosticsStores() {
 }
 
 export function AiChatResearchAgentDiagnostics() {
+  const [panelRevision, setPanelRevision] = useState(0);
   const activeConversation = useAiChatStore((state) =>
     state.conversations.find((conversation) => conversation.id === state.activeConversationId) ?? null,
   );
@@ -210,6 +241,7 @@ export function AiChatResearchAgentDiagnostics() {
 
   const resetState = useCallback(() => {
     resetDiagnosticsStores();
+    setPanelRevision((current) => current + 1);
   }, []);
 
   const createApprovalFixture = useCallback(async () => {
@@ -264,7 +296,7 @@ export function AiChatResearchAgentDiagnostics() {
   }, []);
 
   return (
-    <div className="flex h-screen w-screen flex-col bg-background text-foreground" data-testid="ai-chat-research-agent-ready">
+    <div className="flex min-h-screen w-full flex-col bg-background text-foreground xl:h-screen" data-testid="ai-chat-research-agent-ready">
       <header className="flex items-center gap-3 border-b border-border px-4 py-3">
         <div>
           <h1 className="text-sm font-medium">AI Chat Research Agent Regression</h1>
@@ -291,9 +323,12 @@ export function AiChatResearchAgentDiagnostics() {
         </button>
       </header>
 
-      <main className="grid min-h-0 flex-1 grid-cols-[1fr_360px] gap-3 p-3">
-        <section className="min-h-0 rounded-lg border border-border">
-          <AiChatPanel className="h-full" />
+      <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 p-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <section
+          className="h-[calc(100dvh-8rem)] min-h-[32rem] min-w-0 rounded-lg border border-border xl:h-auto xl:min-h-0"
+          data-testid="ai-chat-diagnostics-panel-host"
+        >
+          <AiChatPanel key={panelRevision} className="h-full" loadPersistedState={false} />
         </section>
 
         <aside className="min-h-0 overflow-auto rounded-lg border border-border bg-muted/20 p-3 text-xs leading-6">
@@ -368,6 +403,7 @@ export function AiChatResearchAgentDiagnostics() {
             data-testid="ai-chat-agent-approval-trace"
           >
             <AgentTracePanel
+              loadPersisted={false}
               runCode={async () => ({ output: "diagnostics approval ok" })}
             />
           </div>

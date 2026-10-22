@@ -1,0 +1,86 @@
+{
+  "name": "lattice-workbench",
+  "displayName": "Lattice Workbench",
+  "description": "Research workflows for the Lattice Scientific Workbench.",
+  "publisher": "lattice",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.128.0"
+  },
+  "main": "./extension.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:lattice.research",
+    "onCommand:lattice.openResearch",
+    "onCommand:lattice.importVSCodeProfile",
+    "onCommand:lattice.showMigrationStatus",
+    "onCommand:lattice.openExplorer",
+    "onCommand:lattice.openExtensions",
+    "onCommand:lattice.openTerminal",
+    "onCommand:lattice.openRunAndDebug"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Research views are available, but execution and native-service operations remain disabled until the workspace is trusted."
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "lattice",
+          "title": "Lattice",
+          "icon": "media/lattice-activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "lattice": [
+        {
+          "id": "lattice.research",
+          "name": "Research"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "lattice.research",
+        "contents": "Use the native Workbench without leaving Lattice.\n[Open files](command:lattice.openExplorer)  [Open Extensions](command:lattice.openExtensions)\n[Open terminal](command:lattice.openTerminal)  [Run and Debug](command:lattice.openRunAndDebug)\n[Import VS Code extensions](command:lattice.importVSCodeProfile)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "lattice.openResearch",
+        "title": "Lattice: Open Research"
+      },
+      {
+        "command": "lattice.importVSCodeProfile",
+        "title": "Lattice: Import VS Code Profile"
+      },
+      {
+        "command": "lattice.showMigrationStatus",
+        "title": "Lattice: Show Migration Status"
+      },
+      {
+        "command": "lattice.openExplorer",
+        "title": "Lattice: Open Files"
+      },
+      {
+        "command": "lattice.openExtensions",
+        "title": "Lattice: Open Extensions"
+      },
+      {
+        "command": "lattice.openTerminal",
+        "title": "Lattice: Open Terminal"
+      },
+      {
+        "command": "lattice.openRunAndDebug",
+        "title": "Lattice: Open Run and Debug"
+      }
+    ]
+  }
+}

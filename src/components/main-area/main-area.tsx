@@ -10,10 +10,14 @@ import { LayoutRenderer } from "./layout-renderer";
 import { findPane } from "@/lib/layout-utils";
 import { getFileExtension, isEditableFile } from "@/lib/file-utils";
 import { useFileSystem } from "@/hooks/use-file-system";
-import { saveWorkspaceTabContent } from "@/lib/workspace-save";
+import { acknowledgeWorkspaceTabSave, saveWorkspaceTabContent } from "@/lib/workspace-save";
 import { useWorkspaceRunnerPreferencesPersistence } from "@/hooks/use-workspace-runner-preferences";
 import { useI18n } from "@/hooks/use-i18n";
-import { isFileTabState } from "@/types/layout";
+import { isDocumentTabState, type LayoutNode } from "@/types/layout";
+
+function hasOpenTabs(node: LayoutNode): boolean {
+  return node.type === "pane" ? node.tabs.length > 0 : node.children.some(hasOpenTabs);
+}
 
 /**
  * Welcome placeholder component - shown when no workspace is open
@@ -24,8 +28,8 @@ function WelcomePlaceholder() {
   const recentWorkspaces = useSettingsStore((state) => state.settings.recentWorkspacePaths ?? []).slice(0, 5);
 
   return (
-    <div className="flex h-full items-center justify-center bg-background p-8">
-      <div className="w-full max-w-3xl rounded-2xl border border-border bg-card/70 p-8 shadow-sm">
+    <div className="flex h-full min-w-0 overflow-y-auto bg-background p-4" data-testid="main-welcome">
+      <div className="m-auto w-full min-w-0 max-w-3xl rounded-2xl border border-border bg-card/70 p-5 shadow-sm">
         <div className="text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">
           {t("main.welcome.title")}
@@ -35,13 +39,13 @@ function WelcomePlaceholder() {
           </p>
         </div>
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(18rem,1fr)]">
-          <div className="rounded-2xl border border-border bg-background p-5">
+        <div className="mt-6 grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 18rem), 1fr))" }}>
+          <div className="min-w-0 rounded-2xl border border-border bg-background p-5" data-testid="main-welcome-open-card">
             <div className="flex items-start gap-4">
-              <div className="rounded-2xl bg-primary/10 p-3 text-primary">
+              <div className="shrink-0 rounded-2xl bg-primary/10 p-3 text-primary">
                 <FolderOpen className="h-6 w-6" />
               </div>
-              <div className="flex-1">
+              <div className="min-w-0 flex-1">
                 <div className="text-lg font-semibold text-foreground">{t("main.welcome.open")}</div>
                 <p className="mt-1 text-sm text-muted-foreground">{t("main.welcome.openHint")}</p>
               </div>
@@ -51,7 +55,7 @@ function WelcomePlaceholder() {
               type="button"
               onClick={() => void openDirectory()}
               disabled={isLoading}
-              className="mt-6 inline-flex min-w-44 items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
               data-testid="main-welcome-open-workspace"
             >
               {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderOpen className="h-4 w-4" />}
@@ -59,7 +63,7 @@ function WelcomePlaceholder() {
             </button>
           </div>
 
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4">
             <div className="rounded-2xl border border-border bg-background p-4">
               <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                 <History className="h-4 w-4 text-muted-foreground" />
@@ -104,7 +108,7 @@ function WelcomePlaceholder() {
 /**
  * Main Area component with advanced layout system
  */
-export function MainArea() {
+export function MainArea({ active = true, hasCloudWorkspace = false }: { active?: boolean; hasCloudWorkspace?: boolean } = {}) {
   useWorkspaceRunnerPreferencesPersistence();
 
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
@@ -115,7 +119,9 @@ export function MainArea() {
 
   // Keyboard shortcut handler for Ctrl+S
   useEffect(() => {
+    if (!active) return;
     const handleKeyDown = async (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       // Check for Ctrl+S or Cmd+S
       if ((e.ctrlKey || e.metaKey) && e.key === 's' && !e.shiftKey) {
         e.preventDefault();
@@ -131,7 +137,7 @@ export function MainArea() {
         if (!activeTab) {
           return;
         }
-        if (!isFileTabState(activeTab)) {
+        if (!isDocumentTabState(activeTab)) {
           toast.info(t('main.toast.readOnly.title'), {
             description: '当前网页标签不支持保存到工作区文件。',
           });
@@ -175,10 +181,7 @@ export function MainArea() {
           });
 
           // Mark as saved in cache
-          useContentCacheStore.getState().markAsSaved(persistedTab.id, cached.content);
-
-          // Clear dirty state in layout
-          setTabDirty(layout.activePaneId, activePane.activeTabIndex, false);
+          acknowledgeWorkspaceTabSave(persistedTab.id, cached.content);
 
           toast.success(t('main.toast.saved.title'), {
             description: t('main.toast.saved.description', { fileName: persistedTab.fileName }),
@@ -198,7 +201,10 @@ export function MainArea() {
         const activePane = findPane(layout.root, layout.activePaneId);
 
         if (activePane && activePane.activeTabIndex >= 0) {
-          closeTab(layout.activePaneId, activePane.activeTabIndex);
+          const tab = activePane.tabs[activePane.activeTabIndex];
+          if (tab && useContentCacheStore.getState().hasUnsavedChanges(tab.id)) {
+            window.dispatchEvent(new CustomEvent("lattice:close-workbench-tab", { detail: { paneId: layout.activePaneId, tabId: tab.id } }));
+          } else closeTab(layout.activePaneId, activePane.activeTabIndex);
         }
       }
 
@@ -260,10 +266,10 @@ export function MainArea() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [refreshDirectory, rootHandle, setTabDirty, t]);
+  }, [active, refreshDirectory, rootHandle, setTabDirty, t]);
 
   // Show welcome placeholder if no workspace is open
-  if (!rootHandle) {
+  if (!rootHandle && !hasCloudWorkspace && !hasOpenTabs(layout.root)) {
     return <WelcomePlaceholder />;
   }
 

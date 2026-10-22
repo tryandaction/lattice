@@ -1,98 +1,57 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createDefaultAiProviderProfile } from "@/lib/ai/provider-profiles";
+import { useAiProviderProfileStore } from "@/stores/ai-provider-profile-store";
+import { routeModel } from "@/lib/ai/model-router";
 
-const {
-  getConfiguredProvidersMock,
-  getDefaultProviderMock,
-  getProviderMock,
-} = vi.hoisted(() => ({
-  getConfiguredProvidersMock: vi.fn(),
-  getDefaultProviderMock: vi.fn(),
-  getProviderMock: vi.fn(),
-}));
+vi.mock("@/lib/ai/key-storage", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/ai/key-storage")>("@/lib/ai/key-storage");
+  return { ...actual, getProfileApiKey: vi.fn(() => "profile-secret") };
+});
 
-vi.mock('../ai/providers', () => ({
-  getConfiguredProviders: getConfiguredProvidersMock,
-  getDefaultProvider: getDefaultProviderMock,
-  getProvider: getProviderMock,
-}));
-
-import { getModelRouterPolicy, routeModel } from '../ai/model-router';
-import type { AiProvider, AiRuntimeSettings } from '../ai/types';
-
-function createProvider(id: AiProvider['id'], name: string): AiProvider {
-  return {
-    id,
-    name,
-    isConfigured: () => true,
-    testConnection: async () => ({ ok: true }),
-    getAvailableModels: async () => [],
-    generate: async () => ({ text: 'ok', model: 'stub-model' }),
-    stream: async function* () {
-      yield { type: 'done' as const };
-    },
-    estimateTokens: () => 0,
-  };
-}
-
-const baseSettings: AiRuntimeSettings = {
-  aiEnabled: true,
-  providerId: 'openai',
-  model: 'gpt-test',
-  temperature: 0.2,
-  maxTokens: 512,
-  systemPrompt: 'system',
-};
-
-describe('model-router', () => {
+describe("profile-aware model router", () => {
   beforeEach(() => {
-    getConfiguredProvidersMock.mockReset();
-    getDefaultProviderMock.mockReset();
-    getProviderMock.mockReset();
+    useAiProviderProfileStore.setState({ profiles: [], activeProfileId: null, isLoading: false, isInitialized: true, error: null });
   });
 
-  it('prefers local provider when preferLocal is enabled', () => {
-    const ollamaProvider = createProvider('ollama', 'Ollama');
-    const openaiProvider = createProvider('openai', 'OpenAI');
+  it("routes through a configured profile before legacy provider settings", () => {
+    const profile = createDefaultAiProviderProfile("openrouter", { id: "team-router", name: "Team router", model: "openai/gpt-4.1-mini" });
+    useAiProviderProfileStore.getState().addProfile(profile);
 
-    getConfiguredProvidersMock.mockReturnValue([ollamaProvider, openaiProvider]);
-    getProviderMock.mockImplementation((id: string) => {
-      if (id === 'openai') return openaiProvider;
-      if (id === 'ollama') return ollamaProvider;
-      return null;
+    const selection = routeModel("chat", {
+      aiEnabled: true,
+      providerId: "anthropic",
+      model: null,
+      temperature: 0.2,
+      maxTokens: 256,
+      systemPrompt: "system",
+      profileId: "team-router",
     });
 
-    const selection = routeModel('research', {
-      ...baseSettings,
-      preferLocal: true,
-    });
-
-    expect(selection.provider.id).toBe('ollama');
-    expect(selection.modelInfo.source).toBe('local');
-    expect(selection.policy.evidenceRequired).toBe(true);
+    expect(selection.provider.name).toBe("Team router");
+    expect(selection.modelInfo.providerId).toBe("openrouter");
+    expect(selection.modelInfo.model).toBe("openai/gpt-4.1-mini");
   });
 
-  it('falls back to default configured provider when preferred provider is unavailable', () => {
-    const googleProvider = createProvider('google', 'Google');
+  it("routes the profile default model instead of the legacy model field", () => {
+    const profile = createDefaultAiProviderProfile("anthropic", { id: "anthropic-channel", model: "claude-sonnet-4-5-20250929" });
+    profile.models = [
+      ...profile.models,
+      { id: "claude-haiku", name: "Claude Haiku", contextWindow: 200000, maxOutputTokens: 8192, enabled: true },
+    ];
+    profile.defaultModelId = "claude-haiku";
+    profile.model = "claude-haiku";
+    useAiProviderProfileStore.getState().addProfile(profile);
 
-    getConfiguredProvidersMock.mockReturnValue([]);
-    getProviderMock.mockReturnValue(null);
-    getDefaultProviderMock.mockReturnValue(googleProvider);
-
-    const selection = routeModel('chat', baseSettings);
-
-    expect(selection.provider.id).toBe('google');
-    expect(selection.modelInfo.source).toBe('cloud');
-  });
-
-  it('returns policy with task-specific budget and evidence requirement', () => {
-    const policy = getModelRouterPolicy('knowledge_organize', {
-      ...baseSettings,
-      preferLocal: false,
+    const selection = routeModel("chat", {
+      aiEnabled: true,
+      providerId: "anthropic",
+      model: null,
+      temperature: 0.2,
+      maxTokens: 256,
+      systemPrompt: "system",
+      profileId: "anthropic-channel",
     });
 
-    expect(policy.taskType).toBe('knowledge_organize');
-    expect(policy.maxContextTokens).toBe(20000);
-    expect(policy.evidenceRequired).toBe(true);
-    expect(policy.preferredProvider).toBe('openai');
+    expect(selection.modelInfo.model).toBe("claude-haiku");
   });
 });

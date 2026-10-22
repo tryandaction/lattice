@@ -40,13 +40,14 @@ export function deriveWebDocumentName(url: string, title?: string | null): strin
   return pathTail || parsed.hostname || parsed.href;
 }
 
-export async function loadWebDocument(url: string): Promise<WebDocumentSnapshot> {
+export async function loadWebDocument(url: string, signal?: AbortSignal): Promise<WebDocumentSnapshot> {
   if (isTauriHost()) {
     return invokeTauriCommand<WebDocumentSnapshot>("fetch_web_document", { url }, { timeoutMs: 20000 });
   }
 
   const response = await fetch(url, {
     redirect: "follow",
+    signal,
   });
   if (!response.ok) {
     throw new Error(`Failed to load webpage: HTTP ${response.status}`);

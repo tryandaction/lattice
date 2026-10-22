@@ -7,6 +7,8 @@ import { extractMarkdownDocument } from '@/lib/markdown/extract';
  */
 
 export interface FileIndex {
+  /** Bounded discovery data; use authorized source reads for actual quotation evidence. */
+  contentScope?: 'discovery-preview';
   path: string;
   name: string;
   extension: string;
@@ -54,6 +56,21 @@ let currentIndex: WorkspaceIndex = {
 
 const indexChangeListeners = new Set<() => void>();
 let indexing = false;
+let indexRunToken = 0;
+
+function yieldToMainThread(): Promise<void> {
+  if (typeof window !== "undefined") {
+    const win = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+    };
+    if (win.requestIdleCallback) {
+      return new Promise((resolve) => {
+        win.requestIdleCallback(() => resolve(), { timeout: 500 });
+      });
+    }
+  }
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 function notifyListeners() {
   for (const l of indexChangeListeners) { try { l(); } catch { /* */ } }
@@ -70,6 +87,17 @@ export function subscribeIndex(cb: () => void): () => void {
 
 export function isIndexing(): boolean {
   return indexing;
+}
+
+export function clearWorkspaceIndex(): void {
+  indexRunToken += 1;
+  indexing = false;
+  currentIndex = {
+    files: new Map(),
+    lastFullIndex: 0,
+    version: currentIndex.version + 1,
+  };
+  notifyListeners();
 }
 
 /**
@@ -115,7 +143,7 @@ export function extractFileIndexSummary(content: string, ext: string): Partial<F
   if (ext === '.md' || ext === '.mdx') {
     const document = extractMarkdownDocument(content);
     return {
-      summary: document.body.slice(0, 200).replace(/\n/g, ' ').trim(),
+      contentScope: 'discovery-preview', summary: document.body.slice(0, 200).replace(/\n/g, ' ').trim(),
       headings: document.headings.map((heading) => heading.text),
       links: document.links.map((link) => link.target).slice(0, 50),
       tags: document.tags.map((tag) => tag.tag).slice(0, 50),
@@ -138,18 +166,18 @@ export function extractFileIndexSummary(content: string, ext: string): Partial<F
         name: match[2],
       });
     }
-    return { summary, exports: exports.slice(0, 20), symbols: symbols.slice(0, 20), chunks };
+    return { contentScope: 'discovery-preview', summary, exports: exports.slice(0, 20), symbols: symbols.slice(0, 20), chunks };
   }
 
   if (ext === '.ipynb') {
     return {
-      summary,
+      contentScope: 'discovery-preview', summary,
       notebookCells: extractNotebookCells(content),
       chunks,
     };
   }
 
-  return { summary, chunks };
+  return { contentScope: 'discovery-preview', summary, chunks };
 }
 
 /**
@@ -171,7 +199,7 @@ async function indexFile(
     const ext = '.' + (path.split('.').pop()?.toLowerCase() ?? '');
     // Skip binary/large files
     if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf', '.zip', '.woff', '.woff2', '.ttf'].includes(ext)) {
-      return { path, name: parts[parts.length - 1], extension: ext, size: file.size, summary: `[binary: ${ext}]`, lastModified: file.lastModified };
+      return { contentScope: 'discovery-preview', path, name: parts[parts.length - 1], extension: ext, size: file.size, summary: `[binary: ${ext}]`, lastModified: file.lastModified };
     }
     if (file.size > 500_000) {
       return { path, name: parts[parts.length - 1], extension: ext, size: file.size, summary: '[large file]', lastModified: file.lastModified };
@@ -181,7 +209,7 @@ async function indexFile(
     const extracted = extractFileIndexSummary(content, ext);
 
     return {
-      path,
+      contentScope: 'discovery-preview', path,
       name: parts[parts.length - 1],
       extension: ext,
       size: file.size,
@@ -210,16 +238,21 @@ async function collectPaths(
   paths: string[],
   maxDepth = 8,
   depth = 0,
+  counter: { value: number } = { value: 0 },
 ): Promise<void> {
   if (depth > maxDepth) return;
   for await (const entry of handle.values()) {
+    counter.value += 1;
+    if (counter.value % 100 === 0) {
+      await yieldToMainThread();
+    }
     const entryPath = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.kind === 'file') {
       // Skip hidden files and node_modules
       if (!entry.name.startsWith('.')) paths.push(entryPath);
     } else if (entry.kind === 'directory') {
       if (['node_modules', '.git', '.next', 'dist', 'build', '.turbo', 'target'].includes(entry.name)) continue;
-      await collectPaths(entry as FileSystemDirectoryHandle, entryPath, paths, maxDepth, depth + 1);
+      await collectPaths(entry as FileSystemDirectoryHandle, entryPath, paths, maxDepth, depth + 1, counter);
     }
   }
 }
@@ -229,17 +262,24 @@ async function collectPaths(
  */
 export async function indexWorkspace(rootHandle: FileSystemDirectoryHandle): Promise<void> {
   if (indexing) return;
+  const runToken = ++indexRunToken;
   indexing = true;
   notifyListeners();
 
   try {
     const paths: string[] = [];
-    await collectPaths(rootHandle, '', paths);
+    await collectPaths(rootHandle, '', paths, 8, 0, { value: 0 });
 
     const newFiles = new Map<string, FileIndex>();
     // Process in batches to avoid blocking
     const BATCH_SIZE = 20;
     for (let i = 0; i < paths.length; i += BATCH_SIZE) {
+      if (runToken !== indexRunToken) {
+        return;
+      }
+      if (i > 0) {
+        await yieldToMainThread();
+      }
       const batch = paths.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(batch.map(p => indexFile(rootHandle, p)));
       for (const result of results) {
@@ -247,14 +287,19 @@ export async function indexWorkspace(rootHandle: FileSystemDirectoryHandle): Pro
       }
     }
 
+    if (runToken !== indexRunToken) {
+      return;
+    }
     currentIndex = {
       files: newFiles,
       lastFullIndex: Date.now(),
       version: currentIndex.version + 1,
     };
   } finally {
-    indexing = false;
-    notifyListeners();
+    if (runToken === indexRunToken) {
+      indexing = false;
+      notifyListeners();
+    }
   }
 }
 
@@ -310,7 +355,7 @@ export function buildIndexContext(relevantPaths?: string[]): string {
     ? relevantPaths.map(p => currentIndex.files.get(p)).filter(Boolean) as FileIndex[]
     : [...currentIndex.files.values()];
 
-  return files.map(f => {
+  const context = files.map(f => {
     let entry = `## ${f.path} (${f.size}B)`;
     if (f.headings?.length) entry += `\nHeadings: ${f.headings.join(', ')}`;
     if (f.tags?.length) entry += `\nTags: ${f.tags.join(', ')}`;
@@ -324,4 +369,5 @@ export function buildIndexContext(relevantPaths?: string[]): string {
     if (f.summary) entry += `\n${f.summary}`;
     return entry;
   }).join('\n\n');
+  return context ? 'Workspace discovery previews only; these summaries do not establish full-document reading or verified quotations. Read authorized source units for evidence.\n\n' + context : '';
 }

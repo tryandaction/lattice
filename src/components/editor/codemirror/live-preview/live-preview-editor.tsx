@@ -9,9 +9,11 @@
 
 import "katex/dist/katex.min.css";
 import "highlight.js/styles/github-dark.css";
-import { useEffect, useRef, useState, useCallback, memo, forwardRef, useImperativeHandle } from 'react';
+import { useEffect, useRef, useState, useCallback, useContext, memo, forwardRef, useImperativeHandle } from 'react';
+import { AssetSourceContext } from '@/lib/asset-source-context';
 import { Loader2 } from 'lucide-react';
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
+import { flashReferenceTarget, flashReferenceRange } from '@/lib/reference-target-flash';
 import { EditorSelection, EditorState, Extension, Transaction } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
@@ -100,6 +102,7 @@ type LivePreviewViewWithHandlers = EditorView & {
   _unifiedInputBlurHandler?: () => void;
   _mathEditorHandler?: (e: Event) => void;
   _quantumFormulaInsertedHandler?: (e: Event) => void;
+  _markdownImageEditHandler?: (e: Event) => void;
   _resolvedImageUrls?: LocalImageUrlCache;
 };
 
@@ -152,6 +155,8 @@ export interface LivePreviewEditorProps {
   readOnly?: boolean;
   /** Outline change callback */
   onOutlineChange?: (outline: OutlineItem[]) => void;
+  /** Fires after the editor document is ready for navigation. */
+  onReady?: () => void;
   /** Wiki link click callback */
   onWikiLinkClick?: (target: string) => void;
   /** Unified link navigation callback */
@@ -178,6 +183,17 @@ export interface LivePreviewEditorProps {
   filePath?: string;
   /** Run callback for live preview code blocks */
   onCodeBlockRun?: (request: LivePreviewCodeBlockRunRequest) => void;
+  /** Open the host Markdown image editor for an inline image widget */
+  onMarkdownImageEdit?: (detail: MarkdownImageEditRequest) => void;
+}
+
+export interface MarkdownImageEditRequest {
+  url: string;
+  alt: string;
+  width?: number;
+  syntax?: "markdown" | "wiki";
+  elementFrom: number;
+  elementTo: number;
 }
 
 /** Ref handle for LivePreviewEditor */
@@ -188,10 +204,12 @@ export interface EditorStateSnapshot {
 }
 
 export interface LivePreviewEditorRef {
+  getContent: () => string | null;
   /** Scroll to a specific line number */
   scrollToLine: (lineNumber: number) => void;
   /** Flash a specific line to confirm navigation */
   flashLine: (lineNumber: number) => void;
+  flashRange: (from: number, to: number) => (() => void) | null;
   /** Focus the editor */
   focus: () => void;
   /** Get current editor state for restoration */
@@ -208,6 +226,8 @@ export interface LivePreviewEditorRef {
   getMarkdownContext: () => MarkdownEditorContext | null;
   /** Move the editor cursor to a screen coordinate */
   setCursorFromPoint: (x: number, y: number) => boolean;
+  /** Move the editor cursor to a document offset */
+  setCursorToPosition: (position: number) => boolean;
   /** Copy the current Markdown block as source */
   copyCurrentBlockAsMarkdown: () => Promise<boolean>;
   /** Copy the current Markdown block as simple HTML */
@@ -393,6 +413,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     showFoldGutter = true,
     readOnly = false,
     onOutlineChange,
+    onReady,
     onWikiLinkClick,
     onLinkNavigate,
     onSave,
@@ -406,7 +427,9 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     rootHandle,
     filePath,
     onCodeBlockRun,
+    onMarkdownImageEdit,
   }, ref) {
+  const assetSource = useContext(AssetSourceContext);
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const pendingEditorStateRef = useRef<EditorStateSnapshot | null>(null);
@@ -432,16 +455,20 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
   // Store callbacks in refs
   const onChangeRef = useRef(onChange);
   const onOutlineChangeRef = useRef(onOutlineChange);
+  const onReadyRef = useRef(onReady);
   const onSaveRef = useRef(onSave);
+  const onMarkdownImageEditRef = useRef(onMarkdownImageEdit);
   // Store content in ref for initialization (avoids content in dependency array)
   const contentRef = useRef(content);
 
   useEffect(() => {
     onChangeRef.current = onChange;
     onOutlineChangeRef.current = onOutlineChange;
+    onReadyRef.current = onReady;
     onSaveRef.current = onSave;
+    onMarkdownImageEditRef.current = onMarkdownImageEdit;
     contentRef.current = content;
-  }, [onChange, onOutlineChange, onSave, content]);
+  }, [onChange, onOutlineChange, onReady, onSave, onMarkdownImageEdit, content]);
 
   const applyEditorState = useCallback((state: EditorStateSnapshot) => {
     const view = viewRef.current;
@@ -524,6 +551,10 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           if (existingQuantumFormulaHandler) {
             existingView.dom.removeEventListener('quantum-formula-inserted', existingQuantumFormulaHandler);
           }
+          const existingImageEditHandler = (existingView as LivePreviewViewWithHandlers)._markdownImageEditHandler;
+          if (existingImageEditHandler) {
+            existingView.dom.removeEventListener('lattice-markdown-image-edit', existingImageEditHandler);
+          }
           clearExposedEditorView(existingView);
           unregisterCodeMirrorView(existingView.dom);
           existingView.destroy();
@@ -555,7 +586,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         let resolvedImageUrls: LocalImageUrlCache | undefined;
 
         // Add image resolver facet if rootHandle is available
-        if (rootHandle) {
+        if (rootHandle || assetSource) {
           const currentRootHandle = rootHandle;
           const currentFilePath = filePath;
           const urlCache = createLocalImageUrlCache();
@@ -564,6 +595,15 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
             // Skip external URLs and data URLs
             if (!url || /^(https?:|data:|blob:)/.test(url)) return null;
             try {
+              if (assetSource) {
+                const cached = urlCache.get(url);
+                if (cached) return cached;
+                const blob = await assetSource.resolveAsset(url);
+                if (!mounted || !blob) return 'about:blank';
+                const objectUrl = URL.createObjectURL(blob);
+                urlCache.set(url, objectUrl);
+                return objectUrl;
+              }
               // Resolve relative path against the current file's directory
               const resolvedPath = currentFilePath
                 ? resolveImagePath(currentFilePath, url)
@@ -572,13 +612,13 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
               if (cachedUrl) {
                 return cachedUrl;
               }
-              const fileHandle = await resolveFileHandleFromRoot(currentRootHandle, resolvedPath);
+              const fileHandle = await resolveFileHandleFromRoot(currentRootHandle!, resolvedPath);
               const file = await fileHandle.getFile();
               const objectUrl = URL.createObjectURL(file);
               urlCache.set(resolvedPath, objectUrl);
               return objectUrl;
             } catch {
-              return null;
+              return assetSource ? 'about:blank' : null;
             }
           };
           extensions.push(imageResolverFacet.of(resolver));
@@ -663,6 +703,17 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         view.dom.addEventListener('quantum-formula-inserted', handleQuantumFormulaInserted);
         (view as LivePreviewViewWithHandlers)._quantumFormulaInsertedHandler = handleQuantumFormulaInserted;
 
+        const handleMarkdownImageEdit = (e: Event) => {
+          const customEvent = e as CustomEvent<MarkdownImageEditRequest>;
+          const detail = customEvent.detail;
+          if (!detail?.url || !Number.isFinite(detail.elementFrom) || !Number.isFinite(detail.elementTo)) {
+            return;
+          }
+          onMarkdownImageEditRef.current?.(detail);
+        };
+        view.dom.addEventListener('lattice-markdown-image-edit', handleMarkdownImageEdit);
+        (view as LivePreviewViewWithHandlers)._markdownImageEditHandler = handleMarkdownImageEdit;
+
         // Register unified input target for CodeMirror integration
         registerCodeMirrorView(view.dom, view);
         const focusHandler = () => {
@@ -723,6 +774,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         }
         
         setIsLoading(false);
+        onReadyRef.current?.();
       } catch (err) {
         logger.error('Failed to initialize Live Preview Editor', {
           error: err instanceof Error ? err.message : String(err),
@@ -756,13 +808,17 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         if (existingQuantumFormulaHandler) {
           existingView.dom.removeEventListener('quantum-formula-inserted', existingQuantumFormulaHandler);
         }
+        const existingImageEditHandler = (existingView as LivePreviewViewWithHandlers)._markdownImageEditHandler;
+        if (existingImageEditHandler) {
+          existingView.dom.removeEventListener('lattice-markdown-image-edit', existingImageEditHandler);
+        }
         clearExposedEditorView(existingView);
         unregisterCodeMirrorView(existingView.dom);
         existingView.destroy();
         viewRef.current = null;
       }
     };
-  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, autoHeight, aiCompletionEnabled, fileId, onImageUpload, useWikiImageStyle, highContrast, applyEditorState, rootHandle, filePath]); // fileId triggers re-init on file switch, content is handled by separate useEffect
+  }, [librariesLoaded, mode, showLineNumbers, showFoldGutter, readOnly, autoHeight, aiCompletionEnabled, fileId, onImageUpload, useWikiImageStyle, highContrast, applyEditorState, rootHandle, filePath, assetSource]); // fileId triggers re-init on file switch, content is handled by separate useEffect
 
   // Update content when it changes externally (but fileId change triggers re-init above)
   useEffect(() => {
@@ -853,7 +909,9 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
       container.removeEventListener('external-link-click', handleExternalLinkClick);
       container.removeEventListener('run-code-block', handleCodeBlockRun);
     };
-  }, [onCodeBlockRun, onLinkNavigate, onWikiLinkClick]);
+  // Loading/error screens do not mount the editor container. Bind again when
+  // that container first appears or is recreated after retrying a failed load.
+  }, [librariesLoaded, error, onCodeBlockRun, onLinkNavigate, onWikiLinkClick]);
 
   // Handle MathEditor open event - REMOVED (now handled in editor init)
 
@@ -949,20 +1007,22 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         return;
       }
 
-      lineElement.animate(
-        [
-          { backgroundColor: 'rgba(59, 130, 246, 0.22)' },
-          { backgroundColor: 'rgba(59, 130, 246, 0.12)' },
-          { backgroundColor: 'transparent' },
-        ],
-        {
-          duration: 1800,
-          easing: 'ease-out',
-        },
-      );
+      flashReferenceTarget(lineElement);
     } catch (e) {
       console.warn('Failed to flash line:', lineNumber, e);
     }
+  }, []);
+
+  const flashRange = useCallback((from: number, to: number) => {
+    const view = viewRef.current;
+    if (!view || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to > view.state.doc.length || from >= to) return null;
+    if (from < view.viewport.from || to > view.viewport.to) return null;
+    const start = view.domAtPos(from, 1);
+    const end = view.domAtPos(to, -1);
+    const range = document.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    return flashReferenceRange(range);
   }, []);
 
   const revealCodeBlockLine = useCallback((request: LivePreviewCodeBlockRevealRequest) => {
@@ -1025,6 +1085,18 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     return true;
   }, []);
 
+  const setCursorToPosition = useCallback((position: number) => {
+    const view = viewRef.current;
+    if (!view || !Number.isFinite(position)) return false;
+    const safePosition = Math.max(0, Math.min(view.state.doc.length, Math.trunc(position)));
+    view.dispatch({
+      selection: EditorSelection.cursor(safePosition),
+      scrollIntoView: false,
+    });
+    view.focus();
+    return true;
+  }, []);
+
   const copyCurrentBlockAsMarkdown = useCallback(async () => {
     const view = viewRef.current;
     if (!view || typeof navigator === 'undefined' || !navigator.clipboard) {
@@ -1056,8 +1128,10 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
   
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
+    getContent: () => viewRef.current?.state.doc.toString() ?? null,
     scrollToLine,
     flashLine,
+    flashRange,
     focus,
     getEditorState,
     restoreEditorState: applyEditorState,
@@ -1066,12 +1140,14 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     runMarkdownCommand,
     getMarkdownContext,
     setCursorFromPoint,
+    setCursorToPosition,
     copyCurrentBlockAsMarkdown,
     copyCurrentBlockAsHtml,
     copyPropertiesYaml,
   }), [
     scrollToLine,
     flashLine,
+    flashRange,
     focus,
     getEditorState,
     applyEditorState,
@@ -1080,6 +1156,7 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
     runMarkdownCommand,
     getMarkdownContext,
     setCursorFromPoint,
+    setCursorToPosition,
     copyCurrentBlockAsMarkdown,
     copyCurrentBlockAsHtml,
     copyPropertiesYaml,
@@ -1137,6 +1214,9 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
  * Only re-render when critical props change
  */
 export const LivePreviewEditor = memo(LivePreviewEditorComponent, (prev, next) => {
+  // The content Effect cannot receive a new document when memo skips this
+  // render. Keep contentRef current before Activity recreates the editor.
+  if (prev.content !== next.content) return false;
   // Always re-render if fileId changes (file switch)
   if (prev.fileId !== next.fileId) return false;
   // Re-render if mode changes
@@ -1149,8 +1229,6 @@ export const LivePreviewEditor = memo(LivePreviewEditorComponent, (prev, next) =
   if (prev.className !== next.className) return false;
   if (prev.highContrast !== next.highContrast) return false;
   if (prev.onCodeBlockRun !== next.onCodeBlockRun) return false;
-  // Content changes are handled by the useEffect, so we can skip re-render
-  // But we need to ensure the content prop is passed through
   return true;
 });
 

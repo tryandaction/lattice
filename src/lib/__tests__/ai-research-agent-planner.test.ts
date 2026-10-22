@@ -7,6 +7,68 @@ import {
 } from '../ai/research-agent-planner';
 
 describe('research-agent-planner', () => {
+  it('preserves a source tool attached to a reserved core id as a separate executable step', () => {
+    const plan = normalizeResearchAgentPlan({ planSteps: [
+      { id: 'context-pack', title: 'Locate BB1 passages', description: 'Search the captured PDF for BB1', toolName: 'lattice.sources.search', toolArgs: { query: 'BB1', maxUnits: 20, maxFiles: 1, maxChars: 40000 } },
+      { id: 'evidence-resolve', title: 'Resolve evidence', description: 'Resolve original quotations', toolName: 'evidence.resolve' },
+      { id: 'synthesize-answer', title: 'Answer', description: 'Explain BB1', toolName: 'evidence.resolve', toolArgs: { query: 'BB1' } },
+    ] });
+    expect(plan.source).toBe('custom');
+    expect(plan.steps.find(step => step.id === 'context-pack')?.toolName).toBeUndefined();
+    expect(plan.steps.find(step => step.id === 'synthesize-answer')?.toolName).toBeUndefined();
+    expect(plan.steps.filter(step => step.toolName === 'lattice.sources.search')).toEqual([
+      expect.objectContaining({ id: expect.not.stringMatching(/^(?:context-pack|evidence-resolve|synthesize-answer)$/), status: 'pending', toolArgs: { query: 'BB1', maxUnits: 20, maxFiles: 1, maxChars: 40000 } }),
+    ]);
+    expect(new Set(plan.steps.map(step => step.id)).size).toBe(plan.steps.length);
+  });
+
+  it('rejects an action smuggled onto a reserved core id instead of silently skipping its approval', () => {
+    const plan = normalizeResearchAgentPlan({ context: { allowCodeExecution: true }, planSteps: [
+      { id: 'context-pack', title: 'Run', description: 'Compute result', toolName: 'runner.runCode', toolArgs: { language: 'python', code: 'print(1)' } },
+      ...buildDefaultResearchAgentPlanSteps({ includeCompactionStep: false }).filter(step => step.id !== 'context-pack'),
+    ] });
+    expect(plan.source).toBe('fallback');
+    expect(plan.steps.some(step => step.toolName === 'runner.runCode')).toBe(false);
+  });
+  function planWithRunner(toolArgs: unknown, status?: string) {
+    return [
+      ...buildDefaultResearchAgentPlanSteps({ includeCompactionStep: false }),
+      { id: 'compute-mean', title: 'Compute mean', description: 'Run the requested calculation after approval.', toolName: 'runner.runCode', toolArgs, ...(status ? { status } : {}) },
+    ];
+  }
+
+  it('accepts typed computation only when the task explicitly enables code execution', () => {
+    const plan = normalizeResearchAgentPlan({
+      context: { allowCodeExecution: true },
+      planSteps: planWithRunner({ language: 'python', code: 'print(sum([2, 4]) / 2)' }),
+    });
+    expect(plan.source).toBe('custom');
+    expect(plan.steps.at(-1)).toMatchObject({
+      id: 'compute-mean', status: 'pending', toolName: 'runner.runCode',
+      toolArgs: { language: 'python', code: 'print(sum([2, 4]) / 2)' },
+    });
+  });
+
+  it('does not accept model execution steps for a read-only task', () => {
+    const plan = normalizeResearchAgentPlan({
+      planSteps: planWithRunner({ language: 'python', code: 'print(4)' }),
+    });
+    expect(plan.source).toBe('fallback');
+    expect(plan.steps.some((step) => step.toolName === 'runner.runCode')).toBe(false);
+  });
+
+  it.each([undefined, {}, { language: 'python', code: ' ' }, { language: 'bash', code: 'echo unsafe' }, { language: 'python', code: 4 }, { language: 'python', code: 'print(4)', approvedByUser: true }])('rejects malformed or permission-bearing computation arguments: %j', (toolArgs) => {
+    const plan = normalizeResearchAgentPlan({ context: { allowCodeExecution: true }, planSteps: planWithRunner(toolArgs) });
+    expect(plan.source).toBe('fallback');
+    expect(plan.steps.some((step) => step.toolName === 'runner.runCode')).toBe(false);
+    expect(plan.warnings.join(' ')).toContain('runner.runCode');
+  });
+
+  it('rejects a planner claim that code already completed without execution', () => {
+    const plan = normalizeResearchAgentPlan({ context: { allowCodeExecution: true }, planSteps: planWithRunner({ language: 'python', code: 'print(4)' }, 'completed') });
+    expect(plan.source).toBe('fallback');
+  });
+
   it('builds the default research plan from artifact and compaction context', () => {
     const steps = buildDefaultResearchAgentPlanSteps({
       includeDraftStep: true,
@@ -233,6 +295,26 @@ describe('research-agent-planner', () => {
         expect.stringContaining('workbench.createDraft toolArgs are not accepted'),
       ]),
     );
+  });
+
+  it('sanitizes scheduled task steps without allowing unsafe schedules', () => {
+    const plan = normalizeResearchAgentPlan({
+      planSteps: [
+        { id: 'context-pack', title: 'Collect context', description: 'Collect context.' },
+        { id: 'evidence-resolve', title: 'Resolve evidence', description: 'Resolve evidence.' },
+        { id: 'schedule', title: 'Schedule follow-up', description: 'Schedule an approved follow-up.', toolName: 'schedule_task', toolArgs: { title: 'Daily digest', prompt: 'Summarize evidence', schedule: { kind: 'interval', everyMs: 60000 } } },
+        { id: 'synthesize-answer', title: 'Write answer', description: 'Write the answer.' },
+      ],
+    });
+
+    expect(plan.source).toBe('custom');
+    expect(plan.steps).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'schedule',
+        toolName: 'schedule_task',
+        toolArgs: { title: 'Daily digest', prompt: 'Summarize evidence', schedule: { kind: 'interval', everyMs: 60000 } },
+      }),
+    ]));
   });
 
   it('updates a single step status without mutating the original plan', () => {

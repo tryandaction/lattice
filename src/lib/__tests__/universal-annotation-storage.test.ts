@@ -4,7 +4,7 @@
  * Feature: universal-annotation-manager
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as fc from 'fast-check';
 import {
   generateFileId,
@@ -15,9 +15,11 @@ import {
   detectFileType,
   ANNOTATIONS_DIR,
   loadAnnotationsForFileIdentity,
+  loadAnnotationsFromDisk,
   moveAnnotationSidecar,
 } from '../universal-annotation-storage';
 import { resolveFileIdentity } from '../file-identity';
+import { registerAnnotationLocation } from '../annotation-registry';
 import type { 
   UniversalAnnotationFile, 
   AnnotationItem,
@@ -518,6 +520,116 @@ class NestedTestDirectoryHandle {
 }
 
 describe('nested .lattice discovery', () => {
+  function sidecar(id: string): string {
+    return JSON.stringify({ ...createUniversalAnnotationFile('paper.pdf', 'pdf', id), annotations: [{ id, target: { type: 'pdf', page: 1, rects: [{ x1: .1, y1: .1, x2: .2, y2: .2 }] }, style: { type: 'highlight', color: '#FFD400' }, author: 'user', createdAt: 1 }] });
+  }
+
+  async function identityFor(path: string) {
+    return resolveFileIdentity({ fileName: 'paper.pdf', filePath: path, workspaceIdentity: null });
+  }
+
+  it('recovers only the PDF ancestor workspace rather than an unrelated same-name document', async () => {
+    const root = new NestedTestDirectoryHandle('scoped-root');
+    const unrelated = root.addDirectory(new NestedTestDirectoryHandle('unrelated'));
+    unrelated.addDirectory(new NestedTestDirectoryHandle('.lattice')).addDirectory(new NestedTestDirectoryHandle('annotations')).addFile(new NestedTestFileHandle('paper.pdf.json', sidecar('wrong-document')));
+    const relevant = root.addDirectory(new NestedTestDirectoryHandle('papers'));
+    relevant.addFile(new NestedTestFileHandle('paper.pdf', 'synthetic pdf'));
+    relevant.addDirectory(new NestedTestDirectoryHandle('.lattice')).addDirectory(new NestedTestDirectoryHandle('annotations')).addFile(new NestedTestFileHandle('paper.pdf.json', sidecar('right-document')));
+    const fileIdentity = await identityFor('scoped-root/papers/paper.pdf');
+    const resolved = await loadAnnotationsForFileIdentity({ rootHandle: root as unknown as FileSystemDirectoryHandle, fileIdentity, workspaceKey: null, fileType: 'pdf' });
+    expect(resolved.annotationFile.annotations.map((item) => item.id)).toEqual(['right-document']);
+  });
+
+  it('does not enumerate the workspace while looking for an unannotated PDF', async () => {
+    const root = new NestedTestDirectoryHandle('no-scan-root');
+    const relevant = root.addDirectory(new NestedTestDirectoryHandle('papers'));
+    relevant.addFile(new NestedTestFileHandle('paper.pdf', 'synthetic pdf'));
+    const enumerations = vi.spyOn(root, 'values');
+    const childEnumerations = vi.spyOn(relevant, 'values');
+    const fileIdentity = await identityFor('no-scan-root/papers/paper.pdf');
+    const resolved = await loadAnnotationsForFileIdentity({ rootHandle: root as unknown as FileSystemDirectoryHandle, fileIdentity, workspaceKey: null, fileType: 'pdf' });
+    expect(resolved.annotationFile.annotations).toEqual([]);
+    expect(enumerations).not.toHaveBeenCalled();
+    expect(childEnumerations).not.toHaveBeenCalled();
+  });
+
+  it('does not reuse a same-basename sidecar belonging to a PDF in the current root', async () => {
+    const root = new NestedTestDirectoryHandle('ancestor-collision-root');
+    root.addFile(new NestedTestFileHandle('paper.pdf', 'other synthetic pdf'));
+    root.addDirectory(new NestedTestDirectoryHandle('.lattice')).addDirectory(new NestedTestDirectoryHandle('annotations')).addFile(new NestedTestFileHandle('paper.pdf.json', sidecar('root-document')));
+    const child = root.addDirectory(new NestedTestDirectoryHandle('papers'));
+    child.addFile(new NestedTestFileHandle('paper.pdf', 'target synthetic pdf'));
+    child.addDirectory(new NestedTestDirectoryHandle('.lattice')).addDirectory(new NestedTestDirectoryHandle('annotations')).addFile(new NestedTestFileHandle('paper.pdf.json', sidecar('child-document')));
+    const fileIdentity = await identityFor('ancestor-collision-root/papers/paper.pdf');
+    const resolved = await loadAnnotationsForFileIdentity({ rootHandle: root as unknown as FileSystemDirectoryHandle, fileIdentity, workspaceKey: null, fileType: 'pdf' });
+    expect(resolved.annotationFile.annotations.map((item) => item.id)).toEqual(['child-document']);
+  });
+
+  it('uses the file path relative to each nested workspace when recovering sidecars', async () => {
+    const root = new NestedTestDirectoryHandle('nested-collision-root');
+    const papers = root.addDirectory(new NestedTestDirectoryHandle('papers'));
+    papers.addFile(new NestedTestFileHandle('paper.pdf', 'other synthetic pdf'));
+    papers.addDirectory(new NestedTestDirectoryHandle('.lattice')).addDirectory(new NestedTestDirectoryHandle('annotations')).addFile(new NestedTestFileHandle('paper.pdf.json', sidecar('ancestor-document')));
+    const child = papers.addDirectory(new NestedTestDirectoryHandle('chapter'));
+    child.addFile(new NestedTestFileHandle('paper.pdf', 'target synthetic pdf'));
+    child.addDirectory(new NestedTestDirectoryHandle('.lattice')).addDirectory(new NestedTestDirectoryHandle('annotations')).addFile(new NestedTestFileHandle('paper.pdf.json', sidecar('chapter-document')));
+    const fileIdentity = await identityFor('nested-collision-root/papers/chapter/paper.pdf');
+    const resolved = await loadAnnotationsForFileIdentity({ rootHandle: root as unknown as FileSystemDirectoryHandle, fileIdentity, workspaceKey: null, fileType: 'pdf' });
+    expect(resolved.annotationFile.annotations.map((item) => item.id)).toEqual(['chapter-document']);
+  });
+
+  it('ignores a registry alias whose relative path resolves to another document in this root', async () => {
+    const root = new NestedTestDirectoryHandle('registry-collision-root');
+    root.addDirectory(new NestedTestDirectoryHandle('.lattice')).addDirectory(new NestedTestDirectoryHandle('annotations')).addFile(new NestedTestFileHandle('paper.pdf.json', sidecar('unrelated-registry-document')));
+    const child = root.addDirectory(new NestedTestDirectoryHandle('papers'));
+    child.addFile(new NestedTestFileHandle('paper.pdf', 'target synthetic pdf'));
+    child.addDirectory(new NestedTestDirectoryHandle('.lattice')).addDirectory(new NestedTestDirectoryHandle('annotations')).addFile(new NestedTestFileHandle('paper.pdf.json', sidecar('expected-registry-document')));
+    const fileIdentity = await identityFor('registry-collision-root/papers/paper.pdf');
+    await registerAnnotationLocation({ documentId: 'expected-registry-document', alias: { sourcePath: '.lattice/annotations/paper.pdf.json', canonicalPath: fileIdentity.canonicalPath, relativePathFromRoot: fileIdentity.relativePathFromRoot, fileId: 'paper.pdf', workspaceKey: 'another-workspace', updatedAt: 1 } });
+    const resolved = await loadAnnotationsForFileIdentity({ rootHandle: root as unknown as FileSystemDirectoryHandle, fileIdentity, workspaceKey: null, fileType: 'pdf' });
+    expect(resolved.annotationFile.annotations.map((item) => item.id)).toEqual(['expected-registry-document']);
+  });
+
+  it.each(['permission', 'invalid JSON'])('rejects direct sidecar loading on %s failure', async (failure) => {
+    const root = new NestedTestDirectoryHandle('direct-load-root');
+    const annotations = root.addDirectory(new NestedTestDirectoryHandle('.lattice')).addDirectory(new NestedTestDirectoryHandle('annotations'));
+    const file = annotations.addFile(new NestedTestFileHandle('paper.pdf.json', '{broken'));
+    if (failure === 'permission') vi.spyOn(file, 'getFile').mockRejectedValue(new DOMException('Access denied', 'NotAllowedError'));
+    await expect(loadAnnotationsFromDisk('paper.pdf', root as unknown as FileSystemDirectoryHandle, 'pdf')).rejects.toThrow();
+  });
+
+  it('reports unreadable existing storage rather than returning a writable empty snapshot', async () => {
+    const root = new NestedTestDirectoryHandle('denied-root');
+    vi.spyOn(root, 'getDirectoryHandle').mockRejectedValue(new DOMException('Access denied', 'NotAllowedError'));
+    const fileIdentity = await identityFor('denied-root/paper.pdf');
+    await expect(loadAnnotationsForFileIdentity({ rootHandle: root as unknown as FileSystemDirectoryHandle, fileIdentity, workspaceKey: null })).rejects.toThrow('Access denied');
+  });
+
+  it('reports malformed sidecars instead of treating them as absent', async () => {
+    const root = new NestedTestDirectoryHandle('corrupt-root');
+    root.addDirectory(new NestedTestDirectoryHandle('.lattice')).addDirectory(new NestedTestDirectoryHandle('annotations')).addFile(new NestedTestFileHandle('corrupt-root-paper.pdf.json', '{broken'));
+    const fileIdentity = await identityFor('corrupt-root/paper.pdf');
+    await expect(loadAnnotationsForFileIdentity({ rootHandle: root as unknown as FileSystemDirectoryHandle, fileIdentity, workspaceKey: null })).rejects.toThrow();
+  });
+
+  it('does not mirror a legacy sidecar when restoration is cancelled during its read', async () => {
+    const root = new NestedTestDirectoryHandle('cancelled-root');
+    const annotations = root.addDirectory(new NestedTestDirectoryHandle('.lattice')).addDirectory(new NestedTestDirectoryHandle('annotations'));
+    const legacy = annotations.addFile(new NestedTestFileHandle('paper.pdf.json', sidecar('cancelled-document')));
+    let finishRead!: (file: File) => void;
+    vi.spyOn(legacy, 'getFile').mockImplementationOnce(() => new Promise<File>((resolve) => { finishRead = resolve; }));
+    const fileIdentity = await identityFor('cancelled-root/paper.pdf');
+    const controller = new AbortController();
+    const input = { rootHandle: root as unknown as FileSystemDirectoryHandle, fileIdentity, workspaceKey: null, signal: controller.signal };
+    const pending = loadAnnotationsForFileIdentity(input);
+    await vi.waitFor(() => expect(finishRead).toBeTypeOf('function'));
+    controller.abort();
+    const assertion = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    finishRead(new File([sidecar('cancelled-document')], 'paper.pdf.json'));
+    await assertion;
+    await expect(annotations.getFileHandle('cancelled-root-paper.pdf.json')).rejects.toMatchObject({ name: 'NotFoundError' });
+  });
+
   it('loads annotations from a nested child workspace and mirrors them into the current root', async () => {
     const root = new NestedTestDirectoryHandle('Course');
     const child = root.addDirectory(new NestedTestDirectoryHandle('选修'));
@@ -579,6 +691,30 @@ describe('nested .lattice discovery', () => {
 });
 
 describe('annotation sidecar moves', () => {
+  it('does not remove a different root-level PDF sidecar when renaming a nested same-name PDF', async () => {
+    const root = new NestedTestDirectoryHandle('root');
+    const annotations = root.addDirectory(new NestedTestDirectoryHandle('.lattice')).addDirectory(new NestedTestDirectoryHandle('annotations'));
+    const sourceId = generateFileId('root/folder/paper.pdf');
+    annotations.addFile(new NestedTestFileHandle(`${sourceId}.json`, serializeAnnotationFile(createUniversalAnnotationFile(sourceId, 'pdf', 'nested-document'))));
+    annotations.addFile(new NestedTestFileHandle('paper.pdf.json', serializeAnnotationFile(createUniversalAnnotationFile('paper.pdf', 'pdf', 'unrelated-document'))));
+    await moveAnnotationSidecar(root as unknown as FileSystemDirectoryHandle, 'root/folder/paper.pdf', 'root/folder/renamed.pdf', 'pdf');
+    const unrelated = deserializeAnnotationFile(await (await (await annotations.getFileHandle('paper.pdf.json')).getFile()).text());
+    expect(unrelated?.documentId).toBe('unrelated-document');
+  });
+
+  it('keeps the old sidecar when the new path cannot be written', async () => {
+    const root = new NestedTestDirectoryHandle('root');
+    const annotations = root.addDirectory(new NestedTestDirectoryHandle('.lattice')).addDirectory(new NestedTestDirectoryHandle('annotations'));
+    const sourceId = generateFileId('root/folder/paper.pdf'), targetId = generateFileId('root/folder/renamed.pdf');
+    annotations.addFile(new NestedTestFileHandle(`${sourceId}.json`, serializeAnnotationFile(createUniversalAnnotationFile(sourceId, 'pdf', 'retained-document'))));
+    const original = annotations.getFileHandle.bind(annotations);
+    vi.spyOn(annotations, 'getFileHandle').mockImplementation(async (name, options) => {
+      if (name === `${targetId}.json`) throw new DOMException('Permission denied', 'NotAllowedError');
+      return original(name, options);
+    });
+    await expect(moveAnnotationSidecar(root as unknown as FileSystemDirectoryHandle, 'root/folder/paper.pdf', 'root/folder/renamed.pdf', 'pdf')).rejects.toThrow();
+    await expect(annotations.getFileHandle(`${sourceId}.json`)).resolves.toBeDefined();
+  });
   it('moves annotation sidecars to the new file id on rename', async () => {
     const root = new NestedTestDirectoryHandle('Course');
     const latticeDir = root.addDirectory(new NestedTestDirectoryHandle('.lattice'));

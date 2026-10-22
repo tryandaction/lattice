@@ -1,0 +1,30 @@
+{
+  "nameShort": "Lattice",
+  "nameLong": "Lattice Scientific Workbench",
+  "applicationName": "lattice",
+  "dataFolderName": ".lattice-code",
+  "sharedDataFolderName": ".lattice-code-shared",
+  "urlProtocol": "lattice",
+  "win32MutexName": "lattice_desktop",
+  "win32DirName": "Lattice",
+  "win32NameVersion": "Lattice",
+  "win32RegValueName": "Lattice",
+  "win32AppUserModelId": "Lattice.ScientificWorkbench",
+  "win32ShellNameShort": "Lattice",
+  "win32x64AppId": "{{7244F2E2-FDEF-43AD-8F58-16FA80906552}",
+  "win32arm64AppId": "{{65AE41F6-3CD3-4D8D-841D-7C780B8A6896}",
+  "win32x64UserAppId": "{{6D88E79F-4E51-4957-B722-037394F383C7}",
+  "win32arm64UserAppId": "{{B3369C4D-B4AE-442C-8DD1-816E94CDDDA9}",
+  "darwinBundleIdentifier": "com.lattice.editor",
+  "darwinProfileUUID": "4DE4F5B1-221D-44B9-9126-9B28712D5101",
+  "darwinProfilePayloadUUID": "23A21908-0C40-4C26-956E-7697A65EAA14",
+  "linuxIconName": "lattice",
+  "licenseName": "MIT",
+  "licenseUrl": "https://github.com/microsoft/vscode/blob/1.128.0/LICENSE.txt",
+  "serverLicenseUrl": "https://github.com/microsoft/vscode/blob/1.128.0/LICENSE.txt",
+  "extensionsGallery": {
+    "serviceUrl": "https://open-vsx.org/vscode/gallery",
+    "itemUrl": "https://open-vsx.org/vscode/item",
+    "resourceUrlTemplate": "https://open-vsx.org/vscode/asset/{publisher}/{name}/Microsoft.VisualStudio.Code.WebResources/{version}/{path}"
+  }
+}

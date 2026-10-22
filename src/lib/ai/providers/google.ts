@@ -1,5 +1,6 @@
 import type { AiProvider, AiModel, AiMessage, AiGenerateOptions, AiGenerateResult, AiStreamChunk } from '../types';
 import { getMessageText } from '../types';
+import { extractProviderText, parseSseJson } from '../provider-response';
 import { getApiKey as getKey, getBaseUrl as getUrl } from '../key-storage';
 
 const MODELS: AiModel[] = [
@@ -107,9 +108,7 @@ export const googleProvider: AiProvider = {
     }
 
     const data = await res.json().catch(() => { throw new Error('Failed to parse Gemini API response'); });
-    const text = data.candidates?.[0]?.content?.parts
-      ?.map((p: { text?: string }) => p.text ?? '')
-      .join('') ?? '';
+    const text = extractProviderText(data.candidates?.[0]?.content?.parts);
 
     return {
       text,
@@ -157,33 +156,16 @@ export const googleProvider: AiProvider = {
       return;
     }
 
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data: ')) continue;
-          try {
-            const data = JSON.parse(trimmed.slice(6));
-            const text = data.candidates?.[0]?.content?.parts
-              ?.map((p: { text?: string }) => p.text ?? '')
-              .join('');
-            if (text) yield { type: 'text', text };
-          } catch { /* skip */ }
+      for await (const data of parseSseJson(res)) {
+        const text = extractProviderText((data as { candidates?: Array<{ content?: { parts?: unknown } }> }).candidates?.[0]?.content?.parts);
+        if (text) {
+          yield { type: 'text', text };
         }
       }
-    } finally {
-      reader.releaseLock();
+    } catch (error) {
+      yield { type: 'error', error: error instanceof Error ? error.message : String(error) };
+      return;
     }
     yield { type: 'done' };
   },

@@ -2,6 +2,48 @@
 
 ## 桌面能力总览
 
+### VS Code 原生代码调试（2026-07-20）
+
+桌面端的 VS Code 工具现在包含一个固定的“运行和调试”左侧工具。对于
+Python `launch` 配置，Lattice 会直接管理本地 `debugpy.adapter` DAP 会话，
+支持断点、继续/暂停、单步、调用栈、作用域、变量、选中栈帧求值和有界输出。
+代码文件仍在 Lattice 自己的 CodeMirror 编辑器中打开，并显示 VS Code 风格
+断点标记和当前帧高亮，不需要用户再次在另一个 VS Code 窗口中打开文件夹。
+
+Local `node` / `pwa-node` program launches now use the pinned Microsoft
+vscode-js-debug 1.117.0 server with the same native breakpoint, stack, variable,
+evaluation, and control surface. Remote attach, browser/terminal launches,
+child/worker debugging, advanced breakpoints, and arbitrary extension-provided
+debug adapters remain unsupported and are shown truthfully in the interface.
+
+### VS Code 插件代码能力桥接（2026-07-21）
+
+本地导入、具有桌面 `main` 入口并能在受支持 Host API 上注册语言 Provider
+的 VS Code 插件，现在可以直接作用于 Lattice 的 CodeMirror 代码编辑器。
+已接入补全、悬停、跳转定义、诊断、查找引用、格式化、当前文件重命名和
+当前文件快速修复。打开代码文件会立即显示内容，匹配语言的插件在后台去重
+预热；Provider 超时或异常只影响该插件，不会冻结编辑器。
+
+重命名和快速修复若包含跨文件 WorkspaceEdit 会明确拒绝，避免只应用部分
+修改。依赖 `vscode-languageclient`、Pylance、Rust Analyzer、ESLint server、
+Volar、终端或远程服务的扩展仍需后续 LSP/服务进程适配，不能因为扩展图标或
+清单可见就视为已经可用。
+
+### VS Code 风格 Notebook 与扩展激活（2026-07-21）
+
+可编辑 `.ipynb` 现在使用固定的运行工具栏集中显示全部运行、停止、重启内核、
+添加代码/Markdown 单元、运行环境管理和内核选择。当前解释器路径、环境来源、
+验证状态和单元格数量持续可见；代码单元使用左侧运行 gutter、执行计数、方形
+编辑边界以及对齐的 Problems/Output 区域，不再把每个部分包装成独立卡片。
+
+活动代码单元会作为工作区内的版本化虚拟文档同步到 Extension Host，因此能够
+使用已兼容插件提供的补全、悬停和诊断。为避免同时同步整本 Notebook 导致卡顿，
+只有活动代码单元建立该实时桥接。
+
+扩展侧栏把具有桌面入口的“可运行扩展”和仅导入设置/主题/贡献元数据的项目分开。
+可运行扩展支持直接激活和失败后重试，只有 Host 返回 `active` 才表示它已实际运行。
+依赖未实现 API 或外部语言服务器的扩展仍可能失败，界面会显示具体错误和缺失 API。
+
 ### 1. 首次启动引导
 
 首次启动应用时，会显示引导向导帮助你完成初始设置：
@@ -123,12 +165,65 @@
 - **Problems 分层**：代码文件、Notebook code cell、Markdown code block 现在把 Run 输出与 Problems 拆层展示，语法问题、运行前诊断、运行时错误和 runner health 使用同一问题模型
 - **降级策略**：桌面端无本地 Python 时，只会把 Pyodide 作为“应急回退”显式展示；网页版继续以 Pyodide 为主
 
+### 7.1 代码工作台兼容 VS Code 配置
+
+VS Code 活动栏中的源代码管理现已支持本地 Git 闭环：识别真实仓库根目录与分支领先/落后状态，分组显示冲突、已暂存和工作区更改，可在 Lattice 内打开文件、查看有上限的差异、暂存/取消暂存单项或全部更改，并在明确确认后创建本地提交。Git 只通过桌面端白名单命令直接执行，不经过 shell；当前不提供 push/pull、discard/reset、分支改写、merge/rebase 或凭据操作。
+
+桌面端现在支持导入常见 VS Code 工作区配置，并把它们映射到 Lattice 的代码编辑体验：
+
+- `settings.json`
+- `keybindings.json`
+- `snippets`
+- `tasks.json`
+- `.vscode/extensions.json` 推荐扩展
+- 本机已安装扩展清单
+- 已安装扩展的语言、snippet、命令、视图、菜单、Notebook、Notebook renderer、grammar、theme、调试器和配置贡献
+
+使用方式：
+
+1. 打开 `Settings / 设置`。
+2. 进入 `Files / 文件`。
+3. 点击 `Import from VS Code / 一键导入`。
+4. 等待 Lattice 自动扫描本机 VS Code / VS Code Insiders 的标准配置目录。
+5. 导入成功后，兼容配置会自动启用；之后打开任意文件夹时，代码工作台会使用已导入的 VS Code 系配置。
+
+普通用户不需要上传 JSON，也不需要选择 VS Code 配置目录。`Reset / 重置` 会清空已导入配置并关闭兼容配置。
+
+导入后设置页会直接展示配置来源、导入时间、当前 VS Code 主题、扩展数量、任务数量、代码片段数量、文件关联数量、扩展贡献语言/命令/视图/Notebook/grammar/theme/调试器数量和已识别扩展。打开可执行代码文件或 `.ipynb` 时，内容区仍保持 Lattice 的原生编辑、Notebook 和输出体验，不出现 `VS Code Takeover / VS Code 接管` 顶部条。兼容模式会在专用 VS Code 活动栏中显示已注册的 Host 命令、视图与扩展生命周期；清单贡献只作为发现和按需激活元数据，不会被当作已经可运行的功能。扩展失败会显示扩展 ID、错误和缺失的 VS Code API；PDF、Markdown、图片、批注、AI 和子文档工作流不受影响。Run & Tasks 面板会把导入任务分成默认、构建、测试和其他任务。
+
+导入后会影响：
+
+- 编辑器选项
+- 文件关联与语言识别
+- Explorer 排除
+- 工作区搜索排除
+- 代码片段补全
+- VS Code task 执行，输出进入 Lattice Run 面板
+- `.vscode/launch.json` 运行配置导入，并在代码工作台 `Run & Tasks` 面板里显示可执行 launch 项
+- `workbench.colorTheme` 识别和已安装扩展的 theme 贡献展示
+- 已映射 VS Code 工作台命令可跳转到对应 Lattice 面板；扩展私有命令只在 Host 实际注册后进入活动栏和命令面板
+- 扩展能力按可运行、命令、视图、调试、Notebook、grammar/theme 与纯清单分类，并明确区分清单发现与 Host 注册态
+- 兼容诊断显示扩展激活中、失败、缺少 VS Code API 或尚未注册入口的真实原因
+- VS Code tasks 按默认、构建、测试和其他任务分组，并标记默认任务
+- 可执行代码文件和 `.ipynb` 的 VS Code 风格活动栏与插件/运行/Notebook 侧边面板
+- 可执行代码文件和 `.ipynb` 的 VS Code 专用活动栏与本机 VS Code 打开入口，不覆盖内容区的原生界面
+- 只读代码浏览和只读 `.ipynb` 保持 Lattice 原生阅读体验，同时向 Host 发送语言或 Notebook 激活事件
+- `.ipynb` 的 kernel/runtime/cell/problems 状态，以及可用时的 `Run All Cells / 运行全部单元`
+- 扩展/插件清单、名称、版本、分类和能力映射状态
+- 已安装扩展贡献的文件关联、snippet JSON、commands、views、menus、notebooks、notebook renderers、grammars 和 themes
+- 桌面端 `Extension Host / 扩展宿主`：会为带 `main` 入口的已导入 VS Code 扩展启动受限宿主，并仅把实际注册的命令和视图接入 Lattice；Python 代码与 `.ipynb` 会触发对应的按需激活事件
+- 宿主当前已补到 P0.5：支持 `workspace.getConfiguration()`、`workspace.fs`、`workspace.openTextDocument()`、`workspace.findFiles()`、`window.showTextDocument()`、`extensions.getExtension/all`、`Disposable`、`EventEmitter`，并支持 `onStartupFinished`
+
+完整设计边界见 `docs/VS_CODE_COMPATIBILITY_PLAN.md`。
+
+这层兼容只服务于代码工作台体验，Lattice 的主场能力仍然优先保留给 PDF、Markdown、HTML、批注、公式、链接跳转、AI 和子文档体系。
+
 #### 当前不在本阶段范围
 
 - 调试断点
 - 调用栈
-- LSP 补全 / hover
-- 远程 kernel 管理
+- 完整 VS Code Extension Host API（当前仅实现受限的命令激活/执行桥接）
+- 远程 extension host / remote kernel 管理
 
 ### 8. 外部链接与工作区深链
 
