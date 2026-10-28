@@ -65,6 +65,8 @@ npm run release:prepare
 
 ### 产品与使用
 
+- [商业化战略与执行计划（规划，尚未开放收费）](./docs/business/LATTICE_COMMERCIAL_STRATEGY_1.0.0.md)
+- [商业计划事实快照与实现边界](./docs/business/FACTS.md)
 - [用户指南](./docs/USER_GUIDE.md)
 - [快速开始](./docs/guides/quick-start.md)
 - [安装与更新](./docs/guides/installation.md)
@@ -94,7 +96,7 @@ releases/           本地发布产物与元数据事实来源
 ## 发布与部署
 
 - `web-dist/` 是统一的静态导出产物
-- 线上站点当前发布到 Cloudflare Pages：<https://lattice-apq-7xj.pages.dev/>
+- 网页端入口：<https://lattice-apq.pages.dev/>；对应 Cloudflare Pages 项目名为 `lattice`
 - 使用 `npm run deploy:web` 更新；Pages 构建配置位于 `wrangler.json`，目标账号及项目位于 `wrangler.deployment.json`，`/build-info.json` 可核对线上版本
 - GitHub Pages workflow 仍保留为备用/镜像发布链路
 - 桌面发布使用 `releases/vX.Y.Z/` 作为本地事实来源
@@ -123,4 +125,6 @@ releases/           本地发布产物与元数据事实来源
 
 ## License
 
-MIT
+Our licensing intent is for the MIT License in the repository root to cover Lattice-owned code only. The standard root license text does not enumerate file or directory scope, and ownership/contribution rights are still under review. Third-party components, bundled runtimes, fonts, models, and other assets remain under their respective licenses and notices.
+
+The third-party inventory is not complete yet. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the pending review scope. Do not treat that placeholder as a completed license audit.

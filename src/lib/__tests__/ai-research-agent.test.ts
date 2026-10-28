@@ -468,7 +468,9 @@ describe('research-agent', () => {
       generateAnswer: async () => ({ text: '{"annotations":[]}' }), validateAnswer,
       artifacts: { approvedByUser: true, draft: { type: 'paper_note', title: 'Invalid annotation', content: 'Must not be written', sourceRefs: [] } },
     })).rejects.toThrow('No verified annotation quotes');
-    expect(validateAnswer).toHaveBeenCalledWith('{"annotations":[]}', expect.objectContaining({ prompt: expect.stringContaining('Verified experimental finding.') }));
+    expect(validateAnswer).toHaveBeenCalledWith('{"annotations":[]}', expect.objectContaining({ prompt: expect.stringContaining('Verified experimental finding.') }), [
+      expect.objectContaining({ toolName: 'lattice.resolvePathIdentity', status: 'completed', sessionId: 'research-invalid-artifact' }),
+    ]);
     const session = useAgentSessionStore.getState().getSession('research-invalid-artifact')!;
     expect(session.status).toBe('failed');
     expect(session.trace.some((event) => event.metadata?.planStepId === 'synthesize-answer' && event.metadata?.planStepStatus === 'completed')).toBe(false);

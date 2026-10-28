@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
+  getAllQuantumLayerMeanings,
   getQuantumLayerMeanings,
   type QuantumKeyMeaning,
   type QuantumLayerId,
@@ -41,8 +42,29 @@ function normalizeOverride(patch: QuantumMeaningOverride): QuantumMeaningOverrid
     }
   }
   if (typeof patch.displayMode === "boolean") normalized.displayMode = patch.displayMode;
-  if (patch.templateKind) normalized.templateKind = patch.templateKind;
+  if (patch.templateKind && ["symbol", "structure", "matrix", "bracket", "operator"].includes(patch.templateKind)) normalized.templateKind = patch.templateKind;
   return normalized;
+}
+
+function restoreOverrides(value: unknown): QuantumKeymapOverrides {
+  if (!value || typeof value !== "object") return {};
+  const keys: [string, QuantumLayerOverrides][] = [];
+  for (const [keyCode, rawKey] of Object.entries(value)) {
+    if (!rawKey || typeof rawKey !== "object") continue;
+    const layers: QuantumLayerOverrides = {};
+    for (const layer of ["base", "ctrl"] as const) {
+      const rawLayer = (rawKey as QuantumLayerOverrides)[layer];
+      if (!rawLayer || typeof rawLayer !== "object") continue;
+      const entries = Object.entries(rawLayer).flatMap(([id, raw]) => {
+        if (!raw || typeof raw !== "object") return [];
+        const override = normalizeOverride(raw);
+        return Object.keys(override).length ? [[id, override] as const] : [];
+      });
+      if (entries.length) layers[layer] = Object.fromEntries(entries);
+    }
+    if (Object.keys(layers).length) keys.push([keyCode, layers]);
+  }
+  return Object.fromEntries(keys);
 }
 
 function isEmptyOverride(override: QuantumMeaningOverride | undefined): boolean {
@@ -82,6 +104,15 @@ export function getEffectiveQuantumLayerMeanings(
   ));
 }
 
+export function getAllEffectiveQuantumLayerMeanings(
+  keyCode: string,
+  layer: QuantumLayerId,
+  overrides: QuantumKeymapOverrides = {},
+): QuantumKeyMeaning[] {
+  const layerOverrides = overrides[keyCode]?.[layer] ?? {};
+  return getAllQuantumLayerMeanings(keyCode, layer).map(meaning => applyQuantumMeaningOverride(meaning, layerOverrides[meaning.id]));
+}
+
 export function getEffectiveQuantumMeaning(
   keyCode: string,
   layer: QuantumLayerId,
@@ -100,7 +131,7 @@ export const useQuantumKeymapStore = create<QuantumKeymapCustomizationState>()(
       overrides: {},
 
       updateMeaning: (keyCode, layer, meaningId, patch) => {
-        const official = getQuantumLayerMeanings(keyCode, layer).some((meaning) => meaning.id === meaningId);
+        const official = getAllQuantumLayerMeanings(keyCode, layer).some((meaning) => meaning.id === meaningId);
         if (!official) return;
 
         set((state) => {
@@ -110,6 +141,10 @@ export const useQuantumKeymapStore = create<QuantumKeymapCustomizationState>()(
             ...(layerOverrides[meaningId] ?? {}),
             ...normalizeOverride(patch),
           };
+          if (typeof patch.latex === "string" && patch.latex !== layerOverrides[meaningId]?.latex) {
+            if (!("mathlive" in patch)) delete nextOverride.mathlive;
+            if (!("markdown" in patch)) delete nextOverride.markdown;
+          }
 
           return {
             overrides: {
@@ -165,6 +200,10 @@ export const useQuantumKeymapStore = create<QuantumKeymapCustomizationState>()(
     {
       name: "quantum-keyboard-keymap",
       storage: createSafeJSONStorage<QuantumKeymapCustomizationState>(),
+      merge: (value, current) => ({
+        ...current,
+        overrides: restoreOverrides((value as Partial<QuantumKeymapCustomizationState> | null)?.overrides),
+      }),
       partialize: (state) => ({ overrides: state.overrides }) as QuantumKeymapCustomizationState,
     },
   ),

@@ -9,6 +9,7 @@ import { LATTICE_SOURCE_PDF_TOOLS } from './lattice-skills/source-pdf-tool-runti
 import { LATTICE_HARNESS_TOOLS } from './harness/lattice-tool-definitions';
 import type { LatticeApiToolDefinition } from './agent-tool-broker';
 import type { AgentSourceSelection } from './source-index';
+import { buildLatticeProductOperationGuide } from './lattice-skills/product-operation-guide';
 
 export interface ResearchAgentPlannerPromptInput {
   apiTools?: readonly LatticeApiToolDefinition[];
@@ -109,6 +110,7 @@ export function buildResearchAgentPlannerPrompt(input: ResearchAgentPlannerPromp
     input.apiTools ? 'Additional executable tools in this request: ' + JSON.stringify(input.apiTools.filter(tool => LATTICE_HARNESS_TOOLS.some(known => known.name === tool.name)))
       : input.latticeSourcePdfToolsAvailable ? 'Additional executable tools in this request: ' + JSON.stringify(LATTICE_SOURCE_PDF_TOOLS) : '',
     input.apiTools ? 'The request-local executable tool schemas above are authoritative for Lattice operations. Older workflow tool lists describe legacy workflows; use the request-local sources/skills/PDF/write-proposal tools for actual reads and proposals. A proposal tool prepares complete content for user review and never applies it.' : '',
+    input.apiTools || input.latticeSourcePdfToolsAvailable ? buildLatticeProductOperationGuide((input.apiTools ?? LATTICE_SOURCE_PDF_TOOLS).map(tool => tool.name)) : '',
     input.sourceSelections?.length ? (input.authorizedSourceSelections ? 'Priority document targets: ' : 'Authorized source selections: ') + JSON.stringify(input.sourceSelections) : '',
     input.authorizedSourceSelections?.length ? 'Actual authorized tool scope: ' + JSON.stringify(input.authorizedSourceSelections) + '. Priority targets identify the conversation topic, not the entire tool scope. Read the priority source first; when the question needs another file, use bounded sources.list/search/read within this authorized scope, rather than asking the user to reopen or paste a file that the tools can access. Never read credential or unrelated files.' : '',
     input.filePath ? `Current source path: ${input.filePath}` : '',

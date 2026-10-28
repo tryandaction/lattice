@@ -17,6 +17,8 @@ describe('formula templates', () => {
       'integral',
       'limit',
       'matrix-2x2',
+      'matrix-3x3',
+      'matrix-4x4',
       'cases-2',
       'vector',
     ]);

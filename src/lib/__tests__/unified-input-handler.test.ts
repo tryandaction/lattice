@@ -80,8 +80,9 @@ describe('unified-input-handler editable detection', () => {
 
     expect(inserted).toBe(true);
     expect(mathField.insert).toHaveBeenCalledWith('\\frac{\\placeholder{}}{\\placeholder{}}', {
-      insertionMode: 'insertAfter',
-      selectionMode: 'after',
+      insertionMode: 'replaceSelection',
+      selectionMode: 'placeholder',
+      focus: true,
     });
 
     mathField.remove();
@@ -146,6 +147,24 @@ describe('unified-input-handler editable detection', () => {
 
     view.destroy();
     host.remove();
+  });
+
+  it('keeps inserting markdown when the editor has no quantum formula consumer', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const view = new EditorView({ state: EditorState.create({ doc: '' }), parent: host });
+    registerCodeMirrorView(view.dom, view);
+    setActiveInputTargetFromElement(view.dom);
+
+    try {
+      expect(insertFormulaAtCursor({ latex: '\\alpha' }).handled).toBe(true);
+      await Promise.resolve();
+      expect(insertFormulaAtCursor({ latex: '\\beta' }).handled).toBe(true);
+      expect(view.state.doc.toString()).toBe('$\\alpha$$\\beta$');
+    } finally {
+      view.destroy();
+      host.remove();
+    }
   });
 
   it('places the textarea cursor in the first matrix cell for display formulas', () => {

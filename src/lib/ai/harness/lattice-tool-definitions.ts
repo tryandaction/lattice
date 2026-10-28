@@ -1,4 +1,5 @@
 import { LATTICE_SOURCE_PDF_TOOLS } from '../lattice-skills/source-pdf-tool-runtime';
+import { validateHarnessAnnotationStyle } from './pdf-tool-helpers';
 
 const integer = { type: 'integer', minimum: 1 };
 const paging = { cursor: { type: 'integer', minimum: 0 }, limit: integer };
@@ -14,7 +15,9 @@ export const LATTICE_HARNESS_TOOLS = [
     parameters: { type: 'object', properties: { ...parent, ...paging, maxChars: integer }, required: ['parentPath'], additionalProperties: false } },
   { type: 'function', name: 'lattice.pdf.proposeAnnotations', description: 'Propose exact-quote highlight/underline drafts for pages actually read. Preserves prior annotation-note content. Emits a Workbench review draft, never coordinates, approval or writes.',
     parameters: { type: 'object', properties: { ...parent, annotations: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'object', properties: {
-      page: integer, quote: { type: 'string' }, type: { type: 'string', enum: ['highlight', 'underline'] }, color: { type: 'string' }, comment: { type: 'string' }, tags: { type: 'array', items: { type: 'string' }, maxItems: 20 },
+      page: integer, quote: { type: 'string' }, type: { type: 'string', enum: ['highlight', 'underline'] },
+      color: { type: 'string', description: 'Optional #RGB, #RRGGBB, or CSS color name: aqua, black, blue, brown, cyan, fuchsia, gray/grey, green, lime, magenta, maroon, navy, olive, orange, pink, purple, red, silver, teal, white, yellow. Names preserve their standard CSS value; omitted uses #FFD400.' },
+      comment: { type: 'string' }, tags: { type: 'array', items: { type: 'string' }, maxItems: 20 },
     }, required: ['page', 'quote', 'type'], additionalProperties: false } } }, required: ['parentPath', 'annotations'], additionalProperties: false } },
   { type: 'function', name: 'lattice.workspace.proposeWrite', description: 'Prepare a complete Markdown/code/Notebook/text file for concrete Workbench review. Updates bind the actual original content and revision; no model tool can approve or apply. Local create uses a workspace-relative targetPath. Cloud update uses the real resource ID; cloud create uses an authorized folder resource ID as targetPath and a single fileName.',
     parameters: { type: 'object', properties: { targetPath: { type: 'string' }, fileName: { type: 'string' }, content: { type: 'string' }, mode: { type: 'string', enum: ['create', 'update'] }, expectedVersion: { type: 'string' } }, required: ['targetPath', 'content', 'mode'], additionalProperties: false } },
@@ -51,6 +54,17 @@ function validate(schema: Schema, value: unknown, depth = 0): void {
 export function validateLatticeHarnessArgs(name: string, value: unknown): Record<string, unknown> {
   const tool = LATTICE_HARNESS_TOOLS.find(tool => tool.name === name);
   if (!tool) throw new Error('Unknown Lattice tool. Writes require concrete Workbench user review.');
+  if (name === 'lattice.pdf.proposeAnnotations' && value && typeof value === 'object' && !Array.isArray(value)) {
+    const annotations = (value as Record<string, unknown>).annotations;
+    if (Array.isArray(annotations) && annotations.length <= 50) {
+      for (const annotation of annotations) {
+        if (annotation && typeof annotation === 'object' && !Array.isArray(annotation)) {
+          const style = annotation as Record<string, unknown>;
+          validateHarnessAnnotationStyle({ type: style.type, color: style.color });
+        }
+      }
+    }
+  }
   validate(tool.parameters as Schema, value);
   return value as Record<string, unknown>;
 }

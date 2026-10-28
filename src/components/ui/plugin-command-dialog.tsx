@@ -15,6 +15,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useAiChatStore } from "@/stores/ai-chat-store";
 import { getRegisteredCommands, subscribePluginRegistry } from "@/lib/plugins/runtime";
 import { useVSCodeExtensionHostStore } from "@/stores/vscode-extension-host-store";
+import { localizeQuantumKeyboardCommand } from "@/plugins/quantum-keyboard/localization";
 import type { PluginCommand } from "@/lib/plugins/types";
 import { cn } from "@/lib/utils";
 import { UI_MODAL_OVERLAY_CLASS, UI_MODAL_OVERLAY_STYLE, UI_MODAL_PANEL_CLASS } from "@/lib/ui-layers";
@@ -341,6 +342,7 @@ export function PluginCommandDialog({
     const pluginItems = settings.pluginsEnabled
       ? pluginCommands.map((command) => ({
           ...command,
+          title: localizeQuantumKeyboardCommand(command.id, language === "en-US" ? "en-US" : "zh-CN", command.title),
           source: "plugin" as const,
           category: "plugin" as const,
           description: language === "en-US"

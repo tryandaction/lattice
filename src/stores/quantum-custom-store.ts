@@ -25,6 +25,7 @@ export interface QuantumCustomState {
   
   // Actions
   addCustomSymbol: (keyCode: string, symbol: string) => void;
+  updateCustomSymbol: (keyCode: string, symbol: string, replacement: string) => void;
   removeCustomSymbol: (keyCode: string, symbol: string) => void;
   hideDefaultSymbol: (keyCode: string, symbol: string) => void;
   unhideDefaultSymbol: (keyCode: string, symbol: string) => void;
@@ -32,6 +33,19 @@ export interface QuantumCustomState {
   getHiddenSymbols: (keyCode: string) => string[];
   resetKey: (keyCode: string) => void;
   resetAll: () => void;
+}
+
+function restoreSymbols(value: unknown): string[] {
+  return Array.isArray(value) ? [...new Set(value.flatMap(symbol => typeof symbol === 'string' && symbol.trim() ? [symbol.trim()] : []))] : [];
+}
+
+function restoreMappings(value: unknown): Record<string, CustomKeyMapping> {
+  if (!value || typeof value !== 'object') return {};
+  return Object.fromEntries(Object.entries(value).flatMap(([key, mapping]) => {
+    if (!mapping || typeof mapping !== 'object') return [];
+    const saved = mapping as Partial<CustomKeyMapping>;
+    return [[key, { customSymbols: restoreSymbols(saved.customSymbols), hiddenSymbols: restoreSymbols(saved.hiddenSymbols) }]];
+  }));
 }
 
 // ============================================================================
@@ -44,6 +58,8 @@ export const useQuantumCustomStore = create<QuantumCustomState>()(
       customMappings: {},
       
       addCustomSymbol: (keyCode: string, symbol: string) => {
+        symbol = symbol.trim();
+        if (!symbol) return;
         set((state) => {
           const existing = state.customMappings[keyCode] || { customSymbols: [], hiddenSymbols: [] };
           // Don't add duplicates
@@ -77,8 +93,22 @@ export const useQuantumCustomStore = create<QuantumCustomState>()(
           };
         });
       },
+
+      updateCustomSymbol: (keyCode, symbol, replacement) => {
+        replacement = replacement.trim();
+        if (!replacement || replacement === symbol) return;
+        set(state => {
+          const existing = state.customMappings[keyCode];
+          if (!existing?.customSymbols.includes(symbol) || existing.customSymbols.includes(replacement)) return state;
+          return { customMappings: { ...state.customMappings, [keyCode]: {
+            ...existing, customSymbols: existing.customSymbols.map(value => value === symbol ? replacement : value),
+          } } };
+        });
+      },
       
       hideDefaultSymbol: (keyCode: string, symbol: string) => {
+        symbol = symbol.trim();
+        if (!symbol) return;
         set((state) => {
           const existing = state.customMappings[keyCode] || { customSymbols: [], hiddenSymbols: [] };
           if (existing.hiddenSymbols.includes(symbol)) return state;
@@ -134,6 +164,11 @@ export const useQuantumCustomStore = create<QuantumCustomState>()(
     {
       name: 'quantum-keyboard-custom',
       storage: createSafeJSONStorage<QuantumCustomState>(),
+      partialize: state => ({ customMappings: state.customMappings }) as QuantumCustomState,
+      merge: (value, current) => ({
+        ...current,
+        customMappings: restoreMappings((value as Partial<QuantumCustomState> | null)?.customMappings),
+      }),
     }
   )
 );

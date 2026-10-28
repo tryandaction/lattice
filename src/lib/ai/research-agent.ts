@@ -11,6 +11,7 @@ import {
   executeAgentTool,
   buildRunCodeRequestSignature,
   isLatticeApiToolName,
+  agentToolSourceReads,
   type AgentToolExecutionResult,
 } from './agent-tool-broker';
 import { LATTICE_HARNESS_TOOLS } from './harness/lattice-tool-definitions';
@@ -240,7 +241,7 @@ export interface ResearchAgentRunInput {
   /** Production surfaces require a real model answer; context-only calls are internal diagnostics. */
   requireAnswer?: boolean;
   answerInstructions?: string;
-  validateAnswer?: (answer: string, context: AiPromptContext) => void;
+  validateAnswer?: (answer: string, context: AiPromptContext, toolResults?: readonly AgentToolExecutionResult[]) => void;
   generateOmittedSummary?: ResearchAgentOmittedModelSummaryGenerate;
   plannerModel?: string;
   plannerTemperature?: number;
@@ -1301,6 +1302,7 @@ function mergeObservationReplanSteps(input: {
   current: ResearchAgentPlanStep[];
   replanned: ResearchAgentPlanStep[];
   allowSourceSteps?: boolean;
+  recoverableAnnotationStepIds?: ReadonlySet<string>;
 }): {
   steps: ResearchAgentPlanStep[];
   updatedStepIds: string[];
@@ -1309,8 +1311,17 @@ function mergeObservationReplanSteps(input: {
   const currentById = new Map(input.current.map((step) => [step.id, step]));
   const replannedById = new Map(input.replanned.map((step) => [step.id, step]));
   const updatedStepIds: string[] = [];
+  const annotationRepairTargets = new Set(input.current.filter(step => input.recoverableAnnotationStepIds?.has(step.id))
+    .map(step => (step.toolArgs as Record<string, unknown> | undefined)?.parentPath).filter((path): path is string => typeof path === 'string'));
+  const allowedAnnotationRepairRead = (step: ResearchAgentPlanStep) => {
+    const args = step.toolArgs as Record<string, unknown> | undefined;
+    if (step.toolName === 'lattice.sources.read') return typeof args?.path === 'string' && annotationRepairTargets.has(args.path);
+    return step.toolName === 'lattice.sources.search' && Array.isArray(args?.paths) && args.paths.length > 0
+      && args.paths.every(path => typeof path === 'string' && annotationRepairTargets.has(path));
+  };
   const additions = input.allowSourceSteps ? input.replanned.filter(step => !currentById.has(step.id) && step.status === 'pending' &&
     step.toolName && isLatticeApiToolName(step.toolName) &&
+    (!input.recoverableAnnotationStepIds?.size || allowedAnnotationRepairRead(step)) &&
     !input.current.some(current => current.toolName === step.toolName && JSON.stringify(current.toolArgs) === JSON.stringify(step.toolArgs)))
     .slice(0, Math.max(0, 24 - input.current.length)) : [];
   const addedIds = new Set(additions.map(step => step.id));
@@ -1318,11 +1329,16 @@ function mergeObservationReplanSteps(input: {
     .filter((step) => !currentById.has(step.id) && !addedIds.has(step.id))
     .map((step) => step.id);
   const steps = input.current.map((step) => {
-    if (step.status !== 'pending') {
-      return step;
-    }
-
     const replanned = replannedById.get(step.id);
+    const priorArgs = step.toolArgs as Record<string, unknown> | undefined;
+    const nextArgs = replanned?.toolArgs as Record<string, unknown> | undefined;
+    const repairsAnnotation = step.status === 'failed' && input.recoverableAnnotationStepIds?.has(step.id)
+      && step.toolName === 'lattice.pdf.proposeAnnotations' && replanned?.toolName === step.toolName
+      && priorArgs?.parentPath === nextArgs?.parentPath
+      && priorArgs?.expectedVersion === nextArgs?.expectedVersion;
+    // Quote repair may replace only the original rejected proposal, never repurpose another pending step.
+    if (input.recoverableAnnotationStepIds?.size && !repairsAnnotation) return step;
+    if (step.status !== 'pending' && !repairsAnnotation) return step;
     if (!replanned) {
       return step;
     }
@@ -1920,9 +1936,24 @@ export function canRetryResearchAgentSynthesis(session: AgentSession | null | un
 }
 
 function actualSourceReads(results: AgentToolExecutionResult[]): AgentSourceRead[] {
-  return results.filter(result => result.status === 'completed').flatMap(result =>
-    result.toolName === 'lattice.sources.read' || result.toolName === 'lattice.sources.active' ? [result.result as AgentSourceRead]
-      : result.toolName === 'lattice.sources.search' ? (result.result as AgentSourceSearchResult).reads : []);
+  return results.filter(result => result.status === 'completed').flatMap(result => agentToolSourceReads(result.toolName, result.result));
+}
+
+function recoverableAnnotationFailure(result: AgentToolExecutionResult): boolean {
+  return result.status === 'failed' && result.toolName === 'lattice.pdf.proposeAnnotations'
+    && result.resultMetadata?.annotationValidationRecoverable === true;
+}
+
+/** A rejected draft is recovered only by a later real receipt for the same step and PDF. */
+function unresolvedToolFailures(results: AgentToolExecutionResult[]): AgentToolExecutionResult[] {
+  return results.filter((result, index) => {
+    if (result.status !== 'failed' && result.status !== 'denied') return false;
+    if (!recoverableAnnotationFailure(result) || !result.resultMetadata?.annotationPlanStepId) return true;
+    return !results.slice(index + 1).some(later => later.status === 'completed'
+      && later.toolName === result.toolName
+      && later.resultMetadata?.annotationPlanStepId === result.resultMetadata?.annotationPlanStepId
+      && later.resultMetadata?.annotationTargetPath === result.resultMetadata?.annotationTargetPath);
+  });
 }
 
 export async function runResearchAgent(
@@ -2352,6 +2383,7 @@ export async function runResearchAgent(
   let observationPlannerPrompt: string | null = null;
   let observationPlannerRawOutput: string | null = null;
   let observationReplanIteration = 0;
+  let annotationRepairAttempted = false;
   let observationReplanStopReason: string | null = null;
   let observationQualitySummary: string | null = null;
   let observationDuplicateCount = 0;
@@ -2445,11 +2477,16 @@ export async function runResearchAgent(
       observations: readToolLoop.observations,
     });
     const hasIterationReadToolFailure = iterationReadToolLoop.toolResults.some((result) => result.status === 'failed' || result.status === 'denied');
+    const annotationRepairSteps = new Set(iterationReadToolLoop.toolResults.filter(recoverableAnnotationFailure)
+      .map(result => result.resultMetadata?.annotationPlanStepId).filter((id): id is string => typeof id === 'string'));
+    const canRepairAnnotation = hasIterationReadToolFailure && !annotationRepairAttempted
+      && iterationReadToolLoop.toolResults.filter(result => result.status === 'failed' || result.status === 'denied').every(recoverableAnnotationFailure)
+      && readToolLoop.toolResults.length < (input.maxReadToolSteps ?? 8);
     if (iterationReadToolLoop.blocked) {
       observationReplanStopReason = 'blocked';
       break;
     }
-    if (hasIterationReadToolFailure) {
+    if (hasIterationReadToolFailure && !canRepairAnnotation) {
       observationReplanStopReason = 'read_tool_failed';
       break;
     }
@@ -2468,7 +2505,7 @@ export async function runResearchAgent(
     }
     const readySourceReads = actualSourceReads(readToolLoop.toolResults);
     const requiredConcept = researchConceptTerm(query)?.toLocaleLowerCase();
-    if (!requireSourceDiscovery && !missingRequiredRead && readySourceReads.some(read => read.chunks.some(chunk =>
+    if (!hasIterationReadToolFailure && !requireSourceDiscovery && !missingRequiredRead && readySourceReads.some(read => read.chunks.some(chunk =>
       chunk.text.trim() && (!requiredConcept || chunk.text.toLocaleLowerCase().includes(requiredConcept))))
       && !planSteps.some(step => step.toolName && step.status === 'pending' && !['context-pack', 'evidence-resolve', 'synthesize-answer', 'compact-session'].includes(step.id))) {
       observationReplanStopReason = 'source_evidence_ready';
@@ -2497,6 +2534,7 @@ export async function runResearchAgent(
 
     try {
       throwIfResearchAgentAborted(input.plannerSignal);
+      if (canRepairAnnotation) annotationRepairAttempted = true;
       const observationPlannerRun = await runResearchAgentPlanner({
         latticeSourcePdfToolsAvailable: sourceToolsAvailable,
         apiTools, sourceSelections, authorizedSourceSelections: input.apiToolRuntime?.authorizedSourceSelections, requireSourceDiscovery, requireSourceRead: missingRequiredRead, filePath, history: input.history,
@@ -2512,7 +2550,7 @@ export async function runResearchAgent(
         includeCompactionStep: planContext.includeCompactionStep,
         allowCodeExecution: planContext.allowCodeExecution,
         continuationSummary: continuationRecovery.plannerSummary,
-        observationsSummary: iterationObservationsSummary,
+        observationsSummary: canRepairAnnotation ? `${iterationObservationsSummary}\n\nOne safe annotation repair is available. Reuse these failed step ids: ${[...annotationRepairSteps].join(', ')}. Keep each original parentPath and expectedVersion. Read the actual page if needed, then replace the quote with exact unique source text. Never invent text, lower validation, change the source target, or claim a write. A repeated mismatch ends this task.` : iterationObservationsSummary,
         workflowHints: input.plannerHints,
         generatePlan: observationReplanGenerate,
         model: input.plannerModel,
@@ -2526,6 +2564,7 @@ export async function runResearchAgent(
         current: planSteps,
         replanned: observationPlannerRun.plan.steps,
         allowSourceSteps: sourceToolsAvailable,
+        recoverableAnnotationStepIds: canRepairAnnotation ? annotationRepairSteps : undefined,
       });
       const observationRecoveryRecommendation = buildObservationRecoveryRecommendation({
         stopReason: merged.updatedStepIds.length === 0 ? 'no_pending_updates' : null,
@@ -2620,7 +2659,7 @@ export async function runResearchAgent(
     }
   }
 
-  if (observationReplanStopReason && maxObservationReplans > 1) {
+  if (observationReplanStopReason && maxObservationReplans > 1 && !isTerminalResearchAgentStatus(openSession(sessionId).status)) {
     const observationsPreview = (buildToolObservationsSummary(readToolLoop.observations) ?? '').slice(0, 900);
     const observationRecoveryRecommendation = buildObservationRecoveryRecommendation({
       stopReason: observationReplanStopReason,
@@ -2675,7 +2714,8 @@ export async function runResearchAgent(
       if (!recovered.toolResults.length || recovery.id === 'recover-source-read') break;
     } else break;
   }
-  const hasReadToolFailure = !recoveredSourceFailure && readToolLoop.toolResults.some((result) => result.status === 'failed' || result.status === 'denied');
+  const remainingToolFailures = unresolvedToolFailures(readToolLoop.toolResults);
+  const hasReadToolFailure = !recoveredSourceFailure && remainingToolFailures.length > 0;
   const actualToolReads = actualSourceReads(readToolLoop.toolResults);
   const searchHitLocators = new Set(readToolLoop.toolResults.filter(result => result.status === 'completed' && result.toolName === 'lattice.sources.search')
     .flatMap(result => (result.result as AgentSourceSearchResult).hits.map(hit => hit.locator)));
@@ -2695,12 +2735,12 @@ export async function runResearchAgent(
       anchor: { page, lineStart: line, cellId } };
   });
   const partialReadFailure = hasReadToolFailure && actualToolChunks.some(({ chunk }) => chunk.text.trim())
-    && readToolLoop.toolResults.filter(result => result.status === 'failed' || result.status === 'denied').every(isRecoverableSourceReadFailure);
+    && remainingToolFailures.every(isRecoverableSourceReadFailure);
   const partialReadNotice = partialReadFailure ? '部分来源的补充读取未成功；以下回答仅依据本次成功读取的原文片段，未核查部分仍存在证据缺口。' : undefined;
   if (partialReadNotice) agentStore.appendTrace(sessionId, { kind: 'planning', message: partialReadNotice,
     metadata: { stage: 'context.partial_source_read', successfulUnitCount: actualToolChunks.length } });
   if (hasReadToolFailure && !partialReadFailure) {
-    const failed = readToolLoop.toolResults.find((result) => result.status === 'failed' || result.status === 'denied');
+    const failed = remainingToolFailures[0];
     const error = failed?.error ?? 'Research agent planned tool step failed.';
     const diagnostic = classifyAgentError({
       error,
@@ -3036,7 +3076,7 @@ export async function runResearchAgent(
           if (!documentReading?.complete) assertSupportedSourceCoverage(generatedText, actualToolReads, sourceContextTruncated);
           if (rejectedAnswer) assertRepairedAnswerCitations(rejectedAnswer, generatedText, resolved.result.evidenceRefs);
           else assertValidAnswerCitations(generatedText, resolved.result.evidenceRefs);
-          input.validateAnswer?.(generatedText, resolved.result);
+          input.validateAnswer?.(generatedText, resolved.result, readToolLoop.toolResults);
           answer = partialReadNotice ? generatedText + '\n\n> ' + partialReadNotice : generatedText;
           answerGenerationStatus = 'generated';
           input.onAnswerDelta?.(answer);

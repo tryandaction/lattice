@@ -35,6 +35,10 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAnnotationSystem, type AnnotationUpdates } from "@/hooks/use-annotation-system";
 import { useSharedAnnotationSystem } from "@/hooks/use-shared-annotation-system";
+import { useSharedAnnotationVisibility } from "@/hooks/use-shared-annotation-visibility";
+import { filterVisibleAnnotations } from "@/lib/shared-library/annotation-visibility";
+import { annotationItemsEqual } from "@/lib/shared-library/annotation-equality";
+import { AnnotationVisibilityControl } from "@/components/shared-library/annotation-visibility-control";
 import type { CloudPdfDocument } from "@/lib/shared-library/cloud-pdf";
 import { useAnnotationNavigation } from "@/hooks/use-annotation-navigation";
 import { useInkAnnotation, type MergedInkAnnotation, type InkStroke } from "@/hooks/use-ink-annotation";
@@ -43,6 +47,8 @@ import { exportOriginalPdf, exportPdfWithAnnotations } from "./pdf-export-button
 import { PdfAnnotationSidebar } from "./pdf-annotation-sidebar";
 import { PdfFormulaContent } from "./pdf-formula-content";
 import { enrichPdfFormulaSelection, remapPdfFormulaSelection } from "@/lib/pdf-formula-selection";
+import { inferPdfFormulaFromSelection } from "@/lib/pdf-formula-structure";
+import { resolvePdfFormulaAnnotationLayout } from "@/lib/pdf-formula-annotation-layout";
 import { recognizeFormulaImageWithPix2tex } from "@/lib/formula-ocr";
 import { applyPdfFormulaOcrResult } from "@/lib/pdf-formula-ocr-result";
 import { pdfImageRegion, renderPdfRegionImage, type PdfImageRegion } from '@/lib/pdf-region-image';
@@ -107,6 +113,7 @@ import {
   type PdfItemManifest,
 } from "@/lib/pdf-item";
 import { generateFileId } from "@/lib/universal-annotation-storage";
+import { subscribeVaultChange } from "@/lib/plugins/runtime";
 import {
   buildBacklinkNavigationTarget,
   getBacklinkIndex,
@@ -1023,6 +1030,36 @@ function pdfPageRectToQuad(rect: PdfResolvedSelection["pageRects"][number]) {
   };
 }
 
+function enrichAiPdfAnnotationFormula(
+  annotation: AnnotationItem | null,
+  model: PdfPageTextModel | null,
+  exact: string,
+  preferredRects: PdfTarget["rects"],
+): AnnotationItem | null {
+  if (!annotation || annotation.target.type !== "pdf" || !model || preferredRects.length < 2) return annotation;
+  if (!/[=+−±×÷∑∏∫∂∇ℏα-ωΑ-Ω_^()[\]{}]/u.test(exact) || /\b(?:the|this|that|where|from|with|which|when|result|using|and|are|is)\b|[㐀-鿿]/iu.test(exact)) return annotation;
+  const target = annotation.target;
+  const start = target.startCharIndex ?? 0;
+  const end = target.endCharIndex ?? model.normalizedText.length;
+  const kernel = buildPdfTextKernelPage({ model });
+  const glyphs = kernel.chars.filter(char => char.charIndex >= start && char.charIndex < end && char.text.trim())
+    .map(char => ({ text: char.text, ...char.pdfRect }));
+  if (!glyphs.length) return annotation;
+  const inference = inferPdfFormulaFromSelection({ text: model.normalizedText.slice(start, end), chars: glyphs, rects: preferredRects });
+  if (inference.status !== "ready" || !inference.latex || !inference.bounds) return annotation;
+  return { ...annotation, formula: {
+    latex: inference.latex,
+    rawText: model.normalizedText.slice(start, end),
+    status: "ready",
+    source: "geometry",
+    originalRects: glyphs.map(glyph => ({ x1: glyph.x1, y1: glyph.y1, x2: glyph.x2, y2: glyph.y2 })),
+  } };
+}
+
+function aiPdfAnnotationId(proposalId: string, shared: boolean): string {
+  return shared ? proposalId.replace(/^ann-/, "") : `ann-${proposalId}`;
+}
+
 function pdfTargetRectsToOverlaySegments(rects: PdfTarget["rects"]): PdfMergedTextOverlaySegment[] {
   return rects
     .map((rect) => {
@@ -1045,6 +1082,21 @@ function pdfTargetRectsToOverlaySegments(rects: PdfTarget["rects"]): PdfMergedTe
 
 function mergePdfTextMarkupRenderRectsToOverlaySegments(rects: PdfTarget["rects"]): PdfMergedTextOverlaySegment[] {
   return mergePageRelativePdfTextMarkupRects(rects).filter((segment) => segment.width > 0 && segment.height > 0);
+}
+
+function buildPdfFormulaTextMarkupOverlaySegments(
+  rects: PdfTarget["rects"],
+  styleType: "highlight" | "underline",
+): PdfMergedTextOverlaySegment[] {
+  const valid = rects.filter((rect) => [rect.x1, rect.y1, rect.x2, rect.y2].every(Number.isFinite)
+    && rect.x1 >= 0 && rect.y1 >= 0 && rect.x2 <= 1 && rect.y2 <= 1 && rect.x2 > rect.x1 && rect.y2 > rect.y1);
+  if (!valid.length) return [];
+  if (styleType === "underline") return mergePdfTextMarkupRenderRectsToOverlaySegments(valid);
+  const left = Math.min(...valid.map(rect => rect.x1));
+  const top = Math.min(...valid.map(rect => rect.y1));
+  const right = Math.max(...valid.map(rect => rect.x2));
+  const bottom = Math.max(...valid.map(rect => rect.y2));
+  return pdfTargetRectsToOverlaySegments([{ x1: left, y1: top, x2: right, y2: bottom }]);
 }
 
 function overlaySegmentsToPdfTargetRects(segments: PdfMergedTextOverlaySegment[]): PdfTarget["rects"] {
@@ -1115,7 +1167,9 @@ function buildPdfTextMarkupViewFromRects(
 ): PdfTextMarkupView | null {
   if(annotation.formula){
     const formulaRects=rects.filter(r=>[r.x1,r.y1,r.x2,r.y2].every(Number.isFinite)&&r.x1>=0&&r.y1>=0&&r.x2<=1&&r.y2<=1&&r.x2>r.x1&&r.y2>r.y1);
-    return formulaRects.length ? {annotation:withResolvedPdfTextMarkupRects(annotation,formulaRects),rects:formulaRects,segments:pdfTargetRectsToOverlaySegments(formulaRects)} : null;
+    const styleType = annotation.style.type === "underline" ? "underline" : "highlight";
+    const segments = buildPdfFormulaTextMarkupOverlaySegments(formulaRects, styleType);
+    return formulaRects.length && segments.length ? {annotation:withResolvedPdfTextMarkupRects(annotation,formulaRects),rects:formulaRects,segments} : null;
   }
   const normalizedRects = normalizePdfTextMarkupRenderRects(rects);
   if (normalizedRects.length === 0) {
@@ -1286,12 +1340,25 @@ function buildMeasuredPdfTextMarkupTarget(
 function resolvePdfTextMarkupView(
   annotation: AnnotationItem,
   model?: PdfPageTextModel | null,
+  sourceModel?: PdfPageTextModel | null,
 ): PdfTextMarkupView | null {
   if (!isPdfTextMarkupAnnotation(annotation)) {
     return null;
   }
 
   const originalTarget = annotation.target as PdfTarget;
+  // Existing text-only annotations need the same actual-glyph formula layout
+  // as new ones. LaTeX recognition and old skinny rectangles are not geometry.
+  const formulaModel = sourceModel ?? model;
+  const formulaLayout = formulaModel ? resolvePdfFormulaAnnotationLayout(annotation, formulaModel) : null;
+  if (formulaLayout) {
+    const formulaRects = formulaLayout.formulaRects.map(rect => annotation.style.type === 'underline'
+      ? { ...rect, y2: Math.min(1, rect.y2 + 2 / formulaModel!.viewportHeight) } : rect);
+    return { annotation, rects: [...formulaLayout.ordinaryRects, ...formulaRects], segments: [
+      ...mergePdfTextMarkupRenderRectsToOverlaySegments(formulaLayout.ordinaryRects),
+      ...pdfTargetRectsToOverlaySegments(formulaRects),
+    ] };
+  }
   if (annotation.formula || originalTarget.readingOrder) return buildPdfTextMarkupViewFromRects(annotation, originalTarget.rects);
   const originalQuote = (originalTarget.textQuote?.exact ?? annotation.content ?? "").trim();
   const directStoredView = buildDirectPdfTextMarkupView(annotation, originalTarget.rects);
@@ -1527,7 +1594,7 @@ function doesPdfAnnotationSatisfyMarkdownDraft(
   return Boolean(annotationText && draftText && annotationText === draftText);
 }
 
-function buildPdfTextMarkupViewCacheKey(
+export function buildPdfTextMarkupViewCacheKey(
   annotation: AnnotationItem,
   model?: PdfPageTextModel | null,
 ): string {
@@ -1540,7 +1607,9 @@ function buildPdfTextMarkupViewCacheKey(
         model.normalizedText.length,
       ].join(":")
     : "no-model";
-  return `${annotation.id}::${repairSignature}::${modelSignature}`;
+  const formulaSignature = JSON.stringify(annotation.formula ?? null);
+  const readingOrder = annotation.target.type === "pdf" && annotation.target.readingOrder === true;
+  return `${annotation.id}::${repairSignature}::${modelSignature}::${formulaSignature}::${readingOrder}`;
 }
 
 function isPdfTextMarkupAnnotation(annotation: AnnotationItem): annotation is AnnotationItem & { target: PdfTarget } {
@@ -5085,7 +5154,9 @@ function PdfTransientSelectionOverlay({ selection, paneId, page, pageWidth, page
   }
 
   // Use the same normalized line geometry as persistent markup.
-  const mergedRects = (selection.formula ? pdfTargetRectsToOverlaySegments(rects) : mergePdfTextMarkupRenderRectsToOverlaySegments(rects)).map((rect) => ({
+  const mergedRects = (selection.formula
+    ? buildPdfFormulaTextMarkupOverlaySegments(rects, styleType)
+    : mergePdfTextMarkupRenderRectsToOverlaySegments(rects)).map((rect) => ({
     ...rect,
     left: rect.left * pageWidth / 100,
     top: rect.top * pageHeight / 100,
@@ -6338,13 +6409,13 @@ export function PDFHighlighterAdapter({
     saveDelay: isDiagnosticsMode ? 300000 : undefined,
   });
   const sharedAnnotationSystem = useSharedAnnotationSystem(sharedDocument);
+  const sharedAnnotationVisibility = useSharedAnnotationVisibility(sharedDocument);
   const {
     annotations,
     isLoading: annotationsLoading,
     error: annotationsError,
     addAnnotation,
     upsertAnnotation,
-    upsertAnnotations,
     persistAnnotationChanges,
     updateAnnotation: commitAnnotationUpdate,
     deleteAnnotation,
@@ -6413,8 +6484,15 @@ export function PDFHighlighterAdapter({
   const [pdfTextLayerRevision, setPdfTextLayerRevision] = useState(0);
   const pageTextLayerRevisionRef = useRef<Map<number, number>>(new Map());
   const processedMarkdownDraftSignatureRef = useRef<string | null>(null);
+  const [markdownDraftRevision, setMarkdownDraftRevision] = useState(0);
+  const persistMarkdownDraftAnnotationsRef = useRef(persistAnnotationChanges);
+  useEffect(() => {
+    persistMarkdownDraftAnnotationsRef.current = persistAnnotationChanges;
+  }, [persistAnnotationChanges]);
   const renderedPageTextModelCacheRef = useRef<Map<number, { revision: number; model: PdfPageTextModel | null }>>(new Map());
   const pdfTextMarkupViewCacheRef = useRef<Map<string, PdfTextMarkupView | null>>(new Map());
+  const sourceFormulaModelsRef = useRef<Map<number, PdfPageTextModel>>(new Map());
+  const [formulaSourceFocusPage, setFormulaSourceFocusPage] = useState<number | null>(null);
   const citationPreviewOpenTimeoutRef = useRef<number | null>(null);
   const citationPreviewCloseTimeoutRef = useRef<number | null>(null);
   useEffect(() => {
@@ -6473,15 +6551,29 @@ export function PDFHighlighterAdapter({
   const transientAnnotationsForDocument = useMemo(() => transientAnnotations.filter((annotation) => (
     aiDocumentIdentity !== null && pdfCompanionDocumentIdentity(annotation.documentPath, aiDocumentScope) === aiDocumentIdentity
   )), [aiDocumentIdentity, aiDocumentScope, transientAnnotations]);
+  const sharedAnnotationAuthor = sharedDocument?.authorId;
+  const sharedAnnotationAuthorName = sharedDocument?.authorNames?.[sharedAnnotationAuthor ?? ""];
   const transientDisplayAnnotations = useMemo(
-    () => confirmTransientPdfAnnotations(transientAnnotationsForDocument, "ai"),
-    [transientAnnotationsForDocument],
+    () => confirmTransientPdfAnnotations(transientAnnotationsForDocument, sharedAnnotationAuthor ?? "ai").map((annotation, index) => ({
+      ...annotation, id: aiPdfAnnotationId(transientAnnotationsForDocument[index].id, isSharedDocument),
+      ...(sharedAnnotationAuthorName ? { authorDisplayName: sharedAnnotationAuthorName } : {}),
+    })),
+    [transientAnnotationsForDocument, sharedAnnotationAuthor, sharedAnnotationAuthorName, isSharedDocument],
   );
   const persistentDisplayAnnotations = displayAnnotations;
-  const displayAnnotationsWithTransient = useMemo(() => [
+  const visiblePersistentAnnotations = useMemo(() => sharedDocument
+    ? filterVisibleAnnotations(persistentDisplayAnnotations, sharedDocument.authorId, sharedAnnotationVisibility.preference)
+    : persistentDisplayAnnotations,
+  [persistentDisplayAnnotations, sharedDocument, sharedAnnotationVisibility.preference]);
+  const completeDisplayAnnotationsWithTransient = useMemo(() => [
     ...persistentDisplayAnnotations,
     ...transientDisplayAnnotations.filter((annotation) => !persistentDisplayAnnotations.some((persisted) => persisted.id === annotation.id)),
   ], [persistentDisplayAnnotations, transientDisplayAnnotations]);
+  const displayAnnotationsWithTransient = useMemo(() => sharedDocument
+    ? filterVisibleAnnotations(completeDisplayAnnotationsWithTransient, sharedDocument.authorId, sharedAnnotationVisibility.preference)
+    : completeDisplayAnnotationsWithTransient,
+  [completeDisplayAnnotationsWithTransient, sharedDocument, sharedAnnotationVisibility.preference]);
+  const visibleAnnotationIds = useMemo(() => new Set(displayAnnotationsWithTransient.map(annotation => annotation.id)), [displayAnnotationsWithTransient]);
   const manifestSeedId = useMemo(() => generateFileId(filePath), [filePath]);
   const annotationMirrorTimeoutRef = useRef<number | null>(null);
   const pdfAnnotationCount = useMemo(() => (
@@ -6515,6 +6607,7 @@ export function PDFHighlighterAdapter({
   }, [dedupedAnnotations]);
 
   const handleTextLayerReady = useCallback((pageNumber: number) => {
+    setFormulaSourceFocusPage(pageNumber);
     pageTextLayerRevisionRef.current.set(
       pageNumber,
       (pageTextLayerRevisionRef.current.get(pageNumber) ?? 0) + 1,
@@ -6547,12 +6640,13 @@ export function PDFHighlighterAdapter({
     annotation: AnnotationItem,
     model?: PdfPageTextModel | null,
   ): PdfTextMarkupView | null => {
-    const cacheKey = buildPdfTextMarkupViewCacheKey(annotation, model);
+    const sourceModel = annotation.target.type === 'pdf' ? sourceFormulaModelsRef.current.get(annotation.target.page) : undefined;
+    const cacheKey = buildPdfTextMarkupViewCacheKey(annotation, model) + ':' + buildPdfTextMarkupViewCacheKey(annotation, sourceModel);
     if (pdfTextMarkupViewCacheRef.current.has(cacheKey)) {
       return pdfTextMarkupViewCacheRef.current.get(cacheKey) ?? null;
     }
 
-    const view = resolvePdfTextMarkupView(annotation, model);
+    const view = resolvePdfTextMarkupView(annotation, model, sourceModel);
     pdfTextMarkupViewCacheRef.current.set(cacheKey, view);
     if (pdfTextMarkupViewCacheRef.current.size > 600) {
       const oldestKey = pdfTextMarkupViewCacheRef.current.keys().next().value;
@@ -7026,6 +7120,35 @@ export function PDFHighlighterAdapter({
   const [pdfLoadWorkerState, setPdfLoadWorkerState] = useState("idle");
   const [numPages, setNumPages] = useState<number>(0);
   const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null);
+  useEffect(() => {
+    sourceFormulaModelsRef.current.clear();
+    pdfTextMarkupViewCacheRef.current.clear();
+  }, [pdfDocument]);
+  useEffect(() => {
+    if (!pdfDocument) return;
+    let cancelled = false;
+    const annotatedPages = [...new Set(persistentDisplayAnnotations.filter(annotation => annotation.target.type === 'pdf'
+      && /[=+−±×÷∑∏∫∂∇ℏα-ωΑ-Ω_^\uf8eb-\uf8fe]/u.test(annotation.target.textQuote?.exact ?? annotation.content ?? ''))
+      .map(annotation => (annotation.target as PdfTarget).page))];
+    const pages = [...new Set([...(formulaSourceFocusPage !== null && annotatedPages.includes(formulaSourceFocusPage) ? [formulaSourceFocusPage] : []), ...annotatedPages])].slice(0, 24);
+    for (const page of sourceFormulaModelsRef.current.keys()) if (!pages.includes(page)) sourceFormulaModelsRef.current.delete(page);
+    void (async () => {
+      for (let index = 0; index < pages.length; index += 2) {
+        await Promise.all(pages.slice(index, index + 2).map(async page => {
+          if (cancelled || sourceFormulaModelsRef.current.has(page)) return;
+          try {
+            const model = await getPdfPageTextModel(pdfDocument, page);
+            if (cancelled) return;
+            sourceFormulaModelsRef.current.set(page, model);
+            pdfTextMarkupViewCacheRef.current.clear();
+            setPdfTextLayerRevision(revision => revision + 1);
+          } catch { /* Keep existing safe markup while unavailable source geometry is reported by the reader. */ }
+        }));
+        if (cancelled) return;
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pdfDocument, persistentDisplayAnnotations, formulaSourceFocusPage]);
   const pendingAiUndo = useAiPdfCompanionStore((state) => state.pendingUndo);
   const pendingAiUndoRequestId = useAiPdfCompanionStore((state) => state.pendingUndoRequestId);
   const savedAiAnnotations = useAiPdfCompanionStore((state) => state.savedAnnotations);
@@ -7052,7 +7175,7 @@ export function PDFHighlighterAdapter({
         if (undoItems.length) {
           const unchanged = undoItems.filter((saved) => {
             const current = dedupedAnnotationsRef.current.find((item) => item.id === saved.annotation.id);
-            return !current || JSON.stringify(current) === JSON.stringify(saved.annotation);
+            return !current || annotationItemsEqual(current, saved.annotation);
           });
           const ids = unchanged.map((item) => item.annotation.id);
           if (cancelled || !store.beginOperationPersistence(operation)) return;
@@ -7062,7 +7185,12 @@ export function PDFHighlighterAdapter({
           return;
         }
         const resolved: AnnotationItem[] = [];
+        const reservedIds = new Set<string>();
         for (const proposal of proposals) {
+          const proposalAnnotationId = aiPdfAnnotationId(proposal.id, isSharedDocument);
+          // Reapplying a suggestion must preserve existing user-owned marks, including edited AI marks.
+          if (reservedIds.has(proposalAnnotationId) || dedupedAnnotationsRef.current.some(item => item.id === proposalAnnotationId)) continue;
+          reservedIds.add(proposalAnnotationId);
           const resolution = await resolvePdfEvidenceSnippetFromModels({
             renderedModel: getRenderedPdfPageTextModelForPage(proposal.page),
             loadSourceModel: () => getPdfPageTextModel(pdfDocument, proposal.page),
@@ -7072,22 +7200,24 @@ export function PDFHighlighterAdapter({
           if (cancelled) return;
           const model = resolution?.model;
           const preciseTarget = resolution?.target;
-          const annotation = model && preciseTarget ? buildCanonicalPdfTextMarkupAnnotationFromExact({
+          const preferredRects = preciseTarget?.rects.map((rect) => ({ x1: rect.left, y1: rect.top, x2: rect.left + rect.width, y2: rect.top + rect.height })) ?? [];
+          const annotation = model && preciseTarget ? enrichAiPdfAnnotationFormula(buildCanonicalPdfTextMarkupAnnotationFromExact({
             model, exact: proposal.quote, page: proposal.page, styleType: "highlight", preserveExact: true,
-            preferredRects: preciseTarget.rects.map((rect) => ({ x1: rect.left, y1: rect.top, x2: rect.left + rect.width, y2: rect.top + rect.height })),
-            color: "#FFD400", author: "ai", id: `ann-${proposal.id}`, createdAt: Date.now(),
-          }) as AnnotationItem | null : null;
+            preferredRects,
+            color: "#FFD400", author: sharedAnnotationAuthor ?? "ai", id: proposalAnnotationId, createdAt: Date.now(),
+          }) as AnnotationItem | null, model, proposal.quote, preferredRects) : null;
           if (!annotation || annotation.target.type !== "pdf" || !annotation.target.rects.length) {
             throw new Error(`第 ${proposal.page} 页无法唯一定位引文，未写入本组建议。`);
           }
-          if (dedupedAnnotationsRef.current.some((item) => item.id === annotation.id)) {
-            throw new Error("同一引文已有批注，请先检查 PDF 批注栏，避免覆盖现有修改。");
-          }
-          resolved.push({ ...annotation, comment: proposal.reason ?? proposal.source.label, tags: ["ai-evidence"] });
+          // A collaborator or another view may save it while this quote is being resolved.
+          if (dedupedAnnotationsRef.current.some((item) => item.id === annotation.id)) continue;
+          resolved.push({ ...annotation, comment: proposal.reason ?? proposal.source.label, tags: ["ai-evidence"],
+            ...(sharedAnnotationAuthorName ? { authorDisplayName: sharedAnnotationAuthorName } : {}) });
         }
         if (cancelled || !request || !store.beginOperationPersistence(operation)) return;
-        if (!await persistAnnotationChanges(resolved)) throw new Error("批注未能保存，请检查工作区权限后重试。");
-        store.completeInjection(request.requestId, proposals.map((item) => item.id), resolved.map((annotation) => ({ documentPath: filePath, annotation })));
+        const additions = resolved.filter(annotation => !dedupedAnnotationsRef.current.some(item => item.id === annotation.id));
+        if (additions.length && !await persistAnnotationChanges(additions)) throw new Error("批注未能保存，请检查工作区权限后重试。");
+        store.completeInjection(request.requestId, proposals.map((item) => item.id), additions.map((annotation) => ({ documentPath: filePath, annotation })));
       } catch (error) {
         if (request) store.failInjection(request.requestId, error instanceof Error ? error.message : "批注执行失败，请重试。");
         else store.completeUndo(requestId, [], "撤销失败，请重试。");
@@ -7101,7 +7231,7 @@ export function PDFHighlighterAdapter({
       // keeps its claim until it settles so another pane cannot replay it.
       store.releaseOperation(operation);
     };
-  }, [aiConsumerId, aiDocumentIdentity, aiDocumentScope, aiOperationRevision, annotationsLoading, filePath, getRenderedPdfPageTextModelForPage, pdfDocument, pendingAiUndo, pendingAiUndoRequestId, pendingTransientInjection, persistAnnotationChanges, savedAiAnnotations]);
+  }, [aiConsumerId, aiDocumentIdentity, aiDocumentScope, aiOperationRevision, annotationsLoading, filePath, getRenderedPdfPageTextModelForPage, isSharedDocument, pdfDocument, pendingAiUndo, pendingAiUndoRequestId, pendingTransientInjection, persistAnnotationChanges, savedAiAnnotations, sharedAnnotationAuthor, sharedAnnotationAuthorName]);
 
   const loadedPdfDocumentKeyRef = useRef<string | null>(null);
   const loadedPdfSourceRef = useRef<{ document: PDFDocumentProxy; loadKey: string; revision?: string } | null>(null);
@@ -7196,6 +7326,17 @@ export function PDFHighlighterAdapter({
   const nativeSelectionClearTokenRef = useRef(0);
   const diagnosticScrollToPageRef = useRef<((pageNumber: number) => boolean) | null>(null);
   const referencePreviewModelsRef = useRef<Map<number, PdfPageTextModel>>(new Map());
+
+  useEffect(() => {
+    processedMarkdownDraftSignatureRef.current = null;
+    if (!canManagePdfItemWorkspace || !pdfItemManifest) return;
+    const normalize = (path: string) => path.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "").replace(/^\/+/, "");
+    const annotationPath = normalize(pdfItemManifest.annotationIndexPath ?? `${pdfItemManifest.itemFolderPath}/_annotations.md`);
+    const acceptedPaths = new Set([annotationPath, `${itemRootHandle.name}/${annotationPath}`, `${rootHandle.name}/${annotationPath}`]);
+    return subscribeVaultChange((path) => {
+      if (acceptedPaths.has(normalize(path))) setMarkdownDraftRevision((revision) => revision + 1);
+    });
+  }, [canManagePdfItemWorkspace, itemRootHandle, pdfItemManifest, rootHandle]);
 
   useEffect(() => {
     if (
@@ -7297,7 +7438,8 @@ export function PDFHighlighterAdapter({
           }
 
           virtualFile = result.annotationFile;
-          imported.push(result.annotation);
+          imported.push(enrichAiPdfAnnotationFormula(result.annotation, model, draft.exact,
+            result.annotation.target.type === "pdf" ? result.annotation.target.rects : []) ?? result.annotation);
           resolvedDraftIds.push(result.annotation.id);
         }
 
@@ -7308,17 +7450,21 @@ export function PDFHighlighterAdapter({
           return;
         }
 
-        processedMarkdownDraftSignatureRef.current = signature;
-        if (imported.length > 0) {
-          upsertAnnotations(imported);
+        // The annotation hooks expose optimistic in-memory snapshots as well as
+        // durable ones. Confirm storage even for already matching IDs before
+        // removing the original draft; a failed save must remain retryable.
+        const saved = await persistMarkdownDraftAnnotationsRef.current(imported);
+        if (!saved) {
+          logger.warn("[PDF] Markdown annotation draft save failed; original drafts retained for retry.");
+          return;
         }
-        removeResolvedPdfItemAnnotationMarkdownDrafts(
+        if (cancelled) return;
+        await removeResolvedPdfItemAnnotationMarkdownDrafts(
           itemRootHandle,
           pdfItemManifest,
           resolvedDraftIds,
-        ).catch((error) => {
-          logger.warn("[PDF] Imported markdown annotation drafts could not be cleared:", error);
-        });
+        );
+        if (!cancelled) processedMarkdownDraftSignatureRef.current = signature;
       } catch (error) {
         logger.warn("[PDF] Markdown annotation draft import skipped:", error);
       }
@@ -7332,10 +7478,11 @@ export function PDFHighlighterAdapter({
     canManagePdfItemWorkspace,
     effectiveBinding?.canonicalStorageFileId,
     isDiagnosticsMode,
+    itemRootHandle,
+    markdownDraftRevision,
     pdfDocument,
     pdfItemManifest,
     rootHandle,
-    upsertAnnotations,
   ]);
 
   useEffect(() => {
@@ -11066,8 +11213,8 @@ export function PDFHighlighterAdapter({
 
   const handleExportPdfWithAnnotations = useCallback(async () => {
     const pdfBytes = await getSourcePdfBytesForExport();
-    await exportPdfWithAnnotations(pdfBytes, persistentDisplayAnnotations, fileName);
-  }, [fileName, getSourcePdfBytesForExport, persistentDisplayAnnotations]);
+    await exportPdfWithAnnotations(pdfBytes, visiblePersistentAnnotations, fileName);
+  }, [fileName, getSourcePdfBytesForExport, visiblePersistentAnnotations]);
 
   const commandBarState = useMemo<CommandBarState>(() => {
     const breadcrumbs = filePath.split("/").filter(Boolean).map((segment) => ({ label: segment }));
@@ -11334,8 +11481,8 @@ export function PDFHighlighterAdapter({
   }, [setShowSidebarPreservingPdfAnchor]);
 
   const annotationById = useMemo(() => {
-    return new Map(displayAnnotationsWithTransient.map((annotation) => [annotation.id, annotation] as const));
-  }, [displayAnnotationsWithTransient]);
+    return new Map(completeDisplayAnnotationsWithTransient.map((annotation) => [annotation.id, annotation] as const));
+  }, [completeDisplayAnnotationsWithTransient]);
   const formulaRecognitionEpoch = useRef(0);
   const latestFormulaDraft = useRef(pendingSelectionDraft);
   useEffect(() => { latestFormulaDraft.current = pendingSelectionDraft; }, [pendingSelectionDraft]);
@@ -12355,6 +12502,9 @@ export function PDFHighlighterAdapter({
   }, [getViewerScrollContainer, pdfContextMenu]);
 
   useEffect(() => {
+    // Opening or filtering a shared PDF must never create a cloud write.
+    // Shared previews are saved only with explicit annotation edits.
+    if (isSharedDocument) return;
     dedupedAnnotations.forEach((annotation) => {
       if (
         annotation.target.type !== "pdf" ||
@@ -12391,7 +12541,7 @@ export function PDFHighlighterAdapter({
         }
       });
     });
-  }, [dedupedAnnotations, renderScale, updateAnnotation, visiblePages]);
+  }, [dedupedAnnotations, isSharedDocument, renderScale, updateAnnotation, visiblePages]);
 
   // Handle Ctrl+Wheel zoom only inside the current pane.
   // CRITICAL for scroll performance: we only register a non-passive wheel handler
@@ -14326,7 +14476,7 @@ export function PDFHighlighterAdapter({
       {annotationMenuState ? (
         (() => {
           const annotation = annotationById.get(annotationMenuState.annotationId);
-          if (!annotation) {
+          if (!annotation || !visibleAnnotationIds.has(annotation.id)) {
             return null;
           }
 
@@ -14591,6 +14741,25 @@ export function PDFHighlighterAdapter({
       ) : null}
 
       {/* Error banner */}
+      {sharedDocument ? (
+        <AnnotationVisibilityControl
+          annotations={persistentDisplayAnnotations}
+          authorId={sharedDocument.authorId}
+          authorNames={sharedDocument.authorNames}
+          preference={sharedAnnotationVisibility.preference}
+          visibleCount={visiblePersistentAnnotations.filter(annotation => annotation.target.type === 'pdf').length}
+          onModeChange={mode => {
+            sharedAnnotationVisibility.setMode(mode);
+            closeAnnotationMenu();
+            setEditingTextAnnotation(null);
+          }}
+          onAuthorVisibleChange={(authorId, visible) => {
+            sharedAnnotationVisibility.setAuthorVisible(authorId, visible);
+            closeAnnotationMenu();
+            setEditingTextAnnotation(null);
+          }}
+        />
+      ) : null}
       {annotationsError && (
         <div className="bg-red-50 dark:bg-red-950 border-b border-red-200 dark:border-red-800 px-4 py-2 text-sm text-red-700 dark:text-red-300">
           {t("common.error")}: {annotationsError}
@@ -14726,7 +14895,7 @@ export function PDFHighlighterAdapter({
                 />
                 <div className="min-h-0 flex-1 overflow-hidden">
                   <PdfAnnotationSidebar
-                    annotations={persistentDisplayAnnotations}
+                    annotations={visiblePersistentAnnotations}
                     authorNames={sharedDocument?.authorNames}
                     isLoading={annotationsLoading}
                     viewState={pdfSidebarViewState}
@@ -14806,7 +14975,7 @@ export function PDFHighlighterAdapter({
         />
       )}
 
-      {editingTextAnnotation && (
+      {editingTextAnnotation && visibleAnnotationIds.has(editingTextAnnotation.annotation.id) && (
         <TextAnnotationPopup
           position={{ x: editingTextAnnotation.position.x, y: editingTextAnnotation.position.y }}
           onSave={handleUpdateTextAnnotation}

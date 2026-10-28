@@ -10,6 +10,7 @@
  */
 
 import { EditorView } from '@codemirror/view';
+import { queueQuantumMathInput } from "@/lib/quantum-input-session";
 import { findFormulaFillPosition, normalizeFormulaInput, wrapLatexForMarkdown } from '@/lib/formula-utils';
 
 // ============================================================================
@@ -88,17 +89,12 @@ export function toMathLivePlaceholders(latex: string): string {
 }
 
 function insertIntoMathLive(mathField: MathLiveElement, latex: string): void {
-  if (mathField.executeCommand) {
-    mathField.executeCommand(['insert', latex]);
-    mathField.executeCommand('moveToNextPlaceholder');
-    return;
-  }
-
+  const options = { insertionMode: 'replaceSelection', selectionMode: 'placeholder', focus: true };
   if (mathField.insert) {
-    mathField.insert(latex, {
-      insertionMode: 'insertAfter',
-      selectionMode: 'after',
-    });
+    mathField.insert(latex, options);
+  } else if (mathField.executeCommand) {
+    mathField.executeCommand(['insert', latex, options]);
+    mathField.focus?.();
   }
 }
 
@@ -137,6 +133,8 @@ function insertFormulaIntoCodeMirror(
   });
 
   if (format === 'markdown') {
+    // The plugin starts a pending session only after accepting this event.
+    // Source mode and plain CodeMirror editors must keep inserting Markdown.
     queueMicrotask(() => {
       view.dom.dispatchEvent(new CustomEvent('quantum-formula-inserted', {
         bubbles: true,
@@ -184,6 +182,7 @@ export function unregisterCodeMirrorView(element: HTMLElement): void {
  * Detect the type of input element
  */
 function detectInputType(element: HTMLElement): InputTargetType | null {
+  if (element.closest('[data-quantum-keyboard]')) return null;
   // Check for MathLive math-field
   if (element.tagName?.toLowerCase() === 'math-field') {
     return 'mathlive';
@@ -361,14 +360,7 @@ function createMathLiveTarget(element: HTMLElement): UnifiedInputTarget {
         displayMode: payload.displayMode ?? normalized.displayMode,
       };
     },
-    insertMathLiveLatex: (latex: string) => {
-      if (mathField.executeCommand) {
-        mathField.executeCommand(['insert', latex]);
-        mathField.executeCommand('moveToNextPlaceholder');
-      } else if (mathField.insert) {
-        mathField.insert(latex);
-      }
-    },
+    insertMathLiveLatex: (latex: string) => insertIntoMathLive(mathField, latex),
     wrapSelection: (before: string, after: string) => {
       // MathLive doesn't have a direct wrap API, so we get selection and replace
       const selection = mathField.selection;
@@ -556,13 +548,15 @@ function createContentEditableTarget(element: HTMLElement): UnifiedInputTarget {
  * Detects the focused element and creates a unified interface
  */
 export function getActiveInputTarget(): UnifiedInputTarget | null {
+  if (lastActiveTarget && !lastActiveTarget.element.isConnected) lastActiveTarget = null;
   // Return cached active target if still valid
   if (activeTarget && document.activeElement === activeTarget.element) {
     return activeTarget;
   }
 
   const focused = document.activeElement as HTMLElement;
-  if (!focused) return lastActiveTarget;
+  if (!focused) return lastActiveTarget?.element.isConnected ? lastActiveTarget : null;
+  if (focused.closest('[data-quantum-keyboard]')) return lastActiveTarget?.element.isConnected ? lastActiveTarget : null;
 
   const type = detectInputType(focused);
   if (!type) {
@@ -593,7 +587,7 @@ export function getActiveInputTarget(): UnifiedInputTarget | null {
  * Get the last active input target (useful when keyboard steals focus)
  */
 export function getLastActiveInputTarget(): UnifiedInputTarget | null {
-  return lastActiveTarget;
+  return lastActiveTarget?.element.isConnected ? lastActiveTarget : null;
 }
 
 /**
@@ -609,7 +603,7 @@ export function setActiveInputTarget(target: UnifiedInputTarget | null): void {
  * Useful when focus is managed externally (e.g., HUD input focus)
  */
 export function setActiveInputTargetFromElement(element: HTMLElement): UnifiedInputTarget | null {
-  if (!element) return null;
+  if (!element || element.closest('[data-quantum-keyboard]')) return null;
 
   const type = detectInputType(element);
   if (!type) {
@@ -656,6 +650,10 @@ export function insertLatexAtCursor(
 export function insertFormulaAtCursor(payload: FormulaInsertPayload): FormulaInsertResult {
   const target = getActiveInputTarget() || getLastActiveInputTarget();
   if (!target) return { handled: false, targetType: null };
+
+  if (target.type === 'codemirror' && queueQuantumMathInput(target.element, field => {
+    field.insert(payload.mathLiveLatex ?? toMathLivePlaceholders(payload.latex), { insertionMode: 'replaceSelection', selectionMode: 'placeholder', focus: true });
+  })) return { handled: true, targetType: 'mathlive', latex: payload.latex };
 
   if (target.insertFormula) {
     return target.insertFormula(payload);

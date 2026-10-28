@@ -19,7 +19,7 @@ describe("formula extractor plugin registration", () => {
   });
 
   it("lists Formula Extractor as an official recommended plugin", () => {
-    expect(getAvailablePlugins().map((plugin) => plugin.id)).toEqual([FORMULA_EXTRACTOR_PLUGIN_ID]);
+    expect(getAvailablePlugins().map((plugin) => plugin.id)).toEqual(expect.arrayContaining([FORMULA_EXTRACTOR_PLUGIN_ID, 'quantum-keyboard']));
     const recommended = getRecommendedPlugins();
     expect(recommended.map((plugin) => plugin.id)).toContain(FORMULA_EXTRACTOR_PLUGIN_ID);
     expect(recommended.find((plugin) => plugin.id === FORMULA_EXTRACTOR_PLUGIN_ID)?.recommended).toBe(true);

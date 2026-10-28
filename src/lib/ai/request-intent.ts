@@ -46,6 +46,16 @@ export function isWholeDocumentRequest(query: string): boolean {
     || /全文|全篇|整篇|全部阅读|完整阅读|通读|所有页面|所有正文|whole (?:paper|document)|entire (?:paper|document)|all pages|full (?:paper|document)|\bread (?:it )?all(?=\s*(?:$|[,;.!?])|\s+(?:of\s+)?(?:it|this|the\s+(?:paper|document))\b)/iu.test(query);
 }
 
+/** A document-level explanation request needs full reading when a source is in scope. */
+export function isBroadDocumentExplanation(query: string): boolean {
+  if (hasNarrowReadingScope(query) || isReadingAdvice(query) || isFocusedDocumentRequest(query)) return false;
+  if (/(?:仅|只)(?:需|要|是)?(?:解释|讲解|分析|总结|讨论|回答)[^，,；;。!?！？\n]{0,28}(?:选中|所选|这段|该段|所选页面|selected (?:text|paragraph|section|passage)|this (?:paragraph|section|excerpt))/iu.test(query)
+    || /\b(?:only|just)\s+(?:explain|analy[sz]e|summari[sz]e|discuss|answer)\b[^,;.!?\n]{0,48}\b(?:selected|this)\s+(?:text|paragraph|section|passage)\b/iu.test(query)) return false;
+  if (!/(?:本文|这篇|这份|该文|报告|论文|文章|文档|材料|paper|document|report|article|pdf)/iu.test(query)) return false;
+  if (!/(?:详细|深入|全面|完整|整体|原理|机制|方法|结果|贡献|结构|总结|概括|梳理|讲解|解释|分析|\b(?:detailed|in-depth|explain|analy[sz]e|summari[sz]e|review|overview)\b)/iu.test(query)) return false;
+  return !isTargetedDocumentRequest(query);
+}
+
 export function isFocusedDocumentRequest(query: string): boolean {
   return /第\s*[\d一二三四五六七八九十百]+(?:\s*[-–—到至]\s*[\d一二三四五六七八九十百]+)?\s*页|\bpages?\s*\d|选中|选区|这段|this (?:passage|excerpt|selection)|#(?:page|section|line)=/iu.test(query);
 }

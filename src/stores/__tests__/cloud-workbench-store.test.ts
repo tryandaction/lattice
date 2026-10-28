@@ -36,6 +36,15 @@ describe("cloud workbench source store", () => {
     finish({ item: controller.getSnapshot().items[0], role: "editor", content: { kind: "text", text: "old", mimeType: "text/plain", updatedAt: "now" } });
     await expect(opening).rejects.toThrow("账号或连接已切换"); expect(workspace.openCloudFileInPane).not.toHaveBeenCalled();
   });
+  it('does not reopen an old library after switching libraries during a file read', async () => {
+    const { controller, read } = controllerFixture(); let finish!: (value: Awaited<ReturnType<typeof read>>) => void;
+    read.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const store = useCloudWorkbenchStore.getState(); store.bindController(controller); await store.selectLibrary('library');
+    const opening = store.openItem('file'); await store.selectLibrary('other-library');
+    finish({ item: controller.getSnapshot().items[0], role: 'editor', content: { kind: 'text', text: 'late old file', mimeType: 'text/plain', updatedAt: 'now' } });
+    expect(await opening).toBe(false); expect(useCloudWorkbenchStore.getState().libraryId).toBe('other-library');
+    expect(workspace.openCloudFileInPane).not.toHaveBeenCalled();
+  });
   it("treats explicit null as root and omitted parent as the selected folder", async () => {
     const { controller, createItem } = controllerFixture(); const store = useCloudWorkbenchStore.getState();
     store.bindController(controller); await store.selectLibrary("library"); store.setSelectedFolderId("selected-folder");

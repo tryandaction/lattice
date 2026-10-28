@@ -55,8 +55,10 @@ describe("CloudConnectionPanel", () => {
     expect(screen.queryByRole("button", { name: "连接设置" })).toBeNull();
     expect(screen.queryByLabelText("Worker API URL")).toBeNull();
   });
-  it("starts with one paste-and-connect action instead of technical endpoint fields", () => {
+  it("opens invitation connection only when joining another library explicitly", () => {
     render(<CloudConnectionPanel {...props()} />);
+    expect(screen.queryByLabelText("云库邀请链接或配置")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "加入其他云库" }));
     expect(screen.getByLabelText("云库邀请链接或配置")).toBeTruthy();
     expect(screen.getByRole("button", { name: "解析并连接" })).toBeTruthy();
     expect(screen.queryByLabelText("Worker API URL")).toBeNull();
@@ -65,6 +67,7 @@ describe("CloudConnectionPanel", () => {
   it("saves a pasted invite as a validated connection", async () => {
     const onSave = vi.fn(async () => undefined);
     render(<CloudConnectionPanel {...props({ onSave })} />);
+    fireEvent.click(screen.getByRole("button", { name: "加入其他云库" }));
     fireEvent.change(screen.getByLabelText("云库邀请链接或配置"), { target: { value: invite } });
     fireEvent.click(screen.getByRole("button", { name: "解析并连接" }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
@@ -87,6 +90,7 @@ describe("CloudConnectionPanel", () => {
     const saved = { id: "selected", name: "Old", apiUrl: "https://old.example", supabaseUrl: "https://old.supabase.co", publicKey: "sb_publishable_old", maxFileBytes: 1000 };
     const onSave = vi.fn(async () => undefined);
     render(<CloudConnectionPanel {...props({ connections: [saved], activeId: saved.id, onSave })} />);
+    fireEvent.click(screen.getByRole("button", { name: "加入其他云库" }));
     fireEvent.change(screen.getByLabelText("云库邀请链接或配置"), { target: { value: invite } });
     fireEvent.click(screen.getByRole("button", { name: "解析并连接" }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
@@ -97,6 +101,7 @@ describe("CloudConnectionPanel", () => {
     const onInvitation = vi.fn();
     const link = `${invite}&invite=token&library=lib-123`;
     render(<CloudConnectionPanel {...props({ onInvitation })} />);
+    fireEvent.click(screen.getByRole("button", { name: "加入其他云库" }));
     fireEvent.change(screen.getByLabelText("云库邀请链接或配置"), { target: { value: link } });
     fireEvent.click(screen.getByRole("button", { name: "解析并连接" }));
     await waitFor(() => expect(onInvitation).toHaveBeenCalledWith("token", "lib-123", expect.any(String)));
@@ -112,6 +117,7 @@ describe("CloudConnectionPanel", () => {
 
   it("shows a short error and keeps the input after malformed paste", async () => {
     render(<CloudConnectionPanel {...props()} />);
+    fireEvent.click(screen.getByRole("button", { name: "加入其他云库" }));
     const input = screen.getByLabelText("云库邀请链接或配置");
     fireEvent.change(input, { target: { value: "not a cloud invite" } });
     fireEvent.click(screen.getByRole("button", { name: "解析并连接" }));

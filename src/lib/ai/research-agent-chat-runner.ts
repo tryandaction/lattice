@@ -26,6 +26,7 @@ import {
 import { buildNoteTakingDraftSuggestion } from './lattice-skills/note-taking-draft-planner';
 import { buildWorkflowAnswerInstructions } from './research-workflow-answer';
 import { preparePdfAnnotationProposal } from './pdf-annotation-agent';
+import { verifiedPdfAnnotationToolDeliveries } from './pdf-annotation-tool-delivery';
 import type { TransientPdfAnnotation } from './transient-pdf-annotations';
 import { effectiveOutputTokenCeiling, outputTokenBudget } from './output-budget';
 import { requestsMarkdownDocument } from './task-outcome';
@@ -367,7 +368,7 @@ export async function runResearchAgentForSurface(
   const workflow = getResearchAgentWorkflow(inferredWorkflowId);
   const markdownDocument = requestsMarkdownDocument(agentInput.task ?? agentInput.query ?? '');
   const noteConfig = resolveNoteTakingSkillConfig(workflow, noteConfigOverrides);
-  const annotationLimit = noteConfigOverrides?.annotationLimit ?? (agentInput.documentSources?.length || agentInput.documentDirectory ? 12 : 5);
+  const annotationLimit = noteConfigOverrides?.annotationLimit ?? 5;
   const answerConfig = { ...noteConfig, annotationLimit };
   const workflowPlannerHints = workflow
     ? buildResearchAgentWorkflowPlannerHints(
@@ -442,13 +443,13 @@ export async function runResearchAgentForSurface(
     answerInstructions: [responseMode === 'conversation' && !markdownDocument && workflow?.id !== 'pdf-annotation'
       ? 'This is a conversational document question. Answer the latest question at its requested depth and honor explicit language or style preferences; otherwise mirror the language of the question. Explain mechanisms and supported derivations clearly, distinguishing evidence from deductions. Cite original passages. Do not output a reading-note template, annotation proposal or claim any file write.\n' + (settings.systemPrompt ?? '')
       : buildWorkflowAnswerInstructions(workflow, answerConfig, settings.systemPrompt, { markdownDocument }), agentInput.answerInstructions].filter(Boolean).join('\n\n'),
-    validateAnswer: (answer, context) => {
-      agentInput.validateAnswer?.(answer, context);
+    validateAnswer: (answer, context, toolResults) => {
+      agentInput.validateAnswer?.(answer, context, toolResults);
       const proposal = workflow?.id === 'pdf-annotation' ? preparePdfAnnotationProposal(answer, context.evidenceRefs, { maxAnnotations: annotationLimit }) : null;
       if (proposal && markdownDocument && !proposal.text.trim()) {
         throw new Error('缺少用户要求的 Markdown 讲解正文。请保留批注提案，同时补充有证据支持的完整讲解。');
       }
-      if (proposal && !markdownDocument && proposal.annotations.length === 0) {
+      if (proposal && !markdownDocument && proposal.annotations.length === 0 && !verifiedPdfAnnotationToolDeliveries(toolResults).length) {
         throw new Error('批注提案未通过原文或结构校验，本次没有写入。已读进度会保留，可继续重新生成建议。');
       }
     },
@@ -469,12 +470,25 @@ export async function runResearchAgentForSurface(
     }),
   });
 
+  const annotationToolDeliveries = workflow?.id === 'pdf-annotation' ? verifiedPdfAnnotationToolDeliveries(result.toolResults) : [];
+  const hasAnnotationToolDelivery = annotationToolDeliveries.length > 0;
+  const annotationValidationWarnings: string[] = [];
+  for (const receipt of result.toolResults ?? []) {
+    if (receipt.status !== 'completed' || receipt.toolName !== 'lattice.pdf.proposeAnnotations' || !receipt.result || typeof receipt.result !== 'object') continue;
+    const validation = (receipt.result as { annotationValidation?: { acceptedCount: number; rejectedCount: number } }).annotationValidation;
+    if (validation && validation.rejectedCount > 0) annotationValidationWarnings.push(noteConfig.language === 'en-US'
+      ? `${validation.acceptedCount} verified annotation draft${validation.acceptedCount === 1 ? '' : 's'} retained for review; ${validation.rejectedCount} suggestion${validation.rejectedCount === 1 ? '' : 's'} could not be located in the original text and ${validation.rejectedCount === 1 ? 'was' : 'were'} excluded. No annotations have been applied.`
+      : `已保留 ${validation.acceptedCount} 条通过原文核验的批注草稿；另有 ${validation.rejectedCount} 条未能定位，已排除。请审查有效草稿后应用，本次尚未写入批注。`);
+  }
+  adapterWarnings.push(...annotationValidationWarnings);
+  const annotationValidationNotice = annotationValidationWarnings.length ? `\n\n${annotationValidationWarnings.join('\n\n')}` : '';
+
   const draftSuggestion = result.documentReading?.resumable || responseMode === 'conversation' && !markdownDocument ? undefined : buildNoteTakingDraftSuggestion({
     workflow,
     result,
     noteConfig,
   });
-  const annotationProposal = workflow?.id === 'pdf-annotation' && !result.documentReading?.resumable
+  const annotationProposal = workflow?.id === 'pdf-annotation' && !result.documentReading?.resumable && !hasAnnotationToolDelivery
     ? preparePdfAnnotationProposal(result.answer, result.promptContext.evidenceRefs, { maxAnnotations: annotationLimit })
     : null;
   if (annotationProposal && !markdownDocument && annotationProposal.annotations.length === 0) {
@@ -496,7 +510,8 @@ export async function runResearchAgentForSurface(
     agentResult: { ...buildResearchAgentResultMetadata({
       result,
       adapterWarnings,
-    }), ...(annotationProposal ? { deliveryStatus: annotationProposal.annotations.length ? 'ready_for_review' as const : 'partial' as const } : {}) },
+    }), ...(hasAnnotationToolDelivery ? { deliveryStatus: annotationToolDeliveries.some(delivery => delivery.rejectedCount > 0) ? 'partial' as const : 'ready_for_review' as const }
+      : annotationProposal ? { deliveryStatus: annotationProposal.annotations.length ? 'ready_for_review' as const : 'partial' as const } : {}) },
     followUpActions: buildWorkflowFollowUpActions({
       workflow,
       result,
@@ -504,10 +519,14 @@ export async function runResearchAgentForSurface(
     }),
     draftSuggestion,
     annotationProposal: annotationProposal?.annotations,
-    chatText: annotationProposal
-      ? `${markdownDocument ? `${annotationProposal.text}\n\nMarkdown 讲解已生成，尚未保存为文件。\n\n` : ''}${result.documentReading ? `已分析 ${result.documentReading.coverage.reduce((sum, item) => sum + item.readUnits.length, 0)}/${result.documentReading.coverage.reduce((sum, item) => sum + item.totalUnits, 0)} 页/节。` : ''}${annotationProposal.annotations.length ? `已生成 ${annotationProposal.annotations.length} 条原文高亮建议，尚未写入 PDF。请核对下方引文与理由后应用。` : '批注未就绪：没有建议通过原文与结构校验，本次没有写入 PDF；Markdown 讲解已保留。'}${readingEvidenceGap}${annotationProposal.rejectedCount ? `另有 ${annotationProposal.rejectedCount} 条建议未通过原文校验，已排除。` : ''}${annotationProposal.limitedCount ? `按本次数量上限保留了最先列出的建议；另有 ${annotationProposal.limitedCount} 条未列入。` : ''}`
+    chatText: hasAnnotationToolDelivery
+      ? `${preparePdfAnnotationProposal(result.answer, result.promptContext.evidenceRefs, { maxAnnotations: annotationLimit }).text}\n\n${noteConfig.language === 'en-US'
+        ? 'Verified annotation drafts are ready in AI Workbench. Open this message’s draft to review and apply them; no annotations have been written to the PDF.'
+        : '已将通过原文核验的批注草稿提交 AI 工作台。请打开当前消息的草稿审查后应用，尚未写入 PDF。'}${annotationValidationNotice}`
+      : annotationProposal
+      ? `${markdownDocument ? `${annotationProposal.text}\n\nMarkdown 讲解已生成，尚未保存为文件。\n\n` : ''}${result.documentReading ? `已分析 ${result.documentReading.coverage.reduce((sum, item) => sum + item.readUnits.length, 0)}/${result.documentReading.coverage.reduce((sum, item) => sum + item.totalUnits, 0)} 页/节。` : ''}${annotationProposal.annotations.length ? `已生成 ${annotationProposal.annotations.length} 条原文高亮建议，尚未写入 PDF。请核对下方引文与理由后应用。` : '批注未就绪：没有建议通过原文与结构校验，本次没有写入 PDF；Markdown 讲解已保留。'}${readingEvidenceGap}${annotationProposal.rejectedCount ? `另有 ${annotationProposal.rejectedCount} 条建议未通过原文校验，已排除。` : ''}${annotationProposal.limitedCount ? `按本次数量上限保留了最先列出的建议；另有 ${annotationProposal.limitedCount} 条未列入。` : ''}${annotationValidationNotice}`
       : responseMode === 'conversation' && result.answer.trim()
-      ? result.answer.trim()
+      ? `${result.answer.trim()}${annotationValidationNotice}`
       : formatResearchAgentChatAnswer({
       result,
       plannerModel,

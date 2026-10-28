@@ -998,6 +998,104 @@ describe('AiChatPanel selection-origin flows', () => {
     } finally { unregister(); }
   });
 
+  it('displays the explicitly selected cloud entry source when another file remains active', async () => {
+    const provider: CloudLibrarySourceProvider = { scope: 'source-display-account', list: vi.fn(), read: vi.fn(), search: vi.fn(), save: vi.fn() };
+    setCloudWorkspaceProvider(provider);
+    setCloudWorkspaceResource({ id: 'unrelated', libraryId: 'other', itemId: 'active', name: 'Unrelated active file.md', kind: 'markdown', path: 'cloud://active', role: 'viewer', content: null });
+    const { openCloudAiEntry } = await import('@/lib/shared-library/cloud-ai-entry');
+    openCloudAiEntry({ provider, expectedScope: 'source-display-account', selection: { libraryId: 'selected', itemId: 'paper', kind: 'file' }, sourceName: 'Explicit selected source.pdf' });
+    render(<AiChatPanel loadPersistedState={false} />);
+    const sources = screen.getByTestId('ai-cloud-source-selection');
+    expect(sources.textContent).toContain('已选 AI 云来源：');
+    expect(sources.textContent).toContain('Explicit selected source.pdf');
+    expect(sources.textContent).not.toContain('Unrelated active file.md');
+    expect((screen.getByTestId('ai-chat-input') as HTMLTextAreaElement).value).toBe('');
+    expect(useAiChatStore.getState().getActiveConversation()?.messages).toEqual([]);
+    expect(provider.read).not.toHaveBeenCalled();
+  });
+
+  it.each(['api', 'codex'] as const)('keeps a scoped cloud draft unsent after an account switch in the %s engine', async (engine) => {
+    useAiHarnessStore.getState().setConfig({ engine });
+    const read = vi.fn().mockRejectedValue(new Error('The switched account must not read this draft source'));
+    const provider: CloudLibrarySourceProvider = { scope: 'account-b', list: vi.fn(), read, search: vi.fn(), save: vi.fn() };
+    setCloudWorkspaceProvider(provider);
+    useAiChatStore.setState({ hasHydratedConversations: true, conversations: [{ id: 'scoped-cloud-draft', title: 'Cloud source', createdAt: 1, messages: [],
+      workspace: { workspaceKey: 'cloud:library', libraryId: 'library', permissionScope: 'account-a' },
+      draft: { text: '@cloud:library:paper Explain this source', mode: 'agent' },
+    }], activeConversationId: 'scoped-cloud-draft', composerDraft: null, isOpen: true });
+    render(<AiChatPanel loadPersistedState={false} />);
+    const composer = screen.getByTestId('ai-chat-input');
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
+    await waitFor(() => expect(screen.getByTestId('ai-source-validation-notice').textContent).toContain('重新选择云来源'));
+    expect((composer as HTMLTextAreaElement).value).toBe('Explain this source');
+    expect(useAiChatStore.getState().getActiveConversation()?.messages).toEqual([]);
+    expect(useAiChatStore.getState().getActiveConversation()?.workspace?.permissionScope).toBe('account-a');
+    expect(read).not.toHaveBeenCalled();
+    expect(orchestratorMocks.runChat).not.toHaveBeenCalled();
+    expect(researchAgentMocks.runResearchAgentForChat).not.toHaveBeenCalled();
+  });
+
+  it('keeps cloud identities in the draft while editing only the question and removing the source chip', async () => {
+    const provider: CloudLibrarySourceProvider = { scope: 'question-account', list: vi.fn(), read: vi.fn(), search: vi.fn(), save: vi.fn() };
+    setCloudWorkspaceProvider(provider);
+    const { openCloudAiEntry } = await import('@/lib/shared-library/cloud-ai-entry');
+    const { conversationId } = openCloudAiEntry({ provider, expectedScope: 'question-account', selection: { libraryId: '11111111-library', itemId: '22222222-paper', kind: 'file' }, sourceName: 'Friendly paper.pdf' });
+    render(<AiChatPanel loadPersistedState={false} />);
+    const input = screen.getByTestId('ai-chat-input') as HTMLTextAreaElement;
+    expect(input.value).toBe('');
+    fireEvent.change(input, { target: { value: 'Explain this experiment\nKeep the second line' } });
+    expect(input.value).toBe('Explain this experiment\nKeep the second line');
+    expect(useAiChatStore.getState().getConversationDraft()?.text).toBe('@cloud:11111111-library:22222222-paper Explain this experiment\nKeep the second line');
+    act(() => {
+      useAiChatStore.getState().newConversation();
+      useAiChatStore.getState().setConversationDraft('An independent local question');
+    });
+    expect(input.value).toBe('An independent local question');
+    act(() => useAiChatStore.getState().setActiveConversation(conversationId));
+    expect(input.value).toBe('Explain this experiment\nKeep the second line');
+    fireEvent.click(screen.getByRole('button', { name: '移除云来源 22222222-paper' }));
+    expect(useAiChatStore.getState().getConversationDraft()?.text).not.toContain('@cloud:');
+    expect(input.value).toBe('Explain this experiment\nKeep the second line');
+    expect(provider.read).not.toHaveBeenCalled();
+  });
+
+  it('routes an Enter-submitted natural question to its hidden selected cloud source', async () => {
+    const current: CloudLibraryResource = { id: 'lattice-cloud:question-account:library:paper', libraryId: 'library', itemId: 'paper', name: 'Friendly paper.md', kind: 'markdown', path: 'cloud://paper', role: 'viewer', versionId: 'v1', content: { kind: 'text', text: '# Experiment\n\nGrounded hidden source.', mimeType: 'text/markdown', updatedAt: 'today' } };
+    const provider: CloudLibrarySourceProvider = { scope: 'question-account', list: vi.fn().mockResolvedValue([]), read: vi.fn().mockResolvedValue(current), search: vi.fn(), save: vi.fn() };
+    setCloudWorkspaceProvider(provider);
+    const { openCloudAiEntry } = await import('@/lib/shared-library/cloud-ai-entry');
+    openCloudAiEntry({ provider, expectedScope: 'question-account', selection: { libraryId: 'library', itemId: 'paper', kind: 'file' }, sourceName: current.name });
+    let requestSource: string | undefined;
+    researchAgentMocks.runResearchAgentForChat.mockImplementationOnce(async request => {
+      requestSource = request.documentSources?.[0]?.path;
+      return { chatText: 'Answer from the selected source', result: { promptContext: { nodes: [], prompt: '', evidenceRefs: [], truncated: false } }, agentResult: { sessionId: request.sessionId }, followUpActions: [] };
+    });
+    render(<AiChatPanel loadPersistedState={false} />);
+    const input = screen.getByTestId('ai-chat-input') as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: 'Explain the experiment in detail' } });
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+    await waitFor(() => expect(requestSource).toBe(current.id));
+    expect(provider.read).toHaveBeenCalledWith('library', 'paper', expect.anything());
+    expect(useAiChatStore.getState().getActiveConversation()?.messages[0].content).toBe('@cloud:library:paper Explain the experiment in detail');
+  });
+
+  it('does not rebind a scoped cloud conversation if the account changes during source discovery', async () => {
+    const current: CloudLibraryResource = { id: 'lattice-cloud:account-a:library:paper', libraryId: 'library', itemId: 'paper', versionId: 'v1', role: 'viewer', kind: 'markdown', name: 'paper.md', path: 'cloud://paper', content: { kind: 'text', text: '# Source\n\nOriginal account content.', mimeType: 'text/markdown', updatedAt: 'today' } };
+    const otherRead = vi.fn().mockResolvedValue({ ...current, id: 'lattice-cloud:account-b:library:paper' });
+    const other: CloudLibrarySourceProvider = { scope: 'account-b', list: vi.fn(), read: otherRead, search: vi.fn(), save: vi.fn() };
+    const provider: CloudLibrarySourceProvider = { scope: 'account-a', list: vi.fn(), read: vi.fn(async () => { setCloudWorkspaceProvider(other); return current; }), search: vi.fn(), save: vi.fn() };
+    setCloudWorkspaceProvider(provider);
+    useAiChatStore.setState({ hasHydratedConversations: true, conversations: [{ id: 'cloud-discovery-race', title: 'Cloud source', createdAt: 1, messages: [],
+      workspace: { workspaceKey: 'cloud:library', libraryId: 'library', permissionScope: 'account-a' }, draft: { text: '@cloud:library:paper Explain this source', mode: 'agent' },
+    }], activeConversationId: 'cloud-discovery-race', composerDraft: null, isOpen: true });
+    render(<AiChatPanel loadPersistedState={false} />);
+    fireEvent.keyDown(screen.getByTestId('ai-chat-input'), { key: 'Enter', code: 'Enter' });
+    await waitFor(() => expect(useAiChatStore.getState().getActiveConversation()?.messages.at(-1)?.error).toBeTruthy());
+    expect(useAiChatStore.getState().getActiveConversation()?.workspace?.permissionScope).toBe('account-a');
+    expect(otherRead).not.toHaveBeenCalled();
+    expect(researchAgentMocks.runResearchAgentForChat).not.toHaveBeenCalled();
+  });
+
   it('uses the current cloud resource through fresh provider access without touching the personal active tab', async () => {
     const privateRead = vi.fn().mockRejectedValue(new Error('Personal file must not be read'));
     useWorkspaceStore.setState({ layout: { activePaneId: 'personal', root: { type: 'pane', id: 'personal', activeTabIndex: 0, tabs: [{ id: 'personal-file', kind: 'file', fileName: 'same.md', filePath: 'private/same.md', fileHandle: { getFile: privateRead } as unknown as FileSystemFileHandle, isDirty: false, scrollPosition: 0 }] } } });

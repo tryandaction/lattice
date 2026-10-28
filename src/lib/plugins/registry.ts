@@ -1,9 +1,11 @@
 import type { PluginManifest, PluginModule } from './types';
 import { formulaExtractorPlugin } from '@/plugins/formula-extractor';
+import { quantumKeyboardPlugin } from '@/plugins/quantum-keyboard';
 import { DEFAULT_ENABLED_PLUGIN_IDS as DEFAULT_PLUGIN_IDS } from '@/lib/plugins/defaults';
 
 const registry = new Map<string, PluginModule>([
   [formulaExtractorPlugin.manifest.id, formulaExtractorPlugin],
+  [quantumKeyboardPlugin.manifest.id, quantumKeyboardPlugin],
 ]);
 
 export const DEFAULT_ENABLED_PLUGIN_IDS = DEFAULT_PLUGIN_IDS.filter((id) => (

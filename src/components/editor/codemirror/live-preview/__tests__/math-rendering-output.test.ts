@@ -6,8 +6,38 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { describe, expect, it, vi } from "vitest";
 import { MathWidget, renderInlineMarkdownHtml } from "../widgets";
+import { quantumMathEditingExtension, quantumMathEditField } from "@/plugins/quantum-keyboard/editor-extension";
 
 describe("live preview math rendering output", () => {
+  it("preserves the rendered widget until a double click can open the plugin editor", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const view = new EditorView({ state: EditorState.create({ doc: "$x^2$", extensions: quantumMathEditingExtension }), parent: host });
+    const dom = new MathWidget("x^2", false, 0, 5).toDOM(view);
+    view.dom.appendChild(dom);
+    try {
+      dom.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+      expect(view.state.selection.main.head).toBe(0);
+      dom.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));
+      expect(view.state.field(quantumMathEditField)).toMatchObject({ from: 0, to: 5, latex: "x^2", displayMode: false });
+    } finally {
+      view.destroy(); host.remove();
+    }
+  });
+
+  it("does not enter source mode on right mousedown before the native copy menu", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const view = new EditorView({ state: EditorState.create({ doc: "$x^2$" }), parent: host });
+    const dom = new MathWidget("x^2", false, 0, 5).toDOM(view);
+    view.dom.appendChild(dom);
+    try {
+      dom.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 2 }));
+      expect(view.state.selection.main.head).toBe(0);
+    } finally {
+      view.destroy(); host.remove();
+    }
+  });
   it("renders inline math without embedding MathML fallback text in table HTML", () => {
     const html = renderInlineMarkdownHtml("$a^2 + b^2 = c^2$");
     const container = document.createElement("div");

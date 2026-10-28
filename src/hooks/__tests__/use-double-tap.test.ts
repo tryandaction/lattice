@@ -4,13 +4,61 @@
  * Validates: Requirements 1.1, 1.2
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { act, cleanup, renderHook } from '@testing-library/react';
 import * as fc from 'fast-check';
 import {
   detectDoubleTap,
+  useDoubleTap,
   wouldTriggerDoubleTap,
   type DoubleTapState,
 } from '../use-double-tap';
+
+describe('double Tab native input boundaries', () => {
+  afterEach(() => { cleanup(); vi.useRealTimers(); });
+
+  function tap(options: KeyboardEventInit = {}) {
+    const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true, ...options });
+    act(() => { document.dispatchEvent(event); vi.advanceTimersByTime(20); });
+    return event;
+  }
+
+  it('does not open from key repeat or pair a later press with a held key', () => {
+    vi.useFakeTimers(); vi.setSystemTime(1000);
+    const open = vi.fn();
+    renderHook(() => useDoubleTap({ key: 'Tab', onDoubleTap: open, preventDefaultOnFirstTap: true }));
+    tap();
+    expect(tap({ repeat: true }).defaultPrevented).toBe(false);
+    tap();
+    expect(open).not.toHaveBeenCalled();
+    tap();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([{ ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true }, { isComposing: true }])(
+    'leaves modified/composing Tab native and resets the tap sequence: %j', options => {
+      vi.useFakeTimers(); vi.setSystemTime(1000);
+      const open = vi.fn();
+      renderHook(() => useDoubleTap({ key: 'Tab', onDoubleTap: open, preventDefaultOnFirstTap: true }));
+      tap();
+      expect(tap(options).defaultPrevented).toBe(false);
+      tap();
+      expect(open).not.toHaveBeenCalled();
+      tap();
+      expect(open).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('requires consecutive taps with no other key between them', () => {
+    vi.useFakeTimers(); vi.setSystemTime(1000);
+    const open = vi.fn();
+    renderHook(() => useDoubleTap({ key: 'Tab', onDoubleTap: open }));
+    tap(); tap({ key: 'a' }); tap();
+    expect(open).not.toHaveBeenCalled();
+    tap();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('useDoubleTap', () => {
   const DEFAULT_THRESHOLD = 250;

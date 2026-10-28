@@ -11,7 +11,6 @@ import { LanguageSelector } from './language-selector';
 import { ThemeSelector } from './theme-selector';
 import { PluginsPanel } from './plugins-panel';
 import { FolderSelector } from './folder-selector';
-import { QuantumKeyboardEditor } from './quantum-keyboard-editor';
 import { isTauri, isTauriHost } from '@/lib/storage-adapter';
 import { getAvailablePlugins } from '@/lib/plugins/registry';
 import { readVSCodeConfigFromDetectedProfiles } from '@/lib/vscode-compat/auto-discovery';
@@ -63,7 +62,7 @@ const tabs: { id: SettingsTab; icon: typeof Settings; labelKey: 'settings.genera
 const APP_VERSION = packageJson.version;
 
 export function SettingsDialog({ isOpen, onClose, initialTab = 'general' }: SettingsDialogProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const dialogRef = useRef<HTMLDivElement>(null);
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const updateSetting = useSettingsStore((state) => state.updateSetting);
@@ -644,22 +643,12 @@ export function SettingsDialog({ isOpen, onClose, initialTab = 'general' }: Sett
                   </div>
                   <div className="space-y-1">
                     <ShortcutItem label={t('settings.shortcuts.quantumOpen')} shortcut="Tab Tab" />
-                    <ShortcutItem label={t('settings.shortcuts.fraction')} shortcut="4 / F" />
-                    <ShortcutItem label={t('settings.shortcuts.sqrt')} shortcut="3 / R" />
-                    <ShortcutItem label={t('settings.shortcuts.sum')} shortcut="5 / S" />
-                    <ShortcutItem label={t('settings.shortcuts.integral')} shortcut="6 / I" />
-                    <ShortcutItem label={t('settings.shortcuts.limit')} shortcut="7 / L" />
-                    <ShortcutItem label={t('settings.shortcuts.matrix')} shortcut="M / X" />
-                    <ShortcutItem label={t('settings.shortcuts.vector')} shortcut="V" />
-                    <ShortcutItem label={t('settings.shortcuts.quantumTab')} shortcut="Tab" />
-                    <ShortcutItem label={t('settings.shortcuts.quantumNested')} shortcut="Alt+键" />
-                    <ShortcutItem label={t('settings.shortcuts.quantumShiftTab')} shortcut="Shift+Tab" />
-                    <ShortcutItem label={t('settings.shortcuts.quantumVariant')} shortcut={t('settings.shortcuts.quantumVariantShortcut')} />
+                    <ShortcutItem label={t('settings.shortcuts.quantumTab')} shortcut="Tab / Shift+Tab" />
                     <ShortcutItem label={t('settings.shortcuts.quantumClose')} shortcut="Esc" />
                   </div>
                 </div>
 
-                <QuantumKeyboardEditor />
+                <p className="px-1 text-xs leading-5 text-muted-foreground">{locale === 'en-US' ? 'Quantum Keyboard is an official Lattice plugin. Enable it in Plugins, then browse, search or configure key mappings in its panel.' : '量子键盘已作为 Lattice 官方插件提供。请在插件中启用；打开面板后可浏览公式、搜索或配置键位。'}</p>
 
                 {/* Line operations */}
                 <div>

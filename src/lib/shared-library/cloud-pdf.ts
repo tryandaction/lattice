@@ -16,6 +16,8 @@ export interface CloudPdfWorkspace {
 /** Shared renderer seam owned by the host. Never pass a cloud URL to local filesystem storage. */
 export interface CloudPdfDocument {
   identity: string;
+  /** Stable connection/resource identity, excluding the source version, for local view preferences. */
+  viewScope?: string;
   sourceVersion?: string;
   authorId: string;
   authorNames?: Record<string, string>;

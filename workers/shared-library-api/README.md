@@ -53,3 +53,65 @@ provide TUS byte-offset resumption. The Worker forwards the user JWT for Storage
 verifies persisted size/SHA-256, and atomically registers Supabase blob metadata.
 Expired upload capacity is released only after authenticated Storage API cleanup
 and database confirmation. See [deployment and limits](../../docs/operations/supabase-library-storage.md).
+
+## Team AI
+
+Apply `202610270001_cloud_team_ai.sql` and `202610280001_cloud_team_ai_owner_config.sql`
+before enabling team AI. Configure `TEAM_AI_ENCRYPTION_KEY` as a Worker/Edge
+Function secret. This is a random 32-byte AES-256 key owned by the deployment,
+not a model API key. `TEAM_AI_PROVIDERS_JSON` remains an optional legacy mode;
+the normal product flow lets a library owner/admin configure the team's provider,
+endpoint, models, API key and limits inside Lattice.
+
+Never use `NEXT_PUBLIC_` variables for server secrets or include encrypted values
+in browser responses. A library provider key is encrypted with AES-GCM and bound
+to the library/provider identity. Members receive only provider metadata.
+
+The legacy deployment-only provider shape is retained for existing installations:
+
+~~~json
+[
+  {
+    "id": "team",
+    "label": "Team model",
+    "baseUrl": "https://approved-provider.example.com/v1",
+    "apiKey": "REPLACE_WITH_WORKER_SECRET",
+    "models": ["approved-model"],
+    "maxOutputTokens": 1024,
+    "requestBudgetUsdMicros": 10000
+  }
+]
+~~~
+
+Routes are GET /v1/libraries/:libraryId/ai/providers and
+POST /v1/libraries/:libraryId/ai/chat. Only configured provider URLs and models
+are accepted. Upstreams require HTTPS, a public DNS hostname and no credentials,
+query, fragment or custom port; redirects fail closed. Clients cannot supply
+URLs, headers, keys or tools. This release supports non-streaming text chat:
+at most 64 messages, 65,536 total message characters, 128 KiB JSON request and
+response bodies, and 8,192 output tokens, further restricted by each provider
+and library. Provider descriptors contain only id, label, models and maxOutputTokens.
+
+The normal user-configured flow creates/updates the library policy through the
+owner/admin-only `/v1/libraries/:libraryId/ai/config` route. Missing or disabled
+policies deny chat; regular members cannot edit the policy or read provider keys.
+The service-role credential and `TEAM_AI_ENCRYPTION_KEY` remain restricted to the
+trusted Worker/Edge Function. Legacy deployment-managed providers may continue
+to use an explicitly provisioned policy row.
+
+Before each paid request the Worker validates the caller through Supabase Auth,
+checks active library membership, then invokes the service-role-only
+cloud_reserve_ai_request RPC. The RPC rechecks membership and policy under a
+library transaction lock and records one immutable request allocation. Daily
+request and monthly budget periods use UTC. requestBudgetUsdMicros is a fixed
+conservative allocation for each attempt, **not measured invoice cost**; set it
+at least as high as the provider's worst-case cost for the allowed input/output
+limits and revisit it when pricing changes. One dollar is 1,000,000 microdollars.
+Allocations remain consumed after provider errors or timeouts because billing
+may already have occurred. No automatic retries or refunds occur in the Worker.
+
+Chat accepts {providerId, model, messages, maxTokens?, temperature?} and returns
+{providerId, model, content, usage, reservationId}. Usage exposes only numeric
+promptTokens, completionTokens and totalTokens when provided upstream. Errors
+use the existing stable envelope without upstream bodies, URLs, credentials or
+raw exception text. A missing budget migration/configuration fails closed.

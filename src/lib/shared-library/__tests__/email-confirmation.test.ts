@@ -36,7 +36,7 @@ describe("cloud email confirmation return", () => {
   });
   it("does not treat incomplete or password recovery credentials as signup success", () => {
     expect(readCloudEmailCallback("https://app.example/#access_token=partial&type=signup").callback?.kind).toBe("error");
-    expect(readCloudEmailCallback(`https://app.example/#access_token=${accessToken}&refresh_token=r&type=recovery`).callback?.kind).toBe("error");
+    expect(readCloudEmailCallback(`https://app.example/#access_token=${accessToken}&refresh_token=r&type=recovery`).callback?.kind).toBe("recovery");
   });
   it("only selects an already configured service matching the token issuer", () => {
     expect(findEmailCallbackConnection(tokens, [connection])).toBe(connection);

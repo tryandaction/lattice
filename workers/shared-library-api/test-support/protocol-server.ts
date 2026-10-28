@@ -37,10 +37,11 @@ export async function createProtocolServer(options: { authPort?: number; apiPort
   const modulePath = pathToFileURL(resolve(".lattice-build/cloud-team-test-runtime/node_modules/@electric-sql/pglite/dist/index.js")).href;
   const { PGlite } = await import(/* @vite-ignore */ modulePath) as { PGlite: new () => Database };
   const db = new PGlite();
-  await db.exec(`create role anon nologin; create role authenticated nologin;
+  await db.exec(`create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
     create schema auth; create table auth.users(id uuid primary key,email text);
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     create function auth.jwt() returns jsonb language sql stable as $$ select jsonb_build_object('sub',auth.uid()) $$;
+    create function auth.role() returns text language sql stable as $$ select coalesce(nullif(current_setting('request.jwt.claim.role',true),''),'authenticated') $$;
     grant usage on schema auth,public to authenticated; grant execute on all functions in schema auth to authenticated;
     insert into auth.users values('${PROFILE_A}','a@cloud.test'),('${PROFILE_B}','b@cloud.test');`);
   if (options.storageBackend === "supabase") await db.exec(`create schema storage;
@@ -57,6 +58,7 @@ export async function createProtocolServer(options: { authPort?: number; apiPort
   }
   await db.exec("grant select,insert,update,delete on all tables in schema public to authenticated; grant usage,select on all sequences in schema public to authenticated;");
   if (options.storageBackend === "supabase") await db.exec("grant select,insert,update,delete on all tables in schema storage to authenticated");
+  for (const migration of ['202610270001_cloud_team_ai.sql', '202610270002_cloud_collaboration_audit.sql', '202610270003_github_integration.sql', '202610280001_cloud_team_ai_owner_config.sql']) await db.exec(await readFile(resolve('supabase/migrations', migration), 'utf8'));
   const tokens = new Map<string, string>();
   const refresh = new Map<string, string>();
   const signingKey = randomUUID();
@@ -104,9 +106,12 @@ export async function createProtocolServer(options: { authPort?: number; apiPort
         }
         const where = conditions.length ? ` where ${conditions.join(" and ")}` : "";
         if (request.method === "GET") {
-          const select = url.searchParams.get("select") ?? "*";
-          if (!/^[a-z0-9_,*]+$/.test(select)) throw new Error("invalid select");
-          const order = url.searchParams.get("order")?.split(",").map(part => { const [column, direction] = part.split("."); if (!/^[a-z_]+$/.test(column) || !["asc", "desc"].includes(direction)) throw new Error("invalid order"); return `${column} ${direction}`; }).join(",");
+          const select = (url.searchParams.get("select") ?? "*").split(',').map(column => {
+            if (column === 'sequence::text') return 'sequence::text as sequence';
+            if (!/^(?:[a-z_][a-z0-9_]*|\*)$/.test(column)) throw new Error('invalid select');
+            return column;
+          }).join(',');
+          const order = url.searchParams.get("order")?.split(",").map(part => { const [column, direction] = part.split("."); if (!/^[a-z_]+$/.test(column) || !["asc", "desc"].includes(direction)) throw new Error("invalid order"); return `${route}.${column} ${direction}`; }).join(",");
           const limit = Number(url.searchParams.get("limit") ?? 10000);
           const result = await transaction.query(`select ${select} from public.${route}${where}${order ? ` order by ${order}` : ""} limit ${Math.min(limit, 10000)}`, params);
           return json(result.rows);
@@ -188,6 +193,10 @@ export async function createProtocolServer(options: { authPort?: number; apiPort
         const userId = tokens.get(request.headers.get("authorization")?.replace(/^Bearer /, "") ?? "");
         for (const [key, id] of refresh) if (id === userId) refresh.delete(key);
         await send(response, new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } })); return;
+      }
+      if (url.pathname === '/auth/v1/user' && request.method === 'GET') {
+        const userId = tokens.get(request.headers.get('authorization')?.replace(/^Bearer /, '') ?? '');
+        await send(response, userId ? json({ id: userId }) : json({ error: 'invalid fixture session' }, 401)); return;
       }
       await send(response, json({ error: "not found" }, 404));
     } catch (e) { await send(response, json({ error: String(e) }, 500)); }

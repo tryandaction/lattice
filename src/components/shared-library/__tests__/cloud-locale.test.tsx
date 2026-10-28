@@ -49,6 +49,7 @@ describe("cloud interface locale", () => {
   it("translates invalid invitation feedback and advanced fields without discarding the draft", async () => {
     const onSave = vi.fn();
     render(<CloudConnectionPanel connections={[]} onSelect={vi.fn()} onSave={onSave} onLogin={vi.fn()} onLogout={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "加入其他云库" }));
     fireEvent.change(screen.getByLabelText("云库邀请链接或配置"), { target: { value: "invalid fixture" } });
     fireEvent.click(screen.getByRole("button", { name: "解析并连接" }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("无法识别"));

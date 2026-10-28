@@ -1,6 +1,38 @@
 import { validateCloudPath } from "./connection";
 
 export interface CloudImportFailure { file: File; path: string; error: string }
+export type CloudImportState = "pending" | "reading" | "queued" | "synced" | "failed" | "cancelled" | "paused" | "conflicted";
+export interface CloudImportEntry {
+  id: string;
+  file: File;
+  path: string;
+  state: CloudImportState;
+  error?: string;
+  libraryId?: string;
+  parentItemId?: string;
+  itemId?: string;
+  relatedItemIds?: string[];
+}
+
+/** File capabilities stay in memory until their bytes have entered the durable outbox. */
+export function createCloudImportBatch(files: File[], maxFileBytes: number, remainingBytes?: number): CloudImportEntry[] {
+  const seen = new Set<string>();
+  const entries = files.map((file): CloudImportEntry => {
+    const entry: CloudImportEntry = { id: crypto.randomUUID(), file, path: file.webkitRelativePath || file.name, state: "pending" };
+    try {
+      entry.path = validateCloudPath(entry.path);
+      if (seen.has(entry.path)) throw new Error("上传列表存在重复路径；未覆盖同名文件。");
+      seen.add(entry.path);
+      if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > maxFileBytes) throw new Error("文件超出单文件限额，未读取或上传。");
+    } catch (error) { entry.state = "failed"; entry.error = error instanceof Error ? error.message : String(error); }
+    return entry;
+  });
+  const total = entries.filter(entry => entry.state === "pending").reduce((sum, entry) => sum + entry.file.size, 0);
+  if (!Number.isSafeInteger(total) || (remainingBytes !== undefined && total > remainingBytes)) {
+    for (const entry of entries) if (entry.state === "pending") { entry.state = "failed"; entry.error = "文件超过库剩余额度；原文件未上传。"; }
+  }
+  return entries;
+}
 export function validateCloudImportBatch(files: File[], maxFileBytes: number, remainingBytes?: number): string[] {
   const paths = files.map(file => validateCloudPath(file.webkitRelativePath || file.name));
   if (new Set(paths).size !== paths.length) throw new Error("上传列表存在重复路径。");

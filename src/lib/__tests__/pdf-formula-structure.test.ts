@@ -58,6 +58,34 @@ describe("inferPdfFormulaFromSelection", () => {
       glyph(")", 123, 0, 7, 70)], "M=\\begin{pmatrix}a & b \\\\ c & d\\end{pmatrix}");
   });
 
+  it("recovers a three-by-three matrix from common column gaps across every row", () => {
+    expectReady([
+      glyph("M", 0, 42), glyph("=", 16, 42), glyph("(", 35, 0, 7, 105), glyph(")", 173, 0, 7, 105),
+      glyph("a", 53, 8), glyph("b", 103, 8), glyph("c", 153, 8),
+      glyph("d", 53, 42), glyph("e", 103, 42), glyph("f", 153, 42),
+      glyph("g", 53, 76), glyph("h", 103, 76), glyph("i", 153, 76),
+    ], "M=\\begin{pmatrix}a & b & c \\\\ d & e & f \\\\ g & h & i\\end{pmatrix}");
+  });
+
+  it("recovers a rectangular two-by-three matrix without inventing a missing cell", () => {
+    expectReady([
+      glyph("M", 0, 25), glyph("=", 16, 25), glyph("[", 35, 0, 7, 70), glyph("]", 173, 0, 7, 70),
+      glyph("a", 53, 8), glyph("b", 103, 8), glyph("c", 153, 8),
+      glyph("d", 53, 42), glyph("e", 103, 42), glyph("f", 153, 42),
+    ], "M=\\begin{bmatrix}a & b & c \\\\ d & e & f\\end{bmatrix}");
+  });
+
+  it("keeps an irregular matrix layout under review when a row has a different column count", () => {
+    const chars = [
+      glyph("M", 0, 42), glyph("=", 16, 42), glyph("(", 35, 0, 7, 105), glyph(")", 173, 0, 7, 105),
+      glyph("a", 53, 8), glyph("b", 103, 8), glyph("c", 153, 8),
+      glyph("d", 53, 42), glyph("e", 103, 42),
+      glyph("f", 53, 76), glyph("g", 103, 76), glyph("h", 153, 76),
+    ];
+    expect(infer(chars).status).toBe("needs-review");
+    expect(infer(chars).latex).toBeUndefined();
+  });
+
   it('includes matrix cells above a PDF scalable delimiter font box when their centers remain within half an em', () => {
     expectReady([glyph('M',337,202.706,14.994,18),glyph('=',359,202.706,10.152,18),
       glyph('(',383,197.533,16.317,49),glyph(')',468,197.533,16.317,49),

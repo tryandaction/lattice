@@ -1116,7 +1116,7 @@ function scorePdfQuoteCandidateByRects(input: {
   };
 }
 
-function resolvePdfExactQuoteOffsetCandidates(input: {
+export function resolvePdfExactQuoteOffsetCandidates(input: {
   model: PdfPageTextModel;
   exact: string | null | undefined;
   preferredRects?: BoundingBox[];

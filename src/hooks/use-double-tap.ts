@@ -51,13 +51,22 @@ export function useDoubleTap({
       if (!enabled) {
         return;
       }
-      if (event.key !== key) return;
+      const reset = () => {
+        lastPressTimeRef.current = 0;
+        if (pendingTimeoutRef.current) clearTimeout(pendingTimeoutRef.current);
+        pendingTimeoutRef.current = null;
+      };
+      if (event.key !== key || event.repeat || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) {
+        reset();
+        return;
+      }
 
       // Check if we should intercept this key press
       // If shouldIntercept is provided and returns false, let the browser handle it
       const shouldInterceptResult = shouldIntercept ? shouldIntercept() : true;
       
       if (shouldIntercept && !shouldInterceptResult) {
+        reset();
         return;
       }
 
@@ -120,6 +129,8 @@ export function useDoubleTap({
       if (pendingTimeoutRef.current) {
         clearTimeout(pendingTimeoutRef.current);
       }
+      pendingTimeoutRef.current = null;
+      lastPressTimeRef.current = 0;
     };
   }, [handleKeyDown, enabled]);
 }

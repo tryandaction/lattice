@@ -32,7 +32,7 @@ import { wikiLinkAutocomplete, updateAvailableFiles, updateWikiLinkCompletionCon
 import { markdownSmartInputExtension } from './markdown-smart-input';
 import { createImageDropExtension, ImageUploadHandler } from './image-drop-plugin';
 import { createMathPasteExtension } from './math-paste-plugin';
-import { activateQuantumMathEdit, quantumMathEditingExtension } from './quantum-math-editing';
+import { createPluginEditorExtensions } from '../plugin-extensions';
 import { createAccessibilityExtension, addEditorDescription, announceChange } from './accessibility';
 import type {
   ViewMode,
@@ -98,10 +98,9 @@ async function resolveFileHandleFromRoot(
 
 type LivePreviewViewWithHandlers = EditorView & {
   _outlineTimeout?: ReturnType<typeof setTimeout>;
-  _unifiedInputFocusHandler?: () => void;
+  _unifiedInputFocusHandler?: (event: FocusEvent) => void;
   _unifiedInputBlurHandler?: () => void;
   _mathEditorHandler?: (e: Event) => void;
-  _quantumFormulaInsertedHandler?: (e: Event) => void;
   _markdownImageEditHandler?: (e: Event) => void;
   _resolvedImageUrls?: LocalImageUrlCache;
 };
@@ -362,7 +361,7 @@ function buildExtensions(
       ...markdownSmartInputExtension,
       ...wikiLinkAutocomplete,
       createMathPasteExtension(),
-      quantumMathEditingExtension,
+      createPluginEditorExtensions(),
       createImageDropExtension(onImageUpload, useWikiImageStyle)
     );
   } else if (mode === 'source') {
@@ -547,10 +546,6 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
           if (existingMathHandler) {
             existingView.dom.removeEventListener('open-math-editor', existingMathHandler);
           }
-          const existingQuantumFormulaHandler = (existingView as LivePreviewViewWithHandlers)._quantumFormulaInsertedHandler;
-          if (existingQuantumFormulaHandler) {
-            existingView.dom.removeEventListener('quantum-formula-inserted', existingQuantumFormulaHandler);
-          }
           const existingImageEditHandler = (existingView as LivePreviewViewWithHandlers)._markdownImageEditHandler;
           if (existingImageEditHandler) {
             existingView.dom.removeEventListener('lattice-markdown-image-edit', existingImageEditHandler);
@@ -676,33 +671,6 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         // Store handler for cleanup
         (view as LivePreviewViewWithHandlers)._mathEditorHandler = handleOpenMathEditor;
 
-        const handleQuantumFormulaInserted = (e: Event) => {
-          const customEvent = e as CustomEvent<{
-            from: number;
-            to: number;
-            latex: string;
-            displayMode: boolean;
-          }>;
-          const detail = customEvent.detail;
-          if (
-            !detail ||
-            !Number.isFinite(detail.from) ||
-            !Number.isFinite(detail.to) ||
-            !detail.latex
-          ) {
-            return;
-          }
-
-          activateQuantumMathEdit(view, {
-            from: detail.from,
-            to: detail.to,
-            latex: detail.latex,
-            displayMode: Boolean(detail.displayMode),
-          });
-        };
-        view.dom.addEventListener('quantum-formula-inserted', handleQuantumFormulaInserted);
-        (view as LivePreviewViewWithHandlers)._quantumFormulaInsertedHandler = handleQuantumFormulaInserted;
-
         const handleMarkdownImageEdit = (e: Event) => {
           const customEvent = e as CustomEvent<MarkdownImageEditRequest>;
           const detail = customEvent.detail;
@@ -716,8 +684,9 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
 
         // Register unified input target for CodeMirror integration
         registerCodeMirrorView(view.dom, view);
-        const focusHandler = () => {
-          setActiveInputTargetFromElement(view.dom);
+        const focusHandler = (event: FocusEvent) => {
+          const focused = event.target instanceof HTMLElement ? event.target.closest('math-field') : null;
+          setActiveInputTargetFromElement(focused instanceof HTMLElement ? focused : view.dom);
           // Mark editor as focused so cursor context starts revealing syntax
           if (viewRef.current) {
             viewRef.current.dispatch({ effects: setEditorFocus.of(true) });
@@ -803,10 +772,6 @@ const LivePreviewEditorComponent = forwardRef<LivePreviewEditorRef, LivePreviewE
         const existingMathHandler = (existingView as LivePreviewViewWithHandlers)._mathEditorHandler;
         if (existingMathHandler) {
           existingView.dom.removeEventListener('open-math-editor', existingMathHandler);
-        }
-        const existingQuantumFormulaHandler = (existingView as LivePreviewViewWithHandlers)._quantumFormulaInsertedHandler;
-        if (existingQuantumFormulaHandler) {
-          existingView.dom.removeEventListener('quantum-formula-inserted', existingQuantumFormulaHandler);
         }
         const existingImageEditHandler = (existingView as LivePreviewViewWithHandlers)._markdownImageEditHandler;
         if (existingImageEditHandler) {

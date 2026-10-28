@@ -60,7 +60,7 @@ function queryKey(input: RunDocumentResearchInput): string { return JSON.stringi
 function messages(input: RunDocumentResearchInput, fragments: Fragment[], repair?: string): AiMessage[] {
   return [{ role: 'system', content: SYSTEM }, { role: 'user', content: JSON.stringify({
     task: input.task, question: input.query,
-    ...(repair ? { correction: 'Previous batch validation failed: ' + repair.slice(0, 200) + '. Return a complete compact JSON object only: summary under 300 characters, at most 3 findings selecting exact sourceId and passageId pairs with brief reasons. Do not retype quotes. Use only passages below.' } : {}),
+    ...(repair ? { correction: 'Previous batch validation failed: ' + repair.slice(0, 200) + '. Return a complete compact JSON object only: summary under 300 characters, at most 3 findings selecting exact sourceId and passageId pairs with brief reasons. Replace only the rejected findings using exact passage IDs from the same original source and page. Keep earlier verified findings unchanged; repeating them does not repair another finding. Do not retype quotes. Use only passages below.' } : {}),
     units: fragments.map(({ id, path, unit, from, to, passages }) => ({ id, path, unit, from, to, passages: passages.map(({ passageId, text }) => ({ ...(passageId ? { passageId } : {}), text })) })),
   }) }];
 }
@@ -123,7 +123,7 @@ function validateOutput(raw: string, batch: Fragment[]): { summary: string; find
       quote = passage.text.trim();
     }
     if (typeof quote !== 'string' || quote.trim().length < 8 || quote.length > 600) { reject('invalid_fields', fragment); continue; }
-    const original = findReferenceTextRange(fragment.validationText ?? fragment.fullText, quote);
+    const original = findReferenceTextRange(fragment.validationText ?? fragment.fullText, quote, { pdfTypography: fragment.ref.kind === 'pdf_page' });
     if (!original) { reject('unverified_quote', fragment); continue; }
     const unitNavigation = Boolean(fragment.ref.cloudIdentity) || /#(?:cell|line)=/u.test(fragment.ref.locator);
     const unitRef = unitNavigation ? { ...fragment.ref, preview: quote,
@@ -354,21 +354,33 @@ export async function runDocumentResearch(input: RunDocumentResearchInput): Prom
           if (generated.finishReason === 'length') throw new Error('Output truncated at the token limit; return shorter complete JSON');
           if (generated.finishReason && generated.finishReason !== 'stop') throw new Error('Provider did not complete the batch answer: ' + generated.finishReason);
           const candidate = validateOutput(generated.text, batch);
-          if (!candidate.issues.length) {
-            if (partial) {
-              const replacementCount = new Set(candidate.findings.filter(finding => !partial!.findings.some(item => item.sourceId === finding.sourceId && item.quote === finding.quote))
-                .map(finding => JSON.stringify([finding.sourceId, finding.quote]))).size;
-              // Dropping invalid rows or repeating good ones is not evidence repair.
-              candidate.issues = partial.issues.slice(replacementCount);
-              for (const finding of partial.findings) if (!candidate.findings.some(item => item.sourceId === finding.sourceId && item.quote === finding.quote)) candidate.findings.push(finding);
+          if (partial) {
+            const key = (finding: Omit<DocumentResearchFinding, 'citation'>) => JSON.stringify([finding.sourceId, finding.unit, finding.quote]);
+            const priorFindings = partial.findings;
+            const priorFindingKeys = new Set(priorFindings.map(key));
+            const replacements = [...new Map(candidate.findings.filter(finding => !priorFindingKeys.has(key(finding)))
+              .map(finding => [key(finding), finding])).values()];
+            // A replacement can repair only a rejected item from its original source/page.
+            const unmatched = partial.issues.map((issue, index) => ({ issue, index }))
+              .sort((left, right) => Number(!left.issue.sourcePath) - Number(!right.issue.sourcePath));
+            const consumed = new Set<number>();
+            for (const finding of replacements) {
+              const match = unmatched.find(({ issue, index }) => !consumed.has(index)
+                && (!issue.sourcePath || issue.sourcePath === finding.sourcePath)
+                && (issue.unit === undefined || issue.unit === finding.unit));
+              if (match) consumed.add(match.index);
             }
-            if (candidate.issues.length && !candidate.findings.length) continue;
-            parsed = candidate;
-            break;
+            const remaining = unmatched.filter(({ index }) => !consumed.has(index)).map(({ issue }) => issue);
+            const issueKey = (issue: Omit<DocumentEvidenceIssue, 'batch'>) => JSON.stringify([issue.finding, issue.code, issue.sourcePath, issue.unit]);
+            const issues = [...candidate.issues];
+            const seenIssues = new Set(issues.map(issueKey));
+            for (const issue of remaining) if (!seenIssues.has(issueKey(issue))) { issues.push(issue); seenIssues.add(issueKey(issue)); }
+            candidate.issues = issues;
+            for (const finding of priorFindings) if (!candidate.findings.some(item => key(item) === key(finding))) candidate.findings.push(finding);
           }
-          if (partial) for (const finding of partial.findings) if (!candidate.findings.some(item => item.sourceId === finding.sourceId && item.quote === finding.quote)) candidate.findings.push(finding);
+          if (!candidate.issues.length) { parsed = candidate; break; }
           partial = candidate;
-          repair = candidate.issues.map(issue => 'finding ' + issue.finding + ': ' + issue.code).join('; ');
+          repair = candidate.issues.map(issue => 'finding ' + issue.finding + (issue.sourcePath ? ' from ' + issue.sourcePath + (issue.unit ? ' unit ' + issue.unit : '') : '') + ': ' + issue.code).join('; ');
         }
         catch (error) { repair = error instanceof Error ? error.message : 'Invalid evidence output'; }
       }

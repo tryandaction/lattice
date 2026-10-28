@@ -13,6 +13,7 @@ import { openCloudRelativeLink } from "@/lib/shared-library/workbench-links";
 import { findClosestAnchorHref } from "@/lib/link-router/link-click";
 import { AssetSourceContext } from "@/lib/asset-source-context";
 import { createCloudAssetResolver } from "@/lib/shared-library/workbench-assets";
+import { CloudCollaborationToolbar } from "@/components/shared-library/cloud-collaboration-toolbar";
 
 /** Source capabilities only. Tabs, panes, editors and viewer controls belong to the workbench. */
 export function CloudFileViewer({ tab, content, paneId, isActive, onContentChange, onSave }: {
@@ -51,6 +52,7 @@ export function CloudFileViewer({ tab, content, paneId, isActive, onContentChang
     const guard = () => { const current = useCloudWorkbenchStore.getState(); if (current.controller !== controller || current.scope !== tab.cloud.scope) throw new Error("云端账号或连接已切换。"); };
     return {
       identity: `${tab.cloud.resourceId}:${tab.cloud.versionId ?? "unversioned"}`,
+      viewScope: `${tab.cloud.scope}:${tab.cloud.resourceId}`,
       sourceVersion: tab.cloud.versionId, authorId: controller.userId,
       authorNames: state.memberNames?.[tab.cloud.libraryId],
       canAnnotate: !state.revoked.includes(tab.cloud.libraryId) && can(role, "annotation.create"),
@@ -78,16 +80,18 @@ export function CloudFileViewer({ tab, content, paneId, isActive, onContentChang
     void openCloudRelativeLink(tab, target, paneId).catch(error => toast.error(error instanceof Error ? error.message : String(error)));
   }, [tab, paneId]);
 
-  if (renderer === "unsupported") return <div className="flex h-full flex-col items-center justify-center gap-3 text-sm">
+  if (renderer === "unsupported") return <div className="relative flex h-full min-h-0 flex-col"><CloudCollaborationToolbar tab={tab} content={content} /><div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 text-sm">
     <p>{tab.fileName}</p><p className="text-muted-foreground">此格式暂不支持预览，原文件已保留。</p>
     <button className="rounded border border-border px-3 py-2 hover:bg-accent" onClick={() => {
       if (content.kind !== "buffer" && content.kind !== "text") return;
       const url = URL.createObjectURL(new Blob([content.kind === "buffer" ? content.data : content.text], { type: tab.cloud.mimeType }));
       const link = document.createElement("a"); link.href = url; link.download = tab.fileName; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     }}>下载原文件</button>
-  </div>;
+  </div></div>;
 
-  return <AssetSourceContext.Provider value={assetSource}><div className="h-full min-h-0 min-w-0 overflow-hidden bg-background" onClick={event => {
+  return <AssetSourceContext.Provider value={assetSource}><div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
+    <CloudCollaborationToolbar tab={tab} content={content} />
+    <div className="min-h-0 min-w-0 flex-1 overflow-hidden" onClick={event => {
     const href = findClosestAnchorHref(event.target);
     if (!href || event.defaultPrevented) return;
     event.preventDefault(); event.stopPropagation(); navigate(href);
@@ -96,5 +100,5 @@ export function CloudFileViewer({ tab, content, paneId, isActive, onContentChang
       fileId={tab.id} filePath={tab.filePath} paneId={paneId} executionScopeId={`cloud:${tab.id}`}
       isActive={isActive} onContentChange={onContentChange} onSave={onSave} onNavigateToFile={navigate}
       sharedDocument={sharedDocument} />
-  </div></AssetSourceContext.Provider>;
+  </div></div></AssetSourceContext.Provider>;
 }

@@ -8,6 +8,7 @@ import { DEFAULT_SETTINGS } from "@/types/settings";
 import { BUILTIN_THEMES } from "@/lib/appearance/registry";
 import { MAX_CUSTOM_THEMES } from "@/lib/appearance/types";
 import { APPEARANCE_CACHE_KEY } from '@/lib/appearance/bootstrap';
+import { QUANTUM_KEYBOARD_PLUGIN_ID } from '@/lib/plugins/defaults';
 
 const storage = {
   get: vi.fn(),
@@ -108,6 +109,70 @@ describe("settings-store desktop shell persistence", () => {
     expect(nextState.settings.theme).toBe("dark");
     expect(nextState.settings.appearance.activeThemeId).toBe("lattice");
     expect(nextState.settings.appearance.customThemes).toEqual([]);
+  });
+
+  it("adds new official plugins when hydrating an older desktop settings payload", async () => {
+    storage.get.mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      enabledPlugins: ["formula-extractor"],
+      trustedPlugins: ["formula-extractor"],
+      builtinPluginDefaultsVersion: undefined,
+    });
+
+    await useSettingsStore.getState().loadSettings();
+
+    expect(useSettingsStore.getState().settings.enabledPlugins).toContain(QUANTUM_KEYBOARD_PLUGIN_ID);
+    expect(useSettingsStore.getState().settings.trustedPlugins).toContain(QUANTUM_KEYBOARD_PLUGIN_ID);
+  });
+
+  it("does not re-add a plugin after an already migrated user disables it", async () => {
+    storage.get.mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      enabledPlugins: ["formula-extractor"],
+      trustedPlugins: ["formula-extractor"],
+      builtinPluginDefaultsVersion: 1,
+    });
+
+    await useSettingsStore.getState().loadSettings();
+
+    expect(useSettingsStore.getState().settings.enabledPlugins).not.toContain(QUANTUM_KEYBOARD_PLUGIN_ID);
+    expect(useSettingsStore.getState().settings.trustedPlugins).not.toContain(QUANTUM_KEYBOARD_PLUGIN_ID);
+  });
+
+  it("migrates only the new keyboard and preserves other explicit plugin choices", async () => {
+    storage.get.mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      enabledPlugins: [],
+      trustedPlugins: [],
+      builtinPluginDefaultsVersion: undefined,
+    });
+
+    await useSettingsStore.getState().loadSettings();
+
+    expect(useSettingsStore.getState().settings.enabledPlugins).toEqual([QUANTUM_KEYBOARD_PLUGIN_ID]);
+    expect(useSettingsStore.getState().settings.trustedPlugins).toEqual([QUANTUM_KEYBOARD_PLUGIN_ID]);
+  });
+
+  it("persists the plugin migration marker before users can disable the new default", async () => {
+    let saved: unknown = {
+      ...DEFAULT_SETTINGS,
+      enabledPlugins: ["formula-extractor"],
+      trustedPlugins: ["formula-extractor"],
+      builtinPluginDefaultsVersion: undefined,
+    };
+    storage.get.mockImplementation(async () => structuredClone(saved));
+    storage.set.mockImplementation(async (_key, value) => { saved = structuredClone(value); });
+
+    await useSettingsStore.getState().loadSettings();
+    expect(await useSettingsStore.getState().updateSettings({
+      enabledPlugins: ["formula-extractor"],
+      trustedPlugins: ["formula-extractor"],
+    })).toBe(true);
+    expect(saved).toMatchObject({ builtinPluginDefaultsVersion: 1 });
+
+    useSettingsStore.setState({ settings: DEFAULT_SETTINGS, isInitialized: false, isLoading: true, error: null });
+    await useSettingsStore.getState().loadSettings();
+    expect(useSettingsStore.getState().settings.enabledPlugins).not.toContain(QUANTUM_KEYBOARD_PLUGIN_ID);
   });
 
   it("drops invalid custom packages and falls back from an unknown active id", async () => {

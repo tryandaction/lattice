@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "document_version": "2.0.0",
+  "as_of": "2026-10-27",
+  "status": "planning_assumptions_not_observed_financial_results",
+  "currency": "CNY",
+  "offer": {
+    "id": "gezi_official_reading_30d_v1",
+    "price": 99,
+    "period_days": 30,
+    "successful_sessions": 20,
+    "max_pages_per_session": 20,
+    "max_file_mib": 20,
+    "max_qa_turns": 5,
+    "max_annotation_drafts": 5,
+    "max_note_chinese_characters": 2000,
+    "max_total_input_tokens": 100000,
+    "max_total_output_tokens": 10000,
+    "auto_renew": false,
+    "trial_days": 7,
+    "trial_sessions": 1
+  },
+  "cost": {
+    "payment_fee_rate": 0.01,
+    "refund_reserve_rate": 0.05,
+    "tax_cash_reserve_rate": 0.05,
+    "success_session_ai_budget": 0.6,
+    "failure_retry_reserve_per_period": 3,
+    "infrastructure_variable_per_customer": 2,
+    "fixed_cash_per_period": 300,
+    "cash_contribution_margin_target": 0.7,
+    "cash_cac_per_new_customer": 10,
+    "one_time_setup_cost": null
+  },
+  "capacity": {
+    "founder_hours_per_period": 32,
+    "product_hours": 12,
+    "research_acquisition_hours": 6,
+    "support_hours": 6,
+    "operations_hours": 4,
+    "buffer_hours": 4,
+    "support_minutes_per_paying_customer": 6,
+    "extra_onboarding_minutes_per_new_customer": 15,
+    "founder_hourly_value": 100
+  },
+  "scenarios": [
+    {
+      "customers": 5,
+      "new_customers": 5,
+      "cash_cac": 0
+    },
+    {
+      "customers": 10,
+      "new_customers": 3,
+      "cash_cac": 10
+    },
+    {
+      "customers": 30,
+      "new_customers": 4,
+      "cash_cac": 10
+    },
+    {
+      "customers": 50,
+      "new_customers": 4,
+      "cash_cac": 10
+    },
+    {
+      "customers": 100,
+      "new_customers": 8,
+      "cash_cac": 10
+    }
+  ],
+  "stress": {
+    "ai_cost_per_customer": 30,
+    "support_minutes_per_customer": 20,
+    "fixed_cash_per_period": 1500,
+    "cycle_repurchase_rate": 0.6
+  },
+  "experiments": {
+    "founder_model_budget_suggestion": 300,
+    "approved_founder_model_budget": null,
+    "max_first_paid_cohort": 8,
+    "minimum_real_paid_continuation_signal": 3,
+    "minimum_mature_expiry_sample": 5,
+    "repurchase_continuation_signal": 3,
+    "minimum_repurchase_rate_for_continuation": 0.6,
+    "engineering_baseline_hours": 40,
+    "engineering_review_ceiling_hours": 60
+  },
+  "not_in_revenue_forecast": [
+    "team_procurement",
+    "creator_market",
+    "sponsorship"
+  ],
+  "budget_rules": [
+    "No spending authorization is created by this JSON.",
+    "Unknown one-time costs are blockers, not zero costs.",
+    "Founder labour is included in economic target, not variable cash contribution.",
+    "Payment, tax and refund percentages are planning reserves, not verified rates."
+  ]
+}

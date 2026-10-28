@@ -6,14 +6,18 @@
 
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
+import katex from 'katex';
+import { validateLatex } from 'mathlive/ssr';
 import {
   quantumKeymap,
+  quantumKeyboardMap,
   validateKeymap,
   isValidLatexCommand,
   getDisplaySymbol,
   getCandidateSymbol,
   getCandidateSymbols,
   getQuantumLayerMeanings,
+  getAllQuantumLayerMeanings,
   getQuantumMeaning,
   hasVariants,
   getVariants,
@@ -246,6 +250,29 @@ describe('Quantum Keymap', () => {
   });
 
   describe('Formula input data quality', () => {
+    it('keeps every official physical layer between five and six candidates', () => {
+      const counts = Object.values(quantumKeyboardMap).map(key => ({
+        letter: key.letter,
+        base: key.base.length,
+        ctrl: key.ctrl.length,
+      }));
+      const underfilled = counts.filter(({ base, ctrl }) =>
+        base < 5 || base > 6 || ctrl < 5 || ctrl > 6,
+      );
+      expect(underfilled).toEqual([]);
+    });
+
+    it.each([
+      ['KeyJ', 'base', 5, String.raw`\operatorname{Im}`],
+      ['KeyZ', 'base', 5, String.raw`\mathcal{Z}\{f[n]\}(z)`],
+      ['KeyY', 'ctrl', 5, String.raw`Y=\frac{\sigma}{\varepsilon}`],
+    ] as const)('provides a valid fifth candidate for %s %s', (keyCode, layer, index, latex) => {
+      const meaning = getQuantumMeaning(keyCode, layer, index);
+      expect(meaning?.latex).toBe(latex);
+      expect(() => katex.renderToString(latex, { throwOnError: true })).not.toThrow();
+      expect(validateLatex(latex)).toEqual([]);
+    });
+
     it('exposes official base and ctrl layer meanings for the physical I key', () => {
       expect(getQuantumLayerMeanings('KeyI', 'base').map((meaning) => meaning.label)).toEqual([
         'integral',
@@ -253,15 +280,53 @@ describe('Quantum Keymap', () => {
         'triple integral',
         'contour integral',
         'bounded integral',
+        'closed surface integral',
       ]);
-      expect(getQuantumLayerMeanings('KeyI', 'ctrl').map((meaning) => meaning.label)).toEqual([
+      expect(getAllQuantumLayerMeanings('KeyI', 'ctrl').slice(0, 4).map((meaning) => meaning.label)).toEqual([
         'current I',
         'identity',
         'indicator',
         'inertia I',
       ]);
       expect(getQuantumMeaning('KeyI', 'base', 3)?.latex).toBe('\\iiint');
-      expect(getQuantumMeaning('KeyI', 'ctrl', 1)?.latex).toBe('I');
+      expect(getQuantumLayerMeanings('KeyI', 'ctrl').map(meaning => meaning.latex)).toEqual([
+        String.raw`\oiiint`, String.raw`\iint_{}^{}`, String.raw`\iiint_{}^{}`,
+        String.raw`\oint_{}^{}`, String.raw`\oiint_{}^{}`, String.raw`\oiiint_{}^{}`,
+      ]);
+    });
+
+    it('preserves source IDs after moving candidates out of the official keyboard', () => {
+      expect(getAllQuantumLayerMeanings('KeyI', 'base').find(meaning => meaning.id === 'base-KeyI-9')?.latex).toBe(String.raw`\iiint_{}^{}`);
+      expect(getAllQuantumLayerMeanings('KeyC', 'ctrl').find(meaning => meaning.id === 'ctrl-KeyC-7')?.latex).toBe(String.raw`2\mathrm{H}_{2}+\mathrm{O}_{2}\rightarrow 2\mathrm{H}_{2}\mathrm{O}`);
+      expect(getQuantumLayerMeanings('KeyF', 'base').map(meaning => meaning.id)).toEqual([
+        'base-KeyF-1', 'base-KeyF-2', 'base-KeyF-5', 'base-KeyF-6', 'base-KeyF-7',
+      ]);
+      expect(getQuantumLayerMeanings('KeyF', 'base').at(-1)?.latex).toBe(String.raw`\frac{\partial{}}{\partial{}}`);
+      expect(getCandidateSymbol('KeyF', 5)).toBe(String.raw`\frac{\partial{}}{\partial{}}`);
+    });
+
+    it.each([
+      ['KeyE', 'ctrl', 'ctrl-KeyE-4', String.raw`\mathrm{E}+\mathrm{S}\rightleftharpoons\mathrm{ES}\rightarrow\mathrm{E}+\mathrm{P}`],
+      ['KeyR', 'ctrl', 'ctrl-KeyR-6', String.raw`{}\rightleftharpoons{}`],
+      ['KeyI', 'base', 'base-KeyI-7', String.raw`\oiiint`],
+      ['KeyI', 'base', 'base-KeyI-8', String.raw`\iint_{}^{}`],
+      ['KeyI', 'base', 'base-KeyI-9', String.raw`\iiint_{}^{}`],
+      ['KeyI', 'ctrl', 'ctrl-KeyI-1', 'I'],
+      ['KeyI', 'ctrl', 'ctrl-KeyI-2', String.raw`\mathbb{I}`],
+      ['KeyI', 'ctrl', 'ctrl-KeyI-3', String.raw`\mathbf{1}`],
+      ['KeyI', 'ctrl', 'ctrl-KeyI-4', String.raw`I=\int r_{\perp}^{2}\,\mathrm{d}m`],
+      ['KeyI', 'ctrl', 'ctrl-KeyI-5', String.raw`\int_a^b u\,\mathrm{d}v=[uv]_a^b-\int_a^b v\,\mathrm{d}u`],
+      ['KeyS', 'base', 'base-KeyS-7', String.raw`\sum_{}^{} {}`],
+      ['KeyF', 'base', 'base-KeyF-3', String.raw`\frac{d}{d}`],
+      ['KeyF', 'base', 'base-KeyF-4', String.raw`\frac{\partial}{\partial}`],
+      ['KeyL', 'base', 'base-KeyL-6', String.raw`\leftarrow`],
+      ['KeyC', 'ctrl', 'ctrl-KeyC-7', String.raw`2\mathrm{H}_{2}+\mathrm{O}_{2}\rightarrow 2\mathrm{H}_{2}\mathrm{O}`],
+      ['KeyC', 'ctrl', 'ctrl-KeyC-8', String.raw`c=\frac{n}{V}`],
+      ['KeyV', 'base', 'base-KeyV-4', String.raw`\overline{}`],
+      ['KeyM', 'base', 'base-KeyM-4', String.raw`\begin{pmatrix}{}&{}&{}\\{}&{}&{}\\{}&{}&{}\end{pmatrix}`],
+    ] as const)('retains the archived identity %s %s %s', (keyCode, layer, id, latex) => {
+      expect(getAllQuantumLayerMeanings(keyCode, layer).find(meaning => meaning.id === id)?.latex).toBe(latex);
+      expect(getQuantumLayerMeanings(keyCode, layer).some(meaning => meaning.id === id)).toBe(false);
     });
 
     it('provides a non-empty ctrl second layer for every physical letter key', () => {

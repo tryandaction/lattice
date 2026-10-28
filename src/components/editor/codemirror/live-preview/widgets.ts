@@ -1939,8 +1939,8 @@ export class HorizontalRuleWidget extends WidgetType {
  * 数学公式Widget - 使用KaTeX渲染LaTeX公式
  *
  * 交互:
- * - 单击: 定位光标到公式开始位置（显示源码）
- * - 双击: 选择整个公式（便于编辑）
+ * - 单击: 插件停用时显示源码；启用时保留渲染形态以接收双击
+ * - 双击: 插件启用时进入可视化公式编辑
  * - 右键: 打开复制菜单，可复制 Markdown 或 LaTeX
  */
 export class MathWidget extends WidgetType {
@@ -1972,7 +1972,9 @@ export class MathWidget extends WidgetType {
     container.dataset.from = String(this.from);
     container.dataset.to = String(this.to);
     container.dataset.latex = this.latex; // 存储LaTeX用于复制功能
-    container.title = `${this.isBlock ? 'Block' : 'Inline'} formula: Click to edit, Right-click for copy options`;
+    const isZh = () => document.documentElement.lang.startsWith('zh');
+    const formulaType = this.isBlock ? (isZh() ? '块级' : 'Block') : (isZh() ? '行内' : 'Inline');
+    container.title = isZh() ? formulaType + '公式：双击编辑，右键复制' : formulaType + ' formula: Double-click to edit, right-click to copy';
     if (this.isBlock) {
       applyBlockContext(container, this.context);
     }
@@ -1985,7 +1987,7 @@ export class MathWidget extends WidgetType {
       errorSpan.textContent = this.isBlock ? '$$...$$' : '$...$';
       container.appendChild(errorSpan);
       container.classList.add('cm-math-error');
-      container.title = 'Empty or invalid LaTeX formula — click to edit';
+      container.title = isZh() ? '公式为空或 LaTeX 无效，双击编辑' : 'Empty or invalid LaTeX formula; double-click to edit';
       return container;
     }
 
@@ -1993,12 +1995,14 @@ export class MathWidget extends WidgetType {
     container.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if ((e as MouseEvent).button !== 0) return;
       enterMathSourceMode(view, this.from, this.to);
     });
 
     // 右键: 复制 Markdown / LaTeX 源码
     container.addEventListener('contextmenu', (event) => {
       const e = event as MouseEvent;
+      const zh = isZh();
       e.preventDefault();
       e.stopPropagation();
 
@@ -2017,7 +2021,7 @@ export class MathWidget extends WidgetType {
           }, 1200);
         } catch (err) {
           console.error('Failed to copy formula:', err);
-          container.title = 'Copy failed';
+          container.title = zh ? '复制失败' : 'Copy failed';
           setTimeout(() => {
             container.title = originalTitle;
           }, 1200);
@@ -2026,12 +2030,12 @@ export class MathWidget extends WidgetType {
 
       showMathCopyMenu(e, [
         {
-          label: 'Copy Markdown formula',
-          onSelect: () => copySource(markdownSource, 'Markdown formula copied'),
+          label: zh ? '复制 Markdown 公式' : 'Copy Markdown formula',
+          onSelect: () => copySource(markdownSource, zh ? 'Markdown 公式已复制' : 'Markdown formula copied'),
         },
         {
-          label: 'Copy LaTeX formula',
-          onSelect: () => copySource(this.latex, 'LaTeX formula copied'),
+          label: zh ? '复制 LaTeX 公式' : 'Copy LaTeX formula',
+          onSelect: () => copySource(this.latex, zh ? 'LaTeX 公式已复制' : 'LaTeX formula copied'),
         },
       ]);
     });

@@ -8,6 +8,8 @@ export type FormulaTemplateId =
   | 'integral'
   | 'limit'
   | 'matrix-2x2'
+  | 'matrix-3x3'
+  | 'matrix-4x4'
   | 'cases-2'
   | 'vector';
 
@@ -90,13 +92,25 @@ export const FORMULA_TEMPLATES: Record<FormulaTemplateId, FormulaTemplate> = {
     keywords: ['limit', 'lim', '极限'],
   },
   'matrix-2x2': {
-    id: 'matrix-2x2',
-    label: 'Matrix',
+    id: 'matrix-2x2', label: 'Matrix 2×2',
     latex: '\\begin{pmatrix}{}&{}\\\\{}&{}\\end{pmatrix}',
     mathLiveLatex: '\\begin{pmatrix}\\placeholder{}&\\placeholder{}\\\\\\placeholder{}&\\placeholder{}\\end{pmatrix}',
-    previewLatex: '\\begin{pmatrix}\\square&\\square\\\\\\square&\\square\\end{pmatrix}',
-    displayMode: true,
-    keywords: ['matrix', 'pmatrix', 'linear algebra', '矩阵'],
+    previewLatex: '\\begin{pmatrix}\\square&\\square\\\\\\square&\\square\\end{pmatrix}', displayMode: true,
+    keywords: ['matrix', 'pmatrix', 'linear algebra', '矩阵', '2x2'],
+  },
+  'matrix-3x3': {
+    id: 'matrix-3x3', label: 'Matrix 3×3',
+    latex: '\\begin{pmatrix}{}&{}&{}\\\\{}&{}&{}\\\\{}&{}&{}\\end{pmatrix}',
+    mathLiveLatex: '\\begin{pmatrix}\\placeholder{}&\\placeholder{}&\\placeholder{}\\\\\\placeholder{}&\\placeholder{}&\\placeholder{}\\\\\\placeholder{}&\\placeholder{}&\\placeholder{}\\end{pmatrix}',
+    previewLatex: '\\begin{pmatrix}\\square&\\square&\\square\\\\\\square&\\square&\\square\\\\\\square&\\square&\\square\\end{pmatrix}', displayMode: true,
+    keywords: ['matrix', 'pmatrix', 'linear algebra', '矩阵', '3x3'],
+  },
+  'matrix-4x4': {
+    id: 'matrix-4x4', label: 'Matrix 4×4',
+    latex: '\\begin{pmatrix}{}&{}&{}&{}\\\\{}&{}&{}&{}\\\\{}&{}&{}&{}\\\\{}&{}&{}&{}\\end{pmatrix}',
+    mathLiveLatex: '\\begin{pmatrix}\\placeholder{}&\\placeholder{}&\\placeholder{}&\\placeholder{}\\\\\\placeholder{}&\\placeholder{}&\\placeholder{}&\\placeholder{}\\\\\\placeholder{}&\\placeholder{}&\\placeholder{}&\\placeholder{}\\\\\\placeholder{}&\\placeholder{}&\\placeholder{}&\\placeholder{}\\end{pmatrix}',
+    previewLatex: '\\begin{pmatrix}\\square&\\square&\\square&\\square\\\\\\square&\\square&\\square&\\square\\\\\\square&\\square&\\square&\\square\\\\\\square&\\square&\\square&\\square\\end{pmatrix}', displayMode: true,
+    keywords: ['matrix', 'pmatrix', 'linear algebra', '矩阵', '4x4'],
   },
   'cases-2': {
     id: 'cases-2',
@@ -126,6 +140,8 @@ export const QUICK_FORMULA_TEMPLATE_IDS: FormulaTemplateId[] = [
   'integral',
   'limit',
   'matrix-2x2',
+  'matrix-3x3',
+  'matrix-4x4',
   'cases-2',
   'vector',
 ];

@@ -8,6 +8,12 @@ function bind(query: string, prior = cloud, activeCloud = false) {
   return bindConversationSources({ query, messages: [{ id: 'a', role: 'assistant', content: 'previous result', timestamp: 1, documentContext: prior }], localWorkspaceKey: 'local', activeCloud, activeCloudLibraryId: activeCloud ? 'lib' : undefined, providerScope: 'current-account' });
 }
 describe('conversation request source binding', () => {
+  it('keeps an explicit cloud draft bound to its original account after connection switching', () => {
+    expect(bindConversationSources({ query: '@cloud:lib:paper Explain it', messages: [], localWorkspaceKey: 'local', activeCloud: false,
+      providerScope: 'account-b', conversationWorkspace: { workspaceKey: 'cloud:lib', libraryId: 'lib', permissionScope: 'account-a' } }))
+      .toEqual({ kind: 'cloud', workspaceKey: 'cloud:lib', providerScope: 'account-a' });
+  });
+
   it('keeps an independent explanation in the current storage instead of a prior cloud source', () => {
     expect(bind('不结合这篇论文，为什么会出现这种相变？')).toEqual({ kind: 'local', workspaceKey: 'local' });
   });

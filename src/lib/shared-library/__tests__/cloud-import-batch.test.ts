@@ -1,8 +1,27 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, vi } from "vitest";
-import { persistCloudImportBatch, validateCloudImportBatch } from "../cloud-import-batch";
+import { createCloudImportBatch, persistCloudImportBatch, validateCloudImportBatch } from "../cloud-import-batch";
 
 describe("cloud local import batch", () => {
+  it("keeps valid files available when another file exceeds the limit", () => {
+    const files = [new File(["a"], "small.md"), new File(["large"], "large.md")];
+    const batch = createCloudImportBatch(files, 2);
+    expect(batch.map(entry => [entry.path, entry.state])).toEqual([["small.md", "pending"], ["large.md", "failed"]]);
+    expect(batch[1].error).toContain("单文件限额");
+  });
+  it("preserves folder paths and rejects only repeated paths without renaming or overwriting", () => {
+    const first = new File(["a"], "note.md");
+    const nested = new File(["b"], "note.md");
+    Object.defineProperty(nested, "webkitRelativePath", { value: "folder/note.md" });
+    const batch = createCloudImportBatch([first, nested, first], 10);
+    expect(batch.map(entry => [entry.path, entry.state])).toEqual([["note.md", "pending"], ["folder/note.md", "pending"], ["note.md", "failed"]]);
+    expect(new Set(batch.map(entry => entry.id)).size).toBe(3);
+  });
+  it("rejects the eligible batch before reading when its total exceeds remaining storage", () => {
+    const batch = createCloudImportBatch([new File(["aa"], "a.md"), new File(["bb"], "b.md")], 10, 3);
+    expect(batch.every(entry => entry.state === "failed")).toBe(true);
+    expect(batch.every(entry => entry.error?.includes("剩余额度"))).toBe(true);
+  });
   it("validates every path and byte limit before persisting", () => {
     const a = new File(["a"], "good.md");
     const b = new File(["bb"], "../bad.md");

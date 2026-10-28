@@ -71,6 +71,7 @@ export interface AppSettings {
   pluginsEnabled: boolean;
   enabledPlugins: string[];
   trustedPlugins: string[];
+  builtinPluginDefaultsVersion: number;
   pluginNetworkAllowlist: string[];
   pluginPanelDockSize: number;
   pluginPanelDockOpen: boolean;
@@ -123,6 +124,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   pluginsEnabled: true,
   enabledPlugins: DEFAULT_ENABLED_PLUGIN_IDS,
   trustedPlugins: DEFAULT_ENABLED_PLUGIN_IDS,
+  builtinPluginDefaultsVersion: 1,
   pluginNetworkAllowlist: [],
   pluginPanelDockSize: 22,
   pluginPanelDockOpen: false,

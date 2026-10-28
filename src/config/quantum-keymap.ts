@@ -2,9 +2,11 @@
  * Quantum Keymap Configuration
  *
  * The Quantum Keyboard is a physical QWERTY-letter mapper for formula input.
- * Number keys keep their normal keyboard meaning; Shift+1/2/3 + letter picks
- * a visible candidate on that letter key.
+ * Select a letter, then its visible candidate number; Shift+letter selects
+ * the extended layer. Ctrl+I/M plus sequential digits builds special templates.
  */
+
+import { QUANTUM_FORMULA_PRESETS, type QuantumShortLabel } from "./quantum-formula-presets";
 
 export type QuantumKeyCategory =
   | "structure"
@@ -24,6 +26,7 @@ export type QuantumLayerId = "base" | "ctrl";
 export interface QuantumKeyMeaning {
   id: string;
   label: string;
+  shortLabel?: QuantumShortLabel;
   latex: string;
   mathlive?: string;
   markdown?: string;
@@ -122,9 +125,9 @@ export const quantumKeymap: QuantumKeymap = {
   KeyR: {
     default: "\\rho",
     shift: "\\mathbb{R}",
-    variants: ["\\rightarrow", "\\Rightarrow", "\\rangle"],
+    variants: ["\\rightarrow", "\\Rightarrow", "\\rangle", "\\sqrt[]{}"],
     label: "rho",
-    variantLabels: ["rho", "R", "to", "Right", "rangle"],
+    variantLabels: ["rho", "R", "to", "Right", "rangle", "nth root"],
     title: "Rho / reals / arrow",
     preview: "rho",
     category: "relations",
@@ -166,13 +169,13 @@ export const quantumKeymap: QuantumKeymap = {
   KeyI: {
     default: "\\int",
     shift: "\\iint",
-    variants: ["\\iiint", "\\oint", "\\int_{}^{}"],
+    variants: ["\\iiint", "\\oint", "\\int_{}^{}", "\\oiint", "\\oiiint", "\\iint_{}^{}", "\\iiint_{}^{}"],
     label: "int",
-    variantLabels: ["int", "iint", "iiint", "oint", "bounds"],
+    variantLabels: ["int", "iint", "iiint", "oint", "bounds", "oiint", "oiiint", "double bounds", "triple bounds"],
     title: "Integral",
     preview: "int",
     category: "calculus",
-    keywords: ["integral", "double integral", "triple integral"],
+    keywords: ["integral", "double integral", "triple integral", "closed surface", "closed volume"],
   },
   KeyO: {
     default: "\\circ",
@@ -188,9 +191,9 @@ export const quantumKeymap: QuantumKeymap = {
   KeyP: {
     default: "\\pi",
     shift: "\\prod",
-    variants: ["\\Pi", "\\partial", "\\parallel"],
+    variants: ["\\Pi", "\\partial", "\\parallel", "^{}"],
     label: "pi",
-    variantLabels: ["pi", "prod", "Pi", "partial", "parallel"],
+    variantLabels: ["pi", "prod", "Pi", "partial", "parallel", "power"],
     title: "Pi / product",
     preview: "pi",
     category: "greek",
@@ -210,9 +213,9 @@ export const quantumKeymap: QuantumKeymap = {
   KeyS: {
     default: "\\sum",
     shift: "\\Sigma",
-    variants: ["\\sigma", "\\sqrt{}", "\\subseteq", "\\sin"],
+    variants: ["\\sigma", "\\sqrt{}", "\\subseteq", "\\sin", "\\sum_{}^{} {}"],
     label: "sum",
-    variantLabels: ["sum", "Sigma", "sigma", "sqrt", "subset", "sin"],
+    variantLabels: ["sum", "Sigma", "sigma", "sqrt", "subset", "sin", "sum bounds"],
     title: "Sum / sigma",
     preview: "sum",
     displayMode: true,
@@ -233,9 +236,9 @@ export const quantumKeymap: QuantumKeymap = {
   KeyF: {
     default: "\\frac{}{}",
     shift: "\\dfrac{}{}",
-    variants: ["\\frac{d}{d}", "\\frac{\\partial}{\\partial}", "\\phi"],
+    variants: ["\\frac{d}{d}", "\\frac{\\partial}{\\partial}", "\\phi", "\\frac{d{}}{d{}}", "\\frac{\\partial{}}{\\partial{}}"],
     label: "frac",
-    variantLabels: ["frac", "dfrac", "d/d", "partial", "phi"],
+    variantLabels: ["frac", "dfrac", "d/d", "partial", "phi", "derivative", "partial derivative"],
     title: "Fraction",
     preview: "a/b",
     category: "structure",
@@ -266,9 +269,9 @@ export const quantumKeymap: QuantumKeymap = {
   KeyJ: {
     default: "\\jmath",
     shift: "\\mathbf{J}",
-    variants: ["\\operatorname{Jac}", "\\mathbb{J}"],
+    variants: ["\\operatorname{Jac}", "\\mathbb{J}", "\\operatorname{Im}"],
     label: "j",
-    variantLabels: ["j", "J", "Jac", "blackboard J"],
+    variantLabels: ["j", "J", "Jac", "blackboard J", "Im / 虚部"],
     title: "J / Jacobian",
     preview: "j",
     category: "linear-algebra",
@@ -288,9 +291,9 @@ export const quantumKeymap: QuantumKeymap = {
   KeyL: {
     default: "\\lambda",
     shift: "\\lim",
-    variants: ["\\Lambda", "\\log", "\\ln", "\\leftarrow"],
+    variants: ["\\Lambda", "\\log", "\\ln", "\\leftarrow", "\\lim_{{}\\to{}} {}"],
     label: "lambda",
-    variantLabels: ["lambda", "lim", "Lambda", "log", "ln", "left"],
+    variantLabels: ["lambda", "lim", "Lambda", "log", "ln", "left", "limit template"],
     title: "Lambda / limit",
     preview: "lambda",
     category: "greek",
@@ -299,9 +302,9 @@ export const quantumKeymap: QuantumKeymap = {
   KeyZ: {
     default: "\\zeta",
     shift: "\\mathbb{Z}",
-    variants: ["\\mathcal{Z}", "\\varnothing"],
+    variants: ["\\mathcal{Z}", "\\varnothing", String.raw`\mathcal{Z}\{f[n]\}(z)`],
     label: "zeta",
-    variantLabels: ["zeta", "Z", "calZ", "empty"],
+    variantLabels: ["zeta", "Z", "calZ", "empty", "Z transform / Z 变换"],
     title: "Zeta / integers",
     preview: "zeta",
     category: "greek",
@@ -332,9 +335,9 @@ export const quantumKeymap: QuantumKeymap = {
   KeyV: {
     default: "\\vec{}",
     shift: "\\mathbf{}",
-    variants: ["\\bar{}", "\\overline{}", "\\begin{pmatrix}{}\\\\{}\\end{pmatrix}"],
+    variants: ["\\bar{}", "\\overline{}", "\\begin{pmatrix}{}\\\\{}\\end{pmatrix}", "\\dot{}", "\\ddot{}"],
     label: "vec",
-    variantLabels: ["vec", "bold", "bar", "overline", "column"],
+    variantLabels: ["vec", "bold", "bar", "overline", "column", "dot", "ddot"],
     title: "Vector",
     preview: "vec",
     category: "linear-algebra",
@@ -354,9 +357,9 @@ export const quantumKeymap: QuantumKeymap = {
   KeyN: {
     default: "\\nu",
     shift: "\\mathbb{N}",
-    variants: ["\\nabla", "\\neg", "\\neq"],
+    variants: ["\\nabla", "\\neg", "\\neq", "\\infty"],
     label: "nu",
-    variantLabels: ["nu", "N", "nabla", "not", "neq"],
+    variantLabels: ["nu", "N", "nabla", "not", "neq", "infinity"],
     title: "Nu / naturals / negation",
     preview: "nu",
     category: "greek",
@@ -365,19 +368,19 @@ export const quantumKeymap: QuantumKeymap = {
   KeyM: {
     default: "\\begin{pmatrix}{}&{}\\\\{}&{}\\end{pmatrix}",
     shift: "\\begin{bmatrix}{}&{}\\\\{}&{}\\end{bmatrix}",
-    variants: ["\\begin{matrix}{}&{}\\\\{}&{}\\end{matrix}", "\\mu", "\\pm"],
-    label: "matrix",
-    variantLabels: ["pmatrix", "bmatrix", "matrix", "mu", "pm"],
+    variants: ["\\begin{matrix}{}&{}\\\\{}&{}\\end{matrix}", "\\begin{pmatrix}{}&{}&{}\\\\{}&{}&{}\\\\{}&{}&{}\\end{pmatrix}", "\\begin{pmatrix}{}&{}&{}&{}\\\\{}&{}&{}&{}\\\\{}&{}&{}&{}\\\\{}&{}&{}&{}\\end{pmatrix}", "\\mu", "\\pm"],
+    label: "matrix 2×2",
+    variantLabels: ["pmatrix 2×2", "bmatrix 2×2", "matrix", "pmatrix 3×3", "pmatrix 4×4", "mu", "pm"],
     title: "Matrix / mu",
     preview: "2x2",
     displayMode: true,
     category: "linear-algebra",
-    keywords: ["matrix", "mu", "plus minus"],
+    keywords: ["matrix", "2x2", "3x3", "4x4", "mu", "plus minus"],
   },
 };
 
 const BASE_LABEL_OVERRIDES: Record<string, string[]> = {
-  KeyI: ["integral", "double integral", "triple integral", "contour integral", "bounded integral"],
+  KeyI: ["integral", "double integral", "triple integral", "contour integral", "bounded integral", "closed surface integral", "closed volume integral", "bounded double integral", "bounded triple integral"],
 };
 
 const CTRL_LAYER_MEANINGS: Record<string, Array<Omit<QuantumKeyMeaning, "id">>> = {
@@ -391,66 +394,66 @@ const CTRL_LAYER_MEANINGS: Record<string, Array<Omit<QuantumKeyMeaning, "id">>> 
     { label: "work W", latex: "W", category: "physics", keywords: ["work", "energy"] },
     { label: "wave W", latex: "\\mathcal{W}", category: "physics", keywords: ["wave"] },
     { label: "Wronskian", latex: "\\operatorname{Wr}", category: "calculus", keywords: ["wronskian"] },
-    { label: "weak op", latex: "\\mathcal{W}", category: "physics", keywords: ["weak", "operator"] },
+    { label: "differential work", latex: String.raw`\mathrm{d}W=\mathbf{F}\cdot\mathrm{d}\mathbf{r}`, shortLabel: { zh: "功微分", en: "Work" }, category: "physics", keywords: ["work", "force", "displacement", "功", "微分"] },
   ],
   KeyE: [
     { label: "energy E", latex: "E", category: "physics", keywords: ["energy"] },
     { label: "electric field", latex: "\\mathbf{E}", category: "physics", keywords: ["electric", "field"] },
     { label: "expectation", latex: "\\mathbb{E}", category: "calculus", keywords: ["expectation", "probability"] },
-    { label: "enzyme E", latex: "E", category: "biology", keywords: ["enzyme"] },
+    { label: "simple enzyme reaction", latex: String.raw`\mathrm{E}+\mathrm{S}\rightleftharpoons\mathrm{ES}\rightarrow\mathrm{E}+\mathrm{P}`, shortLabel: { zh: "酶催化", en: "Enzyme" }, category: "chemistry", keywords: ["enzyme", "substrate", "michaelis menten", "酶", "底物"] },
   ],
   KeyR: [
     { label: "resistance R", latex: "R", category: "engineering", keywords: ["resistance"] },
     { label: "radius r", latex: "r", category: "physics", keywords: ["radius"] },
-    { label: "reaction rate", latex: "r", category: "chemistry", keywords: ["reaction", "rate"] },
-    { label: "Reynolds", latex: "\\operatorname{Re}", category: "engineering", keywords: ["reynolds"] },
+    { label: "power-law reaction rate", latex: String.raw`r=k[\mathrm{A}]^m[\mathrm{B}]^n`, shortLabel: { zh: "反应速率", en: "Rate law" }, category: "chemistry", keywords: ["reaction", "rate", "power law", "幂律", "速率"] },
+    { label: "Reynolds", latex: "\\mathrm{Re}", category: "engineering", keywords: ["reynolds"] },
   ],
   KeyT: [
     { label: "temperature T", latex: "T", category: "physics", keywords: ["temperature"] },
-    { label: "period T", latex: "T", category: "physics", keywords: ["period"] },
+    { label: "period / frequency", latex: String.raw`T=\frac{1}{f}`, category: "physics", keywords: ["period", "frequency", "周期", "频率"] },
     { label: "torque", latex: "\\tau", category: "physics", keywords: ["torque"] },
-    { label: "time constant", latex: "\\tau", category: "engineering", keywords: ["time", "constant"] },
+    { label: "RC time constant", latex: String.raw`\tau=RC`, category: "engineering", keywords: ["time", "constant", "rc", "时间常数"] },
   ],
   KeyY: [
     { label: "yield Y", latex: "Y", category: "chemistry", keywords: ["yield"] },
     { label: "spherical harmonic Y", latex: "Y_{\\ell}^{m}", category: "physics", keywords: ["spherical", "harmonic"] },
-    { label: "admittance Y", latex: "Y", category: "engineering", keywords: ["admittance"] },
+    { label: "admittance / impedance", latex: String.raw`Y=\frac{1}{Z}`, category: "engineering", keywords: ["admittance", "impedance", "导纳", "阻抗"] },
   ],
   KeyU: [
     { label: "potential U", latex: "U", category: "physics", keywords: ["potential"] },
     { label: "unitary U", latex: "\\hat{U}", category: "physics", keywords: ["unitary"] },
-    { label: "internal energy", latex: "U", category: "physics", keywords: ["internal", "energy"] },
+    { label: "internal energy change", latex: "\\Delta U", category: "physics", keywords: ["internal", "energy", "change", "内能变化"] },
     { label: "velocity u", latex: "u", category: "engineering", keywords: ["velocity"] },
   ],
   KeyI: [
     { label: "current I", latex: "I", category: "physics", keywords: ["current"] },
     { label: "identity", latex: "\\mathbb{I}", category: "linear-algebra", keywords: ["identity"] },
     { label: "indicator", latex: "\\mathbf{1}", category: "logic", keywords: ["indicator"] },
-    { label: "inertia I", latex: "I", category: "engineering", keywords: ["inertia"] },
+    { label: "inertia I", latex: String.raw`I=\int r_{\perp}^{2}\,\mathrm{d}m`, shortLabel: { zh: "转动惯量", en: "Inertia" }, category: "physics", keywords: ["inertia", "axis", "moment", "转动惯量"] },
   ],
   KeyO: [
     { label: "big-O", latex: "\\mathcal{O}", category: "calculus", keywords: ["big o", "order"] },
-    { label: "order parameter", latex: "\\mathcal{O}", category: "physics", keywords: ["order", "parameter"] },
+    { label: "order parameter expectation", latex: String.raw`\langle\hat{O}\rangle`, category: "physics", keywords: ["order", "parameter", "expectation", "序参量"] },
     { label: "oxygen O", latex: "\\mathrm{O}", category: "chemistry", keywords: ["oxygen"] },
-    { label: "orbital O", latex: "\\mathcal{O}", category: "physics", keywords: ["orbital"] },
+    { label: "atomic orbital", latex: String.raw`\psi_{n\ell m}`, category: "physics", keywords: ["orbital", "wavefunction", "原子轨道", "波函数"] },
   ],
   KeyP: [
     { label: "pressure P", latex: "P", category: "physics", keywords: ["pressure"] },
     { label: "probability P", latex: "\\mathbb{P}", category: "calculus", keywords: ["probability"] },
     { label: "momentum p", latex: "p", category: "physics", keywords: ["momentum"] },
-    { label: "power P", latex: "P", category: "engineering", keywords: ["power"] },
+    { label: "instantaneous power", latex: String.raw`P=\frac{\mathrm{d}W}{\mathrm{d}t}`, shortLabel: { zh: "瞬时功率", en: "Power" }, category: "physics", keywords: ["power", "work", "功率"] },
   ],
   KeyA: [
     { label: "area A", latex: "A", category: "engineering", keywords: ["area"] },
     { label: "vector potential A", latex: "\\mathbf{A}", category: "physics", keywords: ["vector", "potential"] },
     { label: "activity a", latex: "a", category: "chemistry", keywords: ["activity"] },
-    { label: "absorbance A", latex: "A", category: "chemistry", keywords: ["absorbance"] },
+    { label: "absorbance / transmittance", latex: String.raw`A=-\log_{10}T`, shortLabel: { zh: "吸光度", en: "Absorb." }, category: "chemistry", keywords: ["absorbance", "transmittance", "吸光度", "透射比"] },
   ],
   KeyS: [
     { label: "entropy S", latex: "S", category: "physics", keywords: ["entropy"] },
-    { label: "action S", latex: "S", category: "physics", keywords: ["action"] },
+    { label: "action integral", latex: String.raw`S=\int_{t_1}^{t_2}L\,\mathrm{d}t`, shortLabel: { zh: "作用量", en: "Action" }, category: "physics", keywords: ["action", "lagrangian", "作用量", "拉格朗日"] },
     { label: "spin S", latex: "\\mathbf{S}", category: "physics", keywords: ["spin"] },
-    { label: "stoichiometry S", latex: "S", category: "chemistry", keywords: ["stoichiometry"] },
+    { label: "stoichiometric coefficient", latex: String.raw`\nu_i`, category: "chemistry", keywords: ["stoichiometry", "coefficient", "化学计量", "系数"] },
   ],
   KeyD: [
     { label: "derivative d/dx", latex: "\\frac{d}{dx}", category: "calculus", keywords: ["derivative"] },
@@ -460,15 +463,15 @@ const CTRL_LAYER_MEANINGS: Record<string, Array<Omit<QuantumKeyMeaning, "id">>> 
   ],
   KeyF: [
     { label: "force F", latex: "F", category: "physics", keywords: ["force"] },
-    { label: "Faraday F", latex: "F", category: "chemistry", keywords: ["faraday"] },
+    { label: "Faraday constant (C mol^-1)", latex: "F=N_Ae", category: "chemistry", keywords: ["faraday", "avogadro", "charge", "法拉第常数"] },
     { label: "flux Phi", latex: "\\Phi", category: "physics", keywords: ["flux"] },
     { label: "Fourier F", latex: "\\mathcal{F}", category: "engineering", keywords: ["fourier"] },
   ],
   KeyG: [
     { label: "Gibbs G", latex: "G", category: "chemistry", keywords: ["gibbs"] },
-    { label: "conductance G", latex: "G", category: "engineering", keywords: ["conductance"] },
-    { label: "gravitational G", latex: "G", category: "physics", keywords: ["gravity"] },
-    { label: "Green G", latex: "G", category: "calculus", keywords: ["green"] },
+    { label: "electrical conductance", latex: String.raw`G=\frac{1}{R}`, category: "engineering", keywords: ["conductance", "resistance", "电导", "电阻"] },
+    { label: "Newton gravity (point masses)", latex: String.raw`F=G\frac{m_1m_2}{r^2}`, shortLabel: { zh: "万有引力", en: "Gravity" }, category: "physics", keywords: ["gravity", "newton", "point mass", "万有引力", "质点"] },
+    { label: "Green function", latex: String.raw`G(\mathbf{r},\mathbf{r}')`, shortLabel: { zh: "格林函数", en: "Green" }, category: "calculus", keywords: ["green", "function", "格林函数"] },
   ],
   KeyH: [
     { label: "enthalpy H", latex: "H", category: "chemistry", keywords: ["enthalpy"] },
@@ -480,7 +483,7 @@ const CTRL_LAYER_MEANINGS: Record<string, Array<Omit<QuantumKeyMeaning, "id">>> 
     { label: "current density J", latex: "\\mathbf{J}", category: "physics", keywords: ["current", "density"] },
     { label: "Bessel J", latex: "J_n", category: "calculus", keywords: ["bessel"] },
     { label: "flux J", latex: "J", category: "physics", keywords: ["flux"] },
-    { label: "impulse J", latex: "J", category: "engineering", keywords: ["impulse"] },
+    { label: "impulse integral", latex: String.raw`\mathbf{J}=\int_{t_1}^{t_2}\mathbf{F}\,\mathrm{d}t`, shortLabel: { zh: "冲量", en: "Impulse" }, category: "physics", keywords: ["impulse", "force", "冲量"] },
   ],
   KeyK: [
     { label: "Boltzmann k", latex: "k_B", category: "physics", keywords: ["boltzmann"] },
@@ -492,11 +495,11 @@ const CTRL_LAYER_MEANINGS: Record<string, Array<Omit<QuantumKeyMeaning, "id">>> 
     { label: "Lagrangian L", latex: "\\mathcal{L}", category: "physics", keywords: ["lagrangian"] },
     { label: "length L", latex: "L", category: "engineering", keywords: ["length"] },
     { label: "angular momentum L", latex: "\\mathbf{L}", category: "physics", keywords: ["angular", "momentum"] },
-    { label: "Laplace L", latex: "\\mathcal{L}", category: "engineering", keywords: ["laplace"] },
+    { label: "Laplace transform operator", latex: String.raw`\mathcal{L}\{{}\}(s)`, shortLabel: { zh: "拉普模板", en: "Laplace" }, category: "calculus", keywords: ["laplace", "transform", "拉普拉斯"] },
   ],
   KeyZ: [
     { label: "impedance Z", latex: "Z", category: "engineering", keywords: ["impedance"] },
-    { label: "atomic number Z", latex: "Z", category: "chemistry", keywords: ["atomic", "number"] },
+    { label: "atomic number / proton count", latex: String.raw`Z=N_{\mathrm{p}}`, category: "chemistry", keywords: ["atomic", "number", "proton", "原子序数", "质子数"] },
     { label: "z-transform", latex: "\\mathcal{Z}", category: "engineering", keywords: ["z transform"] },
     { label: "z-score", latex: "z", category: "calculus", keywords: ["z score"] },
   ],
@@ -508,14 +511,14 @@ const CTRL_LAYER_MEANINGS: Record<string, Array<Omit<QuantumKeyMeaning, "id">>> 
   ],
   KeyC: [
     { label: "capacitance C", latex: "C", category: "engineering", keywords: ["capacitance"] },
-    { label: "concentration C", latex: "C", category: "chemistry", keywords: ["concentration"] },
-    { label: "heat capacity", latex: "C", category: "physics", keywords: ["heat", "capacity"] },
+    { label: "species concentration", latex: String.raw`[\mathrm{A}]`, category: "chemistry", keywords: ["concentration", "species", "物种浓度"] },
+    { label: "isobaric heat capacity", latex: String.raw`C_p=\left(\frac{\partial H}{\partial T}\right)_p`, shortLabel: { zh: "定压热容", en: "Cp" }, category: "physics", keywords: ["heat", "capacity", "constant pressure", "定压热容"] },
     { label: "carbon C", latex: "\\mathrm{C}", category: "chemistry", keywords: ["carbon"] },
   ],
   KeyV: [
     { label: "voltage V", latex: "V", category: "engineering", keywords: ["voltage"] },
-    { label: "potential V", latex: "V", category: "physics", keywords: ["potential"] },
-    { label: "volume V", latex: "V", category: "physics", keywords: ["volume"] },
+    { label: "electric potential", latex: String.raw`V=\frac{U}{q}`, category: "physics", keywords: ["potential", "potential energy", "charge", "电势", "势能"] },
+    { label: "volume integral", latex: String.raw`V=\iiint_{\Omega}1\,\mathrm{d}V`, shortLabel: { zh: "区域体积", en: "Volume" }, category: "physics", keywords: ["volume", "region", "体积", "区域"] },
     { label: "velocity v", latex: "\\mathbf{v}", category: "physics", keywords: ["velocity"] },
   ],
   KeyB: [
@@ -533,7 +536,7 @@ const CTRL_LAYER_MEANINGS: Record<string, Array<Omit<QuantumKeyMeaning, "id">>> 
   KeyM: [
     { label: "mass m", latex: "m", category: "physics", keywords: ["mass"] },
     { label: "molarity M", latex: "M", category: "chemistry", keywords: ["molarity"] },
-    { label: "moment M", latex: "M", category: "engineering", keywords: ["moment"] },
+    { label: "moment of force", latex: String.raw`\mathbf{M}=\mathbf{r}\times\mathbf{F}`, shortLabel: { zh: "力矩", en: "Torque" }, category: "physics", keywords: ["moment", "torque", "force", "力矩"] },
     { label: "metric M", latex: "g_{\\mu\\nu}", category: "physics", keywords: ["metric"] },
   ],
 };
@@ -565,20 +568,62 @@ function buildBaseLayer(keyCode: string, mapping: KeyMapping): QuantumKeyMeaning
     .map((value, index) => toQuantumKeyMeaning(keyCode, "base", index, value, mapping));
 }
 
-export const quantumKeyboardMap: QuantumKeyboardMap = Object.fromEntries(
+/** Full source list, including search-only meanings and their original override IDs. */
+export const allQuantumKeyboardMap: QuantumKeyboardMap = Object.fromEntries(
   Object.entries(quantumKeymap).map(([keyCode, mapping]) => [
     keyCode,
     {
       keyCode,
       letter: KEY_LABELS[keyCode] ?? keyCode.replace(/^Key/, ""),
       base: buildBaseLayer(keyCode, mapping),
-      ctrl: (CTRL_LAYER_MEANINGS[keyCode] ?? []).map((meaning, index) => ({
+      ctrl: [
+        ...(CTRL_LAYER_MEANINGS[keyCode] ?? []),
+        ...QUANTUM_FORMULA_PRESETS.filter(preset => preset.keyCode === keyCode).map(preset => ({
+          id: preset.id,
+          label: preset.nameEn,
+          shortLabel: preset.shortLabel,
+          latex: preset.latex,
+          category: preset.category,
+          keywords: preset.keywords,
+          templateKind: "structure" as const,
+        })),
+      ].map((meaning, index) => ({
         ...meaning,
-        id: `ctrl-${keyCode}-${index + 1}`,
+        id: "id" in meaning && meaning.id ? meaning.id : `ctrl-${keyCode}-${index + 1}`,
       })),
     },
   ]),
 ) as QuantumKeyboardMap;
+
+/** Visible order changes independently of stable source IDs. */
+const VISIBLE_MEANING_IDS: Record<string, Partial<Record<QuantumLayerId, readonly string[]>>> = {
+  KeyI: {
+    base: ["base-KeyI-1", "base-KeyI-2", "base-KeyI-3", "base-KeyI-4", "base-KeyI-5", "base-KeyI-6"],
+    ctrl: ["ctrl-KeyI-integral-1", "ctrl-KeyI-integral-2", "ctrl-KeyI-integral-3", "ctrl-KeyI-integral-4", "ctrl-KeyI-integral-5", "ctrl-KeyI-integral-6"],
+  },
+  KeyS: { base: ["base-KeyS-1", "base-KeyS-2", "base-KeyS-3", "base-KeyS-4", "base-KeyS-5", "base-KeyS-6"] },
+  KeyF: { base: ["base-KeyF-1", "base-KeyF-2", "base-KeyF-5", "base-KeyF-6", "base-KeyF-7"] },
+  KeyL: { base: ["base-KeyL-1", "base-KeyL-2", "base-KeyL-3", "base-KeyL-4", "base-KeyL-5", "base-KeyL-7"] },
+  KeyV: { base: ["base-KeyV-1", "base-KeyV-2", "base-KeyV-3", "base-KeyV-5", "base-KeyV-6", "base-KeyV-7"] },
+  KeyM: { base: ["base-KeyM-1", "base-KeyM-2", "base-KeyM-3", "base-KeyM-5", "base-KeyM-6", "base-KeyM-7"] },
+  KeyE: { ctrl: ["ctrl-KeyE-1", "ctrl-KeyE-2", "ctrl-KeyE-3", "ctrl-KeyE-5", "ctrl-KeyE-6", "ctrl-KeyE-7"] },
+  KeyR: { ctrl: ["ctrl-KeyR-1", "ctrl-KeyR-2", "ctrl-KeyR-3", "ctrl-KeyR-4", "ctrl-KeyR-5", "ctrl-KeyR-7"] },
+  KeyC: { ctrl: ["ctrl-KeyC-1", "ctrl-KeyC-2", "ctrl-KeyC-3", "ctrl-KeyC-4", "ctrl-KeyC-5", "ctrl-KeyC-6"] },
+};
+
+export const quantumKeyboardMap: QuantumKeyboardMap = Object.fromEntries(
+  Object.entries(allQuantumKeyboardMap).map(([keyCode, key]) => {
+    const select = (layer: QuantumLayerId) => {
+      const ids = VISIBLE_MEANING_IDS[keyCode]?.[layer];
+      return ids ? ids.flatMap(id => key[layer].filter(meaning => meaning.id === id)) : key[layer];
+    };
+    return [keyCode, { ...key, base: select("base"), ctrl: select("ctrl") }];
+  }),
+);
+
+export function getAllQuantumLayerMeanings(keyCode: string, layer: QuantumLayerId): QuantumKeyMeaning[] {
+  return allQuantumKeyboardMap[keyCode]?.[layer] ?? [];
+}
 
 export function getQuantumLayerMeanings(keyCode: string, layer: QuantumLayerId): QuantumKeyMeaning[] {
   return quantumKeyboardMap[keyCode]?.[layer] ?? [];
@@ -633,11 +678,7 @@ export function getDisplaySymbol(keyCode: string, isShiftHeld: boolean): string 
 }
 
 export function getCandidateSymbols(keyCode: string): string[] {
-  const mapping = quantumKeymap[keyCode];
-  if (!mapping) return [];
-  return [mapping.default, mapping.shift, ...(mapping.variants ?? [])]
-    .filter((value): value is string => Boolean(value))
-    .filter((value, index, values) => values.indexOf(value) === index);
+  return getQuantumLayerMeanings(keyCode, "base").map(meaning => meaning.latex);
 }
 
 export function getCandidateSymbol(keyCode: string, oneBasedIndex: number): string | null {
@@ -648,10 +689,7 @@ export function getCandidateSymbol(keyCode: string, oneBasedIndex: number): stri
 }
 
 export function getCandidateLabel(keyCode: string, oneBasedIndex: number): string {
-  const mapping = quantumKeymap[keyCode];
-  if (!mapping) return "";
-  const labels = mapping.variantLabels ?? [];
-  return labels[oneBasedIndex - 1] ?? getCandidateSymbol(keyCode, oneBasedIndex) ?? "";
+  return getQuantumLayerMeanings(keyCode, "base")[oneBasedIndex - 1]?.label ?? getCandidateSymbol(keyCode, oneBasedIndex) ?? "";
 }
 
 export function hasVariants(keyCode: string): boolean {

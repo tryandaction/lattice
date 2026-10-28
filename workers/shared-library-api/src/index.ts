@@ -8,8 +8,14 @@
  */
 
 import { StorageRequestError, SupabaseBlobStore, SUPABASE_MAX_UPLOAD_BYTES } from "./supabase-storage";
+import { handleTeamAiRoute, type TeamAiEnv } from './team-ai';
+import { dispatchGitHubIntegration, handleGitHubWebhook, processGitHubWebhookDeliveries, type GitHubIntegrationEnv } from './github';
+import { handleGitHubJobs } from './github-jobs';
+import { dispatch as dispatchAudit } from './collaboration-audit';
+import type { CloudIntegrationContext } from './integration-context';
 
-export interface SharedLibraryWorkerEnv {
+export interface SharedLibraryWorkerEnv extends TeamAiEnv, GitHubIntegrationEnv {
+  GITHUB_SYNC_JOB_SECRET?: string;
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
   ALLOWED_ORIGINS?: string;
@@ -374,6 +380,9 @@ async function cleanInvalidStorageUpload(env: SharedLibraryWorkerEnv, actor: Act
 }
 
 async function handleRequest(request: Request, env: SharedLibraryWorkerEnv, id: string): Promise<Response> {
+  const path = new URL(request.url).pathname;
+  if (path === '/v1/integrations/github/webhook') return handleGitHubWebhook(request, env);
+  if (path === '/v1/integrations/github/jobs/run') return handleGitHubJobs(request, env);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request, env, id) });
   const actorResult = requireActor(request);
   if (actorResult instanceof Response) return errorResponse(request, env, id, "UNAUTHORIZED", "Authentication required", 401);
@@ -383,6 +392,16 @@ async function handleRequest(request: Request, env: SharedLibraryWorkerEnv, id: 
   if (segments[0] !== "v1") return errorResponse(request, env, id, "NOT_FOUND", "Route not found", 404);
 
   try {
+    const integrationContext: CloudIntegrationContext = {
+      env, actor, segments, url,
+      db: (table, init, query) => dbRequest(env, actor, table, init, query),
+      json: (body, status) => json(request, env, id, body, status),
+      error: (code, message, status, retryable) => errorResponse(request, env, id, code, message, status, retryable),
+    };
+    for (const dispatch of [handleTeamAiRoute, dispatchGitHubIntegration, dispatchAudit]) {
+      const result = await dispatch(request, integrationContext);
+      if (result) return result;
+    }
     if (segments[1] === "invitations" && segments[2] === "accept" && request.method === "POST") {
       const input = await readBody(request);
       if (typeof input.token !== "string" || !/^[a-f0-9]{64}$/.test(input.token)) return errorResponse(request, env, id, "INVALID_INPUT", "Invalid invitation token", 400);
@@ -833,6 +852,13 @@ async function handleRequest(request: Request, env: SharedLibraryWorkerEnv, id: 
       }
       if (segments.length === 3 && request.method === "PATCH") {
         const input = await readBody(request);
+        if (input.metadataPatch !== undefined) {
+          if (!input.metadataPatch || typeof input.metadataPatch !== 'object' || Array.isArray(input.metadataPatch) || (input.expectedVersionId !== null && typeof input.expectedVersionId !== 'string')) return errorResponse(request, env, id, 'INVALID_INPUT', 'Metadata patch and explicit version baseline required', 400);
+          const result = await dbRequest(env, actor, 'rpc/cloud_update_item_metadata', { method: 'POST', body: JSON.stringify({ p_item_id: itemId, p_patch: input.metadataPatch, p_expected_version_id: input.expectedVersionId }) });
+          const record = Array.isArray(result.body) ? result.body[0] : result.body;
+          const conflict = !result.response.ok && (result.response.status === 409 || (result.body as DbRecord)?.code === '40001');
+          return result.response.ok && record ? json(request, env, id, mapItem(record as DbRecord)) : errorResponse(request, env, id, conflict ? 'SYNC_CONFLICT' : 'DATABASE_ERROR', conflict ? 'Content version changed; source metadata was not overwritten' : 'Metadata update rejected', conflict ? 409 : result.response.ok ? 409 : result.response.status);
+        }
         const result = await dbRequest(env, actor, "items", { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify({ ...(input.title !== undefined ? { title: input.title } : {}), ...(input.canonicalName !== undefined ? { canonical_name: input.canonicalName } : {}), ...(input.collectionId !== undefined ? { collection_id: input.collectionId } : {}), ...(input.metadata !== undefined ? { metadata: input.metadata } : {}), updated_at: new Date().toISOString() }) }, { id: `eq.${itemId}` });
         const record = Array.isArray(result.body) ? result.body[0] : result.body;
         return result.response.ok ? json(request, env, id, mapItem(record as DbRecord)) : errorResponse(request, env, id, "DATABASE_ERROR", "Unable to update item", result.response.status);
@@ -907,6 +933,9 @@ async function handleRequest(request: Request, env: SharedLibraryWorkerEnv, id: 
 }
 
 const worker = {
+  async scheduled(_event: unknown, env: SharedLibraryWorkerEnv): Promise<void> {
+    if (env.GITHUB_WEBHOOK_SECRET && env.SUPABASE_SERVICE_ROLE_KEY) await processGitHubWebhookDeliveries(env);
+  },
   fetch(request: Request, env: SharedLibraryWorkerEnv): Promise<Response> {
     const id = requestId();
     return handleRequest(request, env, id);

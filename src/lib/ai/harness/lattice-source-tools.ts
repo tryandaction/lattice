@@ -1,6 +1,7 @@
 import { createLatticeSourcePdfToolRuntime } from '../lattice-skills/source-pdf-tool-runtime';
 import { LATTICE_SKILL_REGISTRY } from '../lattice-skills/skill-registry';
-import { listLatticeOperationContracts } from '../lattice-skills/operation-contract';
+import { LATTICE_PRODUCT_SKILL_OPERATIONS } from '../lattice-skills/product-operation-guide';
+import type { LatticeSkillId } from '../lattice-skills/skill-registry';
 import { createAuthorizedSourceIndex, type AuthorizedSourceIndex, type AgentSourceRead, type AgentSourceReadOptions } from '../source-index';
 import { preparePdfChildProposal } from '../lattice-skills/pdf-child-skill';
 import { listPdfItemNotes, loadPdfItemManifest } from '@/lib/pdf-item';
@@ -9,7 +10,7 @@ import { normalizeWorkspaceWritePath } from '../workbench-actions';
 import { LATTICE_HARNESS_TOOLS, validateLatticeHarnessArgs } from './lattice-tool-definitions';
 import { evaluateBoundedMath } from './bounded-math';
 import { publishHarnessDraft, validateHarnessTextContent, type HarnessDraftHandler } from './tool-draft';
-import { appendVerifiedAnnotationDrafts, harnessPage, readExistingHarnessText, type HarnessAnnotationIntent } from './pdf-tool-helpers';
+import { prepareVerifiedAnnotationDraftBatch, harnessPage, readExistingHarnessText, type HarnessAnnotationIntent } from './pdf-tool-helpers';
 import { createCloudHarnessSourceTools, type CloudHarnessToolInput } from './cloud-source-tools';
 import type { PdfChildProposal } from '../lattice-skills/pdf-child-skill';
 export { LATTICE_HARNESS_TOOLS } from './lattice-tool-definitions';
@@ -23,21 +24,15 @@ export interface LocalHarnessToolInput {
   onProposal?: (proposal: PdfChildProposal) => void | Promise<void>;
 }
 export type LatticeHarnessToolInput = LocalHarnessToolInput | CloudHarnessToolInput;
-const skillTools: Record<string, string[]> = {
-  'path-identity': ['lattice.sources.active', 'lattice.sources.list', 'lattice.pdf.listChildren'],
-  'note-taking': ['lattice.sources.read', 'lattice.workspace.proposeWrite'],
-  'notebook-analysis': ['lattice.sources.read', 'lattice.compute.evaluate', 'lattice.workspace.proposeWrite'],
-  'coding-change-review': ['lattice.sources.read', 'lattice.workspace.proposeWrite'],
-  'knowledge-organization': ['lattice.sources.search', 'lattice.sources.read', 'lattice.workspace.proposeWrite'],
-  'pdf-item-workspace': ['lattice.pdf.listChildren', 'lattice.sources.read', 'lattice.pdf.proposeChild'],
-  'pdf-annotation': ['lattice.pdf.readAnnotations', 'lattice.sources.read', 'lattice.pdf.proposeAnnotations'],
-};
+const skillTools = Object.fromEntries(Object.entries(LATTICE_PRODUCT_SKILL_OPERATIONS).map(([id, operation]) => [id, operation.tools]));
 function skill(id: string) {
   const descriptor = LATTICE_SKILL_REGISTRY.find(skill => skill.id === id);
   if (!descriptor) throw new Error('Unknown Lattice skill.');
   const executableTools = skillTools[id] ?? [];
-  const contracts = listLatticeOperationContracts(descriptor.operationContractIds).map(({ requiredTools, ...contract }) => ({ ...contract, sourceApiTools: requiredTools }));
-  return { descriptor: { ...descriptor, allowedTools: executableTools }, executableTools,
+  const rules = LATTICE_PRODUCT_SKILL_OPERATIONS[id as LatticeSkillId].instructions;
+  const contracts = descriptor.operationContractIds.map(contractId => ({ id: contractId, sourceApiTools: executableTools, rules,
+    prohibitions: ['Do not invent coordinates, source evidence, review approval, writes, code execution or deployment success.'] }));
+  return { descriptor: { ...descriptor, allowedTools: executableTools, notes: rules }, executableTools,
     tools: LATTICE_HARNESS_TOOLS.filter(tool => executableTools.includes(tool.name)), contracts,
     boundary: 'Read actual units and preserve returned versions/locators. All writes are pending Workbench user review. No Harness approval/apply tool exists. Notebook scripts use the separate approved runner; bounded math is numeric arithmetic only.' };
 }
@@ -133,16 +128,23 @@ function createLocalTools(input: LocalHarnessToolInput) {
         ...(annotationNote ? { annotationNote } : {}) };
     }
     if (name === 'lattice.pdf.proposeAnnotations') {
-      const { snapshot, manifest } = await parent(args, signal), evidence = remembered.get(snapshot.path);
-      if (!evidence || evidence.snapshot.version !== snapshot.version) throw new Error('Read the actual PDF pages before proposing annotations.');
+      const { snapshot, manifest } = await parent(args, signal), prior = remembered.get(snapshot.path);
+      if (prior && prior.snapshot.version !== snapshot.version) throw new Error('PDF source revision changed before annotation proposal.');
+      // A prior chat's reading ledger belongs to another runtime. Re-read only
+      // the requested pages here instead of trusting history or rejecting it.
+      const annotations = args.annotations as HarnessAnnotationIntent[];
+      const evidence = await read(snapshot.path, { expectedVersion: snapshot.version, units: [...new Set(annotations.map(annotation => annotation.page))],
+        maxChars: 1_000_000, maxUnits: 50 }, signal);
       const annotationPath = manifest.annotationIndexPath ?? `${manifest.itemFolderPath}/_annotations.md`;
       const existing = await readExistingHarnessText(input.root, annotationPath, signal);
-      const content = appendVerifiedAnnotationDrafts(existing?.content ?? '', args.annotations as HarnessAnnotationIntent[], evidence);
+      const batch = prepareVerifiedAnnotationDraftBatch(existing?.content ?? '', annotations, evidence);
+      const content = batch.content;
       const proposal = await preparePdfChildProposal({ root: input.root, workspaceKey: input.workspaceKey, parentPath: snapshot.path, parentItemId: manifest.itemId,
         fileName: '_annotations.md', content, mode: existing ? 'update' : 'create', sourceSnapshot: snapshot,
         ...(existing ? { expectedContent: existing.content } : {}), signal });
       await assertCurrent(signal);
-      return publishPdf(proposal, signal);
+      return { ...await publishPdf(proposal, signal), verifiedSourceRead: evidence, complete: batch.rejectedCount === 0,
+        annotationValidation: { acceptedCount: batch.acceptedCount, rejectedCount: batch.rejectedCount, ...(batch.validationDetails ? { details: batch.validationDetails } : {}) } };
     }
     if (name === 'lattice.pdf.proposeChild') return publishPdf(await base.execute(name, args, signal) as PdfChildProposal, signal);
     if (name === 'lattice.workspace.proposeWrite') {

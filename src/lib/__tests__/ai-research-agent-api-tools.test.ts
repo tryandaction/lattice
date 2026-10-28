@@ -41,14 +41,161 @@ describe('API agent shared tools and required source reading', () => {
     const paper = root.add(new SourceTestFile('Senoo.pdf', '%PDF fixture'));
     const unrelated = root.add(new SourceTestFile('unrelated.md', 'Unrelated active tab.'));
     const sourceSelections = [{ kind: 'file' as const, path: 'Senoo.pdf' }];
+    const onDraft = vi.fn(() => 'annotation-review');
     const runtime = createLatticeHarnessToolRuntime({ kind: 'local', root: root.handle(), workspaceKey: 'A',
       index: createAuthorizedSourceIndex({ rootHandle: root.handle(), workspaceKey: 'A', selections: sourceSelections }),
-      getActivePath: () => 'Senoo.pdf' });
+      getActivePath: () => 'Senoo.pdf', onDraft });
     const execute = vi.fn(runtime.execute);
-    return { paper, unrelated, execute, input: { task: '单比特门如何实现？', query: '单比特门如何实现？',
+    return { paper, unrelated, execute, onDraft, input: { task: '单比特门如何实现？', query: '单比特门如何实现？',
       filePath: 'Senoo.pdf', apiToolRuntime: { ...runtime, execute, sourceSelections },
       workspaceKey: 'A', includeWorkspaceSummary: false, suggestMemory: false, compact: false } as ResearchAgentRunInput };
   }
+
+  function annotationPlan(quote: string) {
+    return JSON.stringify({ steps: [...core,
+      { id: 'read-annotation-page', title: 'Read annotation source', description: 'Read the actual first PDF page',
+        toolName: 'lattice.sources.read', toolArgs: { path: 'Senoo.pdf', units: [1], maxChars: 4000, maxUnits: 1 } },
+      { id: 'propose-core-annotation', title: 'Propose core annotation', description: 'Prepare a verified review draft',
+        toolName: 'lattice.pdf.proposeAnnotations', toolArgs: { parentPath: 'Senoo.pdf', annotations: [{ page: 1, quote, type: 'highlight' }] } },
+    ] });
+  }
+
+  it('repairs one exact-quote annotation mismatch from actual tool observations before failing the task', async () => {
+    const state = singlePaper();
+    const generatePlan = vi.fn(async (messages: AiMessage[]) => {
+      if (generatePlan.mock.calls.length === 1) return { text: annotationPlan('A fabricated annotation quote.') };
+      const prompt = messages.map(message => getMessageText(message.content)).join('\n');
+      expect(prompt).toContain('批注引文');
+      expect(prompt).toContain('two metastable states');
+      return { text: annotationPlan('logical 0 and 1 encoded in two metastable states') };
+    });
+    const result = await runResearchAgent({ ...state.input, task: '批注本文核心', query: '批注本文核心', generatePlan,
+      requireAnswer: true, generateAnswer: async () => ({ text: '已生成经过原文校验的批注草稿，等待审阅。' }) });
+    expect(generatePlan).toHaveBeenCalledTimes(2);
+    expect(state.onDraft).toHaveBeenCalledTimes(1);
+    expect(result.session.status).toBe('completed');
+    expect(result.toolResults.filter(tool => tool.toolName === 'lattice.pdf.proposeAnnotations').map(tool => tool.status)).toEqual(['failed', 'completed']);
+    expect(result.session.trace.some(event => event.kind === 'error')).toBe(false);
+    expect(state.unrelated.reads).toBe(0);
+  });
+
+  it('counts the verified PDF read receipt when the first planned step proposes a valid annotation', async () => {
+    const state = singlePaper();
+    const generatePlan = vi.fn(async () => ({ text: JSON.stringify({ steps: [...core,
+      { id: 'propose-core-annotation', title: 'Propose core annotation', description: 'Prepare a verified review draft',
+        toolName: 'lattice.pdf.proposeAnnotations', toolArgs: { parentPath: 'Senoo.pdf', annotations: [
+          { page: 1, quote: 'logical 0 and 1 encoded in two metastable states', type: 'highlight' },
+        ] } },
+    ] }) }));
+    const result = await runResearchAgent({ ...state.input, task: '批注本文核心', query: '批注本文核心', generatePlan,
+      maxReadToolSteps: 1,
+      requireAnswer: true, generateAnswer: async () => ({ text: '已生成经过原文校验的批注草稿，等待审阅。' }) });
+    expect(state.execute.mock.calls.map(call => call[0])).toEqual(['lattice.pdf.proposeAnnotations']);
+    expect(state.onDraft).toHaveBeenCalledTimes(1);
+    expect(result.session.status).toBe('completed');
+    expect(result.promptContext.prompt).toContain('two metastable states');
+    expect(result.promptContext.evidenceRefs.some(ref => ref.locator.includes('Senoo.pdf#page=1'))).toBe(true);
+    expect(state.unrelated.reads).toBe(0);
+  });
+
+  it('does not treat an unverified pending-review response as a source read receipt', async () => {
+    const state = singlePaper();
+    state.input.apiToolRuntime!.execute = async () => ({ status: 'pending-review', artifactId: 'unverified-review' });
+    const generatePlan = vi.fn(async () => ({ text: JSON.stringify({ steps: [...core,
+      { id: 'propose-core-annotation', title: 'Propose core annotation', description: 'Prepare a review draft',
+        toolName: 'lattice.pdf.proposeAnnotations', toolArgs: { parentPath: 'Senoo.pdf', annotations: [
+          { page: 1, quote: 'logical 0 and 1 encoded in two metastable states', type: 'highlight' },
+        ] } },
+    ] }) }));
+    await expect(runResearchAgent({ ...state.input, task: '批注本文核心', query: '批注本文核心', generatePlan,
+      maxReadToolSteps: 1, requireAnswer: true, generateAnswer: async () => ({ text: 'Unverified success.' }) })).rejects.toThrow(/未完成.*正文|正文.*未完成/);
+    expect(state.onDraft).not.toHaveBeenCalled();
+  });
+
+  it('does not repeatedly retry a mismatched annotation or publish an unchecked draft', async () => {
+    const state = singlePaper();
+    const generatePlan = vi.fn(async () => ({ text: annotationPlan('A fabricated annotation quote.') }));
+    await expect(runResearchAgent({ ...state.input, task: '批注本文核心', query: '批注本文核心', generatePlan,
+      maxObservationReplans: 5, requireAnswer: true, generateAnswer: async () => ({ text: 'Unverified success.' }) })).rejects.toThrow(/批注引文/);
+    expect(generatePlan).toHaveBeenCalledTimes(2);
+    expect(state.onDraft).not.toHaveBeenCalled();
+    expect(useAgentSessionStore.getState().sessions[0].status).toBe('failed');
+  });
+
+  it('does not hide a rejected annotation by adding a different proposal step during repair', async () => {
+    const state = singlePaper();
+    const generatePlan = vi.fn(async () => ({ text: generatePlan.mock.calls.length === 1
+      ? annotationPlan('A fabricated annotation quote.')
+      : annotationPlan('logical 0 and 1 encoded in two metastable states').replace('propose-core-annotation', 'replacement-annotation') }));
+    await expect(runResearchAgent({ ...state.input, task: '批注本文核心', query: '批注本文核心', generatePlan,
+      requireAnswer: true, generateAnswer: async () => ({ text: 'Unverified success.' }) })).rejects.toThrow(/批注引文/);
+    expect(generatePlan).toHaveBeenCalledTimes(2);
+    expect(state.onDraft).not.toHaveBeenCalled();
+  });
+
+  it('repairs only the failed annotation step and ignores added same-target or other-target actions', async () => {
+    const state = singlePaper();
+    const generatePlan = vi.fn(async () => {
+      if (generatePlan.mock.calls.length === 1) return { text: annotationPlan('A fabricated annotation quote.') };
+      const repaired = JSON.parse(annotationPlan('logical 0 and 1 encoded in two metastable states'));
+      repaired.steps.push(
+        { ...repaired.steps.at(-1), id: 'duplicate-same-pdf' },
+        { ...repaired.steps.at(-1), id: 'other-pdf', toolArgs: { ...repaired.steps.at(-1).toolArgs, parentPath: 'Other.pdf' } },
+        { id: 'read-other-target', title: 'Read other source', description: 'Should be excluded from this quote repair',
+          toolName: 'lattice.sources.read', toolArgs: { path: 'unrelated.md', maxChars: 1000, maxUnits: 1 } },
+      );
+      return { text: JSON.stringify(repaired) };
+    });
+    const result = await runResearchAgent({ ...state.input, task: '批注本文核心', query: '批注本文核心', generatePlan,
+      requireAnswer: true, generateAnswer: async () => ({ text: '已生成经过原文校验的批注草稿，等待审阅。' }) });
+    expect(state.onDraft).toHaveBeenCalledTimes(1);
+    expect(result.session.status).toBe('completed');
+    expect(state.unrelated.reads).toBe(0);
+    expect(state.execute.mock.calls.filter(call => call[0] === 'lattice.pdf.proposeAnnotations')).toHaveLength(2);
+    expect(state.execute.mock.calls.every(call => !JSON.stringify(call[1]).includes('Other.pdf'))).toBe(true);
+  });
+
+  it.each(['Senoo.pdf', 'Other.pdf'])('keeps an existing pending read from becoming a second proposal for %s during repair', async target => {
+    const state = singlePaper();
+    const generatePlan = vi.fn(async () => {
+      const first = generatePlan.mock.calls.length === 1;
+      const plan = JSON.parse(annotationPlan(first ? 'A fabricated annotation quote.' : 'logical 0 and 1 encoded in two metastable states'));
+      plan.steps.push(first
+        ? { id: 'read-note', title: 'Read the next source page', description: 'Read the same captured PDF',
+          toolName: 'lattice.sources.read', toolArgs: { path: 'Senoo.pdf', units: [2], maxChars: 4000, maxUnits: 1 } }
+        : { ...plan.steps.at(-1), id: 'read-note', toolArgs: { ...plan.steps.at(-1).toolArgs, parentPath: target } });
+      return { text: JSON.stringify(plan) };
+    });
+    const result = await runResearchAgent({ ...state.input, task: '批注本文核心', query: '批注本文核心', generatePlan,
+      requireAnswer: true, generateAnswer: async () => ({ text: '已生成经过原文校验的批注草稿，等待审阅。' }) });
+    expect(state.onDraft).toHaveBeenCalledTimes(1);
+    expect(result.session.status).toBe('completed');
+    expect(state.execute.mock.calls.filter(call => call[0] === 'lattice.pdf.proposeAnnotations')).toHaveLength(2);
+    expect(state.execute.mock.calls.filter(call => call[0] === 'lattice.sources.read').map(call => call[1])).toContainEqual(expect.objectContaining({ path: 'Senoo.pdf', units: [2] }));
+  });
+
+  it('does not spend another planning call when the annotation repair tool budget is exhausted', async () => {
+    const state = singlePaper();
+    const generatePlan = vi.fn(async () => ({ text: annotationPlan('A fabricated annotation quote.') }));
+    await expect(runResearchAgent({ ...state.input, task: '批注本文核心', query: '批注本文核心', generatePlan,
+      maxReadToolSteps: 2, requireAnswer: true, generateAnswer: async () => ({ text: 'Unverified success.' }) })).rejects.toThrow(/批注引文/);
+    expect(generatePlan).toHaveBeenCalledTimes(1);
+    expect(state.onDraft).not.toHaveBeenCalled();
+  });
+
+  it('never recovers a PDF source revision failure as a quote mismatch', async () => {
+    const state = singlePaper();
+    const realExecute = state.input.apiToolRuntime!.execute;
+    state.input.apiToolRuntime!.execute = async (name, args, signal) => {
+      if (name === 'lattice.pdf.proposeAnnotations') throw new Error('PDF source version changed before annotation review.');
+      return realExecute(name, args, signal);
+    };
+    const generatePlan = vi.fn(async () => ({ text: annotationPlan('logical 0 and 1 encoded in two metastable states') }));
+    await expect(runResearchAgent({ ...state.input, task: '批注本文核心', query: '批注本文核心', generatePlan,
+      requireAnswer: true, generateAnswer: async () => ({ text: 'Unverified success.' }) })).rejects.toThrow(/version changed/);
+    expect(generatePlan).toHaveBeenCalledTimes(1);
+    expect(state.onDraft).not.toHaveBeenCalled();
+  });
 
   it('searches the captured PDF before asking the planner to recover zero-hit literal evidence', async () => {
     const state = singlePaper();

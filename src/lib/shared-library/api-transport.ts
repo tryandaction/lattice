@@ -131,7 +131,7 @@ export class ApiTransport implements SharedLibraryTransport {
         headers,
         ...(requestBody !== undefined ? { body: requestBody } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
-      }, this.timeoutMs ?? (isBinaryRequest || input.responseType === "arrayBuffer" || /\/uploads\/[^/]+\/complete$/.test(input.path) ? 120_000 : 15_000), input.responseType));
+      }, this.timeoutMs ?? (isBinaryRequest || input.responseType === "arrayBuffer" || /\/uploads\/[^/]+\/complete$|\/ai\/chat$/.test(input.path) ? 120_000 : 15_000), input.responseType));
     } catch (error) {
       if (input.signal?.aborted) throw new DOMException("云资源读取已取消", "AbortError");
       throw new SharedLibraryError({

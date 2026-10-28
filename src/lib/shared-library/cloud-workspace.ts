@@ -23,6 +23,7 @@ export interface CloudOutboxEntry {
   contentKey?: string;
   versionId?: string;
   baseVersionId?: string;
+  restoredFromVersionId?: string;
   hash?: string;
   upload?: UploadSession;
   parts?: Array<{ partNumber: number; etag: string }>;
@@ -54,6 +55,10 @@ const initialSnapshot = (): CloudWorkspaceSnapshot => ({ schema: 1, revision: 0,
 const now = () => new Date().toISOString();
 const bytes = (content: SharedLibraryItemContent): ArrayBuffer => content.kind === "binary" ? content.data : new TextEncoder().encode(content.text).buffer;
 const parentId = (item: Item) => typeof item.metadata.parentItemId === "string" ? item.metadata.parentItemId : undefined;
+const pendingAnnotationIds = (snapshot: CloudWorkspaceSnapshot, libraryId: string, itemId: string) => new Set(snapshot.outbox.filter(entry => entry.libraryId === libraryId && entry.itemId === itemId).flatMap(entry => {
+  const body = entry.request?.body as { id?: string; annotation?: { id?: string } } | undefined;
+  return [body?.id, body?.annotation?.id].filter((id): id is string => typeof id === "string");
+}));
 
 /** Local-first product controller. HTTP execution, durable projection and UI state share this boundary. */
 export class CloudLibraryWorkspaceController {
@@ -84,15 +89,15 @@ export class CloudLibraryWorkspaceController {
   private emit() { for (const listener of this.listeners) listener(); }
   private assertLive() { if (this.disposed) throw new Error("云端身份已关闭，请重新打开连接。"); }
   private guard(signal?: AbortSignal) { this.assertLive(); if (signal?.aborted) throw new DOMException("云资源读取已取消", "AbortError"); }
-  private transaction<T>(update: (draft: CloudWorkspaceSnapshot) => T, contents: ReadonlyArray<{ key: string; content: SharedLibraryItemContent | null }> = []): Promise<T> {
+  private transaction<T>(update: (draft: CloudWorkspaceSnapshot) => T, contents: ReadonlyArray<{ key: string; content: SharedLibraryItemContent | null }> = [], signal?: AbortSignal): Promise<T> {
     const run = this.tail.then(async () => {
       for (let attempt = 0; attempt < 8; attempt++) {
-        this.assertLive();
+        this.guard(signal);
         const revision = this.snapshot.revision ?? 0;
         const draft = structuredClone(this.snapshot);
         const result = update(draft); draft.revision = revision + 1;
         try {
-          await this.persistence.commit(draft, contents, revision);
+          await this.persistence.commit(draft, contents, revision, signal);
           const shouldWake = draft.outbox.some(entry => entry.state === "pending" && !this.snapshot.outbox.some(previous => previous.id === entry.id && previous.state === "pending"));
           this.snapshot = draft; this.emit();
           if (this.started && shouldWake) { this.wakeRequested = true; queueMicrotask(() => { if (!this.disposed) void this.sync(); }); }
@@ -217,6 +222,82 @@ export class CloudLibraryWorkspaceController {
     return { item: current, role, content };
   }
   async readContent(libraryId: string, itemId: string, signal?: AbortSignal) { return (await this.readResource(libraryId, itemId, signal)).content; }
+  private async versionHistory(libraryId: string, itemId: string, signal?: AbortSignal): Promise<{ item: Item; versions: ItemVersion[] }> {
+    await this.verifyAccess(libraryId, signal);
+    this.guard(signal);
+    const item = this.online()
+      ? await this.request<Item>({ method: "GET", path: `/v1/items/${encodeURIComponent(itemId)}`, signal })
+      : this.snapshot.items.find(candidate => candidate.id === itemId && candidate.libraryId === libraryId);
+    this.guard(signal);
+    if (!item || item.id !== itemId || item.libraryId !== libraryId || item.status !== "active") throw new Error("云库文件不存在或未授权，无法读取历史版本。");
+    let versions = this.snapshot.versions.filter(version => version.itemId === itemId);
+    if (this.online()) {
+      versions = await this.request<ItemVersion[]>({ method: "GET", path: `/v1/items/${encodeURIComponent(itemId)}/versions`, signal });
+      this.guard(signal);
+      if (!Array.isArray(versions) || versions.some(version => !version || version.itemId !== itemId || !version.id || !version.contentHash)) throw new Error("历史版本条目归属或元数据不一致，请刷新重试。");
+      await this.transaction(draft => {
+        this.guard(signal);
+        for (const version of versions) {
+          const previous = draft.versions.find(candidate => candidate.id === version.id);
+          if (previous && (previous.itemId !== version.itemId || previous.contentHash !== version.contentHash || previous.blobId !== version.blobId)) throw new Error("不可变历史版本元数据已变化，已停止读取。");
+        }
+        draft.versions = [...draft.versions.filter(version => version.itemId !== itemId), ...versions];
+      });
+    }
+    this.guard(signal);
+    return { item: structuredClone(item), versions: structuredClone(versions).sort((a, b) => b.versionNumber - a.versionNumber) };
+  }
+  async listVersions(libraryId: string, itemId: string, signal?: AbortSignal): Promise<ItemVersion[]> {
+    return (await this.versionHistory(libraryId, itemId, signal)).versions;
+  }
+  async readVersion(libraryId: string, itemId: string, versionId: string, signal?: AbortSignal): Promise<SharedLibraryItemContent> {
+    const { item, versions } = await this.versionHistory(libraryId, itemId, signal);
+    const version = versions.find(candidate => candidate.id === versionId && candidate.itemId === itemId);
+    if (!version) throw new Error("该历史版本不存在或尚未缓存，请联网刷新历史。");
+    const key = `cache:${itemId}:${version.contentHash}`;
+    const cached = await this.persistence.content(key);
+    this.guard(signal);
+    let content = cached;
+    if (!content) {
+      if (!this.online()) throw new Error("该历史版本内容尚未缓存，请联网读取。");
+      if (!version.blobId) throw new Error("该历史版本没有可读取的文件内容。");
+      const response = await this.request<unknown>({ method: "GET", path: `/v1/libraries/${encodeURIComponent(libraryId)}/blobs/${encodeURIComponent(version.blobId)}/content`, responseType: "arrayBuffer", signal });
+      this.guard(signal);
+      const data = cloudArrayBuffer(response);
+      if (!data) throw new Error("云端返回的历史内容不是有效的二进制数据。");
+      if (await defaultSha256Hex(data) !== version.contentHash) throw new Error("历史内容 hash 不匹配，未写入缓存。");
+      const mimeType = typeof version.manifest.mimeType === "string" ? version.manifest.mimeType : "application/octet-stream";
+      content = cloudContentFromBytes(item.canonicalName, data, mimeType, version.createdAt);
+    }
+    if (await defaultSha256Hex(bytes(content)) !== version.contentHash) throw new Error("历史内容 hash 不匹配，已停止读取。");
+    this.guard(signal);
+    if (!cached) await this.transaction(() => { this.guard(signal); }, [{ key, content }]);
+    this.guard(signal);
+    return structuredClone(content);
+  }
+  private assertRestoreReady(snapshot: CloudWorkspaceSnapshot, libraryId: string, itemId: string, expectedVersionId: string) {
+    if (snapshot.outbox.some(entry => entry.libraryId === libraryId && entry.itemId === itemId)) throw new Error("此文件存在本地待同步编辑或冲突，请先处理后恢复历史版本。");
+    const item = snapshot.items.find(candidate => candidate.id === itemId && candidate.libraryId === libraryId && candidate.status === "active");
+    if (!expectedVersionId || !item || item.currentVersionId !== expectedVersionId) throw new Error("当前文件版本已变化，请重新载入历史后恢复。");
+  }
+  async restoreVersion(libraryId: string, itemId: string, versionId: string, expectedCurrentVersionId: string, signal?: AbortSignal): Promise<string | undefined> {
+    this.guard(signal);
+    if (!this.online()) throw new Error("恢复历史版本需要联网验证当前版本和成员权限。");
+    const role = await this.verifyAccess(libraryId, signal);
+    this.guard(signal);
+    if (!this.online()) throw new Error("恢复历史版本需要联网验证当前版本和成员权限。");
+    if (!can(role, "item.update")) throw new Error("当前角色没有恢复历史版本的权限。");
+    this.assertRestoreReady(this.snapshot, libraryId, itemId, expectedCurrentVersionId);
+    const content = await this.readVersion(libraryId, itemId, versionId, signal);
+    const latestRole = await this.verifyAccess(libraryId, signal);
+    this.guard(signal);
+    if (!this.online()) throw new Error("恢复历史版本需要联网验证当前版本和成员权限。");
+    if (!can(latestRole, "item.update")) throw new Error("当前角色没有恢复历史版本的权限。");
+    const current = await this.request<Item>({ method: "GET", path: `/v1/items/${encodeURIComponent(itemId)}`, signal });
+    this.guard(signal);
+    if (current.id !== itemId || current.libraryId !== libraryId || current.status !== "active" || current.currentVersionId !== expectedCurrentVersionId) throw new Error("当前文件版本已变化，请重新载入历史后恢复。");
+    return this.enqueueContent(current, content, expectedCurrentVersionId, { restoredFromVersionId: versionId, signal });
+  }
   async assertCurrentVersion(libraryId: string, itemId: string, expectedVersion: string) {
     await this.verifyAccess(libraryId);
     const item = this.online() ? await this.repository.getItem(itemId) : this.snapshot.items.find(i => i.id === itemId && i.libraryId === libraryId);
@@ -233,12 +314,13 @@ export class CloudLibraryWorkspaceController {
   private async writable(libraryId: string, capability: "item.create" | "item.update" | "item.delete" | "annotation.create" | "comment.create") {
     if (!can(await this.verifyAccess(libraryId), capability)) throw new Error("当前角色没有此操作权限。");
   }
-  async createItem(input: { libraryId: string; name: string; kind: ItemKind; parentItemId?: string }, content?: SharedLibraryItemContent, expectedParentVersion?: string) {
+  async createItem(input: { libraryId: string; name: string; kind: ItemKind; parentItemId?: string; metadata?: Record<string, unknown> }, content?: SharedLibraryItemContent, expectedParentVersion?: string) {
     await this.writable(input.libraryId, "item.create");
     const name = validateCloudPath(input.name);
     if (name.includes("/")) throw new Error("名称必须是单个文件名，目录请逐层创建。");
     if (input.parentItemId && !this.snapshot.items.some(i => i.id === input.parentItemId && i.libraryId === input.libraryId && i.status === "active")) throw new Error("父条目不在当前库。");
-    const item: Item = { id: crypto.randomUUID(), libraryId: input.libraryId, title: name, canonicalName: name, kind: input.kind, metadata: input.parentItemId ? { parentItemId: input.parentItemId, ...(expectedParentVersion ? { expectedParentVersion } : {}) } : {}, status: "active", createdBy: this.userId, createdAt: now(), updatedAt: now() };
+    if (input.metadata && ['parentItemId', 'expectedParentVersion'].some(key => key in input.metadata!)) throw new Error('来源元数据不能修改目录关系。');
+    const item: Item = { id: crypto.randomUUID(), libraryId: input.libraryId, title: name, canonicalName: name, kind: input.kind, metadata: { ...structuredClone(input.metadata ?? {}), ...(input.parentItemId ? { parentItemId: input.parentItemId, ...(expectedParentVersion ? { expectedParentVersion } : {}) } : {}) }, status: "active", createdBy: this.userId, createdAt: now(), updatedAt: now() };
     const entry: CloudOutboxEntry = { id: crypto.randomUUID(), libraryId: item.libraryId, itemId: item.id, kind: "request", request: { method: "POST", path: `/v1/libraries/${encodeURIComponent(item.libraryId)}/items`, body: { ...item, parentItemId: input.parentItemId } }, state: "pending", createdAt: now() };
     const contentEntry = content ? await this.contentEntry(item, content) : undefined;
     await this.transaction(draft => {
@@ -259,15 +341,41 @@ export class CloudLibraryWorkspaceController {
     await this.writable(libraryId, "item.update");
     const item = this.snapshot.items.find(i => i.id === itemId && i.libraryId === libraryId);
     if (!item) throw new Error("文件不存在。");
+    return this.enqueueContent(item, content, expectedVersionId);
+  }
+  private async enqueueContent(item: Item, content: SharedLibraryItemContent, expectedVersionId?: string, restore?: { restoredFromVersionId: string; signal?: AbortSignal }) {
     const entry = await this.contentEntry(item, content);
-    if (entry.hash === item.contentHash) return item.currentVersionId;
+    if (!restore && entry.hash === item.contentHash) return this.transaction(draft => {
+      const current = draft.items.find(candidate => candidate.id === item.id && candidate.libraryId === item.libraryId && candidate.status === 'active');
+      if (!current || current.contentHash !== entry.hash || (expectedVersionId !== undefined && current.currentVersionId !== expectedVersionId)) throw new Error('当前文件版本已变化，请重新载入后保存。');
+      return current.currentVersionId;
+    });
+    if (restore) entry.restoredFromVersionId = restore.restoredFromVersionId;
     await this.transaction(draft => {
-      const current = draft.items.find(i => i.id === itemId)!;
+      if (restore) {
+        this.guard(restore.signal);
+        if (!this.online()) throw new Error("恢复历史版本需要联网验证当前版本和成员权限。");
+        this.assertRestoreReady(draft, item.libraryId, item.id, expectedVersionId!);
+        if (!can(draft.roles[item.libraryId]?.role ?? "viewer", "item.update")) throw new Error("当前角色没有恢复历史版本的权限。");
+      }
+      const current = draft.items.find(i => i.id === item.id && i.libraryId === item.libraryId && i.status === 'active');
+      if (!current) throw new Error('当前文件已移除，请重新载入后保存。');
+      if (!restore && expectedVersionId !== undefined && current.currentVersionId !== expectedVersionId) throw new Error('当前文件版本已变化，请重新载入后保存。');
       entry.baseVersionId = expectedVersionId ?? current.currentVersionId;
       current.currentVersionId = entry.versionId; current.contentHash = entry.hash; current.updatedAt = now();
       draft.outbox.push(entry);
-    }, [{ key: entry.contentKey!, content }]);
+    }, [{ key: entry.contentKey!, content }], restore?.signal);
     return entry.versionId;
+  }
+  async updateMetadata(libraryId: string, itemId: string, patch: Record<string, unknown>, expectedVersionId?: string) {
+    await this.writable(libraryId, 'item.update');
+    if (['parentItemId', 'expectedParentVersion'].some(key => key in patch)) throw new Error('元数据更新不能修改目录关系。');
+    await this.transaction(draft => {
+      const item = draft.items.find(entry => entry.id === itemId && entry.libraryId === libraryId && entry.status === 'active');
+      if (!item || (expectedVersionId !== undefined && item.currentVersionId !== expectedVersionId)) throw new Error('当前文件版本已变化，请重新读取。');
+      item.metadata = { ...item.metadata, ...structuredClone(patch) }; item.updatedAt = now();
+      draft.outbox.push({ id: crypto.randomUUID(), libraryId, itemId, kind: 'request', request: { method: 'PATCH', path: `/v1/items/${encodeURIComponent(itemId)}`, body: { metadataPatch: structuredClone(patch), expectedVersionId: expectedVersionId ?? null } }, state: 'pending', createdAt: now() });
+    });
   }
   async updateItem(libraryId: string, itemId: string, name: string, newParentId?: string) {
     await this.writable(libraryId, "item.update");
@@ -307,9 +415,16 @@ export class CloudLibraryWorkspaceController {
   async annotations(libraryId: string, itemId: string) {
     await this.verifyAccess(libraryId);
     if (this.online()) {
+      const before = new Map(this.snapshot.annotations.filter(annotation => annotation.itemId === itemId).map(annotation => [annotation.id, annotation]));
+      const pendingBefore = pendingAnnotationIds(this.snapshot, libraryId, itemId);
       const entries = await this.repository.listAnnotations(itemId);
       await this.transaction(draft => {
-        const pending = new Set(draft.outbox.filter(o => o.itemId === itemId).map(o => (o.request?.body as { id?: string })?.id));
+        const pending = new Set([...pendingBefore, ...pendingAnnotationIds(draft, libraryId, itemId)]);
+        // A list response can predate a local save whose outbox already drained.
+        for (const annotation of draft.annotations.filter(annotation => annotation.itemId === itemId)) {
+          const previous = before.get(annotation.id);
+          if (!previous || previous.revision !== annotation.revision || previous.updatedAt !== annotation.updatedAt || previous.status !== annotation.status) pending.add(annotation.id);
+        }
         draft.annotations = [...draft.annotations.filter(a => a.itemId !== itemId || pending.has(a.id)), ...entries.filter(a => !pending.has(a.id))];
       });
     }
@@ -409,6 +524,26 @@ export class CloudLibraryWorkspaceController {
     const data = bytes(content);
     const blob = new RemoteBlobStore(this.transport, { libraryId: entry.libraryId });
     const item = this.snapshot.items.find(i => i.id === entry.itemId)!;
+    // A stale content operation used to upload the blob before the database
+    // CAS rejected its base version.  On the production Edge path that reject
+    // can spend the full request timeout, leaving an unnecessary upload
+    // reservation and a pending outbox entry.  Recheck the remote projection
+    // before starting or resuming an upload so the conflict is explicit and
+    // immediately actionable in the sync task UI.
+    if (entry.baseVersionId) {
+      const remote = await this.repository.getItem(entry.itemId);
+      if (remote.currentVersionId !== entry.baseVersionId) {
+        if (entry.upload && !entry.blobId) {
+          await blob.abortUpload(entry.upload.uploadId).catch(() => undefined);
+        }
+        await this.checkpoint(entry.id, {
+          state: "conflicted",
+          error: "远端文件版本已变化，请选择保留远端版本或另存本地编辑。",
+          remoteVersionId: remote.currentVersionId,
+        });
+        return false;
+      }
+    }
     if (!entry.blobId && !entry.upload) {
       const existing = await this.request<{ blobId?: string }>({ method: "GET", path: `/v1/libraries/${encodeURIComponent(entry.libraryId)}/blobs/find`, query: { hash: entry.hash! } });
       if (existing.blobId) { entry.blobId = existing.blobId; await this.checkpoint(entry.id, { blobId: entry.blobId }); }
@@ -430,7 +565,7 @@ export class CloudLibraryWorkspaceController {
     }
     if (this.snapshot.outbox.find(o => o.id === entry.id)?.state !== "pending") return false;
     if (!entry.blobId) { entry.blobId = (await blob.completeUpload({ uploadId: entry.upload!.uploadId, sha256: entry.hash!, parts })).blobId; await this.checkpoint(entry.id, { blobId: entry.blobId }); }
-    const response = await this.request<ItemVersion>({ method: "POST", path: `/v1/items/${encodeURIComponent(entry.itemId)}/versions`, idempotencyKey: entry.id, body: { id: entry.versionId, blobId: entry.blobId, baseVersionId: entry.baseVersionId ?? null, contentHash: entry.hash, manifest: { mimeType: content.mimeType, sizeBytes: data.byteLength } } });
+    const response = await this.request<ItemVersion>({ method: "POST", path: `/v1/items/${encodeURIComponent(entry.itemId)}/versions`, idempotencyKey: entry.id, body: { id: entry.versionId, blobId: entry.blobId, baseVersionId: entry.baseVersionId ?? null, contentHash: entry.hash, manifest: { mimeType: content.mimeType, sizeBytes: data.byteLength, ...(entry.restoredFromVersionId ? { restoredFromVersionId: entry.restoredFromVersionId } : {}) } } });
     if (content.kind === "text" && data.byteLength <= 1024 * 1024) {
       await this.request({ method: "POST", path: `/v1/items/${encodeURIComponent(entry.itemId)}/index-text`, body: { versionId: response.id, text: content.text } });
     }

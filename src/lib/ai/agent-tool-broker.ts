@@ -41,7 +41,8 @@ import { useScheduledTaskStore } from '@/stores/scheduled-task-store';
 import type { ScheduledTaskSchedule } from '@/lib/ai/scheduled-tasks';
 import type { LatticeSourcePdfToolName, LatticeSourcePdfToolResult } from './lattice-skills/source-pdf-tool-runtime';
 import { LATTICE_HARNESS_TOOLS, validateLatticeHarnessArgs } from './harness/lattice-tool-definitions';
-import type { AgentSourceSelection } from './source-index';
+import type { AgentSourceRead, AgentSourceSelection } from './source-index';
+import { isRecoverableAnnotationQuoteError } from './harness/pdf-tool-helpers';
 export type { LatticeSourcePdfToolName } from './lattice-skills/source-pdf-tool-runtime';
 export type LatticeApiToolName = typeof LATTICE_HARNESS_TOOLS[number]['name'];
 export interface LatticeApiToolDefinition { name: string; description: string; parameters: unknown }
@@ -56,6 +57,20 @@ export interface LatticeApiToolRuntime {
 }
 export function isLatticeApiToolName(name: string): name is LatticeApiToolName {
   return LATTICE_HARNESS_TOOLS.some(tool => tool.name === name);
+}
+
+/** Proposals may carry the source runtime's actual read receipt; review status alone is never evidence. */
+export function agentToolSourceReads(toolName: string, result: unknown): AgentSourceRead[] {
+  if (toolName === 'lattice.sources.read' || toolName === 'lattice.sources.active') return [result as AgentSourceRead];
+  if (toolName === 'lattice.sources.search') return (result as { reads: AgentSourceRead[] }).reads;
+  if (toolName !== 'lattice.pdf.proposeAnnotations' || !result || typeof result !== 'object' || !('verifiedSourceRead' in result)) return [];
+  const read = result.verifiedSourceRead as AgentSourceRead | undefined;
+  if (!read?.snapshot || read.snapshot.kind !== 'pdf' || typeof read.snapshot.path !== 'string' || !read.snapshot.path
+    || typeof read.snapshot.version !== 'string' || !read.snapshot.version || !Array.isArray(read.chunks) || !read.chunks.length
+    || !Array.isArray(read.readUnits) || !Array.isArray(read.pendingUnits) || !Array.isArray(read.unreadableUnits)
+    || !read.chunks.every(chunk => chunk.path === read.snapshot.path && chunk.sourceId === read.snapshot.sourceId
+      && chunk.version === read.snapshot.version && typeof chunk.text === 'string' && chunk.endOffset - chunk.startOffset === chunk.text.length)) return [];
+  return [read];
 }
 
 export type AgentToolName =
@@ -179,6 +194,8 @@ export type AgentToolExecutionStatus =
 export interface AgentToolExecutionOptions {
   /** The research loop owns the terminal decision after its bounded source recovery. */
   deferSourceReadFailure?: boolean;
+  /** Keep only recoverable exact-quote proposal failures open for one bounded planning repair. */
+  deferAnnotationValidationFailure?: boolean;
   apiToolRuntime?: LatticeApiToolRuntime;
   latticeSourcePdfRuntime?: LatticeSourcePdfExecutionRuntime;
   signal?: AbortSignal;
@@ -397,9 +414,10 @@ export function buildAgentToolResultPreview<TName extends AgentToolName>(
     const value = result && typeof result === 'object' ? result as Record<string, unknown> : {};
     const entries = Array.isArray(value.entries) ? value.entries : [];
     const chunks = Array.isArray(value.chunks) ? value.chunks : Array.isArray(value.reads)
-      ? value.reads.flatMap(read => read && typeof read === 'object' && Array.isArray(read.chunks) ? read.chunks : []) : [];
+      ? value.reads.flatMap(read => read && typeof read === 'object' && Array.isArray(read.chunks) ? read.chunks : [])
+      : toolName === 'lattice.pdf.proposeAnnotations' ? agentToolSourceReads(toolName, result).flatMap(read => read.chunks) : [];
     const evidenceCount = chunks.filter(chunk => chunk && typeof chunk === 'object' && typeof chunk.text === 'string' && chunk.text.trim()).length;
-    const status = typeof value.status === 'string' ? value.status : value.complete === false ? 'partial' : 'completed';
+    const status = value.complete === false ? 'partial' : typeof value.status === 'string' ? value.status : 'completed';
     const preview = fallbackResultPreview(result);
     return { preview, metadata: {
       ...buildResultEnvelopeMetadata({ toolName, preview, status: value.complete === false ? 'partial' : 'completed',
@@ -914,7 +932,9 @@ export async function executeAgentTool<TName extends AgentToolName>(
       decision,
       result,
       resultPreview: preview.preview,
-      resultMetadata: preview.metadata,
+      resultMetadata: { ...preview.metadata, ...(request.name === 'lattice.pdf.proposeAnnotations' ? {
+        annotationTargetPath: String((request.args as Record<string, unknown>).parentPath), annotationPlanStepId: options.planStepId ?? null,
+      } : {}) },
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -936,14 +956,21 @@ export async function executeAgentTool<TName extends AgentToolName>(
     }
     const sourceFailureObservation = options.deferSourceReadFailure
       && ['lattice.sources.read', 'lattice.sources.search', 'lattice.sources.active'].includes(request.name);
+    const annotationFailureObservation = Boolean(options.deferAnnotationValidationFailure
+      && request.name === 'lattice.pdf.proposeAnnotations' && isRecoverableAnnotationQuoteError(error));
+    const recoveryMetadata: AgentToolResultPreviewMetadata = annotationFailureObservation ? {
+      annotationValidationRecoverable: true,
+      annotationTargetPath: String((request.args as Record<string, unknown>).parentPath), annotationPlanStepId: options.planStepId ?? null,
+      resultDiagnosticsPreview: 'Repair this same annotation step once using exact unique source text; do not weaken validation or change the PDF target.',
+    } : {};
     appendTrace(session.id, {
       id: traceId(session.id, request.name, 'failed'),
-      kind: sourceFailureObservation ? 'tool_result' : 'error',
+      kind: sourceFailureObservation || annotationFailureObservation ? 'tool_result' : 'error',
       message: `${label} failed: ${message}`,
       error: message,
       tool,
       decision,
-      metadata: { ...agentErrorMetadata(diagnostic), resultStatus: 'failed' },
+      metadata: { ...agentErrorMetadata(diagnostic), resultStatus: 'failed', ...recoveryMetadata },
     });
     return {
       status: 'failed',
@@ -951,6 +978,7 @@ export async function executeAgentTool<TName extends AgentToolName>(
       toolName: request.name,
       decision,
       error: message,
+      ...(annotationFailureObservation && isRecoverableAnnotationQuoteError(error) ? { resultMetadata: { resultStatus: 'failed', ...recoveryMetadata, annotationRepairDetails: JSON.stringify(error.details).slice(0, 12000) } } : {}),
     };
   }
 }

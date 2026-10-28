@@ -52,6 +52,7 @@ import type { LivePreviewEditorRef, MarkdownImageEditRequest } from "./codemirro
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { clearDecorationCache } from "./codemirror/live-preview/decoration-coordinator";
 import { emitFileSave, emitVaultChange } from "@/lib/plugins/runtime";
+import { openQuantumKeyboard as openQuantumKeyboardPlugin, useQuantumPluginRuntime } from "@/plugins/quantum-keyboard/runtime";
 import { navigateLinkWithFeedback } from "@/lib/link-router/navigate-link-with-feedback";
 import { useLinkNavigationStore } from "@/stores/link-navigation-store";
 import { resolveMarkdownReference } from "@/lib/reference-navigation";
@@ -285,7 +286,8 @@ export function ObsidianMarkdownViewer({
   filePath,
   variant = "document",
 }: ObsidianMarkdownViewerProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const quantumKeyboardActive = useQuantumPluginRuntime(state => state.active);
   const [mode, setMode] = useState<ViewMode>(initialMode);
   const [localContent, setLocalContent] = useState(content);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
@@ -1056,8 +1058,7 @@ export function ObsidianMarkdownViewer({
   }, [runMarkdownCommand]);
 
   const openQuantumKeyboard = useCallback(() => {
-    if (typeof window === "undefined") return;
-    window.dispatchEvent(new CustomEvent("lattice-open-quantum-keyboard"));
+    openQuantumKeyboardPlugin();
   }, []);
 
   const copyFormulaAsLatex = useCallback((context: MarkdownEditorContext) => {
@@ -1472,12 +1473,12 @@ export function ObsidianMarkdownViewer({
           },
         ],
       },
-      {
+      ...(quantumKeyboardActive ? [{
         id: "open-quantum-keyboard",
-        label: "Quantum keyboard",
+        label: locale === "en-US" ? "Quantum Keyboard" : "量子键盘",
         icon: <Braces className="h-4 w-4" />,
         onSelect: openQuantumKeyboard,
-      },
+      }] : []),
       {
         id: "tools-links",
         label: "Links",
@@ -1560,6 +1561,9 @@ export function ObsidianMarkdownViewer({
       },
     ];
   }, [
+    quantumKeyboardActive,
+    locale,
+    openQuantumKeyboard,
     copyCurrentBlockAsHtml,
     copyCurrentBlockAsMarkdown,
     copyPropertiesYaml,

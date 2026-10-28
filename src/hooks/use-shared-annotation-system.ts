@@ -3,18 +3,25 @@ import type { AnnotationItem, AnnotationTarget } from '@/types/universal-annotat
 import { validateAnnotationItem } from '@/types/universal-annotation';
 import type { AnnotationUpdates, UseAnnotationSystemReturn } from './use-annotation-system';
 import { triggerAnnotationNavigation } from './use-annotation-navigation';
+import { annotationItemsEqual } from '@/lib/shared-library/annotation-equality';
 
 export interface SharedAnnotationDocument {
   identity: string;
+  viewScope?: string;
   sourceVersion?: string;
   authorId: string;
+  authorNames?: Record<string, string>;
   canAnnotate: boolean;
   annotations: AnnotationItem[];
   onPersist: (upserts: AnnotationItem[], removeIds?: string[]) => Promise<void>;
 }
 type Overlay = { value: AnnotationItem | null; sequence: number; committed: boolean };
-const keyOf = (doc: SharedAnnotationDocument | null) => doc ? JSON.stringify([doc.identity, doc.sourceVersion ?? '']) : '';
+const keyOf = (doc: SharedAnnotationDocument | null) => doc ? JSON.stringify([doc.authorId, doc.viewScope ?? '', doc.identity, doc.sourceVersion ?? '']) : '';
 const overlayEntries = (map: Map<string, Overlay> | undefined): Array<[string, Overlay]> => map ? [...map.entries()] : [];
+const withCurrentAuthorName = (annotation: AnnotationItem, doc: SharedAnnotationDocument): AnnotationItem => {
+  const name = doc.authorNames?.[annotation.author];
+  return name ? { ...annotation, authorDisplayName: name } : annotation;
+};
 
 /** The existing PDF interaction code receives the same action contract, while
  * cloud writes remain delta-based, permission checked and source scoped. */
@@ -28,12 +35,12 @@ export function useSharedAnnotationSystem(document: SharedAnnotationDocument | n
   const mounted = useRef(true);
   const [status, setStatus] = useState({ scope, error: null as string | null });
   const [pendingSnapshot, setPendingSnapshot] = useState({ scope, count: 0 });
-  const [overlaySnapshot, setOverlaySnapshot] = useState<Array<[string, Overlay]>>([]);
+  const [overlaySnapshot, setOverlaySnapshot] = useState({ scope, entries: [] as Array<[string, Overlay]> });
   useEffect(() => { mounted.current = true;return () => { mounted.current = false; }; }, []);
   useEffect(() => { latest.current = document; }, [document]);
 
   useEffect(() => {
-    setOverlaySnapshot(overlayEntries(overlays.current.get(scope)));
+    setOverlaySnapshot({ scope, entries: overlayEntries(overlays.current.get(scope)) });
   }, [scope]);
   useEffect(() => {
     if (!document) return;
@@ -42,12 +49,12 @@ export function useSharedAnnotationSystem(document: SharedAnnotationDocument | n
     let acknowledged = false;
     for (const [id, entry] of entries) {
       const incoming = document.annotations.find(annotation => annotation.id === id);
-      if (entry.committed && (entry.value === null ? !incoming : incoming && JSON.stringify(incoming) === JSON.stringify(entry.value))) {
+      if (entry.committed && (entry.value === null ? !incoming : incoming && annotationItemsEqual(withCurrentAuthorName(incoming, document), withCurrentAuthorName(entry.value, document)))) {
         entries.delete(id);acknowledged = true;
       }
     }
-    if (acknowledged) setOverlaySnapshot([...entries.entries()]);
-  }, [document, scope]);
+    if (acknowledged) setOverlaySnapshot({ scope, entries: [...entries.entries()] });
+  }, [document, scope, overlaySnapshot]);
 
   const visible = useCallback((doc: SharedAnnotationDocument | null, entries: Array<[string, Overlay]>) => {
     const items = new Map((doc?.annotations ?? []).map(annotation => [annotation.id, annotation]));
@@ -56,7 +63,7 @@ export function useSharedAnnotationSystem(document: SharedAnnotationDocument | n
     }
     return [...items.values()];
   }, []);
-  const annotations = useMemo(() => visible(document, overlaySnapshot), [document, overlaySnapshot, visible]);
+  const annotations = useMemo(() => visible(document, overlaySnapshot.scope === scope ? overlaySnapshot.entries : []), [document, overlaySnapshot, scope, visible]);
 
   const enqueue = useCallback((upserts: AnnotationItem[], removals: string[] = []): Promise<boolean> | null => {
     const doc = latest.current;
@@ -67,7 +74,8 @@ export function useSharedAnnotationSystem(document: SharedAnnotationDocument | n
       const validation = validateAnnotationItem(item);
       if (!validation.valid) { setStatus({ scope, error: `Invalid annotation: ${validation.errors.join(', ')}` });return null; }
     }
-    const items = upserts.map(item => structuredClone(item));
+    const existingItems = new Map(visible(doc, overlayEntries(overlays.current.get(scope))).map(item => [item.id, item]));
+    const items = upserts.map(item => ({ ...structuredClone(item), author: existingItems.get(item.id)?.author ?? doc.authorId }));
     const ids = [...new Set(removals)];
     const number = ++sequence.current;
     const entries = overlays.current.get(scope) ?? new Map<string, Overlay>();
@@ -75,7 +83,7 @@ export function useSharedAnnotationSystem(document: SharedAnnotationDocument | n
     for (const item of items) entries.set(item.id, { value: item, sequence: number, committed: false });
     for (const id of ids) entries.set(id, { value: null, sequence: number, committed: false });
     const nextPending = (pending.current.get(scope) ?? 0) + 1;
-    pending.current.set(scope, nextPending); setPendingSnapshot({ scope, count: nextPending }); setOverlaySnapshot([...entries.entries()]);
+    pending.current.set(scope, nextPending); setPendingSnapshot({ scope, count: nextPending }); setOverlaySnapshot({ scope, entries: [...entries.entries()] });
     const affected = [...items.map(item => item.id), ...ids];
     const operation = tail.current.then(async () => {
       let error: string | null = null;
@@ -90,7 +98,7 @@ export function useSharedAnnotationSystem(document: SharedAnnotationDocument | n
       const remaining = Math.max(0, (pending.current.get(scope) ?? 1) - 1);
       pending.current.set(scope, remaining);
       if (mounted.current && keyOf(latest.current) === scope) {
-        setOverlaySnapshot([...entries.entries()]);
+        setOverlaySnapshot({ scope, entries: [...entries.entries()] });
         setPendingSnapshot({ scope, count: remaining });
         setStatus({ scope, error });
       }
@@ -98,7 +106,7 @@ export function useSharedAnnotationSystem(document: SharedAnnotationDocument | n
     });
     tail.current = operation.catch(() => undefined);
     return operation;
-  }, [scope]);
+  }, [scope, visible]);
   const addAnnotation = useCallback((input: Omit<AnnotationItem, 'id' | 'createdAt'>): string | null => {
     const annotation = { ...input, id: crypto.randomUUID(), author: latest.current?.authorId ?? input.author, createdAt: Date.now() };
     return enqueue([annotation]) ? annotation.id : null;

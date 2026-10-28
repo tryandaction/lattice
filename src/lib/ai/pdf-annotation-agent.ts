@@ -42,7 +42,13 @@ export function preparePdfAnnotationProposal(answer: string, evidenceRefs: Evide
         const selection = passageId ?? quoteId;
         const selected = contracts.find(contract => contract.stableId === sourceId && contract.stableId === selection);
         if (!selected?.evidenceRef.anchor?.snippet || (passageId !== undefined && quoteId !== undefined && passageId !== quoteId)) { rejectedCount++; continue; }
-        quote = selected.evidenceRef.anchor.snippet;
+        // A passage id identifies a verified source window. When the model
+        // supplies a shorter quote, keep and re-resolve that exact subrange
+        // inside the window; do not silently expand it back to the full anchor.
+        // Omitting quote intentionally selects the complete verified window.
+        quote = typeof quote === 'string' && quote.trim()
+          ? quote.trim()
+          : selected.evidenceRef.anchor.snippet;
       }
       if (typeof sourceId !== 'string' || typeof quote !== 'string' || quote.trim().length < 8 ||
           typeof reason !== 'string' || !reason.trim() || reason.length > 500) {

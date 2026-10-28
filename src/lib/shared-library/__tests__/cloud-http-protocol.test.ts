@@ -191,8 +191,10 @@ describe("cloud library two-profile real HTTP + PostgreSQL RLS", () => {
     const fromCache = await createCloudSourceProvider(restored).read(library.id, item.id);
     expect(fromCache).toMatchObject({ versionId: read2.versionId, content: { text: "v2" } });
     expect(restored.getSnapshot().items.find(i => i.id === item.id)?.currentVersionId).toBe(read2.versionId);
-    await restored.save(library.id, item.id, text("v1 stale edit"), read1.versionId); await restored.sync();
-    expect(restored.getStatus().status).toBe("conflicted"); expect(await A.controller.readContent(library.id, item.id)).toMatchObject({ text: "v2" });
+    await expect(restored.save(library.id, item.id, text("v1 stale edit"), read1.versionId)).rejects.toThrow(/版本已变化/);
+    expect(restored.getSnapshot().outbox).toHaveLength(0);
+    expect(restored.getSnapshot().items.find(i => i.id === item.id)?.currentVersionId).toBe(read2.versionId);
+    expect(await A.controller.readContent(library.id, item.id)).toMatchObject({ text: "v2" });
     A.controller.dispose(); restored.dispose();
   });
   it("merges two offline controllers' journals and recovers completed R2 bytes after registration fails", async () => {

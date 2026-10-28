@@ -15,13 +15,15 @@ export function buildWorkflowAnswerInstructions(
   ];
   if (workflow?.id === 'pdf-annotation') {
     return [...common,
-      `Select only useful passages for the requested PDF annotations (at most ${config.annotationLimit ?? 5}). Each must directly support an important claim, method, result, or limitation across the supplied document coverage; do not fill the quota or highlight every page or whole paragraphs by default.`,
+      `Select only the most useful passages for the requested PDF annotations (at most ${config.annotationLimit ?? 5} total for the entire document, independent of its page count). Each must directly support one important claim, method, result, limitation, or requested formula; use fewer when sufficient and do not fill the quota, annotate every page, or highlight whole paragraphs by default.`,
       options.markdownDocument
         ? 'The user also requests a document: first write the complete Markdown explanation at the requested depth, with grounded mechanisms, results and limitations. This narrative is an independent deliverable and must remain useful even if no annotation is possible. Do not replace it with a brief annotation summary. Then append one fenced lattice-annotations JSON block.'
         : 'Give a brief explanation, then one fenced lattice-annotations JSON block.',
       'Select verified evidence by one id: {"annotations":[{"passageId":"EXACT_SUPPLIED_VERIFIED_PASSAGE_ID","reason":"specific reason this passage matters"}]}. The application resolves the exact original quote, source and page; do not retype mathematical passages. The optional legacy sourceId must equal passageId when both are supplied.',
+      'For prose, select the smallest complete sentence or tightly connected clause that carries one key point; exclude adjacent follow-on text. For a displayed equation or matrix, select one complete verified passage containing the whole expression, never isolated rows or a partial matrix, and do not include neighboring explanatory prose. If no single verified passage covers the complete expression, omit it rather than splitting, paraphrasing, or inventing a quote.',
       'Use passageId only for supplied verified anchored passages, never for an unanchored page. If the context explicitly lacks passage ids, the legacy sourceId, page, quote and reason form is supported: copy an 8-600 character unique verbatim quote. Never invent ids, coordinates or missing evidence; a summary is not an original quote.',
       'These are proposals awaiting the user\'s review, not saved highlights. If no suitable supplied original text exists, return an empty annotations array and explain what evidence is missing.',
+      'If an actual successful lattice.pdf.proposeAnnotations tool receipt already delivered verified drafts for user review, give the completion explanation and any separately requested Markdown body without generating a second lattice-annotations block; otherwise keep the block contract above.',
     ].filter(Boolean).join('\n\n');
   }
   const format = (() => {

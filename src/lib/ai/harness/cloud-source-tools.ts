@@ -5,7 +5,7 @@ import type { AgentSourceRead, AgentSourceChunk } from '../source-index';
 import { isAgentDocumentPath } from '../document-source';
 import { prepareCloudPdfChildProposal } from '../lattice-skills/cloud-pdf-child-skill';
 import { cloudHarnessResourceVersion, prepareCloudFileProposal } from './cloud-file-proposal';
-import { appendVerifiedAnnotationDrafts, harnessPage, type HarnessAnnotationIntent } from './pdf-tool-helpers';
+import { prepareVerifiedAnnotationDraftBatch, harnessPage, type HarnessAnnotationIntent } from './pdf-tool-helpers';
 import { publishHarnessDraft, type HarnessDraftHandler } from './tool-draft';
 
 export interface CloudHarnessToolInput {
@@ -213,7 +213,11 @@ export function createCloudHarnessSourceTools(input: CloudHarnessToolInput) {
     if (name === 'lattice.pdf.proposeChild') return pdfProposal(await parent(args, signal), args, signal);
     if (name === 'lattice.pdf.proposeAnnotations') {
       const current = await parent(args, signal), prior = evidence.get(current.id);
-      if (!prior || prior.snapshot.version !== await cloudHarnessResourceVersion(current, signal)) throw new Error('Read the actual cloud PDF pages before proposing annotations.');
+      const version = await cloudHarnessResourceVersion(current, signal);
+      if (prior && prior.snapshot.version !== version) throw new Error('Cloud PDF source revision changed before annotation proposal.');
+      const annotations = args.annotations as HarnessAnnotationIntent[];
+      const verified = await read(current.id, { expectedVersion: version, units: [...new Set(annotations.map(annotation => annotation.page))],
+        maxChars: 1_000_000, maxUnits: 50 }, signal);
       const children = await provider!.list(current.libraryId, current.itemId, signal); await assertCurrent(signal);
       const candidates = children.filter(item => item.libraryId === current.libraryId && item.metadata.parentItemId === current.itemId
         && item.status === 'active' && item.canonicalName === '_annotations.md');
@@ -226,7 +230,10 @@ export function createCloudHarnessSourceTools(input: CloudHarnessToolInput) {
         if (!note.versionId) throw new Error('Cloud annotation-note has no stable version.');
         expectedChild = { itemId: note.itemId, versionId: note.versionId };
       }
-      return pdfProposal(current, { fileName: '_annotations.md', mode: candidates[0] ? 'update' : 'create', content: appendVerifiedAnnotationDrafts(previous, args.annotations as HarnessAnnotationIntent[], prior) }, signal, expectedChild);
+      const batch = prepareVerifiedAnnotationDraftBatch(previous, annotations, verified);
+      return { ...await pdfProposal(current, { fileName: '_annotations.md', mode: candidates[0] ? 'update' : 'create', content: batch.content }, signal, expectedChild),
+        verifiedSourceRead: verified, complete: batch.rejectedCount === 0,
+        annotationValidation: { acceptedCount: batch.acceptedCount, rejectedCount: batch.rejectedCount, ...(batch.validationDetails ? { details: batch.validationDetails } : {}) } };
     }
     if (name === 'lattice.workspace.proposeWrite') {
       const current = await resource(await find(args.targetPath as string, signal), signal);

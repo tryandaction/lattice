@@ -3,3 +3,11 @@ project_id = "lattice-cloud"
 [functions.shared-library-api]
 verify_jwt = true
 entrypoint = "./functions/shared-library-api/index.js"
+
+[functions.shared-library-github-webhook]
+verify_jwt = false
+entrypoint = "./functions/shared-library-github-webhook/index.js"
+
+[functions.shared-library-github-jobs]
+verify_jwt = false
+entrypoint = "./functions/shared-library-github-jobs/index.js"

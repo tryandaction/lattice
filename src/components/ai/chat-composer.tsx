@@ -10,10 +10,11 @@ import { useAgentSessionStore } from '@/stores/agent-session-store';
 import { useAiComposerInput } from '@/hooks/use-ai-composer-input';
 import { captureAgentDocumentSources, snapshotAgentDocumentSources, shouldReadConversationDocuments, wantsDocumentReading, resolveAuthorizedDocumentHandle, conversationOpenFileTabs } from '@/lib/ai/document-source-capture';
 import type { ResearchAgentRunInput } from '@/lib/ai/research-agent';
+import { agentToolSourceReads } from '@/lib/ai/agent-tool-broker';
 import { validateChatSources } from '@/lib/ai/chat-source-validation';
 import { estimateLongInputBudget, processLongInput, LongInputProcessingError } from '@/lib/ai/long-input';
 import { isAgentDocumentPath, openAgentDocumentSource, type AgentDocumentSource } from '@/lib/ai/document-source';
-import type { AgentSourceSnapshot, AuthorizedSourceIndex, AgentSourceRead, AgentSourceSearchResult } from '@/lib/ai/source-index';
+import type { AgentSourceSnapshot, AuthorizedSourceIndex, AgentSourceRead } from '@/lib/ai/source-index';
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useContentCacheStore } from "@/stores/content-cache-store";
 import { useAnnotationStore } from "@/stores/annotation-store";
@@ -25,7 +26,10 @@ import { hasNamedDocumentReference, isCurrentDocumentReference, isDocumentCompar
 import { resolveConversationSourceTargets, type ConversationSourceTargets } from '@/lib/ai/conversation-source-targeting';
 import { resolveCloudConversationTargets } from '@/lib/ai/cloud-conversation-targeting';
 import { bindConversationSources, type ConversationSourceBinding } from '@/lib/ai/conversation-source-binding';
-import { isDocumentFollowup, isShortContinuationAck, isTrivialQuery, isWholeDocumentRequest, isWholeDirectoryRequest } from '@/lib/ai/request-intent';
+import { cloudAiLabels } from '@/lib/shared-library/cloud-ai-labels';
+import { CloudSourceSelection } from './cloud-source-selection';
+import { cloudComposerInput, withCloudComposerQuestion } from '@/lib/ai/cloud-composer-input';
+import { isBroadDocumentExplanation, isDocumentFollowup, isShortContinuationAck, isTrivialQuery, isWholeDocumentRequest, isWholeDirectoryRequest } from '@/lib/ai/request-intent';
 import { IncompleteAnswerError, InterruptedAnswerError } from '@/lib/ai/answer-execution';
 import { requestsCodeExecution, parsePdfMarkdownChildRequest } from '@/lib/ai/task-outcome';
 import { parseWorkspaceFileTask, prepareWorkspaceFileTask, resolvePdfChildTargetRevision } from '@/lib/ai/workspace-file-task';
@@ -41,7 +45,7 @@ import { describeHarnessFailure } from '@/lib/ai/harness/runtime-error';
 import { harnessToolNameToLattice } from '@/lib/ai/harness/tool-broker';
 import { useAgentMemoryStore } from '@/stores/agent-memory-store';
 import { createLatticeHarnessToolRuntime, type HarnessReviewDraft } from '@/lib/ai/harness/lattice-source-tools';
-import { cloudHarnessWorkspaceSpec, prepareHarnessConversationContext, harnessAnswerEvent } from '@/lib/ai/harness/conversation-context';
+import { cloudHarnessWorkspaceSpec, prepareHarnessConversationContext, harnessAnswerEvent, runHarnessDocumentReadingLoop } from '@/lib/ai/harness/conversation-context';
 import { createAuthorizedSourceIndex } from '@/lib/ai/source-index';
 import { bindCloudPdfChildDraft } from '@/lib/ai/lattice-skills/cloud-pdf-child-skill';
 import { getCloudWorkspaceSnapshot, subscribeCloudWorkspaceHost } from '@/lib/cloud-workspace-host';
@@ -294,6 +298,9 @@ export function ChatComposer() {
   const cloudHost = useSyncExternalStore(subscribeCloudWorkspaceHost, getCloudWorkspaceSnapshot, getCloudWorkspaceSnapshot);
   const currentCloudSource = cloudHost.active && cloudHost.provider && cloudHost.resource ? cloudHost.resource : null;
   const [input, setInput] = useAiComposerInput();
+  const cloudInput = useMemo(() => cloudComposerInput(input), [input]);
+  const question = cloudInput.question;
+  const setQuestion = useCallback((value: string) => setInput(current => withCloudComposerQuestion(current, value)), [setInput]);
   const [sourceNotice, setSourceNotice] = useState<string | null>(null);
   const [budgetError, setBudgetError] = useState<string | null>(null);
   const [isPromptPickerOpen, setPromptPickerOpen] = useState(false);
@@ -309,6 +316,10 @@ export function ChatComposer() {
   const [suggestMemoryForRun, setSuggestMemoryForRun] = useState(false);
   const [submitComposerDraft, setSubmitComposerDraft] = useState<string | null>(null);
   const activeConversationId = useAiChatStore(state => state.activeConversationId);
+  const cloudSourceScope = useAiChatStore(state => {
+    const workspace = state.conversations.find(conversation => conversation.id === state.activeConversationId)?.workspace;
+    return workspace?.workspaceKey.startsWith('cloud:') ? workspace.permissionScope : undefined;
+  });
   const pendingAttachments = useAiAttachmentStore(state => state.attachmentsByConversation[activeConversationId ?? '']?.some(ref => ref.status === 'pending') ?? false);
   const attachmentBusy = useAiAttachmentStore(state => Boolean(state.busyByConversation[activeConversationId ?? '']));
   const isGenerating = useAiChatStore((s) => s.isGenerating);
@@ -354,10 +365,10 @@ export function ChatComposer() {
   useLayoutEffect(() => {
     const pending = mentionCaretRef.current;
     mentionCaretRef.current = null;
-    if (!pending || pending.value !== input || !textareaRef.current) return;
+    if (!pending || pending.value !== question || !textareaRef.current) return;
     textareaRef.current.focus();
     textareaRef.current.setSelectionRange(pending.position, pending.position);
-  }, [input]);
+  }, [question]);
   const selectedResearchWorkflow = useMemo(() => {
     if (!selectedResearchWorkflowId) {
       return null;
@@ -454,7 +465,7 @@ export function ChatComposer() {
     const conversation = useAiChatStore.getState().getActiveConversation();
     const legacyWorkspaceKey = conversation?.workspace?.workspaceKey ?? '';
     return { ...bindConversationSources({
-    query, messages: conversation?.messages ?? [], legacyWorkspaceKey,
+    query, messages: conversation?.messages ?? [], legacyWorkspaceKey, conversationWorkspace: conversation?.workspace,
     localWorkspaceKey: workspaceKey ?? workspaceRootPath ?? rootHandle?.name ?? '', activeCloud: cloudHost.active,
     activeCloudLibraryId: currentCloudSource?.libraryId, providerScope: cloudHost.provider?.scope,
     activeLocalPath: activeTab?.filePath, activeCloudName: currentCloudSource?.name,
@@ -495,17 +506,25 @@ export function ChatComposer() {
   const revalidateHistory = useCallback(async (conversationId: string | null, signal: AbortSignal, scopeKey?: string) => {
     const state = useAiChatStore.getState();
     const host = getCloudWorkspaceSnapshot();
+    const providerScope = host.provider?.scope;
     const key = scopeKey ?? (host.active ? `cloud:${host.resource?.libraryId ?? 'unselected'}` : workspaceKey ?? workspaceRootPath ?? rootHandle?.name ?? '');
     const conversation = state.conversations.find(item => item.id === conversationId) ?? null;
+    const assertCloudScope = () => {
+      if (key.startsWith('cloud:') && (!host.provider || getCloudWorkspaceSnapshot().provider !== host.provider || host.provider.scope !== providerScope
+        || conversation?.workspace?.workspaceKey.startsWith('cloud:') && conversation.workspace.permissionScope && conversation.workspace.permissionScope !== providerScope)) {
+        throw new Error(cloudAiLabels(locale).scopeChanged);
+      }
+    };
+    assertCloudScope();
     const validation = await validateChatSources({ conversation, workspaceKey: key, rootHandle, activeTab, openTabs: conversationOpenFileTabs(useWorkspaceStore.getState().layout.root), signal, cloudProvider: host.provider });
     signal.throwIfAborted();
-    if (key.startsWith('cloud:') && getCloudWorkspaceSnapshot().provider !== host.provider) throw new Error('云连接已改变，请重新选择来源。');
+    assertCloudScope();
     const binding = { workspaceKey: key, ...(key.startsWith('cloud:') ? { libraryId: key.slice(6), permissionScope: host.provider?.scope ?? null } : {}) };
     state.setConversationWorkspace(binding, conversationId ?? undefined);
     state.markConversationSourcesValidated(binding, conversationId ?? undefined, validation.validMessageIds);
     setSourceNotice(validation.notice);
     return state.getMessagesForApi(conversationId ?? undefined);
-  }, [workspaceKey, workspaceRootPath, rootHandle, activeTab]);
+  }, [workspaceKey, workspaceRootPath, rootHandle, activeTab, locale]);
 
   const buildChatContextSnapshot = useCallback(async (options?: {
     includeCurrentFileContent?: boolean;
@@ -858,7 +877,10 @@ export function ChatComposer() {
         folderSelections = target.selections?.filter(selection => selection.kind === 'folder') ?? folderSelections;
         folderRetrieval = (requestIsCloud ? selectedCloudSources.some(selection => selection.kind === 'folder') : folderSelections.length > 0) && !isWholeDocumentRequest(text);
         if (!automaticChat && !restoredWorkflowId && !selectedResearchWorkflowId) chosenWorkflow = inferResearchAgentWorkflow({ task: text, query: text, filePath: requestDocumentPaths[0], hasDocumentContext: requestDocumentPaths.length > 0 });
-        fullReading = !continuation?.approvalResume && !folderRetrieval && !contextualSource && Boolean(capturedAttachments?.sources.length || selectedCloudSources.length || folderSelections.length || requestDocumentPaths.length && wantsDocumentReading(text, chosenWorkflow, { hasDocumentContext: true, workflowExplicit }));
+        const broadCurrentDocumentRequest = isWholeDocumentRequest(text) || isBroadDocumentExplanation(text);
+        fullReading = !continuation?.approvalResume && !folderRetrieval && (!contextualSource || broadCurrentDocumentRequest)
+          && Boolean(capturedAttachments?.sources.length || selectedCloudSources.length || folderSelections.length
+            || requestDocumentPaths.length && wantsDocumentReading(text, chosenWorkflow, { hasDocumentContext: true, workflowExplicit }));
         setAssistantMetadata(msgId, { documentContext });
       }
       if ((continuation?.documentResume || continuation?.documentRestart) && !documentTask) throw new Error('未找到原阅读任务，请重新选择要阅读的文件。');
@@ -1021,7 +1043,7 @@ export function ChatComposer() {
         if (!capturedAttachments) assertApiToolScope();
         const result = await mergedTools.execute(name, args, signal);
         if (!capturedAttachments) assertApiToolScope();
-        const reads = ['lattice.sources.read', 'lattice.sources.active'].includes(name) ? [result as AgentSourceRead] : name === 'lattice.sources.search' ? (result as AgentSourceSearchResult).reads : [];
+        const reads = agentToolSourceReads(name, result);
         if (reads.length) {
           const message = useAiChatStore.getState().conversations.find(conversation => conversation.id === requestConversationId)?.messages.find(message => message.id === msgId);
           const snapshots = [...(message?.documentContext?.snapshots ?? []), ...(message?.documentContext?.cloudSnapshots ?? []), ...reads.map(read => read.snapshot)];
@@ -1306,8 +1328,12 @@ export function ChatComposer() {
       rememberReads(prepared.reads);
       const nativeWorkspace = requestIsCloud ? await cloudHarnessWorkspaceSpec(provider?.scope, key.slice(6))
         : workspaceRootPath ?? await cloudHarnessWorkspaceSpec(`attachments:${conversationId}`, 'uploads');
-      const result = await useAiHarnessStore.getState().sendTurn({ conversationId, workspace: nativeWorkspace, text: prepared.prompt,
-        images: capturedAttachments?.imageParts.map(part => ({ data: part.data!, mimeType: part.mimeType! })), signal: controller.signal,
+      const fullDocumentRead = target.paths.length > 0 && !isTrivialQuery(text)
+        && (isWholeDocumentRequest(text) || isBroadDocumentExplanation(text));
+      const readTurn = async (turnText: string, turn: number) => {
+        const turnReads: AgentSourceRead[] = [];
+        const answer = await useAiHarnessStore.getState().sendTurn({ conversationId, workspace: nativeWorkspace, text: turnText,
+        images: turn === 0 ? capturedAttachments?.imageParts.map(part => ({ data: part.data!, mimeType: part.mimeType! })) : undefined, signal: controller.signal,
         onBeforeTurn: async () => {
           controller.signal.throwIfAborted();
           if (useAiChatStore.getState().activeConversationId !== conversationId || !isCurrent()) throw new Error('对话、账号或来源范围已改变，已取消发送原文档内容。请在当前来源下重新提问。');
@@ -1327,6 +1353,9 @@ export function ChatComposer() {
           const scoped = Boolean(connection && event.connectionId === connection.connectionId
             && (!event.sessionId || !session?.sessionId || event.sessionId === session.sessionId)
             && (!event.turnId || !session?.turnId || event.turnId === session.turnId));
+          if (scoped && fullDocumentRead && turn > 0 && event.kind === 'started' && !controller.signal.aborted) {
+            chat.replaceAssistantDraft(messageId, '');
+          }
           const answer = harnessAnswerEvent(event);
           if (scoped && answer && !controller.signal.aborted) {
             if (answer.mode === 'append') chat.appendToAssistantMessage(messageId, answer.text);
@@ -1341,15 +1370,32 @@ export function ChatComposer() {
             const result = await tools.execute(harnessToolNameToLattice(call.tool), call.arguments, controller.signal);
             controller.signal.throwIfAborted();
             const name = harnessToolNameToLattice(call.tool);
-            const reads = ['lattice.sources.read', 'lattice.sources.active'].includes(name) ? [result as AgentSourceRead]
-              : name === 'lattice.sources.search' ? (result as AgentSourceSearchResult).reads : [];
+            const reads = agentToolSourceReads(name, result);
+            turnReads.push(...reads);
             rememberReads(reads);
             return { success: true, text: JSON.stringify(result) };
           } catch (cause) { return { success: false, text: cause instanceof Error ? cause.message : String(cause) }; }
         },
+        });
+        return { answer, reads: turnReads };
+      };
+      const reading = await runHarnessDocumentReadingLoop({ query: text, paths: target.paths, initialPrompt: prepared.prompt,
+        initialReads: prepared.reads, signal: controller.signal,
+        sendTurn: async (prompt, options) => {
+          const turn = await readTurn(prompt, options.turn);
+          options.recordReads(turn.reads);
+          return turn.answer;
+        },
       });
+      if (fullDocumentRead && !reading.complete) {
+        const incomplete = reading.coverage.map(item => `${item.path}: 已读 ${item.readUnits.length}/${item.totalUnits ?? '?'} 页/节；待读 ${item.totalUnits === null ? '尚未核实页数' : item.pendingUnits.join(', ') || '无'}；无法读取 ${item.unreadableUnits.map(unit => unit.unit).join(', ') || '无'}${item.versionChanged ? '；读取期间来源版本发生变化，覆盖作废' : ''}`).join('\n');
+        const message = `全文读取未完成，已保留当前回答草稿；未将部分页面结果标记为完整讲解。${incomplete ? `\n${incomplete}` : '\n没有获得可核验的实际页码覆盖。'} 请继续读取或缩小任务范围。`;
+        chat.setAssistantMetadata(messageId, { agentResult: { sessionId: `harness:${conversationId}`, deliveryStatus: 'partial', warnings: [message] } });
+        chat.setAssistantError(messageId, message, reading.text);
+        return;
+      }
       controller.signal.throwIfAborted();
-      chat.finishAssistantMessage(messageId, result || '本机 Agent 已完成本次执行，未提供回答文本。请查看实际执行事件。');
+      chat.finishAssistantMessage(messageId, reading.text || '本机 Agent 已完成本次执行，未提供回答文本。请查看实际执行事件。');
       const config = useAiHarnessStore.getState().config;
       chat.setAssistantMetadata(messageId, { model: { providerId: 'custom', providerName: config.engine === 'codex' ? '本机 Codex' : '本机 Claude Code', model: config.model ?? null, source: 'local' } });
     } catch (cause) {
@@ -1454,6 +1500,14 @@ export function ChatComposer() {
   const submitInput = useCallback(() => {
     setBudgetError(null);
     if (attachmentBusy) return;
+    const sourceBinding = sourceBindingForRequest(input);
+    const cloud = getCloudWorkspaceSnapshot();
+    const savedWorkspace = useAiChatStore.getState().getActiveConversation()?.workspace;
+    if (sourceBinding.kind === 'cloud' && savedWorkspace?.workspaceKey.startsWith('cloud:') && savedWorkspace.permissionScope
+      && (!cloud.provider || sourceBinding.providerScope !== cloud.provider.scope || savedWorkspace.permissionScope !== cloud.provider.scope)) {
+      setSourceNotice(cloudAiLabels(locale).scopeChanged);
+      return;
+    }
     if (runtimeEngine !== 'api') { void handleHarnessTurn(); return; }
     if (requestAttachmentRefs(input).some(ref => ref.kind !== 'image')) { void handleResearchAgentRun(composerView.submitIntent !== 'agent'); return; }
     if (inputBudget.requiresBatching) { setBudgetError('完整输入超过当前模型的预计上下文预算。请分批处理全文，或引用文件按需读取；原正文与草稿已保留。'); return; }
@@ -1475,7 +1529,10 @@ export function ChatComposer() {
     }
     const messages = useAiChatStore.getState().getActiveConversation()?.messages ?? [];
     const sessions = useAgentSessionStore.getState();
-    const explicitDocumentRequest = parseSourceSelections(input).some(source => source.kind === 'folder') || wantsDocumentReading(input, undefined, { hasDocumentContext: false });
+    const requestDocumentPaths = documentPathsForRequest(input);
+    const explicitDocumentRequest = parseSourceSelections(input).some(source => source.kind === 'folder')
+      || wantsDocumentReading(input, undefined, { hasDocumentContext: false })
+      || requestDocumentPaths.length > 0 && isBroadDocumentExplanation(input);
     const followsRecentDocument = Boolean(requestBinding.referentPaths?.length) || recentDocumentTaskSessions(messages, id => sessions.getSession(id)).length > 0;
     if (persistedContinuation?.documentResume || persistedContinuation?.documentRestart || persistedContinuation?.approvalResume || requestsCodeExecution(input) || parseSourceSelections(input).some(source => source.kind === 'folder') || (shouldReadConversationDocuments(input, documentPathsForRequest(input)) && (explicitDocumentRequest || followsRecentDocument))) {
       void handleResearchAgentRun(true);
@@ -1488,7 +1545,7 @@ export function ChatComposer() {
       return;
     }
     void handleSend();
-  }, [runtimeEngine, handleHarnessTurn, inputBudget, rootHandle, activeTab, handleFileTask, composerView.submitIntent, persistedContinuation, documentPathsForRequest, sourceBindingForRequest, input, handleResearchAgentRun, handleSend, attachmentBusy, requestAttachmentRefs]);
+  }, [runtimeEngine, handleHarnessTurn, inputBudget, rootHandle, activeTab, handleFileTask, composerView.submitIntent, persistedContinuation, documentPathsForRequest, sourceBindingForRequest, input, handleResearchAgentRun, handleSend, attachmentBusy, requestAttachmentRefs, locale]);
 
   useEffect(() => {
     if (!submitComposerDraft || !input.trim() || isGenerating) {
@@ -1512,6 +1569,10 @@ export function ChatComposer() {
       <RequestProgress />
       <HarnessExecutionTimeline key={activeConversationId} />
       <ChatAttachments conversationId={activeConversationId} disabled={isGenerating} />
+      {cloudHost.active || cloudInput.mentions.length ? <CloudSourceSelection
+        key={`${activeConversationId}:${cloudHost.provider?.scope}`}
+        host={cloudHost} input={input} onInputChange={setInput} disabled={isGenerating} expectedScope={cloudSourceScope}
+      /> : null}
       {sourceNotice ? <p role="status" data-testid="ai-source-validation-notice" className="px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300">{sourceNotice}</p> : null}
       {persistenceError ? <div role="alert" className="px-2 py-1 text-[11px] text-destructive">会话保存／恢复失败：{persistenceError} <button type="button" className="underline" onClick={() => void (hydrationError ? useAiChatStore.getState().loadConversations() : useAiChatStore.getState().flushConversations()).catch(() => {})}>重试</button></div> : null}
       {input.length > 1000 ? <div className="flex flex-wrap items-center gap-2 px-2 py-1 text-[11px] text-muted-foreground" data-testid="ai-input-budget">
@@ -1555,13 +1616,13 @@ export function ChatComposer() {
             const textarea = textareaRef.current;
             if (textarea) {
               const cursorPos = textarea.selectionStart;
-              const textBefore = input.slice(0, cursorPos);
-              const textAfter = input.slice(cursorPos);
+              const textBefore = question.slice(0, cursorPos);
+              const textAfter = question.slice(cursorPos);
               const atIdx = textBefore.lastIndexOf('@');
               const suffix = selection.continueSelection ? '' : ' ';
               const newText = textBefore.slice(0, atIdx) + selection.value + suffix + textAfter;
-                mentionCaretRef.current = { value: newText, position: (textBefore.slice(0, atIdx) + selection.value + suffix).length };
-              setInput(newText);
+              mentionCaretRef.current = { value: cloudComposerInput(newText).question, position: cloudComposerInput(textBefore.slice(0, atIdx) + selection.value + suffix).question.length };
+              setQuestion(newText);
             }
             setMentionQuery(selection.continueSelection ? selection.nextQuery : null);
           }}
@@ -1584,18 +1645,21 @@ export function ChatComposer() {
       >
         <textarea
           ref={textareaRef}
-          value={input}
+          value={question}
           onChange={(e) => {
             const val = e.target.value;
-            setInput(val);
-            setMentionQuery(getActiveMentionQuery(val, e.target.selectionStart));
+            const visible = cloudComposerInput(val).question;
+            const caret = cloudComposerInput(val.slice(0, e.target.selectionStart)).question.length;
+            if (visible !== val) mentionCaretRef.current = { value: visible, position: caret };
+            setQuestion(val);
+            setMentionQuery(getActiveMentionQuery(visible, caret));
           }}
           onSelect={e => setMentionQuery(getActiveMentionQuery(e.currentTarget.value, e.currentTarget.selectionStart))}
           onKeyDown={handleKeyDown}
           onCompositionStart={() => { composingRef.current = true; }}
           onCompositionEnd={() => { composingRef.current = false; }}
           placeholder={t('chat.placeholder')}
-          rows={input.includes('\n') || input.length > 500 ? 6 : 2}
+          rows={question.includes('\n') || question.length > 500 ? 6 : 2}
           aria-label={t('chat.placeholder')}
           data-testid="ai-chat-input"
           className="min-h-12 max-h-64 w-full resize-y overflow-y-auto bg-transparent px-3 pb-2 pt-3 text-xs focus:outline-none"

@@ -39,6 +39,26 @@ describe('evidence-verified PDF annotation proposals', () => {
     expect(result.annotations[0]).toMatchObject({ quote, page: 3, rects: [] });
     expect(result.rejectedCount).toBe(0);
   });
+  it('keeps a valid shorter quote inside a verified passage instead of selecting trailing prose', () => {
+    const passage = 'The matrix is positive definite for every 0 < p < 1. This following explanation must not be selected.';
+    const verified = { ...evidence, preview: passage, anchor: { page: 3, snippet: passage } };
+    const id = buildCitationContract(verified).stableId;
+    const result = preparePdfAnnotationProposal(answer([{ sourceId: id, passageId: id,
+      quote: 'The matrix is positive definite for every 0 < p < 1.', reason: '完整矩阵结论。' }]), [verified]);
+    expect(result.annotations).toHaveLength(1);
+    expect(result.annotations[0].quote).toBe('The matrix is positive definite for every 0 < p < 1.');
+    expect(result.annotations[0].quote).not.toContain('following explanation');
+    expect(result.annotations[0].source.anchor?.snippet).toBe(result.annotations[0].quote);
+  });
+  it('rejects a passage-id quote that is outside the verified passage window', () => {
+    const passage = 'The matrix is positive definite.';
+    const verified = { ...evidence, preview: passage, anchor: { page: 3, snippet: passage } };
+    const id = buildCitationContract(verified).stableId;
+    const result = preparePdfAnnotationProposal(answer([{ sourceId: id, passageId: id,
+      quote: 'A different unverified result.', reason: '不应通过。' }]), [verified]);
+    expect(result.annotations).toEqual([]);
+    expect(result.rejectedCount).toBe(1);
+  });
   it('rejects mismatched selection IDs instead of falling back to a supplied valid quote', () => {
     const verified = { ...evidence, anchor: { page: 3, snippet: proposal().quote } };
     const id = buildCitationContract(verified).stableId;

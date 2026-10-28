@@ -3,7 +3,7 @@ import type { AgentSourceSelection, AgentSourceSnapshot } from './source-index';
 import { parseMentions, resolveMentions } from './mention-resolver';
 import { isFileTabState, type TabState } from '@/types/layout';
 import type { LayoutNode } from '@/types/layout';
-import { isDocumentFollowup, isFocusedDocumentRequest, isTargetedDocumentRequest, isTrivialQuery, isWholeDocumentRequest } from './request-intent';
+import { isBroadDocumentExplanation, isDocumentFollowup, isFocusedDocumentRequest, isTargetedDocumentRequest, isTrivialQuery, isWholeDocumentRequest } from './request-intent';
 
 function localMentionQuery(query: string): string {
   return query.replace(/@(?:folder|cloud(?:-folder)?):[^\s@]*/g, '').replace(/@[^\s@]+/g, mention => {
@@ -29,6 +29,7 @@ export function wantsDocumentReading(query: string, workflowId?: string | null, 
   if (isTrivialQuery(query)) return false;
   if (isWholeDocumentRequest(query)) return true;
   if (isFocusedDocumentRequest(query)) return false;
+  if (context.hasDocumentContext && isBroadDocumentExplanation(query)) return true;
   const mentions = documentMentions(query);
   if (mentions.some(mention => mention.fragment)) return false;
   const readingWorkflow = workflowId === 'pdf-annotation' || workflowId === 'paper-reading' || workflowId === 'literature-matrix';

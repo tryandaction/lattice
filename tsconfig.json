@@ -59,7 +59,11 @@
     ".lattice-build/cloud-managed-ui-dev/types/**/*.ts",
     ".lattice-build/cloud-managed-ui-dev/dev/types/**/*.ts",
     ".lattice-build/web-parity-dev-20261015/types/**/*.ts",
-    ".lattice-build/web-parity-dev-20261015/dev/types/**/*.ts"
+    ".lattice-build/web-parity-dev-20261015/dev/types/**/*.ts",
+    ".lattice-build/cloud-production-dev-20261027/types/**/*.ts",
+    ".lattice-build/cloud-production-dev-20261027/dev/types/**/*.ts",
+    "web-dist-quantum-final/types/**/*.ts",
+    "web-dist-quantum-final/dev/types/**/*.ts"
   ],
   "exclude": [
     ".lattice-build",

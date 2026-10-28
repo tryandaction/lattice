@@ -20,11 +20,29 @@ import type { EvidenceRef } from "@/lib/ai/types";
 import { buildAiResultViewModel, type AiResultSectionViewModel, type AiResultViewModel } from "@/lib/ai/result-view-model";
 import { type CitationContract } from "@/lib/ai/citation-contract";
 import { focusAgentSession } from "@/lib/ai/agent-session-focus";
+import type { AgentSession } from "@/lib/ai/agent-session";
+import { cloudComposerInput } from "@/lib/ai/cloud-composer-input";
+import { cloudAiLabels } from "@/lib/shared-library/cloud-ai-labels";
 import {
   SelectionOriginBadge,
 } from "./workbench-queue";
 
 const CHAT_AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
+
+function hasCompleteDocumentRead(state: AgentSession['documentResearch']): boolean {
+  const coverage = state?.checkpoint.coverage;
+  if (!coverage?.length || !coverage.every(item => {
+    const units = new Set(item.readUnits);
+    return Number.isSafeInteger(item.totalUnits) && item.totalUnits > 0 && units.size === item.totalUnits
+      && [...units].every(unit => Number.isSafeInteger(unit) && unit >= 1 && unit <= item.totalUnits)
+      && item.pendingUnits.length === 0 && item.unreadableUnits.length === 0;
+  })) return false;
+  const directory = state?.directory;
+  return !directory || Boolean(directory.manifest?.complete && !directory.manifest.pendingDirectories.length
+    && !directory.pendingValidation?.length && directory.phase === 'ready' && directory.files.length
+    && directory.files.every(file => file.status === 'complete'
+      && coverage.some(item => item.path === (file.snapshot?.path ?? file.path))));
+}
 
 function EvidenceSummaryButton({
   messageId,
@@ -151,7 +169,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
   onOpenWorkbench?: () => void;
   onOpenEvidence: (messageId: string, ref?: EvidenceRef) => void;
 }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   // Stream parsing is interruptible by typing/selection; completion is immediate.
   const [editing, setEditing] = useState(false);
   const closeEditor = useCallback(() => setEditing(false), []);
@@ -160,8 +178,12 @@ const ChatMessageRow = memo(function ChatMessageRow({
   // Old persisted failures used the error as answer text. Render their metadata once.
   const msg = useMemo(() => displayed.error && displayed.content === 'Error: ' + displayed.error
     ? { ...displayed, content: '' } : displayed, [displayed]);
+  const userDisplay = useMemo(() => msg.role === 'user' ? cloudComposerInput(msg.content, { committed: true }) : null, [msg.role, msg.content]);
   const setComposerDraft = useAiChatStore((state) => state.setComposerDraft);
   const resultView = useMemo(() => msg.role === "assistant" ? buildAiResultViewModel(msg) : null, [msg]);
+  const completeDocumentRead = useAgentSessionStore(state => hasCompleteDocumentRead(
+    msg.agentResult?.sessionId ? state.sessions.find(session => session.id === msg.agentResult!.sessionId)?.documentResearch : undefined,
+  ));
   const codeBlocks = useMemo(() => msg.role === "assistant" && !msg.isStreaming ? extractCodeBlocks(msg.content) : [], [msg.role, msg.isStreaming, msg.content]);
   const activeTabId = useWorkspaceStore((state) => codeBlocks.length ? state.getActiveTab()?.id ?? null : null);
   // Editor keystrokes must not redraw the conversation when no diff is open.
@@ -205,8 +227,8 @@ const ChatMessageRow = memo(function ChatMessageRow({
                       data-testid="ai-chat-context-truncated"
                       className="mt-1 text-[10px] text-muted-foreground"
                     >
-                      <summary className="cursor-pointer">{t("chat.context.partial")}</summary>
-                      <p className="mt-1">{t("chat.context.partialDetail")}</p>
+                      <summary className="cursor-pointer">{t(completeDocumentRead ? "chat.context.excerpts" : "chat.context.partial")}</summary>
+                      <p className="mt-1">{t(completeDocumentRead ? "chat.context.excerptsDetail" : "chat.context.partialDetail")}</p>
                     </details>
                   ) : null}
                 </div>
@@ -340,7 +362,12 @@ const ChatMessageRow = memo(function ChatMessageRow({
             </>
           ) : (
             <div className="whitespace-pre-wrap break-words text-xs leading-relaxed">
-              {msg.content}
+              {userDisplay?.mentions.length ? <div className="mb-1 flex flex-wrap gap-1">
+                {[...new Set(userDisplay.mentions)].map(source => <span key={source} className="rounded border border-border/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  {source.startsWith('@cloud-folder:') ? cloudAiLabels(locale).folderLabel : cloudAiLabels(locale).fileLabel}
+                </span>)}
+              </div> : null}
+              {userDisplay?.question ?? msg.content}
             </div>
           )}
         </div>

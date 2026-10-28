@@ -5,6 +5,61 @@ All notable changes to Lattice will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Connect authorized private GitHub App repositories with PKCE, encrypted expiring credentials, write-collaborator mapping, signed membership webhooks and durable retries.
+- Import repository files into cloud versions and explicitly pull or publish with source SHA and repository baselines.
+- Use server-hosted team AI with member authorization, approved models and atomic library request/budget limits.
+- Inspect immutable activity for document versions, metadata, annotations, comments and membership changes.
+- Keep shared cloud documents in the regular workbench with direct sharing, cloud AI and version history controls.
+- Filter shared PDF annotations by self, other members or selected authors; keep local viewing preferences separate from shared edits and use the visible set for annotated exports.
+- Inspect authors, timestamps and text changes in immutable cloud versions; restore historical content as a new version with its source recorded.
+
+### Fixed
+- Compare content versions atomically before applying GitHub source metadata; preserve current server folder relationships and refuse stale saves.
+- Protect unsaved drafts, in-flight restoration and account changes throughout cloud history and AI workflows.
+- Preserve pending annotation changes during remote refresh; acknowledge normalized shared annotations without hiding later collaborator updates.
+- Keep shared AI annotation attribution and undo consistent across synchronization and reopening.
+
+## [3.1.9] - 2026-10-26
+
+### Fixed
+- Recover formula markup from current PDF source glyph geometry for existing text-only annotations, independently of LaTeX recognition.
+- Fold TeX split delimiters into complete matrix regions and group fraction numerators, denominators and scripts into logical equation underline rows.
+- Repaint legacy mixed prose/formula annotations without changing stored quotes or notes; exclude separated equation labels from formula geometry.
+- Invalidate formula metadata caches and prioritize the displayed annotated page within the bounded source-model cache.
+- Normalize supported annotation color names and short hexadecimal values consistently with the tool contract; reject unsupported annotation types and colors with specific diagnostics.
+- Keep verified annotation suggestions reviewable when another quote fails, reporting accepted and rejected counts without dropping existing user notes or presenting partial batches as fully verified.
+- Reapplying AI annotation proposals preserves existing or user-edited marks and adds only missing suggestions; undo remains limited to newly inserted marks.
+- Match PDF evidence with consistent line-break typography rules, and repair rejected findings only with new verified evidence from the same original source and page.
+- Recognize successful source-bound annotation tool drafts in final-answer validation instead of requiring a second annotation JSON proposal; keep Markdown deliverables and explicit review pending.
+
+## [3.1.8] - 2026-10-26
+
+### Fixed
+- AI PDF annotation proposals use at most five document-wide suggestions and preserve a verified shorter quote instead of expanding it into following prose.
+- Matrix and displayed-formula geometry supports clearly resolved 2x3/3x3 layouts; highlight uses one full formula envelope while underline remains one segment per visual row.
+- AI-applied and Markdown-draft annotations classify only geometry-verified formulas, preserving ordinary multi-line prose behavior and safe review fallback.
+
+## [3.1.7] - 2026-10-26
+
+### Fixed
+- PDF annotation proposals re-read requested pages against the current authorized revision, including after an earlier reading task or a fresh conversation tool runtime.
+- Exact quotes are checked across contiguous source chunks, preserve real PDF ligatures, require complete-page unique matching, and reject gaps, changed revisions and invented text.
+- API Agent can repair an actual same-target quote mismatch once within its tool budget, while preserving failures and avoiding duplicate proposal side effects.
+- PDF readers import newly approved annotation drafts from existing file-change events and preserve drafts until annotation persistence succeeds.
+- API and local Harness share executable Lattice product operation instructions for annotations, PDF children, notes, code and cloud resources, with actual review and deployment boundaries.
+
+## [3.1.6] - 2026-10-26
+
+### Fixed
+- Detailed explanations of the currently open or referenced paper are routed to whole-document reading when no narrower page or passage scope is requested.
+- Codex/Claude Harness reading follows verified pending page/section coverage across bounded tool turns; partial drafts are marked incomplete until the captured source revision is fully read.
+- PDF read-tool instructions distinguish completed reads from opening excerpts, previews, and search scans.
+
+Real model response quality remains subject to user acceptance; this release uses deterministic synthetic PDF coverage tests and makes no hosted-model test calls.
+
 ## [3.1.5] - 2026-10-22
 
 ### Fixed

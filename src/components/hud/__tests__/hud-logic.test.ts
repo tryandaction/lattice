@@ -248,7 +248,7 @@ describe('HUD Logic', () => {
         candidatePrefix: 1,
       })).toMatchObject({
         action: 'insert',
-        latex: 'I',
+        latex: '\\oiiint',
         layer: 'ctrl',
         index: 1,
       });
@@ -260,7 +260,7 @@ describe('HUD Logic', () => {
         candidatePrefix: 2,
       })).toMatchObject({
         action: 'insert',
-        latex: '\\mathbb{I}',
+        latex: '\\iint_{}^{}',
         layer: 'ctrl',
         index: 2,
       });
@@ -274,9 +274,9 @@ describe('HUD Logic', () => {
         candidatePrefix: 99,
       })).toMatchObject({
         action: 'insert',
-        latex: 'I',
+        latex: '\\oiiint_{}^{}',
         layer: 'ctrl',
-        index: 4,
+        index: 6,
       });
     });
   });

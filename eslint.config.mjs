@@ -46,6 +46,7 @@ const eslintConfig = defineConfig([
     "web-dist*/**",
     "build/**",
     "output/**",
+    "tmp/**",
     "scripts/**",
     "supabase/functions/shared-library-api/index.js",
     "next-env.d.ts",

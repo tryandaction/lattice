@@ -10,13 +10,16 @@ import type { CloudWorkspaceAnchor } from "@/lib/cloud-workspace-host";
 import { setCloudWorkspaceProvider } from "@/lib/cloud-workspace-host";
 import { cloudNavigationTarget } from "@/lib/shared-library/cloud-navigation";
 import { cloudContentFromBytes, cloudFileKind } from "@/lib/shared-library/file-content";
-import { persistCloudImportBatch, validateCloudImportBatch, type CloudImportFailure } from "@/lib/shared-library/cloud-import-batch";
+import { createCloudImportBatch, persistCloudImportBatch, type CloudImportEntry, type CloudImportFailure } from "@/lib/shared-library/cloud-import-batch";
 import { useLinkNavigationStore } from "@/stores/link-navigation-store";
 import type { PaneId } from "@/types/layout";
 
 export interface CloudWorkbenchState {
   active: boolean;
   managementOpen: boolean;
+  managementSection: "connection" | "members" | "ai" | "github" | "activity";
+  teamAiSource?: { name: string; text: string; versionId?: string; truncated?: boolean; readUnits?: number; totalUnits?: number };
+  requestedVersionHistory: { id: string; scope: string; libraryId: string; itemId: string; versionId?: string } | null;
   controller: CloudLibraryWorkspaceController | null;
   provider: CloudLibrarySourceProvider | null;
   scope: string | null;
@@ -33,13 +36,17 @@ export interface CloudWorkbenchState {
   uploading: boolean;
   uploadProgress: string;
   importFailures: CloudImportFailure[];
+  uploadEntries: CloudImportEntry[];
   pendingLocalUpload: LocalCloudUploadEntry | null;
   localUploadWarnings: string[];
   requestLocalUpload(entry: LocalCloudUploadEntry): void;
   dismissLocalUpload(): void;
   uploadLocalEntry(libraryId: string, parentItemId?: string): Promise<void>;
   setActive(active: boolean): void;
-  setManagementOpen(open: boolean): void;
+  setManagementOpen(open: boolean, section?: "connection" | "members" | "ai" | "github" | "activity"): void;
+  setTeamAiSource(source?: { name: string; text: string; versionId?: string; truncated?: boolean; readUnits?: number; totalUnits?: number }): void;
+  requestVersionHistory(libraryId: string, itemId: string, versionId?: string): void;
+  clearVersionHistoryRequest(id: string): void;
   setSelectedFolderId(id?: string): void;
   setError(error: unknown): void;
   bindController(controller: CloudLibraryWorkspaceController | null): void;
@@ -47,6 +54,7 @@ export interface CloudWorkbenchState {
   openItem(itemId: string, options?: { paneId?: PaneId; libraryId?: string; anchor?: CloudWorkspaceAnchor }): Promise<boolean>;
   refresh(): Promise<void>;
   uploadFiles(files: File[], parentItemId?: string | null): Promise<void>;
+  retryUpload(entryId?: string): Promise<void>;
   cancelUpload(): void;
   createFolder(name: string, parentItemId?: string | null): Promise<Item>;
   createNote(name: string, parentItemId?: string | null): Promise<Item>;
@@ -72,6 +80,7 @@ let localUploadAbort: AbortController | null = null;
 const parentOf = (item: Item) => typeof item.metadata.parentItemId === "string" ? item.metadata.parentItemId : undefined;
 
 export const useCloudWorkbenchStore = create<CloudWorkbenchState>((set, get) => {
+  let currentUploadEntryIds = new Set<string>();
   function current() {
     const state = get();
     if (!state.controller || !state.provider || !state.scope) throw new Error("请先连接共享库。");
@@ -84,14 +93,84 @@ export const useCloudWorkbenchStore = create<CloudWorkbenchState>((set, get) => 
     const { controller, libraryId } = get();
     if (!controller) return;
     const snapshot = controller.getSnapshot();
-    set({ revision: get().revision + 1, libraries: snapshot.libraries, items: snapshot.revoked.includes(libraryId) ? [] : snapshot.items.filter(item => item.libraryId === libraryId && item.status !== "trashed"), role: snapshot.revoked.includes(libraryId) ? null : snapshot.roles[libraryId]?.role ?? null, status: controller.getStatus() });
+    const uploadEntries = get().uploadEntries.map(entry => {
+      if (!entry.itemId) return entry;
+      const ids = new Set([entry.itemId, ...(entry.relatedItemIds ?? [])]);
+      const operations = snapshot.outbox.filter(operation => operation.libraryId === entry.libraryId && ids.has(operation.itemId));
+      const blocked = operations.find(operation => operation.state === "conflicted") ?? operations.find(operation => operation.state === "failed") ?? operations.find(operation => operation.state === "paused");
+      if (blocked) return { ...entry, state: blocked.state, error: blocked.error };
+      if (operations.length) return { ...entry, state: "queued" as const, error: operations.find(operation => operation.error)?.error };
+      if (snapshot.items.some(item => item.id === entry.itemId && item.libraryId === entry.libraryId)) return { ...entry, state: "synced" as const, error: undefined };
+      return { ...entry, state: "failed" as const, error: "上传条目不可用，请重新选择文件。" };
+    });
+    set({ revision: get().revision + 1, libraries: snapshot.libraries, items: snapshot.revoked.includes(libraryId) ? [] : snapshot.items.filter(item => item.libraryId === libraryId && item.status !== "trashed"), role: snapshot.revoked.includes(libraryId) ? null : snapshot.roles[libraryId]?.role ?? null, status: controller.getStatus(), uploadEntries });
   }
   async function action<T>(operation: () => Promise<T>): Promise<T> {
     set({ error: null });
     try { return await operation(); } catch (error) { get().setError(error); throw error; }
   }
+  function updateUpload(id: string, patch: Partial<CloudImportEntry>) {
+    set({ uploadEntries: get().uploadEntries.map(entry => entry.id === id ? { ...entry, ...patch } : entry) });
+  }
+  async function pauseUploadedEntries(controller: CloudLibraryWorkspaceController) {
+    const batchIds = new Set(currentUploadEntryIds);
+    const ids = new Set(get().uploadEntries.filter(entry => batchIds.has(entry.id)).flatMap(entry => entry.itemId ? [entry.itemId, ...(entry.relatedItemIds ?? [])] : []));
+    for (const operation of controller.getSnapshot().outbox) if (ids.has(operation.itemId) && operation.state === "pending") await controller.pause(operation.id);
+    assertIdentity(controller); project();
+  }
+  async function importEntries(entries: CloudImportEntry[], controller: CloudLibraryWorkspaceController, libraryId: string) {
+    if (get().uploading) throw new Error("正在添加文件，请稍后再上传。");
+    currentUploadEntryIds = new Set(entries.map(entry => entry.id));
+    set({ uploading: true, uploadProgress: "正在检查文件…", importFailures: [] }); uploadCancelled = false;
+    try {
+      const usage = navigator.onLine ? await controller.usage(libraryId) : undefined;
+      assertIdentity(controller);
+      const checked = createCloudImportBatch(entries.map(entry => entry.file), Math.min(controller.connection.maxFileBytes, usage?.maxFileBytes ?? Infinity), usage ? usage.maxStorageBytes - usage.usedBytes - usage.reservedBytes : undefined);
+      const eligible: CloudImportEntry[] = [];
+      for (let index = 0; index < entries.length; index++) {
+        const entry = entries[index]; const validation = checked[index];
+        updateUpload(entry.id, { state: validation.state, error: validation.error });
+        if (validation.state === "pending") eligible.push(entry);
+      }
+      const directories = new Map<string, string>(); let completed = 0;
+      const result = await persistCloudImportBatch(eligible.map(entry => entry.file), eligible.map(entry => entry.path), async (file, path) => {
+        const entry = eligible.find(candidate => candidate.file === file && candidate.path === path)!;
+        updateUpload(entry.id, { state: "reading", error: undefined });
+        const content = cloudContentFromBytes(file.name, await file.arrayBuffer(), file.type, new Date().toISOString());
+        assertIdentity(controller); if (uploadCancelled) throw new Error("已取消，文件尚未加入上传队列。");
+        const parts = path.split("/"); let parent = entry.parentItemId; const relatedItemIds: string[] = [];
+        for (let depth = 0; depth < parts.length - 1; depth++) {
+          const directoryPath = `${entry.parentItemId ?? ""}/${parts.slice(0, depth + 1).join("/")}`;
+          const existing = controller.getSnapshot().items.find(item => item.libraryId === libraryId && item.kind === "folder" && parentOf(item) === parent && item.canonicalName === parts[depth] && item.status === "active");
+          let id = directories.get(directoryPath) ?? existing?.id;
+          if (!id) id = (await controller.createItem({ libraryId, name: parts[depth], kind: "folder", parentItemId: parent })).id;
+          assertIdentity(controller); if (uploadCancelled) throw new Error("已取消，文件尚未加入上传队列。");
+          directories.set(directoryPath, id); relatedItemIds.push(id); parent = id;
+        }
+        const item = await controller.createItem({ libraryId, name: parts.at(-1)!, kind: cloudFileKind(file.name, file.type), parentItemId: parent }, content);
+        assertIdentity(controller); updateUpload(entry.id, { state: "queued", itemId: item.id, relatedItemIds, error: undefined });
+        set({ uploadProgress: `${++completed} 个文件已保存到本机，等待同步` });
+      }, () => uploadCancelled || get().controller !== controller);
+      assertIdentity(controller);
+      for (const failure of result.failures) {
+        const entry = eligible.find(candidate => candidate.file === failure.file && candidate.path === failure.path)!;
+        updateUpload(entry.id, { state: uploadCancelled ? "cancelled" : "failed", error: failure.error });
+      }
+      const failures = get().uploadEntries.filter(entry => !entry.itemId && ["failed", "cancelled"].includes(entry.state)).map(entry => ({ file: entry.file, path: entry.path, error: entry.error ?? "尚未上传" }));
+      set({ importFailures: failures, uploadProgress: `${result.completed} 个文件已保存到本机，等待同步${failures.length ? `；${failures.length} 个尚未上传` : ""}` });
+      if (uploadCancelled) await pauseUploadedEntries(controller);
+      else void controller.sync().then(() => { if (get().controller === controller) project(); }).catch(error => { if (get().controller === controller) get().setError(error); });
+      project();
+    } catch (error) {
+      if (get().controller === controller) {
+        const message = error instanceof Error ? error.message : String(error);
+        set({ uploadEntries: get().uploadEntries.map(entry => entries.some(candidate => candidate.id === entry.id) && !entry.itemId ? { ...entry, state: uploadCancelled ? "cancelled" : "failed", error: message } : entry) });
+      }
+      throw error;
+    } finally { if (get().controller === controller) set({ uploading: false }); }
+  }
   return {
-    active: false, managementOpen: false, controller: null, provider: null, scope: null, libraryId: "", revision: 0, status: null, role: null, items: [], libraries: [], error: null, loading: false, openingItemId: null, uploading: false, uploadProgress: "", importFailures: [], pendingLocalUpload: null, localUploadWarnings: [],
+    active: false, managementOpen: false, controller: null, provider: null, scope: null, libraryId: "", revision: 0, status: null, role: null, items: [], libraries: [], error: null, loading: false, openingItemId: null, uploading: false, uploadProgress: "", importFailures: [], uploadEntries: [], pendingLocalUpload: null, localUploadWarnings: [],
     requestLocalUpload: pendingLocalUpload => set({ pendingLocalUpload, localUploadWarnings: [], error: null, ...(!get().controller ? { managementOpen: true } : {}) }),
     dismissLocalUpload: () => { if (!get().uploading) set({ pendingLocalUpload: null, localUploadWarnings: [] }); },
     uploadLocalEntry: (libraryId, parentItemId) => action(async () => {
@@ -109,18 +188,30 @@ export const useCloudWorkbenchStore = create<CloudWorkbenchState>((set, get) => 
       } finally { localUploadAbort = null; if (get().controller === controller) set({ uploading: false }); }
     }),
     setActive: active => set({ active }),
-    setManagementOpen: managementOpen => set({ managementOpen }),
+    managementSection: "connection",
+    requestedVersionHistory: null,
+    setManagementOpen: (managementOpen, managementSection = "connection") => set({ managementOpen, managementSection }),
+    setTeamAiSource: teamAiSource => set({ teamAiSource }),
+    requestVersionHistory: (libraryId, itemId, versionId) => {
+      const { controller, scope } = get();
+      if (!controller || !scope) throw new Error('请先连接共享库。');
+      set({ requestedVersionHistory: { id: crypto.randomUUID(), scope, libraryId, itemId, versionId } });
+    },
+    clearVersionHistoryRequest: id => { if (get().requestedVersionHistory?.id === id) set({ requestedVersionHistory: null }); },
     setSelectedFolderId: selectedFolderId => set({ selectedFolderId }),
     setError: error => set({ error: error == null ? null : error instanceof Error ? error.message : String(error) }),
     bindController(controller) {
       unsubscribeController?.(); unsubscribeController = undefined; ++openSequence; uploadCancelled = true; localUploadAbort?.abort();
+      currentUploadEntryIds.clear();
       const provider = controller ? createCloudSourceProvider(controller) : null;
-      set({ controller, provider, scope: controller ? cloudScope(controller.connection, controller.userId) : null, libraryId: "", selectedFolderId: undefined, items: [], libraries: [], role: null, status: null, loading: false, openingItemId: null, uploading: false, uploadProgress: "", importFailures: [] });
+      set({ controller, provider, scope: controller ? cloudScope(controller.connection, controller.userId) : null, libraryId: "", teamAiSource: undefined, requestedVersionHistory: null, selectedFolderId: undefined, items: [], libraries: [], role: null, status: null, loading: false, openingItemId: null, uploading: false, uploadProgress: "", importFailures: [], uploadEntries: [] });
       setCloudWorkspaceProvider(provider);
       if (controller) { unsubscribeController = controller.subscribe(project); project(); }
     },
     selectLibrary: libraryId => action(async () => {
-      const { controller } = current(); set({ libraryId, selectedFolderId: undefined, loading: true }); project();
+      const { controller } = current();
+      if (get().libraryId !== libraryId) ++openSequence;
+      set({ libraryId, teamAiSource: undefined, selectedFolderId: undefined, loading: true, openingItemId: null }); project();
       try { if (libraryId) await controller.refreshLibrary(libraryId); assertIdentity(controller); project(); }
       finally { if (get().controller === controller) set({ loading: false }); }
     }),
@@ -146,34 +237,30 @@ export const useCloudWorkbenchStore = create<CloudWorkbenchState>((set, get) => 
       } finally { if (request === openSequence) set({ openingItemId: null }); }
     }),
     refresh: () => action(async () => { const { controller, libraryId } = current(); await controller.refreshLibraries(); if (libraryId) await controller.refreshLibrary(libraryId); await controller.sync(); assertIdentity(controller); project(); }),
-    cancelUpload: () => { uploadCancelled = true; localUploadAbort?.abort(); },
+    cancelUpload: () => {
+      uploadCancelled = true; localUploadAbort?.abort();
+      set({ uploadEntries: get().uploadEntries.map(entry => ["pending", "reading"].includes(entry.state) ? { ...entry, state: "cancelled", error: "已取消，文件尚未加入上传队列。" } : entry) });
+      const controller = get().controller;
+      if (controller) void pauseUploadedEntries(controller).catch(error => { if (get().controller === controller) get().setError(error); });
+    },
     uploadFiles: (files, requestedParent) => action(async () => {
       if (!files.length) return;
-      if (get().uploading) throw new Error("正在添加文件，请稍后再上传。");
       const { controller, libraryId, selectedFolderId } = current(); const parentId = requestedParent === undefined ? selectedFolderId : requestedParent ?? undefined;
-      if (!libraryId) throw new Error("请先选择小组库。");
-      set({ uploading: true, uploadProgress: "正在添加文件…", importFailures: [] }); uploadCancelled = false;
-      try {
-        validateCloudImportBatch(files, controller.connection.maxFileBytes);
-        const usage = navigator.onLine ? await controller.usage(libraryId) : undefined;
-        const paths = validateCloudImportBatch(files, Math.min(controller.connection.maxFileBytes, usage?.maxFileBytes ?? Infinity), usage ? usage.maxStorageBytes - usage.usedBytes - usage.reservedBytes : undefined);
-        assertIdentity(controller); const directories = new Map<string, string>(); let completed = 0;
-        const result = await persistCloudImportBatch(files, paths, async (file, path) => {
-          const content = cloudContentFromBytes(file.name, await file.arrayBuffer(), file.type, new Date().toISOString());
-          assertIdentity(controller); if (uploadCancelled) throw new Error("上传已暂停。");
-          const parts = path.split("/"); let parent = parentId;
-          for (let depth = 0; depth < parts.length - 1; depth++) {
-            const directoryPath = parts.slice(0, depth + 1).join("/");
-            const existing = controller.getSnapshot().items.find(item => item.libraryId === libraryId && item.kind === "folder" && parentOf(item) === parent && item.canonicalName === parts[depth] && item.status === "active");
-            let id = directories.get(directoryPath) ?? existing?.id;
-            if (!id) id = (await controller.createItem({ libraryId, name: parts[depth], kind: "folder", parentItemId: parent })).id;
-            directories.set(directoryPath, id); parent = id;
-          }
-          await controller.createItem({ libraryId, name: parts.at(-1)!, kind: cloudFileKind(file.name, file.type), parentItemId: parent }, content);
-          set({ uploadProgress: `正在添加 ${++completed}/${files.length} 个文件` });
-        }, () => uploadCancelled || get().controller !== controller);
-        assertIdentity(controller); set({ importFailures: result.failures, uploadProgress: result.failures.length ? `${result.completed} 个已添加，${result.failures.length} 个未添加` : `${result.completed} 个文件已添加` }); void controller.sync();
-      } finally { if (get().controller === controller) set({ uploading: false }); }
+      if (!libraryId) throw new Error("请先选择云端库。");
+      if (get().uploading) throw new Error("正在添加文件，请稍后再上传。");
+      const uploadEntries = createCloudImportBatch(files, controller.connection.maxFileBytes).map(entry => ({ ...entry, libraryId, parentItemId: parentId }));
+      currentUploadEntryIds = new Set(uploadEntries.map(entry => entry.id)); set({ uploadEntries }); await importEntries(uploadEntries, controller, libraryId);
+    }),
+    retryUpload: entryId => action(async () => {
+      const { controller } = current();
+      if (get().uploading) throw new Error("正在添加文件，请稍后再重试。");
+      const entries = get().uploadEntries.filter(entry => (!entryId || entry.id === entryId) && (["failed", "cancelled", "paused"].includes(entry.state) || (entry.state === "queued" && Boolean(entry.error))));
+      const ids = new Set(entries.flatMap(entry => entry.itemId ? [entry.itemId, ...(entry.relatedItemIds ?? [])] : []));
+      for (const operation of controller.getSnapshot().outbox) if (ids.has(operation.itemId) && operation.state !== "conflicted") await controller.retry(operation.id);
+      currentUploadEntryIds = new Set(entries.map(entry => entry.id));
+      const local = entries.filter(entry => !entry.itemId);
+      if (local.length) await importEntries(local, controller, local[0].libraryId!);
+      await controller.sync(); assertIdentity(controller); project();
     }),
     createFolder: (name, parentItemId) => get().createFile(name, "folder", undefined, parentItemId),
     createNote: (name, parentItemId) => get().createFile(name, "markdown", { kind: "text", text: `# ${name.replace(/\.(?:md|markdown)$/i, "")}\n`, mimeType: "text/markdown", updatedAt: new Date().toISOString() }, parentItemId),

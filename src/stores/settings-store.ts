@@ -7,6 +7,7 @@
 import { create } from 'zustand';
 import type { AppSettings, ExecutionDockLayout, Locale, ThemeMode } from '@/types/settings';
 import { DEFAULT_SETTINGS, SETTINGS_STORAGE_KEY } from '@/types/settings';
+import { BUILTIN_PLUGIN_DEFAULTS_VERSION, QUANTUM_KEYBOARD_PLUGIN_ID } from '@/lib/plugins/defaults';
 import { getStorageAdapter } from '@/lib/storage-adapter';
 import { DEFAULT_APPEARANCE_SETTINGS, MAX_CUSTOM_THEMES, type AppearanceSettings, type ThemePackage } from '@/lib/appearance/types';
 import { isBuiltinTheme } from '@/lib/appearance/registry';
@@ -95,12 +96,22 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     hydrationTask = (async () => { try {
       const storage = getStorageAdapter();
       const saved = await (storage.getStrict ? storage.getStrict<AppSettings>(SETTINGS_STORAGE_KEY) : storage.get<AppSettings>(SETTINGS_STORAGE_KEY));
+      const normalized = normalizeSettings(saved ? saved : {});
+      const storedPluginDefaultsVersion = typeof saved?.builtinPluginDefaultsVersion === 'number'
+        ? saved.builtinPluginDefaultsVersion
+        : 0;
+      const shouldOfferNewBuiltins = storedPluginDefaultsVersion < BUILTIN_PLUGIN_DEFAULTS_VERSION;
       const resolved: AppSettings = {
         ...DEFAULT_SETTINGS,
-        ...(saved ? normalizeSettings(saved) : { language: detectSystemLanguage() }),
+        ...(saved ? normalized : { language: detectSystemLanguage() }),
         appearance: normalizeAppearance(saved?.appearance),
       };
-      persistedSettings = { ...resolved, ...saved };
+      if (shouldOfferNewBuiltins) {
+        resolved.enabledPlugins = Array.from(new Set([...resolved.enabledPlugins, QUANTUM_KEYBOARD_PLUGIN_ID]));
+        resolved.trustedPlugins = Array.from(new Set([...resolved.trustedPlugins, QUANTUM_KEYBOARD_PLUGIN_ID]));
+        resolved.builtinPluginDefaultsVersion = BUILTIN_PLUGIN_DEFAULTS_VERSION;
+      }
+      persistedSettings = { ...resolved, ...saved, builtinPluginDefaultsVersion: resolved.builtinPluginDefaultsVersion };
       set({ settings: resolved, isLoading: false, isInitialized: true });
       writeAppearanceCache(resolved.appearance, resolved.theme);
     } catch (error) {
@@ -377,6 +388,9 @@ function normalizeSettings(raw: Partial<AppSettings>): Partial<AppSettings> {
   if (typeof raw.pluginsEnabled === 'boolean') normalized.pluginsEnabled = raw.pluginsEnabled;
   assignIfDefined('enabledPlugins', stringArray(raw.enabledPlugins));
   assignIfDefined('trustedPlugins', stringArray(raw.trustedPlugins));
+  if (typeof raw.builtinPluginDefaultsVersion === 'number' && Number.isFinite(raw.builtinPluginDefaultsVersion)) {
+    normalized.builtinPluginDefaultsVersion = raw.builtinPluginDefaultsVersion;
+  }
   assignIfDefined('pluginNetworkAllowlist', stringArray(raw.pluginNetworkAllowlist));
   if (typeof raw.pluginPanelDockSize === 'number') normalized.pluginPanelDockSize = raw.pluginPanelDockSize;
   if (typeof raw.pluginPanelDockOpen === 'boolean') normalized.pluginPanelDockOpen = raw.pluginPanelDockOpen;

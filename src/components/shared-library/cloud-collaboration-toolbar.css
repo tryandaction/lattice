@@ -1,0 +1,9 @@
+.lattice-cloud-toolbar {
+  container-type: inline-size;
+}
+
+@container (max-width: 440px) {
+  .lattice-cloud-toolbar .lattice-cloud-action-label {
+    display: none;
+  }
+}

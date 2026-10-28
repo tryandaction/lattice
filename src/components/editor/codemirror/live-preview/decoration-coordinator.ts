@@ -39,6 +39,7 @@ import { EditorState, StateField, StateEffect, Text } from '@codemirror/state';
 import { cursorContextField, shouldRevealAt, type CursorContext } from './cursor-context-plugin';
 import { codeBlockSourceModeField, isCodeBlockSourceMode, mathSourceModeField, isMathSourceMode } from './source-mode';
 import { codeBlockRunContextFacet } from './code-block-run-context';
+import { activeMathEditorRange } from './math-editor-range';
 import { logger } from '@/lib/logger';
 import {
   FormattedTextWidget,
@@ -3490,6 +3491,7 @@ export function resolveConflicts(elements: ParsedElement[]): ParsedElement[] {
  * 从解析元素构建装饰器集合
  */
 function buildDecorationsFromElements(elements: ParsedElement[], state: EditorState): DecorationSet {
+  const activeFormula = state.facet(activeMathEditorRange);
   const entries: DecorationEntry[] = [];
   let skippedCount = 0;
   let processedCount = 0;
@@ -3504,6 +3506,9 @@ function buildDecorationsFromElements(elements: ParsedElement[], state: EditorSt
   const referenceSignature = buildReferenceSignature(referenceDefs);
 
   for (const element of elements) {
+    // An active formula has one owner: the editable MathLive widget.
+    if (activeFormula && (element.type === ElementType.MATH_INLINE || element.type === ElementType.MATH_BLOCK)
+      && element.from < activeFormula.to && element.to > activeFormula.from) continue;
     // CRITICAL FIX: Validate element range to prevent truncation and errors
     if (element.from < 0 || element.to < 0) {
       debugLog('[buildDecorations] Skipping element with negative range:', element.from, element.to);
@@ -4554,7 +4559,7 @@ export const decorationCoordinatorField = StateField.define<DecorationSet>({
     }
   },
   update(value, tr) {
-    if (tr.docChanged) {
+    if (tr.docChanged || tr.startState.facet(activeMathEditorRange) !== tr.state.facet(activeMathEditorRange)) {
       // Document changed — full re-parse required
       try {
         const elements = parseDocument(tr.state, false);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isFocusedDocumentRequest, isTargetedDocumentRequest, isWholeDirectoryRequest, isWholeDocumentRequest } from '../request-intent';
+import { wantsDocumentReading } from '../document-source-capture';
 
 describe('complete directory reading intent', () => {
   it.each([
@@ -80,5 +81,13 @@ describe('complete directory reading intent', () => {
     expect(isTargetedDocumentRequest('本文中的BB1是什么？')).toBe(true);
     expect(isTargetedDocumentRequest('全文分析BB1')).toBe(false);
     expect(isWholeDocumentRequest('总结整篇论文，包括BB1')).toBe(true);
+  });
+
+  it('routes a detailed report explanation through full document reading when a report is open', () => {
+    const query = '请详细讲解报告的原理、实验方法和结果。';
+    expect(wantsDocumentReading(query, undefined, { hasDocumentContext: true })).toBe(true);
+    expect(wantsDocumentReading(query, undefined, { hasDocumentContext: false })).toBe(false);
+    expect(wantsDocumentReading('请详细讲解这份报告。只回答选中的这段。', undefined, { hasDocumentContext: true })).toBe(false);
+    expect(wantsDocumentReading('请详细讲解选中的这段报告。', undefined, { hasDocumentContext: true })).toBe(false);
   });
 });

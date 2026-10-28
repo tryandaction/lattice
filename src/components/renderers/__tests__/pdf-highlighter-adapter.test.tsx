@@ -5,7 +5,7 @@
 import React from 'react';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { PDFHighlighterAdapter } from '../pdf-highlighter-adapter';
+import { PDFHighlighterAdapter, buildPdfTextMarkupViewCacheKey } from '../pdf-highlighter-adapter';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 import { useContentCacheStore } from '@/stores/content-cache-store';
 import { useLinkNavigationStore } from '@/stores/link-navigation-store';
@@ -24,6 +24,12 @@ import type { AnnotationItem } from '@/types/universal-annotation';
 import { ensurePdfItemWorkspace, ensurePdfItemWorkspaceForBinding } from '@/lib/pdf-item';
 import { getActivePdfSelectionImage } from '@/lib/pdf-selection-image-provider';
 import { recognizeFormulaImageWithPix2tex } from '@/lib/formula-ocr';
+import { emitVaultChange } from '@/lib/plugins/runtime';
+import { persistCloudPdfAnnotations, toLegacyAnnotation, type CloudPdfDocument } from '@/lib/shared-library/cloud-pdf';
+import { CloudLibraryWorkspaceController, type CloudWorkspaceSnapshot } from '@/lib/shared-library/cloud-workspace';
+import { ApiTransport } from '@/lib/shared-library/api-transport';
+import type { Annotation } from '@/lib/shared-library/domain';
+import { exportPdfWithAnnotations } from '../pdf-export-button';
 vi.mock('@/lib/formula-ocr', () => ({ recognizeFormulaImageWithPix2tex: vi.fn(async () => ({ latex: '\\frac{a}{b}', confidence: .9 })) }));
 
 const navigateLinkMock = vi.hoisted(() => vi.fn(async () => true));
@@ -1236,7 +1242,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => nextNavigationMockState.searchParams,
 }));
 
-function renderPdfPane(props: { paneId: 'pane-left' | 'pane-right'; fileId: string; filePath?: string; preloaded?: boolean; sourceRevision?: string | null; diskRevision?: number; noFileHandle?: boolean; desktopUrl?: string; getFile?: () => Promise<File> }) {
+function renderPdfPane(props: { paneId: 'pane-left' | 'pane-right'; fileId: string; filePath?: string; preloaded?: boolean; sourceRevision?: string | null; diskRevision?: number; noFileHandle?: boolean; desktopUrl?: string; getFile?: () => Promise<File>; sharedDocument?: CloudPdfDocument }) {
   return (
     <div className="h-[600px] w-[800px]">
       <PDFHighlighterAdapter
@@ -1252,6 +1258,7 @@ function renderPdfPane(props: { paneId: 'pane-left' | 'pane-right'; fileId: stri
         fileId={props.fileId}
         filePath={props.filePath ?? `docs/${props.fileId}.pdf`}
         preloadedPdfDocument={props.preloaded ? mockPdfDocument as never : undefined}
+        sharedDocument={props.sharedDocument}
       />
     </div>
   );
@@ -6818,6 +6825,107 @@ describe('PDFHighlighterAdapter', () => {
     expect(inkSegment).toBeTruthy();
   });
 
+  it('renders formula highlights as one matrix envelope and underlines as separate visual rows', async () => {
+    const rows = [
+      { x1: 0.25, y1: 0.20, x2: 0.62, y2: 0.22 },
+      { x1: 0.27, y1: 0.23, x2: 0.60, y2: 0.25 },
+      { x1: 0.29, y1: 0.26, x2: 0.58, y2: 0.28 },
+    ];
+    const formula = { latex: '\\begin{pmatrix}a&b\\\\c&d\\\\e&f\\end{pmatrix}', rawText: 'a b c d e f',
+      source: 'geometry' as const, status: 'ready' as const, originalRects: rows };
+    useAnnotationSystemMock.mockReturnValue({
+      annotations: [
+        { id: 'ann-matrix-highlight', target: { type: 'pdf' as const, page: 1, rects: rows }, style: { color: '#FFEB3B', type: 'highlight' as const },
+          content: formula.rawText, author: 'user', createdAt: 1, formula },
+        { id: 'ann-matrix-underline', target: { type: 'pdf' as const, page: 1, rects: rows }, style: { color: '#2196F3', type: 'underline' as const },
+          content: formula.rawText, author: 'user', createdAt: 2, formula },
+      ],
+      error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(),
+    });
+
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'matrix-formula' }));
+    await waitForPdfTextModelPrefetch();
+    await waitFor(() => {
+      expect(document.querySelector('.pdf-stored-annotation-overlay-ann-matrix-highlight')).toBeTruthy();
+      expect(document.querySelector('.pdf-stored-annotation-overlay-ann-matrix-underline')).toBeTruthy();
+    });
+
+    const highlightSegments = Array.from(document.querySelectorAll<HTMLElement>(
+      '.pdf-stored-annotation-overlay-ann-matrix-highlight [data-pdf-stored-annotation-segment="true"]'));
+    const underlineSegments = Array.from(document.querySelectorAll<HTMLElement>(
+      '.pdf-stored-annotation-overlay-ann-matrix-underline [data-pdf-stored-annotation-segment="true"]'));
+    expect(highlightSegments).toHaveLength(1);
+    expect(highlightSegments[0]?.style.left).toBe('25%');
+    expect(highlightSegments[0]?.style.width).toBe('37%');
+    expect(highlightSegments[0]?.style.top).toBe('20%');
+    expect(Number.parseFloat(highlightSegments[0]?.style.height ?? '')).toBeCloseTo(8);
+    expect(underlineSegments).toHaveLength(3);
+    expect(underlineSegments.map(segment => Number.parseFloat(segment.style.top))).toEqual([20.14, 23.14, 26.14]);
+    expect(underlineSegments.every(segment => segment.style.backgroundImage.includes('linear-gradient'))).toBe(true);
+  });
+
+  it('redraws a legacy unmarked matrix stripe after loading the actual PDF source glyph model', async () => {
+    const sourceRows = [
+      { text: 'A verified surrounding theorem.', x: 300, y: 100, w: 240, h: 10 },
+      { text: 'Q', x: 330, y: 175, w: 10, h: 10 }, { text: '=', x: 345, y: 175, w: 10, h: 10 },
+      { text: '', x: 365, y: 140, w: 5, h: 10 }, { text: '', x: 365, y: 155, w: 5, h: 10 }, { text: '', x: 365, y: 180, w: 5, h: 10 },
+      { text: '1 2', x: 380, y: 140, w: 50, h: 10 }, { text: '3 4', x: 380, y: 160, w: 50, h: 10 },
+      { text: '5 6', x: 380, y: 180, w: 50, h: 10 },
+      { text: '', x: 440, y: 140, w: 5, h: 10 }, { text: '', x: 440, y: 155, w: 5, h: 10 }, { text: '', x: 440, y: 180, w: 5, h: 10 },
+      { text: '(73)', x: 540, y: 160, w: 20, h: 10 },
+      { text: 'The matrix is positive definite.', x: 300, y: 220, w: 240, h: 10 },
+    ];
+    const originalGetPage = mockPdfGetPage.getMockImplementation()!;
+    mockPdfGetPage.mockImplementation(async pageNumber => {
+      const page = await originalGetPage(pageNumber);
+      if (pageNumber !== 1) return page;
+      return { ...page,
+        getViewport: vi.fn(({ scale = 1 }: { scale?: number } = {}) => ({ width: 612 * scale, height: 792 * scale, transform: [scale, 0, 0, -scale, 0, 792 * scale] })),
+        getTextContent: vi.fn(async () => ({ items: sourceRows.map(row => ({ str: row.text, dir: 'ltr',
+          transform: [10, 0, 0, 10, row.x, 792 - row.y - row.h], width: row.w, height: row.h, fontName: 'f', hasEOL: true })),
+          styles: { f: { ascent: 1 } }, lang: null })),
+      };
+    });
+    try {
+      const sourceModel = await getPdfPageTextModel(mockPdfDocument as never, 1);
+      const annotation: AnnotationItem = { id: 'ann-source-matrix', target: { type: 'pdf', page: 1,
+        rects: [{ x1: .54, x2: .91, y1: .2, y2: .215 }], textQuote: { exact: sourceModel.normalizedText, prefix: '', suffix: '', source: 'pdfjs-text-model', confidence: 'exact' } },
+        style: { type: 'highlight', color: '#FFD400' }, content: sourceModel.normalizedText, author: 'ai', createdAt: 1 };
+      expect(annotation.formula).toBeUndefined();
+      useAnnotationSystemMock.mockReturnValue({ annotations: [annotation], error: null,
+        addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn() });
+      render(renderPdfPane({ paneId: 'pane-left', fileId: 'legacy-matrix-source', preloaded: true }));
+      await waitFor(() => {
+        const segments = Array.from(document.querySelectorAll<HTMLElement>(
+          '.pdf-stored-annotation-overlay-ann-source-matrix [data-pdf-stored-annotation-segment="true"]'));
+        const formulaSegment = segments.find(segment => Number.parseFloat(segment.style.height) > 5);
+        expect(formulaSegment).toBeTruthy();
+        expect(Number.parseFloat(formulaSegment!.style.top)).toBeCloseTo(140 / 792 * 100);
+        expect(Number.parseFloat(formulaSegment!.style.height)).toBeCloseTo(50 / 792 * 100);
+        expect(Number.parseFloat(formulaSegment!.style.left) + Number.parseFloat(formulaSegment!.style.width)).toBeLessThan(540 / 612 * 100);
+      });
+      expect(annotation.formula).toBeUndefined();
+      expect(annotation.target.type === 'pdf' && annotation.target.rects).toEqual([{ x1: .54, x2: .91, y1: .2, y2: .215 }]);
+    } finally { mockPdfGetPage.mockImplementation(originalGetPage); }
+  });
+
+  it('changes the view cache identity when formula metadata or original formula glyph geometry changes', () => {
+    const rows = [
+      { x1: .25, y1: .20, x2: .62, y2: .22 },
+      { x1: .27, y1: .25, x2: .60, y2: .27 },
+    ];
+    const annotation: AnnotationItem = { id: 'ann-cache-matrix', target: { type: 'pdf', page: 1, rects: rows },
+      style: { type: 'highlight', color: '#FFD400' }, content: 'Cached source text', author: 'user', createdAt: 1 };
+    const withFormula: AnnotationItem = { ...annotation, formula: {
+      latex: '\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}', rawText: 'a b c d', source: 'geometry', status: 'ready', originalRects: rows,
+    } };
+    expect(buildPdfTextMarkupViewCacheKey(withFormula)).not.toBe(buildPdfTextMarkupViewCacheKey(annotation));
+    const changedGlyphs = { ...withFormula, formula: { ...withFormula.formula!, originalRects: [{ ...rows[0], y2: .235 }, rows[1]] } };
+    expect(buildPdfTextMarkupViewCacheKey(changedGlyphs)).not.toBe(buildPdfTextMarkupViewCacheKey(withFormula));
+    const readingOrder: AnnotationItem = { ...annotation, target: { ...annotation.target, readingOrder: true } as AnnotationItem['target'] };
+    expect(buildPdfTextMarkupViewCacheKey(readingOrder)).not.toBe(buildPdfTextMarkupViewCacheKey(annotation));
+  });
+
   it('anchors stored underline strokes below the text segment instead of at the segment top', async () => {
     const underlineStyles = ['solid', 'dashed', 'double', 'wavy'] as const;
 
@@ -8936,6 +9044,7 @@ describe('PDFHighlighterAdapter', () => {
   it('does not replay a resolved markdown draft over an existing precise annotation on open', async () => {
     const updateAnnotation = vi.fn();
     const upsertAnnotations = vi.fn();
+    const persistAnnotationChanges = vi.fn(async () => true);
     const exact = 'Fig. 5, that tend to cause shifts in opposite directions.';
     nextNavigationMockState.pathname = '/workspace/paper-left';
     pdfItemMockState.annotationMarkdown = [
@@ -8976,6 +9085,7 @@ describe('PDFHighlighterAdapter', () => {
       updateAnnotation,
       deleteAnnotation: vi.fn(),
       upsertAnnotations,
+      persistAnnotationChanges,
     });
 
     render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
@@ -8992,7 +9102,114 @@ describe('PDFHighlighterAdapter', () => {
       );
     });
     expect(upsertAnnotations).not.toHaveBeenCalled();
+    expect(persistAnnotationChanges).toHaveBeenCalledWith([]);
     expect(updateAnnotation).not.toHaveBeenCalled();
+  });
+
+  it('keeps imported markdown drafts until their canonical annotations are durably saved', async () => {
+    nextNavigationMockState.pathname = '/workspace/paper-left';
+    const exact = 'Selected PDF text';
+    pdfItemMockState.annotationMarkdown = [PDF_ANNOTATION_DRAFTS_BEGIN,
+      '<!-- lattice-pdf-annotation id="ann-ai-durable" page="1" type="highlight" color="#FFD400" -->',
+      `- Quote: ${exact}`, '', PDF_ANNOTATION_DRAFTS_END].join('\n');
+    let acknowledge: (saved: boolean) => void = () => {};
+    const persistAnnotationChanges = vi.fn((_items: AnnotationItem[]) => new Promise<boolean>(resolve => { acknowledge = resolve; }));
+    const upsertAnnotations = vi.fn();
+    useAnnotationSystemMock.mockReturnValue({ annotations: [], error: null, isLoading: false,
+      addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), upsertAnnotations, persistAnnotationChanges });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    await waitFor(() => expect(persistAnnotationChanges).toHaveBeenCalledTimes(1));
+    expect(persistAnnotationChanges.mock.calls[0][0]).toEqual([expect.objectContaining({ id: 'ann-ai-durable', content: exact })]);
+    expect(removeResolvedPdfItemAnnotationMarkdownDraftsMock).not.toHaveBeenCalled();
+    expect(upsertAnnotations).not.toHaveBeenCalled();
+    await act(async () => { acknowledge(true); });
+    await waitFor(() => expect(removeResolvedPdfItemAnnotationMarkdownDraftsMock).toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({ itemId: 'paper-id' }), ['ann-ai-durable']));
+  });
+
+  it('retains a failed markdown draft import and retries it on the next PDF open', async () => {
+    nextNavigationMockState.pathname = '/workspace/paper-left';
+    pdfItemMockState.annotationMarkdown = [PDF_ANNOTATION_DRAFTS_BEGIN,
+      '<!-- lattice-pdf-annotation id="ann-ai-retry-save" page="1" type="highlight" color="#FFD400" -->',
+      '- Quote: Selected PDF text', '', PDF_ANNOTATION_DRAFTS_END].join('\n');
+    const persistAnnotationChanges = vi.fn(async (_items: AnnotationItem[]) => false);
+    useAnnotationSystemMock.mockReturnValue({ annotations: [], error: null, isLoading: false,
+      addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), upsertAnnotations: vi.fn(), persistAnnotationChanges });
+    const first = render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    await waitFor(() => expect(persistAnnotationChanges).toHaveBeenCalledTimes(1));
+    expect(removeResolvedPdfItemAnnotationMarkdownDraftsMock).not.toHaveBeenCalled();
+    expect(pdfItemMockState.annotationMarkdown).toContain('ann-ai-retry-save');
+    first.unmount();
+    persistAnnotationChanges.mockResolvedValue(true);
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    await waitFor(() => expect(persistAnnotationChanges).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(removeResolvedPdfItemAnnotationMarkdownDraftsMock).toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({ itemId: 'paper-id' }), ['ann-ai-retry-save']));
+  });
+
+  it('does not remove markdown drafts after the PDF closes during durable annotation save', async () => {
+    nextNavigationMockState.pathname = '/workspace/paper-left';
+    pdfItemMockState.annotationMarkdown = [PDF_ANNOTATION_DRAFTS_BEGIN,
+      '<!-- lattice-pdf-annotation id="ann-ai-close-save" page="1" type="highlight" color="#FFD400" -->',
+      '- Quote: Selected PDF text', '', PDF_ANNOTATION_DRAFTS_END].join('\n');
+    let acknowledge: (saved: boolean) => void = () => {};
+    const persistAnnotationChanges = vi.fn((_items: AnnotationItem[]) => new Promise<boolean>(resolve => { acknowledge = resolve; }));
+    useAnnotationSystemMock.mockReturnValue({ annotations: [], error: null, isLoading: false,
+      addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    const pane = render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    await waitFor(() => expect(persistAnnotationChanges).toHaveBeenCalledTimes(1));
+    pane.unmount();
+    await act(async () => { acknowledge(true); });
+    expect(removeResolvedPdfItemAnnotationMarkdownDraftsMock).not.toHaveBeenCalled();
+    expect(pdfItemMockState.annotationMarkdown).toContain('ann-ai-close-save');
+  });
+
+  it('keeps markdown drafts retryable when their cleanup fails after a successful annotation save', async () => {
+    nextNavigationMockState.pathname = '/workspace/paper-left';
+    pdfItemMockState.annotationMarkdown = [PDF_ANNOTATION_DRAFTS_BEGIN,
+      '<!-- lattice-pdf-annotation id="ann-ai-cleanup-retry" page="1" type="highlight" color="#FFD400" -->',
+      '- Quote: Selected PDF text', '', PDF_ANNOTATION_DRAFTS_END].join('\n');
+    const persistAnnotationChanges = vi.fn(async (_items: AnnotationItem[]) => true);
+    useAnnotationSystemMock.mockReturnValue({ annotations: [], error: null, isLoading: false,
+      addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    removeResolvedPdfItemAnnotationMarkdownDraftsMock.mockRejectedValueOnce(new Error('Synthetic draft cleanup failure'));
+    const first = render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    await waitFor(() => expect(removeResolvedPdfItemAnnotationMarkdownDraftsMock).toHaveBeenCalledTimes(1));
+    expect(pdfItemMockState.annotationMarkdown).toContain('ann-ai-cleanup-retry');
+    first.unmount();
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    await waitFor(() => expect(removeResolvedPdfItemAnnotationMarkdownDraftsMock).toHaveBeenCalledTimes(2));
+    expect(persistAnnotationChanges).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['.lattice/items/paper-id.pdf/_annotations.md', 'workspace/.lattice/items/paper-id.pdf/_annotations.md'])(
+    'imports newly approved markdown drafts in an already open PDF on its real vault event (%s)', async changedPath => {
+    nextNavigationMockState.pathname = '/workspace/paper-left';
+    pdfItemMockState.annotationMarkdown = `${PDF_ANNOTATION_DRAFTS_BEGIN}\n${PDF_ANNOTATION_DRAFTS_END}`;
+    const persistAnnotationChanges = vi.fn(async (_items: AnnotationItem[]) => true);
+    useAnnotationSystemMock.mockReturnValue({ annotations: [], error: null, isLoading: false,
+      addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    await waitFor(() => expect(readPdfItemAnnotationMarkdownMock).toHaveBeenCalled());
+    const initialReads = readPdfItemAnnotationMarkdownMock.mock.calls.length;
+    pdfItemMockState.annotationMarkdown = [PDF_ANNOTATION_DRAFTS_BEGIN,
+      '<!-- lattice-pdf-annotation id="ann-ai-live-approval" page="1" type="highlight" color="#FFD400" -->',
+      '- Quote: Selected PDF text', '', PDF_ANNOTATION_DRAFTS_END].join('\n');
+    await act(async () => { emitVaultChange('workspace/.lattice/items/other-paper/_annotations.md'); });
+    expect(readPdfItemAnnotationMarkdownMock).toHaveBeenCalledTimes(initialReads);
+    expect(persistAnnotationChanges).not.toHaveBeenCalled();
+    await act(async () => { emitVaultChange(changedPath); });
+    await waitFor(() => expect(persistAnnotationChanges).toHaveBeenCalledTimes(1));
+    expect(persistAnnotationChanges.mock.calls[0][0]).toEqual([expect.objectContaining({ id: 'ann-ai-live-approval' })]);
+    await waitFor(() => expect(removeResolvedPdfItemAnnotationMarkdownDraftsMock).toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({ itemId: 'paper-id' }), ['ann-ai-live-approval']));
   });
 
   it('refuses to overwrite an existing annotation when a markdown draft reuses the id with a different quote', async () => {
@@ -9278,6 +9495,68 @@ describe('PDFHighlighterAdapter', () => {
     expect(useAiPdfCompanionStore.getState().transientAnnotations).toEqual([]);
   });
 
+  it('adds AI annotations alongside existing manual marks without overwriting user content', async () => {
+    const manual: AnnotationItem = { id: 'ann-human-kept', target: { type: 'pdf', page: 1, rects: [{ x1: .1, y1: .1, x2: .3, y2: .12 }], textQuote: { exact: 'Selected PDF text', prefix: '', suffix: '', source: 'pdfjs-text-model', confidence: 'exact' } },
+      style: { type: 'underline', color: '#2196F3' }, content: 'Selected PDF text', comment: 'My handwritten interpretation', author: 'user', createdAt: 1 };
+    const before = JSON.stringify(manual);
+    const persistAnnotationChanges = vi.fn(async (_items: AnnotationItem[]) => true);
+    useAnnotationSystemMock.mockReturnValue({ annotations: [manual], isLoading: false, error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    act(() => {
+      useAiPdfCompanionStore.getState().setTransientAnnotations([{ id: 'proposal-new-manual', documentPath: 'docs/paper-left.pdf', page: 1, quote: 'Selected PDF text', rects: [], source: { kind: 'pdf_page', label: 'paper', locator: 'docs/paper-left.pdf#page=1' } }]);
+      useAiPdfCompanionStore.getState().requestInjection();
+    });
+    await waitFor(() => expect(useAiPdfCompanionStore.getState().savedAnnotations).toHaveLength(1));
+    expect(persistAnnotationChanges.mock.calls[0][0].map(item => item.id)).toEqual(['ann-proposal-new-manual']);
+    expect(JSON.stringify(manual)).toBe(before);
+    expect(useAiPdfCompanionStore.getState().error).toBeNull();
+  });
+
+  it('skips already saved or user-edited AI ids while saving the other valid new proposal', async () => {
+    const existing: AnnotationItem = { id: 'ann-proposal-existing', target: { type: 'pdf', page: 1, rects: [{ x1: .1, y1: .1, x2: .3, y2: .12 }], textQuote: { exact: 'Selected PDF text', prefix: '', suffix: '', source: 'pdfjs-text-model', confidence: 'exact' } },
+      style: { type: 'underline', color: '#2196F3' }, content: 'Selected PDF text', comment: 'User edited after applying', author: 'user', createdAt: 1 };
+    const before = JSON.stringify(existing);
+    const persistAnnotationChanges = vi.fn(async (_items: AnnotationItem[]) => true);
+    useAnnotationSystemMock.mockReturnValue({ annotations: [existing], isLoading: false, error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    act(() => {
+      useAiPdfCompanionStore.getState().setTransientAnnotations([
+        { id: 'proposal-existing', documentPath: 'docs/paper-left.pdf', page: 1, quote: 'Selected PDF text', rects: [], source: { kind: 'pdf_page', label: 'paper', locator: 'docs/paper-left.pdf#page=1' } },
+        { id: 'proposal-new-page', documentPath: 'docs/paper-left.pdf', page: 2, quote: 'Second page text', rects: [], source: { kind: 'pdf_page', label: 'paper', locator: 'docs/paper-left.pdf#page=2' } },
+      ]);
+      useAiPdfCompanionStore.getState().requestInjection();
+    });
+    await waitFor(() => expect(useAiPdfCompanionStore.getState().pendingInjection).toBeNull());
+    expect(useAiPdfCompanionStore.getState().error).toBeNull();
+    expect(persistAnnotationChanges).toHaveBeenCalledTimes(1);
+    expect(persistAnnotationChanges.mock.calls[0][0].map(item => item.id)).toEqual(['ann-proposal-new-page']);
+    expect(useAiPdfCompanionStore.getState().savedAnnotations.map(item => item.annotation.id)).toEqual(['ann-proposal-new-page']);
+    expect(useAiPdfCompanionStore.getState().transientAnnotations).toEqual([]);
+    expect(JSON.stringify(existing)).toBe(before);
+  });
+
+  it('treats an all-duplicate AI request as an idempotent no-op with no undo claim over existing marks', async () => {
+    const existing: AnnotationItem = { id: 'ann-proposal-existing-only', target: { type: 'pdf', page: 1, rects: [{ x1: .1, y1: .1, x2: .3, y2: .12 }], textQuote: { exact: 'Selected PDF text', prefix: '', suffix: '', source: 'pdfjs-text-model', confidence: 'exact' } },
+      style: { type: 'highlight', color: '#FFD400' }, content: 'Selected PDF text', comment: 'Keep edited text', author: 'user', createdAt: 1 };
+    const before = JSON.stringify(existing);
+    const persistAnnotationChanges = vi.fn(async (_items: AnnotationItem[]) => true);
+    useAnnotationSystemMock.mockReturnValue({ annotations: [existing], isLoading: false, error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'paper-left' }));
+    await waitForPdfTextModelPrefetch();
+    act(() => {
+      useAiPdfCompanionStore.getState().setTransientAnnotations([{ id: 'proposal-existing-only', documentPath: 'docs/paper-left.pdf', page: 1, quote: 'Selected PDF text', rects: [], source: { kind: 'pdf_page', label: 'paper', locator: 'docs/paper-left.pdf#page=1' } }]);
+      useAiPdfCompanionStore.getState().requestInjection();
+    });
+    await waitFor(() => expect(useAiPdfCompanionStore.getState().pendingInjection).toBeNull());
+    expect(useAiPdfCompanionStore.getState().error).toBeNull();
+    expect(persistAnnotationChanges).not.toHaveBeenCalled();
+    expect(useAiPdfCompanionStore.getState().savedAnnotations).toEqual([]);
+    expect(useAiPdfCompanionStore.getState().transientAnnotations).toEqual([]);
+    expect(JSON.stringify(existing)).toBe(before);
+  });
+
   it('does not apply an AI proposal to a nested same-name PDF', async () => {
     const persistAnnotationChanges = vi.fn(async () => true);
     useAnnotationSystemMock.mockReturnValue({ annotations: [], isLoading: false, error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
@@ -9361,6 +9640,58 @@ describe('PDFHighlighterAdapter', () => {
     expect(useAiPdfCompanionStore.getState().savedAnnotations).toEqual([]);
   });
 
+  it('filters shared PDF pages, the sidebar and annotated exports without changing cloud data', async () => {
+    const mine: AnnotationItem = { id: '14c66a24-f1e4-4f4e-9637-02d0318de766', target: { type: 'pdf', page: 1, rects: [{ x1: .1, y1: .1, x2: .2, y2: .2 }] }, style: { type: 'area', color: '#FFD400' }, preview: { type: 'image', dataUrl: 'data:image/png;base64,mock', width: 100, height: 100 }, content: 'Mine', author: 'me', createdAt: 1 };
+    const other: AnnotationItem = { ...mine, id: '74397cf3-1798-40df-8c1e-02426c89b99d', author: 'alice', content: 'Alice' };
+    const onPersist = vi.fn(async () => undefined);
+    const sharedDocument: CloudPdfDocument = { identity: 'cloud-file:version-1', viewScope: 'connection:file', sourceVersion: 'version-1', authorId: 'me', authorNames: { me: 'My name', alice: 'Alice' }, canAnnotate: true, annotations: [mine, other], onPersist };
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'shared-paper', preloaded: true, sharedDocument }));
+    await waitForPdfTextModelPrefetch();
+    await act(async () => useWorkspaceStore.getState().commandBarByPane['pane-left']?.actions.find(action => action.id === 'toggle-sidebar')?.onTrigger?.());
+    fireEvent.click(screen.getByTestId(`pdf-stored-annotation-segment-${other.id}-0`));
+    expect(document.querySelector(`[data-pdf-annotation-menu="${other.id}"]`)).toBeTruthy();
+    const scope = screen.getByLabelText(/批注范围|Annotation scope/);
+    for (const [mode, visible] of [['mine', [mine]], ['others', [other]], ['hidden', []], ['all', [mine, other]]] as const) {
+      fireEvent.change(scope, { target: { value: mode } });
+      await waitFor(() => expect((pdfMockState.sidebarProps?.annotations as AnnotationItem[])?.map(item => item.id)).toEqual(visible.map(item => item.id)));
+      for (const annotation of [mine, other]) {
+        expect(Boolean(document.querySelector(`[data-pdf-stored-annotation-id="${annotation.id}"]`))).toBe(visible.some(item => item.id === annotation.id));
+      }
+      if (mode === 'mine') expect(document.querySelector(`[data-pdf-annotation-menu="${other.id}"]`)).toBeNull();
+      await act(async () => useWorkspaceStore.getState().commandBarByPane['pane-left']?.actions.find(action => action.id === 'export-annotated')?.onTrigger?.());
+      await waitFor(() => expect(exportPdfWithAnnotations).toHaveBeenLastCalledWith(expect.any(ArrayBuffer), [...visible], 'shared-paper.pdf'));
+    }
+    expect(onPersist).not.toHaveBeenCalled();
+    expect(sharedDocument.annotations).toEqual([mine, other]);
+  });
+
+  it('does not upload automatic preview backfills while changing a cloud PDF view', async () => {
+    const annotation: AnnotationItem = { id: '14c66a24-f1e4-4f4e-9637-02d0318de766', target: { type: 'pdf', page: 1, rects: [{ x1: .1, y1: .1, x2: .2, y2: .2 }] }, style: { type: 'area', color: '#FFD400' }, content: 'Cloud area without stored preview', author: 'alice', createdAt: 1 };
+    const onPersist = vi.fn(async () => undefined);
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'shared-paper', preloaded: true, sharedDocument: { identity: 'cloud-file:version-1', authorId: 'me', canAnnotate: true, annotations: [annotation], onPersist } }));
+    await waitForPdfTextModelPrefetch();
+    fireEvent.change(screen.getByLabelText(/批注范围|Annotation scope/), { target: { value: 'hidden' } });
+    await act(async () => { await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
+    expect(onPersist).not.toHaveBeenCalled();
+  });
+
+  it('allows a member to be hidden while preserving that member when a visible annotation is edited', async () => {
+    const mine: AnnotationItem = { id: '14c66a24-f1e4-4f4e-9637-02d0318de766', target: { type: 'pdf', page: 1, rects: [{ x1: .1, y1: .1, x2: .2, y2: .2 }] }, style: { type: 'area', color: '#FFD400' }, preview: { type: 'image', dataUrl: 'data:image/png;base64,mock', width: 100, height: 100 }, content: 'Mine', author: 'me', createdAt: 1 };
+    const other: AnnotationItem = { ...mine, id: '74397cf3-1798-40df-8c1e-02426c89b99d', author: 'alice' };
+    const onPersist = vi.fn(async () => undefined);
+    const sharedDocument: CloudPdfDocument = { identity: 'cloud-file:version-1', viewScope: 'connection:file', authorId: 'me', authorNames: { me: 'My name', alice: 'Alice' }, canAnnotate: true, annotations: [mine, other], onPersist };
+    render(renderPdfPane({ paneId: 'pane-left', fileId: 'shared-paper', preloaded: true, sharedDocument }));
+    await waitForPdfTextModelPrefetch();
+    await act(async () => useWorkspaceStore.getState().commandBarByPane['pane-left']?.actions.find(action => action.id === 'toggle-sidebar')?.onTrigger?.());
+    fireEvent.click(screen.getByLabelText('Alice'));
+    await waitFor(() => expect(pdfMockState.sidebarProps?.annotations).toEqual([mine]));
+    expect(onPersist).not.toHaveBeenCalled();
+    await act(async () => { (pdfMockState.sidebarProps?.onUpdateComment as (id: string, comment: string) => void)(mine.id, 'My edit'); });
+    await waitFor(() => expect(onPersist).toHaveBeenCalledWith([{ ...mine, comment: 'My edit' }], []));
+    fireEvent.click(screen.getByLabelText('Alice'));
+    await waitFor(() => expect((pdfMockState.sidebarProps?.annotations as AnnotationItem[]).find(item => item.id === other.id)).toEqual(other));
+  });
+
   it('keeps AI proposals reviewable when the exact PDF quote cannot be located', async () => {
     const persistAnnotationChanges = vi.fn(async () => true);
     useAnnotationSystemMock.mockReturnValue({ annotations: [], isLoading: false, error: null, addAnnotation: vi.fn(), updateAnnotation: vi.fn(), deleteAnnotation: vi.fn(), persistAnnotationChanges });
@@ -9394,6 +9725,79 @@ describe('PDFHighlighterAdapter', () => {
     await waitFor(() => expect(persistAnnotationChanges).toHaveBeenCalledWith([], ['ann-batch-original']));
     expect(useAiPdfCompanionStore.getState().error).toContain('已保留');
     expect(useAiPdfCompanionStore.getState().savedAnnotations.map((item) => item.annotation.id)).toEqual(['ann-batch-edited']);
+  });
+
+  it.each([false, true])('undoes a shared AI batch with real cloud identities (synced and reopened: %s)', async synced => {
+    const path = 'cloud://shared-paper';
+    const timestamp = '2026-10-27T00:00:00Z';
+    let online = false;
+    let durable: CloudWorkspaceSnapshot = { schema: 1, revision: 0, libraries: [], versions: [], annotations: [], comments: [], outbox: [], revoked: [], cursors: {},
+      roles: { library: { role: 'editor', verifiedAt: Date.now() } }, memberNames: { library: { me: 'Member' } },
+      items: [{ id: 'paper', libraryId: 'library', canonicalName: 'paper.pdf', title: 'paper.pdf', kind: 'pdf', metadata: {}, currentVersionId: 'v1', status: 'active', createdBy: 'me', createdAt: timestamp, updatedAt: timestamp }] };
+    let remoteAnnotations: Annotation[] = [];
+    const json = (value: unknown) => new Response(JSON.stringify({ data: value }), { headers: { 'content-type': 'application/json' } });
+    const transport = new ApiTransport({ baseUrl: 'https://cloud.test', getAccessToken: async () => 'fixture-session', fetchImpl: async (url, init) => {
+      const route = new URL(url).pathname;
+      if (route.endsWith('/members/me')) return json({ libraryId: 'library', userId: 'me', role: 'editor', displayName: 'Member', status: 'active', joinedAt: timestamp });
+      if (route === '/v1/items/paper') return json(durable.items[0]);
+      if (route.endsWith('/annotation-mutations')) {
+        const mutation = JSON.parse(String(init.body)) as { annotation: Annotation; deleted?: boolean };
+        const annotation = { ...mutation.annotation, ...(mutation.deleted ? { status: 'deleted' as const } : {}) };
+        remoteAnnotations = [...remoteAnnotations.filter(item => item.id !== annotation.id), annotation];
+        return json(annotation);
+      }
+      if (route.endsWith('/annotations')) return json(remoteAnnotations);
+      throw new Error(`Unexpected cloud fixture request: ${route}`);
+    } });
+    const controller = new CloudLibraryWorkspaceController({ id: 'fixture', name: 'Fixture', apiUrl: 'https://cloud.test', supabaseUrl: 'https://auth.test', publicKey: 'fixture-key', maxFileBytes: 1024 * 1024 }, 'me', {
+      load: async () => structuredClone(durable), content: async () => null,
+      commit: async snapshot => { durable = structuredClone(snapshot); },
+    }, transport, () => online);
+    await controller.initialize();
+    function SharedPdf() {
+      const snapshot = React.useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+      return renderPdfPane({ paneId: 'pane-left', fileId: 'cloud-paper', filePath: path, preloaded: true, noFileHandle: true,
+        sharedDocument: { identity: 'cloud-paper:v1', viewScope: 'fixture:me:paper', sourceVersion: 'v1', authorId: 'me', authorNames: snapshot.memberNames?.library,
+          canAnnotate: true, annotations: snapshot.annotations.filter(item => item.status !== 'deleted').map(toLegacyAnnotation),
+          onPersist: (items, removals) => persistCloudPdfAnnotations(controller, 'library', 'paper', items, removals, 'v1') } });
+    }
+    let view = render(<SharedPdf />);
+    try {
+      await waitForPdfTextModelPrefetch();
+      act(() => {
+        useAiPdfCompanionStore.getState().setTransientAnnotations([
+          { id: 'proposal-cloud-first', documentPath: path, page: 1, quote: 'Selected PDF text', rects: [], source: { kind: 'pdf_page', label: 'paper', locator: `${path}#page=1` } },
+          { id: 'proposal-cloud-second', documentPath: path, page: 2, quote: 'Second page text', rects: [], source: { kind: 'pdf_page', label: 'paper', locator: `${path}#page=2` } },
+        ]);
+        useAiPdfCompanionStore.getState().requestInjection();
+      });
+      await waitFor(() => expect(useAiPdfCompanionStore.getState().savedAnnotations).toHaveLength(2));
+      expect(useAiPdfCompanionStore.getState().savedAnnotations.map(item => item.annotation.id)).toEqual(['proposal-cloud-first', 'proposal-cloud-second']);
+      expect(useAiPdfCompanionStore.getState().savedAnnotations.every(item => item.annotation.author === 'me')).toBe(true);
+      fireEvent.change(screen.getByLabelText('批注范围'), { target: { value: 'mine' } });
+      await act(async () => useWorkspaceStore.getState().commandBarByPane['pane-left']?.actions.find(action => action.id === 'toggle-sidebar')?.onTrigger?.());
+      await waitFor(() => expect(pdfMockState.sidebarProps?.annotations).toHaveLength(2));
+      if (synced) {
+        await act(async () => { (pdfMockState.sidebarProps?.onUpdateComment as (id: string, text: string) => void)('proposal-cloud-second', 'Keep my later note'); });
+        await waitFor(() => expect(controller.getSnapshot().annotations.find(item => item.id === 'proposal-cloud-second')?.body.comment).toBe('Keep my later note'));
+        online = true;
+        await act(async () => { await controller.sync(); await controller.annotations('library', 'paper'); });
+        expect(controller.getSnapshot().outbox).toEqual([]);
+        view.unmount();
+        view = render(<SharedPdf />);
+        await waitForPdfTextModelPrefetch();
+      }
+      act(() => { useAiPdfCompanionStore.getState().requestUndo(path); });
+      await waitFor(() => expect(useAiPdfCompanionStore.getState().pendingUndo).toBeNull());
+      const retained = controller.getSnapshot().annotations.filter(item => item.status !== 'deleted');
+      expect(retained.map(item => item.id)).toEqual(synced ? ['proposal-cloud-second'] : []);
+      expect(durable.annotations.filter(item => item.status !== 'deleted')).toEqual(retained);
+      if (synced) {
+        expect(retained[0].body.comment).toBe('Keep my later note');
+        await act(async () => { await controller.sync(); });
+        expect(remoteAnnotations.filter(item => item.status !== 'deleted').map(item => item.id)).toEqual(['proposal-cloud-second']);
+      }
+    } finally { view.unmount(); controller.dispose(); }
   });
 
 });

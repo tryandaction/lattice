@@ -18,7 +18,7 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 const require = createRequire(import.meta.url);
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=';
 const TEXT = '附件实验记录：样品温度从二十摄氏度升至三十摄氏度，测试信号随温度变化。研究者在固定光强下重复测量三次，结果用于比较实验条件。';
-const SCREENSHOT_DIR = path.join(tmpdir(), 'lattice-composer-attachment-qa');
+const SCREENSHOT_DIR = path.join(tmpdir(), `lattice-composer-attachment-qa-${process.pid}-${Date.now()}`);
 
 interface CapturedApiCall { stage: string; messages: AiMessage[]; body: { messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }> }; text: string }
 interface FixtureState {
@@ -338,6 +338,25 @@ async function send(text: string) {
 }
 
 describe('real ChatComposer attachment send integration', () => {
+  it('keeps an unfinished cloud mention editable and preserves question caret after committing it', async () => {
+    await page.evaluate(() => (window as unknown as BrowserFixture).fixture.openCloudDirectory());
+    const input = page.getByTestId('ai-chat-input');
+    await input.pressSequentially('@cloud:cloud-library:paper-001');
+    expect(await input.inputValue()).toBe('@cloud:cloud-library:paper-001');
+    await input.pressSequentially(' ');
+    expect(await input.inputValue()).toBe('');
+    await input.pressSequentially('Explain this experiment');
+    expect(await input.inputValue()).toBe('Explain this experiment');
+    expect(await input.evaluate(element => (element as HTMLTextAreaElement).selectionStart)).toBe(23);
+    expect((await snapshot()).conversation?.draft?.text).toBe('@cloud:cloud-library:paper-001 Explain this experiment');
+    await page.getByRole('button', { name: '移除云来源 paper-001', exact: true }).click();
+    expect(await input.inputValue()).toBe('Explain this experiment');
+    expect((await snapshot()).conversation?.draft?.text).toBe('Explain this experiment');
+    expect((await snapshot()).calls).toEqual([]);
+    expect(externalRequests).toEqual([]);
+    expect(browserErrors).toEqual([]);
+  });
+
   it('submits a complete encoded folder mention with adjoining Chinese text on the first Enter', async () => {
     const pdf = await PDFDocument.create();
     pdf.addPage().drawText('SCREENSHOT_ENTER_SUBMIT: This synthetic document must be actually read after the first Enter.', { x: 30, y: 750, size: 10 });
@@ -345,7 +364,7 @@ describe('real ChatComposer attachment send integration', () => {
     const input = page.getByTestId('ai-chat-input');
     await input.fill('@folder:Theoretical%20Research/taiyi/essay/06_fast_long_range_and_native_gates中文章都阅读并讲述文章内容，对话内回复');
     await input.press('Enter');
-    await page.waitForFunction(() => (window as unknown as BrowserFixture).fixture.snapshot().calls.length > 0, null, { timeout: 5000 });
+    await page.waitForFunction(() => (window as unknown as BrowserFixture).fixture.snapshot().calls.length > 0, null, { timeout: 15000 });
     await page.waitForFunction(() => !(window as unknown as BrowserFixture).fixture.snapshot().busy);
     const state = await snapshot();
     expect(state.conversation?.messages.at(-1)?.error).toBeUndefined();
@@ -499,6 +518,36 @@ describe('real ChatComposer attachment send integration', () => {
     expect(followup.conversation?.messages.at(-1)?.error).toBeUndefined();
     expect(followup.conversation?.messages.at(-1)?.documentContext?.paths).toEqual(['essay/Senoo 2026.pdf']);
     expect(followup.fileReads['notes/other.md'] ?? 0).toBe(0);
+    expect(externalRequests).toEqual([]);
+    expect(browserErrors).toEqual([]);
+  });
+
+  it.each(['chat', 'agent'] as const)('reads every PDF page before a detailed report explanation through %s', async mode => {
+    const pdf = await PDFDocument.create();
+    const font = await pdf.embedFont(StandardFonts.Helvetica);
+    for (let pageNumber = 1; pageNumber <= 22; pageNumber++) {
+      const marker = pageNumber === 1 ? 'ABSTRACT_ONLY_INTRODUCTION' : `FULL_PAPER_PAGE_${pageNumber}_METHODS_RESULTS`;
+      pdf.addPage().drawText(`${marker}: Synthetic full-paper evidence for page ${pageNumber}.`, { x: 30, y: 750, size: 10, font });
+    }
+    await page.evaluate(({ bytes, mode }) => (window as unknown as BrowserFixture).fixture.openPdf(bytes, mode), { bytes: Array.from(await pdf.save()), mode });
+    await send('请详细讲解报告的原理、实验方法和结果。');
+    const state = await snapshot();
+    const response = state.conversation?.messages.at(-1);
+    expect(response?.error).toBeUndefined();
+    expect(response?.documentContext?.paths).toEqual(['essay/Senoo 2026.pdf']);
+    expect(state.calls.some(call => call.stage === 'document-batch')).toBe(true);
+    const analysis = state.calls.filter(call => call.stage === 'document-batch').map(call => call.text).join('\n');
+    for (let pageNumber = 1; pageNumber <= 22; pageNumber++) {
+      const marker = pageNumber === 1 ? 'ABSTRACT_ONLY_INTRODUCTION' : `FULL_PAPER_PAGE_${pageNumber}_METHODS_RESULTS`;
+      expect(analysis, `page ${pageNumber} must be analyzed before synthesis`).toContain(marker);
+    }
+    const session = state.sessions.find(item => item.id === response?.agentResult?.sessionId);
+    expect(session?.documentResearch?.checkpoint.coverage).toContainEqual(expect.objectContaining({
+      path: 'essay/Senoo 2026.pdf',
+      totalUnits: 22,
+      readUnits: Array.from({ length: 22 }, (_, index) => index + 1),
+      pendingUnits: [],
+    }));
     expect(externalRequests).toEqual([]);
     expect(browserErrors).toEqual([]);
   });

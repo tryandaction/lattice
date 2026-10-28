@@ -178,17 +178,40 @@ function rowGroups(atoms: Atom[]): Atom[][] {
 }
 
 function matrixCells(rows: Atom[][], em: number): Atom[][][] {
-  if (rows.length !== 2) throw new UncertainLayout("unsupported-matrix-shape");
+  if (rows.length < 2 || rows.length > 12) throw new UncertainLayout("unsupported-matrix-shape");
   const gaps = rows.map((row) => {
     const sorted = [...row].sort((a, b) => a.x1 - b.x1);
     return sorted.slice(1).map((atom, index) => ({ left: sorted[index].x2, right: atom.x1 }))
       .filter((gap) => gap.right - gap.left >= em);
   });
-  const cuts = gaps[0].flatMap((top) => gaps[1].map((bottom) => ({ left: Math.max(top.left, bottom.left),
-    right: Math.min(top.right, bottom.right) }))).filter((gap) => gap.right - gap.left >= em * 0.6);
-  if (cuts.length !== 1) throw new UncertainLayout("ambiguous-matrix-columns");
-  const split = (cuts[0].left + cuts[0].right) / 2;
-  return rows.map((row) => [row.filter((atom) => atom.x2 < split), row.filter((atom) => atom.x1 > split)]);
+  const gapCount = gaps[0].length;
+  if (gapCount < 1 || gaps.some((row) => row.length !== gapCount)) {
+    throw new UncertainLayout("ambiguous-matrix-columns");
+  }
+
+  // Every inferred column boundary must be supported by exactly one wide gap
+  // in every visual row. This prevents uneven rows from being silently padded.
+  const cuts = gaps[0].map((firstGap) => {
+    const matches = gaps.slice(1).map((rowGaps) => rowGaps.filter((gap) =>
+      Math.min(firstGap.right, gap.right) - Math.max(firstGap.left, gap.left) >= em * 0.6));
+    if (matches.some((rowMatches) => rowMatches.length !== 1)) {
+      throw new UncertainLayout("ambiguous-matrix-columns");
+    }
+    const intervals = [firstGap, ...matches.map((rowMatches) => rowMatches[0])];
+    return { left: Math.max(...intervals.map((gap) => gap.left)), right: Math.min(...intervals.map((gap) => gap.right)) };
+  });
+  if (cuts.some((cut) => cut.right - cut.left < em * 0.6)) throw new UncertainLayout("ambiguous-matrix-columns");
+  const splits = cuts.map((cut) => (cut.left + cut.right) / 2);
+  return rows.map((row) => {
+    const cells: Atom[][] = Array.from({ length: gapCount + 1 }, () => []);
+    for (const atom of row) {
+      const cell = splits.filter((split) => atom.x1 > split).length;
+      if (splits.some((split) => atom.x1 <= split && atom.x2 >= split)) throw new UncertainLayout("ambiguous-matrix-columns");
+      cells[cell].push(atom);
+    }
+    if (cells.some((cell) => cell.length === 0)) throw new UncertainLayout("ambiguous-matrix-columns");
+    return cells;
+  });
 }
 
 function collapseMatrices(atoms: Atom[], em: number): Atom[] {

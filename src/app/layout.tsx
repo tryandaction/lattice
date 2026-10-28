@@ -4,7 +4,7 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { Toaster } from "sonner";
 import "./globals.css";
-import { HUDProvider } from "@/components/hud/hud-provider";
+import { QuantumKeyboardPluginHost } from "@/plugins/quantum-keyboard/host";
 import { ChunkReloadGuard, ServiceWorkerRegister } from "@/components/pwa";
 import { APPEARANCE_BOOTSTRAP_SCRIPT } from "@/lib/appearance/bootstrap";
 
@@ -49,9 +49,9 @@ export default function RootLayout({
           strategy="beforeInteractive"
           dangerouslySetInnerHTML={{ __html: `${APPEARANCE_BOOTSTRAP_SCRIPT}\nperformance.mark('lattice-appearance-applied');` }}
         />
-        <HUDProvider>
+        <QuantumKeyboardPluginHost>
           {children}
-        </HUDProvider>
+        </QuantumKeyboardPluginHost>
         <Toaster position="bottom-right" richColors />
         <ChunkReloadGuard />
         <ServiceWorkerRegister />

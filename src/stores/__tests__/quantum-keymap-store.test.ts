@@ -33,9 +33,9 @@ describe("quantum-keymap-store", () => {
 
   it("resolves customized candidates by one-based index", () => {
     const overrides: QuantumKeymapOverrides = {
-      KeyI: {
+      KeyJ: {
         ctrl: {
-          "ctrl-KeyI-1": {
+          "ctrl-KeyJ-1": {
             label: "current density",
             latex: "\\mathbf{J}",
           },
@@ -43,7 +43,7 @@ describe("quantum-keymap-store", () => {
       },
     };
 
-    expect(getEffectiveQuantumMeaning("KeyI", "ctrl", 1, overrides)?.latex).toBe("\\mathbf{J}");
+    expect(getEffectiveQuantumMeaning("KeyJ", "ctrl", 1, overrides)?.latex).toBe("\\mathbf{J}");
   });
 
   it("persists and resets user key overrides", () => {
@@ -56,5 +56,34 @@ describe("quantum-keymap-store", () => {
 
     useQuantumKeymapStore.getState().resetMeaning("KeyI", "base", "base-KeyI-1");
     expect(useQuantumKeymapStore.getState().overrides.KeyI).toBeUndefined();
+  });
+
+  it("repairs malformed persisted overrides while retaining valid edits", async () => {
+    localStorage.setItem("quantum-keyboard-keymap", JSON.stringify({ version: 0, state: {
+      overrides: { KeyI: { base: { "base-KeyI-1": { label: "Mine", latex: "\\int_0^1", displayMode: "yes" }, broken: null } }, KeyA: null },
+    } }));
+    await useQuantumKeymapStore.persist.rehydrate();
+    expect(getEffectiveQuantumLayerMeanings("KeyI", "base", useQuantumKeymapStore.getState().overrides)[0]).toMatchObject({
+      label: "Mine", latex: "\\int_0^1", displayMode: undefined,
+    });
+    expect(useQuantumKeymapStore.getState().overrides.KeyA).toBeUndefined();
+  });
+
+  it("discards stale insertion payloads when the formula changes", () => {
+    useQuantumKeymapStore.getState().updateMeaning("KeyI", "base", "base-KeyI-1", { latex: "\\alpha", mathlive: "\\alpha", markdown: "$\\alpha$" });
+    useQuantumKeymapStore.getState().updateMeaning("KeyI", "base", "base-KeyI-1", { latex: "\\beta" });
+    const meaning = getEffectiveQuantumMeaning("KeyI", "base", 1, useQuantumKeymapStore.getState().overrides);
+    expect(meaning?.latex).toBe("\\beta");
+    expect(meaning?.mathlive).toBeUndefined();
+    expect(meaning?.markdown).toBeUndefined();
+  });
+
+  it("updates archived overrides without moving them onto visible keys", async () => {
+    useQuantumKeymapStore.getState().updateMeaning("KeyI", "ctrl", "ctrl-KeyI-1", { label: "Archived current", latex: "I_0" });
+    useQuantumKeymapStore.getState().updateMeaning("KeyI", "ctrl", "ctrl-KeyI-1", { latex: "I_1" });
+    expect(useQuantumKeymapStore.getState().overrides.KeyI?.ctrl?.["ctrl-KeyI-1"]).toMatchObject({ label: "Archived current", latex: "I_1" });
+    await useQuantumKeymapStore.persist.rehydrate();
+    expect(useQuantumKeymapStore.getState().overrides.KeyI?.ctrl?.["ctrl-KeyI-1"]?.latex).toBe("I_1");
+    expect(getEffectiveQuantumLayerMeanings("KeyI", "ctrl", useQuantumKeymapStore.getState().overrides).some(meaning => meaning.id === "ctrl-KeyI-1")).toBe(false);
   });
 });

@@ -406,7 +406,7 @@ export async function runResearchAgentReadToolLoop(input: {
 
     throwIfAborted(input.signal);
     if (!restoredResult) executedReadToolSteps += 1;
-    const result = restoredResult ?? await executeAgentTool(request, { sessionId: input.sessionId, planStepId: step.id, deferSourceReadFailure: true,
+    const result = restoredResult ?? await executeAgentTool(request, { sessionId: input.sessionId, planStepId: step.id, deferSourceReadFailure: true, deferAnnotationValidationFailure: true,
       apiToolRuntime: input.apiToolRuntime, latticeSourcePdfRuntime: input.latticeSourcePdfRuntime, signal: input.signal });
     throwIfAborted(input.signal);
     toolResults.push(result);
@@ -429,6 +429,8 @@ export async function runResearchAgentReadToolLoop(input: {
         output: result.result.output, outputTruncated: result.resultMetadata?.outputTruncated === true,
       } : {}),
       ...(isLatticeApiToolName(request.name) && result.status === 'completed' ? { output: JSON.stringify(result.result).slice(0, 32000), outputTruncated: JSON.stringify(result.result).length > 32000 } : {}),
+      ...(result.resultMetadata?.annotationValidationRecoverable === true && typeof result.resultMetadata.annotationRepairDetails === 'string'
+        ? { output: result.resultMetadata.annotationRepairDetails, outputTruncated: false } : {}),
       recoveryLocator,
       preview: resultPreview,
       evidenceCount: readEvidenceCount(result.resultMetadata),

@@ -1,4 +1,4 @@
-import type { ChatMessage } from '@/stores/ai-chat-store';
+import type { ChatConversationWorkspace, ChatMessage } from '@/stores/ai-chat-store';
 import { parseCloudSourceSelections } from './cloud-source';
 import { parseSourceSelections } from './source-index';
 import { isDocumentFollowup, isTrivialQuery } from './request-intent';
@@ -15,12 +15,17 @@ export function bindConversationSources(input: {
   activeCloud: boolean; activeCloudLibraryId?: string; providerScope?: string;
   activeLocalPath?: string; activeCloudName?: string;
   legacyWorkspaceKey?: string;
+  conversationWorkspace?: ChatConversationWorkspace;
 }): ConversationSourceBinding {
   const active: ConversationSourceBinding = input.activeCloud
     ? { kind: 'cloud', workspaceKey: `cloud:${input.activeCloudLibraryId ?? 'unselected'}`, providerScope: input.providerScope }
     : { kind: 'local', workspaceKey: input.localWorkspaceKey };
   const cloudSelections = parseCloudSourceSelections(input.query);
-  if (cloudSelections.length) return { kind: 'cloud', workspaceKey: `cloud:${cloudSelections[0].libraryId}`, providerScope: input.providerScope };
+  if (cloudSelections.length) {
+    const workspaceKey = `cloud:${cloudSelections[0].libraryId}`;
+    const savedScope = input.conversationWorkspace?.workspaceKey === workspaceKey ? input.conversationWorkspace.permissionScope : null;
+    return { kind: 'cloud', workspaceKey, providerScope: savedScope ?? input.providerScope };
+  }
   if (parseSourceSelections(input.query).length) return { kind: 'local', workspaceKey: input.localWorkspaceKey };
   input = { ...input, query: documentSourceReferenceQuery(input.query) };
   // A pasted local path is a request to resolve that exact local source, not

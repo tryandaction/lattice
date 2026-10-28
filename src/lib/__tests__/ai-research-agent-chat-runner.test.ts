@@ -202,7 +202,7 @@ describe('research-agent-chat-runner', () => {
       return createResult({ answer, promptContext: context, workflowId: 'pdf-annotation' });
     });
     const result = await runResearchAgentForChat({ settings, workflowId: 'pdf-annotation', task: 'Highlight the key results', filePath: 'papers/source.pdf', content: quote, validateAnswer });
-    expect(validateAnswer).toHaveBeenCalledWith(answer, context);
+    expect(validateAnswer).toHaveBeenCalledWith(answer, context, undefined);
     expect(result.annotationProposal).toEqual([expect.objectContaining({ documentPath: 'papers/source.pdf', page: 4, quote, reason: 'Records the field used in the measurement.', rects: [] })]);
     expect(result.chatText).toContain('1 条原文高亮建议');
     expect(result.chatText).toContain('尚未写入 PDF');
@@ -211,6 +211,31 @@ describe('research-agent-chat-runner', () => {
     expect(result.chatText).not.toContain('highlighted the entire paper');
     expect(result.draftSuggestion).toBeUndefined();
     expect(result.followUpActions).toEqual([]);
+  });
+
+  it('keeps automatic full-paper annotation proposals selective instead of expanding the quota by page count', async () => {
+    const source = { path: 'papers/source.pdf', kind: 'pdf' as const, version: 'synthetic-v1', totalUnits: 15, unitLabel: 'page' as const,
+      readUnit: vi.fn(), close: vi.fn() };
+    const refs = Array.from({ length: 6 }, (_, index) => {
+      const page = index + 1, quote = `Synthetic central result ${page} is verified on this page.`;
+      return { kind: 'pdf_page' as const, label: `Paper p.${page}`, locator: `papers/source.pdf#page=${page}`, preview: quote, anchor: { page, snippet: quote } };
+    });
+    const proposals = refs.map((ref, index) => ({ sourceId: buildCitationContract(ref).stableId, passageId: buildCitationContract(ref).stableId,
+      reason: `Core result ${index + 1} matters.` }));
+    const answer = `Explanation from verified evidence.\n\n\`\`\`lattice-annotations\n${JSON.stringify({ annotations: proposals })}\n\`\`\``;
+    const context = { nodes: [], prompt: 'Synthetic full-paper context', evidenceRefs: refs, truncated: false };
+    mocks.runResearchAgent.mockImplementation(async (input: ResearchAgentRunInput) => {
+      input.validateAnswer?.(answer, context);
+      return createResult({ answer, promptContext: context, workflowId: 'pdf-annotation' });
+    });
+    const result = await runResearchAgentForChat({ settings, workflowId: 'pdf-annotation', task: '批注本文核心', documentSources: [source] });
+    expect(result.annotationProposal).toHaveLength(5);
+    expect(result.chatText).toContain('按本次数量上限保留了最先列出的建议；另有 1 条未列入');
+    expect(mocks.runResearchAgent.mock.calls[0][0].answerInstructions).toContain('at most 5');
+    expect(mocks.runResearchAgent.mock.calls[0][0].answerInstructions).not.toContain('at most 12');
+    expect(mocks.runResearchAgent.mock.calls[0][0].answerInstructions).toContain('independent of its page count');
+    expect(mocks.runResearchAgent.mock.calls[0][0].answerInstructions).toContain('never isolated rows or a partial matrix');
+    expect(mocks.runResearchAgent.mock.calls[0][0].answerInstructions).toContain('exclude adjacent follow-on text');
   });
 
   it('rejects invalid annotation output through the engine validator before returning a surface result', async () => {
