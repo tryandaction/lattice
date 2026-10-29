@@ -243,4 +243,5 @@ dry-run 必须显示 project=lattice、branch=main、dryRun=true；accountId 应
 - 运营方要改善投递质量，可选择自有发信域和邮件服务商，在服务商配置并验证 SPF、DKIM、DMARC，再更新 Supabase Auth 的自定义 SMTP。QQ 个人邮箱设置不构成商业邮件到达率承诺。SMTP 授权码只保存在 Supabase Auth，不进入网页、桌面包、仓库或 AI 配置。
 - 普通用户仍在产品内授权自己的 GitHub 仓库并设置自己的个人 AI；库 owner/admin 按产品设计配置团队 AI。产品运营者不需要把个人 GitHub token 或 AI API Key 注入产品，也不应索取普通用户的此类凭据。
 - 网页 3.2.0 安全构建已于 2026-10-29 部署至原站；首页、`/library` 和 `/build-info.json` 均为 HTTP 200，首页 SHA256 为 `968a78a5e2fb6dbd86da38d8799f216046d5ab323c8dc3892eb13df7d4ba405d`，与桌面/移动浏览器验收构建一致。浏览器还验证了 OTP 成功后库列表返回 503 时可以改用密码登录恢复，所有外部请求均使用合成响应。
-- 桌面 3.2.0 安全版 Rust release 编译已成功，安装器与本机安装烟测仍须单独验收。网页部署、桌面安装、GitHub 推送和真实 OTP 收件是四项独立状态；不要互相代替。
+- 桌面 3.2.0 已通过 NSIS 安装器更新到本机 `AppData/Local/Lattice/lattice.exe`，安装退出码为 0，程序 SHA256 与发布包一致（`aa3359631bfa6653b7aa9086229972558b63865ed8621e42440a30824d7d69d8`）。正常窗口标题为“Lattice 格致”，进程响应正常。独立诊断配置的真实 PDF 烟测通过，覆盖画布和文字层、文字选择与复制、批注及搜索命中状态保持。
+- 本轮本地安装包交付为 NSIS，位于 `releases/v3.2.0-cloud-otp-20261029`，含校验清单；没有将安装包上传 GitHub Release，也没有把早先失败的 MSI 作为可用产物。产品代码提交 `a36bfb3` 已推送 `main`，其余并行 AI 开发改动没有纳入。网页部署、桌面安装、GitHub 推送和真实 OTP 收件是四项独立状态；真实 OTP 邮件投递仍沿用前述未重复验收边界。
