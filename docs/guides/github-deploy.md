@@ -4,7 +4,7 @@
 
 Lattice 现在有三条可并行维护的发布路径：
 
-- **Cloudflare Pages**：当前线上主站，发布 `web-dist/` 到 `lattice-apq-7xj.pages.dev`
+- **Cloudflare Pages**：当前线上主站，发布 `web-dist/` 到 `lattice-apq.pages.dev`
 - **GitHub Pages**：备用/镜像静态站点链路，同样发布 `web-dist/`
 - **Desktop Release**：发布 `releases/vX.Y.Z/` 中的桌面产物与元数据
 
@@ -30,7 +30,7 @@ npm run deploy:web
 验收项：
 
 - `web-dist/index.html` 存在
-- Pages 项目 URL 为 `https://lattice-apq-7xj.pages.dev/`
+- Pages 项目 URL 为 `https://lattice-apq.pages.dev/`
 - `/build-info.json` 的版本、构建时间和首页 SHA-256 与本轮产物一致
 - `/library` 与 `/library/<id>/item/<id>` 能进入同一工作台，不返回 404
 - diagnostics 与 guide 相关静态路由能正常访问

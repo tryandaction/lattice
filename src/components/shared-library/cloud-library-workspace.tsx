@@ -49,6 +49,7 @@ export function CloudLibraryControllerHost() {
   const [pendingInvite, setPendingInvite] = useState<PendingCloudInvitation | null>(null);
   const [inviteState, setInviteState] = useState<"pending" | "joining" | "failed">("pending");
   const [newLibraryName, setNewLibraryName] = useState<string | null>(null);
+  const [joiningInviteMode, setJoiningInviteMode] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [passwordRecovery, setPasswordRecovery] = useState<{ connectionId: string; tokens: EmailConfirmationTokens } | null>(null);
   const [nickname, setNickname] = useState("");
@@ -119,6 +120,11 @@ export function CloudLibraryControllerHost() {
     localStorage.setItem(INVITE_KEY, JSON.stringify(invite)); setPendingInvite(invite); setInviteState("pending"); inviteAttempt.current = "";
     useCloudWorkbenchStore.getState().setManagementOpen(true);
   }
+  function openInviteJoin() {
+    setMembers(null); setInvitations([]); setInviteUrl("");
+    setJoiningInviteMode(true);
+    useCloudWorkbenchStore.getState().setManagementOpen(true, "connection");
+  }
   useEffect(() => {
     // Read and scrub credentials before parsing invites or doing any asynchronous work.
     const returned = readCloudEmailCallback(window.location.href);
@@ -187,7 +193,10 @@ export function CloudLibraryControllerHost() {
           session = await auth.load();
         }
       } else session = await auth.load();
-      if (session && epoch === epochRef.current) await bind(connection, auth, session.userId, epoch);
+      if (session && epoch === epochRef.current) {
+        await bind(connection, auth, session.userId, epoch);
+        if (epoch === epochRef.current && !useCloudWorkbenchStore.getState().libraries.length) useCloudWorkbenchStore.getState().setManagementOpen(true, "connection");
+      }
     });
     const storageChanged = (event: StorageEvent) => {
       if (event.key !== key) return; auth.invalidate();
@@ -247,7 +256,7 @@ export function CloudLibraryControllerHost() {
     <section role="dialog" aria-modal="true" aria-label={t("cloud.manage.title")} className={cn(UI_MODAL_PANEL_CLASS, "flex max-h-[85dvh] w-full max-w-2xl flex-col overflow-hidden rounded-lg")}>
       <header className="flex items-center justify-between border-b border-border px-4 py-3"><h2 className="text-sm font-medium">{t("cloud.manage.title")}</h2><Button variant="ghost" size="sm" aria-label={t("cloud.manage.close")} onClick={() => cloud.setManagementOpen(false)}><X className="size-4" /></Button></header>
       <div className="min-h-0 overflow-auto">
-        <CloudConnectionPanel connections={connections} activeId={activeId} managedConnectionId={managedConnectionId} userId={controller?.userId} onInvitation={savePendingInvite} confirmation={emailConfirmation ? { tone: emailConfirmation.tone, message: t(emailConfirmation.messageKey) } : undefined}
+        <CloudConnectionPanel connections={connections} activeId={activeId} managedConnectionId={managedConnectionId} userId={controller?.userId} onInvitation={savePendingInvite} startWithJoin={joiningInviteMode} confirmation={emailConfirmation ? { tone: emailConfirmation.tone, message: t(emailConfirmation.messageKey) } : undefined}
           passwordRecovery={passwordRecovery?.connectionId === activeId}
           onRequestPasswordReset={async email => { const connection = connections.find(value => value.id === activeId); if (!connection) throw new Error(t("cloud.connection.configureFirst")); await new SupabaseAuthRepository(connection).requestPasswordReset(email, window.location.href); }}
           onResetPassword={async password => { const recovery = passwordRecovery; const connection = connections.find(value => value.id === recovery?.connectionId); if (!recovery || !connection) throw new Error(t("cloud.email.unknownService")); await new SupabaseAuthRepository(connection).resetPassword(recovery.tokens, password); setPasswordRecovery(null); }}
@@ -255,10 +264,10 @@ export function CloudLibraryControllerHost() {
           onContinueLocal={() => { cloud.setActive(false); cloud.setManagementOpen(false); }}
           onRetry={async () => { const saved = (JSON.parse(localStorage.getItem(CONFIG_KEY) ?? "[]") as CloudLibraryConnection[]).map(validateCloudConnection); const startup = cloudStartupConnections(saved, getManagedCloudConnection(), localStorage.getItem(ACTIVE_KEY)); setConnections(startup.connections); setActiveId(startup.activeId); }}
           onSelect={id => { closeIdentity(); localStorage.setItem(ACTIVE_KEY, id); setActiveId(id); }}
-          onSave={async connection => { const next = [...connections.filter(value => value.id !== connection.id), connection]; localStorage.setItem(CONFIG_KEY, JSON.stringify(next)); localStorage.setItem(ACTIVE_KEY, connection.id); setConnections(next); setActiveId(connection.id); }}
+          onSave={async connection => { const next = [...connections.filter(value => value.id !== connection.id), connection]; localStorage.setItem(CONFIG_KEY, JSON.stringify(next)); localStorage.setItem(ACTIVE_KEY, connection.id); setJoiningInviteMode(false); setConnections(next); setActiveId(connection.id); }}
           onLogin={async (email, password) => { const auth = authRef.current; const connection = connections.find(value => value.id === activeId); if (!auth || !connection) throw new Error(t("cloud.connection.configureFirst")); closeIdentity(); const epoch = epochRef.current; const session = await auth.signIn(email, password); await bind(connection, auth, session.userId, epoch); }}
-          onRegister={async (email, password) => { const connection = connections.find(value => value.id === activeId); if (!connection) throw new Error(t("cloud.connection.connectFirst")); return new SupabaseAuthRepository(connection).signUp(email, password); }}
-          onResendConfirmation={async email => { const connection = connections.find(value => value.id === activeId); if (!connection) throw new Error(t("cloud.connection.connectFirst")); await new SupabaseAuthRepository(connection).resendConfirmation(email); }}
+          onRegister={async (email, password) => { const connection = connections.find(value => value.id === activeId); if (!connection) throw new Error(t("cloud.connection.connectFirst")); return new SupabaseAuthRepository(connection).signUp(email, password, window.location.href); }}
+          onResendConfirmation={async email => { const connection = connections.find(value => value.id === activeId); if (!connection) throw new Error(t("cloud.connection.connectFirst")); await new SupabaseAuthRepository(connection).resendConfirmation(email, window.location.href); }}
           onLogout={async () => { closeIdentity(); await authRef.current?.signOut(); }} />
         {error || status?.error ? <p role="alert" className="px-4 py-2 text-xs text-destructive">{error ?? status?.error}</p> : null}
         {pendingInvite ? <div role="status" className="flex items-center gap-2 border-b border-border p-3 text-xs"><span>{!controller ? t("cloud.invite.signIn") : inviteState === "joining" ? t("cloud.invite.joining") : inviteState === "failed" ? t("cloud.invite.failed") : t("cloud.invite.ready")}</span>{controller && inviteState === "failed" ? <Button size="sm" onClick={() => void acceptPendingInvite()}>{t("cloud.invite.retry")}</Button> : null}</div> : null}
@@ -271,6 +280,7 @@ export function CloudLibraryControllerHost() {
           {snapshot?.outbox.length ? <details className="border-t border-border p-3 text-xs"><summary>{t("cloud.sync.tasks", { count: snapshot.outbox.length })}</summary>{snapshot.outbox.map(operation => <div key={operation.id} className="mt-2 flex items-center gap-2"><span className="min-w-0 flex-1 truncate">{snapshot.items.find(item => item.id === operation.itemId)?.title} · {t(`cloud.sync.state.${operation.state}`)} {operation.error}</span>{operation.state === "pending" ? <Button size="sm" variant="ghost" aria-label={t("cloud.sync.pause")} onClick={() => void run(() => controller.pause(operation.id))}><Pause className="size-3" /></Button> : operation.state !== "conflicted" ? <Button size="sm" variant="ghost" aria-label={t("cloud.sync.retry")} onClick={() => void run(async () => { await controller.retry(operation.id); await controller.sync(); })}><Play className="size-3" /></Button> : ["remote", "local", "copy"].map((choice, index) => <Button key={choice} size="sm" variant="outline" onClick={() => void run(async () => { await controller.resolveConflict(operation.id, choice as "remote" | "local" | "copy"); await controller.sync(); })}>{[t("cloud.conflict.remote"), t("cloud.conflict.local"), t("cloud.conflict.copy")][index]}</Button>)}</div>)}</details> : null}
           <CloudProductionTools key={`${controller.connection.id}:${controller.userId}:${libraryId}`} controller={controller} libraryId={libraryId}
             onRequestCreateLibrary={() => setNewLibraryName("")}
+          onRequestJoinLibrary={openInviteJoin}
             onCreateLibrary={async repository => (await controller.createLibrary(repository.fullName)).id}
             onLibraryConnected={id => useCloudWorkbenchStore.getState().selectLibrary(id)}
             onOpenUpload={() => { setUploadOpen(true); cloud.setManagementOpen(false); }} />

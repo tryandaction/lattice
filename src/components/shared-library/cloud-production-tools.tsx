@@ -14,10 +14,11 @@ import { CloudActivityHistory } from './cloud-activity-history';
 import { CloudTeamAiPanel } from './cloud-team-ai-panel';
 import { CloudGitHubPanel } from './cloud-github-panel';
 
-export function CloudProductionTools({ controller, libraryId, onRequestCreateLibrary, onCreateLibrary, onLibraryConnected, onOpenUpload }: {
+export function CloudProductionTools({ controller, libraryId, onRequestCreateLibrary, onRequestJoinLibrary, onCreateLibrary, onLibraryConnected, onOpenUpload }: {
   controller: CloudLibraryWorkspaceController;
   libraryId: string;
   onRequestCreateLibrary?: () => void;
+  onRequestJoinLibrary?: () => void;
   onCreateLibrary?: (repository: GitHubRepository) => Promise<string>;
   onLibraryConnected?: (libraryId: string) => void | Promise<void>;
   onOpenUpload?: () => void;
@@ -40,17 +41,19 @@ export function CloudProductionTools({ controller, libraryId, onRequestCreateLib
   }
   return <div className="border-t border-border">
     {!libraryId ? <section className="space-y-2 px-3 py-3" aria-labelledby="cloud-first-library-title">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t('cloud.onboarding.firstUseStep')}</p>
       <h3 id="cloud-first-library-title" className="text-sm font-medium">{t('cloud.onboarding.emptyTitle')}</h3>
       <p className="text-xs text-muted-foreground">{t('cloud.onboarding.emptyDescription')}</p>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" disabled={!onRequestCreateLibrary} onClick={onRequestCreateLibrary}>{t('cloud.onboarding.createLibrary')}</Button>
+        <Button size="sm" variant="outline" disabled={!onRequestJoinLibrary} onClick={onRequestJoinLibrary}>{t('cloud.onboarding.joinInvitation')}</Button>
         <Button size="sm" variant="outline" onClick={() => useCloudWorkbenchStore.getState().setManagementOpen(true, 'github')}><Github className="size-3.5" />{t('cloud.onboarding.connectGitHub')}</Button>
       </div>
     </section> : <div className="flex justify-end px-3 pt-2">
       <Button size="sm" variant="outline" disabled={!role || !can(role, 'item.create') || !onOpenUpload} onClick={onOpenUpload}><Upload className="size-3.5" />{t('cloud.upload.title')}</Button>
     </div>}
-    <nav aria-label="云库协作工具" className="flex flex-wrap gap-1 px-3 py-2">
-      {(['members', 'ai', 'github', 'activity'] as const).map((id, index) => <button key={id} type="button" disabled={!libraryId && id !== 'github'} aria-pressed={section === id} className={`rounded px-2 py-1 text-xs disabled:opacity-40 ${section === id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent'}`} onClick={() => useCloudWorkbenchStore.getState().setManagementOpen(true, id)}>{['成员与共享', '团队 AI', 'GitHub 仓库', '协作记录'][index]}</button>)}
+    <nav aria-label={t('cloud.tools.navigation')} className="flex flex-wrap gap-1 px-3 py-2">
+      {(['members', 'ai', 'github', 'activity'] as const).map((id, index) => <button key={id} type="button" disabled={!libraryId && id !== 'github'} aria-pressed={section === id} className={`rounded px-2 py-1 text-xs disabled:opacity-40 ${section === id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent'}`} onClick={() => useCloudWorkbenchStore.getState().setManagementOpen(true, id)}>{[t('cloud.tools.members'), t('cloud.tools.ai'), t('cloud.tools.github'), t('cloud.tools.activity')][index]}</button>)}
     </nav>
     {section === 'ai' && libraryId ? <CloudTeamAiPanel key={`${controller.connection.id}:${controller.userId}:${libraryId}:${role}`} loadProviders={ai.loadProviders} send={ai.send} source={source} canManage={role === 'owner' || role === 'admin'} loadConfig={ai.loadConfig} saveConfig={ai.saveConfig} deleteProvider={ai.deleteProvider} /> : null}
     {section === 'github' ? <CloudGitHubPanel key={`${controller.connection.id}:${controller.userId}:${libraryId}`} controller={controller} libraryId={libraryId || undefined} role={role ?? undefined} onCreateLibrary={!libraryId ? onCreateLibrary : undefined} onLibraryConnected={onLibraryConnected} /> : null}

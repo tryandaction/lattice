@@ -8,7 +8,7 @@ const entry = bundled.outputFiles[0].text.replace(/export \{[\s\S]*?\};\s*$/, ""
 await writeFile(`${output}/index.js`, `${entry}\nexport default { fetch(request) { return handleSupabaseEdgeRequest(request, {
   SUPABASE_URL: Deno.env.get("SUPABASE_URL"),
   SUPABASE_ANON_KEY: Deno.env.get("SUPABASE_ANON_KEY"),
-  ALLOWED_ORIGINS: Deno.env.get("ALLOWED_ORIGINS") || "http://tauri.localhost,https://tauri.localhost,tauri://localhost,https://lattice-apq.pages.dev,https://lattice-apq-7xj.pages.dev",
+  ALLOWED_ORIGINS: Deno.env.get("ALLOWED_ORIGINS") || "http://tauri.localhost,https://tauri.localhost,tauri://localhost,https://lattice-apq.pages.dev",
   SUPABASE_SERVICE_ROLE_KEY: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
   TEAM_AI_PROVIDERS_JSON: Deno.env.get("TEAM_AI_PROVIDERS_JSON"),
   TEAM_AI_ENCRYPTION_KEY: Deno.env.get("TEAM_AI_ENCRYPTION_KEY"),

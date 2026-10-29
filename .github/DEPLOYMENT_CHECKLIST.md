@@ -19,7 +19,7 @@
 
 - [ ] `web-dist/index.html` exists
 - [ ] `deploy-cloudflare-pages.yml` deploys `web-dist/` to project `lattice`
-- [ ] Cloudflare workflow summary shows target URL `https://lattice-apq-7xj.pages.dev`
+- [ ] Cloudflare workflow summary shows target URL `https://lattice-apq.pages.dev`
 
 ## GitHub Pages Deploy
 

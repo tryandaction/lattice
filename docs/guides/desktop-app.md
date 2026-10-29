@@ -65,7 +65,7 @@ npm run release:prepare
 ## 5. GitHub Release 与 Pages 的关系
 
 - 桌面 draft release 由 `release.yml` 负责
-- 当前线上站点优先发布到 Cloudflare Pages：`https://lattice-apq-7xj.pages.dev/`
+- 当前线上站点优先发布到 Cloudflare Pages：`https://lattice-apq.pages.dev/`
 - GitHub Pages 使用同一个 `web-dist/` 作为备用/镜像链路
 - 平台侧若因 billing 或 Actions 不可用而阻塞，不影响本地 `release:prepare` 闭环
 

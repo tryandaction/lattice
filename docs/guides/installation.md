@@ -4,7 +4,7 @@
 
 ### Web
 
-直接访问：<https://lattice-apq-7xj.pages.dev/>
+直接访问：<https://lattice-apq.pages.dev/>
 
 ### Desktop
 

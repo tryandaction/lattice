@@ -27,15 +27,16 @@ export interface CloudConnectionPanelProps {
   onRetry?: () => void | Promise<void>;
   onContinueLocal?: () => void;
   confirmation?: { tone: "pending" | "success" | "error"; message: string };
+  startWithJoin?: boolean;
 }
 
 export function CloudConnectionPanel(props: CloudConnectionPanelProps) {
   const selected = props.connections.find(connection => connection.id === props.activeId);
   const identity = JSON.stringify([selected?.id, selected?.apiUrl, selected?.supabaseUrl]);
-  return <CloudConnectionPanelContent key={identity} {...props} />;
+  return <CloudConnectionPanelContent key={`${identity}:${String(Boolean(props.startWithJoin))}`} {...props} />;
 }
 
-function CloudConnectionPanelContent({ connections, activeId, managedConnectionId, onSelect, onSave, onLogin, onLogout, onRegister, onResendConfirmation, onRequestPasswordReset, onResetPassword, onCancelPasswordRecovery, passwordRecovery, serviceUnavailable, onRetry, onContinueLocal, confirmation, userId, onInvitation }: CloudConnectionPanelProps) {
+function CloudConnectionPanelContent({ connections, activeId, managedConnectionId, onSelect, onSave, onLogin, onLogout, onRegister, onResendConfirmation, onRequestPasswordReset, onResetPassword, onCancelPasswordRecovery, passwordRecovery, serviceUnavailable, onRetry, onContinueLocal, confirmation, userId, onInvitation, startWithJoin }: CloudConnectionPanelProps) {
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [advanced, setAdvanced] = useState(false);
@@ -47,7 +48,7 @@ function CloudConnectionPanelContent({ connections, activeId, managedConnectionI
   const [error, setError] = useState<string | null>(null);
   const [invalidInput, setInvalidInput] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [joining, setJoining] = useState(false);
+  const [joining, setJoining] = useState(Boolean(startWithJoin));
   const [registering, setRegistering] = useState(false);
   const [forgotPassword, setForgotPassword] = useState(false);
   const [notice, setNotice] = useState<TranslationKey | "">("");
@@ -56,6 +57,7 @@ function CloudConnectionPanelContent({ connections, activeId, managedConnectionI
   const managedSelected = Boolean(selected && selected.id === managedConnectionId);
   const showAdvancedForm = advanced || editing;
   const unavailable = serviceUnavailable || !selected;
+  const showRegistrationConfirmation = confirmationNeeded && !userId && !passwordRecovery && !forgotPassword && !registering && Boolean(email.trim());
 
   function changeAccountMode(mode: "login" | "register" | "forgot") {
     setRegistering(mode === "register");
@@ -105,7 +107,17 @@ function CloudConnectionPanelContent({ connections, activeId, managedConnectionI
       <Button size="sm" className="self-end sm:self-start" disabled={busy || !pasted.trim()} onClick={() => void execute(parseAndSave)}>{busy ? t("cloud.connection.connecting") : t("cloud.connection.connect")}</Button>
     </div> : null}
 
-    {((!unavailable && !userId) || passwordRecovery) && !showAdvancedForm ? <form className="mt-3 grid gap-3" onSubmit={event => { event.preventDefault(); setNotice("");
+    {showRegistrationConfirmation ? <section className="mt-3 grid gap-3 rounded-md border border-border bg-muted/20 p-3" aria-labelledby="cloud-confirmation-title">
+      <div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("cloud.account.confirmationStep")}</p><h3 id="cloud-confirmation-title" className="mt-1 text-sm font-medium">{t("cloud.account.confirmationTitle")}</h3></div><span className="text-xs text-muted-foreground">{t("cloud.account.confirmationStepCount")}</span></div>
+      <p className="text-xs leading-relaxed text-muted-foreground">{t("cloud.account.confirmationHint")}</p>
+      <p className="rounded border border-border/70 bg-background px-2 py-1.5 text-sm" data-testid="cloud-confirmation-email">{email}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        {onResendConfirmation ? <Button type="button" size="sm" disabled={busy} onClick={() => void execute(async () => { await onResendConfirmation(email.trim()); setNotice("cloud.connection.resendNotice"); })}>{busy ? t("cloud.connection.processing") : t("cloud.connection.resend")}</Button> : null}
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { setConfirmationNeeded(false); setNotice(""); setPassword(""); }}>{t("cloud.account.returnToLogin")}</Button>
+      </div>
+      <p className="text-xs text-muted-foreground">{t("cloud.account.confirmationNext")}</p>
+    </section> : null}
+    {((!unavailable && !userId) || passwordRecovery) && !showAdvancedForm && !showRegistrationConfirmation ? <form className="mt-3 grid gap-3" onSubmit={event => { event.preventDefault(); setNotice("");
       if (passwordRecovery && (password.length < 8 || password !== repeatedPassword)) { setError(t(password.length < 8 ? "cloud.account.passwordLength" : "cloud.account.passwordMismatch")); return; }
       void execute(async () => {
       if (passwordRecovery && onResetPassword) {
@@ -117,10 +129,11 @@ function CloudConnectionPanelContent({ connections, activeId, managedConnectionI
       if (registering && onRegister) {
         const result = await onRegister(email.trim(), password);
         setConfirmationNeeded(result?.confirmationRequired !== false);
-        setRegistering(false); setNotice(result?.confirmationRequired === false ? "cloud.connection.createdNotice" : "cloud.connection.confirmationNotice");
+        setRegistering(false); setNotice(result?.confirmationRequired === false ? "cloud.connection.createdNotice" : "cloud.account.confirmationSentNotice");
       } else await onLogin(email.trim(), password);
       setPassword("");
     }); }}>
+      {registering ? <div className="rounded border border-border/70 bg-muted/20 px-3 py-2"><p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("cloud.account.signupStep")}</p><p className="mt-1 text-xs text-muted-foreground">{t("cloud.account.signupHint")}</p></div> : null}
       {passwordRecovery || forgotPassword ? <div><p className="text-sm font-medium">{t(passwordRecovery ? "cloud.account.resetTitle" : "cloud.account.forgotTitle")}</p><p className="mt-1 text-xs text-muted-foreground">{t(passwordRecovery ? "cloud.account.resetHint" : "cloud.account.forgotHint")}</p></div> : null}
       <div className="grid gap-2 sm:grid-cols-2">
         {!passwordRecovery ? <label className="grid gap-1 text-xs">{t("cloud.connection.email")}<input aria-label={t("cloud.connection.email")} className={field} type="email" autoComplete="username" value={email} onChange={event => setEmail(event.target.value)} placeholder={t("cloud.connection.emailPlaceholder")} required disabled={busy} /></label> : null}

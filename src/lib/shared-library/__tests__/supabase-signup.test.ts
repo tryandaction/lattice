@@ -31,9 +31,15 @@ describe("cloud account registration", () => {
   });
   it("resends a signup confirmation only through an explicit request using the public key", async () => {
     const request = vi.fn<typeof fetch>().mockResolvedValue(new Response("{}", { status: 200 }));
-    await new SupabaseAuthRepository(connection, request).resendConfirmation("member@example.com");
-    expect(request.mock.calls[0][0]).toBe(`${connection.supabaseUrl}/auth/v1/resend`);
+    await new SupabaseAuthRepository(connection, request).resendConfirmation("member@example.com", "https://lattice-apq.pages.dev/");
+    expect(request.mock.calls[0][0]).toBe(`${connection.supabaseUrl}/auth/v1/resend?redirect_to=https%3A%2F%2Flattice-apq.pages.dev%2F`);
     expect(JSON.parse(String(request.mock.calls[0][1]?.body))).toEqual({ type: "signup", email: "member@example.com" });
     expect(new Headers(request.mock.calls[0][1]?.headers).get("apikey")).toBe(connection.publicKey);
+  });
+
+  it("sends registration confirmation back to the official web app", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ id: "new", confirmation_sent_at: "2026-10-29T00:00:00Z" }), { status: 200 }));
+    await new SupabaseAuthRepository(connection, request).signUp("member@example.com", "test-password", "https://lattice-apq.pages.dev/");
+    expect(request.mock.calls[0][0]).toBe(`${connection.supabaseUrl}/auth/v1/signup?redirect_to=https%3A%2F%2Flattice-apq.pages.dev%2F`);
   });
 });

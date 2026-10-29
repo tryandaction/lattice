@@ -31,10 +31,11 @@ describe("CloudConnectionPanel", () => {
     expect(values.onLogin).not.toHaveBeenCalled();
     expect(screen.getByRole("status").textContent).toContain("最新邮件");
   });
-  it("registers an account in the same compact form and keeps confirmation separate from login", async () => {
+  it("moves registration into an explicit email-confirmation step", async () => {
     const connection = { id: "lattice-managed", name: "Lattice 云库", apiUrl: "https://cloud.example.com", supabaseUrl: "https://db.supabase.co", publicKey: "sb_publishable_test", maxFileBytes: 1000 };
-    const onRegister = vi.fn(async () => undefined);
-    const values = props({ connections: [connection], activeId: connection.id, onRegister });
+    const onRegister = vi.fn(async () => ({ confirmationRequired: true }));
+    const onResendConfirmation = vi.fn(async () => undefined);
+    const values = props({ connections: [connection], activeId: connection.id, onRegister, onResendConfirmation });
     render(<CloudConnectionPanel {...values} managedConnectionId={connection.id} />);
     fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
     fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "member@example.com" } });
@@ -42,8 +43,13 @@ describe("CloudConnectionPanel", () => {
     fireEvent.submit(screen.getByRole("button", { name: "注册云库" }).closest("form")!);
     await waitFor(() => expect(onRegister).toHaveBeenCalledWith("member@example.com", "new-password"));
     expect(values.onLogin).not.toHaveBeenCalled();
-    expect(screen.getByRole("status").textContent).toContain("确认");
-    expect((screen.getByLabelText("云库密码") as HTMLInputElement).value).toBe("");
+    expect(screen.getByRole("status").textContent).toContain("确认邮件");
+    expect(screen.getByText("第 2 步，共 3 步")).toBeTruthy();
+    expect(screen.getByText("member@example.com")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "重新发送确认邮件" }));
+    await waitFor(() => expect(onResendConfirmation).toHaveBeenCalledWith("member@example.com"));
+    fireEvent.click(screen.getByRole("button", { name: "返回登录" }));
+    expect(screen.getByLabelText("云库密码")).toBeTruthy();
   });
   it("shows only product sign-in for a managed service, with no vendor setup or required invite", () => {
     const connection = { id: "lattice-managed", name: "Lattice 云库", apiUrl: "https://cloud.example.com", supabaseUrl: "https://db.supabase.co", publicKey: "sb_publishable_test", maxFileBytes: 1000 };

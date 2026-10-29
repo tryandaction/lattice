@@ -25,7 +25,7 @@ describe("cloud simple flow recovery", () => {
   });
   it("shares the current public entry when an invitation is created from the retired domain", () => {
     const value = createCloudInviteShare("https://lattice-apq.pages.dev/library", connection, "lib", "token");
-    expect(new URL(value).origin).toBe("https://lattice-apq-7xj.pages.dev");
+    expect(new URL(value).origin).toBe("https://lattice-apq.pages.dev");
     expect(parseCloudConnectionInput(value)).toMatchObject({ libraryId: "lib", inviteToken: "token", apiUrl: connection.apiUrl });
   });
   it("retains consumed invitation identity after reload with the original URL", () => {

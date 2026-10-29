@@ -33,14 +33,14 @@
 
 **Android 平板/手机**
 
-1. 用 Chrome 浏览器访问 https://lattice-apq-7xj.pages.dev/
+1. 用 Chrome 浏览器访问 https://lattice-apq.pages.dev/
 2. 点击弹出的「安装」提示，或点击菜单 → 「添加到主屏幕」
 3. 从主屏幕启动，获得全屏 App 体验
 4. 支持完整的文件夹访问和编辑功能
 
 **在线版**
 
-直接访问：https://lattice-apq-7xj.pages.dev/
+直接访问：https://lattice-apq.pages.dev/
 
 ### 首次使用
 

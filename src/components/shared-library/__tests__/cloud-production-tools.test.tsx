@@ -1,12 +1,14 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CloudProductionTools } from '../cloud-production-tools';
 import { useCloudWorkbenchStore } from '@/stores/cloud-workbench-store';
 import type { CloudLibraryWorkspaceController } from '@/lib/shared-library/cloud-workspace';
+import { setLocale } from '@/lib/i18n';
 vi.mock('../cloud-activity-history', () => ({ CloudActivityHistory: ({ inline, onOpenVersionHistory }: { inline?: boolean; onOpenVersionHistory: (itemId: string, versionId: string) => void }) => <button data-inline={String(inline)} onClick={() => onOpenVersionHistory('file', 'historical-v1')}>查看审计版本</button> }));
 vi.mock('../cloud-github-panel', () => ({ CloudGitHubPanel: ({ onCreateLibrary, onLibraryConnected }: { onCreateLibrary?: (repository: { id: number; name: string; fullName: string; private: boolean; installationId: number; branch: string; permissions: { push: boolean; maintain: boolean; admin: boolean } }) => Promise<string>; onLibraryConnected?: (libraryId: string) => void | Promise<void> }) => <button type="button" onClick={async () => { const id = await onCreateLibrary?.({ id: 88, name: 'papers', fullName: 'lab/papers', private: true, installationId: 5, branch: 'main', permissions: { push: true, maintain: false, admin: false } }); if (id) await onLibraryConnected?.(id); }}>模拟从 GitHub 建库</button> }));
 vi.mock('../cloud-team-ai-panel', () => ({ CloudTeamAiPanel: () => null }));
-afterEach(cleanup);
+beforeEach(() => setLocale('zh-CN'));
+afterEach(() => { cleanup(); setLocale('zh-CN'); });
 function fixture(openItem = vi.fn(async () => true)) {
   const controller = { connection: { id: 'cloud' }, userId: 'alice', transport: {} } as unknown as CloudLibraryWorkspaceController;
   useCloudWorkbenchStore.setState({ controller, scope: 'account-a', libraryId: 'library', managementOpen: true, managementSection: 'activity', requestedVersionHistory: null, error: null, openItem });
@@ -41,6 +43,28 @@ describe('production activity integration', () => {
 });
 
 describe('cloud library first-use actions', () => {
+  it('localizes cloud tool navigation when the application language changes', () => {
+    const controller = { connection: { id: 'cloud' }, userId: 'alice', transport: {} } as unknown as CloudLibraryWorkspaceController;
+    useCloudWorkbenchStore.setState({ controller, scope: 'account-a', libraryId: 'library', managementOpen: true, managementSection: 'connection', role: 'owner' as never, error: null });
+    render(<CloudProductionTools controller={controller} libraryId="library" />);
+    const navigation = screen.getByRole('navigation', { name: '云库协作工具' });
+    for (const name of ['成员与共享', '团队 AI', 'GitHub 仓库', '协作记录']) {
+      expect(within(navigation).getByRole('button', { name })).toBeTruthy();
+    }
+    act(() => setLocale('en-US'));
+    expect(screen.getByRole('navigation', { name: 'Cloud collaboration tools' })).toBe(navigation);
+    for (const name of ['Members and sharing', 'Team AI', 'GitHub repository', 'Activity']) {
+      expect(within(navigation).getByRole('button', { name })).toBeTruthy();
+    }
+    fireEvent.click(within(navigation).getByRole('button', { name: 'Activity' }));
+    expect(useCloudWorkbenchStore.getState().managementSection).toBe('activity');
+
+    act(() => setLocale('zh-CN'));
+    expect(screen.getByRole('navigation', { name: '云库协作工具' })).toBe(navigation);
+    expect(within(navigation).getByRole('button', { name: '协作记录' }).getAttribute('aria-pressed')).toBe('true');
+    expect(useCloudWorkbenchStore.getState().managementSection).toBe('activity');
+  });
+
   it('offers empty-library and GitHub creation paths and selects a linked repository library', async () => {
     const controller = { connection: { id: 'cloud' }, userId: 'alice', transport: {} } as unknown as CloudLibraryWorkspaceController;
     const onRequestCreateLibrary = vi.fn();

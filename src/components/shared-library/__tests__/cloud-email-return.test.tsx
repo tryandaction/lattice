@@ -16,9 +16,10 @@ function seedSignedInSession() {
 
 vi.mock("@/lib/shared-library/cloud-persistence", () => ({ createCloudPersistence: () => ({}) }));
 vi.mock("../local-upload-target-dialog", () => ({ LocalUploadTargetDialog: () => null }));
-vi.mock("../cloud-production-tools", () => ({ CloudProductionTools: ({ onOpenUpload, onRequestCreateLibrary, onCreateLibrary, onLibraryConnected }: { onOpenUpload?: () => void; onRequestCreateLibrary?: () => void; onCreateLibrary?: (repository: { fullName: string }) => Promise<string>; onLibraryConnected?: (libraryId: string) => void | Promise<void> }) => <div>
+vi.mock("../cloud-production-tools", () => ({ CloudProductionTools: ({ onOpenUpload, onRequestCreateLibrary, onRequestJoinLibrary, onCreateLibrary, onLibraryConnected }: { onOpenUpload?: () => void; onRequestCreateLibrary?: () => void; onRequestJoinLibrary?: () => void; onCreateLibrary?: (repository: { fullName: string }) => Promise<string>; onLibraryConnected?: (libraryId: string) => void | Promise<void> }) => <div>
   <button type="button" onClick={onOpenUpload}>测试：打开云端上传</button>
   <button type="button" onClick={onRequestCreateLibrary}>测试：新建空库</button>
+  <button type="button" onClick={onRequestJoinLibrary}>测试：加入邀请</button>
   <button type="button" onClick={async () => { const id = await onCreateLibrary?.({ fullName: "lab/papers" }); if (id) await onLibraryConnected?.(id); }}>测试：从 GitHub 建库</button>
 </div> }));
 vi.mock("../cloud-upload-dialog", () => ({ CloudUploadDialog: ({ open }: { open: boolean }) => open ? <div role="dialog" aria-label="上传到云端测试">云端上传进度</div> : null }));
@@ -48,6 +49,28 @@ beforeEach(() => {
 afterEach(() => { cleanup(); setLocale("zh-CN"); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("email return in the regular application shell", () => {
+  it("registers and resends confirmation with the official Pages redirect", async () => {
+    const request = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "new-user", confirmation_sent_at: "2026-10-29T00:00:00Z" })))
+      .mockResolvedValueOnce(new Response("{}"));
+    vi.stubGlobal("fetch", request);
+    useCloudWorkbenchStore.setState({ managementOpen: true });
+    render(<CloudLibraryControllerHost />);
+    fireEvent.click(await screen.findByRole("button", { name: "创建账号" }));
+    fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "new-user@example.com" } });
+    fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "synthetic-password" } });
+    fireEvent.submit(screen.getByRole("button", { name: "注册云库" }).closest("form")!);
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("确认邮件已发送"));
+    expect(new URL(String(request.mock.calls[0][0])).searchParams.get("redirect_to")).toBe("https://lattice-apq.pages.dev/");
+    expect(screen.getByText("第 2 步，共 3 步")).toBeTruthy();
+    expect(screen.getByTestId("cloud-confirmation-email").textContent).toBe("new-user@example.com");
+
+    fireEvent.click(screen.getByRole("button", { name: "重新发送确认邮件" }));
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(new URL(String(request.mock.calls[1][0])).searchParams.get("redirect_to")).toBe("https://lattice-apq.pages.dev/");
+    expect(screen.getByRole("status").textContent).toContain("最新邮件");
+  });
+
   it("opens the existing cloud dialog, scrubs the URL, and signs in after server validation", async () => {
     window.history.replaceState(null, "", `/#access_token=${accessToken}&refresh_token=synthetic-return&type=signup`);
     const request = vi.fn<typeof fetch>()
@@ -140,6 +163,15 @@ describe("email return in the regular application shell", () => {
     fireEvent.change(screen.getByLabelText("新建名称"), { target: { value: "论文协作" } });
     fireEvent.submit(screen.getByRole("button", { name: "创建" }).closest("form")!);
     await waitFor(() => expect(useCloudWorkbenchStore.getState().libraryId).toBe("library-论文协作"));
+  });
+
+  it("opens the invitation form from the empty-library first-use action", async () => {
+    seedSignedInSession();
+    useCloudWorkbenchStore.setState({ active: true, managementOpen: true });
+    render(<CloudLibraryControllerHost />);
+    await waitFor(() => expect(useCloudWorkbenchStore.getState().controller?.userId).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "测试：加入邀请" }));
+    expect(await screen.findByLabelText("云库邀请链接或配置")).toBeTruthy();
   });
 
   it("creates a cloud library from GitHub and selects it after the repository is linked", async () => {

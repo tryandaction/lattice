@@ -15,6 +15,8 @@ describe("cloud account password recovery", () => {
 
   it("uses a clean app return URL without forwarding private invitation or auth fields", () => {
     expect(getCloudAuthRedirectUrl("https://app.example/workspace?invite=private&redirect_to=https://other.example/#access_token=private")).toBe("https://app.example/workspace");
+    expect(getCloudAuthRedirectUrl("https://lattice-apq.pages.dev/library")).toBe("https://lattice-apq.pages.dev/library");
+    expect(LATTICE_WEB_URL).toBe("https://lattice-apq.pages.dev/");
     expect(getCloudAuthRedirectUrl("http://tauri.localhost/")).toBe(LATTICE_WEB_URL);
     expect(getCloudAuthRedirectUrl("tauri://localhost/")).toBe(LATTICE_WEB_URL);
     expect(getCloudAuthRedirectUrl("https://user:private@app.example/")).toBeUndefined();

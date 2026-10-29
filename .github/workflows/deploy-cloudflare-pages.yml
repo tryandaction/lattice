@@ -47,6 +47,6 @@ jobs:
             echo "## Cloudflare Pages Deploy"
             echo "- artifact path: \`web-dist\`"
             echo "- target project: \`lattice-apq\`"
-            echo "- target url: https://lattice-apq-7xj.pages.dev"
+            echo "- target url: https://lattice-apq.pages.dev"
             echo "- status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"

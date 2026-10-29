@@ -38,7 +38,7 @@ const config = {
   name: "lattice-shared-library-api", main: path.join(root, "workers/shared-library-api/src/index.ts").replaceAll("\\", "/"),
   compatibility_date: "2026-08-30", workers_dev: true,
   triggers: { crons: ["*/5 * * * *"] },
-  vars: { ALLOWED_ORIGINS: "http://tauri.localhost,https://tauri.localhost,tauri://localhost,https://lattice-apq.pages.dev,https://lattice-apq-7xj.pages.dev", MAX_UPLOAD_BYTES: String(maxFileBytes), BLOB_BACKEND: storageBackend },
+  vars: { ALLOWED_ORIGINS: "http://tauri.localhost,https://tauri.localhost,tauri://localhost,https://lattice-apq.pages.dev", MAX_UPLOAD_BYTES: String(maxFileBytes), BLOB_BACKEND: storageBackend },
   ...(storageBackend === "r2" ? { r2_buckets: [{ binding: "LIBRARY_BLOBS", bucket_name: "lattice-shared-library" }] } : {}),
 };
 await writeFile(path.join(output, "initialize-new-project.sql"), sql, "utf8");
