@@ -78,6 +78,10 @@ export function MobileSidebar({
   const sidebarRef = useRef<HTMLDivElement>(null);
   const controls = useAnimation();
 
+  useEffect(() => {
+    if (isOpen) void controls.start('open');
+  }, [isOpen, controls]);
+
   // Prevent body scroll when sidebar is open
   useEffect(() => {
     if (isOpen) {

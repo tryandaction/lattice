@@ -17,7 +17,7 @@ export interface CloudConnectionPanelProps {
   managedConnectionId?: string;
   onSelect: (id: string) => void; onSave: (connection: CloudLibraryConnection) => Promise<void>;
   onLogin: (email: string, password: string) => Promise<void>; onLogout: () => Promise<void>;
-  onRegister?: (email: string, password: string) => Promise<{ confirmationRequired: boolean } | void>;
+  onRegister?: (email: string, password: string) => Promise<{ confirmationRequired: boolean; confirmationSent?: boolean } | void>;
   onResendConfirmation?: (email: string) => Promise<void>;
   onRequestPasswordReset?: (email: string) => Promise<void>;
   onResetPassword?: (password: string) => Promise<void>;
@@ -52,16 +52,20 @@ function CloudConnectionPanelContent({ connections, activeId, managedConnectionI
   const [registering, setRegistering] = useState(false);
   const [forgotPassword, setForgotPassword] = useState(false);
   const [notice, setNotice] = useState<TranslationKey | "">("");
-  const [confirmationNeeded, setConfirmationNeeded] = useState(false);
+  const [confirmationState, setConfirmationState] = useState<"sent" | "unconfirmed" | "unknown" | null>(null);
   const selected = connections.find(connection => connection.id === activeId);
   const managedSelected = Boolean(selected && selected.id === managedConnectionId);
   const showAdvancedForm = advanced || editing;
   const unavailable = serviceUnavailable || !selected;
-  const showRegistrationConfirmation = confirmationNeeded && !userId && !passwordRecovery && !forgotPassword && !registering && Boolean(email.trim());
+  const registrationEmailSent = confirmationState === "sent";
+  const confirmationTitle = registrationEmailSent ? "cloud.account.confirmationTitle" : confirmationState === "unknown" ? "cloud.account.confirmationUnknownTitle" : "cloud.account.confirmationNeededTitle";
+  const confirmationHint = registrationEmailSent ? "cloud.account.confirmationHint" : confirmationState === "unknown" ? "cloud.account.confirmationUnknownHint" : "cloud.account.confirmationNeededHint";
+  const showRegistrationConfirmation = confirmationState !== null && !userId && !passwordRecovery && !forgotPassword && !registering && Boolean(email.trim());
 
   function changeAccountMode(mode: "login" | "register" | "forgot") {
     setRegistering(mode === "register");
     setForgotPassword(mode === "forgot");
+    setConfirmationState(null);
     setError(null); setInvalidInput(false); setNotice(""); setPassword(""); setRepeatedPassword("");
   }
 
@@ -69,7 +73,7 @@ function CloudConnectionPanelContent({ connections, activeId, managedConnectionI
     setBusy(true); setError(null); setInvalidInput(false);
     try { await action(); } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
-      if ((cause as { code?: string })?.code === "email_not_confirmed") setConfirmationNeeded(true);
+      if ((cause as { code?: string })?.code === "email_not_confirmed") { setConfirmationState("unconfirmed"); setPassword(""); }
     } finally { setBusy(false); }
   }
 
@@ -108,14 +112,14 @@ function CloudConnectionPanelContent({ connections, activeId, managedConnectionI
     </div> : null}
 
     {showRegistrationConfirmation ? <section className="mt-3 grid gap-3 rounded-md border border-border bg-muted/20 p-3" aria-labelledby="cloud-confirmation-title">
-      <div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("cloud.account.confirmationStep")}</p><h3 id="cloud-confirmation-title" className="mt-1 text-sm font-medium">{t("cloud.account.confirmationTitle")}</h3></div><span className="text-xs text-muted-foreground">{t("cloud.account.confirmationStepCount")}</span></div>
-      <p className="text-xs leading-relaxed text-muted-foreground">{t("cloud.account.confirmationHint")}</p>
+      <div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("cloud.account.confirmationStep")}</p><h3 id="cloud-confirmation-title" className="mt-1 text-sm font-medium">{t(confirmationTitle)}</h3></div>{registrationEmailSent ? <span className="text-xs text-muted-foreground">{t("cloud.account.confirmationStepCount")}</span> : null}</div>
+      <p className="text-xs leading-relaxed text-muted-foreground">{t(confirmationHint)}</p>
       <p className="rounded border border-border/70 bg-background px-2 py-1.5 text-sm" data-testid="cloud-confirmation-email">{email}</p>
       <div className="flex flex-wrap items-center gap-2">
-        {onResendConfirmation ? <Button type="button" size="sm" disabled={busy} onClick={() => void execute(async () => { await onResendConfirmation(email.trim()); setNotice("cloud.connection.resendNotice"); })}>{busy ? t("cloud.connection.processing") : t("cloud.connection.resend")}</Button> : null}
-        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { setConfirmationNeeded(false); setNotice(""); setPassword(""); }}>{t("cloud.account.returnToLogin")}</Button>
+        {onResendConfirmation ? <Button type="button" size="sm" disabled={busy} onClick={() => void execute(async () => { await onResendConfirmation(email.trim()); setConfirmationState("unknown"); setNotice("cloud.connection.resendNotice"); setPassword(""); })}>{busy ? t("cloud.connection.processing") : t("cloud.connection.resend")}</Button> : null}
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { setConfirmationState(null); setNotice(""); setPassword(""); }}>{t("cloud.account.returnToLogin")}</Button>
       </div>
-      <p className="text-xs text-muted-foreground">{t("cloud.account.confirmationNext")}</p>
+      {registrationEmailSent ? <p className="text-xs text-muted-foreground">{t("cloud.account.confirmationNext")}</p> : null}
     </section> : null}
     {((!unavailable && !userId) || passwordRecovery) && !showAdvancedForm && !showRegistrationConfirmation ? <form className="mt-3 grid gap-3" onSubmit={event => { event.preventDefault(); setNotice("");
       if (passwordRecovery && (password.length < 8 || password !== repeatedPassword)) { setError(t(password.length < 8 ? "cloud.account.passwordLength" : "cloud.account.passwordMismatch")); return; }
@@ -128,8 +132,8 @@ function CloudConnectionPanelContent({ connections, activeId, managedConnectionI
       }
       if (registering && onRegister) {
         const result = await onRegister(email.trim(), password);
-        setConfirmationNeeded(result?.confirmationRequired !== false);
-        setRegistering(false); setNotice(result?.confirmationRequired === false ? "cloud.connection.createdNotice" : "cloud.account.confirmationSentNotice");
+        setConfirmationState(result?.confirmationRequired === false ? null : result?.confirmationSent === true ? "sent" : "unknown");
+        setRegistering(false); setNotice(result?.confirmationRequired === false ? "cloud.connection.createdNotice" : result?.confirmationSent === true ? "cloud.account.confirmationSentNotice" : "cloud.account.confirmationUnknownNotice");
       } else await onLogin(email.trim(), password);
       setPassword("");
     }); }}>
@@ -145,7 +149,7 @@ function CloudConnectionPanelContent({ connections, activeId, managedConnectionI
         {!passwordRecovery && onRegister && !forgotPassword ? <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => changeAccountMode(registering ? "login" : "register")}>{registering ? t("cloud.connection.backToLogin") : t("cloud.connection.createAccount")}</Button> : null}
         {!passwordRecovery && onRequestPasswordReset && !registering ? <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => changeAccountMode(forgotPassword ? "login" : "forgot")}>{t(forgotPassword ? "cloud.connection.backToLogin" : "cloud.account.forgotPassword")}</Button> : null}
         {passwordRecovery && onCancelPasswordRecovery ? <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onCancelPasswordRecovery}>{t("cloud.connection.backToLogin")}</Button> : null}
-        {!passwordRecovery && !forgotPassword && onResendConfirmation && !registering && (confirmationNeeded || confirmation?.tone === "error") ? <Button type="button" variant="ghost" size="sm" disabled={busy || !email.trim()} onClick={() => void execute(async () => { await onResendConfirmation(email.trim()); setNotice("cloud.connection.resendNotice"); setPassword(""); })}>{t("cloud.connection.resend")}</Button> : null}
+        {!passwordRecovery && !forgotPassword && onResendConfirmation && !registering && (confirmationState !== null || confirmation?.tone === "error") ? <Button type="button" variant="ghost" size="sm" disabled={busy || !email.trim()} onClick={() => void execute(async () => { await onResendConfirmation(email.trim()); setConfirmationState("unknown"); setNotice("cloud.connection.resendNotice"); setPassword(""); })}>{t("cloud.connection.resend")}</Button> : null}
       </div>
     </form> : null}
     {notice ? <p role="status" className="mt-2 text-xs text-muted-foreground">{t(notice)}</p> : null}

@@ -29,19 +29,19 @@ export class SupabaseAuthRepository implements AuthRepository {
   }
 
   signIn(input: { email: string; password: string; deviceId: string }) { return this.token("password", { email: input.email, password: input.password }, input.deviceId); }
-  async signUp(email: string, password: string, redirectTo?: string): Promise<{ confirmationRequired: boolean }> {
+  async signUp(email: string, password: string, redirectTo?: string): Promise<{ confirmationRequired: boolean; confirmationSent: boolean }> {
     const response = await this.fetchImpl.call(globalThis, this.emailEndpoint("signup", redirectTo), {
       method: "POST", headers: { apikey: this.connection.publicKey, "content-type": "application/json" },
       body: JSON.stringify({ email, password }), signal: AbortSignal.timeout(15000),
     });
-    const result = await response.json().catch(() => null) as { id?: string; access_token?: string; user?: { id?: string }; code?: string; error_code?: string } | null;
+    const result = await response.json().catch(() => null) as { id?: string; access_token?: string; confirmation_sent_at?: string; user?: { id?: string; confirmation_sent_at?: string }; code?: string; error_code?: string } | null;
     if (!response.ok) {
       const code = result?.code ?? result?.error_code;
       const message = response.status === 429 ? "注册请求较多，请稍后再试。" : response.status >= 500 || code === "email_address_not_authorized" || code === "unexpected_failure" ? "注册邮件暂时无法发送，请稍后重试；本地文件仍可正常使用。" : "注册未完成，请检查邮箱和密码（至少 8 个字符）。";
       throw Object.assign(new Error(message), { status: response.status });
     }
     if (!result?.id && !result?.user?.id) throw new Error("身份服务返回无效注册结果。");
-    return { confirmationRequired: !result.access_token };
+    return { confirmationRequired: !result.access_token, confirmationSent: Boolean(result.confirmation_sent_at ?? result.user?.confirmation_sent_at) };
   }
   refresh(input: { refreshToken: string; deviceId: string }) { return this.token("refresh_token", { refresh_token: input.refreshToken }, input.deviceId); }
   async confirmEmail(tokens: EmailConfirmationTokens, deviceId: string): Promise<AuthSession> {

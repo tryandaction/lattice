@@ -33,7 +33,7 @@ describe("CloudConnectionPanel", () => {
   });
   it("moves registration into an explicit email-confirmation step", async () => {
     const connection = { id: "lattice-managed", name: "Lattice 云库", apiUrl: "https://cloud.example.com", supabaseUrl: "https://db.supabase.co", publicKey: "sb_publishable_test", maxFileBytes: 1000 };
-    const onRegister = vi.fn(async () => ({ confirmationRequired: true }));
+    const onRegister = vi.fn(async () => ({ confirmationRequired: true, confirmationSent: true }));
     const onResendConfirmation = vi.fn(async () => undefined);
     const values = props({ connections: [connection], activeId: connection.id, onRegister, onResendConfirmation });
     render(<CloudConnectionPanel {...values} managedConnectionId={connection.id} />);
@@ -50,6 +50,43 @@ describe("CloudConnectionPanel", () => {
     await waitFor(() => expect(onResendConfirmation).toHaveBeenCalledWith("member@example.com"));
     fireEvent.click(screen.getByRole("button", { name: "返回登录" }));
     expect(screen.getByLabelText("云库密码")).toBeTruthy();
+  });
+
+  it("does not claim a confirmation email was sent when the auth response has no send timestamp", async () => {
+    const connection = { id: "lattice-managed", name: "Lattice 云库", apiUrl: "https://cloud.example.com", supabaseUrl: "https://db.supabase.co", publicKey: "sb_publishable_test", maxFileBytes: 1000 };
+    const values = props({ connections: [connection], activeId: connection.id, onRegister: vi.fn(async () => ({ confirmationRequired: true, confirmationSent: false })), onResendConfirmation: vi.fn(async () => undefined) });
+    render(<CloudConnectionPanel {...values} managedConnectionId={connection.id} />);
+    fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
+    fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "member@example.com" } });
+    fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "new-password" } });
+    fireEvent.submit(screen.getByRole("button", { name: "注册云库" }).closest("form")!);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "检查邮箱或登录" })).toBeTruthy());
+    expect(screen.queryByText("确认邮件已发送，请打开最新邮件中的链接。")).toBeNull();
+  });
+
+  it("treats an omitted send result as unknown without claiming a sent email", async () => {
+    const connection = { id: "lattice-managed", name: "Lattice 云库", apiUrl: "https://cloud.example.com", supabaseUrl: "https://db.supabase.co", publicKey: "sb_publishable_test", maxFileBytes: 1000 };
+    render(<CloudConnectionPanel {...props({ connections: [connection], activeId: connection.id, onRegister: vi.fn(async () => ({ confirmationRequired: true })) })} managedConnectionId={connection.id} />);
+    fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
+    fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "member@example.com" } });
+    fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "new-password" } });
+    fireEvent.submit(screen.getByRole("button", { name: "注册云库" }).closest("form")!);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "检查邮箱或登录" })).toBeTruthy());
+    expect(screen.queryByText("确认邮件已发送，请打开最新邮件中的链接。")).toBeNull();
+  });
+
+  it("distinguishes an unconfirmed existing account from a newly sent confirmation", async () => {
+    const connection = { id: "lattice-managed", name: "Lattice 云库", apiUrl: "https://cloud.example.com", supabaseUrl: "https://db.supabase.co", publicKey: "sb_publishable_test", maxFileBytes: 1000 };
+    const onResendConfirmation = vi.fn(async () => undefined);
+    const values = props({ connections: [connection], activeId: connection.id, onLogin: vi.fn(async () => { throw Object.assign(new Error("邮箱尚未确认"), { code: "email_not_confirmed" }); }), onResendConfirmation });
+    render(<CloudConnectionPanel {...values} managedConnectionId={connection.id} />);
+    fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "existing@example.com" } });
+    fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "password" } });
+    fireEvent.submit(screen.getByRole("button", { name: "登录云库" }).closest("form")!);
+    await waitFor(() => expect(screen.getByText("这个账号还没有完成邮箱确认。点击重新发送确认邮件，然后打开最新邮件中的链接。")).toBeTruthy());
+    expect(screen.queryByText("确认邮件已发送，请打开最新邮件中的链接。")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "重新发送确认邮件" }));
+    await waitFor(() => expect(onResendConfirmation).toHaveBeenCalledWith("existing@example.com"));
   });
   it("shows only product sign-in for a managed service, with no vendor setup or required invite", () => {
     const connection = { id: "lattice-managed", name: "Lattice 云库", apiUrl: "https://cloud.example.com", supabaseUrl: "https://db.supabase.co", publicKey: "sb_publishable_test", maxFileBytes: 1000 };

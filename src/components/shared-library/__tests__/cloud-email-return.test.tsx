@@ -174,6 +174,18 @@ describe("email return in the regular application shell", () => {
     expect(await screen.findByLabelText("云库邀请链接或配置")).toBeTruthy();
   });
 
+  it("does not reopen the invitation form after the management dialog is closed", async () => {
+    seedSignedInSession();
+    useCloudWorkbenchStore.setState({ active: true, managementOpen: true });
+    render(<CloudLibraryControllerHost />);
+    await waitFor(() => expect(useCloudWorkbenchStore.getState().controller?.userId).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "测试：加入邀请" }));
+    expect(await screen.findByLabelText("云库邀请链接或配置")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "关闭共享库管理" }));
+    act(() => useCloudWorkbenchStore.getState().setManagementOpen(true, "connection"));
+    expect(screen.queryByLabelText("云库邀请链接或配置")).toBeNull();
+  });
+
   it("creates a cloud library from GitHub and selects it after the repository is linked", async () => {
     seedSignedInSession();
     useCloudWorkbenchStore.setState({ active: true, managementOpen: true });

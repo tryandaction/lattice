@@ -220,3 +220,12 @@ dry-run 必须显示 project=lattice、branch=main、dryRun=true；accountId 应
 打开 https://lattice-apq.pages.dev/，点击共享库，注册或登录自己的 Lattice 账号，然后新建库并上传文件。共享与协作在库内完成；连接 GitHub 时到 GitHub 官方页面授权自己的账号，并仅选择希望访问的仓库。个人 AI 在自己的设置中配置，团队 AI 由该库 owner/admin 在产品内添加模型和团队 Key。
 
 用户不需要创建 Supabase 项目、产品 GitHub App、运行迁移或填写平台加密密钥。运营者的发信和平台凭据保留在服务端，不进入网页或桌面分发包。
+
+## 15. 2026-10-29 注册确认与自动部署复核
+
+- 正式网页、注册确认、重发确认、密码恢复与邀请链接统一使用 https://lattice-apq.pages.dev/；代码不再把正式域名改写为旧的 7xj 入口。
+- 注册界面依据服务端结果区分已发送、发送状态未知和登录时邮箱未确认；成功 HTTP 状态不等于收件箱实际投递成功，不据此宣称整个注册闭环已验收。
+- 用户授权的一次真实注册请求返回 HTTP 200 和 confirmation_sent_at，但尚未核实收件。没有重复发送、点击私人确认链接或保存测试密码。
+- SMTP 已启用，smtp.qq.com:465，发件地址和用户名 xingduoweiyun@qq.com，发件人 Lattice 格致，确认开启，30 封/小时；site_url 为正式网页，额外回跳白名单为空。模板和 Auth 投递错误日志未获安全可读证据。
+- GitHub Actions 运行 40816858848（e4a5d22）在 runner 启动前因账号账单限制失败，执行步骤为零。该通知不是 Lattice 注册邮件；网页可使用已授权的 Cloudflare Pages 直接部署流程。账号所有者须在 GitHub Billing 页面自行核实并解除限制，不通过修改代码或自动重试绕过。
+- 本轮不重新构建、安装或发布桌面产品。代码、网页部署和真实邮件收件验收应分别报告。

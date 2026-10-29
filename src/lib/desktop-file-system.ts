@@ -331,6 +331,10 @@ export class DesktopFileHandle implements FileSystemFileHandle, DesktopHandleMar
     return new DesktopWritableFileStream(this.fullPath) as unknown as FileSystemWritableFileStream;
   }
 
+  async createSyncAccessHandle(): Promise<never> {
+    throw new DOMException("Synchronous access handles are not supported by the desktop file bridge.", "NotSupportedError");
+  }
+
   async isSameEntry(other: FileSystemHandle): Promise<boolean> {
     return isDesktopFileHandle(other) && normalizeDesktopPath(other.fullPath) === normalizeDesktopPath(this.fullPath);
   }
@@ -469,19 +473,19 @@ export class DesktopDirectoryHandle implements FileSystemDirectoryHandle, Deskto
     return descendantPath.slice(basePath.length).split("/").filter(Boolean);
   }
 
-  async *keys(): AsyncIterableIterator<string> {
+  async *keys(): AsyncGenerator<string> {
     for await (const [name] of this.entries()) {
       yield name;
     }
   }
 
-  async *entries(): AsyncIterableIterator<[string, FileSystemDirectoryHandle | FileSystemFileHandle]> {
+  async *entries(): AsyncGenerator<[string, FileSystemDirectoryHandle | FileSystemFileHandle]> {
     for await (const entry of this.values()) {
       yield [entry.name, entry];
     }
   }
 
-  [Symbol.asyncIterator](): AsyncIterableIterator<[string, FileSystemDirectoryHandle | FileSystemFileHandle]> {
+  [Symbol.asyncIterator](): AsyncGenerator<[string, FileSystemDirectoryHandle | FileSystemFileHandle]> {
     return this.entries();
   }
 

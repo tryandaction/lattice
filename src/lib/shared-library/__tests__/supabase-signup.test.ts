@@ -5,12 +5,12 @@ const connection = { id: "managed", name: "Cloud", apiUrl: "https://api.example.
 describe("cloud account registration", () => {
   it("accepts the raw GoTrue user response when email confirmation is required", async () => {
     const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ id: "new", aud: "authenticated", email: "member@example.com", confirmation_sent_at: "2026-10-13T00:00:00Z" }), { status: 200 }));
-    await expect(new SupabaseAuthRepository(connection, request).signUp("member@example.com", "test-password")).resolves.toEqual({ confirmationRequired: true });
+    await expect(new SupabaseAuthRepository(connection, request).signUp("member@example.com", "test-password")).resolves.toEqual({ confirmationRequired: true, confirmationSent: true });
   });
   it("uses only the public key and requires email confirmation before sign-in", async () => {
     const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ user: { id: "new" }, session: null }), { status: 200 }));
     const result = await new SupabaseAuthRepository(connection, request).signUp("member@example.com", "test-password");
-    expect(result).toEqual({ confirmationRequired: true });
+    expect(result).toEqual({ confirmationRequired: true, confirmationSent: false });
     expect(request.mock.calls[0][0]).toBe(`${connection.supabaseUrl}/auth/v1/signup`);
     const init = request.mock.calls[0][1]!;
     expect(new Headers(init.headers).get("apikey")).toBe(connection.publicKey);

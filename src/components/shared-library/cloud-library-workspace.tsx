@@ -125,6 +125,10 @@ export function CloudLibraryControllerHost() {
     setJoiningInviteMode(true);
     useCloudWorkbenchStore.getState().setManagementOpen(true, "connection");
   }
+  function closeManagement() {
+    setJoiningInviteMode(false);
+    cloud.setManagementOpen(false);
+  }
   useEffect(() => {
     // Read and scrub credentials before parsing invites or doing any asynchronous work.
     const returned = readCloudEmailCallback(window.location.href);
@@ -252,16 +256,16 @@ export function CloudLibraryControllerHost() {
 
   if (!managementOpen) return <>{uploadOpen ? null : <LocalUploadTargetDialog />}<CloudUploadDialog open={uploadOpen} onClose={() => setUploadOpen(false)} onFiles={files => { void cloud.uploadFiles(files).catch(() => {}); }} /></>;
   const snapshot = controller?.getSnapshot();
-  return <><div className={cn(UI_MODAL_OVERLAY_CLASS, "flex items-center justify-center p-4")} style={UI_MODAL_OVERLAY_STYLE} onMouseDown={event => { if (event.target === event.currentTarget) cloud.setManagementOpen(false); }}>
+  return <><div className={cn(UI_MODAL_OVERLAY_CLASS, "flex items-center justify-center p-4")} style={UI_MODAL_OVERLAY_STYLE} onMouseDown={event => { if (event.target === event.currentTarget) closeManagement(); }}>
     <section role="dialog" aria-modal="true" aria-label={t("cloud.manage.title")} className={cn(UI_MODAL_PANEL_CLASS, "flex max-h-[85dvh] w-full max-w-2xl flex-col overflow-hidden rounded-lg")}>
-      <header className="flex items-center justify-between border-b border-border px-4 py-3"><h2 className="text-sm font-medium">{t("cloud.manage.title")}</h2><Button variant="ghost" size="sm" aria-label={t("cloud.manage.close")} onClick={() => cloud.setManagementOpen(false)}><X className="size-4" /></Button></header>
+      <header className="flex items-center justify-between border-b border-border px-4 py-3"><h2 className="text-sm font-medium">{t("cloud.manage.title")}</h2><Button variant="ghost" size="sm" aria-label={t("cloud.manage.close")} onClick={closeManagement}><X className="size-4" /></Button></header>
       <div className="min-h-0 overflow-auto">
         <CloudConnectionPanel connections={connections} activeId={activeId} managedConnectionId={managedConnectionId} userId={controller?.userId} onInvitation={savePendingInvite} startWithJoin={joiningInviteMode} confirmation={emailConfirmation ? { tone: emailConfirmation.tone, message: t(emailConfirmation.messageKey) } : undefined}
           passwordRecovery={passwordRecovery?.connectionId === activeId}
           onRequestPasswordReset={async email => { const connection = connections.find(value => value.id === activeId); if (!connection) throw new Error(t("cloud.connection.configureFirst")); await new SupabaseAuthRepository(connection).requestPasswordReset(email, window.location.href); }}
           onResetPassword={async password => { const recovery = passwordRecovery; const connection = connections.find(value => value.id === recovery?.connectionId); if (!recovery || !connection) throw new Error(t("cloud.email.unknownService")); await new SupabaseAuthRepository(connection).resetPassword(recovery.tokens, password); setPasswordRecovery(null); }}
           onCancelPasswordRecovery={() => setPasswordRecovery(null)}
-          onContinueLocal={() => { cloud.setActive(false); cloud.setManagementOpen(false); }}
+          onContinueLocal={() => { setJoiningInviteMode(false); cloud.setActive(false); cloud.setManagementOpen(false); }}
           onRetry={async () => { const saved = (JSON.parse(localStorage.getItem(CONFIG_KEY) ?? "[]") as CloudLibraryConnection[]).map(validateCloudConnection); const startup = cloudStartupConnections(saved, getManagedCloudConnection(), localStorage.getItem(ACTIVE_KEY)); setConnections(startup.connections); setActiveId(startup.activeId); }}
           onSelect={id => { closeIdentity(); localStorage.setItem(ACTIVE_KEY, id); setActiveId(id); }}
           onSave={async connection => { const next = [...connections.filter(value => value.id !== connection.id), connection]; localStorage.setItem(CONFIG_KEY, JSON.stringify(next)); localStorage.setItem(ACTIVE_KEY, connection.id); setJoiningInviteMode(false); setConnections(next); setActiveId(connection.id); }}

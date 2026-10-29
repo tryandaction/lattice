@@ -74,6 +74,7 @@ describe('cloud library first-use actions', () => {
     render(<CloudProductionTools controller={controller} libraryId="" onRequestCreateLibrary={onRequestCreateLibrary} onCreateLibrary={onCreateLibrary} onLibraryConnected={onLibraryConnected} />);
 
     expect(screen.getByText('还没有云端库')).toBeTruthy();
+    expect(screen.getByText('下一步 · 开始协作')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '新建空库' }));
     expect(onRequestCreateLibrary).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: '从 GitHub 创建云库' }));
