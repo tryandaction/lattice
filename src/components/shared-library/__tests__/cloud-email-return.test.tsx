@@ -6,6 +6,11 @@ import { useCloudWorkbenchStore } from "@/stores/cloud-workbench-store";
 import { setLocale } from "@/lib/i18n";
 
 const connection = { id: "lattice-managed", name: "Lattice 云库", apiUrl: "https://api.example.com", supabaseUrl: "https://project.supabase.co", publicKey: "sb_publishable_fixture", maxFileBytes: 5242880 };
+const { refreshLibraries, refreshLibrary, snapshot } = vi.hoisted(() => ({
+  refreshLibraries: vi.fn(async () => undefined),
+  refreshLibrary: vi.fn(async () => undefined),
+  snapshot: { libraries: [] as Array<{ id: string; name: string }>, items: [], outbox: [], revoked: [], roles: {}, memberNames: {} },
+}));
 const accessToken = `header.${btoa(JSON.stringify({ iss: `${connection.supabaseUrl}/auth/v1` }))}.signature`;
 function seedSignedInSession() {
   const deviceId = "existing-device";
@@ -27,19 +32,22 @@ vi.mock("@/lib/shared-library/cloud-workspace", () => ({
   CloudLibraryWorkspaceController: class {
     constructor(public connection: unknown, public userId: string) {}
     initialize = async () => undefined;
-    refreshLibraries = async () => undefined;
+    refreshLibraries = refreshLibraries;
     start = () => undefined;
     dispose = () => undefined;
     subscribe = () => () => undefined;
-    getSnapshot = () => ({ libraries: [], items: [], outbox: [], revoked: [], roles: {}, memberNames: {} });
+    getSnapshot = () => snapshot;
     createLibrary = async (name: string) => ({ id: `library-${name}`, name });
-    refreshLibrary = async () => undefined;
+    refreshLibrary = refreshLibrary;
     setDisplayName = async () => undefined;
     getStatus = () => ({ error: null });
   },
 }));
 
 beforeEach(() => {
+  refreshLibraries.mockReset().mockResolvedValue(undefined);
+  refreshLibrary.mockReset().mockResolvedValue(undefined);
+  snapshot.libraries = [];
   setLocale("zh-CN");
   localStorage.clear();
   window.history.replaceState(null, "", "/");
@@ -49,10 +57,10 @@ beforeEach(() => {
 afterEach(() => { cleanup(); setLocale("zh-CN"); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("email return in the regular application shell", () => {
-  it("registers and resends confirmation with the official Pages redirect", async () => {
+  it("registers, verifies the signup code and binds the returned session", async () => {
     const request = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "new-user", confirmation_sent_at: "2026-10-29T00:00:00Z" })))
-      .mockResolvedValueOnce(new Response("{}"));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "code-access", refresh_token: "code-refresh", expires_in: 3600, user: { id: "verified-user" } })));
     vi.stubGlobal("fetch", request);
     useCloudWorkbenchStore.setState({ managementOpen: true });
     render(<CloudLibraryControllerHost />);
@@ -60,15 +68,47 @@ describe("email return in the regular application shell", () => {
     fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "new-user@example.com" } });
     fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "synthetic-password" } });
     fireEvent.submit(screen.getByRole("button", { name: "注册云库" }).closest("form")!);
-    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("确认邮件已发送"));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("验证码邮件已提交发送"));
     expect(new URL(String(request.mock.calls[0][0])).searchParams.get("redirect_to")).toBe("https://lattice-apq.pages.dev/");
     expect(screen.getByText("第 2 步，共 3 步")).toBeTruthy();
     expect(screen.getByTestId("cloud-confirmation-email").textContent).toBe("new-user@example.com");
 
-    fireEvent.click(screen.getByRole("button", { name: "重新发送确认邮件" }));
-    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
-    expect(new URL(String(request.mock.calls[1][0])).searchParams.get("redirect_to")).toBe("https://lattice-apq.pages.dev/");
-    expect(screen.getByRole("status").textContent).toContain("最新邮件");
+    expect(await screen.findByLabelText("验证码")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("验证码"), { target: { value: "12345678" } });
+    await act(async () => fireEvent.submit(screen.getByRole("button", { name: "验证并登录" }).closest("form")!));
+    await waitFor(() => expect(useCloudWorkbenchStore.getState().controller?.userId).toBe("verified-user"));
+    expect(request.mock.calls[1][0]).toBe(`${connection.supabaseUrl}/auth/v1/verify`);
+    expect(JSON.parse(String(request.mock.calls[1][1]?.body))).toEqual({ email: "new-user@example.com", token: "12345678", type: "email" });
+    expect(screen.getByRole("status").textContent).toContain("邮箱验证成功");
+  });
+
+  it.each(["list", "selection"])("recovers with password login after verification succeeds but cloud %s fails", async stage => {
+    if (stage === "list") refreshLibraries.mockRejectedValueOnce(new Error("temporary cloud outage"));
+    else { snapshot.libraries = [{ id: "fixture-library", name: "Papers" }]; refreshLibrary.mockRejectedValueOnce(new Error("temporary selection outage")); }
+    const request = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "new-user", confirmation_sent_at: "2026-10-29T00:00:00Z" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "code-access", refresh_token: "code-refresh", expires_in: 3600, user: { id: "verified-user" } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "password-access", refresh_token: "password-refresh", expires_in: 3600, user: { id: "verified-user" } })));
+    vi.stubGlobal("fetch", request);
+    useCloudWorkbenchStore.setState({ managementOpen: true });
+    render(<CloudLibraryControllerHost />);
+    fireEvent.click(await screen.findByRole("button", { name: "创建账号" }));
+    fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "new-user@example.com" } });
+    fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "synthetic-password" } });
+    await act(async () => fireEvent.submit(screen.getByRole("button", { name: "注册云库" }).closest("form")!));
+    expect(await screen.findByLabelText("验证码")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("验证码"), { target: { value: "12345678" } });
+    await act(async () => fireEvent.submit(screen.getByRole("button", { name: "验证并登录" }).closest("form")!));
+    expect(useCloudWorkbenchStore.getState().controller).toBeNull();
+    expect(screen.queryByLabelText("验证码")).toBeNull();
+    expect(screen.getAllByRole("alert").some(element => element.textContent?.includes("邮箱已验证"))).toBe(true);
+    fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "synthetic-password" } });
+    await act(async () => fireEvent.submit(screen.getByRole("button", { name: "登录云库" }).closest("form")!));
+    await waitFor(() => expect(useCloudWorkbenchStore.getState().controller?.userId).toBe("verified-user"));
+    expect(request.mock.calls[1][0]).toBe(`${connection.supabaseUrl}/auth/v1/verify`);
+    expect(JSON.parse(String(request.mock.calls[1][1]?.body))).toEqual({ email: "new-user@example.com", token: "12345678", type: "email" });
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(String(request.mock.calls[2][0])).toContain("/auth/v1/token?grant_type=password");
   });
 
   it("opens the existing cloud dialog, scrubs the URL, and signs in after server validation", async () => {

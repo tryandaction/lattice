@@ -56,7 +56,7 @@ export function renderLatex(
       throwOnError: false,
       errorColor: '#cc0000',
       strict: false,
-      trust: true,
+      trust: false,
       macros: {
         // Common macros
         '\\R': '\\mathbb{R}',

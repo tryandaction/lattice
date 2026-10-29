@@ -65,7 +65,7 @@ export function getKaTeXOptions(
     displayMode,
     throwOnError: false,
     errorColor: "#ef4444",
-    trust: true,
+    trust: false,
     strict: false,
     macros: KATEX_MACROS,
     ...overrides,

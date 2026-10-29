@@ -64,9 +64,9 @@ describe("cloud interface locale", () => {
   });
 
   it("switches a filled sign-up form and its confirmation notice without losing input", async () => {
-    const onRegister = vi.fn(async () => ({ confirmationRequired: true }));
+    const onRegister = vi.fn(async () => ({ confirmationRequired: true, confirmationSent: true }));
     const onLogin = vi.fn(async () => undefined);
-    render(<CloudConnectionPanel connections={[connection]} activeId={connection.id} managedConnectionId={connection.id} onSelect={vi.fn()} onSave={vi.fn()} onLogin={onLogin} onLogout={vi.fn()} onRegister={onRegister} />);
+    render(<CloudConnectionPanel connections={[connection]} activeId={connection.id} managedConnectionId={connection.id} onSelect={vi.fn()} onSave={vi.fn()} onLogin={onLogin} onLogout={vi.fn()} onRegister={onRegister} onVerifyEmailCode={vi.fn(async () => undefined)} onResendConfirmation={vi.fn(async () => undefined)} />);
     fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
     fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "researcher@example.com" } });
     fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "synthetic-password" } });
@@ -75,13 +75,23 @@ describe("cloud interface locale", () => {
     expect((screen.getByLabelText("Cloud library email") as HTMLInputElement).value).toBe("researcher@example.com");
     expect((screen.getByLabelText("Cloud library password") as HTMLInputElement).value).toBe("synthetic-password");
     fireEvent.submit(screen.getByRole("button", { name: "Sign up for cloud library" }).closest("form")!);
-    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Confirm your account"));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Verification email submitted"));
+    expect(screen.getByRole("heading", { name: "Confirm your email" })).toBeTruthy();
+    expect(screen.getByLabelText("Email verification code")).toBeTruthy();
+    expect(screen.getByText("Step 2 of 3")).toBeTruthy();
+    expect(screen.getByTestId("cloud-confirmation-email").textContent).toBe("researcher@example.com");
     expect(onRegister).toHaveBeenCalledWith("researcher@example.com", "synthetic-password");
     expect(onLogin).not.toHaveBeenCalled();
 
     act(() => setLocale("zh-CN"));
-    expect(screen.getByRole("status").textContent).toContain("请在邮箱中确认账号");
+    expect(screen.getByRole("status").textContent).toContain("验证码邮件已提交发送");
+    expect(screen.getByRole("heading", { name: "确认你的邮箱" })).toBeTruthy();
+    expect(screen.getByText("第 2 步，共 3 步")).toBeTruthy();
+    expect(screen.getByTestId("cloud-confirmation-email").textContent).toBe("researcher@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "返回登录" }));
     expect(screen.getByRole("button", { name: "登录云库" })).toBeTruthy();
+    expect((screen.getByLabelText("云库邮箱") as HTMLInputElement).value).toBe("researcher@example.com");
+    expect((screen.getByLabelText("云库密码") as HTMLInputElement).value).toBe("");
     expect(onRegister).toHaveBeenCalledTimes(1);
   });
 

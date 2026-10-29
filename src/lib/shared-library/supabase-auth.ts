@@ -20,7 +20,7 @@ export class SupabaseAuthRepository implements AuthRepository {
     if (!response.ok) {
       const result = await response.json().catch(() => null) as { code?: string; error_code?: string } | null;
       const code = result?.code ?? result?.error_code;
-      const message = response.status >= 500 ? "云端账号服务暂不可用，请稍后重试；本地文件仍可正常使用。" : response.status === 429 ? "登录请求较多，请稍后再试。" : code === "email_not_confirmed" ? "邮箱尚未确认，请打开注册邮件中的链接后再登录。" : "登录未完成，请检查邮箱和密码，或使用忘记密码。";
+      const message = response.status >= 500 ? "云端账号服务暂不可用，请稍后重试；本地文件仍可正常使用。" : response.status === 429 ? "登录请求较多，请稍后再试。" : code === "email_not_confirmed" ? "邮箱尚未确认，请使用邮件中的验证码。" : "登录未完成，请检查邮箱和密码，或使用忘记密码。";
       throw Object.assign(new Error(message), { status: response.status, code });
     }
     const result = await response.json() as { access_token: string; refresh_token: string; expires_in: number; user: { id: string } };
@@ -29,6 +29,22 @@ export class SupabaseAuthRepository implements AuthRepository {
   }
 
   signIn(input: { email: string; password: string; deviceId: string }) { return this.token("password", { email: input.email, password: input.password }, input.deviceId); }
+  async verifyEmailCode(input: { email: string; token: string; deviceId: string }): Promise<AuthSession> {
+    const token = input.token.trim();
+    if (!/^\d{8}$/u.test(token)) throw Object.assign(new Error("验证码需要 8 位数字。"), { code: "otp_invalid" });
+    const response = await this.fetchImpl.call(globalThis, `${this.connection.supabaseUrl}/auth/v1/verify`, {
+      method: "POST", headers: { apikey: this.connection.publicKey, "content-type": "application/json" }, body: JSON.stringify({ email: input.email.trim(), token, type: "email" }), signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) {
+      const result = await response.json().catch(() => null) as { code?: string; error_code?: string } | null;
+      const code = result?.code ?? result?.error_code;
+      const message = response.status === 429 ? "验证码尝试较多，请稍后重试。" : "验证码无效或已过期，请重新发送后再试。";
+      throw Object.assign(new Error(message), { status: response.status, code });
+    }
+    const result = await response.json() as { access_token?: string; refresh_token?: string; expires_in?: number; user?: { id?: string } };
+    if (!result.access_token || !result.refresh_token || !result.user?.id || !Number.isFinite(result.expires_in)) throw new Error("验证码验证返回无效会话。");
+    return { accessToken: result.access_token, refreshToken: result.refresh_token, userId: result.user.id, deviceId: input.deviceId, issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + result.expires_in! * 1000).toISOString() };
+  }
   async signUp(email: string, password: string, redirectTo?: string): Promise<{ confirmationRequired: boolean; confirmationSent: boolean }> {
     const response = await this.fetchImpl.call(globalThis, this.emailEndpoint("signup", redirectTo), {
       method: "POST", headers: { apikey: this.connection.publicKey, "content-type": "application/json" },
@@ -118,7 +134,7 @@ export class CloudAuthSession {
   private mutation: Promise<void> = Promise.resolve();
   private generation = 0;
   private userId: string | null = null;
-  constructor(private readonly store: AuthSessionStore, private readonly repository: AuthRepository & { confirmEmail?: (tokens: EmailConfirmationTokens, deviceId: string) => Promise<AuthSession> }, private readonly deviceId: string) {}
+  constructor(private readonly store: AuthSessionStore, private readonly repository: AuthRepository & { confirmEmail?: (tokens: EmailConfirmationTokens, deviceId: string) => Promise<AuthSession>; verifyEmailCode?: (input: { email: string; token: string; deviceId: string }) => Promise<AuthSession> }, private readonly deviceId: string) {}
   /** Serialize durable changes so a delayed save cannot finish after logout. */
   private mutate<T>(operation: () => Promise<T>): Promise<T> {
     const next = this.mutation.then(operation);
@@ -143,6 +159,12 @@ export class CloudAuthSession {
   async signIn(email: string, password: string) {
     const epoch = ++this.generation;
     const session = await this.repository.signIn({ email, password, deviceId: this.deviceId });
+    return this.saveIdentity(session, epoch);
+  }
+  async verifyEmailCode(email: string, token: string) {
+    const epoch = ++this.generation;
+    if (!this.repository.verifyEmailCode) throw new Error("当前云服务不支持邮箱验证码，请使用邮件确认流程。");
+    const session = await this.repository.verifyEmailCode({ email, token, deviceId: this.deviceId });
     return this.saveIdentity(session, epoch);
   }
   async load(): Promise<AuthSession | null> {

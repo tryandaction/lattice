@@ -775,7 +775,7 @@ const katexOptions = {
   macros: KATEX_MACROS,
   throwOnError: false,
   strict: false,
-  trust: true,
+  trust: false,
 };
 
 const EMPTY_CITATION_CONTRACTS: CitationContract[] = [];

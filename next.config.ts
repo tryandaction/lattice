@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
 
 const createNextConfig = (phase: string): NextConfig => ({
+  turbopack: { root: __dirname },
   // Static hosting uses the exported `/library` shell plus the Pages
   // fallback in `public/_redirects`. Development keeps request-time dynamic
   // routes enabled so arbitrary Library/Item deep links can be debugged.

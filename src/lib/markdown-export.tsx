@@ -72,7 +72,7 @@ const KATEX_OPTIONS = {
   macros: KATEX_MACROS,
   throwOnError: false,
   strict: false,
-  trust: true,
+  trust: false,
 };
 
 const A4_PAGE_WIDTH_PX = 794;

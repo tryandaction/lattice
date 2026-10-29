@@ -263,6 +263,18 @@ export function CloudLibraryControllerHost() {
         <CloudConnectionPanel connections={connections} activeId={activeId} managedConnectionId={managedConnectionId} userId={controller?.userId} onInvitation={savePendingInvite} startWithJoin={joiningInviteMode} confirmation={emailConfirmation ? { tone: emailConfirmation.tone, message: t(emailConfirmation.messageKey) } : undefined}
           passwordRecovery={passwordRecovery?.connectionId === activeId}
           onRequestPasswordReset={async email => { const connection = connections.find(value => value.id === activeId); if (!connection) throw new Error(t("cloud.connection.configureFirst")); await new SupabaseAuthRepository(connection).requestPasswordReset(email, window.location.href); }}
+          onVerifyEmailCode={async (email, code) => {
+            const auth = authRef.current; const connection = connections.find(value => value.id === activeId);
+            if (!auth || !connection) throw new Error(t("cloud.connection.configureFirst"));
+            closeIdentity(); const epoch = epochRef.current;
+            const session = await auth.verifyEmailCode(email, code);
+            try { await bind(connection, auth, session.userId, epoch); } catch {
+              if (epoch !== epochRef.current || authRef.current !== auth) return;
+              closeIdentity();
+              throw Object.assign(new Error(t("cloud.otp.connectionFailed")), { code: "email_verified_connection_failed" });
+            }
+            if (epoch === epochRef.current && authRef.current === auth) setEmailConfirmation({ tone: "success", messageKey: "cloud.otp.verified" });
+          }}
           onResetPassword={async password => { const recovery = passwordRecovery; const connection = connections.find(value => value.id === recovery?.connectionId); if (!recovery || !connection) throw new Error(t("cloud.email.unknownService")); await new SupabaseAuthRepository(connection).resetPassword(recovery.tokens, password); setPasswordRecovery(null); }}
           onCancelPasswordRecovery={() => setPasswordRecovery(null)}
           onContinueLocal={() => { setJoiningInviteMode(false); cloud.setActive(false); cloud.setManagementOpen(false); }}

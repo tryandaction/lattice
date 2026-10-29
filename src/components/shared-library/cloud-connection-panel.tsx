@@ -3,7 +3,7 @@
 import { useI18n } from "@/hooks/use-i18n";
 import type { TranslationKey } from "@/lib/i18n";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CloudLibraryConnection } from "@/lib/shared-library/connection";
 import { parseCloudConnectionInput, resolveCloudConnection, validateCloudConnection } from "@/lib/shared-library/connection";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ export interface CloudConnectionPanelProps {
   onLogin: (email: string, password: string) => Promise<void>; onLogout: () => Promise<void>;
   onRegister?: (email: string, password: string) => Promise<{ confirmationRequired: boolean; confirmationSent?: boolean } | void>;
   onResendConfirmation?: (email: string) => Promise<void>;
+  onVerifyEmailCode?: (email: string, code: string) => Promise<void>;
   onRequestPasswordReset?: (email: string) => Promise<void>;
   onResetPassword?: (password: string) => Promise<void>;
   onCancelPasswordRecovery?: () => void;
@@ -36,7 +37,7 @@ export function CloudConnectionPanel(props: CloudConnectionPanelProps) {
   return <CloudConnectionPanelContent key={`${identity}:${String(Boolean(props.startWithJoin))}`} {...props} />;
 }
 
-function CloudConnectionPanelContent({ connections, activeId, managedConnectionId, onSelect, onSave, onLogin, onLogout, onRegister, onResendConfirmation, onRequestPasswordReset, onResetPassword, onCancelPasswordRecovery, passwordRecovery, serviceUnavailable, onRetry, onContinueLocal, confirmation, userId, onInvitation, startWithJoin }: CloudConnectionPanelProps) {
+function CloudConnectionPanelContent({ connections, activeId, managedConnectionId, onSelect, onSave, onLogin, onLogout, onRegister, onResendConfirmation, onVerifyEmailCode, onRequestPasswordReset, onResetPassword, onCancelPasswordRecovery, passwordRecovery, serviceUnavailable, onRetry, onContinueLocal, confirmation, userId, onInvitation, startWithJoin }: CloudConnectionPanelProps) {
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [advanced, setAdvanced] = useState(false);
@@ -48,6 +49,9 @@ function CloudConnectionPanelContent({ connections, activeId, managedConnectionI
   const [error, setError] = useState<string | null>(null);
   const [invalidInput, setInvalidInput] = useState(false);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const [verificationCode, setVerificationCode] = useState("");
+  const [resendSeconds, setResendSeconds] = useState(0);
   const [joining, setJoining] = useState(Boolean(startWithJoin));
   const [registering, setRegistering] = useState(false);
   const [forgotPassword, setForgotPassword] = useState(false);
@@ -57,24 +61,45 @@ function CloudConnectionPanelContent({ connections, activeId, managedConnectionI
   const managedSelected = Boolean(selected && selected.id === managedConnectionId);
   const showAdvancedForm = advanced || editing;
   const unavailable = serviceUnavailable || !selected;
+  const codeFlow = Boolean(onVerifyEmailCode);
   const registrationEmailSent = confirmationState === "sent";
   const confirmationTitle = registrationEmailSent ? "cloud.account.confirmationTitle" : confirmationState === "unknown" ? "cloud.account.confirmationUnknownTitle" : "cloud.account.confirmationNeededTitle";
-  const confirmationHint = registrationEmailSent ? "cloud.account.confirmationHint" : confirmationState === "unknown" ? "cloud.account.confirmationUnknownHint" : "cloud.account.confirmationNeededHint";
+  const confirmationHint = registrationEmailSent ? "cloud.account.confirmationHint" : confirmationState === "unknown" ? "cloud.account.confirmationUnknownHint" : codeFlow ? "cloud.account.confirmationNeededHint" : "cloud.account.confirmationLegacyHint";
   const showRegistrationConfirmation = confirmationState !== null && !userId && !passwordRecovery && !forgotPassword && !registering && Boolean(email.trim());
+  useEffect(() => {
+    if (resendSeconds <= 0) return;
+    const timer = setTimeout(() => setResendSeconds(value => Math.max(0, value - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [resendSeconds]);
 
   function changeAccountMode(mode: "login" | "register" | "forgot") {
     setRegistering(mode === "register");
     setForgotPassword(mode === "forgot");
     setConfirmationState(null);
+    setVerificationCode("");
     setError(null); setInvalidInput(false); setNotice(""); setPassword(""); setRepeatedPassword("");
   }
 
   async function execute(action: () => Promise<void>) {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true); setError(null); setInvalidInput(false);
     try { await action(); } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-      if ((cause as { code?: string })?.code === "email_not_confirmed") { setConfirmationState("unconfirmed"); setPassword(""); }
-    } finally { setBusy(false); }
+      if ((cause as { code?: string })?.code === "email_not_confirmed") {
+        setError(t(codeFlow ? "cloud.account.confirmationNeededNotice" : "cloud.account.confirmationLegacyNotice")); setConfirmationState("unconfirmed"); setPassword("");
+      } else if ((cause as { code?: string })?.code === "email_verified_connection_failed") {
+        setConfirmationState(null); setVerificationCode(""); setNotice(""); setPassword("");
+        setError(t("cloud.otp.connectionFailed"));
+      } else setError(cause instanceof Error ? cause.message : String(cause));
+    } finally { busyRef.current = false; setBusy(false); }
+  }
+  async function resend() {
+    if (!onResendConfirmation || (codeFlow && resendSeconds > 0)) return;
+    await execute(async () => {
+      await onResendConfirmation(email.trim());
+      if (codeFlow) { setVerificationCode(""); setResendSeconds(60); }
+      setConfirmationState("unknown"); setNotice(codeFlow ? "cloud.otp.resent" : "cloud.connection.resendNotice"); setPassword("");
+    });
   }
 
   
@@ -113,11 +138,16 @@ function CloudConnectionPanelContent({ connections, activeId, managedConnectionI
 
     {showRegistrationConfirmation ? <section className="mt-3 grid gap-3 rounded-md border border-border bg-muted/20 p-3" aria-labelledby="cloud-confirmation-title">
       <div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("cloud.account.confirmationStep")}</p><h3 id="cloud-confirmation-title" className="mt-1 text-sm font-medium">{t(confirmationTitle)}</h3></div>{registrationEmailSent ? <span className="text-xs text-muted-foreground">{t("cloud.account.confirmationStepCount")}</span> : null}</div>
-      <p className="text-xs leading-relaxed text-muted-foreground">{t(confirmationHint)}</p>
+      <p className="text-xs leading-relaxed text-muted-foreground">{t(codeFlow ? "cloud.otp.hint" : confirmationHint)}</p>
       <p className="rounded border border-border/70 bg-background px-2 py-1.5 text-sm" data-testid="cloud-confirmation-email">{email}</p>
+      {onVerifyEmailCode ? <form className="grid gap-2" onSubmit={event => { event.preventDefault(); if (busyRef.current) return; const code = verificationCode.trim(); if (!/^\d{8}$/u.test(code)) { setError(t("cloud.otp.invalid")); return; } void execute(async () => { await onVerifyEmailCode(email.trim(), code); setVerificationCode(""); setNotice("cloud.otp.verified"); }); }}>
+        <label className="grid gap-1 text-xs">{t("cloud.otp.label")}<input className={`${field} tracking-[0.25em]`} aria-label={t("cloud.otp.label")} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{8}" maxLength={8} value={verificationCode} onChange={event => setVerificationCode(event.target.value)} disabled={busy} required /></label>
+        <Button size="sm" type="submit" disabled={busy || !verificationCode.trim()}>{busy ? t("cloud.connection.processing") : t("cloud.otp.verify")}</Button>
+      </form> : null}
       <div className="flex flex-wrap items-center gap-2">
-        {onResendConfirmation ? <Button type="button" size="sm" disabled={busy} onClick={() => void execute(async () => { await onResendConfirmation(email.trim()); setConfirmationState("unknown"); setNotice("cloud.connection.resendNotice"); setPassword(""); })}>{busy ? t("cloud.connection.processing") : t("cloud.connection.resend")}</Button> : null}
-        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { setConfirmationState(null); setNotice(""); setPassword(""); }}>{t("cloud.account.returnToLogin")}</Button>
+        {onResendConfirmation ? <Button type="button" size="sm" disabled={busy || (codeFlow && resendSeconds > 0)} onClick={() => void resend()}>{busy ? t("cloud.connection.processing") : codeFlow && resendSeconds > 0 ? t("cloud.otp.cooldown", { seconds: resendSeconds }) : t("cloud.connection.resend")}</Button> : null}
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { setConfirmationState(null); setVerificationCode(""); setNotice(""); setPassword(""); }}>{t("cloud.account.returnToLogin")}</Button>
+        {codeFlow ? <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => changeAccountMode("register")}>{t("cloud.otp.changeEmail")}</Button> : null}
       </div>
       {registrationEmailSent ? <p className="text-xs text-muted-foreground">{t("cloud.account.confirmationNext")}</p> : null}
     </section> : null}
@@ -133,7 +163,8 @@ function CloudConnectionPanelContent({ connections, activeId, managedConnectionI
       if (registering && onRegister) {
         const result = await onRegister(email.trim(), password);
         setConfirmationState(result?.confirmationRequired === false ? null : result?.confirmationSent === true ? "sent" : "unknown");
-        setRegistering(false); setNotice(result?.confirmationRequired === false ? "cloud.connection.createdNotice" : result?.confirmationSent === true ? "cloud.account.confirmationSentNotice" : "cloud.account.confirmationUnknownNotice");
+        if (codeFlow && result?.confirmationSent === true) setResendSeconds(60);
+        setRegistering(false); setNotice(result?.confirmationRequired === false ? "cloud.connection.createdNotice" : result?.confirmationSent === true ? codeFlow ? "cloud.otp.sent" : "cloud.account.confirmationSentNotice" : "cloud.account.confirmationUnknownNotice");
       } else await onLogin(email.trim(), password);
       setPassword("");
     }); }}>
@@ -149,7 +180,7 @@ function CloudConnectionPanelContent({ connections, activeId, managedConnectionI
         {!passwordRecovery && onRegister && !forgotPassword ? <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => changeAccountMode(registering ? "login" : "register")}>{registering ? t("cloud.connection.backToLogin") : t("cloud.connection.createAccount")}</Button> : null}
         {!passwordRecovery && onRequestPasswordReset && !registering ? <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => changeAccountMode(forgotPassword ? "login" : "forgot")}>{t(forgotPassword ? "cloud.connection.backToLogin" : "cloud.account.forgotPassword")}</Button> : null}
         {passwordRecovery && onCancelPasswordRecovery ? <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onCancelPasswordRecovery}>{t("cloud.connection.backToLogin")}</Button> : null}
-        {!passwordRecovery && !forgotPassword && onResendConfirmation && !registering && (confirmationState !== null || confirmation?.tone === "error") ? <Button type="button" variant="ghost" size="sm" disabled={busy || !email.trim()} onClick={() => void execute(async () => { await onResendConfirmation(email.trim()); setConfirmationState("unknown"); setNotice("cloud.connection.resendNotice"); setPassword(""); })}>{t("cloud.connection.resend")}</Button> : null}
+        {!passwordRecovery && !forgotPassword && onResendConfirmation && !registering && (confirmationState !== null || confirmation?.tone === "error") ? <Button type="button" variant="ghost" size="sm" disabled={busy || !email.trim() || (codeFlow && resendSeconds > 0)} onClick={() => void resend()}>{codeFlow && resendSeconds > 0 ? t("cloud.otp.cooldown", { seconds: resendSeconds }) : t("cloud.connection.resend")}</Button> : null}
       </div>
     </form> : null}
     {notice ? <p role="status" className="mt-2 text-xs text-muted-foreground">{t(notice)}</p> : null}

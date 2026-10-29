@@ -37,7 +37,7 @@ interface AnnotationMarkdownRendererProps {
 
 // Stable outside component — never recreated
 const REMARK_PLUGINS: PluggableList = [remarkGfm, remarkMath];
-const KATEX_OPTIONS = { macros: KATEX_MACROS, throwOnError: false, strict: false, trust: true };
+const KATEX_OPTIONS = { macros: KATEX_MACROS, throwOnError: false, strict: false, trust: false };
 
 export function AnnotationMarkdownRenderer({
   content,

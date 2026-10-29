@@ -22,6 +22,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve pending annotation changes during remote refresh; acknowledge normalized shared annotations without hiding later collaborator updates.
 - Keep shared AI annotation attribution and undo consistent across synchronization and reopening.
 
+## [3.2.0] - 2026-10-29
+
+### Added
+- Complete cloud signup with an eight-digit email verification code; successful verification establishes the cloud session.
+- Provide explicit signup, resend cooldown, first-library, invitation, GitHub and mobile navigation flows.
+
+### Fixed
+- Report email delivery as confirmed only when Auth returns a confirmation timestamp; distinguish unknown delivery, unconfirmed accounts and rate limits.
+- Recover with password sign-in when email verification succeeds but cloud library loading fails; never ask users to reuse a consumed code.
+- Send signup and resend callbacks to the official Pages URL and remove obsolete Pages host references from active deployment guidance.
+- Build against the current File System Access API async iterator contract while retaining the desktop bridge behavior.
+- Align the Tauri JavaScript API with the pinned Rust runtime and CLI; resolve production build dependencies from the current project root.
+
+### Security
+- Update HTML sanitization, formula rendering and build dependencies to patched versions; apply one KaTeX version across Markdown plugins.
+- Reject untrusted formula resource and HTML commands while retaining scientific fractions, matrices and physics macros.
+
 ## [3.1.9] - 2026-10-26
 
 ### Fixed
