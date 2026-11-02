@@ -60,6 +60,13 @@ The 3.2.1 web build and native executable compilation succeeded. The first full 
 
 The installed-version smoke used its own diagnostic identifier and temporary WebView profile. It exercised actual native minimize/restore, a separately labeled synthetic visibility transition, close/reopen OTP retention, seven-page PDF rendering, renderer highlight/sidecar persistence, and native PDF byte-copy round trip. Only its own process was closed; the separate application instance observed after installation was preserved. This is basic PDF read/write coverage, not an annotated-PDF export claim.
 
-Production deployment and Git publishing are recorded after their respective completion checks; local success alone is not a production-deployment result.
+## Published release verification
+
+- Source commit `d5273a6dcc1b88b9fac4de396adc1b301e8ea1bb` was pushed without force to `origin/main`, then independently confirmed with `git ls-remote`.
+- `releases/v3.2.1/release-manifest.json` records that source commit with `gitDirty: false`. The fresh release directory contains only the verified NSIS installer and executable plus checksums/summary; no 3.2.1 MSI or GitHub Release upload is claimed.
+- `node scripts/deploy-cloudflare-pages.mjs` exited 0 against the existing `lattice` / `main` Pages target. It deployed the previously accepted static files without rebuilding or incorporating the original checkout's AI changes.
+- Public production GETs at `2026-11-02T12:37:32.5677250Z` confirmed `https://lattice-apq.pages.dev/` and its `build-info.json` both match version `3.2.1` and index SHA256 `3569326dc9a9e89b4ed99783c06e7836d99c9ec5c0b98cdbc39811f13acb07b0`. The published frontend build timestamp is `2026-11-02T11:40:53.892Z`.
+- This publication record is a documentation-only follow-up to the source commit. The installed binary and production static assets remain the exact verified artifacts above.
+- The original checkout remains on its previous local `main` with the independent AI modifications preserved and uncommitted. The release checkout is isolated and is retained with its local release artifacts.
 
 Real OTP delivery remains **not tested**. An accepted synthetic send response or an older confirmation-link email is not delivery evidence.

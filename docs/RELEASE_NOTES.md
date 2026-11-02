@@ -8,7 +8,7 @@
 - GitHub authorization waits for the web callback before claiming the result, including immediate redirects. Collaborative Markdown save failures keep the draft visible and offer copy/retry recovery before manually merging the latest version.
 - The release gate prepares pinned local PostgreSQL fixtures. Security dependencies are updated, and NSIS updates abort when the application is running instead of terminating user instances.
 
-The full gate passed with 5,980 tests and 3 explicitly documented skips. Synthetic browser acceptance covers 144 product assertions and the isolated desktop candidate passed 10 auth/PDF checks. These results do not claim real OTP delivery, real GitHub authorization or paid AI calls. Final installation, deployment, version hashes and Git status are recorded in [the November 2 acceptance record](tests/2026-11-02-cloud-account-repair.md).
+The full gate passed with 5,980 tests and 3 explicitly documented skips. Synthetic browser acceptance covers 144 product assertions, and the installed 3.2.1 desktop release passed 10 auth/PDF checks. The production webpage was verified against the accepted static build. These results do not claim real OTP delivery, real GitHub authorization or paid AI calls. Installation, deployment, version hashes and Git status are recorded in [the November 2 acceptance record](tests/2026-11-02-cloud-account-repair.md).
 
 ## October 21 AI reference completion correction
 
