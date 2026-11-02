@@ -3,7 +3,7 @@
  */
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CloudConnectionPanel } from "../cloud-connection-panel";
 import type { CloudLibraryConnection } from "@/lib/shared-library/connection";
 
@@ -19,7 +19,9 @@ const props = (overrides: Partial<React.ComponentProps<typeof CloudConnectionPan
   ...overrides,
 });
 
-afterEach(() => { cleanup(); vi.useRealTimers(); });
+beforeEach(() => sessionStorage.clear());
+
+afterEach(() => { cleanup(); sessionStorage.clear(); vi.useRealTimers(); });
 
 const managedConnection = { id: "lattice-managed", name: "Lattice 云库", apiUrl: "https://cloud.example.com", supabaseUrl: "https://db.supabase.co", publicKey: "sb_publishable_test", maxFileBytes: 1000 };
 
@@ -29,6 +31,7 @@ async function registerWithCode(overrides: Partial<React.ComponentProps<typeof C
   fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
   fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "member@example.com" } });
   fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "new-password" } });
+  fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "new-password" } });
   await act(async () => fireEvent.submit(screen.getByRole("button", { name: "注册云库" }).closest("form")!));
   return values;
 }
@@ -43,7 +46,9 @@ describe("cloud email code verification", () => {
     await act(async () => fireEvent.submit(screen.getByRole("button", { name: "验证并登录" }).closest("form")!));
     expect(values.onVerifyEmailCode).toHaveBeenCalledWith("member@example.com", "12345678");
     expect(values.onLogin).not.toHaveBeenCalled();
-    expect((input as HTMLInputElement).value).toBe("");
+    expect(screen.queryByLabelText("验证码")).toBeNull();
+    expect(screen.getByLabelText("云库密码")).toHaveProperty("value", "");
+    expect(JSON.stringify(Object.values(sessionStorage))).not.toContain("12345678");
     expect(screen.getByRole("status").textContent).toContain("验证成功");
   });
 
@@ -166,6 +171,7 @@ describe("CloudConnectionPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
     fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "member@example.com" } });
     fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "new-password" } });
+    fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "new-password" } });
     fireEvent.submit(screen.getByRole("button", { name: "注册云库" }).closest("form")!);
     await waitFor(() => expect(onRegister).toHaveBeenCalledWith("member@example.com", "new-password"));
     expect(values.onLogin).not.toHaveBeenCalled();
@@ -185,6 +191,7 @@ describe("CloudConnectionPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
     fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "member@example.com" } });
     fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "new-password" } });
+    fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "new-password" } });
     fireEvent.submit(screen.getByRole("button", { name: "注册云库" }).closest("form")!);
     await waitFor(() => expect(screen.getByRole("heading", { name: "检查邮箱或登录" })).toBeTruthy());
     expect(screen.queryByText("确认邮件已发送，请打开最新邮件中的链接。")).toBeNull();
@@ -196,6 +203,7 @@ describe("CloudConnectionPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
     fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "member@example.com" } });
     fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "new-password" } });
+    fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "new-password" } });
     fireEvent.submit(screen.getByRole("button", { name: "注册云库" }).closest("form")!);
     await waitFor(() => expect(screen.getByRole("heading", { name: "检查邮箱或登录" })).toBeTruthy());
     expect(screen.queryByText("确认邮件已发送，请打开最新邮件中的链接。")).toBeNull();

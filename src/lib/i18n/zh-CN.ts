@@ -3,6 +3,11 @@
  */
 
 export const zhCN = {
+  'markdown.save.failedDraftKept': '保存未完成，草稿仍保留在编辑器中。若云端版本已变化，请先复制草稿，再关闭文档并选择“不保存”，重新打开最新版本后合并。',
+  'markdown.save.copyDraft': '复制草稿',
+  'markdown.save.retry': '再次保存',
+  'markdown.save.draftCopied': '草稿已复制，编辑内容仍保留。',
+  'markdown.save.copyFailed': '未能复制，请在编辑器中全选并手动复制，确认保留草稿后再关闭文档。',
   'formula.review.invalidSyntax': '公式语法需要校正，请与原图对照。',
   'formula.review.originalImage': '公式原图',
   'formula.review.originalPrediction': '识别原始结果',
@@ -357,9 +362,10 @@ export const zhCN = {
   'cloud.account.resetHint': '为邮件链接对应的账号设置新密码。当前打开的其他账号不会切换。',
   'cloud.account.newPassword': '新密码',
   'cloud.account.repeatPassword': '确认新密码',
+  'cloud.account.confirmPassword': '确认密码',
   'cloud.account.savePassword': '保存新密码',
   'cloud.account.passwordLength': '新密码至少需要 8 个字符。',
-  'cloud.account.passwordMismatch': '两次输入的新密码不一致。',
+  'cloud.account.passwordMismatch': '两次输入的密码不一致。',
   'cloud.account.confirmationStep': '注册流程',
   'cloud.otp.label': '验证码',
   'cloud.otp.hint': '输入邮件中的 8 位验证码完成邮箱验证，验证后直接登录。未收到时请检查垃圾邮件；不要向他人分享验证码。',

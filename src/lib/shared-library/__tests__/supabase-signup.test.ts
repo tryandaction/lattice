@@ -64,3 +64,99 @@ describe("cloud account registration", () => {
     expect(request).not.toHaveBeenCalled();
   });
 });
+
+
+describe("cloud account error recovery", () => {
+  it("keeps a temporary verification service failure distinct from an invalid or expired code", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ code: "unexpected_failure", message: "private upstream detail" }), { status: 503 }));
+    const failure = await new SupabaseAuthRepository(connection, request).verifyEmailCode({ email: "member@example.com", token: "12345678", deviceId: "device" }).catch(error => error);
+    expect(failure).toMatchObject({ status: 503, code: "unexpected_failure", message: expect.stringContaining("服务暂不可用") });
+    expect(failure.message).not.toMatch(/无效|过期|重新发送|private upstream/u);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["signIn", "signUp", "verify", "resend", "recover"] as const)("provides a safe network recovery message for %s without retrying or reflecting private upstream text", async operation => {
+    const request = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("private upstream transport detail"));
+    const repository = new SupabaseAuthRepository(connection, request);
+    const result = operation === "signIn" ? repository.signIn({ email: "member@example.com", password: "synthetic-password", deviceId: "device" })
+      : operation === "signUp" ? repository.signUp("member@example.com", "synthetic-password")
+      : operation === "verify" ? repository.verifyEmailCode({ email: "member@example.com", token: "12345678", deviceId: "device" })
+      : operation === "resend" ? repository.resendConfirmation("member@example.com")
+      : repository.requestPasswordReset("member@example.com");
+    const failure = await result.catch(error => error);
+    expect(failure).toMatchObject({ code: "network_error", message: expect.stringContaining("网络") });
+    expect(failure.message).not.toMatch(/private upstream|无效|过期|重新发送/u);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("distinguishes request timeout from invalid credentials", async () => {
+    const request = vi.fn<typeof fetch>().mockRejectedValue(new DOMException("private timeout detail", "TimeoutError"));
+    await expect(new SupabaseAuthRepository(connection, request).verifyEmailCode({ email: "member@example.com", token: "12345678", deviceId: "device" })).rejects.toMatchObject({ code: "request_timeout", message: expect.stringContaining("超时") });
+  });
+
+  it.each(["email_exists", "user_already_exists"])("gives an existing account a sign-in recovery path for %s and preserves the error code", async code => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ code, message: "private upstream account detail" }), { status: 422 }));
+    await expect(new SupabaseAuthRepository(connection, request).signUp("member@example.com", "synthetic-password")).rejects.toMatchObject({ status: 422, code, message: expect.stringMatching(/已注册.*登录.*忘记密码/u) });
+  });
+
+  it("keeps the stable error code from legacy Supabase envelopes", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ code: 400, error_code: "email_not_confirmed", msg: "private upstream account detail" }), { status: 400 }));
+    await expect(new SupabaseAuthRepository(connection, request).signIn({ email: "member@example.com", password: "synthetic-password", deviceId: "device" })).rejects.toMatchObject({ code: "email_not_confirmed", message: expect.stringContaining("邮箱尚未确认") });
+  });
+
+  it("preserves signup and resend rate-limit codes without reflecting upstream messages", async () => {
+    const request = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ error_code: "over_email_send_rate_limit", msg: "private upstream detail" }), { status: 429 }));
+    const repository = new SupabaseAuthRepository(connection, request);
+    await expect(repository.signUp("member@example.com", "synthetic-password")).rejects.toMatchObject({ status: 429, code: "over_email_send_rate_limit", message: expect.stringContaining("稍后") });
+    await expect(repository.resendConfirmation("member@example.com")).rejects.toMatchObject({ status: 429, code: "over_email_send_rate_limit", message: expect.stringContaining("稍后") });
+  });
+
+  it("reads a stable auth error code from the response header when the body is not JSON", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response("private upstream gateway page", { status: 502, headers: { "x-sb-error-code": "unexpected_failure" } }));
+    await expect(new SupabaseAuthRepository(connection, request).verifyEmailCode({ email: "member@example.com", token: "12345678", deviceId: "device" })).rejects.toMatchObject({ status: 502, code: "unexpected_failure", message: expect.stringContaining("服务暂不可用") });
+  });
+});
+
+
+describe("verified email session persistence", () => {
+  it.each(["{}", "not-json"])("recovers with password login after a successful verify response has an unusable session: %s", async body => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, { status: 200 }));
+    await expect(new SupabaseAuthRepository(connection, request).verifyEmailCode({ email: "member@example.com", token: "12345678", deviceId: "device" })).rejects.toMatchObject({ code: "email_verified_connection_failed", message: expect.stringContaining("邮箱已验证") });
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks the code consumed if session persistence fails after successful verification", async () => {
+    const { CloudAuthSession } = await import("../supabase-auth");
+    const session = { userId: "verified-user", deviceId: "device", accessToken: "fixture-access", refreshToken: "fixture-refresh", issuedAt: "2026-11-02T00:00:00Z", expiresAt: "2026-11-02T01:00:00Z" };
+    const verifyEmailCode = vi.fn().mockResolvedValue(session);
+    const auth = new CloudAuthSession({ getSession: async () => null, saveSession: async () => { throw new Error("private storage detail"); }, clearSession: async () => {} }, { verifyEmailCode, signIn: vi.fn(), refresh: vi.fn(), signOut: vi.fn() }, "device");
+    const failure = await auth.verifyEmailCode("member@example.com", "12345678").catch(error => error);
+    expect(failure).toMatchObject({ code: "email_verified_connection_failed", message: expect.stringContaining("邮箱已验证") });
+    expect(failure.message).toMatch(/密码登录/u);
+    expect(failure.message).not.toMatch(/private storage|重新发送/u);
+    expect(verifyEmailCode).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a rejected verification code without treating it as consumed", async () => {
+    const { CloudAuthSession } = await import("../supabase-auth");
+    const failure = Object.assign(new Error("验证码无效或已过期。"), { code: "otp_expired", status: 403 });
+    const saveSession = vi.fn();
+    const auth = new CloudAuthSession({ getSession: async () => null, saveSession, clearSession: async () => {} }, { verifyEmailCode: vi.fn().mockRejectedValue(failure), signIn: vi.fn(), refresh: vi.fn(), signOut: vi.fn() }, "device");
+    await expect(auth.verifyEmailCode("member@example.com", "12345678")).rejects.toBe(failure);
+    expect(saveSession).not.toHaveBeenCalled();
+  });
+
+  it("marks a verified code consumed after identity cancellation without saving the stale identity", async () => {
+    const { CloudAuthSession } = await import("../supabase-auth");
+    let completeVerification!: (session: import("../auth").AuthSession) => void;
+    const saveSession = vi.fn();
+    const auth = new CloudAuthSession({ getSession: async () => null, saveSession, clearSession: async () => {} }, { verifyEmailCode: vi.fn().mockReturnValue(new Promise(resolve => { completeVerification = resolve; })), signIn: vi.fn(), refresh: vi.fn(), signOut: vi.fn() }, "device");
+    const pending = auth.verifyEmailCode("member@example.com", "12345678").catch(error => error);
+    auth.invalidate();
+    completeVerification({ userId: "verified-user", deviceId: "device", accessToken: "fixture-access", refreshToken: "fixture-refresh", issuedAt: "2026-11-02T00:00:00Z", expiresAt: "2026-11-02T01:00:00Z" });
+    const failure = await pending;
+    expect(failure.message).toContain("邮箱已验证");
+    expect(failure.code).toBe("email_verified_connection_failed");
+    expect(saveSession).not.toHaveBeenCalled();
+  });
+});

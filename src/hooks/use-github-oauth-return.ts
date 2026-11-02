@@ -26,7 +26,7 @@ export function useGitHubOAuthReturn(controller: CloudLibraryWorkspaceController
         }
         if (result.cleanUrl !== window.location.href) history.replaceState(history.state, '', result.cleanUrl);
         if (result.error) { sessionStorage.removeItem(GITHUB_OAUTH_ATTEMPT_KEY); sessionStorage.removeItem(GITHUB_OAUTH_RETURN_KEY); callback = null; useCloudWorkbenchStore.getState().setError(result.error); useCloudWorkbenchStore.getState().setManagementOpen(true, 'github'); }
-        if (!callback && !result.error && attempt.flow === 'server') callback = { attempt, state: attempt.state, exchangeStarted: false };
+        if (!callback && !result.error && attempt.flow === 'server' && !attempt.returnTo) callback = { attempt, state: attempt.state, exchangeStarted: false };
       }
       if (callback) { pending.current = callback; useCloudWorkbenchStore.getState().setManagementOpen(true, 'github'); }
       setIdentityRevision(value => value + 1);
@@ -39,7 +39,7 @@ export function useGitHubOAuthReturn(controller: CloudLibraryWorkspaceController
   }, []);
   useEffect(() => {
     const callback = pending.current;
-    if (!controller || !callback || processing.current) return;
+    if (!identityRevision || !controller || !callback || processing.current) return;
     const activeController = controller;
     if (activeController.connection.id !== callback.attempt.connectionId || activeController.userId !== callback.attempt.userId) { useCloudWorkbenchStore.getState().setError('请登录发起 GitHub 授权的云库账号后继续。'); return; }
     function clear() {
@@ -60,6 +60,7 @@ export function useGitHubOAuthReturn(controller: CloudLibraryWorkspaceController
       if (!alreadyConnected?.connected || alreadyConnected.requiresReauth) {
         if (callback!.attempt.flow === 'server') {
           const result = await client.claim({ state: callback!.state, connectionId: callback!.attempt.connectionId });
+          if (!active) return;
           if ('pending' in result) {
             callback!.exchangeStarted = false;
             sessionStorage.setItem(GITHUB_OAUTH_RETURN_KEY, JSON.stringify(callback));
@@ -69,6 +70,7 @@ export function useGitHubOAuthReturn(controller: CloudLibraryWorkspaceController
           }
         } else await client.exchange({ code: callback!.code!, state: callback!.state, redirectUri: callback!.attempt.redirectUri });
       }
+      if (!active) return;
       clear();
       if (useCloudWorkbenchStore.getState().controller !== activeController) return;
       await activeController.refreshLibraries();
@@ -77,6 +79,7 @@ export function useGitHubOAuthReturn(controller: CloudLibraryWorkspaceController
       if (libraryId) await useCloudWorkbenchStore.getState().selectLibrary(libraryId);
       if (useCloudWorkbenchStore.getState().controller === activeController) useCloudWorkbenchStore.getState().setManagementOpen(true, 'github');
       } catch (cause) {
+      if (!active) return;
       const status = (cause as { status?: number }).status;
       if (typeof status === 'number' && status >= 400 && status < 500) clear();
       if (useCloudWorkbenchStore.getState().controller === activeController) useCloudWorkbenchStore.getState().setError(cause);

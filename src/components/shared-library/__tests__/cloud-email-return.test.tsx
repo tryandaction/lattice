@@ -50,11 +50,12 @@ beforeEach(() => {
   snapshot.libraries = [];
   setLocale("zh-CN");
   localStorage.clear();
+  sessionStorage.clear();
   window.history.replaceState(null, "", "/");
   useCloudWorkbenchStore.setState({ active: false, managementOpen: false, controller: null, provider: null, libraryId: "", error: null });
   vi.stubEnv("NEXT_PUBLIC_LATTICE_CLOUD_SERVICE", JSON.stringify({ name: connection.name, apiUrl: connection.apiUrl, supabaseUrl: connection.supabaseUrl, publicKey: connection.publicKey, maxFileBytes: connection.maxFileBytes }));
 });
-afterEach(() => { cleanup(); setLocale("zh-CN"); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { cleanup(); sessionStorage.clear(); vi.restoreAllMocks(); setLocale("zh-CN"); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("email return in the regular application shell", () => {
   it("registers, verifies the signup code and binds the returned session", async () => {
@@ -67,6 +68,7 @@ describe("email return in the regular application shell", () => {
     fireEvent.click(await screen.findByRole("button", { name: "创建账号" }));
     fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "new-user@example.com" } });
     fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "synthetic-password" } });
+    fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "synthetic-password" } });
     fireEvent.submit(screen.getByRole("button", { name: "注册云库" }).closest("form")!);
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("验证码邮件已提交发送"));
     expect(new URL(String(request.mock.calls[0][0])).searchParams.get("redirect_to")).toBe("https://lattice-apq.pages.dev/");
@@ -95,6 +97,7 @@ describe("email return in the regular application shell", () => {
     fireEvent.click(await screen.findByRole("button", { name: "创建账号" }));
     fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "new-user@example.com" } });
     fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "synthetic-password" } });
+    fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "synthetic-password" } });
     await act(async () => fireEvent.submit(screen.getByRole("button", { name: "注册云库" }).closest("form")!));
     expect(await screen.findByLabelText("验证码")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("验证码"), { target: { value: "12345678" } });
@@ -251,5 +254,88 @@ describe("email return in the regular application shell", () => {
     expect(request).toHaveBeenCalledTimes(2);
     expect(request.mock.calls[0][0]).toBe(`${connection.supabaseUrl}/auth/v1/user`);
     expect(request.mock.calls[1][0]).toBe(`${connection.supabaseUrl}/auth/v1/user`);
+  });
+});
+
+async function openRegisteredCodeStep(request = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ id: "new-user", confirmation_sent_at: "2026-11-02T00:00:00Z" })))) {
+  vi.stubGlobal("fetch", request);
+  useCloudWorkbenchStore.setState({ active: true, managementOpen: true });
+  render(<CloudLibraryControllerHost />);
+  fireEvent.click(await screen.findByRole("button", { name: "创建账号" }));
+  fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "retained-user@example.com" } });
+  fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "synthetic-password" } });
+  fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "synthetic-password" } });
+  await act(async () => fireEvent.submit(screen.getByRole("button", { name: "注册云库" }).closest("form")!));
+  expect(await screen.findByLabelText("验证码")).toBeTruthy();
+  return request;
+}
+
+describe("account progress in the real controller host", () => {
+  it("retains the code and email when the user explicitly closes and reopens account management", async () => {
+    const request = await openRegisteredCodeStep();
+    fireEvent.change(screen.getByLabelText("验证码"), { target: { value: "12345678" } });
+    fireEvent.click(screen.getByRole("button", { name: "关闭共享库管理" }));
+    expect(useCloudWorkbenchStore.getState().managementOpen).toBe(false);
+    expect(screen.queryByRole("dialog", { name: "共享库管理" })).toBeNull();
+    act(() => useCloudWorkbenchStore.getState().setManagementOpen(true, "connection"));
+    expect(screen.getByLabelText("验证码")).toHaveProperty("value", "12345678");
+    expect(screen.getByTestId("cloud-confirmation-email").textContent).toBe("retained-user@example.com");
+    expect(screen.queryByLabelText("云库密码")).toBeNull();
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(String(request.mock.calls[0][0])).toContain("/auth/v1/signup");
+  });
+
+  it("keeps unsigned account management open when the window-return interaction hits the backdrop", async () => {
+    const request = await openRegisteredCodeStep();
+    fireEvent.change(screen.getByLabelText("验证码"), { target: { value: "12345678" } });
+    const overlay = screen.getByRole("dialog", { name: "共享库管理" }).parentElement!;
+    fireEvent.mouseDown(overlay);
+    expect(useCloudWorkbenchStore.getState().managementOpen).toBe(true);
+    expect(screen.getByRole("dialog", { name: "共享库管理" })).toBeTruthy();
+    expect(screen.getByLabelText("验证码")).toHaveProperty("value", "12345678");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the editable OTP step through blur, hidden, visible and focus without another signup or resend", async () => {
+    const request = await openRegisteredCodeStep();
+    fireEvent.change(screen.getByLabelText("验证码"), { target: { value: "12345678" } });
+    let visibility: DocumentVisibilityState = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    await act(async () => {
+      fireEvent(window, new Event("blur"));
+      visibility = "hidden";
+      fireEvent(document, new Event("visibilitychange"));
+      visibility = "visible";
+      fireEvent(document, new Event("visibilitychange"));
+      fireEvent(window, new Event("focus"));
+    });
+    expect(screen.getByRole("dialog", { name: "共享库管理" })).toBeTruthy();
+    expect(screen.getByLabelText("验证码")).toHaveProperty("value", "12345678");
+    expect(screen.getByTestId("cloud-confirmation-email").textContent).toBe("retained-user@example.com");
+    expect(screen.getByRole("button", { name: "验证并登录" })).toHaveProperty("disabled", false);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(String(request.mock.calls[0][0])).toContain("/auth/v1/signup");
+  });
+
+  it("offers password login after OTP verification succeeds but saving the session fails", async () => {
+    const request = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "new-user", confirmation_sent_at: "2026-11-02T00:00:00Z" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "code-access", refresh_token: "code-refresh", expires_in: 3600, user: { id: "verified-user" } })));
+    await openRegisteredCodeStep(request);
+    const setItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key.startsWith("cloud-session:")) throw new Error("private storage detail");
+      setItem.call(this, key, value);
+    });
+    fireEvent.change(screen.getByLabelText("验证码"), { target: { value: "12345678" } });
+    await act(async () => fireEvent.submit(screen.getByRole("button", { name: "验证并登录" }).closest("form")!));
+    expect(screen.queryByLabelText("验证码")).toBeNull();
+    expect(screen.getByLabelText("云库邮箱")).toHaveProperty("value", "retained-user@example.com");
+    expect(screen.getByLabelText("云库密码")).toHaveProperty("value", "");
+    expect(screen.getByRole("button", { name: "登录云库" })).toBeTruthy();
+    expect(screen.getAllByRole("alert").some(element => element.textContent?.includes("邮箱已验证"))).toBe(true);
+    expect(document.body.textContent).not.toContain("private storage detail");
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(String(request.mock.calls[1][0])).toContain("/auth/v1/verify");
   });
 });

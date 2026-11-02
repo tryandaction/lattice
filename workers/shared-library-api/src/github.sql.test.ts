@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 const runtime = resolve('.lattice-build/cloud-team-test-runtime/node_modules/@electric-sql/pglite/dist/index.js');
 type Row = Record<string, unknown>;
 interface Pg { exec(sql: string): Promise<unknown>; query(sql: string, parameters?: unknown[]): Promise<{ rows: Row[] }>; transaction<T>(fn: (tx: Pg) => Promise<T>): Promise<T>; close(): Promise<void> }
-describe.skipIf(!existsSync(runtime))('GitHub PostgreSQL service and RLS boundaries', () => {
+describe('GitHub PostgreSQL service and RLS boundaries', () => {
   it('runs migration, preserves manual members, revokes automatic grants and denies client secrets/RPCs', async () => {
     const { PGlite }: { PGlite: new () => Pg } = await import(/* @vite-ignore */ pathToFileURL(runtime).href); const db = new PGlite();
     const owner = randomUUID(), a = randomUUID(), b = randomUUID(), c = randomUUID(), outsider = randomUUID(), org = randomUUID(), library = randomUUID();

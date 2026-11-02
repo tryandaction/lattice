@@ -4,8 +4,22 @@ import type { CloudLibraryConnection } from "./connection";
 import { createDesktopSyncBridge } from "./desktop-bridge";
 import { findEmailCallbackConnection, getCloudAuthRedirectUrl, type EmailConfirmationTokens } from "./email-confirmation";
 
+function authErrorCode(response: Response, result: unknown): string | undefined {
+  const body = result && typeof result === "object" ? result as { code?: unknown; error_code?: unknown } : null;
+  return typeof body?.code === "string" ? body.code : typeof body?.error_code === "string" ? body.error_code : response.headers.get("x-sb-error-code") ?? undefined;
+}
+
 export class SupabaseAuthRepository implements AuthRepository {
   constructor(private readonly connection: CloudLibraryConnection, private readonly fetchImpl: typeof fetch = fetch) {}
+
+  private async fetchRequest(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    try { return await this.fetchImpl.call(globalThis, input, init); }
+    catch (cause) {
+      const name = cause && typeof cause === "object" && "name" in cause ? cause.name : undefined;
+      const timeout = name === "TimeoutError" || name === "AbortError";
+      throw Object.assign(new Error(timeout ? "云端账号请求超时，请稍后重试。" : "无法连接云端账号服务，请检查网络后重试。"), { code: timeout ? "request_timeout" : "network_error" });
+    }
+  }
 
   private emailEndpoint(path: string, redirectTo?: string): string {
     const endpoint = `${this.connection.supabaseUrl}/auth/v1/${path}`;
@@ -14,12 +28,12 @@ export class SupabaseAuthRepository implements AuthRepository {
   }
 
   private async token(grant: string, body: Record<string, string>, deviceId: string): Promise<AuthSession> {
-    const response = await this.fetchImpl.call(globalThis, `${this.connection.supabaseUrl}/auth/v1/token?grant_type=${grant}`, {
+    const response = await this.fetchRequest(`${this.connection.supabaseUrl}/auth/v1/token?grant_type=${grant}`, {
       method: "POST", headers: { apikey: this.connection.publicKey, "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(15000),
     });
     if (!response.ok) {
       const result = await response.json().catch(() => null) as { code?: string; error_code?: string } | null;
-      const code = result?.code ?? result?.error_code;
+      const code = authErrorCode(response, result);
       const message = response.status >= 500 ? "云端账号服务暂不可用，请稍后重试；本地文件仍可正常使用。" : response.status === 429 ? "登录请求较多，请稍后再试。" : code === "email_not_confirmed" ? "邮箱尚未确认，请使用邮件中的验证码。" : "登录未完成，请检查邮箱和密码，或使用忘记密码。";
       throw Object.assign(new Error(message), { status: response.status, code });
     }
@@ -32,29 +46,29 @@ export class SupabaseAuthRepository implements AuthRepository {
   async verifyEmailCode(input: { email: string; token: string; deviceId: string }): Promise<AuthSession> {
     const token = input.token.trim();
     if (!/^\d{8}$/u.test(token)) throw Object.assign(new Error("验证码需要 8 位数字。"), { code: "otp_invalid" });
-    const response = await this.fetchImpl.call(globalThis, `${this.connection.supabaseUrl}/auth/v1/verify`, {
+    const response = await this.fetchRequest(`${this.connection.supabaseUrl}/auth/v1/verify`, {
       method: "POST", headers: { apikey: this.connection.publicKey, "content-type": "application/json" }, body: JSON.stringify({ email: input.email.trim(), token, type: "email" }), signal: AbortSignal.timeout(15000),
     });
     if (!response.ok) {
       const result = await response.json().catch(() => null) as { code?: string; error_code?: string } | null;
-      const code = result?.code ?? result?.error_code;
-      const message = response.status === 429 ? "验证码尝试较多，请稍后重试。" : "验证码无效或已过期，请重新发送后再试。";
+      const code = authErrorCode(response, result);
+      const message = response.status >= 500 || code === "unexpected_failure" ? "云端验证服务暂不可用，请稍后重试。" : response.status === 429 ? "验证码尝试较多，请稍后重试。" : "验证码无效或已过期，请重新发送后再试。";
       throw Object.assign(new Error(message), { status: response.status, code });
     }
-    const result = await response.json() as { access_token?: string; refresh_token?: string; expires_in?: number; user?: { id?: string } };
-    if (!result.access_token || !result.refresh_token || !result.user?.id || !Number.isFinite(result.expires_in)) throw new Error("验证码验证返回无效会话。");
+    const result = await response.json().catch(() => null) as { access_token?: string; refresh_token?: string; expires_in?: number; user?: { id?: string } } | null;
+    if (!result?.access_token || !result.refresh_token || !result.user?.id || !Number.isFinite(result.expires_in)) throw Object.assign(new Error("邮箱已验证，但云端会话未能建立。无需再次验证邮箱，请使用注册时设置的密码登录。"), { code: "email_verified_connection_failed" });
     return { accessToken: result.access_token, refreshToken: result.refresh_token, userId: result.user.id, deviceId: input.deviceId, issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + result.expires_in! * 1000).toISOString() };
   }
   async signUp(email: string, password: string, redirectTo?: string): Promise<{ confirmationRequired: boolean; confirmationSent: boolean }> {
-    const response = await this.fetchImpl.call(globalThis, this.emailEndpoint("signup", redirectTo), {
+    const response = await this.fetchRequest(this.emailEndpoint("signup", redirectTo), {
       method: "POST", headers: { apikey: this.connection.publicKey, "content-type": "application/json" },
       body: JSON.stringify({ email, password }), signal: AbortSignal.timeout(15000),
     });
     const result = await response.json().catch(() => null) as { id?: string; access_token?: string; confirmation_sent_at?: string; user?: { id?: string; confirmation_sent_at?: string }; code?: string; error_code?: string } | null;
     if (!response.ok) {
-      const code = result?.code ?? result?.error_code;
-      const message = response.status === 429 ? "注册请求较多，请稍后再试。" : response.status >= 500 || code === "email_address_not_authorized" || code === "unexpected_failure" ? "注册邮件暂时无法发送，请稍后重试；本地文件仍可正常使用。" : "注册未完成，请检查邮箱和密码（至少 8 个字符）。";
-      throw Object.assign(new Error(message), { status: response.status });
+      const code = authErrorCode(response, result);
+      const message = response.status === 429 ? "注册请求较多，请稍后再试。" : response.status >= 500 || code === "email_address_not_authorized" || code === "unexpected_failure" ? "注册邮件暂时无法发送，请稍后重试；本地文件仍可正常使用。" : code === "email_exists" || code === "user_already_exists" ? "此邮箱已注册，请直接登录；若忘记密码，可使用找回密码。" : "注册未完成，请检查邮箱和密码（至少 8 个字符）。";
+      throw Object.assign(new Error(message), { status: response.status, code });
     }
     if (!result?.id && !result?.user?.id) throw new Error("身份服务返回无效注册结果。");
     return { confirmationRequired: !result.access_token, confirmationSent: Boolean(result.confirmation_sent_at ?? result.user?.confirmation_sent_at) };
@@ -62,7 +76,7 @@ export class SupabaseAuthRepository implements AuthRepository {
   refresh(input: { refreshToken: string; deviceId: string }) { return this.token("refresh_token", { refresh_token: input.refreshToken }, input.deviceId); }
   async confirmEmail(tokens: EmailConfirmationTokens, deviceId: string): Promise<AuthSession> {
     if (!findEmailCallbackConnection(tokens, [this.connection])) throw new Error("此确认链接不属于当前云服务，请返回原云库登录。");
-    const response = await this.fetchImpl.call(globalThis, `${this.connection.supabaseUrl}/auth/v1/user`, {
+    const response = await this.fetchRequest(`${this.connection.supabaseUrl}/auth/v1/user`, {
       headers: { apikey: this.connection.publicKey, authorization: `Bearer ${tokens.accessToken}` }, signal: AbortSignal.timeout(15000),
     });
     if (!response.ok) throw new Error("确认会话已失效，请尝试登录或重新发送确认邮件。");
@@ -74,29 +88,35 @@ export class SupabaseAuthRepository implements AuthRepository {
     return session;
   }
   async resendConfirmation(email: string, redirectTo?: string): Promise<void> {
-    const response = await this.fetchImpl.call(globalThis, this.emailEndpoint("resend", redirectTo), {
+    const response = await this.fetchRequest(this.emailEndpoint("resend", redirectTo), {
       method: "POST", headers: { apikey: this.connection.publicKey, "content-type": "application/json" },
       body: JSON.stringify({ type: "signup", email }), signal: AbortSignal.timeout(15000),
     });
-    if (!response.ok) throw new Error(response.status === 429 ? "发送较频繁，请稍后再试。" : "确认邮件暂时无法发送，请稍后重试。");
+    if (!response.ok) {
+      const code = authErrorCode(response, await response.json().catch(() => null));
+      throw Object.assign(new Error(response.status === 429 ? "发送较频繁，请稍后再试。" : "确认邮件暂时无法发送，请稍后重试。"), { status: response.status, code });
+    }
   }
   async requestPasswordReset(email: string, redirectTo?: string): Promise<void> {
-    const response = await this.fetchImpl.call(globalThis, this.emailEndpoint("recover", redirectTo), {
+    const response = await this.fetchRequest(this.emailEndpoint("recover", redirectTo), {
       method: "POST", headers: { apikey: this.connection.publicKey, "content-type": "application/json" },
       body: JSON.stringify({ email }), signal: AbortSignal.timeout(15000),
     });
-    if (!response.ok) throw new Error(response.status === 429 ? "发送较频繁，请稍后再试。" : "重置邮件暂时无法发送，请稍后重试。");
+    if (!response.ok) {
+      const code = authErrorCode(response, await response.json().catch(() => null));
+      throw Object.assign(new Error(response.status === 429 ? "发送较频繁，请稍后再试。" : "重置邮件暂时无法发送，请稍后重试。"), { status: response.status, code });
+    }
   }
   /** Recovery credentials stay separate from the account already open in this app. */
   async resetPassword(tokens: EmailConfirmationTokens, password: string): Promise<void> {
     if (!findEmailCallbackConnection(tokens, [this.connection])) throw new Error("此重置链接不属于当前云服务，请重新申请重置邮件。");
     if (password.length < 8) throw new Error("新密码至少需要 8 个字符。");
     const headers = { apikey: this.connection.publicKey, authorization: `Bearer ${tokens.accessToken}`, "content-type": "application/json" };
-    const verified = await this.fetchImpl.call(globalThis, `${this.connection.supabaseUrl}/auth/v1/user`, { headers, signal: AbortSignal.timeout(15000) });
+    const verified = await this.fetchRequest(`${this.connection.supabaseUrl}/auth/v1/user`, { headers, signal: AbortSignal.timeout(15000) });
     if (!verified.ok) throw new Error("重置链接已失效，请重新申请重置邮件。");
     const user = await verified.json() as { id?: string };
     if (!user.id) throw new Error("重置链接无法验证，请重新申请重置邮件。");
-    const response = await this.fetchImpl.call(globalThis, `${this.connection.supabaseUrl}/auth/v1/user`, {
+    const response = await this.fetchRequest(`${this.connection.supabaseUrl}/auth/v1/user`, {
       method: "PUT", headers, body: JSON.stringify({ password }), signal: AbortSignal.timeout(15000),
     });
     if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? "重置链接已失效，请重新申请重置邮件。" : response.status === 429 ? "操作较频繁，请稍后再试。" : "密码未能更新，请换一个至少 8 位的新密码后重试。");
@@ -104,7 +124,7 @@ export class SupabaseAuthRepository implements AuthRepository {
     if (updated.id !== user.id) throw new Error("重置链接的账号不一致，请重新申请重置邮件。");
   }
   async signOut(input: { session: AuthSession }) {
-    const response = await this.fetchImpl.call(globalThis, `${this.connection.supabaseUrl}/auth/v1/logout?scope=local`, { method: "POST", headers: { apikey: this.connection.publicKey, authorization: `Bearer ${input.session.accessToken}` }, signal: AbortSignal.timeout(15000) });
+    const response = await this.fetchRequest(`${this.connection.supabaseUrl}/auth/v1/logout?scope=local`, { method: "POST", headers: { apikey: this.connection.publicKey, authorization: `Bearer ${input.session.accessToken}` }, signal: AbortSignal.timeout(15000) });
     if (!response.ok && response.status !== 401) throw new Error("本机已退出，远端会话撤销暂未完成。");
   }
 }
@@ -165,7 +185,10 @@ export class CloudAuthSession {
     const epoch = ++this.generation;
     if (!this.repository.verifyEmailCode) throw new Error("当前云服务不支持邮箱验证码，请使用邮件确认流程。");
     const session = await this.repository.verifyEmailCode({ email, token, deviceId: this.deviceId });
-    return this.saveIdentity(session, epoch);
+    try { return await this.saveIdentity(session, epoch); }
+    catch {
+      throw Object.assign(new Error("邮箱已验证，但云端会话未能保存。无需再次验证邮箱，请稍后使用注册时设置的密码登录。"), { code: "email_verified_connection_failed" });
+    }
   }
   async load(): Promise<AuthSession | null> {
     const epoch = this.generation;

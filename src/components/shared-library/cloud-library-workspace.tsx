@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { Plus, RefreshCw, Users, X, Pause, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CloudConnectionPanel } from "./cloud-connection-panel";
+import { readCloudAccountProgress } from "@/lib/shared-library/account-progress";
 import { MemberManagement } from "./member-management";
 import { useCloudWorkbenchStore } from "@/stores/cloud-workbench-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -153,6 +154,7 @@ export function CloudLibraryControllerHost() {
         if (parsed.inviteToken && parsed.libraryId) savePendingInvite(parsed.inviteToken, parsed.libraryId, connection.id);
       } else {
         setConnections(stored); setActiveId(startup.activeId);
+        if (readCloudAccountProgress(stored.find(value => value.id === startup.activeId))) useCloudWorkbenchStore.getState().setManagementOpen(true, "connection");
         if (savedInvite?.token && savedInvite.libraryId && savedInvite.connectionId) setPendingInvite(savedInvite);
       }
       if (returned.callback?.kind === "session") {
@@ -254,9 +256,8 @@ export function CloudLibraryControllerHost() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [controller, pendingInvite]);
 
-  if (!managementOpen) return <>{uploadOpen ? null : <LocalUploadTargetDialog />}<CloudUploadDialog open={uploadOpen} onClose={() => setUploadOpen(false)} onFiles={files => { void cloud.uploadFiles(files).catch(() => {}); }} /></>;
   const snapshot = controller?.getSnapshot();
-  return <><div className={cn(UI_MODAL_OVERLAY_CLASS, "flex items-center justify-center p-4")} style={UI_MODAL_OVERLAY_STYLE} onMouseDown={event => { if (event.target === event.currentTarget) closeManagement(); }}>
+  return <>{!managementOpen && !uploadOpen ? <LocalUploadTargetDialog /> : null}<div className={cn(UI_MODAL_OVERLAY_CLASS, "flex items-center justify-center p-4")} style={{ ...UI_MODAL_OVERLAY_STYLE, ...(!managementOpen ? { display: "none" } : {}) }} onMouseDown={event => { if (controller && event.target === event.currentTarget) closeManagement(); }}>
     <section role="dialog" aria-modal="true" aria-label={t("cloud.manage.title")} className={cn(UI_MODAL_PANEL_CLASS, "flex max-h-[85dvh] w-full max-w-2xl flex-col overflow-hidden rounded-lg")}>
       <header className="flex items-center justify-between border-b border-border px-4 py-3"><h2 className="text-sm font-medium">{t("cloud.manage.title")}</h2><Button variant="ghost" size="sm" aria-label={t("cloud.manage.close")} onClick={closeManagement}><X className="size-4" /></Button></header>
       <div className="min-h-0 overflow-auto">
@@ -287,7 +288,7 @@ export function CloudLibraryControllerHost() {
           onLogout={async () => { closeIdentity(); await authRef.current?.signOut(); }} />
         {error || status?.error ? <p role="alert" className="px-4 py-2 text-xs text-destructive">{error ?? status?.error}</p> : null}
         {pendingInvite ? <div role="status" className="flex items-center gap-2 border-b border-border p-3 text-xs"><span>{!controller ? t("cloud.invite.signIn") : inviteState === "joining" ? t("cloud.invite.joining") : inviteState === "failed" ? t("cloud.invite.failed") : t("cloud.invite.ready")}</span>{controller && inviteState === "failed" ? <Button size="sm" onClick={() => void acceptPendingInvite()}>{t("cloud.invite.retry")}</Button> : null}</div> : null}
-        {controller ? <>
+        {managementOpen && controller ? <>
           {libraryId ? <form className="flex items-center gap-2 border-b border-border px-3 py-2" onSubmit={event => { event.preventDefault(); void run(async () => { await controller.setDisplayName(libraryId, nickname); if (members) setMembers(await controller.members(libraryId)); }); }}><label htmlFor="cloud-nickname" className="shrink-0 text-xs">{t("cloud.nickname")}</label><input id="cloud-nickname" aria-label={t("cloud.nickname.label")} className={`${field} flex-1`} value={nickname} maxLength={60} onChange={event => setNickname(event.target.value)} placeholder={t("cloud.nickname.placeholder")} required /><Button size="sm" type="submit" disabled={!nickname.trim()}>{t("cloud.nickname.save")}</Button></form> : null}
           <div className="flex flex-wrap items-center gap-2 border-b border-border p-3"><select aria-label={t("cloud.library")} className={field} value={libraryId} onChange={event => { setMembers(null); void run(() => cloud.selectLibrary(event.target.value)); }}><option value="">{t("cloud.selectLibrary")}</option>{cloud.libraries.map(library => <option value={library.id} key={library.id}>{library.name}</option>)}</select>{cloud.libraries.length ? <Button size="sm" variant="ghost" onClick={() => setNewLibraryName("")}><Plus className="size-3" />{t("cloud.createLibrary")}</Button> : null}<Button size="sm" variant="ghost" aria-label={t("cloud.refresh")} onClick={() => void run(cloud.refresh)}><RefreshCw className="size-3" /></Button>{libraryId ? <Button size="sm" variant="ghost" aria-label={t("cloud.members.label")} onClick={() => void run(async () => { if (members) setMembers(null); else { setMembers(await controller.members(libraryId)); if (role && can(role, "member.manage")) setInvitations(await controller.invitations(libraryId)); } })}><Users className="size-3" /></Button> : null}</div>
           {newLibraryName !== null ? <form className="flex gap-2 border-b border-border p-3" onSubmit={event => { event.preventDefault(); void run(async () => { const library = await controller.createLibrary(newLibraryName); await cloud.selectLibrary(library.id); setNewLibraryName(null); }); }}><input aria-label={t("cloud.newName")} className={`${field} flex-1`} required value={newLibraryName} onChange={event => setNewLibraryName(event.target.value)} placeholder={t("cloud.namePlaceholder")} /><Button size="sm" type="submit">{t("cloud.create")}</Button><Button size="sm" type="button" variant="ghost" onClick={() => setNewLibraryName(null)}>{t("common.cancel")}</Button></form> : null}

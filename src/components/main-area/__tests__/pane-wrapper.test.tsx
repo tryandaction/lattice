@@ -18,6 +18,8 @@ import { isFileTabState } from '@/types/layout';
 import type { CloudLibraryWorkspaceController, CloudWorkspaceSnapshot } from "@/lib/shared-library/cloud-workspace";
 
 const refreshDirectoryMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const responsiveState = vi.hoisted(() => ({ isMobile: false, isTablet: false }));
+vi.mock("@/contexts/responsive-context", () => ({ useResponsive: () => responsiveState }));
 const desktopPreviewMocks = vi.hoisted(() => ({
   getDesktopPreviewPath: vi.fn((_handle?: unknown) => null as string | null),
   resolveDesktopPreviewUrl: vi.fn((path: string) => `http://lattice-preview.localhost/${path}`),
@@ -247,6 +249,8 @@ describe("PaneWrapper", () => {
   afterEach(() => { useCloudWorkbenchStore.getState().bindController(null); });
   beforeEach(() => {
     vi.clearAllMocks();
+    responsiveState.isMobile = false; responsiveState.isTablet = false;
+    useWorkspaceStore.setState({ commandBarByPane: {} });
     setLocale("en-US");
     universalViewerMock.mockImplementation((props: unknown) => {
       const {
@@ -943,4 +947,87 @@ describe("PaneWrapper", () => {
       });
     });
   });
-});
+
+  it("offers the current PDF note action in the mobile pane menu with touch-size targets", () => {
+    responsiveState.isMobile = true;
+    const onTrigger = vi.fn();
+    useWorkspaceStore.setState(state => {
+      const pane = state.layout.root;
+      if (pane.type !== "pane") throw new Error("Expected test pane");
+      const tab = { ...pane.tabs[0], fileName: "paper.pdf", filePath: "workspace/paper.pdf" };
+      return {
+        layout: { ...state.layout, root: { ...pane, tabs: [tab] } },
+        commandBarByPane: { "pane-left": { scopeId: "pane-left::tab-1", breadcrumbs: [{ label: "workspace" }, { label: "paper.pdf" }], actions: [{ id: "tool-note", label: "Note", active: true, onTrigger }] } },
+      };
+    });
+    render(<PaneWrapper paneId="pane-left" isActive onActivate={vi.fn()} onSplitRight={vi.fn()} onSplitDown={vi.fn()} onClose={vi.fn()} />);
+    const more = screen.getByRole("button", { name: "More actions" });
+
+    fireEvent.click(more);
+    const note = screen.getByRole("menuitem", { name: "Note" });
+    expect(more.className).toContain("min-h-11");
+
+    expect(note.querySelector(".lucide-check")).not.toBeNull();
+    expect(note.closest('[role="menu"]')?.className).toContain("[&_button]:min-h-11");
+    fireEvent.click(note);
+    expect(onTrigger).toHaveBeenCalledTimes(1);
+  });
+
+  function prepareCompactNote(options: { disabled?: boolean; scopeId?: string | null; registeredPane?: string; desktop?: boolean; tablet?: boolean; fileName?: string } = {}) {
+    responsiveState.isMobile = !options.desktop && !options.tablet;
+    responsiveState.isTablet = Boolean(options.tablet);
+    const onTrigger = vi.fn();
+    useWorkspaceStore.setState(state => {
+      const pane = state.layout.root;
+      if (pane.type !== "pane") throw new Error("Expected test pane");
+      const fileName = options.fileName ?? "paper.pdf";
+      return {
+        layout: { ...state.layout, root: { ...pane, tabs: [{ ...pane.tabs[0], fileName, filePath: "workspace/" + fileName }] } },
+        commandBarByPane: { [options.registeredPane ?? "pane-left"]: {
+          scopeId: options.scopeId === null ? undefined : options.scopeId ?? "pane-left::tab-1",
+          breadcrumbs: [{ label: "workspace" }, { label: "paper.pdf" }],
+          actions: [{ id: "tool-note", label: "Note", disabled: options.disabled, onTrigger }, { id: "tool-draw", label: "Draw", onTrigger: vi.fn() }],
+        } },
+      };
+    });
+    render(<PaneWrapper paneId="pane-left" isActive onActivate={vi.fn()} onSplitRight={vi.fn()} onSplitDown={vi.fn()} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    return onTrigger;
+  }
+
+  it("keeps the reused mobile note disabled and does not expose touch drawing", () => {
+    const onTrigger = prepareCompactNote({ disabled: true });
+    const note = screen.getByRole("menuitem", { name: "Note" });
+    expect(note).toHaveProperty("disabled", true);
+    fireEvent.click(note);
+    expect(onTrigger).not.toHaveBeenCalled();
+    expect(screen.queryByRole("menuitem", { name: "Draw" })).toBeNull();
+  });
+
+  it.each([
+    { desktop: true },
+    { scopeId: "pane-left::another-tab" },
+    { registeredPane: "pane-right" },
+    { fileName: "other.md" },
+    { scopeId: null, fileName: "other.pdf" },
+  ])("does not offer a stale or duplicate note action for %j", options => {
+    prepareCompactNote(options);
+    expect(screen.queryByRole("menuitem", { name: "Note" })).toBeNull();
+  });
+
+  it("supports the legacy PDF registration on tablet by matching full document breadcrumbs", () => {
+    const onTrigger = prepareCompactNote({ tablet: true, scopeId: null });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Note" }));
+    expect(onTrigger).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes the old note action when the active tab changes while the mobile menu is open", () => {
+    const onTrigger = prepareCompactNote();
+    act(() => useWorkspaceStore.setState(state => {
+      const pane = state.layout.root;
+      if (pane.type !== "pane") throw new Error("Expected test pane");
+      return { layout: { ...state.layout, root: { ...pane, tabs: [{ ...pane.tabs[0], id: "new-tab", fileName: "other.pdf", filePath: "workspace/other.pdf" }] } } };
+    }));
+    expect(screen.queryByRole("menuitem", { name: "Note" })).toBeNull();
+    expect(onTrigger).not.toHaveBeenCalled();
+  });});

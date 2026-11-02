@@ -291,6 +291,7 @@ export function ObsidianMarkdownViewer({
   const [mode, setMode] = useState<ViewMode>(initialMode);
   const [localContent, setLocalContent] = useState(content);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [saveError, setSaveError] = useState<{ scope: string; copyFailed?: boolean } | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [showOutline, setShowOutline] = useState(false);
@@ -318,6 +319,10 @@ export function ObsidianMarkdownViewer({
   }, [filePath]);
   const markdownToolsActionsRef = useRef<WorkbenchMenuAction[]>([]);
   const resolvedFileId = fileId || fileName;
+  const saveScope = paneId + "::" + resolvedFileId;
+  const saveScopeRef = useRef<string | null>(saveScope);
+  const savingScopeRef = useRef<string | null>(null);
+  useEffect(() => { saveScopeRef.current = saveScope; return () => { saveScopeRef.current = null; }; }, [saveScope]);
   const prevFileIdRef = useRef(resolvedFileId);
   const workspaceRootPath = useWorkspaceStore((state) => state.workspaceRootPath);
   const workspaceKey = useWorkspaceStore((state) => state.workspaceIdentity?.workspaceKey ?? null);
@@ -736,27 +741,39 @@ export function ObsidianMarkdownViewer({
     });
   }, [onChange]);
 
-  // Handle save
+  // Save failures keep the draft available until the user retries or copies it.
   const handleSave = useCallback(async () => {
-    if (!onSave) return;
-    
+    if (!onSave || savingScopeRef.current === saveScope) return;
+    const savedContent = localContentRef.current;
+    savingScopeRef.current = saveScope;
     setSaveStatus("saving");
     try {
       await onSave();
-      setIsDirty(false);
+      if (saveScopeRef.current !== saveScope) return;
+      setIsDirty(localContentRef.current !== savedContent);
+      setSaveError(null);
       setSaveStatus("saved");
-      if (filePath) {
-        upsertWorkspaceMarkdownFile(filePath, localContent);
-      }
-      // Notify plugins that file was saved
+      if (filePath) upsertWorkspaceMarkdownFile(filePath, savedContent);
       emitFileSave(resolvedFileId);
-      setTimeout(() => setSaveStatus("idle"), 2000);
+      setTimeout(() => { if (saveScopeRef.current === saveScope) setSaveStatus("idle"); }, 2000);
     } catch {
+      if (saveScopeRef.current !== saveScope) return;
       setSaveStatus("error");
-      setTimeout(() => setSaveStatus("idle"), 3000);
+      setSaveError({ scope: saveScope });
+    } finally {
+      if (savingScopeRef.current === saveScope) savingScopeRef.current = null;
     }
-  }, [filePath, localContent, onSave, resolvedFileId]);
+  }, [filePath, onSave, resolvedFileId, saveScope]);
 
+  const copyUnsavedDraft = useCallback(async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(localContentRef.current);
+      if (saveScopeRef.current === saveScope) toast.success(t("markdown.save.draftCopied"));
+    } catch {
+      if (saveScopeRef.current === saveScope) setSaveError({ scope: saveScope, copyFailed: true });
+    }
+  }, [saveScope, t]);
   // Handle mode change
   const handleModeChange = useCallback((newMode: ViewMode) => {
     setMode(newMode);
@@ -2072,6 +2089,14 @@ export function ObsidianMarkdownViewer({
 
   return (
     <div ref={containerRef} className="h-full flex flex-col bg-background">
+      {saveError?.scope === saveScope ? <div role="alert" className="shrink-0 space-y-2 border-b border-destructive/40 bg-destructive/5 px-3 py-2 text-xs">
+        <p>{t("markdown.save.failedDraftKept")}</p>
+        {saveError.copyFailed ? <p>{t("markdown.save.copyFailed")}</p> : null}
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="min-h-11 rounded border border-border px-3 hover:bg-accent" onClick={() => void copyUnsavedDraft()}>{t("markdown.save.copyDraft")}</button>
+          <button type="button" className="min-h-11 rounded border border-border px-3 hover:bg-accent disabled:opacity-50" disabled={saveStatus === "saving" || !onSave} onClick={() => void handleSave()}>{t("markdown.save.retry")}</button>
+        </div>
+      </div> : null}
       {shouldRenderRunDock && showRunDock ? (
         <ResizablePanelGroup
           direction="vertical"

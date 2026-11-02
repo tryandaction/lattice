@@ -91,8 +91,8 @@ PDF `CloudPdfDocument { identity,sourceVersion?,authorId,canAnnotate,annotations
 默认Vitest不发现 `.scenario.ts`，因此不会因开发端口停止而阻断普通单测。专用浏览器场景是独立必跑门禁：缺URL/服务/测试运行时会失败，没有静默skip。
 
 ```powershell
-# 新机器安装隔离测试运行时；主依赖/lock不变，约25MB，非系统服务/镜像
-npm install --prefix ".lattice-build/cloud-team-test-runtime" --no-save --package-lock=false --ignore-scripts "@electric-sql/pglite@0.5.8"
+# 安装固定版本与锁文件的隔离测试运行时；test:run / qa:gate 会自动准备
+npm run prepare:cloud-test-runtime
 
 # focused单测，无需dev端口
 npx vitest run --maxWorkers=1 "src/lib/shared-library" "src/components/shared-library" "workers/shared-library-api/src/index.test.ts"

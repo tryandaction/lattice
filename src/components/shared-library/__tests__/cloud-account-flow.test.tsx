@@ -1,9 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CloudConnectionPanel } from "../cloud-connection-panel";
 
 const connection = { id: "lattice-managed", name: "Lattice 云库", apiUrl: "https://api.example.com", supabaseUrl: "https://project.supabase.co", publicKey: "sb_publishable_fixture", maxFileBytes: 5242880 };
 const props = { connections: [connection], activeId: connection.id, managedConnectionId: connection.id, onSelect: vi.fn(), onSave: vi.fn(), onLogin: vi.fn(), onLogout: vi.fn(), onRegister: vi.fn() };
+
+beforeEach(() => sessionStorage.clear());
 
 describe("ordinary cloud account experience", () => {
   it("shows an unavailable service with retry and local actions instead of infrastructure onboarding", async () => {

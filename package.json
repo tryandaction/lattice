@@ -1,6 +1,6 @@
 {
   "name": "lattice",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "license": "MIT",
   "private": true,
   "scripts": {
@@ -39,7 +39,9 @@
     "audit:official": "npm audit --registry=https://registry.npmjs.org",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "node scripts/tauri-build.mjs"
+    "tauri:build": "node scripts/tauri-build.mjs",
+    "prepare:cloud-test-runtime": "node scripts/prepare-cloud-test-runtime.mjs",
+    "pretest:run": "npm run prepare:cloud-test-runtime"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.0",
@@ -129,26 +131,28 @@
     "sharp": "0.35.5",
     "tailwindcss": "^3.4.19",
     "typescript": "^5.7.0",
-    "vitest": "^4.0.18",
+    "vitest": "^4.1.12",
     "worker-loader": "^3.0.8"
   },
   "overrides": {
     "@humanfs/node": "0.16.8",
     "@xmldom/xmldom": "0.8.15",
-    "brace-expansion": "5.0.9",
+    "brace-expansion": "5.0.12",
     "browserslist": "4.28.9",
     "canvas": "3.2.1",
     "esbuild": "0.28.1",
-    "fast-uri": "3.1.7",
+    "fast-uri": "3.1.9",
     "js-yaml": "4.3.2",
-    "minimatch": "^10.2.1",
-    "postcss": "$postcss",
+    "minimatch": "^11.0.1",
+    "postcss": "^8.5.28",
     "postcss-selector-parser": "6.1.5",
     "source-map-js": "1.2.2",
-    "katex": "$katex",
+    "katex": "0.18.2",
     "pptx-preview": {
       "uuid": "^11.1.1"
     },
-    "undici": "7.29.1"
+    "undici": "7.30.1",
+    "zod": "^4.6.6",
+    "vite": "^7.3.7"
   }
 }

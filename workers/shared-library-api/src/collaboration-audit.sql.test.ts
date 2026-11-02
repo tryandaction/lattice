@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -16,7 +16,7 @@ interface Pg {
 
 // The optional runtime is shared with the repository's existing SQL RLS smoke
 // fixture. No network, hosted database, or added production dependency is used.
-describe.skipIf(!existsSync(runtime))('collaboration audit PostgreSQL behavior', () => {
+describe('collaboration audit PostgreSQL behavior', () => {
   it('enforces actor snapshots, readonly RLS, private audit visibility and cascade retention', async () => {
     const { PGlite }: { PGlite: new () => Pg } = await import(/* @vite-ignore */ pathToFileURL(runtime).href);
     const db = new PGlite();

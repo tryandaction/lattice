@@ -1,0 +1,9 @@
+{
+  "name": "lattice-cloud-team-test-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local embedded PostgreSQL fixture; never connects to the hosted database.",
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.8"
+  }
+}

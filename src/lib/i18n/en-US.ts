@@ -5,6 +5,11 @@
 import type { TranslationKey } from './zh-CN';
 
 export const enUS: Record<TranslationKey, string> = {
+  'markdown.save.failedDraftKept': 'Save did not finish. Your draft is still in the editor. If the cloud version changed, copy the draft, close the document and choose “Don’t save”, then reopen the latest version and merge your edits.',
+  'markdown.save.copyDraft': 'Copy draft',
+  'markdown.save.retry': 'Save again',
+  'markdown.save.draftCopied': 'Draft copied. Your edits remain in the editor.',
+  'markdown.save.copyFailed': 'Copy failed. Select all in the editor and copy manually. Keep a copy of the draft before closing the document.',
   'formula.review.invalidSyntax': 'Formula syntax needs correction. Compare it with the original image.',
   'formula.review.originalImage': 'Original formula image',
   'formula.review.originalPrediction': 'Original recognition result',
@@ -359,9 +364,10 @@ export const enUS: Record<TranslationKey, string> = {
   'cloud.account.resetHint': 'Set a new password for the account in the email link. Any other account currently open will stay signed in.',
   'cloud.account.newPassword': 'New password',
   'cloud.account.repeatPassword': 'Confirm new password',
+  'cloud.account.confirmPassword': 'Confirm password',
   'cloud.account.savePassword': 'Save new password',
   'cloud.account.passwordLength': 'Your new password needs at least 8 characters.',
-  'cloud.account.passwordMismatch': 'The new passwords do not match.',
+  'cloud.account.passwordMismatch': 'The passwords do not match.',
   'cloud.account.confirmationStep': 'Sign-up progress',
   'cloud.otp.label': 'Email verification code',
   'cloud.otp.hint': 'Enter the 8-digit email code to verify and sign in. Check your spam folder if it is missing. Never share this code.',

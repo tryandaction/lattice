@@ -1,31 +1,35 @@
 import { copyFile, mkdir, lstat, realpath, stat, symlink } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = await realpath(path.resolve(scriptDirectory, ".."));
 
-async function resolveBuildDirectory() {
-  if (process.platform !== "win32") {
-    return repositoryRoot;
+export function windowsBuildPaths(env = process.env) {
+  const shortRoot = path.resolve(env.LATTICE_WINDOWS_BUILD_ROOT || "C:/lb");
+  return { shortRoot, shortRepository: path.join(shortRoot, "Lattice") };
+}
+
+export async function resolveBuildDirectory({ repository = repositoryRoot, platform = process.platform, env = process.env } = {}) {
+  if (platform !== "win32") {
+    return repository;
   }
 
-  const shortRoot = "C:/lb";
-  const shortRepository = path.join(shortRoot, "Lattice");
+  const { shortRoot, shortRepository } = windowsBuildPaths(env);
   await mkdir(shortRoot, { recursive: true });
 
   try {
     await lstat(shortRepository);
     const existingTarget = await realpath(shortRepository);
-    if (existingTarget.toLowerCase() !== repositoryRoot.toLowerCase()) {
+    if (existingTarget.toLowerCase() !== repository.toLowerCase()) {
       throw new Error(`Short build path '${shortRepository}' targets '${existingTarget}'.`);
     }
   } catch (error) {
     if (error?.code !== "ENOENT") {
       throw error;
     }
-    await symlink(repositoryRoot, shortRepository, "junction");
+    await symlink(repository, shortRepository, "junction");
   }
 
   return shortRepository;
@@ -80,31 +84,38 @@ async function prepareLocalWebViewBootstrapper(buildDirectory) {
   console.log(`[tauri-build] prepared local WebView2 bootstrapper cache: ${targetPath}`);
 }
 
-const buildDirectory = await resolveBuildDirectory();
-await prepareLocalWebViewBootstrapper(buildDirectory);
-const tauriEntrypoint = path.join(
-  repositoryRoot,
-  "node_modules",
-  "@tauri-apps",
-  "cli",
-  "tauri.js",
-);
-const child = spawn(process.execPath, [tauriEntrypoint, "build", ...process.argv.slice(2)], {
-  cwd: buildDirectory,
-  env: process.env,
-  stdio: "inherit",
-  windowsHide: true,
-});
+async function main() {
+  const buildDirectory = await resolveBuildDirectory();
+  await prepareLocalWebViewBootstrapper(buildDirectory);
+  const tauriEntrypoint = path.join(
+    repositoryRoot,
+    "node_modules",
+    "@tauri-apps",
+    "cli",
+    "tauri.js",
+  );
+  const child = spawn(process.execPath, [tauriEntrypoint, "build", ...process.argv.slice(2)], {
+    cwd: buildDirectory,
+    env: process.env,
+    stdio: "inherit",
+    windowsHide: true,
+  });
 
-child.on("error", (error) => {
-  console.error(`[tauri-build] unable to start Tauri: ${error.message}`);
-  process.exitCode = 1;
-});
-child.on("exit", (code, signal) => {
-  if (signal) {
-    console.error(`[tauri-build] Tauri exited after signal ${signal}.`);
+  child.on("error", (error) => {
+    console.error(`[tauri-build] unable to start Tauri: ${error.message}`);
     process.exitCode = 1;
-    return;
-  }
-  process.exitCode = code ?? 1;
-});
+  });
+  child.on("exit", (code, signal) => {
+    if (signal) {
+      console.error(`[tauri-build] Tauri exited after signal ${signal}.`);
+      process.exitCode = 1;
+      return;
+    }
+    process.exitCode = code ?? 1;
+  });
+}
+
+const invokedPath = process.argv[1] ? await realpath(path.resolve(process.argv[1])).catch(() => null) : null;
+if (invokedPath && pathToFileURL(invokedPath).href === import.meta.url) {
+  await main();
+}

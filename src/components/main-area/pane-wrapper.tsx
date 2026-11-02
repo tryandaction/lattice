@@ -2,7 +2,7 @@
 
 import { startTransition, useCallback, useEffect, useState, useRef, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { useDndMonitor } from "@dnd-kit/core";
-import { Check, Copy, FileCode, FileText, Filter, MoreHorizontal, PanelTopClose, Save, SplitSquareHorizontal, SplitSquareVertical, X } from "lucide-react";
+import { Check, Copy, FileCode, FileText, Filter, MoreHorizontal, PanelTopClose, Save, SplitSquareHorizontal, SplitSquareVertical, StickyNote, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { TabBar } from "./tab-bar";
@@ -30,6 +30,8 @@ import type { ViewerContent } from "@/types/viewer-content";
 import { measureLatticePerformanceAsync } from "@/lib/performance/performance-metrics";
 import { readFileOnce } from "@/lib/inflight-file-read";
 import { getWorkspaceFileRevision, subscribeWorkspaceFileRevisions } from "@/lib/workspace-file-revisions";
+import { useResponsive } from "@/contexts/responsive-context";
+import { buildExecutionScopeId } from "@/lib/runner/execution-scope";
 
 const EMPTY_TABS: TabState[] = [];
 const SYSTEM_INDEX_TEXT_PREVIEW_BYTES = 128 * 1024;
@@ -89,6 +91,9 @@ export function PaneWrapper({
   onClose,
 }: PaneWrapperProps) {
   const { t } = useI18n();
+  const { isMobile, isTablet } = useResponsive();
+  const compactLayout = isMobile || isTablet;
+  const registeredCommandBar = useWorkspaceStore(state => state.commandBarByPane[paneId]);
   const pane = useWorkspaceStore((state) => findPane(state.layout.root, paneId));
   const rootHandle = useWorkspaceStore((state) => state.rootHandle);
   const setActiveTab = useWorkspaceStore((state) => state.setActiveTab);
@@ -628,9 +633,33 @@ export function PaneWrapper({
     }
   }, [isActive, onActivate]);
 
+  const compactPdfNoteAction = useMemo(() => {
+    if (!compactLayout || activeRendererType !== "pdf" || !activeTab || !registeredCommandBar) return null;
+    const scopeId = buildExecutionScopeId({ paneId, tabId: activeTab.id });
+    // Older PDF renderers register full-path breadcrumbs without an explicit scope.
+    const matchesDocument = registeredCommandBar.scopeId
+      ? registeredCommandBar.scopeId === scopeId
+      : registeredCommandBar.breadcrumbs.map(segment => segment.label).join("/") === activeTab.filePath.split("/").filter(Boolean).join("/");
+    if (!matchesDocument) return null;
+    return registeredCommandBar.actions.find(action => action.id === "tool-note" && action.onTrigger) ?? null;
+  }, [activeRendererType, activeTab, compactLayout, paneId, registeredCommandBar]);
+
   const paneMenuActions = useMemo<WorkbenchMenuAction[]>(() => [
+    ...(compactPdfNoteAction ? [{
+      id: "document-tool-note",
+      label: compactPdfNoteAction.label,
+      icon: compactPdfNoteAction.active ? <Check className="h-4 w-4" /> : <StickyNote className="h-4 w-4" />,
+      disabled: compactPdfNoteAction.disabled || (activeTab?.kind === "cloud-file" && !["owner", "admin", "editor", "commenter"].includes(cloudAccess)),
+      onSelect: () => {
+        const state = useWorkspaceStore.getState();
+        const currentPane = findPane(state.layout.root, paneId);
+        if (currentPane?.tabs[currentPane.activeTabIndex]?.id !== activeTab?.id || state.commandBarByPane[paneId] !== registeredCommandBar) return;
+        compactPdfNoteAction.onTrigger?.();
+      },
+    }] : []),
     {
       id: "split-right",
+      separatorBefore: Boolean(compactPdfNoteAction),
       label: t("pane.splitRight"),
       icon: <SplitSquareHorizontal className="h-4 w-4" />,
       onSelect: onSplitRight,
@@ -675,7 +704,7 @@ export function PaneWrapper({
       tone: "destructive",
       onSelect: onClose,
     },
-  ], [activeTab, handleCloseAllTabs, handleCloseSavedTabs, handleCopyTabPath, onClose, onSplitDown, onSplitRight, t, tabs]);
+  ], [activeTab, cloudAccess, compactPdfNoteAction, handleCloseAllTabs, handleCloseSavedTabs, handleCopyTabPath, onClose, onSplitDown, onSplitRight, paneId, registeredCommandBar, t, tabs]);
 
   // Determine if current file is editable
   const isEditable = activeTab 
@@ -748,7 +777,7 @@ export function PaneWrapper({
         >
           <button
             onClick={(e) => { e.stopPropagation(); setPaneMenu({ x: e.clientX, y: e.clientY }); }}
-            className="p-1 rounded hover:bg-accent transition-colors"
+            className={cn("p-1 rounded hover:bg-accent transition-colors", compactLayout && "min-h-11 min-w-11")}
             title={t("workbench.commandBar.more")}
           >
             <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
@@ -806,6 +835,7 @@ export function PaneWrapper({
           x={paneMenu.x}
           y={paneMenu.y}
           actions={paneMenuActions}
+          minWidthClassName={compactLayout ? "min-w-[190px] [&_button]:min-h-11" : undefined}
           onClose={() => setPaneMenu(null)}
         />
       )}
@@ -854,6 +884,9 @@ export function PaneWrapper({
  */
 function EmptyPaneState() {
   const { t } = useI18n();
+
+
+
   return (
     <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
       <FileText className="h-12 w-12 mb-2 opacity-20" />

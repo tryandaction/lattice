@@ -70,10 +70,12 @@ describe("cloud interface locale", () => {
     fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
     fireEvent.change(screen.getByLabelText("云库邮箱"), { target: { value: "researcher@example.com" } });
     fireEvent.change(screen.getByLabelText("云库密码"), { target: { value: "synthetic-password" } });
+    fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "synthetic-password" } });
 
     act(() => setLocale("en-US"));
     expect((screen.getByLabelText("Cloud library email") as HTMLInputElement).value).toBe("researcher@example.com");
     expect((screen.getByLabelText("Cloud library password") as HTMLInputElement).value).toBe("synthetic-password");
+    expect((screen.getByLabelText("Confirm password") as HTMLInputElement).value).toBe("synthetic-password");
     fireEvent.submit(screen.getByRole("button", { name: "Sign up for cloud library" }).closest("form")!);
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Verification email submitted"));
     expect(screen.getByRole("heading", { name: "Confirm your email" })).toBeTruthy();

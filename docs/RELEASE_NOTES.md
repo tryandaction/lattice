@@ -1,4 +1,14 @@
-# Lattice v3.1.3 Release Notes
+# Lattice v3.2.1 Release Notes
+
+## November 2 cloud accounts and collaboration recovery
+
+- Registration requires matching passwords before making a request. Switching windows or reopening shared-library management preserves the OTP step; refresh restores email and progress without storing passwords or verification codes.
+- Resend cooldowns follow elapsed time. Consumed verification codes recover through password login when session persistence or cloud-library connection fails.
+- Mobile and tablet PDF panes expose the existing note tool through More actions, with role and document-scope checks.
+- GitHub authorization waits for the web callback before claiming the result, including immediate redirects. Collaborative Markdown save failures keep the draft visible and offer copy/retry recovery before manually merging the latest version.
+- The release gate prepares pinned local PostgreSQL fixtures. Security dependencies are updated, and NSIS updates abort when the application is running instead of terminating user instances.
+
+The full gate passed with 5,980 tests and 3 explicitly documented skips. Synthetic browser acceptance covers 144 product assertions and the isolated desktop candidate passed 10 auth/PDF checks. These results do not claim real OTP delivery, real GitHub authorization or paid AI calls. Final installation, deployment, version hashes and Git status are recorded in [the November 2 acceptance record](tests/2026-11-02-cloud-account-repair.md).
 
 ## October 21 AI reference completion correction
 
